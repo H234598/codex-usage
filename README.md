@@ -19,6 +19,7 @@ Each account gets its own persistent Playwright profile. These profiles contain 
 codex-usage account add privat --label "Privat"
 codex-usage account add arbeit --label "Arbeit"
 codex-usage account list
+codex-usage account overview
 ```
 
 Log in once per account:
@@ -29,6 +30,18 @@ codex-usage login arbeit
 ```
 
 The login command opens a visible Chromium window. Sign in normally, including MFA, then press Enter in the terminal.
+
+Remove an account from the config:
+
+```bash
+codex-usage account delete privat
+```
+
+This keeps the browser profile by default. To also delete the stored profile:
+
+```bash
+codex-usage account delete privat --delete-profile
+```
 
 ## Run
 

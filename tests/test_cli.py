@@ -35,3 +35,98 @@ def test_login_accepts_unique_label(tmp_path, monkeypatch):
         "label": "BW_Privat",
         "url": "https://chatgpt.com/codex/cloud/settings/analytics",
     }
+
+
+def test_account_overview_shows_config_and_accounts(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "BW_Privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config", str(config_path), "account", "overview"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Account-Uebersicht" in output
+    assert "Accounts: 1" in output
+    assert "privat" in output
+    assert "BW_Privat" in output
+    assert "vorhanden" in output
+
+
+def test_account_delete_removes_config_but_keeps_profile_by_default(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "BW_Privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config", str(config_path), "account", "delete", "BW_Privat"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Account geloescht: privat (BW_Privat)" in output
+    assert "Profil behalten:" in output
+    assert profile_dir.is_dir()
+
+    assert main(["--config", str(config_path), "account", "overview"]) == 0
+    assert "Accounts: 0" in capsys.readouterr().out
+
+
+def test_account_delete_can_delete_marked_profile(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(["--config", str(config_path), "account", "delete", "privat", "--delete-profile"])
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "Profil: geloescht" in output
+    assert not profile_dir.exists()

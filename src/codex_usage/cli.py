@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
 from .browser import login_account, probe_account
-from .config import add_or_update_account, default_config_path, load_config, resolve_account
-from .render import render_json, render_table
+from .config import (
+    add_or_update_account,
+    default_config_path,
+    default_state_dir,
+    load_config,
+    remove_account,
+    resolve_account,
+)
+from .render import render_account_overview, render_json, render_table
 from .scheduler import fetch_all, watch
 
 
@@ -44,6 +52,21 @@ def _build_parser() -> argparse.ArgumentParser:
     add.set_defaults(func=_cmd_account_add)
     listing = account_sub.add_parser("list", help="Accounts anzeigen")
     listing.set_defaults(func=_cmd_account_list)
+    overview = account_sub.add_parser("overview", help="Account-Uebersicht anzeigen")
+    overview.set_defaults(func=_cmd_account_overview)
+    delete = account_sub.add_parser("delete", help="Account aus der Config entfernen")
+    delete.add_argument("account", help="Account-ID oder eindeutiges Label")
+    delete.add_argument(
+        "--delete-profile",
+        action="store_true",
+        help="Auch den gespeicherten Browser-Profilordner loeschen",
+    )
+    delete.add_argument(
+        "--force-delete-profile",
+        action="store_true",
+        help="Profilordner auch ausserhalb des Standardprofils loeschen",
+    )
+    delete.set_defaults(func=_cmd_account_delete)
 
     login = sub.add_parser("login", help="Sichtbaren Browser fuer einen Account oeffnen")
     login.add_argument("account", help="Account-ID oder eindeutiges Label")
@@ -93,6 +116,29 @@ def _cmd_account_list(args: argparse.Namespace) -> int:
         return 0
     for account in config.accounts:
         print(f"{account.id}\t{account.label}\t{account.profile_dir}")
+    return 0
+
+
+def _cmd_account_overview(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    print(render_account_overview(config, args.config or default_config_path()))
+    return 0
+
+
+def _cmd_account_delete(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
+    profile_path = Path(account.profile_dir).expanduser()
+    if args.delete_profile:
+        _validate_profile_delete_target(profile_path, force=args.force_delete_profile)
+
+    remove_account(account.id, path=args.config)
+    print(f"Account geloescht: {account.id} ({account.label})")
+    if args.delete_profile:
+        state = _delete_profile_dir(profile_path)
+        print(f"Profil: {state} {profile_path}")
+    else:
+        print(f"Profil behalten: {profile_path}")
     return 0
 
 
@@ -148,6 +194,48 @@ def _select_accounts(config, account_ids: list[str] | None):
     if not account_ids:
         return config.accounts
     return tuple(resolve_account(config, account_ref) for account_ref in account_ids)
+
+
+def _validate_profile_delete_target(path: Path, *, force: bool) -> None:
+    resolved = path.resolve()
+    home = Path.home().resolve()
+    forbidden = {
+        Path("/").resolve(),
+        home,
+        home / ".config",
+        home / ".local",
+        home / ".local/share",
+    }
+    if resolved in forbidden:
+        raise ValueError(f"refusing to delete unsafe profile path: {resolved}")
+    if not path.exists():
+        return
+    if not path.is_dir():
+        raise ValueError(f"profile path is not a directory: {path}")
+
+    marker_exists = (path / ".codex-usage-profile").exists()
+    default_root = (default_state_dir() / "profiles").expanduser().resolve()
+    in_default_root = _is_relative_to(resolved, default_root)
+    if not force and not marker_exists and not in_default_root:
+        raise ValueError(
+            "refusing to delete profile outside the default profile root without "
+            "--force-delete-profile"
+        )
+
+
+def _delete_profile_dir(path: Path) -> str:
+    if not path.exists():
+        return "fehlt"
+    shutil.rmtree(path)
+    return "geloescht"
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from codex_usage.config import (
     AppConfig,
     add_or_update_account,
     load_config,
+    remove_account,
     resolve_account,
     save_config,
 )
@@ -118,3 +119,22 @@ def test_resolve_account_rejects_ambiguous_label():
 
     with pytest.raises(KeyError, match="ambiguous account label"):
         resolve_account(config, "BW")
+
+
+def test_remove_account_accepts_unique_label_and_keeps_profile(tmp_path):
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+    add_or_update_account(
+        "privat",
+        label="BW_Privat",
+        profile_dir=str(profile_dir),
+        path=config_path,
+    )
+
+    updated, removed = remove_account("BW_Privat", path=config_path)
+
+    assert removed.id == "privat"
+    assert updated.accounts == ()
+    assert load_config(config_path).accounts == ()
+    assert profile_dir.is_dir()
+    assert (profile_dir / ".codex-usage-profile").is_file()

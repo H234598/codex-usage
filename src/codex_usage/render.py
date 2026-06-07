@@ -3,12 +3,48 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from datetime import datetime
+from pathlib import Path
 
+from .config import AppConfig
 from .models import AccountUsage, LimitWindow
 
 
 def render_json(usages: Iterable[AccountUsage]) -> str:
     return json.dumps([usage.as_dict() for usage in usages], ensure_ascii=False, indent=2)
+
+
+def render_account_overview(config: AppConfig, config_path: Path) -> str:
+    rows = [
+        [
+            account.id,
+            account.label,
+            _profile_state(account.profile_dir),
+            str(Path(account.profile_dir).expanduser()),
+        ]
+        for account in sorted(config.accounts, key=lambda item: item.id)
+    ]
+    headers = ["ID", "Label", "Profil", "Pfad"]
+    widths = [
+        max(len(headers[index]), *(len(row[index]) for row in rows)) if rows else len(header)
+        for index, header in enumerate(headers)
+    ]
+    lines = [
+        "Account-Uebersicht",
+        "",
+        f"Config: {config_path}",
+        f"Accounts: {len(config.accounts)}",
+        f"Intervall: {config.interval_seconds}s",
+        f"Headless: {'ja' if config.headless else 'nein'}",
+        f"Analytics: {config.analytics_url}",
+        "",
+    ]
+    if not rows:
+        lines.append("Keine Accounts konfiguriert.")
+        return "\n".join(lines)
+    lines.append(_format_row(headers, widths))
+    lines.append("  ".join("-" * width for width in widths))
+    lines.extend(_format_row(row, widths) for row in rows)
+    return "\n".join(lines)
 
 
 def render_table(usages: Iterable[AccountUsage]) -> str:
@@ -39,6 +75,15 @@ def render_table(usages: Iterable[AccountUsage]) -> str:
 
 def _format_row(row: list[str], widths: list[int]) -> str:
     return "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+
+
+def _profile_state(profile_dir: str) -> str:
+    path = Path(profile_dir).expanduser()
+    if path.is_dir():
+        return "vorhanden"
+    if path.exists():
+        return "kein Ordner"
+    return "fehlt"
 
 
 def _usage_value(window: LimitWindow | None) -> str:

@@ -94,7 +94,20 @@ def add_or_update_account(
         headless=config.headless,
     )
     save_config(updated, path)
-    Path(account.profile_dir).expanduser().mkdir(parents=True, mode=0o700, exist_ok=True)
+    _prepare_profile_dir(account.profile_dir)
+    return updated, account
+
+
+def remove_account(account_ref: str, path: Path | None = None) -> tuple[AppConfig, Account]:
+    config = load_config(path)
+    account = resolve_account(config, account_ref)
+    updated = AppConfig(
+        accounts=tuple(item for item in config.accounts if item.id != account.id),
+        interval_seconds=config.interval_seconds,
+        analytics_url=config.analytics_url,
+        headless=config.headless,
+    )
+    save_config(updated, path)
     return updated, account
 
 
@@ -139,6 +152,23 @@ def _validate_account_id(account_id: str) -> None:
 
 def _safe_profile_name(account_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", account_id)
+
+
+def _prepare_profile_dir(profile_dir: str) -> Path:
+    path = Path(profile_dir).expanduser()
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+    marker = path / ".codex-usage-profile"
+    if not marker.exists():
+        marker.write_text("codex-usage persistent browser profile\n", encoding="utf-8")
+        try:
+            marker.chmod(0o600)
+        except OSError:
+            pass
+    return path
 
 
 def _validate_unique_accounts(accounts: tuple[Account, ...]) -> None:
