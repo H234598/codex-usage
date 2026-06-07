@@ -105,6 +105,23 @@ def get_account(config: AppConfig, account_id: str) -> Account:
     raise KeyError(f"unknown account: {account_id}")
 
 
+def resolve_account(config: AppConfig, account_ref: str) -> Account:
+    for account in config.accounts:
+        if account.id == account_ref:
+            return account
+
+    matches = [account for account in config.accounts if account.label == account_ref]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        ids = ", ".join(account.id for account in matches)
+        raise KeyError(f"ambiguous account label: {account_ref}; matching ids: {ids}")
+
+    available = ", ".join(f"{account.id} ({account.label})" for account in config.accounts)
+    detail = f"; available accounts: {available}" if available else ""
+    raise KeyError(f"unknown account: {account_ref}{detail}")
+
+
 def _account_from_data(item: object) -> Account:
     if not isinstance(item, dict):
         raise ValueError("account entry must be a TOML table")

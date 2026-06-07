@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from codex_usage.config import AppConfig, add_or_update_account, load_config, save_config
+from codex_usage.config import (
+    AppConfig,
+    add_or_update_account,
+    load_config,
+    resolve_account,
+    save_config,
+)
 from codex_usage.models import Account
 
 
@@ -91,3 +97,24 @@ def test_save_config_sets_private_file_mode(tmp_path):
     )
 
     assert oct(config_path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_resolve_account_accepts_id_or_unique_label(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("privat", label="BW_Privat", path=config_path)
+    config = load_config(config_path)
+
+    assert resolve_account(config, "privat").id == "privat"
+    assert resolve_account(config, "BW_Privat").id == "privat"
+
+
+def test_resolve_account_rejects_ambiguous_label():
+    config = AppConfig(
+        accounts=(
+            Account(id="privat", label="BW", profile_dir="/tmp/privat"),
+            Account(id="arbeit", label="BW", profile_dir="/tmp/arbeit"),
+        )
+    )
+
+    with pytest.raises(KeyError, match="ambiguous account label"):
+        resolve_account(config, "BW")

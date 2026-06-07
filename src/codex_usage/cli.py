@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .browser import login_account, probe_account
-from .config import add_or_update_account, default_config_path, get_account, load_config
+from .config import add_or_update_account, default_config_path, load_config, resolve_account
 from .render import render_json, render_table
 from .scheduler import fetch_all, watch
 
@@ -18,6 +18,10 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except KeyboardInterrupt:
         return 130
+    except KeyError as exc:
+        message = exc.args[0] if exc.args else str(exc)
+        print(f"Fehler: {message}", file=sys.stderr)
+        return 1
     except Exception as exc:
         print(f"Fehler: {exc}", file=sys.stderr)
         return 1
@@ -42,7 +46,7 @@ def _build_parser() -> argparse.ArgumentParser:
     listing.set_defaults(func=_cmd_account_list)
 
     login = sub.add_parser("login", help="Sichtbaren Browser fuer einen Account oeffnen")
-    login.add_argument("account_id")
+    login.add_argument("account", help="Account-ID oder eindeutiges Label")
     login.set_defaults(func=_cmd_login)
 
     once = sub.add_parser("once", help="Alle oder einzelne Accounts einmal auslesen")
@@ -59,7 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
     watch_cmd.set_defaults(func=_cmd_watch)
 
     probe = sub.add_parser("probe", help="Extraktionsquellen fuer einen Account untersuchen")
-    probe.add_argument("account_id")
+    probe.add_argument("account", help="Account-ID oder eindeutiges Label")
     probe.add_argument("--headless", action="store_true", help="Probe unsichtbar starten")
     probe.add_argument("--save-dir", type=Path, help="Rohkandidaten lokal speichern")
     probe.set_defaults(func=_cmd_probe)
@@ -78,6 +82,7 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
     )
     print(f"Account gespeichert: {account.id} ({account.label})")
     print(f"Profil: {account.profile_dir}")
+    print(f"Login: codex-usage login {account.id}")
     return 0
 
 
@@ -93,7 +98,7 @@ def _cmd_account_list(args: argparse.Namespace) -> int:
 
 def _cmd_login(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    login_account(get_account(config, args.account_id), config)
+    login_account(resolve_account(config, args.account), config)
     return 0
 
 
@@ -123,7 +128,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
 def _cmd_probe(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     result = probe_account(
-        get_account(config, args.account_id),
+        resolve_account(config, args.account),
         config,
         headed=not args.headless,
         save_dir=args.save_dir,
@@ -142,7 +147,7 @@ def _select_accounts(config, account_ids: list[str] | None):
         raise ValueError("no accounts configured; run `codex-usage account add <id>` first")
     if not account_ids:
         return config.accounts
-    return tuple(get_account(config, account_id) for account_id in account_ids)
+    return tuple(resolve_account(config, account_ref) for account_ref in account_ids)
 
 
 if __name__ == "__main__":
