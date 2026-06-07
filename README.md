@@ -73,6 +73,14 @@ codex-usage probe privat --save-dir probe-output
 
 `probe` prints only response summaries by default. `--save-dir` writes local raw JSON/body fixtures with `0600` permissions; use that only when debugging extraction.
 
+Diagnose login, Cloudflare, and page state without printing cookies or tokens:
+
+```bash
+codex-usage diagnose privat
+codex-usage diagnose privat --headed --screenshot --save-dir diagnose-output
+codex-usage diagnose privat --auth-json ~/.codex/auth.json
+```
+
 ## systemd User Timer
 
 Install the one-shot poller and timer:

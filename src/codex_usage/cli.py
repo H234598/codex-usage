@@ -6,7 +6,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from .browser import login_account, probe_account
+from .browser import diagnose_account, login_account, probe_account
 from .config import (
     SUPPORTED_BROWSERS,
     add_or_update_account,
@@ -28,6 +28,7 @@ Befehle:
   codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
   codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN] [--headed]
   codex-usage probe ACCOUNT [--headless] [--save-dir DIR]
+  codex-usage diagnose ACCOUNT [--headed] [--screenshot] [--save-dir DIR] [--auth-json PATH]
   codex-usage paths
 
 ACCOUNT kann eine Account-ID oder ein eindeutiges Label sein.
@@ -111,6 +112,14 @@ def _build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--save-dir", type=Path, help="Rohkandidaten lokal speichern")
     probe.set_defaults(func=_cmd_probe)
 
+    diagnose = sub.add_parser("diagnose", help="Login-/Cloudflare-/Seitenstatus untersuchen")
+    diagnose.add_argument("account", help="Account-ID oder eindeutiges Label")
+    diagnose.add_argument("--headed", action="store_true", help="Browser sichtbar starten")
+    diagnose.add_argument("--screenshot", action="store_true", help="Diagnose-Screenshot speichern")
+    diagnose.add_argument("--save-dir", type=Path, help="Ordner fuer Screenshot")
+    diagnose.add_argument("--auth-json", type=Path, help="Codex auth.json redigiert mitpruefen")
+    diagnose.set_defaults(func=_cmd_diagnose)
+
     paths = sub.add_parser("paths", help="Standardpfade anzeigen")
     paths.set_defaults(func=_cmd_paths)
     return parser
@@ -193,6 +202,22 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
+
+
+def _cmd_diagnose(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    save_dir = args.save_dir
+    if args.screenshot and save_dir is None:
+        save_dir = Path("diagnose-output")
+    result = diagnose_account(
+        resolve_account(config, args.account),
+        config,
+        headed=args.headed,
+        screenshot_dir=save_dir if args.screenshot else None,
+        auth_json_path=args.auth_json,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if "error" not in result else 2
 
 
 def _cmd_paths(args: argparse.Namespace) -> int:

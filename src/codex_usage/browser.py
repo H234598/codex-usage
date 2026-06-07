@@ -19,6 +19,16 @@ from .models import Account, AccountStatus, AccountUsage
 
 JSON_MAX_BYTES = 2_000_000
 LOGIN_HINTS = ("log in", "sign in", "anmelden", "einloggen", "continue with")
+CLOUDFLARE_HINTS = (
+    "cloudflare",
+    "checking your browser",
+    "turnstile",
+    "cf-chl",
+    "cf-challenge",
+    "verify you are human",
+    "ueberpruefen sie",
+    "überprüfen sie",
+)
 
 
 def login_account(account: Account, config: AppConfig) -> None:
@@ -142,6 +152,72 @@ def probe_account(
     }
 
 
+def diagnose_account(
+    account: Account,
+    config: AppConfig,
+    *,
+    headed: bool = False,
+    screenshot_dir: Path | None = None,
+    auth_json_path: Path | None = None,
+    timeout_ms: int = 60_000,
+) -> dict[str, Any]:
+    captured_at = datetime.now().astimezone()
+    profile_dir = _prepare_profile(account)
+    responses: list[dict[str, Any]] = []
+    result: dict[str, Any] = {
+        "account": account.id,
+        "label": account.label,
+        "browser": account.browser,
+        "profile_dir": str(profile_dir),
+        "captured_at": captured_at.isoformat(),
+        "analytics_url": config.analytics_url,
+        "headed": headed,
+        "codex_auth": _diagnose_auth_json(auth_json_path),
+    }
+
+    try:
+        with _profile_lock(profile_dir):
+            with sync_playwright() as playwright:
+                context = _launch_persistent_context(
+                    playwright,
+                    account,
+                    profile_dir,
+                    headless=not headed,
+                )
+                page = context.new_page()
+                page.on(
+                    "response",
+                    lambda response: _capture_diagnostic_response(response, responses),
+                )
+                main_response = page.goto(
+                    config.analytics_url,
+                    wait_until="domcontentloaded",
+                    timeout=timeout_ms,
+                )
+                try:
+                    page.wait_for_load_state("networkidle", timeout=12_000)
+                except PlaywrightTimeoutError:
+                    pass
+                body_text = _safe_body_text(page)
+                title = _safe_title(page)
+                screenshot_path = _save_diagnostic_screenshot(page, account, screenshot_dir)
+                result.update(
+                    {
+                        "final_url": _redact_url(page.url),
+                        "title": title,
+                        "main_status": main_response.status if main_response else None,
+                        "detected": _detect_page_state(page.url, title, body_text, responses),
+                        "body_excerpt": _safe_excerpt(body_text),
+                        "responses": responses[-20:],
+                        "screenshot": screenshot_path,
+                    }
+                )
+                context.close()
+    except PlaywrightError as exc:
+        result.update({"detected": "browser_error", "error": _clean_error(str(exc))})
+    return result
+
+
 def _capture_json_response(response: Any, candidates: list[JsonCandidate]) -> None:
     url = response.url
     if not _looks_relevant_url(url):
@@ -167,6 +243,65 @@ def _capture_json_response(response: Any, candidates: list[JsonCandidate]) -> No
     candidates.append(JsonCandidate(url=url, payload=payload))
 
 
+def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
+    codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    auth_path = path or codex_home / "auth.json"
+    expanded = auth_path.expanduser()
+    result: dict[str, Any] = {"path": str(expanded), "exists": expanded.exists()}
+    if not expanded.exists():
+        return result
+    try:
+        stat = expanded.stat()
+        payload = json.loads(expanded.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        result.update({"readable": False, "error": type(exc).__name__})
+        return result
+
+    result.update(
+        {
+            "readable": True,
+            "size_bytes": stat.st_size,
+            "mode": oct(stat.st_mode & 0o777),
+            "type": type(payload).__name__,
+        }
+    )
+    if not isinstance(payload, dict):
+        return result
+
+    tokens = payload.get("tokens")
+    result.update(
+        {
+            "top_level_keys": sorted(payload.keys()),
+            "auth_mode": payload.get("auth_mode"),
+            "last_refresh": payload.get("last_refresh"),
+            "has_openai_api_key": bool(payload.get("OPENAI_API_KEY")),
+            "token_fields": sorted(tokens.keys()) if isinstance(tokens, dict) else [],
+            "has_browser_storage_state": any(
+                key in payload for key in ("cookies", "origins", "localStorage", "sessionStorage")
+            ),
+        }
+    )
+    if isinstance(tokens, dict):
+        result["token_presence"] = {
+            key: bool(tokens.get(key))
+            for key in ("access_token", "id_token", "refresh_token", "account_id")
+        }
+    return result
+
+
+def _capture_diagnostic_response(response: Any, responses: list[dict[str, Any]]) -> None:
+    url = response.url
+    if "chatgpt.com" not in url.lower() and "openai.com" not in url.lower():
+        return
+    responses.append(
+        {
+            "status": response.status,
+            "url": _redact_url(url),
+            "content_type": response.headers.get("content-type", "").split(";")[0],
+        }
+    )
+
+
 def _looks_relevant_url(url: str) -> bool:
     lower = url.lower()
     if "chatgpt.com" not in lower and "openai.com" not in lower:
@@ -190,6 +325,60 @@ def _safe_body_text(page: Any) -> str:
         return page.locator("body").inner_text(timeout=10_000)
     except PlaywrightError:
         return ""
+
+
+def _safe_title(page: Any) -> str:
+    try:
+        return page.title()
+    except PlaywrightError:
+        return ""
+
+
+def _safe_excerpt(body_text: str) -> str:
+    clean = re.sub(r"\s+", " ", body_text).strip()
+    if not clean:
+        return ""
+    return clean[:500]
+
+
+def _detect_page_state(
+    url: str,
+    title: str,
+    body_text: str,
+    responses: list[dict[str, Any]] | None = None,
+) -> str:
+    haystack = f"{url}\n{title}\n{body_text}".lower()
+    response_urls = "\n".join(str(item.get("url", "")) for item in responses or []).lower()
+    response_statuses = {item.get("status") for item in responses or []}
+    if title.strip().lower() == "just a moment...":
+        return "cloudflare"
+    if "/cdn-cgi/challenge-platform/" in response_urls:
+        return "cloudflare"
+    if 403 in response_statuses and "chatgpt.com/codex/cloud/settings/analytics" in haystack:
+        return "cloudflare"
+    if any(hint in haystack for hint in CLOUDFLARE_HINTS):
+        return "cloudflare"
+    if "auth" in url.lower() or any(hint in haystack for hint in LOGIN_HINTS):
+        return "login_required"
+    if "5 stunden nutzungsgrenze" in haystack or "weekly usage limit" in haystack:
+        return "analytics_page"
+    if "codex" in haystack and "analytics" in haystack:
+        return "possible_analytics_page"
+    return "unknown"
+
+
+def _save_diagnostic_screenshot(
+    page: Any,
+    account: Account,
+    screenshot_dir: Path | None,
+) -> str | None:
+    if screenshot_dir is None:
+        return None
+    screenshot_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    path = screenshot_dir / f"{account.id}-diagnose.png"
+    page.screenshot(path=str(path), full_page=True)
+    _chmod_private(path, mode=0o600)
+    return str(path)
 
 
 def _status_for_result(
@@ -316,7 +505,10 @@ def _save_probe_payloads(
 
 def _redact_url(url: str) -> str:
     parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    path = parts.path
+    if path.startswith("/cdn-cgi/challenge-platform/"):
+        path = "/cdn-cgi/challenge-platform/..."
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 def _clean_error(error: str) -> str:

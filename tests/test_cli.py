@@ -20,6 +20,8 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage once" in output
     assert "codex-usage watch" in output
     assert "codex-usage probe ACCOUNT" in output
+    assert "codex-usage diagnose ACCOUNT" in output
+    assert "--auth-json PATH" in output
     assert "codex-usage paths" in output
 
 
@@ -85,6 +87,53 @@ def test_login_accepts_unique_label(tmp_path, monkeypatch):
         "label": "BW_Privat",
         "url": "https://chatgpt.com/codex/cloud/settings/analytics",
     }
+
+
+def test_diagnose_accepts_unique_label(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    called = {}
+
+    def fake_diagnose(account, config, *, headed, screenshot_dir, auth_json_path):
+        called["account_id"] = account.id
+        called["label"] = account.label
+        called["headed"] = headed
+        called["screenshot_dir"] = str(screenshot_dir)
+        called["auth_json_path"] = str(auth_json_path)
+        return {"account": account.id, "detected": "cloudflare"}
+
+    monkeypatch.setattr("codex_usage.cli.diagnose_account", fake_diagnose)
+
+    assert (
+        main(["--config", str(config_path), "account", "add", "privat", "--label", "BW_Privat"])
+        == 0
+    )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "diagnose",
+                "BW_Privat",
+                "--headed",
+                "--screenshot",
+                "--save-dir",
+                str(tmp_path / "shots"),
+                "--auth-json",
+                str(tmp_path / "auth.json"),
+            ]
+        )
+        == 0
+    )
+
+    assert called == {
+        "account_id": "privat",
+        "label": "BW_Privat",
+        "headed": True,
+        "screenshot_dir": str(tmp_path / "shots"),
+        "auth_json_path": str(tmp_path / "auth.json"),
+    }
+    assert '"detected": "cloudflare"' in capsys.readouterr().out
 
 
 def test_account_overview_shows_config_and_accounts(tmp_path, capsys):
