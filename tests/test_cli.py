@@ -22,6 +22,10 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage probe ACCOUNT" in output
     assert "codex-usage diagnose ACCOUNT" in output
     assert "--auth-json PATH" in output
+    assert "codex-usage ingest ACCOUNT" in output
+    assert "codex-usage latest" in output
+    assert "codex-usage bridge-snippet ACCOUNT" in output
+    assert "codex-usage bridge-server" in output
     assert "codex-usage paths" in output
 
 
@@ -167,6 +171,46 @@ def test_account_overview_shows_config_and_accounts(tmp_path, capsys):
     assert "BW_Privat" in output
     assert "firefox" in output
     assert "vorhanden" in output
+
+
+def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    body = """
+    5 Stunden Nutzungsgrenze 42 / 100 Zurücksetzungen 08.06.2026 04:26
+    Wöchentliches Nutzungslimit 310 / 1000 Zurücksetzungen 14.06.2026 04:26
+    """
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    import sys
+    from io import StringIO
+
+    old_stdin = sys.stdin
+    try:
+        sys.stdin = StringIO(body)
+        assert main(["--config", str(config_path), "ingest", "privat", "--stdin"]) == 0
+    finally:
+        sys.stdin = old_stdin
+
+    output = capsys.readouterr().out
+    assert "42 / 100" in output
+    assert "310 / 1000" in output
+
+    assert main(["--config", str(config_path), "latest"]) == 0
+    latest = capsys.readouterr().out
+    assert "42 / 100" in latest
+    assert "310 / 1000" in latest
+
+
+def test_bridge_snippet_command_prints_javascript(capsys):
+    assert main(["bridge-snippet", "BW_Privat", "--port", "8765", "--interval", "300"]) == 0
+
+    output = capsys.readouterr().out
+    assert "BW_Privat" in output
+    assert "http://127.0.0.1:8765/ingest" in output
+    assert "setInterval" in output
 
 
 def test_account_delete_removes_config_but_keeps_profile_by_default(tmp_path, capsys):

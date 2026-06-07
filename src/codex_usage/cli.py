@@ -6,6 +6,12 @@ import shutil
 import sys
 from pathlib import Path
 
+from .bridge import (
+    ingest_and_save,
+    load_latest_usages,
+    render_bridge_snippet,
+    run_bridge_server,
+)
 from .browser import diagnose_account, login_account, probe_account
 from .config import (
     SUPPORTED_BROWSERS,
@@ -29,6 +35,10 @@ Befehle:
   codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN] [--headed]
   codex-usage probe ACCOUNT [--headless] [--save-dir DIR]
   codex-usage diagnose ACCOUNT [--headed] [--screenshot] [--save-dir DIR] [--auth-json PATH]
+  codex-usage ingest ACCOUNT (--stdin | --file FILE)
+  codex-usage latest
+  codex-usage bridge-snippet ACCOUNT [--port PORT] [--interval SEKUNDEN]
+  codex-usage bridge-server [--host HOST] [--port PORT]
   codex-usage paths
 
 ACCOUNT kann eine Account-ID oder ein eindeutiges Label sein.
@@ -119,6 +129,31 @@ def _build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--save-dir", type=Path, help="Ordner fuer Screenshot")
     diagnose.add_argument("--auth-json", type=Path, help="Codex auth.json redigiert mitpruefen")
     diagnose.set_defaults(func=_cmd_diagnose)
+
+    ingest = sub.add_parser("ingest", help="Manuell exportierten Seitentext aufnehmen")
+    ingest.add_argument("account", help="Account-ID oder eindeutiges Label")
+    ingest_source = ingest.add_mutually_exclusive_group(required=True)
+    ingest_source.add_argument("--stdin", action="store_true", help="JSON/Text aus stdin lesen")
+    ingest_source.add_argument("--file", type=Path, help="JSON/Text-Datei lesen")
+    ingest.set_defaults(func=_cmd_ingest)
+
+    latest = sub.add_parser("latest", help="Zuletzt manuell ingestierte Werte anzeigen")
+    latest.add_argument("--format", choices=("table", "json"), default="table")
+    latest.set_defaults(func=_cmd_latest)
+
+    snippet = sub.add_parser(
+        "bridge-snippet",
+        help="Browser-Snippet fuer normalen Browser ausgeben",
+    )
+    snippet.add_argument("account", help="Account-ID oder eindeutiges Label")
+    snippet.add_argument("--port", type=int, default=8765)
+    snippet.add_argument("--interval", type=int, default=300)
+    snippet.set_defaults(func=_cmd_bridge_snippet)
+
+    bridge = sub.add_parser("bridge-server", help="Lokalen Browser-Bridge-Server starten")
+    bridge.add_argument("--host", default="127.0.0.1")
+    bridge.add_argument("--port", type=int, default=8765)
+    bridge.set_defaults(func=_cmd_bridge_server)
 
     paths = sub.add_parser("paths", help="Standardpfade anzeigen")
     paths.set_defaults(func=_cmd_paths)
@@ -220,6 +255,38 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
     return 0 if "error" not in result else 2
 
 
+def _cmd_ingest(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    raw = sys.stdin.read() if args.stdin else args.file.read_text(encoding="utf-8")
+    payload = _payload_from_raw_ingest(raw)
+    usage, path = ingest_and_save(config, args.account, payload)
+    print(render_table([usage]))
+    print(f"Gespeichert: {path}")
+    return 0 if usage.error is None else 2
+
+
+def _cmd_latest(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    usages = load_latest_usages(config)
+    if args.format == "json":
+        print(render_json(usages))
+    else:
+        print(render_table(usages) if usages else "Keine Snapshots vorhanden.")
+    return 0
+
+
+def _cmd_bridge_snippet(args: argparse.Namespace) -> int:
+    endpoint = f"http://127.0.0.1:{args.port}/ingest"
+    print(render_bridge_snippet(args.account, endpoint=endpoint, interval_seconds=args.interval))
+    return 0
+
+
+def _cmd_bridge_server(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    run_bridge_server(config, host=args.host, port=args.port)
+    return 0
+
+
 def _cmd_paths(args: argparse.Namespace) -> int:
     print(f"config: {args.config or default_config_path()}")
     return 0
@@ -273,6 +340,19 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _payload_from_raw_ingest(raw: str) -> dict:
+    stripped = raw.strip()
+    if not stripped:
+        return {"bodyText": ""}
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return {"bodyText": raw}
+    if isinstance(payload, dict):
+        return payload
+    return {"bodyText": raw}
 
 
 if __name__ == "__main__":
