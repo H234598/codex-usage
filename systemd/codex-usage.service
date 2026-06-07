@@ -1,0 +1,25 @@
+[Unit]
+Description=Poll ChatGPT Codex usage analytics
+Documentation=man:systemd.service(5)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/codex-usage once --format table
+Environment=PYTHONUNBUFFERED=1
+TimeoutStartSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/codex-usage %h/.local/share/codex-usage %h/.cache/ms-playwright
+RestrictSUIDSGID=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target
