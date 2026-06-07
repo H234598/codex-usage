@@ -1,6 +1,25 @@
 from __future__ import annotations
 
+import pytest
+
 from codex_usage.cli import main
+
+
+def test_root_help_lists_all_commands(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+
+    output = capsys.readouterr().out
+    assert "codex-usage account add ACCOUNT_ID" in output
+    assert "codex-usage account list" in output
+    assert "codex-usage account overview" in output
+    assert "codex-usage account delete ACCOUNT" in output
+    assert "codex-usage login ACCOUNT" in output
+    assert "codex-usage once" in output
+    assert "codex-usage watch" in output
+    assert "codex-usage probe ACCOUNT" in output
+    assert "codex-usage paths" in output
 
 
 def test_account_add_prints_login_id_hint(tmp_path, capsys):

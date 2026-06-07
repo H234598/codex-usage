@@ -18,6 +18,21 @@ from .config import (
 from .render import render_account_overview, render_json, render_table
 from .scheduler import fetch_all, watch
 
+COMMAND_OVERVIEW = """\
+Befehle:
+  codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
+  codex-usage account list
+  codex-usage account overview
+  codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
+  codex-usage login ACCOUNT
+  codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
+  codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN] [--headed]
+  codex-usage probe ACCOUNT [--headless] [--save-dir DIR]
+  codex-usage paths
+
+ACCOUNT kann eine Account-ID oder ein eindeutiges Label sein.
+"""
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
@@ -39,6 +54,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="codex-usage",
         description="Poll ChatGPT Codex analytics limits for multiple accounts.",
+        epilog=COMMAND_OVERVIEW,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--config", type=Path, default=None, help="Pfad zur config.toml")
     sub = parser.add_subparsers(dest="command", required=True)
