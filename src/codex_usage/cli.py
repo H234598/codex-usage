@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .browser import login_account, probe_account
 from .config import (
+    SUPPORTED_BROWSERS,
     add_or_update_account,
     default_config_path,
     default_state_dir,
@@ -20,8 +21,7 @@ from .scheduler import fetch_all, watch
 
 COMMAND_OVERVIEW = """\
 Befehle:
-  codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
-  codex-usage account list
+  codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR] [--browser BROWSER]
   codex-usage account overview
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
   codex-usage login ACCOUNT
@@ -66,9 +66,12 @@ def _build_parser() -> argparse.ArgumentParser:
     add.add_argument("account_id")
     add.add_argument("--label")
     add.add_argument("--profile-dir")
+    add.add_argument(
+        "--browser",
+        choices=SUPPORTED_BROWSERS,
+        help="Browser fuer Login und Polling, Standard: firefox",
+    )
     add.set_defaults(func=_cmd_account_add)
-    listing = account_sub.add_parser("list", help="Accounts anzeigen")
-    listing.set_defaults(func=_cmd_account_list)
     overview = account_sub.add_parser("overview", help="Account-Uebersicht anzeigen")
     overview.set_defaults(func=_cmd_account_overview)
     delete = account_sub.add_parser("delete", help="Account aus der Config entfernen")
@@ -118,21 +121,13 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
         args.account_id,
         label=args.label,
         profile_dir=args.profile_dir,
+        browser=args.browser,
         path=args.config,
     )
     print(f"Account gespeichert: {account.id} ({account.label})")
     print(f"Profil: {account.profile_dir}")
+    print(f"Browser: {account.browser}")
     print(f"Login: codex-usage login {account.id}")
-    return 0
-
-
-def _cmd_account_list(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
-    if not config.accounts:
-        print("Keine Accounts konfiguriert.")
-        return 0
-    for account in config.accounts:
-        print(f"{account.id}\t{account.label}\t{account.profile_dir}")
     return 0
 
 

@@ -18,8 +18,14 @@ Each account gets its own persistent Playwright profile. These profiles contain 
 ```bash
 codex-usage account add privat --label "Privat"
 codex-usage account add arbeit --label "Arbeit"
-codex-usage account list
 codex-usage account overview
+```
+
+Firefox is the default browser. If Cloudflare blocks one browser, change the account browser and log in again:
+
+```bash
+codex-usage account add privat --browser firefox
+codex-usage account add privat --browser chromium
 ```
 
 Log in once per account:

@@ -18,6 +18,7 @@ class Account:
     id: str
     label: str
     profile_dir: str
+    browser: str = "firefox"
 
 
 @dataclass(frozen=True)

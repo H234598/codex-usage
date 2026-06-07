@@ -22,16 +22,14 @@ LOGIN_HINTS = ("log in", "sign in", "anmelden", "einloggen", "continue with")
 
 
 def login_account(account: Account, config: AppConfig) -> None:
-    profile_dir = _prepare_profile(account.profile_dir)
+    profile_dir = _prepare_profile(account)
     with _profile_lock(profile_dir):
         with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                headless=False,
-            )
+            context = _launch_persistent_context(playwright, account, profile_dir, headless=False)
             page = context.new_page()
             page.goto(config.analytics_url, wait_until="domcontentloaded", timeout=60_000)
             print(f"Browserprofil: {profile_dir}")
+            print(f"Browser: {account.browser}")
             print("Melde dich im geoeffneten Browser an und oeffne ggf. die Codex-Analytics-Seite.")
             input("Druecke Enter, wenn der Account eingeloggt ist und die Seite sichtbar ist ... ")
             context.close()
@@ -49,11 +47,13 @@ def fetch_account_usage(
     source_urls: set[str] = set()
 
     try:
-        profile_dir = _prepare_profile(account.profile_dir)
+        profile_dir = _prepare_profile(account)
         with _profile_lock(profile_dir):
             with sync_playwright() as playwright:
-                context = playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(profile_dir),
+                context = _launch_persistent_context(
+                    playwright,
+                    account,
+                    profile_dir,
                     headless=not headed and config.headless,
                 )
                 page = context.new_page()
@@ -103,11 +103,13 @@ def probe_account(
 ) -> dict[str, Any]:
     captured_at = datetime.now().astimezone()
     candidates: list[JsonCandidate] = []
-    profile_dir = _prepare_profile(account.profile_dir)
+    profile_dir = _prepare_profile(account)
     with _profile_lock(profile_dir):
         with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
+            context = _launch_persistent_context(
+                playwright,
+                account,
+                profile_dir,
                 headless=not headed,
             )
             page = context.new_page()
@@ -131,6 +133,7 @@ def probe_account(
 
     return {
         "account": account.id,
+        "browser": account.browser,
         "captured_at": captured_at.isoformat(),
         "json_candidates": [_summarize_candidate(candidate) for candidate in candidates],
         "five_hour": five_hour.source if five_hour else None,
@@ -206,14 +209,50 @@ def _status_for_result(
     return AccountStatus.OK
 
 
-def _prepare_profile(profile_dir: str) -> Path:
-    path = Path(profile_dir).expanduser()
+def _launch_persistent_context(
+    playwright: Any,
+    account: Account,
+    profile_dir: Path,
+    *,
+    headless: bool,
+):
+    browser = account.browser
+    kwargs: dict[str, Any] = {"user_data_dir": str(profile_dir), "headless": headless}
+    if browser == "firefox":
+        return playwright.firefox.launch_persistent_context(**kwargs)
+    if browser == "chromium":
+        return playwright.chromium.launch_persistent_context(**kwargs)
+    raise RuntimeError(f"unsupported browser: {browser}")
+
+
+def _prepare_profile(account: Account) -> Path:
+    root = Path(account.profile_dir).expanduser()
+    root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    _chmod_private(root)
+    marker = root / ".codex-usage-profile"
+    if not marker.exists():
+        marker.write_text("codex-usage persistent browser profile root\n", encoding="utf-8")
+        _chmod_private(marker, mode=0o600)
+
+    path = root / _profile_browser_dir(account.browser)
     path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    _chmod_private(path)
+    engine_marker = path / ".codex-usage-browser-profile"
+    if not engine_marker.exists():
+        engine_marker.write_text(f"{account.browser}\n", encoding="utf-8")
+        _chmod_private(engine_marker, mode=0o600)
+    return path
+
+
+def _chmod_private(path: Path, mode: int = 0o700) -> None:
     try:
-        path.chmod(0o700)
+        path.chmod(mode)
     except OSError:
         pass
-    return path
+
+
+def _profile_browser_dir(browser: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", browser)
 
 
 @contextmanager

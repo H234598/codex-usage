@@ -18,12 +18,13 @@ def render_account_overview(config: AppConfig, config_path: Path) -> str:
         [
             account.id,
             account.label,
+            account.browser,
             _profile_state(account.profile_dir),
             str(Path(account.profile_dir).expanduser()),
         ]
         for account in sorted(config.accounts, key=lambda item: item.id)
     ]
-    headers = ["ID", "Label", "Profil", "Pfad"]
+    headers = ["ID", "Label", "Browser", "Profil", "Pfad"]
     widths = [
         max(len(headers[index]), *(len(row[index]) for row in rows)) if rows else len(header)
         for index, header in enumerate(headers)

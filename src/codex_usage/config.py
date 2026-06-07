@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from .models import Account
 
 APP_NAME = "codex-usage"
+SUPPORTED_BROWSERS = ("firefox", "chromium")
 
 
 @dataclass(frozen=True)
@@ -74,15 +75,20 @@ def add_or_update_account(
     account_id: str,
     label: str | None = None,
     profile_dir: str | None = None,
+    browser: str | None = None,
     path: Path | None = None,
 ) -> tuple[AppConfig, Account]:
     _validate_account_id(account_id)
+    if browser is not None:
+        _validate_browser(browser)
     config = load_config(path)
+    existing = next((item for item in config.accounts if item.id == account_id), None)
     account = Account(
         id=account_id,
-        label=label or account_id,
+        label=label or (existing.label if existing else account_id),
         profile_dir=profile_dir
-        or str(default_state_dir() / "profiles" / _safe_profile_name(account_id)),
+        or (existing.profile_dir if existing else str(_default_profile_root(account_id))),
+        browser=browser or (existing.browser if existing else "firefox"),
     )
 
     accounts = [item for item in config.accounts if item.id != account_id]
@@ -141,8 +147,10 @@ def _account_from_data(item: object) -> Account:
     account_id = str(item.get("id", "")).strip()
     _validate_account_id(account_id)
     label = str(item.get("label") or account_id)
-    profile_dir = str(item.get("profile_dir") or default_state_dir() / "profiles" / account_id)
-    return Account(id=account_id, label=label, profile_dir=profile_dir)
+    profile_dir = str(item.get("profile_dir") or _default_profile_root(account_id))
+    browser = str(item.get("browser") or "firefox")
+    _validate_browser(browser)
+    return Account(id=account_id, label=label, profile_dir=profile_dir, browser=browser)
 
 
 def _validate_account_id(account_id: str) -> None:
@@ -152,6 +160,10 @@ def _validate_account_id(account_id: str) -> None:
 
 def _safe_profile_name(account_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", account_id)
+
+
+def _default_profile_root(account_id: str) -> Path:
+    return default_state_dir() / "profiles" / _safe_profile_name(account_id)
 
 
 def _prepare_profile_dir(profile_dir: str) -> Path:
@@ -187,6 +199,12 @@ def _validate_analytics_url(url: str) -> None:
         raise ValueError("analytics_url must point to /codex/cloud/settings/analytics")
 
 
+def _validate_browser(browser: str) -> None:
+    if browser not in SUPPORTED_BROWSERS:
+        choices = ", ".join(SUPPORTED_BROWSERS)
+        raise ValueError(f"browser must be one of: {choices}")
+
+
 def _strict_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{name} must be an integer")
@@ -213,6 +231,7 @@ def _to_toml(config: AppConfig) -> str:
                 f"id = {_quote(account.id)}",
                 f"label = {_quote(account.label)}",
                 f"profile_dir = {_quote(account.profile_dir)}",
+                f"browser = {_quote(account.browser)}",
                 "",
             ]
         )

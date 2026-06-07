@@ -12,7 +12,8 @@ def test_root_help_lists_all_commands(capsys):
 
     output = capsys.readouterr().out
     assert "codex-usage account add ACCOUNT_ID" in output
-    assert "codex-usage account list" in output
+    assert "--browser BROWSER" in output
+    assert "codex-usage account list" not in output
     assert "codex-usage account overview" in output
     assert "codex-usage account delete ACCOUNT" in output
     assert "codex-usage login ACCOUNT" in output
@@ -29,7 +30,37 @@ def test_account_add_prints_login_id_hint(tmp_path, capsys):
 
     output = capsys.readouterr().out
     assert "Account gespeichert: privat (BW)" in output
+    assert "Browser: firefox" in output
     assert "Login: codex-usage login privat" in output
+
+
+def test_account_add_accepts_browser(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--browser",
+                "chromium",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "Browser: chromium" in output
+
+
+def test_account_list_is_removed(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["account", "list"])
+    assert exc.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_login_accepts_unique_label(tmp_path, monkeypatch):
@@ -85,6 +116,7 @@ def test_account_overview_shows_config_and_accounts(tmp_path, capsys):
     assert "Accounts: 1" in output
     assert "privat" in output
     assert "BW_Privat" in output
+    assert "firefox" in output
     assert "vorhanden" in output
 
 

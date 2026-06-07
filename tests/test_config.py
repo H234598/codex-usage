@@ -32,6 +32,21 @@ def test_config_round_trip_quotes_and_newlines(tmp_path):
 
     assert loaded.accounts == (account,)
     assert loaded.accounts[0].label == 'Privat "Main"\nAccount'
+    assert loaded.accounts[0].browser == "firefox"
+
+
+def test_config_round_trip_browser(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("privat", browser="chromium", path=config_path)
+
+    loaded = load_config(config_path)
+
+    assert loaded.accounts[0].browser == "chromium"
+
+
+def test_config_rejects_unknown_browser(tmp_path):
+    with pytest.raises(ValueError, match="browser must be one of"):
+        add_or_update_account("privat", browser="netscape", path=tmp_path / "config.toml")
 
 
 def test_load_config_rejects_loose_types(tmp_path):
