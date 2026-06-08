@@ -35,7 +35,7 @@ def fetch_all(
     ]
     if save_snapshots:
         for index, usage in enumerate(usages):
-            if usage.error is None:
+            if usage.status == AccountStatus.OK:
                 try:
                     save_usage_snapshot(usage)
                 except Exception as exc:

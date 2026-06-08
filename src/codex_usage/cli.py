@@ -27,6 +27,7 @@ from .config import (
 )
 from .direct import fetch_account_usage_direct
 from .json_utils import loads_strict
+from .models import AccountStatus, AccountUsage
 from .private_io import read_private_text
 from .render import render_account_overview, render_account_values, render_json, render_table
 from .scheduler import fetch_all, watch
@@ -307,7 +308,7 @@ def _cmd_once(args: argparse.Namespace) -> int:
         save_snapshots=direct,
     )
     print(render_json(usages) if args.format == "json" else render_table(usages))
-    return 0 if all(usage.error is None for usage in usages) else 2
+    return 0 if all(_is_successful_usage(usage) for usage in usages) else 2
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
@@ -365,7 +366,7 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
     usage, path = ingest_and_save(config, args.account, payload)
     print(render_table([usage]))
     print(f"Gespeichert: {path}")
-    return 0 if usage.error is None else 2
+    return 0 if _is_successful_usage(usage) else 2
 
 
 def _cmd_latest(args: argparse.Namespace) -> int:
@@ -383,7 +384,7 @@ def _cmd_values(args: argparse.Namespace) -> int:
     accounts = _select_accounts(config, args.account_ids)
     usages = _load_overview_usages(config, accounts)
     print(render_account_values(accounts, usages))
-    return 0 if all(usage.error is None for usage in usages.values()) else 2
+    return 0 if all(_is_successful_usage(usage) for usage in usages.values()) else 2
 
 
 def _cmd_bridge_snippet(args: argparse.Namespace) -> int:
@@ -476,13 +477,17 @@ def _load_overview_usages(config, accounts=None):
         if account.auth_json_path:
             usage = fetch_account_usage_direct(account)
             usages[account.id] = usage
-            if usage.error is None:
+            if _is_successful_usage(usage):
                 save_usage_snapshot(usage)
             continue
         snapshot = load_usage_snapshot(account.id)
         if snapshot is not None:
             usages[account.id] = snapshot
     return usages
+
+
+def _is_successful_usage(usage: AccountUsage) -> bool:
+    return usage.status == AccountStatus.OK and usage.error is None
 
 
 def _validate_profile_delete_target(path: Path, *, force: bool) -> None:
