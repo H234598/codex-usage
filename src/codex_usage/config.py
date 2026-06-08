@@ -13,6 +13,10 @@ from .private_io import read_private_text, write_private_text
 APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
 MAX_CONFIG_BYTES = 1_000_000
+MAX_CONFIG_ACCOUNTS = 100
+MAX_CONFIG_LABEL_CHARS = 256
+MAX_CONFIG_PATH_CHARS = 4096
+MAX_CONFIG_URL_CHARS = 2048
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,10 @@ def load_config(path: Path | None = None) -> AppConfig:
     raw_accounts = data.get("accounts", [])
     if not isinstance(raw_accounts, list):
         raise ValueError("accounts must be a list of TOML tables")
+    if len(raw_accounts) > MAX_CONFIG_ACCOUNTS:
+        raise ValueError(
+            f"accounts must contain at most {MAX_CONFIG_ACCOUNTS} entries"
+        )
     accounts = tuple(_account_from_data(item) for item in raw_accounts)
     _validate_unique_accounts(accounts)
     interval = _strict_int(data.get("interval_seconds", 300), "interval_seconds")
@@ -56,12 +64,14 @@ def load_config(path: Path | None = None) -> AppConfig:
     )
     _validate_analytics_url(analytics_url)
     headless = _strict_bool(data.get("headless", True), "headless")
-    return AppConfig(
+    config = AppConfig(
         accounts=accounts,
         interval_seconds=interval,
         analytics_url=analytics_url,
         headless=headless,
     )
+    _validate_config(config)
+    return config
 
 
 def _read_config_text(config_path: Path) -> str:
@@ -77,9 +87,13 @@ def _read_config_text(config_path: Path) -> str:
 
 
 def save_config(config: AppConfig, path: Path | None = None) -> Path:
+    _validate_config(config)
+    text = _to_toml(config)
+    if len(text.encode("utf-8")) > MAX_CONFIG_BYTES:
+        raise ValueError(f"config file too large; max {MAX_CONFIG_BYTES} bytes")
     config_path = path or default_config_path()
     _prepare_config_directory(config_path.parent)
-    write_private_text(config_path, _to_toml(config), label="config path")
+    write_private_text(config_path, text, label="config path")
     return config_path
 
 
@@ -232,6 +246,58 @@ def _validate_unique_accounts(accounts: tuple[Account, ...]) -> None:
         if account.id in seen:
             raise ValueError(f"duplicate account id: {account.id}")
         seen.add(account.id)
+
+
+def _validate_config(config: AppConfig) -> None:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config must be an AppConfig")
+    if not isinstance(config.accounts, tuple):
+        raise ValueError("accounts must be a tuple of Account entries")
+    if len(config.accounts) > MAX_CONFIG_ACCOUNTS:
+        raise ValueError(
+            f"accounts must contain at most {MAX_CONFIG_ACCOUNTS} entries"
+        )
+
+    interval = _strict_int(config.interval_seconds, "interval_seconds")
+    if interval < 60:
+        raise ValueError("interval_seconds must be at least 60")
+    if not isinstance(config.analytics_url, str):
+        raise ValueError("analytics_url must be an https://chatgpt.com URL")
+    _validate_text_field(config.analytics_url, "analytics_url", MAX_CONFIG_URL_CHARS)
+    _validate_analytics_url(config.analytics_url)
+    _strict_bool(config.headless, "headless")
+
+    for account in config.accounts:
+        _validate_account(account)
+    _validate_unique_accounts(config.accounts)
+
+
+def _validate_account(account: object) -> None:
+    if not isinstance(account, Account):
+        raise ValueError("account entry must be Account")
+    if not isinstance(account.id, str):
+        raise ValueError("account id must be a string")
+    _validate_account_id(account.id)
+    _validate_text_field(account.label, "account label", MAX_CONFIG_LABEL_CHARS)
+    _validate_text_field(account.profile_dir, "profile_dir", MAX_CONFIG_PATH_CHARS)
+    _validate_browser(account.browser)
+    if account.auth_json_path is not None:
+        _validate_text_field(
+            account.auth_json_path,
+            "auth_json_path",
+            MAX_CONFIG_PATH_CHARS,
+        )
+
+
+def _validate_text_field(value: object, name: str, max_chars: int) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    if not value:
+        raise ValueError(f"{name} must not be empty")
+    if len(value) > max_chars:
+        raise ValueError(f"{name} must be at most {max_chars} characters")
+    if "\x00" in value:
+        raise ValueError(f"{name} must not contain NUL bytes")
 
 
 def _validate_analytics_url(url: str) -> None:
