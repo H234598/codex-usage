@@ -11,6 +11,7 @@ from codex_usage.browser import (
     _save_diagnostic_screenshot,
     _save_probe_payloads,
 )
+from codex_usage.direct import MAX_AUTH_JSON_BYTES
 from codex_usage.extractor import JsonCandidate
 from codex_usage.models import Account
 
@@ -40,6 +41,7 @@ def test_diagnose_auth_json_redacts_token_values(tmp_path):
         ),
         encoding="utf-8",
     )
+    auth_path.chmod(0o600)
 
     result = _diagnose_auth_json(auth_path)
     serialized = json.dumps(result)
@@ -58,6 +60,37 @@ def test_diagnose_auth_json_redacts_token_values(tmp_path):
     assert "access-secret" not in serialized
     assert "refresh-secret" not in serialized
     assert "sk-secret" not in serialized
+
+
+def test_diagnose_auth_json_rejects_symlink_auth_file(tmp_path):
+    target = tmp_path / "target-auth.json"
+    target.write_text(
+        json.dumps({"tokens": {"access_token": "access-secret"}}),
+        encoding="utf-8",
+    )
+    target.chmod(0o600)
+    auth_path = tmp_path / "auth.json"
+    auth_path.symlink_to(target)
+
+    result = _diagnose_auth_json(auth_path)
+    serialized = json.dumps(result)
+
+    assert result["exists"] is True
+    assert result["readable"] is False
+    assert "auth.json is not a regular file" in result["error"]
+    assert "access-secret" not in serialized
+
+
+def test_diagnose_auth_json_rejects_oversized_auth_file(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(" " * (MAX_AUTH_JSON_BYTES + 1), encoding="utf-8")
+    auth_path.chmod(0o600)
+
+    result = _diagnose_auth_json(auth_path)
+
+    assert result["exists"] is True
+    assert result["readable"] is False
+    assert "auth.json too large" in result["error"]
 
 
 def test_diagnose_detects_cloudflare_challenge_and_redacts_url():

@@ -14,6 +14,7 @@ from .models import Account, AccountStatus, AccountUsage
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 MAX_RESPONSE_BYTES = 2_000_000
+MAX_AUTH_JSON_BYTES = 1_000_000
 
 
 def default_auth_json_path() -> Path:
@@ -84,7 +85,7 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
 
 
 def _load_access_token(path: Path) -> str:
-    _validate_auth_json_file(path)
+    validate_auth_json_file(path)
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -104,15 +105,20 @@ def _load_access_token(path: Path) -> str:
     return access_token
 
 
-def _validate_auth_json_file(path: Path) -> None:
+def validate_auth_json_file(path: Path):
+    if path.is_symlink():
+        raise DirectAuthError(f"auth.json is not a regular file: {path}")
     try:
         file_stat = path.stat()
     except OSError as exc:
         raise DirectAuthError(f"cannot read auth.json: {path}") from exc
     if not stat.S_ISREG(file_stat.st_mode):
         raise DirectAuthError(f"auth.json is not a regular file: {path}")
+    if file_stat.st_size > MAX_AUTH_JSON_BYTES:
+        raise DirectAuthError(f"auth.json too large; max {MAX_AUTH_JSON_BYTES} bytes")
     if file_stat.st_mode & 0o077:
         raise DirectAuthError(f"auth.json permissions too broad; run chmod 600 {path}")
+    return file_stat
 
 
 def _fetch_wham_usage(token: str, *, timeout_seconds: int) -> dict[str, Any]:

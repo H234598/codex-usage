@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from codex_usage.direct import fetch_account_usage_direct
+from codex_usage.direct import MAX_AUTH_JSON_BYTES, fetch_account_usage_direct
 from codex_usage.models import Account, AccountStatus
 
 
@@ -93,6 +93,58 @@ def test_fetch_account_usage_direct_rejects_broad_auth_json_permissions(tmp_path
     assert usage.error is not None
     assert "permissions too broad" in usage.error
     assert "secret-access-token" not in usage.error
+
+
+def test_fetch_account_usage_direct_rejects_symlink_auth_json(tmp_path, monkeypatch):
+    target = tmp_path / "target-auth.json"
+    target.write_text(
+        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        encoding="utf-8",
+    )
+    target.chmod(0o600)
+    auth_path = tmp_path / "auth.json"
+    auth_path.symlink_to(target)
+
+    def fake_urlopen(request, *, timeout):
+        raise AssertionError("network must not be reached with symlink auth")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", fake_urlopen)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error is not None
+    assert "auth.json is not a regular file" in usage.error
+    assert "secret-access-token" not in usage.error
+
+
+def test_fetch_account_usage_direct_rejects_oversized_auth_json(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(" " * (MAX_AUTH_JSON_BYTES + 1), encoding="utf-8")
+    auth_path.chmod(0o600)
+
+    def fake_urlopen(request, *, timeout):
+        raise AssertionError("network must not be reached with oversized auth")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", fake_urlopen)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error is not None
+    assert "auth.json too large" in usage.error
 
 
 def test_fetch_account_usage_direct_rejects_non_json_content_type(tmp_path, monkeypatch):
