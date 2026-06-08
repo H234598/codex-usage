@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-import stat
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .config import default_state_dir
 from .models import AccountStatus, AccountUsage, LimitWindow
-from .private_io import write_private_text
+from .private_io import read_private_text, write_private_text
 
 MAX_SNAPSHOT_BYTES = 1_000_000
 SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -48,16 +47,16 @@ def load_usage_snapshot(account_id: str, snapshot_dir: Path | None = None) -> Ac
     path = (snapshot_dir or default_snapshot_dir()) / f"{account_id}.json"
     if not path.exists():
         return None
-    if path.is_symlink():
-        return None
     try:
-        file_stat = path.stat()
-    except OSError:
-        return None
-    if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > MAX_SNAPSHOT_BYTES:
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        text, _ = read_private_text(
+            path,
+            regular_label="snapshot path",
+            read_label="snapshot file",
+            max_bytes=MAX_SNAPSHOT_BYTES,
+            too_large_label="snapshot file",
+            invalid_utf8_label="snapshot file",
+        )
+        payload = json.loads(text)
         if not isinstance(payload, dict):
             return None
         return usage_from_dict(payload)

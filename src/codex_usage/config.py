@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import os
 import re
-import stat
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from .models import Account
-from .private_io import write_private_text
+from .private_io import read_private_text, write_private_text
 
 APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
@@ -64,20 +63,15 @@ def load_config(path: Path | None = None) -> AppConfig:
 
 
 def _read_config_text(config_path: Path) -> str:
-    if config_path.is_symlink():
-        raise ValueError(f"config path must be a regular file: {config_path}")
-    try:
-        file_stat = config_path.stat()
-    except OSError as exc:
-        raise ValueError(f"cannot read config file: {config_path}") from exc
-    if not stat.S_ISREG(file_stat.st_mode):
-        raise ValueError(f"config path must be a regular file: {config_path}")
-    if file_stat.st_size > MAX_CONFIG_BYTES:
-        raise ValueError(f"config file too large; max {MAX_CONFIG_BYTES} bytes")
-    try:
-        return config_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"config file is not valid UTF-8: {config_path}") from exc
+    text, _ = read_private_text(
+        config_path,
+        regular_label="config path",
+        read_label="config file",
+        max_bytes=MAX_CONFIG_BYTES,
+        too_large_label="config file",
+        invalid_utf8_label="config file",
+    )
+    return text
 
 
 def save_config(config: AppConfig, path: Path | None = None) -> Path:

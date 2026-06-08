@@ -4,7 +4,6 @@ import argparse
 import ipaddress
 import json
 import shutil
-import stat
 import sys
 from pathlib import Path
 
@@ -27,6 +26,7 @@ from .config import (
     resolve_account,
 )
 from .direct import fetch_account_usage_direct
+from .private_io import read_private_text
 from .render import render_account_overview, render_account_values, render_json, render_table
 from .scheduler import fetch_all, watch
 from .state import load_usage_snapshot, save_usage_snapshot
@@ -548,18 +548,15 @@ def _read_ingest_raw(args: argparse.Namespace) -> str:
         return raw
 
     path = args.file
-    try:
-        file_stat = path.stat()
-    except OSError as exc:
-        raise ValueError(f"cannot read ingest file: {path}") from exc
-    if not stat.S_ISREG(file_stat.st_mode):
-        raise ValueError(f"ingest file is not a regular file: {path}")
-    if file_stat.st_size > MAX_INGEST_BYTES:
-        raise ValueError(f"ingest payload too large; max {MAX_INGEST_BYTES} bytes")
-    try:
-        return path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"ingest file is not valid UTF-8: {path}") from exc
+    text, _ = read_private_text(
+        path,
+        regular_label="ingest file",
+        read_label="ingest file",
+        max_bytes=MAX_INGEST_BYTES,
+        too_large_label="ingest payload",
+        invalid_utf8_label="ingest file",
+    )
+    return text
 
 
 if __name__ == "__main__":
