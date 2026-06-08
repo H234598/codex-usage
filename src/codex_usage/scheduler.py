@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 
 from .browser import fetch_account_usage
 from .config import AppConfig
 from .direct import fetch_account_usage_direct
-from .models import Account, AccountUsage
+from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
 from .state import save_usage_snapshot
 
@@ -22,9 +23,13 @@ def fetch_all(
     save_snapshots: bool = False,
 ) -> list[AccountUsage]:
     usages = [
-        fetch_account_usage_direct(account, auth_json_path=auth_json_path)
-        if direct
-        else fetch_account_usage(account, config, headed=headed)
+        _fetch_one(
+            config,
+            account,
+            headed=headed,
+            direct=direct,
+            auth_json_path=auth_json_path,
+        )
         for account in accounts
     ]
     if save_snapshots:
@@ -32,6 +37,28 @@ def fetch_all(
             if usage.error is None:
                 save_usage_snapshot(usage)
     return usages
+
+
+def _fetch_one(
+    config: AppConfig,
+    account: Account,
+    *,
+    headed: bool,
+    direct: bool,
+    auth_json_path: Path | None,
+) -> AccountUsage:
+    try:
+        if direct:
+            return fetch_account_usage_direct(account, auth_json_path=auth_json_path)
+        return fetch_account_usage(account, config, headed=headed)
+    except Exception as exc:
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+            status=AccountStatus.ERROR,
+            error=f"fetch failed: {type(exc).__name__}",
+        )
 
 
 def watch(
