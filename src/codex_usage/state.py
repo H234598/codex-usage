@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import default_state_dir
+from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow
 from .private_io import read_private_text, write_private_text
 
@@ -57,7 +58,7 @@ def load_usage_snapshot(account_id: str, snapshot_dir: Path | None = None) -> Ac
             too_large_label="snapshot file",
             invalid_utf8_label="snapshot file",
         )
-        payload = json.loads(text)
+        payload = loads_strict(text)
         if not isinstance(payload, dict):
             return None
         return usage_from_dict(payload)

@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .config import AppConfig, default_state_dir, resolve_account
 from .extractor import JsonCandidate, extract_windows, load_json_candidate
+from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
 from .private_io import write_private_text as write_private_output_text
 from .render import render_table
@@ -471,8 +472,8 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
                 self._send_json(413, {"error": "invalid payload size"})
                 return
             try:
-                payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
+                payload = loads_strict(self.rfile.read(content_length).decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
                 self._send_json(400, {"error": "invalid JSON payload"})
                 return
             if not isinstance(payload, dict):

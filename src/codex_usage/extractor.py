@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import re
 from collections.abc import Iterable
@@ -9,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .json_utils import loads_strict
 from .models import LimitWindow
 
 LOCAL_TZ = datetime.now().astimezone().tzinfo or ZoneInfo("UTC")
@@ -85,8 +85,8 @@ def extract_windows(
 
 def load_json_candidate(url: str, payload_text: str) -> JsonCandidate | None:
     try:
-        payload = json.loads(payload_text)
-    except json.JSONDecodeError:
+        payload = loads_strict(payload_text)
+    except ValueError:
         return None
     return JsonCandidate(url=url, payload=payload)
 

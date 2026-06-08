@@ -17,6 +17,7 @@ from playwright.sync_api import sync_playwright
 from .config import AppConfig
 from .direct import DirectAuthError, read_auth_json_file
 from .extractor import JsonCandidate, extract_windows
+from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
 from .private_io import write_private_text as write_private_output_text
 
@@ -244,8 +245,8 @@ def _capture_json_response(response: Any, candidates: list[JsonCandidate]) -> No
     if len(text.encode("utf-8", errors="ignore")) > JSON_MAX_BYTES:
         return
     try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
+        payload = loads_strict(text)
+    except ValueError:
         return
     candidates.append(JsonCandidate(url=url, payload=payload))
 
@@ -260,11 +261,11 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
         return result
     try:
         raw, file_stat = read_auth_json_file(expanded)
-        payload = json.loads(raw)
+        payload = loads_strict(raw)
     except DirectAuthError as exc:
         result.update({"readable": False, "error": str(exc)})
         return result
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         result.update({"readable": False, "error": type(exc).__name__})
         return result
 

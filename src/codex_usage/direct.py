@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import errno
-import json
 import os
 import stat
 from datetime import datetime
@@ -12,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from .extractor import JsonCandidate, extract_windows
+from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
@@ -89,8 +89,8 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
 def _load_access_token(path: Path) -> str:
     raw, _ = read_auth_json_file(path)
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        payload = loads_strict(raw)
+    except ValueError as exc:
         raise DirectAuthError(f"invalid auth.json: {path}") from exc
     if not isinstance(payload, dict):
         raise DirectAuthError(f"invalid auth.json structure: {path}")
@@ -186,8 +186,8 @@ def _fetch_wham_usage(token: str, *, timeout_seconds: int) -> dict[str, Any]:
     if len(body) > MAX_RESPONSE_BYTES:
         raise DirectFetchError("direct response too large")
     try:
-        payload = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = loads_strict(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
         raise DirectFetchError("direct response is not valid JSON") from exc
     if not isinstance(payload, dict):
         raise DirectFetchError("direct response is not a JSON object")

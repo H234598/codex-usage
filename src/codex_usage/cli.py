@@ -26,6 +26,7 @@ from .config import (
     resolve_account,
 )
 from .direct import fetch_account_usage_direct
+from .json_utils import loads_strict
 from .private_io import read_private_text
 from .render import render_account_overview, render_account_values, render_json, render_table
 from .scheduler import fetch_all, watch
@@ -537,8 +538,8 @@ def _payload_from_raw_ingest(raw: str) -> dict:
     if not stripped:
         return {"bodyText": ""}
     try:
-        payload = json.loads(stripped)
-    except json.JSONDecodeError:
+        payload = loads_strict(stripped)
+    except ValueError:
         return {"bodyText": raw}
     if isinstance(payload, dict):
         return payload
