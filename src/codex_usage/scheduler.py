@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -33,9 +34,16 @@ def fetch_all(
         for account in accounts
     ]
     if save_snapshots:
-        for usage in usages:
+        for index, usage in enumerate(usages):
             if usage.error is None:
-                save_usage_snapshot(usage)
+                try:
+                    save_usage_snapshot(usage)
+                except Exception as exc:
+                    usages[index] = replace(
+                        usage,
+                        status=AccountStatus.ERROR,
+                        error=f"snapshot save failed: {type(exc).__name__}",
+                    )
     return usages
 
 
