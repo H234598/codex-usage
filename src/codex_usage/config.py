@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from .models import Account
 
 APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
+MAX_CONFIG_BYTES = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -38,7 +40,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     if not config_path.exists():
         return AppConfig(accounts=())
 
-    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    data = tomllib.loads(_read_config_text(config_path))
     raw_accounts = data.get("accounts", [])
     if not isinstance(raw_accounts, list):
         raise ValueError("accounts must be a list of TOML tables")
@@ -58,6 +60,23 @@ def load_config(path: Path | None = None) -> AppConfig:
         analytics_url=analytics_url,
         headless=headless,
     )
+
+
+def _read_config_text(config_path: Path) -> str:
+    if config_path.is_symlink():
+        raise ValueError(f"config path must be a regular file: {config_path}")
+    try:
+        file_stat = config_path.stat()
+    except OSError as exc:
+        raise ValueError(f"cannot read config file: {config_path}") from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise ValueError(f"config path must be a regular file: {config_path}")
+    if file_stat.st_size > MAX_CONFIG_BYTES:
+        raise ValueError(f"config file too large; max {MAX_CONFIG_BYTES} bytes")
+    try:
+        return config_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"config file is not valid UTF-8: {config_path}") from exc
 
 
 def save_config(config: AppConfig, path: Path | None = None) -> Path:

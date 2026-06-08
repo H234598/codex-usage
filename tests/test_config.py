@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from codex_usage.config import (
+    MAX_CONFIG_BYTES,
     AppConfig,
     add_or_update_account,
     load_config,
@@ -88,6 +89,24 @@ id = "privat"
     )
 
     with pytest.raises(ValueError):
+        load_config(config_path)
+
+
+def test_load_config_rejects_symlink_config_file(tmp_path):
+    target = tmp_path / "outside.toml"
+    target.write_text("interval_seconds = 300\n", encoding="utf-8")
+    config_path = tmp_path / "config.toml"
+    config_path.symlink_to(target)
+
+    with pytest.raises(ValueError, match="config path"):
+        load_config(config_path)
+
+
+def test_load_config_rejects_oversized_config_file(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(" " * (MAX_CONFIG_BYTES + 1), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="config file too large"):
         load_config(config_path)
 
 
