@@ -22,6 +22,8 @@ from .models import Account, AccountStatus, AccountUsage
 from .private_io import write_private_text as write_private_output_text
 
 JSON_MAX_BYTES = 2_000_000
+DIAGNOSTIC_MAX_KEYS = 40
+DIAGNOSTIC_MAX_FIELD_CHARS = 200
 LOGIN_HINTS = ("log in", "sign in", "anmelden", "einloggen", "continue with")
 CLOUDFLARE_HINTS = (
     "cloudflare",
@@ -287,11 +289,11 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
     tokens = payload.get("tokens")
     result.update(
         {
-            "top_level_keys": sorted(payload.keys()),
-            "auth_mode": payload.get("auth_mode"),
-            "last_refresh": payload.get("last_refresh"),
+            "top_level_keys": _diagnostic_keys(payload),
+            "auth_mode": _diagnostic_value(payload.get("auth_mode")),
+            "last_refresh": _diagnostic_value(payload.get("last_refresh")),
             "has_openai_api_key": bool(payload.get("OPENAI_API_KEY")),
-            "token_fields": sorted(tokens.keys()) if isinstance(tokens, dict) else [],
+            "token_fields": _diagnostic_keys(tokens) if isinstance(tokens, dict) else [],
             "has_browser_storage_state": any(
                 key in payload for key in ("cookies", "origins", "localStorage", "sessionStorage")
             ),
@@ -303,6 +305,28 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
             for key in ("access_token", "id_token", "refresh_token", "account_id")
         }
     return result
+
+
+def _diagnostic_keys(mapping: dict[Any, Any]) -> list[str]:
+    return [
+        _diagnostic_text(key, limit=120)
+        for key in sorted(str(key) for key in mapping.keys())[:DIAGNOSTIC_MAX_KEYS]
+    ]
+
+
+def _diagnostic_value(value: Any) -> str | bool | int | float | None:
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        return _diagnostic_text(value, limit=DIAGNOSTIC_MAX_FIELD_CHARS)
+    return type(value).__name__
+
+
+def _diagnostic_text(value: Any, *, limit: int) -> str:
+    text = _clean_error(str(value))
+    return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
 def _capture_diagnostic_response(response: Any, responses: list[dict[str, Any]]) -> None:
