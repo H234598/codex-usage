@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
-from .models import AccountUsage, LimitWindow
+from .models import Account, AccountUsage, LimitWindow
 
 
 def render_json(usages: Iterable[AccountUsage]) -> str:
@@ -63,6 +63,27 @@ def render_account_overview(
         return "\n".join(lines)
     lines.append(_format_row(headers, widths))
     lines.append("  ".join("-" * width for width in widths))
+    lines.extend(_format_row(row, widths) for row in rows)
+    return "\n".join(lines)
+
+
+def render_account_values(
+    accounts: Iterable[Account],
+    usages: Mapping[str, AccountUsage],
+) -> str:
+    rows = [
+        [
+            account.label,
+            *_overview_usage_values(usages.get(account.id)),
+        ]
+        for account in sorted(accounts, key=lambda item: item.id)
+    ]
+    headers = ["Account", "5h Wert", "5h Reset", "Woche Wert", "Woche Reset", "Status"]
+    widths = [
+        max(len(headers[index]), *(len(row[index]) for row in rows)) if rows else len(header)
+        for index, header in enumerate(headers)
+    ]
+    lines = [_format_row(headers, widths), "  ".join("-" * width for width in widths)]
     lines.extend(_format_row(row, widths) for row in rows)
     return "\n".join(lines)
 

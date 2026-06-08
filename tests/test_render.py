@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from codex_usage.models import AccountUsage, LimitWindow
-from codex_usage.render import render_json, render_table
+from codex_usage.models import Account, AccountUsage, LimitWindow
+from codex_usage.render import render_account_values, render_json, render_table
 
 
 def test_render_table_contains_values():
@@ -65,6 +65,43 @@ def test_render_table_labels_remaining_percent_windows():
     assert "55% verbleibend" in rendered
     assert "08.06.2026 06:50" in rendered
     assert "10.06.2026 05:05" in rendered
+
+
+def test_render_account_values_is_compact_and_includes_missing_accounts():
+    accounts = (
+        Account(id="privat", label="Privat", profile_dir="/tmp/privat"),
+        Account(id="work", label="Work", profile_dir="/tmp/work"),
+    )
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(
+            name="5h",
+            used=3,
+            limit=100,
+            remaining=97,
+            percent=97,
+            reset_at=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            used=45,
+            limit=100,
+            remaining=55,
+            percent=55,
+            reset_at=datetime(2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")),
+        ),
+    )
+
+    rendered = render_account_values(accounts, {"privat": usage})
+
+    assert "Account" in rendered
+    assert "Privat" in rendered
+    assert "97% verbleibend" in rendered
+    assert "55% verbleibend" in rendered
+    assert "Work" in rendered
+    assert "Stand:" not in rendered
 
 
 def test_render_json_is_machine_readable():

@@ -38,11 +38,14 @@ def test_root_help_lists_all_commands(capsys):
     assert "--auth-json PATH" in output
     assert "codex-usage ingest ACCOUNT" in output
     assert "codex-usage latest [--format table|json]" in output
+    assert "codex-usage values [--account ACCOUNT]" in output
     assert "codex-usage bridge-snippet ACCOUNT" in output
     assert "codex-usage bridge-extension ACCOUNT" in output
     assert "codex-usage bridge-server" in output
     assert "codex-usage paths" in output
     assert "Direct-Modus mit mehreren Accounts braucht pro Account auth_json_path" in output
+    assert "once/watch nutzen automatisch Direct-Modus" in output
+    assert "codex-usage values" in output
     assert "codex-usage watch --direct" in output
 
 
@@ -273,6 +276,71 @@ def test_watch_direct_passes_auth_json(tmp_path, monkeypatch, capsys):
     }
 
 
+def test_watch_without_account_selects_all_accounts_and_auto_direct(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    called = {}
+
+    def fake_watch(
+        config,
+        accounts,
+        *,
+        output,
+        headed,
+        direct,
+        auth_json_path,
+        interval_seconds,
+    ):
+        called["accounts"] = [account.id for account in accounts]
+        called["output"] = output
+        called["headed"] = headed
+        called["direct"] = direct
+        called["auth_json_path"] = auth_json_path
+        called["interval_seconds"] = interval_seconds
+
+    monkeypatch.setattr("codex_usage.cli.watch", fake_watch)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--auth-json",
+                str(tmp_path / "privat-auth.json"),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "work",
+                "--auth-json",
+                str(tmp_path / "work-auth.json"),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config", str(config_path), "watch"]) == 0
+
+    assert called == {
+        "accounts": ["privat", "work"],
+        "output": "table",
+        "headed": False,
+        "direct": True,
+        "auth_json_path": None,
+        "interval_seconds": None,
+    }
+
+
 def test_direct_rejects_multiple_accounts_without_per_account_auth_json(tmp_path, capsys):
     config_path = tmp_path / "config.toml"
 
@@ -420,6 +488,80 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
     assert "08.06.2026 06:50" in output
     assert "10.06.2026 05:05" in output
     assert "ok" in output
+
+
+def test_values_shows_compact_live_values_for_all_accounts(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    def fake_fetch_direct(account):
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+            five_hour=LimitWindow(
+                name="5h",
+                used=3,
+                limit=100,
+                remaining=97,
+                percent=97,
+                reset_at=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+            ),
+            weekly=LimitWindow(
+                name="weekly",
+                used=45,
+                limit=100,
+                remaining=55,
+                percent=55,
+                reset_at=datetime(2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")),
+            ),
+        )
+
+    monkeypatch.setattr("codex_usage.cli.fetch_account_usage_direct", fake_fetch_direct)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "BW_Privat",
+                "--auth-json",
+                str(tmp_path / "privat-auth.json"),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "work",
+                "--label",
+                "BW_Work",
+                "--auth-json",
+                str(tmp_path / "work-auth.json"),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config", str(config_path), "values"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Account" in output
+    assert "BW_Privat" in output
+    assert "BW_Work" in output
+    assert output.count("97% verbleibend") == 2
+    assert "Stand:" not in output
+    assert "Profil" not in output
 
 
 def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):

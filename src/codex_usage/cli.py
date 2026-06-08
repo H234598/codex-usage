@@ -24,7 +24,7 @@ from .config import (
     resolve_account,
 )
 from .direct import fetch_account_usage_direct
-from .render import render_account_overview, render_json, render_table
+from .render import render_account_overview, render_account_values, render_json, render_table
 from .scheduler import fetch_all, watch
 from .state import load_usage_snapshot, save_usage_snapshot
 
@@ -60,6 +60,7 @@ Analyse und Diagnose:
 Manuelle Aufnahme und Ausgabe:
   codex-usage ingest ACCOUNT (--stdin | --file FILE)
   codex-usage latest [--format table|json]
+  codex-usage values [--account ACCOUNT]
 
 Browser-Bridge:
   codex-usage bridge-snippet ACCOUNT [--port PORT] [--interval SEKUNDEN]
@@ -76,8 +77,13 @@ Ein globales --auth-json ist nur fuer genau einen ausgewaehlten Account erlaubt.
 Beispiele:
   codex-usage account add BW_Privat --auth-json ~/.codex/auth.json
   codex-usage once --account BW_Privat --direct --auth-json ~/.codex/auth.json
+  codex-usage values
   codex-usage watch --direct
   codex-usage latest --format json
+
+Hinweis:
+  once/watch nutzen automatisch Direct-Modus, wenn alle ausgewaehlten Accounts
+  auth_json_path haben und --headed nicht gesetzt ist.
 """
 
 
@@ -193,6 +199,10 @@ def _build_parser() -> argparse.ArgumentParser:
     latest.add_argument("--format", choices=("table", "json"), default="table")
     latest.set_defaults(func=_cmd_latest)
 
+    values = sub.add_parser("values", help="Knappe Werte-Uebersicht aller Accounts anzeigen")
+    values.add_argument("--account", action="append", dest="account_ids")
+    values.set_defaults(func=_cmd_values)
+
     snippet = sub.add_parser(
         "bridge-snippet",
         help="Browser-Snippet fuer normalen Browser ausgeben",
@@ -273,15 +283,16 @@ def _cmd_login(args: argparse.Namespace) -> int:
 def _cmd_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
-    if args.direct:
+    direct = _should_use_direct(args, accounts)
+    if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     usages = fetch_all(
         config,
         accounts,
         headed=args.headed,
-        direct=args.direct,
+        direct=direct,
         auth_json_path=args.auth_json,
-        save_snapshots=args.direct,
+        save_snapshots=direct,
     )
     print(render_json(usages) if args.format == "json" else render_table(usages))
     return 0 if all(usage.error is None for usage in usages) else 2
@@ -292,14 +303,15 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     accounts = _select_accounts(config, args.account_ids)
     if args.interval is not None and args.interval < 60:
         raise ValueError("--interval must be at least 60 seconds")
-    if args.direct:
+    direct = _should_use_direct(args, accounts)
+    if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     watch(
         config,
         accounts,
         output=args.format,
         headed=args.headed,
-        direct=args.direct,
+        direct=direct,
         auth_json_path=args.auth_json,
         interval_seconds=args.interval,
     )
@@ -352,6 +364,14 @@ def _cmd_latest(args: argparse.Namespace) -> int:
     else:
         print(render_table(usages) if usages else "Keine Snapshots vorhanden.")
     return 0
+
+
+def _cmd_values(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    accounts = _select_accounts(config, args.account_ids)
+    usages = _load_overview_usages(config, accounts)
+    print(render_account_values(accounts, usages))
+    return 0 if all(usage.error is None for usage in usages.values()) else 2
 
 
 def _cmd_bridge_snippet(args: argparse.Namespace) -> int:
@@ -410,9 +430,18 @@ def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None
         )
 
 
-def _load_overview_usages(config):
+def _should_use_direct(args: argparse.Namespace, accounts) -> bool:
+    account_list = list(accounts)
+    if args.direct:
+        return True
+    if getattr(args, "headed", False):
+        return False
+    return bool(account_list) and all(account.auth_json_path for account in account_list)
+
+
+def _load_overview_usages(config, accounts=None):
     usages = {}
-    for account in config.accounts:
+    for account in accounts or config.accounts:
         if account.auth_json_path:
             usage = fetch_account_usage_direct(account)
             usages[account.id] = usage
