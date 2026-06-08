@@ -91,12 +91,12 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
 
 
 def _ingest_error(body_text: str, payload: dict[str, Any]) -> str | None:
-    text_length = payload.get("textLength") if payload.get("textLength") is not None else "-"
+    text_length = payload.get("textLength") if payload.get("textLength") is not None else None
     context = (
-        f" url={_redact_url(str(payload.get('url') or '')) or '-'}"
-        f" title={str(payload.get('title') or '-')[:80]}"
-        f" ready={payload.get('readyState') or '-'}"
-        f" textLength={text_length}"
+        f" url={_safe_context_value(_redact_url(str(payload.get('url') or '')), 200)}"
+        f" title={_safe_context_value(payload.get('title'), 80)}"
+        f" ready={_safe_context_value(payload.get('readyState'), 40)}"
+        f" textLength={_safe_context_value(text_length, 40)}"
     )
     if not body_text.strip():
         return f"missing page text{context}"
@@ -211,6 +211,17 @@ def _safe_excerpt(value: str, limit: int = 240) -> str:
     if len(excerpt) <= limit:
         return excerpt
     return excerpt[: limit - 3] + "..."
+
+
+def _safe_context_value(value: Any, limit: int) -> str:
+    if value is None or value == "":
+        return "-"
+    text = " ".join(str(value).split())
+    if not text:
+        return "-"
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 def _safe_filename(value: str) -> str:
