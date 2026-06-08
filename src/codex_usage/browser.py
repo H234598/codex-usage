@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -418,20 +419,28 @@ def _launch_persistent_context(
 
 def _prepare_profile(account: Account) -> Path:
     root = Path(account.profile_dir).expanduser()
-    root.mkdir(parents=True, mode=0o700, exist_ok=True)
-    _chmod_private(root)
+    _prepare_private_output_dir(root, label="profile directory")
     marker = root / ".codex-usage-profile"
-    if not marker.exists():
-        marker.write_text("codex-usage persistent browser profile root\n", encoding="utf-8")
-        _chmod_private(marker, mode=0o600)
+    if marker.exists() or marker.is_symlink():
+        _validate_private_output_path(marker, label="profile marker path")
+    else:
+        _write_private_text(
+            marker,
+            "codex-usage persistent browser profile root\n",
+            label="profile marker path",
+        )
 
     path = root / _profile_browser_dir(account.browser)
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    _chmod_private(path)
+    _prepare_private_output_dir(path, label="browser profile directory")
     engine_marker = path / ".codex-usage-browser-profile"
-    if not engine_marker.exists():
-        engine_marker.write_text(f"{account.browser}\n", encoding="utf-8")
-        _chmod_private(engine_marker, mode=0o600)
+    if engine_marker.exists() or engine_marker.is_symlink():
+        _validate_private_output_path(engine_marker, label="browser profile marker path")
+    else:
+        _write_private_text(
+            engine_marker,
+            f"{account.browser}\n",
+            label="browser profile marker path",
+        )
     return path
 
 
@@ -449,24 +458,42 @@ def _profile_browser_dir(browser: str) -> str:
 @contextmanager
 def _profile_lock(profile_dir: Path):
     lock_path = profile_dir / ".codex-usage.lock"
-    with lock_path.open("w", encoding="utf-8") as handle:
-        try:
-            import fcntl
-
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError(f"profile is already in use: {profile_dir}") from exc
-        handle.write(str(os.getpid()))
-        handle.flush()
-        try:
-            yield
-        finally:
+    if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
+        raise ValueError(f"profile lock path must be a regular file: {lock_path}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise ValueError(f"profile lock path must be a regular file: {lock_path}") from exc
+    try:
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError(f"profile lock path must be a regular file: {lock_path}")
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
             try:
                 import fcntl
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError(f"profile is already in use: {profile_dir}") from exc
+            handle.write(str(os.getpid()))
+            handle.flush()
+            try:
+                yield
+            finally:
+                try:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def _summarize_candidate(candidate: JsonCandidate) -> dict[str, Any]:
