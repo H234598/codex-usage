@@ -468,9 +468,15 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
         server_version = "codex-usage-bridge/0.1"
 
         def do_OPTIONS(self) -> None:
+            if not self._is_allowed_origin():
+                self._send_json(403, {"error": "origin rejected"})
+                return
             self._send_cors(204)
 
         def do_POST(self) -> None:
+            if not self._is_allowed_origin():
+                self._send_json(403, {"error": "origin rejected"})
+                return
             if self.path != "/ingest":
                 self._send_json(404, {"error": "not found"})
                 return
@@ -554,9 +560,17 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
 
         def _allowed_origin(self) -> str:
             origin = self.headers.get("Origin", "")
-            if origin == "https://chatgpt.com" or origin.startswith("chrome-extension://"):
+            if self._is_allowed_origin() and origin:
                 return origin
             return "https://chatgpt.com"
+
+        def _is_allowed_origin(self) -> bool:
+            origin = self.headers.get("Origin", "")
+            return (
+                not origin
+                or origin == "https://chatgpt.com"
+                or origin.startswith("chrome-extension://")
+            )
 
     return BridgeHandler
 
