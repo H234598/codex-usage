@@ -73,8 +73,18 @@ def save_bridge_debug_payload(
     snapshot_dir: Path | None = None,
 ) -> Path:
     directory = (snapshot_dir.parent if snapshot_dir else default_state_dir()) / "debug"
+    if directory.is_symlink():
+        raise ValueError(f"debug directory must not be a symlink: {directory}")
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError(f"debug directory is not a real directory: {directory}")
+    try:
+        directory.chmod(0o700)
+    except OSError:
+        pass
     path = directory / f"{_safe_filename(account_id)}-last-ingest.json"
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError(f"debug path must be a regular file: {path}")
     debug_payload = dict(payload)
     if "url" in debug_payload:
         debug_payload["url"] = _redact_url(str(debug_payload.get("url") or ""))

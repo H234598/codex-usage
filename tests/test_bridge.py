@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from codex_usage.bridge import (
     render_bridge_snippet,
     save_bridge_debug_payload,
@@ -226,6 +228,39 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
     assert "user-secret" not in payload["apiResponses"][0]["bodyText"]
     assert "account-secret" not in payload["apiResponses"][0]["bodyText"]
     assert path.stat().st_mode & 0o077 == 0
+
+
+def test_save_bridge_debug_payload_rejects_symlink_debug_directory(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    debug_link = tmp_path / "debug"
+    debug_link.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="debug directory"):
+        save_bridge_debug_payload(
+            "privat",
+            {"bodyText": "user@example.test"},
+            tmp_path / "snapshots",
+        )
+
+    assert not (outside / "privat-last-ingest.json").exists()
+
+
+def test_save_bridge_debug_payload_rejects_symlink_debug_file(tmp_path):
+    debug_dir = tmp_path / "debug"
+    debug_dir.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("keep", encoding="utf-8")
+    (debug_dir / "privat-last-ingest.json").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="debug path"):
+        save_bridge_debug_payload(
+            "privat",
+            {"bodyText": "user@example.test"},
+            tmp_path / "snapshots",
+        )
+
+    assert outside.read_text(encoding="utf-8") == "keep"
 
 
 def test_render_bridge_snippet_contains_account_endpoint_and_interval():
