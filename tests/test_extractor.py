@@ -103,7 +103,7 @@ def test_extract_windows_from_progress_bar_width_html():
       <h2>Wöchentliches Nutzungslimit</h2>
       <div class="absolute start-0 top-0 h-full transition-[width] bg-[#22c55e]
         rounded-full" style="width: 55%;"></div>
-      <p>Zurücksetzungen 10.06.2026 5:05</p>
+      <span>Zurücksetzungen 10.06.2026 5:05</span>
     </section>
     """
 
