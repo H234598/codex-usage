@@ -55,6 +55,20 @@ def test_config_round_trip_auth_json_path(tmp_path):
     assert f'auth_json_path = "{auth_path}"' in config_path.read_text(encoding="utf-8")
 
 
+def test_add_account_rejects_symlink_profile_dir_without_marking_target(tmp_path):
+    config_path = tmp_path / "config.toml"
+    target = tmp_path / "target-profile"
+    target.mkdir()
+    profile_link = tmp_path / "profile-link"
+    profile_link.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        add_or_update_account("privat", profile_dir=str(profile_link), path=config_path)
+
+    assert not config_path.exists()
+    assert not (target / ".codex-usage-profile").exists()
+
+
 def test_config_rejects_unknown_browser(tmp_path):
     with pytest.raises(ValueError, match="browser must be one of"):
         add_or_update_account("privat", browser="netscape", path=tmp_path / "config.toml")

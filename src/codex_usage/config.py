@@ -103,8 +103,8 @@ def add_or_update_account(
         analytics_url=config.analytics_url,
         headless=config.headless,
     )
-    save_config(updated, path)
     _prepare_profile_dir(account.profile_dir)
+    save_config(updated, path)
     return updated, account
 
 
@@ -179,12 +179,20 @@ def _default_profile_root(account_id: str) -> Path:
 
 def _prepare_profile_dir(profile_dir: str) -> Path:
     path = Path(profile_dir).expanduser()
+    if path.is_symlink():
+        raise ValueError(f"profile dir must not be a symlink: {path}")
     path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if path.is_symlink():
+        raise ValueError(f"profile dir must not be a symlink: {path}")
+    if not path.is_dir():
+        raise ValueError(f"profile path is not a directory: {path}")
     try:
         path.chmod(0o700)
     except OSError:
         pass
     marker = path / ".codex-usage-profile"
+    if marker.is_symlink():
+        raise ValueError(f"profile marker must not be a symlink: {marker}")
     if not marker.exists():
         marker.write_text("codex-usage persistent browser profile\n", encoding="utf-8")
         try:

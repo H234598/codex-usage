@@ -786,3 +786,31 @@ def test_account_delete_can_delete_marked_profile(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Profil: geloescht" in output
     assert not profile_dir.exists()
+
+
+def test_account_delete_rejects_symlink_profile_and_keeps_config(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    target = tmp_path / "target-profile"
+    target.mkdir()
+    profile_link = tmp_path / "profile-link"
+    profile_link.symlink_to(target, target_is_directory=True)
+    config_path.write_text(
+        f"""
+[[accounts]]
+id = "privat"
+label = "BW_Privat"
+profile_dir = "{profile_link}"
+browser = "firefox"
+""",
+        encoding="utf-8",
+    )
+
+    assert (
+        main(["--config", str(config_path), "account", "delete", "privat", "--delete-profile"])
+        == 1
+    )
+
+    assert profile_link.is_symlink()
+    assert target.is_dir()
+    assert "privat" in config_path.read_text(encoding="utf-8")
+    assert "symlink" in capsys.readouterr().err
