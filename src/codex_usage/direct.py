@@ -104,15 +104,19 @@ def _load_access_token(path: Path) -> str:
 
 
 def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
+    if path.is_symlink():
+        raise DirectAuthError(f"auth.json is not a regular file: {path}")
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     try:
         fd = os.open(path, flags)
     except OSError as exc:
-        if exc.errno == errno.ELOOP:
+        if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
             raise DirectAuthError(f"auth.json is not a regular file: {path}") from exc
         raise DirectAuthError(f"cannot read auth.json: {path}") from exc
 

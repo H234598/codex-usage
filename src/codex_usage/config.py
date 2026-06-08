@@ -38,6 +38,8 @@ def default_state_dir() -> Path:
 def load_config(path: Path | None = None) -> AppConfig:
     config_path = path or default_config_path()
     if not config_path.exists():
+        if config_path.is_symlink():
+            raise ValueError(f"config path must be a regular file: {config_path}")
         return AppConfig(accounts=())
 
     data = tomllib.loads(_read_config_text(config_path))

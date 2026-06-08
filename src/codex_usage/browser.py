@@ -254,8 +254,9 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
     codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     auth_path = path or codex_home / "auth.json"
     expanded = auth_path.expanduser()
-    result: dict[str, Any] = {"path": str(expanded), "exists": expanded.exists()}
-    if not expanded.exists():
+    exists = expanded.exists() or expanded.is_symlink()
+    result: dict[str, Any] = {"path": str(expanded), "exists": exists}
+    if not exists:
         return result
     try:
         raw, file_stat = read_auth_json_file(expanded)
