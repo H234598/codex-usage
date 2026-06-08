@@ -235,7 +235,13 @@ def write_bridge_extension(
             {
                 "matches": ["https://chatgpt.com/codex/cloud/settings/analytics*"],
                 "js": ["content.js"],
-                "run_at": "document_idle",
+                "run_at": "document_start",
+            },
+            {
+                "matches": ["https://chatgpt.com/codex/cloud/settings/analytics*"],
+                "js": ["page-hook.js"],
+                "run_at": "document_start",
+                "world": "MAIN",
             }
         ],
     }
@@ -243,6 +249,7 @@ def write_bridge_extension(
         "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2),
         "background.js": _render_extension_background(endpoint),
         "content.js": _render_extension_content(account_ref, interval_seconds),
+        "page-hook.js": _render_extension_page_hook(),
     }
     for filename, content in files.items():
         path = output_dir / filename
@@ -426,11 +433,14 @@ const CODEX_USAGE_API_PATHS = [
   "/backend-api/wham/usage/daily-enterprise-token-usage-breakdown",
   "/backend-api/wham/usage/credit-usage-events"
 ];
+const CODEX_USAGE_CAPTURED_API_LIMIT = 50;
 let codexUsageLastTextLength = -1;
 let codexUsageStopped = false;
 let codexUsageIntervalId = null;
 let codexUsageReadyObserver = null;
 let codexUsageReadyTimer = null;
+let codexUsageApiSendTimer = null;
+const codexUsageCapturedApiResponses = [];
 
 function limitCodexUsageText(value) {{
   const text = String(value || "");
@@ -471,8 +481,65 @@ function stopCodexUsageBridge(reason) {{
     codexUsageReadyObserver.disconnect();
     codexUsageReadyObserver = null;
   }}
+  if (codexUsageApiSendTimer) {{
+    clearTimeout(codexUsageApiSendTimer);
+    codexUsageApiSendTimer = null;
+  }}
   console.warn("codex-usage bridge stopped", reason);
 }}
+
+function rememberCodexUsageApiResponse(item) {{
+  if (!item || typeof item !== "object" || !item.url) {{
+    return;
+  }}
+  codexUsageCapturedApiResponses.push(item);
+  while (codexUsageCapturedApiResponses.length > CODEX_USAGE_CAPTURED_API_LIMIT) {{
+    codexUsageCapturedApiResponses.shift();
+  }}
+}}
+
+function dedupeCodexUsageApiResponses(items) {{
+  const byKey = new Map();
+  for (const item of items) {{
+    if (!item || typeof item !== "object" || !item.url) {{
+      continue;
+    }}
+    const key = [
+      item.source || "",
+      item.url || "",
+      item.status || "",
+      String(item.bodyText || "").slice(0, 200)
+    ].join("\\n");
+    byKey.set(key, item);
+  }}
+  return Array.from(byKey.values()).slice(-CODEX_USAGE_CAPTURED_API_LIMIT);
+}}
+
+function scheduleCodexUsageSend(delayMs = 500) {{
+  if (codexUsageStopped) {{
+    return;
+  }}
+  if (codexUsageApiSendTimer) {{
+    clearTimeout(codexUsageApiSendTimer);
+  }}
+  codexUsageApiSendTimer = setTimeout(() => {{
+    codexUsageApiSendTimer = null;
+    sendCodexUsage();
+  }}, delayMs);
+}}
+
+window.addEventListener("message", (event) => {{
+  if (event.source !== window || !event.data || event.data.type !== "codexUsageApiResponses") {{
+    return;
+  }}
+  const responses = Array.isArray(event.data.responses) ? event.data.responses : [];
+  for (const response of responses) {{
+    rememberCodexUsageApiResponse(response);
+  }}
+  if (responses.length) {{
+    scheduleCodexUsageSend();
+  }}
+}});
 
 function collectCodexUsageAttributeText() {{
   const attrs = ["aria-label", "aria-valuetext", "aria-valuenow", "title", "alt"];
@@ -580,7 +647,11 @@ async function sendCodexUsage() {{
     return;
   }}
   const payload = collectCodexUsage();
-  payload.apiResponses = await fetchCodexUsageApis();
+  const probeResponses = codexUsageCapturedApiResponses.length ? [] : await fetchCodexUsageApis();
+  payload.apiResponses = dedupeCodexUsageApiResponses([
+    ...codexUsageCapturedApiResponses,
+    ...probeResponses
+  ]);
   if (codexUsageStopped) {{
     return;
   }}
@@ -680,6 +751,134 @@ function sendWhenReady(startedAt = Date.now()) {{
   codexUsageReadyTimer = timer;
 }}
 
-sendWhenReady();
-codexUsageIntervalId = setInterval(sendCodexUsage, CODEX_USAGE_INTERVAL_MS);
+function startCodexUsageBridge() {{
+  if (codexUsageStopped) {{
+    return;
+  }}
+  if (!document.documentElement) {{
+    setTimeout(startCodexUsageBridge, 50);
+    return;
+  }}
+  sendWhenReady();
+  codexUsageIntervalId = setInterval(sendCodexUsage, CODEX_USAGE_INTERVAL_MS);
+}}
+
+startCodexUsageBridge();
+"""
+
+
+def _render_extension_page_hook() -> str:
+    return """(() => {
+  const CODEX_USAGE_MAX_FIELD_CHARS = 2000000;
+  const CODEX_USAGE_CAPTURED_API_LIMIT = 50;
+  const CODEX_USAGE_FLUSH_INTERVAL_MS = 1000;
+  const CODEX_USAGE_FLUSH_TICKS = 120;
+  const codexUsageCapturedApiResponses = [];
+  let codexUsageFlushTicks = 0;
+
+  function limitCodexUsageText(value) {
+    const text = String(value || "");
+    return text.length > CODEX_USAGE_MAX_FIELD_CHARS
+      ? text.slice(0, CODEX_USAGE_MAX_FIELD_CHARS)
+      : text;
+  }
+
+  function isCodexUsageTruncated(value) {
+    return String(value || "").length > CODEX_USAGE_MAX_FIELD_CHARS;
+  }
+
+  function looksLikeCodexUsageJson(contentType, bodyText) {
+    return String(contentType || "").toLowerCase().includes("json")
+      || /^[\\s\\n]*[{\\[]/.test(String(bodyText || ""));
+  }
+
+  function requestUrl(input) {
+    try {
+      if (typeof input === "string") {
+        return input;
+      }
+      if (input && typeof input.url === "string") {
+        return input.url;
+      }
+    } catch (_error) {
+      return "";
+    }
+    return "";
+  }
+
+  function shouldCaptureCodexUsageUrl(url) {
+    try {
+      const parsed = new URL(url, location.origin);
+      return parsed.origin === location.origin
+        && parsed.pathname.startsWith("/backend-api/wham/");
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function rememberCodexUsageApiResponse(item) {
+    codexUsageCapturedApiResponses.push(item);
+    while (codexUsageCapturedApiResponses.length > CODEX_USAGE_CAPTURED_API_LIMIT) {
+      codexUsageCapturedApiResponses.shift();
+    }
+    flushCodexUsageApiResponses();
+  }
+
+  function flushCodexUsageApiResponses() {
+    if (!codexUsageCapturedApiResponses.length) {
+      return;
+    }
+    window.postMessage({
+      type: "codexUsageApiResponses",
+      responses: codexUsageCapturedApiResponses.slice()
+    }, location.origin);
+  }
+
+  async function captureCodexUsageFetchResponse(url, response) {
+    if (!shouldCaptureCodexUsageUrl(url)) {
+      return;
+    }
+    try {
+      const clone = response.clone();
+      const contentType = clone.headers.get("content-type") || "";
+      const bodyText = await clone.text();
+      const isJson = looksLikeCodexUsageJson(contentType, bodyText);
+      rememberCodexUsageApiResponse({
+        source: "page-fetch",
+        url: new URL(url, location.origin).href,
+        status: clone.status,
+        ok: clone.ok,
+        contentType,
+        bodyText: isJson ? limitCodexUsageText(bodyText) : "",
+        bodyExcerpt: isJson ? "" : limitCodexUsageText(bodyText).slice(0, 500),
+        truncated: isJson ? isCodexUsageTruncated(bodyText) : false
+      });
+    } catch (error) {
+      rememberCodexUsageApiResponse({
+        source: "page-fetch",
+        url: new URL(url, location.origin).href,
+        error: String(error)
+      });
+    }
+  }
+
+  if (!window.__codexUsageFetchHookInstalled && typeof window.fetch === "function") {
+    window.__codexUsageFetchHookInstalled = true;
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const url = requestUrl(args[0]);
+      const response = await originalFetch(...args);
+      captureCodexUsageFetchResponse(url, response);
+      return response;
+    };
+  }
+
+  const flushTimer = setInterval(() => {
+    codexUsageFlushTicks += 1;
+    flushCodexUsageApiResponses();
+    if (codexUsageFlushTicks >= CODEX_USAGE_FLUSH_TICKS) {
+      clearInterval(flushTimer);
+    }
+  }, CODEX_USAGE_FLUSH_INTERVAL_MS);
+})();
 """

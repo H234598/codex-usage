@@ -247,6 +247,7 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     background = (output / "background.js").read_text(encoding="utf-8")
     content = (output / "content.js").read_text(encoding="utf-8")
+    page_hook = (output / "page-hook.js").read_text(encoding="utf-8")
 
     assert manifest["manifest_version"] == 3
     assert "https://chatgpt.com/*" in manifest["host_permissions"]
@@ -254,6 +255,14 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert manifest["content_scripts"][0]["matches"] == [
         "https://chatgpt.com/codex/cloud/settings/analytics*"
     ]
+    assert manifest["content_scripts"][0]["run_at"] == "document_start"
+    assert manifest["content_scripts"][0]["js"] == ["content.js"]
+    assert manifest["content_scripts"][1]["matches"] == [
+        "https://chatgpt.com/codex/cloud/settings/analytics*"
+    ]
+    assert manifest["content_scripts"][1]["run_at"] == "document_start"
+    assert manifest["content_scripts"][1]["world"] == "MAIN"
+    assert manifest["content_scripts"][1]["js"] == ["page-hook.js"]
     assert "fetch(ENDPOINT" in background
     assert "chrome.runtime.sendMessage" in content
     assert "/backend-api/wham/usage" in content
@@ -266,6 +275,9 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "stopCodexUsageBridge" in content
     assert "extension context invalidated" in content
     assert "codexUsageIntervalId = setInterval" in content
+    assert "codexUsageCapturedApiResponses" in content
+    assert "window.addEventListener(\"message\"" in content
+    assert "codexUsageCapturedApiResponses.length ? [] : await fetchCodexUsageApis()" in content
     assert "document.body.innerText" in content
     assert "sanitizedCodexUsageRoot" in content
     assert "script, style, link, meta, noscript, template" in content
@@ -282,3 +294,9 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "textLength" in content
     assert "BW_Privat" in content
     assert "300000" in content
+    assert "window.fetch" in page_hook
+    assert "response.clone()" in page_hook
+    assert "window.postMessage" in page_hook
+    assert "codexUsageApiResponses" in page_hook
+    assert "/backend-api/wham/" in page_hook
+    assert 'source: "page-fetch"' in page_hook
