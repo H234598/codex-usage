@@ -11,6 +11,7 @@ from .bridge import (
     load_latest_usages,
     render_bridge_snippet,
     run_bridge_server,
+    write_bridge_extension,
 )
 from .browser import diagnose_account, login_account, probe_account
 from .config import (
@@ -38,6 +39,7 @@ Befehle:
   codex-usage ingest ACCOUNT (--stdin | --file FILE)
   codex-usage latest
   codex-usage bridge-snippet ACCOUNT [--port PORT] [--interval SEKUNDEN]
+  codex-usage bridge-extension ACCOUNT [--output DIR] [--port PORT] [--interval SEKUNDEN]
   codex-usage bridge-server [--host HOST] [--port PORT]
   codex-usage paths
 
@@ -149,6 +151,16 @@ def _build_parser() -> argparse.ArgumentParser:
     snippet.add_argument("--port", type=int, default=8765)
     snippet.add_argument("--interval", type=int, default=300)
     snippet.set_defaults(func=_cmd_bridge_snippet)
+
+    extension = sub.add_parser(
+        "bridge-extension",
+        help="Entpackte Vivaldi/Chromium-Bridge-Extension erzeugen",
+    )
+    extension.add_argument("account", help="Account-ID oder eindeutiges Label")
+    extension.add_argument("--output", type=Path)
+    extension.add_argument("--port", type=int, default=8765)
+    extension.add_argument("--interval", type=int, default=300)
+    extension.set_defaults(func=_cmd_bridge_extension)
 
     bridge = sub.add_parser("bridge-server", help="Lokalen Browser-Bridge-Server starten")
     bridge.add_argument("--host", default="127.0.0.1")
@@ -278,6 +290,22 @@ def _cmd_latest(args: argparse.Namespace) -> int:
 def _cmd_bridge_snippet(args: argparse.Namespace) -> int:
     endpoint = f"http://127.0.0.1:{args.port}/ingest"
     print(render_bridge_snippet(args.account, endpoint=endpoint, interval_seconds=args.interval))
+    return 0
+
+
+def _cmd_bridge_extension(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
+    endpoint = f"http://127.0.0.1:{args.port}/ingest"
+    output = args.output or default_state_dir() / "extensions" / account.id
+    path = write_bridge_extension(
+        account.id,
+        output,
+        endpoint=endpoint,
+        interval_seconds=args.interval,
+    )
+    print(f"Extension erzeugt: {path}")
+    print("Vivaldi: vivaldi://extensions -> Entwicklermodus -> Entpackte Erweiterung laden")
     return 0
 
 

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from codex_usage.bridge import render_bridge_snippet, usage_from_ingest_payload
+import json
+
+from codex_usage.bridge import (
+    render_bridge_snippet,
+    usage_from_ingest_payload,
+    write_bridge_extension,
+)
 from codex_usage.models import Account, AccountStatus
 
 
@@ -41,3 +47,27 @@ def test_render_bridge_snippet_contains_account_endpoint_and_interval():
     assert '"http://127.0.0.1:8765/ingest"' in snippet
     assert "setInterval" in snippet
     assert "300000" in snippet
+
+
+def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    background = (output / "background.js").read_text(encoding="utf-8")
+    content = (output / "content.js").read_text(encoding="utf-8")
+
+    assert manifest["manifest_version"] == 3
+    assert "https://chatgpt.com/*" in manifest["host_permissions"]
+    assert "http://127.0.0.1:8765/*" in manifest["host_permissions"]
+    assert manifest["content_scripts"][0]["matches"] == [
+        "https://chatgpt.com/codex/cloud/settings/analytics*"
+    ]
+    assert "fetch(ENDPOINT" in background
+    assert "chrome.runtime.sendMessage" in content
+    assert "BW_Privat" in content
+    assert "300000" in content

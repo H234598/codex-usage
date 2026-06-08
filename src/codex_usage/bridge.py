@@ -69,6 +69,49 @@ def render_bridge_snippet(account_ref: str, *, endpoint: str, interval_seconds: 
 }})();"""
 
 
+def write_bridge_extension(
+    account_ref: str,
+    output_dir: Path,
+    *,
+    endpoint: str,
+    interval_seconds: int,
+) -> Path:
+    output_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    manifest = {
+        "manifest_version": 3,
+        "name": f"codex-usage bridge ({account_ref})",
+        "version": "0.1.0",
+        "description": (
+            "Exports visible ChatGPT Codex analytics text to the local codex-usage bridge."
+        ),
+        "host_permissions": [
+            "https://chatgpt.com/*",
+            endpoint.rsplit("/", 1)[0] + "/*",
+        ],
+        "background": {"service_worker": "background.js"},
+        "content_scripts": [
+            {
+                "matches": ["https://chatgpt.com/codex/cloud/settings/analytics*"],
+                "js": ["content.js"],
+                "run_at": "document_idle",
+            }
+        ],
+    }
+    files = {
+        "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2),
+        "background.js": _render_extension_background(endpoint),
+        "content.js": _render_extension_content(account_ref, interval_seconds),
+    }
+    for filename, content in files.items():
+        path = output_dir / filename
+        path.write_text(content, encoding="utf-8")
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    return output_dir
+
+
 def run_bridge_server(
     config: AppConfig,
     *,
@@ -157,13 +200,19 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
             length: int = 0,
         ) -> None:
             self.send_response(status)
-            self.send_header("Access-Control-Allow-Origin", "https://chatgpt.com")
+            self.send_header("Access-Control-Allow-Origin", self._allowed_origin())
             self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.send_header("Content-Type", content_type)
             if length:
                 self.send_header("Content-Length", str(length))
             self.end_headers()
+
+        def _allowed_origin(self) -> str:
+            origin = self.headers.get("Origin", "")
+            if origin == "https://chatgpt.com" or origin.startswith("chrome-extension://"):
+                return origin
+            return "https://chatgpt.com"
 
     return BridgeHandler
 
@@ -184,3 +233,65 @@ def _redact_url(url: str) -> str:
         return ""
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _render_extension_background(endpoint: str) -> str:
+    endpoint_json = json.dumps(endpoint)
+    return f"""const ENDPOINT = {endpoint_json};
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {{
+  if (!message || message.type !== "codexUsageIngest") {{
+    return false;
+  }}
+  fetch(ENDPOINT, {{
+    method: "POST",
+    headers: {{ "Content-Type": "application/json" }},
+    body: JSON.stringify(message.payload)
+  }})
+    .then(async (response) => {{
+      sendResponse({{
+        ok: response.ok,
+        status: response.status,
+        text: await response.text()
+      }});
+    }})
+    .catch((error) => {{
+      sendResponse({{ ok: false, error: String(error) }});
+    }});
+  return true;
+}});
+"""
+
+
+def _render_extension_content(account_ref: str, interval_seconds: int) -> str:
+    account_json = json.dumps(account_ref)
+    interval_ms = max(interval_seconds, 60) * 1000
+    return f"""const CODEX_USAGE_ACCOUNT = {account_json};
+const CODEX_USAGE_INTERVAL_MS = {interval_ms};
+
+function collectCodexUsage() {{
+  return {{
+    account: CODEX_USAGE_ACCOUNT,
+    url: location.href,
+    title: document.title,
+    capturedAt: new Date().toISOString(),
+    bodyText: document.body ? document.body.innerText : ""
+  }};
+}}
+
+function sendCodexUsage() {{
+  chrome.runtime.sendMessage(
+    {{ type: "codexUsageIngest", payload: collectCodexUsage() }},
+    (response) => {{
+      if (chrome.runtime.lastError) {{
+        console.warn("codex-usage bridge", chrome.runtime.lastError.message);
+        return;
+      }}
+      console.log("codex-usage bridge", response);
+    }}
+  );
+}}
+
+sendCodexUsage();
+setInterval(sendCodexUsage, CODEX_USAGE_INTERVAL_MS);
+"""
