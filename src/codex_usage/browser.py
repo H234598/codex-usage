@@ -544,7 +544,12 @@ def _save_probe_payloads(
     saved: list[str] = []
     for index, candidate in enumerate(candidates, start=1):
         path = save_dir / f"{account.id}-{index:02d}.json"
-        payload_text = json.dumps(candidate.payload, ensure_ascii=False, indent=2)
+        payload_text = json.dumps(
+            candidate.payload,
+            ensure_ascii=False,
+            indent=2,
+            allow_nan=False,
+        )
         _write_private_text(path, payload_text, label="probe output path")
         saved.append(str(path))
     body_path = save_dir / f"{account.id}-body.txt"

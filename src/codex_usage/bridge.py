@@ -163,7 +163,7 @@ def save_bridge_debug_payload(
             debug_payload.pop(field, None)
     write_private_output_text(
         path,
-        json.dumps(debug_payload, ensure_ascii=False, indent=2),
+        json.dumps(debug_payload, ensure_ascii=False, indent=2, allow_nan=False),
         label="debug path",
     )
     return path
@@ -398,7 +398,7 @@ def write_bridge_extension(
         ],
     }
     files = {
-        "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2),
+        "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False),
         "background.js": _render_extension_background(endpoint),
         "content.js": _render_extension_content(account_ref, interval_seconds),
         "page-hook.js": _render_extension_page_hook(),
@@ -532,7 +532,7 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
             return
 
         def _send_json(self, status: int, payload: dict[str, Any]) -> None:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            body = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
             self._send_cors(status, content_type="application/json", length=len(body))
             self.wfile.write(body)
 

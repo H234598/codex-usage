@@ -102,16 +102,17 @@ def _extract_json_window(
     matches: list[tuple[str, str, dict[str, Any], str]] = []
     for candidate in candidates:
         for path, obj in _walk_dicts(candidate.payload):
+            obj_preview = _json_preview(obj)
             wham_window = _window_from_wham_rate_limit_mapping(
                 obj,
                 target=target,
                 captured_at=captured_at,
                 source=f"json:{candidate.url}",
-                raw=f"{path} {json.dumps(obj, ensure_ascii=False, default=str)}"[:500],
+                raw=f"{path} {obj_preview}"[:500],
             )
             if wham_window is not None:
                 return wham_window
-            haystack = f"{path} {json.dumps(obj, ensure_ascii=False, default=str)}".lower()
+            haystack = f"{path} {obj_preview}".lower()
             if target == "five_hour" and not _looks_like_five_hour(haystack):
                 continue
             if target == "weekly" and not _looks_like_weekly(haystack):
@@ -451,6 +452,13 @@ def _parse_number(raw: str | None) -> float | None:
 def _finite_float(value: float) -> float | None:
     coerced = float(value)
     return coerced if math.isfinite(coerced) else None
+
+
+def _json_preview(obj: Any) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False, default=str, allow_nan=False)
+    except (TypeError, ValueError):
+        return type(obj).__name__
 
 
 def _flatten_mapping(

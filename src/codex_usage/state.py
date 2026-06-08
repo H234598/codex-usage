@@ -37,7 +37,7 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
     path = directory / f"{usage.account_id}.json"
     write_private_text(
         path,
-        json.dumps(usage.as_dict(), ensure_ascii=False, indent=2),
+        json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False),
         label="snapshot path",
     )
     return path

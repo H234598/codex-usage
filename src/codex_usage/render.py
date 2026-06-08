@@ -10,7 +10,12 @@ from .models import Account, AccountUsage, LimitWindow
 
 
 def render_json(usages: Iterable[AccountUsage]) -> str:
-    return json.dumps([usage.as_dict() for usage in usages], ensure_ascii=False, indent=2)
+    return json.dumps(
+        [usage.as_dict() for usage in usages],
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    )
 
 
 def render_account_overview(

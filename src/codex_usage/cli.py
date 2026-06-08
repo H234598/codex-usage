@@ -338,7 +338,7 @@ def _cmd_probe(args: argparse.Namespace) -> int:
         headed=not args.headless,
         save_dir=args.save_dir,
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
     return 0
 
 
@@ -354,7 +354,7 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
         screenshot_dir=save_dir if args.screenshot else None,
         auth_json_path=args.auth_json,
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
     return 0 if "error" not in result else 2
 
 
