@@ -11,6 +11,15 @@ def test_root_help_lists_all_commands(capsys):
     assert exc.value.code == 0
 
     output = capsys.readouterr().out
+    assert "Komplette Command-Line-Usage:" in output
+    assert "Globale Optionen:" in output
+    assert "Accounts:" in output
+    assert "Browser-Modus:" in output
+    assert "Direct-Modus ohne Browser:" in output
+    assert "Analyse und Diagnose:" in output
+    assert "Manuelle Aufnahme und Ausgabe:" in output
+    assert "Browser-Bridge:" in output
+    assert "Beispiele:" in output
     assert "codex-usage account add ACCOUNT_ID" in output
     assert "--browser BROWSER" in output
     assert "codex-usage account list" not in output
@@ -24,11 +33,13 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage diagnose ACCOUNT" in output
     assert "--auth-json PATH" in output
     assert "codex-usage ingest ACCOUNT" in output
-    assert "codex-usage latest" in output
+    assert "codex-usage latest [--format table|json]" in output
     assert "codex-usage bridge-snippet ACCOUNT" in output
     assert "codex-usage bridge-extension ACCOUNT" in output
     assert "codex-usage bridge-server" in output
     assert "codex-usage paths" in output
+    assert "Direct-Modus mit mehreren Accounts braucht pro Account auth_json_path" in output
+    assert "codex-usage watch --direct" in output
 
 
 def test_account_add_prints_login_id_hint(tmp_path, capsys):

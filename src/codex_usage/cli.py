@@ -27,26 +27,55 @@ from .render import render_account_overview, render_json, render_table
 from .scheduler import fetch_all, watch
 
 COMMAND_OVERVIEW = """\
-Befehle:
+Komplette Command-Line-Usage:
+
+Globale Optionen:
+  codex-usage [--config CONFIG] COMMAND ...
+
+Accounts:
   codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
                                    [--browser BROWSER] [--auth-json PATH]
   codex-usage account overview
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
+
+Browser-Modus:
   codex-usage login ACCOUNT
   codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
-                   [--direct] [--auth-json PATH]
   codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN]
-                    [--headed] [--direct] [--auth-json PATH]
+                    [--headed]
+
+Direct-Modus ohne Browser:
+  codex-usage once --direct [--account ACCOUNT] [--format table|json]
+                          [--auth-json PATH]
+  codex-usage watch --direct [--account ACCOUNT] [--format table|json]
+                           [--interval SEKUNDEN] [--auth-json PATH]
+
+Analyse und Diagnose:
   codex-usage probe ACCOUNT [--headless] [--save-dir DIR]
-  codex-usage diagnose ACCOUNT [--headed] [--screenshot] [--save-dir DIR] [--auth-json PATH]
+  codex-usage diagnose ACCOUNT [--headed] [--screenshot] [--save-dir DIR]
+                              [--auth-json PATH]
+
+Manuelle Aufnahme und Ausgabe:
   codex-usage ingest ACCOUNT (--stdin | --file FILE)
-  codex-usage latest
+  codex-usage latest [--format table|json]
+
+Browser-Bridge:
   codex-usage bridge-snippet ACCOUNT [--port PORT] [--interval SEKUNDEN]
   codex-usage bridge-extension ACCOUNT [--output DIR] [--port PORT] [--interval SEKUNDEN]
   codex-usage bridge-server [--host HOST] [--port PORT]
+
+Sonstiges:
   codex-usage paths
 
 ACCOUNT kann eine Account-ID oder ein eindeutiges Label sein.
+Direct-Modus mit mehreren Accounts braucht pro Account auth_json_path.
+Ein globales --auth-json ist nur fuer genau einen ausgewaehlten Account erlaubt.
+
+Beispiele:
+  codex-usage account add BW_Privat --auth-json ~/.codex/auth.json
+  codex-usage once --account BW_Privat --direct --auth-json ~/.codex/auth.json
+  codex-usage watch --direct
+  codex-usage latest --format json
 """
 
 
