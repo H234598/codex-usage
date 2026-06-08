@@ -17,6 +17,7 @@ from .models import Account, AccountStatus, AccountUsage
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_AUTH_JSON_BYTES = 1_000_000
+MAX_ACCESS_TOKEN_CHARS = 16_384
 
 
 def default_auth_json_path() -> Path:
@@ -100,6 +101,14 @@ def _load_access_token(path: Path) -> str:
     access_token = tokens.get("access_token")
     if not isinstance(access_token, str) or not access_token.strip():
         raise DirectAuthError(f"auth.json has no access_token: {path}")
+    access_token = access_token.strip()
+    if len(access_token) > MAX_ACCESS_TOKEN_CHARS:
+        raise DirectAuthError("auth.json access_token too large")
+    if any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in access_token
+    ):
+        raise DirectAuthError("auth.json access_token contains invalid characters")
     return access_token
 
 
