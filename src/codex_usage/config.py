@@ -236,9 +236,19 @@ def _validate_unique_accounts(accounts: tuple[Account, ...]) -> None:
 
 def _validate_analytics_url(url: str) -> None:
     parts = urlsplit(url)
-    if parts.scheme != "https" or parts.netloc != "chatgpt.com":
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError("analytics_url must be an https://chatgpt.com URL") from exc
+    if (
+        parts.scheme != "https"
+        or parts.hostname != "chatgpt.com"
+        or parts.username is not None
+        or parts.password is not None
+        or port not in (None, 443)
+    ):
         raise ValueError("analytics_url must be an https://chatgpt.com URL")
-    if not parts.path.startswith("/codex/cloud/settings/analytics"):
+    if parts.path.rstrip("/") != "/codex/cloud/settings/analytics":
         raise ValueError("analytics_url must point to /codex/cloud/settings/analytics")
 
 
