@@ -344,7 +344,11 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
             if self.path != "/ingest":
                 self._send_json(404, {"error": "not found"})
                 return
-            content_length = int(self.headers.get("content-length", "0"))
+            try:
+                content_length = int(self.headers.get("content-length", "0"))
+            except (TypeError, ValueError):
+                self._send_json(413, {"error": "invalid payload size"})
+                return
             if content_length <= 0 or content_length > MAX_INGEST_BYTES:
                 self._send_json(413, {"error": "invalid payload size"})
                 return

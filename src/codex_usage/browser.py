@@ -226,8 +226,12 @@ def _capture_json_response(response: Any, candidates: list[JsonCandidate]) -> No
         return
     content_type = response.headers.get("content-type", "")
     content_length = response.headers.get("content-length")
-    if content_length and int(content_length) > JSON_MAX_BYTES:
-        return
+    if content_length:
+        try:
+            if int(content_length) > JSON_MAX_BYTES:
+                return
+        except (TypeError, ValueError):
+            return
     if "json" not in content_type.lower() and not re.search(r"/(api|backend|accounts?)/", url):
         return
     try:
