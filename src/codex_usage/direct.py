@@ -179,9 +179,9 @@ def _fetch_wham_usage(token: str, *, timeout_seconds: int) -> dict[str, Any]:
             raise DirectAuthError(f"direct auth failed: HTTP {exc.code}") from exc
         raise DirectFetchError(f"direct fetch failed: HTTP {exc.code}") from exc
     except URLError as exc:
-        raise DirectFetchError(f"direct fetch failed: {exc.reason}") from exc
+        raise DirectFetchError("direct fetch failed: network error") from exc
     except OSError as exc:
-        raise DirectFetchError(f"direct fetch failed: {exc}") from exc
+        raise DirectFetchError("direct fetch failed: I/O error") from exc
 
     if len(body) > MAX_RESPONSE_BYTES:
         raise DirectFetchError("direct response too large")
