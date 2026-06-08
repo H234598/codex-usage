@@ -202,7 +202,10 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
             "apiResponses": [
                 {
                     "url": "https://chatgpt.com/backend-api/wham/usage?secret=1",
-                    "bodyText": '{"accessToken":"aaa.bbb.ccc","email":"user@example.test"}',
+                    "bodyText": (
+                        '{"accessToken":"aaa.bbb.ccc","email":"user@example.test",'
+                        '"user_id":"user-secret","account_id":"account-secret"}'
+                    ),
                 }
             ],
         },
@@ -220,6 +223,8 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
     assert payload["apiResponses"][0]["url"] == "https://chatgpt.com/backend-api/wham/usage"
     assert "aaa.bbb.ccc" not in payload["apiResponses"][0]["bodyText"]
     assert "user@example.test" not in payload["apiResponses"][0]["bodyText"]
+    assert "user-secret" not in payload["apiResponses"][0]["bodyText"]
+    assert "account-secret" not in payload["apiResponses"][0]["bodyText"]
     assert path.stat().st_mode & 0o077 == 0
 
 

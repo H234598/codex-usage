@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -98,6 +98,15 @@ def _extract_json_window(
     matches: list[tuple[str, str, dict[str, Any], str]] = []
     for candidate in candidates:
         for path, obj in _walk_dicts(candidate.payload):
+            wham_window = _window_from_wham_rate_limit_mapping(
+                obj,
+                target=target,
+                captured_at=captured_at,
+                source=f"json:{candidate.url}",
+                raw=f"{path} {json.dumps(obj, ensure_ascii=False, default=str)}"[:500],
+            )
+            if wham_window is not None:
+                return wham_window
             haystack = f"{path} {json.dumps(obj, ensure_ascii=False, default=str)}".lower()
             if target == "five_hour" and not _looks_like_five_hour(haystack):
                 continue
@@ -123,6 +132,38 @@ def _extract_json_window(
         if window is not None:
             return window
     return None
+
+
+def _window_from_wham_rate_limit_mapping(
+    obj: dict[str, Any],
+    *,
+    target: str,
+    captured_at: datetime,
+    source: str,
+    raw: str,
+) -> LimitWindow | None:
+    window_seconds = _coerce_number(obj.get("limit_window_seconds"))
+    if target == "five_hour" and window_seconds != 18_000:
+        return None
+    if target == "weekly" and window_seconds != 604_800:
+        return None
+
+    used_percent = _coerce_number(obj.get("used_percent"))
+    reset_at = _parse_datetime(obj.get("reset_at"), captured_at)
+    if used_percent is None and reset_at is None:
+        return None
+
+    remaining_percent = max(100 - used_percent, 0) if used_percent is not None else None
+    return LimitWindow(
+        name="5h" if target == "five_hour" else "weekly",
+        used=used_percent,
+        limit=100 if used_percent is not None else None,
+        remaining=remaining_percent,
+        percent=remaining_percent,
+        reset_at=reset_at,
+        raw=raw,
+        source=source,
+    )
 
 
 def _target_rank(path: str, haystack: str, target: str) -> int:
@@ -187,9 +228,15 @@ def _extract_text_window(
         chunk_end = min(start + 1500, end) if end is not None else start + 1500
         chunk = text[start:chunk_end]
         used, limit = _extract_used_limit(chunk)
+        progress_percent = _extract_progress_width_percent(chunk)
         percent = _extract_percent(chunk)
         remaining = _extract_remaining(chunk)
         reset_at = _extract_reset_at(chunk, captured_at)
+
+        if percent is None and progress_percent is not None:
+            percent = progress_percent
+        if remaining is None and progress_percent is not None:
+            remaining = progress_percent
 
         if all(value is None for value in (used, limit, remaining, percent, reset_at)):
             continue
@@ -249,13 +296,30 @@ def _extract_percent(text: str) -> float | None:
     return _parse_number(match.group("percent")) if match else None
 
 
-def _extract_remaining(text: str) -> float | None:
-    match = re.search(
-        r"(?:remaining|left|verbleibend|uebrig|übrig)\D{0,40}(?P<remaining>\d+(?:[.,]\d+)?)",
-        text,
-        flags=re.IGNORECASE,
+def _extract_progress_width_percent(text: str) -> float | None:
+    patterns = (
+        r"\bstyle=[\"'][^\"']*\bwidth\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
+        r"\bwidth\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
     )
-    return _parse_number(match.group("remaining")) if match else None
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return _parse_number(match.group("percent"))
+    return None
+
+
+def _extract_remaining(text: str) -> float | None:
+    patterns = (
+        r"(?P<remaining>\d+(?:[.,]\d+)?)\s*%?\s*"
+        r"(?:remaining|left|verbleibend|uebrig|übrig)",
+        r"(?:remaining|left|verbleibend|uebrig|übrig)\s+"
+        r"(?P<remaining>\d+(?:[.,]\d+)?)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return _parse_number(match.group("remaining"))
+    return None
 
 
 def _extract_reset_at(text: str, captured_at: datetime) -> datetime | None:
@@ -263,6 +327,9 @@ def _extract_reset_at(text: str, captured_at: datetime) -> datetime | None:
         r"(?:zuruecksetzungen|zurücksetzungen|zuruecksetzung|zurücksetzung|reset(?:s|ting)?"
         r"|wird zurueckgesetzt|wird zurückgesetzt)\D{0,80}"
         r"(?P<date>\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2})",
+        r"(?:zuruecksetzungen|zurücksetzungen|zuruecksetzung|zurücksetzung|reset(?:s|ting)?"
+        r"|wird zurueckgesetzt|wird zurückgesetzt)\D{0,80}"
+        r"(?P<time>\d{1,2}:\d{2})",
         r"(?P<date>\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2})",
         r"(?P<iso>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)",
     )
@@ -270,7 +337,12 @@ def _extract_reset_at(text: str, captured_at: datetime) -> datetime | None:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if not match:
             continue
-        raw = match.groupdict().get("date") or match.groupdict().get("iso")
+        groups = match.groupdict()
+        raw = groups.get("date") or groups.get("iso")
+        if groups.get("time"):
+            parsed = _parse_time_today_or_next(groups["time"], captured_at)
+            if parsed:
+                return parsed
         parsed = _parse_datetime(raw, captured_at)
         if parsed:
             return parsed
@@ -294,6 +366,16 @@ def _pick_datetime(
 ) -> datetime | None:
     for key, value in flat.items():
         lower = key.lower().rsplit(".", 1)[-1]
+        if "reset_after" in lower:
+            continue
+        if lower in hints:
+            parsed = _parse_datetime(value, captured_at)
+            if parsed:
+                return parsed
+    for key, value in flat.items():
+        lower = key.lower().rsplit(".", 1)[-1]
+        if "reset_after" in lower:
+            continue
         if any(hint in lower for hint in hints):
             parsed = _parse_datetime(value, captured_at)
             if parsed:
@@ -327,6 +409,19 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=captured_at.tzinfo)
     return parsed.astimezone(captured_at.tzinfo)
+
+
+def _parse_time_today_or_next(raw: str, captured_at: datetime) -> datetime | None:
+    try:
+        hour, minute = (int(part) for part in raw.split(":", 1))
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    parsed = captured_at.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if parsed < captured_at:
+        parsed += timedelta(days=1)
+    return parsed
 
 
 def _coerce_number(value: Any) -> float | None:

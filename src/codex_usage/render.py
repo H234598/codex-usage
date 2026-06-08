@@ -51,7 +51,7 @@ def render_account_overview(config: AppConfig, config_path: Path) -> str:
 def render_table(usages: Iterable[AccountUsage]) -> str:
     rows = list(usages)
     now = datetime.now().astimezone().strftime("%d.%m.%Y %H:%M")
-    headers = ["Account", "5h genutzt", "5h Reset", "Woche genutzt", "Woche Reset", "Status"]
+    headers = ["Account", "5h Wert", "5h Reset", "Woche Wert", "Woche Reset", "Status"]
     data = [
         [
             usage.label,
@@ -90,6 +90,8 @@ def _profile_state(profile_dir: str) -> str:
 def _usage_value(window: LimitWindow | None) -> str:
     if window is None:
         return "-"
+    if _is_remaining_percent_window(window):
+        return f"{window.remaining:.0f}% verbleibend"
     parts: list[str] = []
     if window.used is not None and window.limit is not None:
         parts.append(f"{_fmt_number(window.used)} / {_fmt_number(window.limit)}")
@@ -102,6 +104,15 @@ def _usage_value(window: LimitWindow | None) -> str:
     if not parts and window.raw:
         return _shorten(window.raw, 28)
     return "  ".join(parts) if parts else "-"
+
+
+def _is_remaining_percent_window(window: LimitWindow) -> bool:
+    return (
+        window.remaining is not None
+        and window.percent is not None
+        and abs(window.remaining - window.percent) < 0.01
+        and (window.limit is None or abs(window.limit - 100) < 0.01)
+    )
 
 
 def _reset_value(window: LimitWindow | None) -> str:

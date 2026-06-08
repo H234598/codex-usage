@@ -161,6 +161,12 @@ def _sanitize_debug_text(value: str) -> str:
         flags=re.IGNORECASE,
     )
     text = re.sub(
+        r'("(?:(?:user|account|organization|workspace)_id)"\s*:\s*")[^"]+',
+        r"\1[redacted]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
         r"\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b",
         "[redacted.jwt]",
         text,

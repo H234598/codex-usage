@@ -36,6 +36,37 @@ def test_render_table_contains_values():
     assert "310 / 1000" in rendered
 
 
+def test_render_table_labels_remaining_percent_windows():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(
+            name="5h",
+            used=3,
+            limit=100,
+            remaining=97,
+            percent=97,
+            reset_at=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            used=45,
+            limit=100,
+            remaining=55,
+            percent=55,
+            reset_at=datetime(2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")),
+        ),
+    )
+
+    rendered = render_table([usage])
+
+    assert "97% verbleibend" in rendered
+    assert "55% verbleibend" in rendered
+    assert "08.06.2026 06:50" in rendered
+    assert "10.06.2026 05:05" in rendered
+
+
 def test_render_json_is_machine_readable():
     usage = AccountUsage(
         account_id="privat",
