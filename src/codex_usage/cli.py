@@ -548,10 +548,7 @@ def _payload_from_raw_ingest(raw: str) -> dict:
 
 def _read_ingest_raw(args: argparse.Namespace) -> str:
     if args.stdin:
-        raw = sys.stdin.read(MAX_INGEST_BYTES + 1)
-        if len(raw.encode("utf-8", errors="ignore")) > MAX_INGEST_BYTES:
-            raise ValueError(f"ingest payload too large; max {MAX_INGEST_BYTES} bytes")
-        return raw
+        return _read_ingest_stdin()
 
     path = args.file
     text, _ = read_private_text(
@@ -563,6 +560,27 @@ def _read_ingest_raw(args: argparse.Namespace) -> str:
         invalid_utf8_label="ingest file",
     )
     return text
+
+
+def _read_ingest_stdin() -> str:
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is not None:
+        raw_bytes = buffer.read(MAX_INGEST_BYTES + 1)
+        if len(raw_bytes) > MAX_INGEST_BYTES:
+            raise ValueError(f"ingest payload too large; max {MAX_INGEST_BYTES} bytes")
+        try:
+            return raw_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("ingest stdin is not valid UTF-8") from exc
+
+    raw = sys.stdin.read(MAX_INGEST_BYTES + 1)
+    try:
+        byte_length = len(raw.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError("ingest stdin is not valid UTF-8") from exc
+    if byte_length > MAX_INGEST_BYTES:
+        raise ValueError(f"ingest payload too large; max {MAX_INGEST_BYTES} bytes")
+    return raw
 
 
 if __name__ == "__main__":
