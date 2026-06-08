@@ -34,6 +34,61 @@ def test_extract_windows_from_german_dom_text():
     assert weekly.remaining == 690
 
 
+def test_extract_windows_from_short_english_dom_labels():
+    body = """
+    5-hour limit
+    42 / 100 used
+    Reset 08.06.2026 04:26
+
+    Weekly limit
+    310 / 1000 used
+    Reset 14.06.2026 04:26
+    """
+
+    five, weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 42
+    assert five.limit == 100
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "08.06.2026 04:26"
+    assert weekly is not None
+    assert weekly.used == 310
+    assert weekly.limit == 1000
+    assert weekly.reset_at is not None
+    assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "14.06.2026 04:26"
+
+
+def test_extract_windows_skips_label_occurrence_without_values():
+    body = """
+    5-hour limit
+    Loading chart
+    Weekly limit
+    Loading chart
+
+    Details
+    5-hour limit
+    42 / 100 used
+    Reset 08.06.2026 04:26
+    Weekly limit
+    310 / 1000 used
+    Reset 14.06.2026 04:26
+    """
+
+    five, weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 42
+    assert weekly is not None
+    assert weekly.used == 310
+
+
 def test_extract_windows_prefers_json_candidates():
     candidates = [
         JsonCandidate(

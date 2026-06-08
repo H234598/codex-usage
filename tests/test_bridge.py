@@ -4,6 +4,7 @@ import json
 
 from codex_usage.bridge import (
     render_bridge_snippet,
+    save_bridge_debug_payload,
     usage_from_ingest_payload,
     write_bridge_extension,
 )
@@ -56,6 +57,65 @@ def test_usage_from_ingest_payload_reports_empty_text_context():
     assert "textLength=0" in usage.error
 
 
+def test_usage_from_ingest_payload_uses_full_dom_payload_fields():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": "Codex analytics",
+            "accessibilityText": """
+            5-hour limit 42 / 100 Reset 08.06.2026 04:26
+            Weekly limit 310 / 1000 Reset 14.06.2026 04:26
+            """,
+        },
+    )
+
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is not None
+    assert usage.five_hour.used == 42
+    assert usage.weekly is not None
+    assert usage.weekly.limit == 1000
+
+
+def test_usage_from_ingest_payload_reports_search_excerpt():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics?secret=1",
+            "title": "Codex",
+            "readyState": "complete",
+            "textLength": 123,
+            "bodyText": "Codex analytics without the expected limit labels",
+        },
+    )
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.error is not None
+    assert "usage limits not found" in usage.error
+    assert "https://chatgpt.com/codex/cloud/settings/analytics" in usage.error
+    assert "secret=1" not in usage.error
+    assert 'excerpt="Codex analytics without the expected limit labels"' in usage.error
+
+
+def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
+    path = save_bridge_debug_payload(
+        "BW/Privat",
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics?secret=1",
+            "htmlText": "<html>debug</html>",
+        },
+        tmp_path / "snapshots",
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert path.name == "BW_Privat-last-ingest.json"
+    assert payload["url"] == "https://chatgpt.com/codex/cloud/settings/analytics"
+    assert payload["htmlText"] == "<html>debug</html>"
+    assert path.stat().st_mode & 0o077 == 0
+
+
 def test_render_bridge_snippet_contains_account_endpoint_and_interval():
     snippet = render_bridge_snippet(
         "BW_Privat",
@@ -90,6 +150,13 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "fetch(ENDPOINT" in background
     assert "chrome.runtime.sendMessage" in content
     assert "document.documentElement.innerText" in content
+    assert "document.documentElement.textContent" in content
+    assert "document.documentElement.outerHTML" in content
+    assert "collectCodexUsageAttributeText" in content
+    assert "collectCodexUsageSvgText" in content
+    assert "fieldLengths" in content
+    assert "truncatedFields" in content
+    assert "htmlText" in content
     assert "MutationObserver" in content
     assert "readyState" in content
     assert "textLength" in content

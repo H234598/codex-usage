@@ -14,15 +14,34 @@ LOCAL_TZ = datetime.now().astimezone().tzinfo or ZoneInfo("UTC")
 
 FIVE_HOUR_LABELS = (
     "5 stunden nutzungsgrenze",
+    "5 stunden limit",
+    "5-stunden nutzungsgrenze",
+    "5-stunden-nutzungsgrenze",
+    "5-stunden limit",
+    "5-stunden-limit",
     "5-hour usage limit",
+    "5-hour limit",
     "5 hour usage limit",
+    "5 hour limit",
+    "5 hours usage limit",
+    "5 hours limit",
+    "5h usage limit",
+    "5h limit",
     "five hour",
+    "five-hour",
 )
 WEEKLY_LABELS = (
     "woechentliches nutzungslimit",
     "wöchentliches nutzungslimit",
+    "woechentliches limit",
+    "wöchentliches limit",
+    "wochenlimit",
+    "wochen limit",
     "weekly usage limit",
+    "weekly limit",
+    "weekly usage",
     "week usage",
+    "week limit",
 )
 
 
@@ -49,6 +68,7 @@ def extract_windows(
             body_text,
             name="5h",
             labels=FIVE_HOUR_LABELS,
+            stop_labels=WEEKLY_LABELS,
             captured_at=captured_at,
         )
     if weekly is None:
@@ -56,6 +76,7 @@ def extract_windows(
             body_text,
             name="weekly",
             labels=WEEKLY_LABELS,
+            stop_labels=FIVE_HOUR_LABELS,
             captured_at=captured_at,
         )
     return five, weekly
@@ -156,39 +177,57 @@ def _extract_text_window(
     *,
     name: str,
     labels: tuple[str, ...],
+    stop_labels: tuple[str, ...],
     captured_at: datetime,
 ) -> LimitWindow | None:
     text = _normalize_ws(body_text)
     lower = text.lower()
-    start = -1
+    for start in _label_offsets(lower, labels):
+        end = _next_label_offset(lower, start + 1, stop_labels)
+        chunk_end = min(start + 1500, end) if end is not None else start + 1500
+        chunk = text[start:chunk_end]
+        used, limit = _extract_used_limit(chunk)
+        percent = _extract_percent(chunk)
+        remaining = _extract_remaining(chunk)
+        reset_at = _extract_reset_at(chunk, captured_at)
+
+        if all(value is None for value in (used, limit, remaining, percent, reset_at)):
+            continue
+
+        if remaining is None and used is not None and limit is not None:
+            remaining = max(limit - used, 0)
+        if percent is None and used is not None and limit:
+            percent = used / limit * 100
+
+        return LimitWindow(
+            name=name,
+            used=used,
+            limit=limit,
+            remaining=remaining,
+            percent=percent,
+            reset_at=reset_at,
+            raw=chunk[:500],
+            source="dom-text",
+        )
+    return None
+
+
+def _label_offsets(text: str, labels: tuple[str, ...]) -> list[int]:
+    offsets: set[int] = set()
     for label in labels:
-        start = lower.find(label)
-        if start >= 0:
-            break
-    if start < 0:
-        return None
+        start = 0
+        while True:
+            index = text.find(label, start)
+            if index < 0:
+                break
+            offsets.add(index)
+            start = index + max(len(label), 1)
+    return sorted(offsets)
 
-    chunk = text[start : start + 1500]
-    used, limit = _extract_used_limit(chunk)
-    percent = _extract_percent(chunk)
-    remaining = _extract_remaining(chunk)
-    reset_at = _extract_reset_at(chunk, captured_at)
 
-    if remaining is None and used is not None and limit is not None:
-        remaining = max(limit - used, 0)
-    if percent is None and used is not None and limit:
-        percent = used / limit * 100
-
-    return LimitWindow(
-        name=name,
-        used=used,
-        limit=limit,
-        remaining=remaining,
-        percent=percent,
-        reset_at=reset_at,
-        raw=chunk[:500],
-        source="dom-text",
-    )
+def _next_label_offset(text: str, start: int, labels: tuple[str, ...]) -> int | None:
+    offsets = [index for label in labels if (index := text.find(label, start)) >= 0]
+    return min(offsets) if offsets else None
 
 
 def _extract_used_limit(text: str) -> tuple[float | None, float | None]:
@@ -330,18 +369,38 @@ def _walk_dicts(value: Any, path: str = "$") -> Iterable[tuple[str, dict[str, An
 
 
 def _normalize_ws(value: str) -> str:
+    value = (
+        value.replace("\u00a0", " ")
+        .replace("\u2010", "-")
+        .replace("\u2011", "-")
+        .replace("\u2012", "-")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+    )
     return re.sub(r"\s+", " ", value).strip()
 
 
 def _looks_like_five_hour(value: str) -> bool:
     return (
         any(label in value for label in FIVE_HOUR_LABELS)
-        or any(word in value for word in ("five_hour", "five-hour", "5_hour", "5-hour"))
-        or bool(re.search(r"\b5\b.{0,20}(hour|stunden)", value))
+        or any(word in value for word in ("five_hour", "five-hour", "5_hour", "5-hour", "5h"))
+        or bool(re.search(r"\b5\s*h\b", value))
+        or bool(re.search(r"\b5\b.{0,20}(hour|hours|stunden)", value))
     )
 
 
 def _looks_like_weekly(value: str) -> bool:
     return any(label in value for label in WEEKLY_LABELS) or any(
-        word in value for word in ("weekly", "week_limit", "woche", "woechentlich", "wöchentlich")
+        word
+        in value
+        for word in (
+            "weekly",
+            "week_limit",
+            "week-limit",
+            "week limit",
+            "woche",
+            "wochenlimit",
+            "woechentlich",
+            "wöchentlich",
+        )
     )

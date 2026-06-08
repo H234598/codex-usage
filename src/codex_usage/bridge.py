@@ -7,24 +7,29 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from .config import AppConfig, resolve_account
+from .config import AppConfig, default_state_dir, resolve_account
 from .extractor import extract_windows
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_table
 from .state import load_usage_snapshot, save_usage_snapshot
 
-MAX_INGEST_BYTES = 2_000_000
+MAX_INGEST_BYTES = 10_000_000
+TEXT_PAYLOAD_FIELDS = (
+    "bodyText",
+    "body_text",
+    "text",
+    "innerText",
+    "domText",
+    "textContent",
+    "accessibilityText",
+    "svgText",
+    "htmlText",
+)
 
 
 def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> AccountUsage:
     captured_at = _parse_captured_at(payload.get("capturedAt") or payload.get("captured_at"))
-    body_text = str(
-        payload.get("bodyText")
-        or payload.get("body_text")
-        or payload.get("text")
-        or payload.get("innerText")
-        or ""
-    )
+    body_text = _combined_payload_text(payload)
     five_hour, weekly = extract_windows(body_text=body_text, now=captured_at)
     status = AccountStatus.OK if five_hour and weekly else AccountStatus.PARTIAL
     error = _ingest_error(body_text, payload) if status != AccountStatus.OK else None
@@ -43,15 +48,62 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
 
 def _ingest_error(body_text: str, payload: dict[str, Any]) -> str | None:
     text_length = payload.get("textLength") if payload.get("textLength") is not None else "-"
+    context = (
+        f" url={_redact_url(str(payload.get('url') or '')) or '-'}"
+        f" title={str(payload.get('title') or '-')[:80]}"
+        f" ready={payload.get('readyState') or '-'}"
+        f" textLength={text_length}"
+    )
     if not body_text.strip():
-        return (
-            "missing page text"
-            f" url={_redact_url(str(payload.get('url') or '')) or '-'}"
-            f" title={str(payload.get('title') or '-')[:80]}"
-            f" ready={payload.get('readyState') or '-'}"
-            f" textLength={text_length}"
-        )
-    return "usage limits not found"
+        return f"missing page text{context}"
+    return f'usage limits not found{context} excerpt="{_safe_excerpt(body_text)}"'
+
+
+def save_bridge_debug_payload(
+    account_id: str,
+    payload: dict[str, Any],
+    snapshot_dir: Path | None = None,
+) -> Path:
+    directory = (snapshot_dir.parent if snapshot_dir else default_state_dir()) / "debug"
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    path = directory / f"{_safe_filename(account_id)}-last-ingest.json"
+    debug_payload = dict(payload)
+    if "url" in debug_payload:
+        debug_payload["url"] = _redact_url(str(debug_payload.get("url") or ""))
+    path.write_text(json.dumps(debug_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+    return path
+
+
+def _combined_payload_text(payload: dict[str, Any]) -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for field in TEXT_PAYLOAD_FIELDS:
+        value = payload.get(field)
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        parts.append(text)
+    return "\n\n".join(parts)
+
+
+def _safe_excerpt(value: str, limit: int = 240) -> str:
+    excerpt = " ".join(value.split())
+    excerpt = excerpt.replace("\\", "\\\\").replace('"', '\\"')
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[: limit - 3] + "..."
+
+
+def _safe_filename(value: str) -> str:
+    return "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in value)
+
 
 
 def render_bridge_snippet(account_ref: str, *, endpoint: str, interval_seconds: int) -> str:
@@ -188,12 +240,19 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
 
             latest = load_latest_usages(config, snapshot_dir)
             print(render_table(latest), flush=True)
+            debug_path = None
+            if usage.error:
+                debug_path = save_bridge_debug_payload(usage.account_id, payload, snapshot_dir)
+                print(f"Diagnose {usage.account_id}: {usage.error}", flush=True)
+                print(f"Debug-Dump: {debug_path}", flush=True)
             self._send_json(
                 200,
                 {
                     "status": usage.status.value,
                     "account": usage.account_id,
                     "saved": str(path),
+                    "error": usage.error,
+                    "debug": str(debug_path) if debug_path else None,
                 },
             )
 
@@ -282,22 +341,78 @@ def _render_extension_content(account_ref: str, interval_seconds: int) -> str:
     return f"""const CODEX_USAGE_ACCOUNT = {account_json};
 const CODEX_USAGE_INTERVAL_MS = {interval_ms};
 const CODEX_USAGE_MIN_TEXT = 40;
+const CODEX_USAGE_MAX_FIELD_CHARS = 2000000;
 let codexUsageLastTextLength = -1;
+
+function limitCodexUsageText(value) {{
+  const text = String(value || "");
+  return text.length > CODEX_USAGE_MAX_FIELD_CHARS
+    ? text.slice(0, CODEX_USAGE_MAX_FIELD_CHARS)
+    : text;
+}}
+
+function isCodexUsageTruncated(value) {{
+  return String(value || "").length > CODEX_USAGE_MAX_FIELD_CHARS;
+}}
+
+function collectCodexUsageAttributeText() {{
+  const attrs = ["aria-label", "aria-valuetext", "aria-valuenow", "title", "alt"];
+  const selector = attrs.map((name) => `[${{name}}]`).join(",");
+  return Array.from(document.querySelectorAll(selector))
+    .flatMap((element) => attrs.map((name) => element.getAttribute(name)))
+    .filter((value) => value && String(value).trim())
+    .join("\\n");
+}}
+
+function collectCodexUsageSvgText() {{
+  return Array.from(document.querySelectorAll("svg text, svg title, svg desc"))
+    .map((element) => element.textContent || "")
+    .filter((value) => value.trim())
+    .join("\\n");
+}}
 
 function collectCodexUsage() {{
   const bodyText = document.body ? (document.body.innerText || "") : "";
+  const domText = document.documentElement
+    ? (document.documentElement.textContent || document.documentElement.innerText || "")
+    : "";
+  const accessibilityText = collectCodexUsageAttributeText();
+  const svgText = collectCodexUsageSvgText();
+  const htmlText = document.documentElement ? (document.documentElement.outerHTML || "") : "";
   const rootText = document.documentElement
     ? (document.documentElement.innerText || document.documentElement.textContent || "")
     : "";
-  const text = bodyText.trim() ? bodyText : rootText;
+  const visibleText = bodyText.trim() ? bodyText : rootText;
+  const searchText = [visibleText, domText, accessibilityText, svgText, htmlText]
+    .filter((value) => value && String(value).trim())
+    .join("\\n\\n");
   return {{
     account: CODEX_USAGE_ACCOUNT,
     url: location.href,
     title: document.title,
     capturedAt: new Date().toISOString(),
     readyState: document.readyState,
-    textLength: text.length,
-    bodyText: text
+    textLength: searchText.length,
+    htmlLength: htmlText.length,
+    fieldLengths: {{
+      bodyText: bodyText.length,
+      domText: domText.length,
+      accessibilityText: accessibilityText.length,
+      svgText: svgText.length,
+      htmlText: htmlText.length
+    }},
+    truncatedFields: {{
+      bodyText: isCodexUsageTruncated(bodyText),
+      domText: isCodexUsageTruncated(domText),
+      accessibilityText: isCodexUsageTruncated(accessibilityText),
+      svgText: isCodexUsageTruncated(svgText),
+      htmlText: isCodexUsageTruncated(htmlText)
+    }},
+    bodyText: limitCodexUsageText(visibleText),
+    domText: limitCodexUsageText(domText),
+    accessibilityText: limitCodexUsageText(accessibilityText),
+    svgText: limitCodexUsageText(svgText),
+    htmlText: limitCodexUsageText(htmlText)
   }};
 }}
 
