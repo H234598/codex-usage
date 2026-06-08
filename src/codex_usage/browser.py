@@ -580,4 +580,13 @@ def _redact_url(url: str) -> str:
 
 
 def _clean_error(error: str) -> str:
-    return re.sub(r"\s+", " ", error).strip()[:500]
+    text = re.sub(r"\s+", " ", error).strip()
+    text = re.sub(r"https?://[^\s\"'<>]+", lambda match: _redact_url(match.group(0)), text)
+    text = re.sub(
+        r"\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b",
+        "[redacted.jwt]",
+        text,
+    )
+    text = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "[redacted.api_key]", text)
+    text = re.sub(r"(?<!\w)/(?:home|tmp|var|run|mnt)/[^\s\"'<>]+", "[redacted.path]", text)
+    return text[:500]
