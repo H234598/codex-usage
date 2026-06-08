@@ -19,6 +19,7 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage login ACCOUNT" in output
     assert "codex-usage once" in output
     assert "codex-usage watch" in output
+    assert "--direct" in output
     assert "codex-usage probe ACCOUNT" in output
     assert "codex-usage diagnose ACCOUNT" in output
     assert "--auth-json PATH" in output
@@ -61,6 +62,30 @@ def test_account_add_accepts_browser(tmp_path, capsys):
 
     output = capsys.readouterr().out
     assert "Browser: chromium" in output
+
+
+def test_account_add_accepts_auth_json(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--auth-json",
+                str(auth_path),
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert f"Auth JSON: {auth_path}" in output
+    assert f'auth_json_path = "{auth_path}"' in config_path.read_text(encoding="utf-8")
 
 
 def test_account_list_is_removed(capsys):
@@ -139,6 +164,152 @@ def test_diagnose_accepts_unique_label(tmp_path, monkeypatch, capsys):
         "auth_json_path": str(tmp_path / "auth.json"),
     }
     assert '"detected": "cloudflare"' in capsys.readouterr().out
+
+
+def test_once_direct_passes_auth_json_and_saves_snapshots(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+    called = {}
+
+    def fake_fetch_all(config, accounts, *, headed, direct, auth_json_path, save_snapshots):
+        called["accounts"] = [account.id for account in accounts]
+        called["headed"] = headed
+        called["direct"] = direct
+        called["auth_json_path"] = auth_json_path
+        called["save_snapshots"] = save_snapshots
+        return []
+
+    monkeypatch.setattr("codex_usage.cli.fetch_all", fake_fetch_all)
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "once",
+                "--direct",
+                "--auth-json",
+                str(auth_path),
+            ]
+        )
+        == 0
+    )
+
+    assert called == {
+        "accounts": ["privat"],
+        "headed": False,
+        "direct": True,
+        "auth_json_path": auth_path,
+        "save_snapshots": True,
+    }
+
+
+def test_watch_direct_passes_auth_json(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+    called = {}
+
+    def fake_watch(
+        config,
+        accounts,
+        *,
+        output,
+        headed,
+        direct,
+        auth_json_path,
+        interval_seconds,
+    ):
+        called["accounts"] = [account.id for account in accounts]
+        called["output"] = output
+        called["headed"] = headed
+        called["direct"] = direct
+        called["auth_json_path"] = auth_json_path
+        called["interval_seconds"] = interval_seconds
+
+    monkeypatch.setattr("codex_usage.cli.watch", fake_watch)
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "watch",
+                "--direct",
+                "--auth-json",
+                str(auth_path),
+                "--interval",
+                "300",
+            ]
+        )
+        == 0
+    )
+
+    assert called == {
+        "accounts": ["privat"],
+        "output": "table",
+        "headed": False,
+        "direct": True,
+        "auth_json_path": auth_path,
+        "interval_seconds": 300,
+    }
+
+
+def test_direct_rejects_multiple_accounts_without_per_account_auth_json(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    assert main(["--config", str(config_path), "account", "add", "work"]) == 0
+    capsys.readouterr()
+
+    assert main(["--config", str(config_path), "once", "--direct"]) == 1
+
+    assert "requires per-account --auth-json" in capsys.readouterr().err
+
+
+def test_direct_rejects_global_auth_json_for_multiple_accounts(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--auth-json",
+                str(tmp_path / "privat-auth.json"),
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "work",
+                "--auth-json",
+                str(tmp_path / "work-auth.json"),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(["--config", str(config_path), "once", "--direct", "--auth-json", str(auth_path)])
+        == 1
+    )
+
+    assert "can only override direct auth for one selected account" in capsys.readouterr().err
 
 
 def test_account_overview_shows_config_and_accounts(tmp_path, capsys):

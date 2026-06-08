@@ -19,6 +19,7 @@ class Account:
     label: str
     profile_dir: str
     browser: str = "firefox"
+    auth_json_path: str | None = None
 
 
 @dataclass(frozen=True)

@@ -28,12 +28,15 @@ from .scheduler import fetch_all, watch
 
 COMMAND_OVERVIEW = """\
 Befehle:
-  codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR] [--browser BROWSER]
+  codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
+                                   [--browser BROWSER] [--auth-json PATH]
   codex-usage account overview
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
   codex-usage login ACCOUNT
   codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
-  codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN] [--headed]
+                   [--direct] [--auth-json PATH]
+  codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN]
+                    [--headed] [--direct] [--auth-json PATH]
   codex-usage probe ACCOUNT [--headless] [--save-dir DIR]
   codex-usage diagnose ACCOUNT [--headed] [--screenshot] [--save-dir DIR] [--auth-json PATH]
   codex-usage ingest ACCOUNT (--stdin | --file FILE)
@@ -84,6 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_BROWSERS,
         help="Browser fuer Login und Polling, Standard: firefox",
     )
+    add.add_argument("--auth-json", type=Path, help="Codex auth.json fuer direkten Abruf")
     add.set_defaults(func=_cmd_account_add)
     overview = account_sub.add_parser("overview", help="Account-Uebersicht anzeigen")
     overview.set_defaults(func=_cmd_account_overview)
@@ -109,6 +113,8 @@ def _build_parser() -> argparse.ArgumentParser:
     once.add_argument("--account", action="append", dest="account_ids")
     once.add_argument("--format", choices=("table", "json"), default="table")
     once.add_argument("--headed", action="store_true", help="Browser sichtbar starten")
+    once.add_argument("--direct", action="store_true", help="Ohne Browser ueber auth.json abrufen")
+    once.add_argument("--auth-json", type=Path, help="auth.json fuer direkten Abruf ueberschreiben")
     once.set_defaults(func=_cmd_once)
 
     watch_cmd = sub.add_parser("watch", help="Alle 5 Minuten fortlaufend auslesen")
@@ -116,6 +122,16 @@ def _build_parser() -> argparse.ArgumentParser:
     watch_cmd.add_argument("--format", choices=("table", "json"), default="table")
     watch_cmd.add_argument("--interval", type=int, default=None)
     watch_cmd.add_argument("--headed", action="store_true", help="Browser sichtbar starten")
+    watch_cmd.add_argument(
+        "--direct",
+        action="store_true",
+        help="Ohne Browser ueber auth.json abrufen",
+    )
+    watch_cmd.add_argument(
+        "--auth-json",
+        type=Path,
+        help="auth.json fuer direkten Abruf ueberschreiben",
+    )
     watch_cmd.set_defaults(func=_cmd_watch)
 
     probe = sub.add_parser("probe", help="Extraktionsquellen fuer einen Account untersuchen")
@@ -178,11 +194,14 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
         label=args.label,
         profile_dir=args.profile_dir,
         browser=args.browser,
+        auth_json_path=str(args.auth_json) if args.auth_json else None,
         path=args.config,
     )
     print(f"Account gespeichert: {account.id} ({account.label})")
     print(f"Profil: {account.profile_dir}")
     print(f"Browser: {account.browser}")
+    if account.auth_json_path:
+        print(f"Auth JSON: {account.auth_json_path}")
     print(f"Login: codex-usage login {account.id}")
     return 0
 
@@ -219,7 +238,16 @@ def _cmd_login(args: argparse.Namespace) -> int:
 def _cmd_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
-    usages = fetch_all(config, accounts, headed=args.headed)
+    if args.direct:
+        _validate_direct_auth_mapping(accounts, args.auth_json)
+    usages = fetch_all(
+        config,
+        accounts,
+        headed=args.headed,
+        direct=args.direct,
+        auth_json_path=args.auth_json,
+        save_snapshots=args.direct,
+    )
     print(render_json(usages) if args.format == "json" else render_table(usages))
     return 0 if all(usage.error is None for usage in usages) else 2
 
@@ -229,11 +257,15 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     accounts = _select_accounts(config, args.account_ids)
     if args.interval is not None and args.interval < 60:
         raise ValueError("--interval must be at least 60 seconds")
+    if args.direct:
+        _validate_direct_auth_mapping(accounts, args.auth_json)
     watch(
         config,
         accounts,
         output=args.format,
         headed=args.headed,
+        direct=args.direct,
+        auth_json_path=args.auth_json,
         interval_seconds=args.interval,
     )
     return 0
@@ -326,6 +358,21 @@ def _select_accounts(config, account_ids: list[str] | None):
     if not account_ids:
         return config.accounts
     return tuple(resolve_account(config, account_ref) for account_ref in account_ids)
+
+
+def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None:
+    account_list = list(accounts)
+    if auth_json_path is not None and len(account_list) > 1:
+        raise ValueError("--auth-json can only override direct auth for one selected account")
+    if len(account_list) <= 1:
+        return
+    missing = [account.id for account in account_list if not account.auth_json_path]
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(
+            "direct mode with multiple accounts requires per-account --auth-json; "
+            f"missing: {joined}"
+        )
 
 
 def _validate_profile_delete_target(path: Path, *, force: bool) -> None:

@@ -19,12 +19,13 @@ def render_account_overview(config: AppConfig, config_path: Path) -> str:
             account.id,
             account.label,
             account.browser,
+            _auth_state(account.auth_json_path),
             _profile_state(account.profile_dir),
             str(Path(account.profile_dir).expanduser()),
         ]
         for account in sorted(config.accounts, key=lambda item: item.id)
     ]
-    headers = ["ID", "Label", "Browser", "Profil", "Pfad"]
+    headers = ["ID", "Label", "Browser", "Auth JSON", "Profil", "Pfad"]
     widths = [
         max(len(headers[index]), *(len(row[index]) for row in rows)) if rows else len(header)
         for index, header in enumerate(headers)
@@ -84,6 +85,17 @@ def _profile_state(profile_dir: str) -> str:
         return "vorhanden"
     if path.exists():
         return "kein Ordner"
+    return "fehlt"
+
+
+def _auth_state(auth_json_path: str | None) -> str:
+    if not auth_json_path:
+        return "-"
+    path = Path(auth_json_path).expanduser()
+    if path.is_file():
+        return "vorhanden"
+    if path.exists():
+        return "keine Datei"
     return "fehlt"
 
 

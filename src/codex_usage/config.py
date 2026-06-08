@@ -76,6 +76,7 @@ def add_or_update_account(
     label: str | None = None,
     profile_dir: str | None = None,
     browser: str | None = None,
+    auth_json_path: str | None = None,
     path: Path | None = None,
 ) -> tuple[AppConfig, Account]:
     _validate_account_id(account_id)
@@ -89,6 +90,9 @@ def add_or_update_account(
         profile_dir=profile_dir
         or (existing.profile_dir if existing else str(_default_profile_root(account_id))),
         browser=browser or (existing.browser if existing else "firefox"),
+        auth_json_path=auth_json_path
+        if auth_json_path is not None
+        else (existing.auth_json_path if existing else None),
     )
 
     accounts = [item for item in config.accounts if item.id != account_id]
@@ -150,7 +154,14 @@ def _account_from_data(item: object) -> Account:
     profile_dir = str(item.get("profile_dir") or _default_profile_root(account_id))
     browser = str(item.get("browser") or "firefox")
     _validate_browser(browser)
-    return Account(id=account_id, label=label, profile_dir=profile_dir, browser=browser)
+    auth_json_path = item.get("auth_json_path")
+    return Account(
+        id=account_id,
+        label=label,
+        profile_dir=profile_dir,
+        browser=browser,
+        auth_json_path=str(auth_json_path) if auth_json_path else None,
+    )
 
 
 def _validate_account_id(account_id: str) -> None:
@@ -232,6 +243,11 @@ def _to_toml(config: AppConfig) -> str:
                 f"label = {_quote(account.label)}",
                 f"profile_dir = {_quote(account.profile_dir)}",
                 f"browser = {_quote(account.browser)}",
+                *(
+                    [f"auth_json_path = {_quote(account.auth_json_path)}"]
+                    if account.auth_json_path
+                    else []
+                ),
                 "",
             ]
         )

@@ -44,6 +44,17 @@ def test_config_round_trip_browser(tmp_path):
     assert loaded.accounts[0].browser == "chromium"
 
 
+def test_config_round_trip_auth_json_path(tmp_path):
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+    add_or_update_account("privat", auth_json_path=str(auth_path), path=config_path)
+
+    loaded = load_config(config_path)
+
+    assert loaded.accounts[0].auth_json_path == str(auth_path)
+    assert f'auth_json_path = "{auth_path}"' in config_path.read_text(encoding="utf-8")
+
+
 def test_config_rejects_unknown_browser(tmp_path):
     with pytest.raises(ValueError, match="browser must be one of"):
         add_or_update_account("privat", browser="netscape", path=tmp_path / "config.toml")
