@@ -4,10 +4,12 @@ import argparse
 import ipaddress
 import json
 import shutil
+import stat
 import sys
 from pathlib import Path
 
 from .bridge import (
+    MAX_INGEST_BYTES,
     ingest_and_save,
     load_latest_usages,
     render_bridge_snippet,
@@ -356,7 +358,7 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    raw = sys.stdin.read() if args.stdin else args.file.read_text(encoding="utf-8")
+    raw = _read_ingest_raw(args)
     payload = _payload_from_raw_ingest(raw)
     usage, path = ingest_and_save(config, args.account, payload)
     print(render_table([usage]))
@@ -536,6 +538,28 @@ def _payload_from_raw_ingest(raw: str) -> dict:
     if isinstance(payload, dict):
         return payload
     return {"bodyText": raw}
+
+
+def _read_ingest_raw(args: argparse.Namespace) -> str:
+    if args.stdin:
+        raw = sys.stdin.read(MAX_INGEST_BYTES + 1)
+        if len(raw.encode("utf-8", errors="ignore")) > MAX_INGEST_BYTES:
+            raise ValueError(f"ingest payload too large; max {MAX_INGEST_BYTES} bytes")
+        return raw
+
+    path = args.file
+    try:
+        file_stat = path.stat()
+    except OSError as exc:
+        raise ValueError(f"cannot read ingest file: {path}") from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise ValueError(f"ingest file is not a regular file: {path}")
+    if file_stat.st_size > MAX_INGEST_BYTES:
+        raise ValueError(f"ingest payload too large; max {MAX_INGEST_BYTES} bytes")
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"ingest file is not valid UTF-8: {path}") from exc
 
 
 if __name__ == "__main__":

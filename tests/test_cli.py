@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from io import StringIO
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from codex_usage.bridge import MAX_INGEST_BYTES
 from codex_usage.cli import main
 from codex_usage.models import AccountUsage, LimitWindow
 
@@ -686,6 +688,53 @@ def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):
     latest = capsys.readouterr().out
     assert "42 / 100" in latest
     assert "310 / 1000" in latest
+
+
+def test_ingest_file_rejects_oversized_payload_before_saving(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    payload_path = tmp_path / "too-large.txt"
+    payload_path.write_text("x" * (MAX_INGEST_BYTES + 1), encoding="utf-8")
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "ingest",
+                "privat",
+                "--file",
+                str(payload_path),
+            ]
+        )
+        == 1
+    )
+
+    assert "ingest payload too large" in capsys.readouterr().err
+    assert not (tmp_path / "data" / "codex-usage" / "snapshots" / "privat.json").exists()
+
+
+def test_ingest_stdin_rejects_oversized_payload_before_saving(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    import sys
+
+    old_stdin = sys.stdin
+    try:
+        sys.stdin = StringIO("x" * (MAX_INGEST_BYTES + 1))
+        assert main(["--config", str(config_path), "ingest", "privat", "--stdin"]) == 1
+    finally:
+        sys.stdin = old_stdin
+
+    assert "ingest payload too large" in capsys.readouterr().err
+    assert not (tmp_path / "data" / "codex-usage" / "snapshots" / "privat.json").exists()
 
 
 def test_bridge_snippet_command_prints_javascript(capsys):
