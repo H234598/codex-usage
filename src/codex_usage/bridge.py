@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -471,19 +472,39 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
                 return
             try:
                 payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
-                account_ref = str(payload.get("account") or "")
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._send_json(400, {"error": "invalid JSON payload"})
+                return
+            if not isinstance(payload, dict):
+                self._send_json(400, {"error": "invalid JSON payload"})
+                return
+
+            account_ref = str(payload.get("account") or "")
+            try:
                 usage, path = ingest_and_save(config, account_ref, payload, snapshot_dir)
+            except KeyError:
+                self._send_json(400, {"error": "unknown or ambiguous account"})
+                return
+            except ValueError as exc:
+                _log_bridge_error("Bridge ingest rejected", exc)
+                self._send_json(400, {"error": "ingest rejected"})
+                return
             except Exception as exc:
-                self._send_json(400, {"error": str(exc)})
+                _log_bridge_error("Bridge ingest failed", exc)
+                self._send_json(500, {"error": "ingest failed"})
                 return
 
             latest = load_latest_usages(config, snapshot_dir)
             print(render_table(latest), flush=True)
             debug_path = None
             if usage.error:
-                debug_path = save_bridge_debug_payload(usage.account_id, payload, snapshot_dir)
                 print(f"Diagnose {usage.account_id}: {usage.error}", flush=True)
-                print(f"Debug-Dump: {debug_path}", flush=True)
+                try:
+                    debug_path = save_bridge_debug_payload(usage.account_id, payload, snapshot_dir)
+                except Exception as exc:
+                    _log_bridge_error("Bridge debug dump failed", exc)
+                else:
+                    print(f"Debug-Dump: {debug_path}", flush=True)
             self._send_json(
                 200,
                 {
@@ -526,6 +547,10 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
             return "https://chatgpt.com"
 
     return BridgeHandler
+
+
+def _log_bridge_error(message: str, exc: Exception) -> None:
+    print(f"{message}: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
 
 
 def _parse_captured_at(value: Any) -> datetime:
