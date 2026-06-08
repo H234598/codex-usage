@@ -273,9 +273,10 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
     profile_state = None
     if args.delete_profile:
         _validate_profile_delete_target(profile_path, force=args.force_delete_profile)
-        profile_state = _delete_profile_dir(profile_path)
 
     remove_account(account.id, path=args.config)
+    if args.delete_profile:
+        profile_state = _delete_profile_dir(profile_path, force=args.force_delete_profile)
     print(f"Account geloescht: {account.id} ({account.label})")
     if args.delete_profile:
         print(f"Profil: {profile_state} {profile_path}")
@@ -502,7 +503,10 @@ def _validate_profile_delete_target(path: Path, *, force: bool) -> None:
     if not path.is_dir():
         raise ValueError(f"profile path is not a directory: {path}")
 
-    marker_exists = (path / ".codex-usage-profile").exists()
+    marker = path / ".codex-usage-profile"
+    if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+        raise ValueError(f"profile marker must be a regular file: {marker}")
+    marker_exists = marker.exists()
     default_root = (default_state_dir() / "profiles").expanduser().resolve()
     in_default_root = _is_relative_to(resolved, default_root)
     if not force and not marker_exists and not in_default_root:
@@ -512,7 +516,8 @@ def _validate_profile_delete_target(path: Path, *, force: bool) -> None:
         )
 
 
-def _delete_profile_dir(path: Path) -> str:
+def _delete_profile_dir(path: Path, *, force: bool) -> str:
+    _validate_profile_delete_target(path, force=force)
     if not path.exists():
         return "fehlt"
     shutil.rmtree(path)
