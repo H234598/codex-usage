@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .config import AppConfig, default_state_dir, resolve_account
 from .extractor import JsonCandidate, extract_windows, load_json_candidate
 from .models import Account, AccountStatus, AccountUsage
+from .private_io import write_private_text as write_private_output_text
 from .render import render_table
 from .state import load_usage_snapshot, save_usage_snapshot
 
@@ -158,11 +159,11 @@ def save_bridge_debug_payload(
             debug_payload[field] = _sanitize_api_responses(api_responses)
         else:
             debug_payload.pop(field, None)
-    path.write_text(json.dumps(debug_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_private_output_text(
+        path,
+        json.dumps(debug_payload, ensure_ascii=False, indent=2),
+        label="debug path",
+    )
     return path
 
 
@@ -408,13 +409,7 @@ def _prepare_private_directory(path: Path, *, label: str) -> None:
 
 
 def _write_private_text(path: Path, content: str, *, label: str) -> None:
-    if path.is_symlink() or (path.exists() and not path.is_file()):
-        raise ValueError(f"{label} must be a regular file: {path}")
-    path.write_text(content, encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_private_output_text(path, content, label=label)
 
 
 def run_bridge_server(

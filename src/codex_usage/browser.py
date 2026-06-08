@@ -18,6 +18,7 @@ from .config import AppConfig
 from .direct import DirectAuthError, read_auth_json_file
 from .extractor import JsonCandidate, extract_windows
 from .models import Account, AccountStatus, AccountUsage
+from .private_io import write_private_text as write_private_output_text
 
 JSON_MAX_BYTES = 2_000_000
 LOGIN_HINTS = ("log in", "sign in", "anmelden", "einloggen", "continue with")
@@ -548,9 +549,7 @@ def _prepare_private_output_dir(path: Path, *, label: str) -> None:
 
 
 def _write_private_text(path: Path, text: str, *, label: str) -> None:
-    _validate_private_output_path(path, label=label)
-    path.write_text(text, encoding="utf-8")
-    _chmod_private(path, mode=0o600)
+    write_private_output_text(path, text, label=label)
 
 
 def _validate_private_output_path(path: Path, *, label: str) -> None:

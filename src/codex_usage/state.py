@@ -9,6 +9,7 @@ from typing import Any
 
 from .config import default_state_dir
 from .models import AccountStatus, AccountUsage, LimitWindow
+from .private_io import write_private_text
 
 MAX_SNAPSHOT_BYTES = 1_000_000
 SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -31,13 +32,11 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
     except OSError:
         pass
     path = directory / f"{usage.account_id}.json"
-    if path.is_symlink():
-        raise ValueError(f"snapshot path must not be a symlink: {path}")
-    path.write_text(json.dumps(usage.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_private_text(
+        path,
+        json.dumps(usage.as_dict(), ensure_ascii=False, indent=2),
+        label="snapshot path",
+    )
     return path
 
 

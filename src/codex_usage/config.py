@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .models import Account
+from .private_io import write_private_text
 
 APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
@@ -82,13 +83,7 @@ def _read_config_text(config_path: Path) -> str:
 def save_config(config: AppConfig, path: Path | None = None) -> Path:
     config_path = path or default_config_path()
     _prepare_config_directory(config_path.parent)
-    if config_path.is_symlink() or (config_path.exists() and not config_path.is_file()):
-        raise ValueError(f"config path must be a regular file: {config_path}")
-    config_path.write_text(_to_toml(config), encoding="utf-8")
-    try:
-        config_path.chmod(0o600)
-    except OSError:
-        pass
+    write_private_text(config_path, _to_toml(config), label="config path")
     return config_path
 
 
@@ -224,14 +219,14 @@ def _prepare_profile_dir(profile_dir: str) -> Path:
     except OSError:
         pass
     marker = path / ".codex-usage-profile"
-    if marker.is_symlink():
-        raise ValueError(f"profile marker must not be a symlink: {marker}")
+    if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+        raise ValueError(f"profile marker must be a regular file: {marker}")
     if not marker.exists():
-        marker.write_text("codex-usage persistent browser profile\n", encoding="utf-8")
-        try:
-            marker.chmod(0o600)
-        except OSError:
-            pass
+        write_private_text(
+            marker,
+            "codex-usage persistent browser profile\n",
+            label="profile marker",
+        )
     return path
 
 
