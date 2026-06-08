@@ -35,9 +35,12 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
     except OSError:
         pass
     path = directory / f"{usage.account_id}.json"
+    text = json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False)
+    if len(text.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
+        raise ValueError(f"snapshot file too large; max {MAX_SNAPSHOT_BYTES} bytes")
     write_private_text(
         path,
-        json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False),
+        text,
         label="snapshot path",
     )
     return path
