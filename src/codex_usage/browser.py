@@ -374,9 +374,11 @@ def _save_diagnostic_screenshot(
 ) -> str | None:
     if screenshot_dir is None:
         return None
-    screenshot_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    _prepare_private_output_dir(screenshot_dir, label="diagnose screenshot directory")
     path = screenshot_dir / f"{account.id}-diagnose.png"
+    _validate_private_output_path(path, label="diagnose screenshot path")
     page.screenshot(path=str(path), full_page=True)
+    _validate_private_output_path(path, label="diagnose screenshot path")
     _chmod_private(path, mode=0o600)
     return str(path)
 
@@ -511,10 +513,14 @@ def _prepare_private_output_dir(path: Path, *, label: str) -> None:
 
 
 def _write_private_text(path: Path, text: str, *, label: str) -> None:
-    if path.is_symlink() or (path.exists() and not path.is_file()):
-        raise ValueError(f"{label} must be a regular file: {path}")
+    _validate_private_output_path(path, label=label)
     path.write_text(text, encoding="utf-8")
     _chmod_private(path, mode=0o600)
+
+
+def _validate_private_output_path(path: Path, *, label: str) -> None:
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError(f"{label} must be a regular file: {path}")
 
 
 def _redact_url(url: str) -> str:

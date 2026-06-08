@@ -8,10 +8,18 @@ from codex_usage.browser import (
     _detect_page_state,
     _diagnose_auth_json,
     _redact_url,
+    _save_diagnostic_screenshot,
     _save_probe_payloads,
 )
 from codex_usage.extractor import JsonCandidate
 from codex_usage.models import Account
+
+
+class FakeScreenshotPage:
+    def screenshot(self, *, path: str, full_page: bool) -> None:
+        assert full_page is True
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("fake-png")
 
 
 def test_diagnose_auth_json_redacts_token_values(tmp_path):
@@ -65,6 +73,33 @@ def test_diagnose_detects_cloudflare_challenge_and_redacts_url():
         )
         == "cloudflare"
     )
+
+
+def test_save_diagnostic_screenshot_rejects_symlink_directory(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    screenshot_link = tmp_path / "screens"
+    screenshot_link.symlink_to(outside, target_is_directory=True)
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+
+    with pytest.raises(ValueError, match="diagnose screenshot directory"):
+        _save_diagnostic_screenshot(FakeScreenshotPage(), account, screenshot_link)
+
+    assert not (outside / "privat-diagnose.png").exists()
+
+
+def test_save_diagnostic_screenshot_rejects_symlink_output_file(tmp_path):
+    screenshot_dir = tmp_path / "screens"
+    screenshot_dir.mkdir()
+    outside = tmp_path / "outside.png"
+    outside.write_text("keep", encoding="utf-8")
+    (screenshot_dir / "privat-diagnose.png").symlink_to(outside)
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+
+    with pytest.raises(ValueError, match="diagnose screenshot path"):
+        _save_diagnostic_screenshot(FakeScreenshotPage(), account, screenshot_dir)
+
+    assert outside.read_text(encoding="utf-8") == "keep"
 
 
 def test_save_probe_payloads_rejects_symlink_save_dir(tmp_path):
