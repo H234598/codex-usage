@@ -26,6 +26,39 @@ TEXT_PAYLOAD_FIELDS = (
     "svgText",
     "htmlText",
 )
+DEBUG_PAYLOAD_FIELDS = (
+    "account",
+    "url",
+    "title",
+    "capturedAt",
+    "captured_at",
+    "readyState",
+    "textLength",
+    "htmlLength",
+    "fieldLengths",
+    "truncatedFields",
+    "visibleTextLength",
+    "apiResponses",
+    "api_responses",
+    *TEXT_PAYLOAD_FIELDS,
+)
+DEBUG_TEXT_FIELDS = (*TEXT_PAYLOAD_FIELDS, "title")
+DEBUG_STRING_FIELDS = ("account", "capturedAt", "captured_at", "readyState")
+DEBUG_NUMBER_FIELDS = ("textLength", "htmlLength", "visibleTextLength")
+DEBUG_API_RESPONSE_FIELDS = (
+    "url",
+    "status",
+    "ok",
+    "contentType",
+    "content_type",
+    "bodyText",
+    "body",
+    "text",
+    "bodyExcerpt",
+    "truncated",
+    "source",
+    "error",
+)
 
 
 def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> AccountUsage:
@@ -85,16 +118,46 @@ def save_bridge_debug_payload(
     path = directory / f"{_safe_filename(account_id)}-last-ingest.json"
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"debug path must be a regular file: {path}")
-    debug_payload = dict(payload)
+    debug_payload = {
+        field: payload[field] for field in DEBUG_PAYLOAD_FIELDS if field in payload
+    }
     if "url" in debug_payload:
         debug_payload["url"] = _redact_url(str(debug_payload.get("url") or ""))
-    for field in TEXT_PAYLOAD_FIELDS:
+    for field in DEBUG_TEXT_FIELDS:
         value = debug_payload.get(field)
         if isinstance(value, str):
             debug_payload[field] = _sanitize_debug_text(value)
-    api_responses = debug_payload.get("apiResponses")
-    if isinstance(api_responses, list):
-        debug_payload["apiResponses"] = [_sanitize_api_response(item) for item in api_responses]
+        elif field in debug_payload:
+            debug_payload.pop(field, None)
+    for field in DEBUG_STRING_FIELDS:
+        value = debug_payload.get(field)
+        if isinstance(value, str):
+            debug_payload[field] = _sanitize_debug_text(value)
+        elif field in debug_payload:
+            debug_payload.pop(field, None)
+    for field in DEBUG_NUMBER_FIELDS:
+        if field in debug_payload:
+            value = _sanitize_debug_number(debug_payload[field])
+            if value is None:
+                debug_payload.pop(field, None)
+            else:
+                debug_payload[field] = value
+    field_lengths = _sanitize_debug_lengths(debug_payload.get("fieldLengths"))
+    if field_lengths:
+        debug_payload["fieldLengths"] = field_lengths
+    else:
+        debug_payload.pop("fieldLengths", None)
+    truncated_fields = _sanitize_debug_flags(debug_payload.get("truncatedFields"))
+    if truncated_fields:
+        debug_payload["truncatedFields"] = truncated_fields
+    else:
+        debug_payload.pop("truncatedFields", None)
+    for field in ("apiResponses", "api_responses"):
+        api_responses = debug_payload.get(field)
+        if isinstance(api_responses, list):
+            debug_payload[field] = _sanitize_api_responses(api_responses)
+        else:
+            debug_payload.pop(field, None)
     path.write_text(json.dumps(debug_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
         path.chmod(0o600)
@@ -185,18 +248,77 @@ def _sanitize_debug_text(value: str) -> str:
     return text
 
 
-def _sanitize_api_response(item: Any) -> Any:
+def _sanitize_api_responses(items: list[Any]) -> list[dict[str, Any]]:
+    responses: list[dict[str, Any]] = []
+    for item in items:
+        response = _sanitize_api_response(item)
+        if response:
+            responses.append(response)
+    return responses
+
+
+def _sanitize_api_response(item: Any) -> dict[str, Any] | None:
     if not isinstance(item, dict):
-        return item
-    redacted = dict(item)
+        return None
+    redacted = {field: item[field] for field in DEBUG_API_RESPONSE_FIELDS if field in item}
     if "url" in redacted:
         redacted["url"] = _redact_url(str(redacted.get("url") or ""))
-    for field in ("bodyText", "body", "text"):
+    for field in ("bodyText", "body", "text", "bodyExcerpt", "error"):
         value = redacted.get(field)
         if isinstance(value, str):
             redacted[field] = _sanitize_debug_text(value)
+        elif field in redacted:
+            redacted.pop(field, None)
+    for field in ("contentType", "content_type", "source"):
+        value = redacted.get(field)
+        if isinstance(value, str):
+            redacted[field] = _sanitize_debug_text(value)
+        elif field in redacted:
+            redacted.pop(field, None)
+    for field in ("ok", "truncated"):
+        if field in redacted and not isinstance(redacted[field], bool):
+            redacted.pop(field, None)
+    if "status" in redacted:
+        status = _sanitize_debug_number(redacted["status"])
+        if status is None:
+            redacted.pop("status", None)
+        else:
+            redacted["status"] = status
     return redacted
 
+
+def _sanitize_debug_number(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if value >= 0 else None
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+def _sanitize_debug_lengths(value: Any) -> dict[str, int] | None:
+    if not isinstance(value, dict):
+        return None
+    lengths: dict[str, int] = {}
+    for field in TEXT_PAYLOAD_FIELDS:
+        length = _sanitize_debug_number(value.get(field))
+        if length is not None:
+            lengths[field] = length
+    return lengths or None
+
+
+def _sanitize_debug_flags(value: Any) -> dict[str, bool] | None:
+    if not isinstance(value, dict):
+        return None
+    flags = {
+        field: value[field]
+        for field in TEXT_PAYLOAD_FIELDS
+        if isinstance(value.get(field), bool)
+    }
+    return flags or None
 
 
 def render_bridge_snippet(account_ref: str, *, endpoint: str, interval_seconds: int) -> str:
