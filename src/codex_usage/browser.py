@@ -242,7 +242,11 @@ def _capture_json_response(response: Any, candidates: list[JsonCandidate]) -> No
         text = response.text()
     except Exception:
         return
-    if len(text.encode("utf-8", errors="ignore")) > JSON_MAX_BYTES:
+    try:
+        encoded = text.encode("utf-8")
+    except UnicodeEncodeError:
+        return
+    if len(encoded) > JSON_MAX_BYTES:
         return
     try:
         payload = loads_strict(text)
