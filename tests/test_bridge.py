@@ -263,6 +263,9 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert 'credentials: "include"' in content
     assert "looksLikeCodexUsageJson" in content
     assert "bodyExcerpt" in content
+    assert "stopCodexUsageBridge" in content
+    assert "extension context invalidated" in content
+    assert "codexUsageIntervalId = setInterval" in content
     assert "document.body.innerText" in content
     assert "sanitizedCodexUsageRoot" in content
     assert "script, style, link, meta, noscript, template" in content

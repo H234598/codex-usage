@@ -427,6 +427,10 @@ const CODEX_USAGE_API_PATHS = [
   "/backend-api/wham/usage/credit-usage-events"
 ];
 let codexUsageLastTextLength = -1;
+let codexUsageStopped = false;
+let codexUsageIntervalId = null;
+let codexUsageReadyObserver = null;
+let codexUsageReadyTimer = null;
 
 function limitCodexUsageText(value) {{
   const text = String(value || "");
@@ -442,6 +446,32 @@ function isCodexUsageTruncated(value) {{
 function looksLikeCodexUsageJson(contentType, bodyText) {{
   return String(contentType || "").toLowerCase().includes("json")
     || /^[\\s\\n]*[{{\\[]/.test(String(bodyText || ""));
+}}
+
+function isCodexUsageExtensionContextError(error) {{
+  return String((error && error.message) || error || "")
+    .toLowerCase()
+    .includes("extension context invalidated");
+}}
+
+function stopCodexUsageBridge(reason) {{
+  if (codexUsageStopped) {{
+    return;
+  }}
+  codexUsageStopped = true;
+  if (codexUsageIntervalId) {{
+    clearInterval(codexUsageIntervalId);
+    codexUsageIntervalId = null;
+  }}
+  if (codexUsageReadyTimer) {{
+    clearInterval(codexUsageReadyTimer);
+    codexUsageReadyTimer = null;
+  }}
+  if (codexUsageReadyObserver) {{
+    codexUsageReadyObserver.disconnect();
+    codexUsageReadyObserver = null;
+  }}
+  console.warn("codex-usage bridge stopped", reason);
 }}
 
 function collectCodexUsageAttributeText() {{
@@ -546,25 +576,56 @@ function collectCodexUsage() {{
 }}
 
 async function sendCodexUsage() {{
+  if (codexUsageStopped) {{
+    return;
+  }}
   const payload = collectCodexUsage();
   payload.apiResponses = await fetchCodexUsageApis();
+  if (codexUsageStopped) {{
+    return;
+  }}
   if (!payload.bodyText.trim() && codexUsageLastTextLength === payload.textLength) {{
     console.warn("codex-usage bridge: page text is still empty", payload);
   }}
   codexUsageLastTextLength = payload.textLength;
-  chrome.runtime.sendMessage(
-    {{ type: "codexUsageIngest", payload }},
-    (response) => {{
-      if (chrome.runtime.lastError) {{
-        console.warn("codex-usage bridge", chrome.runtime.lastError.message);
-        return;
-      }}
-      console.log("codex-usage bridge", response);
+  try {{
+    if (
+      typeof chrome === "undefined"
+      || !chrome.runtime
+      || !chrome.runtime.id
+      || !chrome.runtime.sendMessage
+    ) {{
+      stopCodexUsageBridge("extension context unavailable");
+      return;
     }}
-  );
+    chrome.runtime.sendMessage(
+      {{ type: "codexUsageIngest", payload }},
+      (response) => {{
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        if (lastError) {{
+          if (isCodexUsageExtensionContextError(lastError)) {{
+            stopCodexUsageBridge(lastError.message);
+            return;
+          }}
+          console.warn("codex-usage bridge", lastError.message);
+          return;
+        }}
+        console.log("codex-usage bridge", response);
+      }}
+    );
+  }} catch (error) {{
+    if (isCodexUsageExtensionContextError(error)) {{
+      stopCodexUsageBridge(error.message || String(error));
+      return;
+    }}
+    console.warn("codex-usage bridge", error);
+  }}
 }}
 
 function sendWhenReady(startedAt = Date.now()) {{
+  if (codexUsageStopped) {{
+    return;
+  }}
   let sent = false;
   const sendAndStop = (observer, timer) => {{
     if (sent) {{
@@ -573,9 +634,11 @@ function sendWhenReady(startedAt = Date.now()) {{
     sent = true;
     if (observer) {{
       observer.disconnect();
+      codexUsageReadyObserver = null;
     }}
     if (timer) {{
       clearInterval(timer);
+      codexUsageReadyTimer = null;
     }}
     sendCodexUsage();
   }};
@@ -592,21 +655,31 @@ function sendWhenReady(startedAt = Date.now()) {{
     return;
   }}
   const observer = new MutationObserver(() => {{
+    if (codexUsageStopped) {{
+      sendAndStop(observer, timer);
+      return;
+    }}
     if (isReady()) {{
       sendAndStop(observer, timer);
     }}
   }});
+  codexUsageReadyObserver = observer;
   observer.observe(
     document.documentElement,
     {{ childList: true, subtree: true, characterData: true }}
   );
   const timer = setInterval(() => {{
+    if (codexUsageStopped) {{
+      sendAndStop(observer, timer);
+      return;
+    }}
     if (isReady()) {{
       sendAndStop(observer, timer);
     }}
   }}, 1000);
+  codexUsageReadyTimer = timer;
 }}
 
 sendWhenReady();
-setInterval(sendCodexUsage, CODEX_USAGE_INTERVAL_MS);
+codexUsageIntervalId = setInterval(sendCodexUsage, CODEX_USAGE_INTERVAL_MS);
 """
