@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,7 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
 
 
 def _load_access_token(path: Path) -> str:
+    _validate_auth_json_file(path)
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -102,6 +104,17 @@ def _load_access_token(path: Path) -> str:
     return access_token
 
 
+def _validate_auth_json_file(path: Path) -> None:
+    try:
+        file_stat = path.stat()
+    except OSError as exc:
+        raise DirectAuthError(f"cannot read auth.json: {path}") from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise DirectAuthError(f"auth.json is not a regular file: {path}")
+    if file_stat.st_mode & 0o077:
+        raise DirectAuthError(f"auth.json permissions too broad; run chmod 600 {path}")
+
+
 def _fetch_wham_usage(token: str, *, timeout_seconds: int) -> dict[str, Any]:
     request = Request(
         WHAM_USAGE_URL,
@@ -112,6 +125,9 @@ def _fetch_wham_usage(token: str, *, timeout_seconds: int) -> dict[str, Any]:
     )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
+            content_type = _response_content_type(response).lower()
+            if content_type and "json" not in content_type:
+                raise DirectFetchError("direct response is not JSON content")
             body = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
         if exc.code in (401, 403):
@@ -131,6 +147,18 @@ def _fetch_wham_usage(token: str, *, timeout_seconds: int) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise DirectFetchError("direct response is not a JSON object")
     return payload
+
+
+def _response_content_type(response: Any) -> str:
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        value = headers.get("content-type") or headers.get("Content-Type")
+        if value:
+            return str(value)
+    getheader = getattr(response, "getheader", None)
+    if callable(getheader):
+        return str(getheader("content-type") or "")
+    return ""
 
 
 def _redact_url(url: str) -> str:

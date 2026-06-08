@@ -29,7 +29,8 @@ def fetch_all(
     ]
     if save_snapshots:
         for usage in usages:
-            save_usage_snapshot(usage)
+            if usage.error is None:
+                save_usage_snapshot(usage)
     return usages
 
 
