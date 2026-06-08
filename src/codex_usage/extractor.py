@@ -497,7 +497,9 @@ def _walk_dicts(
                 break
             yield from _walk_dicts(child, f"{path}.{key}", depth=depth + 1)
     elif isinstance(value, list):
-        for index, child in enumerate(value[:MAX_JSON_WALK_ITEMS]):
+        for index, child in enumerate(value):
+            if index >= MAX_JSON_WALK_ITEMS:
+                break
             yield from _walk_dicts(child, f"{path}[{index}]", depth=depth + 1)
 
 
