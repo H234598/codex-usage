@@ -27,7 +27,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
     )
     five_hour, weekly = extract_windows(body_text=body_text, now=captured_at)
     status = AccountStatus.OK if five_hour and weekly else AccountStatus.PARTIAL
-    error = None if body_text.strip() else "missing page text"
+    error = _ingest_error(body_text, payload) if status != AccountStatus.OK else None
     source_url = _redact_url(str(payload.get("url") or ""))
     return AccountUsage(
         account_id=account.id,
@@ -39,6 +39,19 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         error=error,
         source_urls=(source_url,) if source_url else (),
     )
+
+
+def _ingest_error(body_text: str, payload: dict[str, Any]) -> str | None:
+    text_length = payload.get("textLength") if payload.get("textLength") is not None else "-"
+    if not body_text.strip():
+        return (
+            "missing page text"
+            f" url={_redact_url(str(payload.get('url') or '')) or '-'}"
+            f" title={str(payload.get('title') or '-')[:80]}"
+            f" ready={payload.get('readyState') or '-'}"
+            f" textLength={text_length}"
+        )
+    return "usage limits not found"
 
 
 def render_bridge_snippet(account_ref: str, *, endpoint: str, interval_seconds: int) -> str:
@@ -268,20 +281,34 @@ def _render_extension_content(account_ref: str, interval_seconds: int) -> str:
     interval_ms = max(interval_seconds, 60) * 1000
     return f"""const CODEX_USAGE_ACCOUNT = {account_json};
 const CODEX_USAGE_INTERVAL_MS = {interval_ms};
+const CODEX_USAGE_MIN_TEXT = 40;
+let codexUsageLastTextLength = -1;
 
 function collectCodexUsage() {{
+  const bodyText = document.body ? (document.body.innerText || "") : "";
+  const rootText = document.documentElement
+    ? (document.documentElement.innerText || document.documentElement.textContent || "")
+    : "";
+  const text = bodyText.trim() ? bodyText : rootText;
   return {{
     account: CODEX_USAGE_ACCOUNT,
     url: location.href,
     title: document.title,
     capturedAt: new Date().toISOString(),
-    bodyText: document.body ? document.body.innerText : ""
+    readyState: document.readyState,
+    textLength: text.length,
+    bodyText: text
   }};
 }}
 
 function sendCodexUsage() {{
+  const payload = collectCodexUsage();
+  if (!payload.bodyText.trim() && codexUsageLastTextLength === payload.textLength) {{
+    console.warn("codex-usage bridge: page text is still empty", payload);
+  }}
+  codexUsageLastTextLength = payload.textLength;
   chrome.runtime.sendMessage(
-    {{ type: "codexUsageIngest", payload: collectCodexUsage() }},
+    {{ type: "codexUsageIngest", payload }},
     (response) => {{
       if (chrome.runtime.lastError) {{
         console.warn("codex-usage bridge", chrome.runtime.lastError.message);
@@ -292,6 +319,30 @@ function sendCodexUsage() {{
   );
 }}
 
-sendCodexUsage();
+function sendWhenReady() {{
+  const payload = collectCodexUsage();
+  const hasEnoughText = payload.bodyText.trim().length >= CODEX_USAGE_MIN_TEXT;
+  if (hasEnoughText || document.readyState === "complete") {{
+    sendCodexUsage();
+    return;
+  }}
+  const observer = new MutationObserver(() => {{
+    const updated = collectCodexUsage();
+    if (updated.bodyText.trim().length >= CODEX_USAGE_MIN_TEXT) {{
+      observer.disconnect();
+      sendCodexUsage();
+    }}
+  }});
+  observer.observe(
+    document.documentElement,
+    {{ childList: true, subtree: true, characterData: true }}
+  );
+  setTimeout(() => {{
+    observer.disconnect();
+    sendCodexUsage();
+  }}, 10000);
+}}
+
+sendWhenReady();
 setInterval(sendCodexUsage, CODEX_USAGE_INTERVAL_MS);
 """

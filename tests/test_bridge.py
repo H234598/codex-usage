@@ -36,6 +36,26 @@ def test_usage_from_ingest_payload_extracts_visible_values():
     assert usage.weekly.limit == 1000
 
 
+def test_usage_from_ingest_payload_reports_empty_text_context():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "title": "Codex",
+            "readyState": "complete",
+            "textLength": 0,
+            "bodyText": "",
+        },
+    )
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.error is not None
+    assert "missing page text" in usage.error
+    assert "ready=complete" in usage.error
+    assert "textLength=0" in usage.error
+
+
 def test_render_bridge_snippet_contains_account_endpoint_and_interval():
     snippet = render_bridge_snippet(
         "BW_Privat",
@@ -69,5 +89,9 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     ]
     assert "fetch(ENDPOINT" in background
     assert "chrome.runtime.sendMessage" in content
+    assert "document.documentElement.innerText" in content
+    assert "MutationObserver" in content
+    assert "readyState" in content
+    assert "textLength" in content
     assert "BW_Privat" in content
     assert "300000" in content
