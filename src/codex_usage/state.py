@@ -26,6 +26,10 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError(f"snapshot directory is not a real directory: {directory}")
+    try:
+        directory.chmod(0o700)
+    except OSError:
+        pass
     path = directory / f"{usage.account_id}.json"
     if path.is_symlink():
         raise ValueError(f"snapshot path must not be a symlink: {path}")
