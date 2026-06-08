@@ -5,6 +5,7 @@ import ipaddress
 import json
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from .bridge import (
@@ -478,7 +479,14 @@ def _load_overview_usages(config, accounts=None):
             usage = fetch_account_usage_direct(account)
             usages[account.id] = usage
             if _is_successful_usage(usage):
-                save_usage_snapshot(usage)
+                try:
+                    save_usage_snapshot(usage)
+                except Exception as exc:
+                    usages[account.id] = replace(
+                        usage,
+                        status=AccountStatus.ERROR,
+                        error=f"snapshot save failed: {type(exc).__name__}",
+                    )
             continue
         snapshot = load_usage_snapshot(account.id)
         if snapshot is not None:
