@@ -153,7 +153,7 @@ def _window_from_wham_rate_limit_mapping(
     if target == "weekly" and window_seconds != 604_800:
         return None
 
-    used_percent = _coerce_number(obj.get("used_percent"))
+    used_percent = _coerce_percent(obj.get("used_percent"))
     reset_at = _parse_datetime(obj.get("reset_at"), captured_at)
     if used_percent is None and reset_at is None:
         return None
@@ -202,6 +202,8 @@ def _window_from_mapping(
         remaining = max(limit - used, 0)
     if percent is None and used is not None and limit:
         percent = used / limit * 100
+    if percent is not None and not 0 <= percent <= 100:
+        percent = None
 
     if all(value is None for value in (used, limit, remaining, percent, reset_at)):
         return None
@@ -298,7 +300,7 @@ def _extract_used_limit(text: str) -> tuple[float | None, float | None]:
 
 def _extract_percent(text: str) -> float | None:
     match = re.search(r"(?P<percent>\d+(?:[.,]\d+)?)\s*%", text)
-    return _parse_number(match.group("percent")) if match else None
+    return _parse_percent(match.group("percent")) if match else None
 
 
 def _extract_progress_width_percent(text: str) -> float | None:
@@ -309,7 +311,7 @@ def _extract_progress_width_percent(text: str) -> float | None:
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
-            return _parse_number(match.group("percent"))
+            return _parse_percent(match.group("percent"))
     return None
 
 
@@ -439,6 +441,11 @@ def _coerce_number(value: Any) -> float | None:
     return _parse_number(str(value))
 
 
+def _coerce_percent(value: Any) -> float | None:
+    number = _coerce_number(value)
+    return number if number is not None and 0 <= number <= 100 else None
+
+
 def _parse_number(raw: str | None) -> float | None:
     if raw is None:
         return None
@@ -447,6 +454,11 @@ def _parse_number(raw: str | None) -> float | None:
         return _finite_float(float(cleaned))
     except ValueError:
         return None
+
+
+def _parse_percent(raw: str | None) -> float | None:
+    number = _parse_number(raw)
+    return number if number is not None and 0 <= number <= 100 else None
 
 
 def _finite_float(value: float) -> float | None:
