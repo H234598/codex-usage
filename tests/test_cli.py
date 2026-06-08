@@ -42,6 +42,7 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage bridge-snippet ACCOUNT" in output
     assert "codex-usage bridge-extension ACCOUNT" in output
     assert "codex-usage bridge-server" in output
+    assert "--allow-remote" in output
     assert "codex-usage paths" in output
     assert "Direct-Modus mit mehreren Accounts braucht pro Account auth_json_path" in output
     assert "once/watch nutzen automatisch Direct-Modus" in output
@@ -339,6 +340,98 @@ def test_watch_without_account_selects_all_accounts_and_auto_direct(tmp_path, mo
         "auth_json_path": None,
         "interval_seconds": None,
     }
+
+
+def test_bridge_server_rejects_remote_host_without_explicit_opt_in(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    config_path = tmp_path / "config.toml"
+    called = {}
+
+    def fake_run_bridge_server(config, *, host, port):
+        called["host"] = host
+        called["port"] = port
+
+    monkeypatch.setattr("codex_usage.cli.run_bridge_server", fake_run_bridge_server)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "bridge-server",
+                "--host",
+                "0.0.0.0",
+            ]
+        )
+        == 1
+    )
+
+    assert called == {}
+    assert "--allow-remote" in capsys.readouterr().err
+
+
+def test_bridge_server_allows_remote_host_with_explicit_opt_in(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "config.toml"
+    called = {}
+
+    def fake_run_bridge_server(config, *, host, port):
+        called["host"] = host
+        called["port"] = port
+
+    monkeypatch.setattr("codex_usage.cli.run_bridge_server", fake_run_bridge_server)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "bridge-server",
+                "--host",
+                "0.0.0.0",
+                "--allow-remote",
+            ]
+        )
+        == 0
+    )
+
+    assert called == {"host": "0.0.0.0", "port": 8765}
+
+
+def test_bridge_server_allows_loopback_host_without_opt_in(
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "config.toml"
+    called = {}
+
+    def fake_run_bridge_server(config, *, host, port):
+        called["host"] = host
+        called["port"] = port
+
+    monkeypatch.setattr("codex_usage.cli.run_bridge_server", fake_run_bridge_server)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "bridge-server",
+                "--host",
+                "::1",
+                "--port",
+                "9999",
+            ]
+        )
+        == 0
+    )
+
+    assert called == {"host": "::1", "port": 9999}
 
 
 def test_direct_rejects_multiple_accounts_without_per_account_auth_json(tmp_path, capsys):

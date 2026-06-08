@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import shutil
 import sys
@@ -65,7 +66,7 @@ Manuelle Aufnahme und Ausgabe:
 Browser-Bridge:
   codex-usage bridge-snippet ACCOUNT [--port PORT] [--interval SEKUNDEN]
   codex-usage bridge-extension ACCOUNT [--output DIR] [--port PORT] [--interval SEKUNDEN]
-  codex-usage bridge-server [--host HOST] [--port PORT]
+  codex-usage bridge-server [--host HOST] [--port PORT] [--allow-remote]
 
 Sonstiges:
   codex-usage paths
@@ -84,6 +85,7 @@ Beispiele:
 Hinweis:
   once/watch nutzen automatisch Direct-Modus, wenn alle ausgewaehlten Accounts
   auth_json_path haben und --headed nicht gesetzt ist.
+  bridge-server lauscht ohne --allow-remote nur auf Loopback/localhost.
 """
 
 
@@ -225,6 +227,11 @@ def _build_parser() -> argparse.ArgumentParser:
     bridge = sub.add_parser("bridge-server", help="Lokalen Browser-Bridge-Server starten")
     bridge.add_argument("--host", default="127.0.0.1")
     bridge.add_argument("--port", type=int, default=8765)
+    bridge.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Nicht-Loopback-Hostbindung explizit erlauben",
+    )
     bridge.set_defaults(func=_cmd_bridge_server)
 
     paths = sub.add_parser("paths", help="Standardpfade anzeigen")
@@ -398,6 +405,7 @@ def _cmd_bridge_extension(args: argparse.Namespace) -> int:
 
 def _cmd_bridge_server(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    _validate_bridge_host(args.host, allow_remote=args.allow_remote)
     run_bridge_server(config, host=args.host, port=args.port)
     return 0
 
@@ -427,6 +435,24 @@ def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None
         raise ValueError(
             "direct mode with multiple accounts requires per-account --auth-json; "
             f"missing: {joined}"
+        )
+
+
+def _validate_bridge_host(host: str, *, allow_remote: bool) -> None:
+    if allow_remote:
+        return
+    normalized = host.strip()
+    if normalized == "localhost":
+        return
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError as exc:
+        raise ValueError(
+            "bridge-server host must be loopback/localhost unless --allow-remote is set"
+        ) from exc
+    if not address.is_loopback:
+        raise ValueError(
+            "bridge-server host must be loopback/localhost unless --allow-remote is set"
         )
 
 
