@@ -23,6 +23,8 @@ from .private_io import write_private_text as write_private_output_text
 
 JSON_MAX_BYTES = 2_000_000
 PROBE_OUTPUT_MAX_BYTES = 2_000_000
+BROWSER_TEXT_MAX_CHARS = 2_000_000
+TITLE_MAX_CHARS = 500
 DIAGNOSTIC_MAX_KEYS = 40
 DIAGNOSTIC_MAX_FIELD_CHARS = 200
 LOGIN_HINTS = ("log in", "sign in", "anmelden", "einloggen", "continue with")
@@ -363,16 +365,23 @@ def _looks_relevant_url(url: str) -> bool:
 
 def _safe_body_text(page: Any) -> str:
     try:
-        return page.locator("body").inner_text(timeout=10_000)
+        return _limit_text(
+            page.locator("body").inner_text(timeout=10_000),
+            BROWSER_TEXT_MAX_CHARS,
+        )
     except PlaywrightError:
         return ""
 
 
 def _safe_title(page: Any) -> str:
     try:
-        return page.title()
+        return _limit_text(page.title(), TITLE_MAX_CHARS)
     except PlaywrightError:
         return ""
+
+
+def _limit_text(value: str, max_chars: int) -> str:
+    return value if len(value) <= max_chars else value[:max_chars]
 
 
 def _safe_excerpt(body_text: str) -> str:
