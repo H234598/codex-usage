@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
 from .models import Account, AccountUsage, LimitWindow
+
+ACCOUNT_CELL_MAX = 40
+PATH_CELL_MAX = 80
+STATUS_CELL_MAX = 40
+VALUE_CELL_MAX = 28
 
 
 def render_json(usages: Iterable[AccountUsage]) -> str:
@@ -26,13 +32,13 @@ def render_account_overview(
     usage_by_account = usages or {}
     rows = [
         [
-            account.id,
-            account.label,
-            account.browser,
+            _cell(account.id, 64),
+            _cell(account.label, ACCOUNT_CELL_MAX),
+            _cell(account.browser, 16),
             _auth_state(account.auth_json_path),
             *_overview_usage_values(usage_by_account.get(account.id)),
             _profile_state(account.profile_dir),
-            str(Path(account.profile_dir).expanduser()),
+            _cell(str(Path(account.profile_dir).expanduser()), PATH_CELL_MAX),
         ]
         for account in sorted(config.accounts, key=lambda item: item.id)
     ]
@@ -78,7 +84,7 @@ def render_account_values(
 ) -> str:
     rows = [
         [
-            account.label,
+            _cell(account.label, ACCOUNT_CELL_MAX),
             *_overview_usage_values(usages.get(account.id)),
         ]
         for account in sorted(accounts, key=lambda item: item.id)
@@ -99,7 +105,7 @@ def render_table(usages: Iterable[AccountUsage]) -> str:
     headers = ["Account", "5h Wert", "5h Reset", "Woche Wert", "Woche Reset", "Status"]
     data = [
         [
-            usage.label,
+            _cell(usage.label, ACCOUNT_CELL_MAX),
             _usage_value(usage.five_hour),
             _reset_value(usage.five_hour),
             _usage_value(usage.weekly),
@@ -147,11 +153,11 @@ def _overview_usage_values(usage: AccountUsage | None) -> list[str]:
     if usage is None:
         return ["-", "-", "-", "-", "-"]
     return [
-        _usage_value(usage.five_hour),
+        _cell(_usage_value(usage.five_hour), VALUE_CELL_MAX),
         _reset_value(usage.five_hour),
-        _usage_value(usage.weekly),
+        _cell(_usage_value(usage.weekly), VALUE_CELL_MAX),
         _reset_value(usage.weekly),
-        _status_value(usage),
+        _cell(_status_value(usage), STATUS_CELL_MAX),
     ]
 
 
@@ -162,13 +168,22 @@ def _usage_value(window: LimitWindow | None) -> str:
         return f"{window.remaining:.0f}% verbleibend"
     parts: list[str] = []
     if window.used is not None and window.limit is not None:
-        parts.append(f"{_fmt_number(window.used)} / {_fmt_number(window.limit)}")
+        used = _fmt_number(window.used)
+        limit = _fmt_number(window.limit)
+        if used != "-" and limit != "-":
+            parts.append(f"{used} / {limit}")
     elif window.used is not None:
-        parts.append(f"{_fmt_number(window.used)} genutzt")
+        used = _fmt_number(window.used)
+        if used != "-":
+            parts.append(f"{used} genutzt")
     elif window.limit is not None:
-        parts.append(f"Limit {_fmt_number(window.limit)}")
+        limit = _fmt_number(window.limit)
+        if limit != "-":
+            parts.append(f"Limit {limit}")
     if window.percent is not None:
-        parts.append(f"{window.percent:.0f}%")
+        percent = _fmt_number(window.percent)
+        if percent != "-":
+            parts.append(f"{percent}%")
     if not parts and window.raw:
         return _shorten(window.raw, 28)
     return "  ".join(parts) if parts else "-"
@@ -176,10 +191,13 @@ def _usage_value(window: LimitWindow | None) -> str:
 
 def _is_remaining_percent_window(window: LimitWindow) -> bool:
     return (
-        window.remaining is not None
-        and window.percent is not None
-        and abs(window.remaining - window.percent) < 0.01
-        and (window.limit is None or abs(window.limit - 100) < 0.01)
+        _is_finite_number(window.remaining)
+        and _is_finite_number(window.percent)
+        and abs(float(window.remaining) - float(window.percent)) < 0.01
+        and (
+            window.limit is None
+            or (_is_finite_number(window.limit) and abs(float(window.limit) - 100) < 0.01)
+        )
     )
 
 
@@ -196,7 +214,23 @@ def _status_value(usage: AccountUsage) -> str:
 
 
 def _fmt_number(value: float) -> str:
-    return str(int(value)) if value.is_integer() else f"{value:.2f}".rstrip("0").rstrip(".")
+    number = float(value)
+    if not math.isfinite(number):
+        return "-"
+    return str(int(number)) if number.is_integer() else f"{number:.2f}".rstrip("0").rstrip(".")
+
+
+def _is_finite_number(value: float | None) -> bool:
+    if value is None:
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _cell(value: str, max_len: int) -> str:
+    return _shorten(str(value), max_len)
 
 
 def _shorten(value: str, max_len: int) -> str:
