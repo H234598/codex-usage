@@ -389,12 +389,16 @@ def _cmd_values(args: argparse.Namespace) -> int:
 
 
 def _cmd_bridge_snippet(args: argparse.Namespace) -> int:
+    _validate_port(args.port)
+    _validate_min_interval(args.interval)
     endpoint = f"http://127.0.0.1:{args.port}/ingest"
     print(render_bridge_snippet(args.account, endpoint=endpoint, interval_seconds=args.interval))
     return 0
 
 
 def _cmd_bridge_extension(args: argparse.Namespace) -> int:
+    _validate_port(args.port)
+    _validate_min_interval(args.interval)
     config = load_config(args.config)
     account = resolve_account(config, args.account)
     endpoint = f"http://127.0.0.1:{args.port}/ingest"
@@ -412,6 +416,7 @@ def _cmd_bridge_extension(args: argparse.Namespace) -> int:
 
 def _cmd_bridge_server(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    _validate_port(args.port)
     _validate_bridge_host(args.host, allow_remote=args.allow_remote)
     run_bridge_server(config, host=args.host, port=args.port)
     return 0
@@ -461,6 +466,24 @@ def _validate_bridge_host(host: str, *, allow_remote: bool) -> None:
         raise ValueError(
             "bridge-server host must be loopback/localhost unless --allow-remote is set"
         )
+
+
+def _validate_port(port: int) -> None:
+    if (
+        isinstance(port, bool)
+        or not isinstance(port, int)
+        or not 1 <= port <= 65535
+    ):
+        raise ValueError("--port must be between 1 and 65535")
+
+
+def _validate_min_interval(interval_seconds: int) -> None:
+    if (
+        isinstance(interval_seconds, bool)
+        or not isinstance(interval_seconds, int)
+        or interval_seconds < 60
+    ):
+        raise ValueError("--interval must be at least 60 seconds")
 
 
 def _should_use_direct(args: argparse.Namespace, accounts) -> bool:
