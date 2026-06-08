@@ -470,9 +470,13 @@ def _profile_lock(profile_dir: Path):
     lock_path = profile_dir / ".codex-usage.lock"
     if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
         raise ValueError(f"profile lock path must be a regular file: {lock_path}")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    flags = os.O_RDWR | os.O_CREAT
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     try:
         fd = os.open(lock_path, flags, 0o600)
     except OSError as exc:
@@ -481,8 +485,10 @@ def _profile_lock(profile_dir: Path):
         file_stat = os.fstat(fd)
         if not stat.S_ISREG(file_stat.st_mode):
             raise ValueError(f"profile lock path must be a regular file: {lock_path}")
+        if file_stat.st_nlink != 1:
+            raise ValueError(f"profile lock path must not be hard-linked: {lock_path}")
         os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "r+", encoding="utf-8") as handle:
             fd = -1
             try:
                 import fcntl
@@ -490,6 +496,8 @@ def _profile_lock(profile_dir: Path):
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
                 raise RuntimeError(f"profile is already in use: {profile_dir}") from exc
+            handle.seek(0)
+            handle.truncate(0)
             handle.write(str(os.getpid()))
             handle.flush()
             try:

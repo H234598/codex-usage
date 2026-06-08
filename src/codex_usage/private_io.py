@@ -66,7 +66,7 @@ def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) 
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
 
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    flags = os.O_WRONLY | os.O_CREAT
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_CLOEXEC"):
@@ -85,7 +85,10 @@ def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) 
         file_stat = os.fstat(fd)
         if not stat.S_ISREG(file_stat.st_mode):
             raise ValueError(f"{label} must be a regular file: {path}")
+        if file_stat.st_nlink != 1:
+            raise ValueError(f"{label} must not be hard-linked: {path}")
         os.fchmod(fd, mode)
+        os.ftruncate(fd, 0)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             fd = -1
             handle.write(text)
