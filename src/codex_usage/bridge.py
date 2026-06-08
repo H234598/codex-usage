@@ -113,6 +113,12 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
     for item in payload.get("apiResponses") or payload.get("api_responses") or ():
         if not isinstance(item, dict):
             continue
+        status = item.get("status")
+        if isinstance(status, int) and status >= 400:
+            continue
+        content_type = str(item.get("contentType") or item.get("content_type") or "").lower()
+        if content_type and "json" not in content_type:
+            continue
         url = _redact_url(str(item.get("url") or ""))
         body = item.get("bodyText") or item.get("body") or item.get("text")
         if not url or not isinstance(body, str):
@@ -415,10 +421,10 @@ const CODEX_USAGE_MIN_TEXT = 40;
 const CODEX_USAGE_MAX_FIELD_CHARS = 2000000;
 const CODEX_USAGE_READY_TIMEOUT_MS = 60000;
 const CODEX_USAGE_API_PATHS = [
-  "/wham/usage",
-  "/wham/usage/daily-token-usage-breakdown",
-  "/wham/usage/daily-enterprise-token-usage-breakdown",
-  "/wham/usage/credit-usage-events"
+  "/backend-api/wham/usage",
+  "/backend-api/wham/usage/daily-token-usage-breakdown",
+  "/backend-api/wham/usage/daily-enterprise-token-usage-breakdown",
+  "/backend-api/wham/usage/credit-usage-events"
 ];
 let codexUsageLastTextLength = -1;
 
@@ -431,6 +437,11 @@ function limitCodexUsageText(value) {{
 
 function isCodexUsageTruncated(value) {{
   return String(value || "").length > CODEX_USAGE_MAX_FIELD_CHARS;
+}}
+
+function looksLikeCodexUsageJson(contentType, bodyText) {{
+  return String(contentType || "").toLowerCase().includes("json")
+    || /^[\\s\\n]*[{{\\[]/.test(String(bodyText || ""));
 }}
 
 function collectCodexUsageAttributeText() {{
@@ -456,14 +467,17 @@ async function fetchCodexUsageApi(path) {{
     credentials: "include",
     headers: {{ "Accept": "application/json" }}
   }});
+  const contentType = response.headers.get("content-type") || "";
   const bodyText = await response.text();
+  const isJson = looksLikeCodexUsageJson(contentType, bodyText);
   return {{
     url: url.href,
     status: response.status,
     ok: response.ok,
-    contentType: response.headers.get("content-type") || "",
-    bodyText: limitCodexUsageText(bodyText),
-    truncated: isCodexUsageTruncated(bodyText)
+    contentType,
+    bodyText: isJson ? limitCodexUsageText(bodyText) : "",
+    bodyExcerpt: isJson ? "" : limitCodexUsageText(bodyText).slice(0, 500),
+    truncated: isJson ? isCodexUsageTruncated(bodyText) : false
   }};
 }}
 
