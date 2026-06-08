@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import json
 
-from codex_usage.browser import _detect_page_state, _diagnose_auth_json, _redact_url
+import pytest
+
+from codex_usage.browser import (
+    _detect_page_state,
+    _diagnose_auth_json,
+    _redact_url,
+    _save_probe_payloads,
+)
+from codex_usage.extractor import JsonCandidate
+from codex_usage.models import Account
 
 
 def test_diagnose_auth_json_redacts_token_values(tmp_path):
@@ -56,3 +65,36 @@ def test_diagnose_detects_cloudflare_challenge_and_redacts_url():
         )
         == "cloudflare"
     )
+
+
+def test_save_probe_payloads_rejects_symlink_save_dir(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    save_link = tmp_path / "probe"
+    save_link.symlink_to(outside, target_is_directory=True)
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+
+    with pytest.raises(ValueError, match="probe save directory"):
+        _save_probe_payloads(
+            save_link,
+            account,
+            [JsonCandidate(url="https://chatgpt.com/backend-api/wham/usage", payload={})],
+            "visible body",
+        )
+
+    assert not (outside / "privat-01.json").exists()
+    assert not (outside / "privat-body.txt").exists()
+
+
+def test_save_probe_payloads_rejects_symlink_output_file(tmp_path):
+    save_dir = tmp_path / "probe"
+    save_dir.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep", encoding="utf-8")
+    (save_dir / "privat-body.txt").symlink_to(outside)
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+
+    with pytest.raises(ValueError, match="probe output path"):
+        _save_probe_payloads(save_dir, account, [], "visible body")
+
+    assert outside.read_text(encoding="utf-8") == "keep"

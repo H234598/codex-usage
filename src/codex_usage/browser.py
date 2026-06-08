@@ -488,19 +488,33 @@ def _save_probe_payloads(
     candidates: list[JsonCandidate],
     body_text: str,
 ) -> list[str]:
-    save_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    _prepare_private_output_dir(save_dir, label="probe save directory")
     saved: list[str] = []
     for index, candidate in enumerate(candidates, start=1):
         path = save_dir / f"{account.id}-{index:02d}.json"
         payload_text = json.dumps(candidate.payload, ensure_ascii=False, indent=2)
-        path.write_text(payload_text, encoding="utf-8")
-        path.chmod(0o600)
+        _write_private_text(path, payload_text, label="probe output path")
         saved.append(str(path))
     body_path = save_dir / f"{account.id}-body.txt"
-    body_path.write_text(body_text, encoding="utf-8")
-    body_path.chmod(0o600)
+    _write_private_text(body_path, body_text, label="probe output path")
     saved.append(str(body_path))
     return saved
+
+
+def _prepare_private_output_dir(path: Path, *, label: str) -> None:
+    if path.is_symlink():
+        raise ValueError(f"{label} must not be a symlink: {path}")
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(f"{label} is not a real directory: {path}")
+    _chmod_private(path)
+
+
+def _write_private_text(path: Path, text: str, *, label: str) -> None:
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError(f"{label} must be a regular file: {path}")
+    path.write_text(text, encoding="utf-8")
+    _chmod_private(path, mode=0o600)
 
 
 def _redact_url(url: str) -> str:
