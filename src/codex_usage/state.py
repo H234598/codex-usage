@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import stat
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -8,15 +10,25 @@ from typing import Any
 from .config import default_state_dir
 from .models import AccountStatus, AccountUsage, LimitWindow
 
+MAX_SNAPSHOT_BYTES = 1_000_000
+SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
 
 def default_snapshot_dir() -> Path:
     return default_state_dir() / "snapshots"
 
 
 def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -> Path:
+    _validate_snapshot_account_id(usage.account_id)
     directory = snapshot_dir or default_snapshot_dir()
+    if directory.is_symlink():
+        raise ValueError(f"snapshot directory must not be a symlink: {directory}")
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError(f"snapshot directory is not a real directory: {directory}")
     path = directory / f"{usage.account_id}.json"
+    if path.is_symlink():
+        raise ValueError(f"snapshot path must not be a symlink: {path}")
     path.write_text(json.dumps(usage.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
     try:
         path.chmod(0o600)
@@ -26,11 +38,28 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
 
 
 def load_usage_snapshot(account_id: str, snapshot_dir: Path | None = None) -> AccountUsage | None:
+    try:
+        _validate_snapshot_account_id(account_id)
+    except ValueError:
+        return None
     path = (snapshot_dir or default_snapshot_dir()) / f"{account_id}.json"
     if not path.exists():
         return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return usage_from_dict(payload)
+    if path.is_symlink():
+        return None
+    try:
+        file_stat = path.stat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size > MAX_SNAPSHOT_BYTES:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        return usage_from_dict(payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
 
 
 def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
@@ -66,3 +95,8 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _validate_snapshot_account_id(account_id: str) -> None:
+    if account_id in {".", ".."} or not SNAPSHOT_ACCOUNT_ID_RE.fullmatch(account_id):
+        raise ValueError("account id must be 1-64 chars: letters, digits, underscore, dot, dash")
