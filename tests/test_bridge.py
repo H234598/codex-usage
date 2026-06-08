@@ -78,6 +78,47 @@ def test_usage_from_ingest_payload_uses_full_dom_payload_fields():
     assert usage.weekly.limit == 1000
 
 
+def test_usage_from_ingest_payload_extracts_api_responses():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": "Codex analytics",
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/wham/usage?secret=1",
+                    "status": 200,
+                    "bodyText": json.dumps(
+                        {
+                            "five_hour_usage_limit": {
+                                "used": 42,
+                                "limit": 100,
+                                "reset_at": "2026-06-08T04:26:00+02:00",
+                            },
+                            "weekly_usage_limit": {
+                                "used": 310,
+                                "limit": 1000,
+                                "reset_at": "2026-06-14T04:26:00+02:00",
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert usage.status == AccountStatus.OK
+    assert usage.source_urls == (
+        "https://chatgpt.com/codex/cloud/settings/analytics",
+        "https://chatgpt.com/wham/usage",
+    )
+    assert usage.five_hour is not None
+    assert usage.five_hour.used == 42
+    assert usage.weekly is not None
+    assert usage.weekly.limit == 1000
+
+
 def test_usage_from_ingest_payload_reports_search_excerpt():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(
@@ -110,6 +151,12 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
                 '"accessToken":"aaa.bbb.ccc","sessionToken":"ddd.eee.fff"'
                 "</script><body>debug</body></html>"
             ),
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/wham/usage?secret=1",
+                    "bodyText": '{"accessToken":"aaa.bbb.ccc","email":"user@example.test"}',
+                }
+            ],
         },
         tmp_path / "snapshots",
     )
@@ -122,6 +169,9 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
     assert "sessionToken" not in payload["htmlText"]
     assert "<script>[redacted]</script>" in payload["htmlText"]
     assert "<body>debug</body>" in payload["htmlText"]
+    assert payload["apiResponses"][0]["url"] == "https://chatgpt.com/wham/usage"
+    assert "aaa.bbb.ccc" not in payload["apiResponses"][0]["bodyText"]
+    assert "user@example.test" not in payload["apiResponses"][0]["bodyText"]
     assert path.stat().st_mode & 0o077 == 0
 
 
@@ -158,6 +208,10 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     ]
     assert "fetch(ENDPOINT" in background
     assert "chrome.runtime.sendMessage" in content
+    assert "/wham/usage" in content
+    assert "fetchCodexUsageApis" in content
+    assert "apiResponses" in content
+    assert 'credentials: "include"' in content
     assert "document.body.innerText" in content
     assert "sanitizedCodexUsageRoot" in content
     assert "script, style, link, meta, noscript, template" in content

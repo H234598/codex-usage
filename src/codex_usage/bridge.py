@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .config import AppConfig, default_state_dir, resolve_account
-from .extractor import extract_windows
+from .extractor import JsonCandidate, extract_windows, load_json_candidate
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_table
 from .state import load_usage_snapshot, save_usage_snapshot
@@ -31,10 +31,17 @@ TEXT_PAYLOAD_FIELDS = (
 def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> AccountUsage:
     captured_at = _parse_captured_at(payload.get("capturedAt") or payload.get("captured_at"))
     body_text = _combined_payload_text(payload)
-    five_hour, weekly = extract_windows(body_text=body_text, now=captured_at)
+    json_candidates = _json_candidates_from_payload(payload)
+    five_hour, weekly = extract_windows(
+        body_text=body_text,
+        json_candidates=json_candidates,
+        now=captured_at,
+    )
     status = AccountStatus.OK if five_hour and weekly else AccountStatus.PARTIAL
     error = _ingest_error(body_text, payload) if status != AccountStatus.OK else None
-    source_url = _redact_url(str(payload.get("url") or ""))
+    source_urls = {_redact_url(str(payload.get("url") or ""))}
+    source_urls.update(_redact_url(candidate.url) for candidate in json_candidates)
+    source_urls.discard("")
     return AccountUsage(
         account_id=account.id,
         label=account.label,
@@ -43,7 +50,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         weekly=weekly,
         status=status,
         error=error,
-        source_urls=(source_url,) if source_url else (),
+        source_urls=tuple(sorted(source_urls)),
     )
 
 
@@ -75,6 +82,9 @@ def save_bridge_debug_payload(
         value = debug_payload.get(field)
         if isinstance(value, str):
             debug_payload[field] = _sanitize_debug_text(value)
+    api_responses = debug_payload.get("apiResponses")
+    if isinstance(api_responses, list):
+        debug_payload["apiResponses"] = [_sanitize_api_response(item) for item in api_responses]
     path.write_text(json.dumps(debug_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
         path.chmod(0o600)
@@ -96,6 +106,21 @@ def _combined_payload_text(payload: dict[str, Any]) -> str:
         seen.add(text)
         parts.append(text)
     return "\n\n".join(parts)
+
+
+def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate]:
+    candidates: list[JsonCandidate] = []
+    for item in payload.get("apiResponses") or payload.get("api_responses") or ():
+        if not isinstance(item, dict):
+            continue
+        url = _redact_url(str(item.get("url") or ""))
+        body = item.get("bodyText") or item.get("body") or item.get("text")
+        if not url or not isinstance(body, str):
+            continue
+        candidate = load_json_candidate(url, body)
+        if candidate is not None:
+            candidates.append(candidate)
+    return candidates
 
 
 def _safe_excerpt(value: str, limit: int = 240) -> str:
@@ -136,6 +161,19 @@ def _sanitize_debug_text(value: str) -> str:
     )
     text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[redacted.email]", text)
     return text
+
+
+def _sanitize_api_response(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    redacted = dict(item)
+    if "url" in redacted:
+        redacted["url"] = _redact_url(str(redacted.get("url") or ""))
+    for field in ("bodyText", "body", "text"):
+        value = redacted.get(field)
+        if isinstance(value, str):
+            redacted[field] = _sanitize_debug_text(value)
+    return redacted
 
 
 
@@ -376,6 +414,12 @@ const CODEX_USAGE_INTERVAL_MS = {interval_ms};
 const CODEX_USAGE_MIN_TEXT = 40;
 const CODEX_USAGE_MAX_FIELD_CHARS = 2000000;
 const CODEX_USAGE_READY_TIMEOUT_MS = 60000;
+const CODEX_USAGE_API_PATHS = [
+  "/wham/usage",
+  "/wham/usage/daily-token-usage-breakdown",
+  "/wham/usage/daily-enterprise-token-usage-breakdown",
+  "/wham/usage/credit-usage-events"
+];
 let codexUsageLastTextLength = -1;
 
 function limitCodexUsageText(value) {{
@@ -403,6 +447,36 @@ function collectCodexUsageSvgText() {{
     .map((element) => element.textContent || "")
     .filter((value) => value.trim())
     .join("\\n");
+}}
+
+async function fetchCodexUsageApi(path) {{
+  const url = new URL(path, location.origin);
+  const response = await fetch(url.href, {{
+    method: "GET",
+    credentials: "include",
+    headers: {{ "Accept": "application/json" }}
+  }});
+  const bodyText = await response.text();
+  return {{
+    url: url.href,
+    status: response.status,
+    ok: response.ok,
+    contentType: response.headers.get("content-type") || "",
+    bodyText: limitCodexUsageText(bodyText),
+    truncated: isCodexUsageTruncated(bodyText)
+  }};
+}}
+
+async function fetchCodexUsageApis() {{
+  const results = [];
+  for (const path of CODEX_USAGE_API_PATHS) {{
+    try {{
+      results.push(await fetchCodexUsageApi(path));
+    }} catch (error) {{
+      results.push({{ url: new URL(path, location.origin).href, error: String(error) }});
+    }}
+  }}
+  return results;
 }}
 
 function sanitizedCodexUsageRoot() {{
@@ -457,8 +531,9 @@ function collectCodexUsage() {{
   }};
 }}
 
-function sendCodexUsage() {{
+async function sendCodexUsage() {{
   const payload = collectCodexUsage();
+  payload.apiResponses = await fetchCodexUsageApis();
   if (!payload.bodyText.trim() && codexUsageLastTextLength === payload.textLength) {{
     console.warn("codex-usage bridge: page text is still empty", payload);
   }}
