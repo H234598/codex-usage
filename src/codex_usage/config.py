@@ -62,13 +62,27 @@ def load_config(path: Path | None = None) -> AppConfig:
 
 def save_config(config: AppConfig, path: Path | None = None) -> Path:
     config_path = path or default_config_path()
-    config_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    _prepare_config_directory(config_path.parent)
+    if config_path.is_symlink() or (config_path.exists() and not config_path.is_file()):
+        raise ValueError(f"config path must be a regular file: {config_path}")
     config_path.write_text(_to_toml(config), encoding="utf-8")
     try:
         config_path.chmod(0o600)
     except OSError:
         pass
     return config_path
+
+
+def _prepare_config_directory(config_dir: Path) -> None:
+    if config_dir.is_symlink():
+        raise ValueError(f"config directory must not be a symlink: {config_dir}")
+    config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if config_dir.is_symlink() or not config_dir.is_dir():
+        raise ValueError(f"config directory is not a real directory: {config_dir}")
+    try:
+        config_dir.chmod(0o700)
+    except OSError:
+        pass
 
 
 def add_or_update_account(

@@ -140,6 +140,30 @@ def test_save_config_sets_private_file_mode(tmp_path):
     assert oct(config_path.stat().st_mode & 0o777) == "0o600"
 
 
+def test_save_config_rejects_symlink_config_file_without_overwriting_target(tmp_path):
+    target = tmp_path / "outside.toml"
+    target.write_text("keep", encoding="utf-8")
+    config_path = tmp_path / "config.toml"
+    config_path.symlink_to(target)
+
+    with pytest.raises(ValueError, match="config path"):
+        save_config(AppConfig(accounts=()), config_path)
+
+    assert target.read_text(encoding="utf-8") == "keep"
+
+
+def test_save_config_rejects_symlink_config_directory_without_writing_target(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    config_dir = tmp_path / "config"
+    config_dir.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="config directory"):
+        save_config(AppConfig(accounts=()), config_dir / "config.toml")
+
+    assert not (outside / "config.toml").exists()
+
+
 def test_resolve_account_accepts_id_or_unique_label(tmp_path):
     config_path = tmp_path / "config.toml"
     add_or_update_account("privat", label="BW_Privat", path=config_path)
