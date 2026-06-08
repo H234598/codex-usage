@@ -340,3 +340,38 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "codexUsageApiResponses" in page_hook
     assert "/backend-api/wham/" in page_hook
     assert 'source: "page-fetch"' in page_hook
+
+
+def test_write_bridge_extension_rejects_symlink_output_dir(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    output_link = tmp_path / "extension"
+    output_link.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="extension output directory"):
+        write_bridge_extension(
+            "BW_Privat",
+            output_link,
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+        )
+
+    assert not (outside / "manifest.json").exists()
+
+
+def test_write_bridge_extension_rejects_symlink_output_file(tmp_path):
+    output_dir = tmp_path / "extension"
+    output_dir.mkdir()
+    outside = tmp_path / "outside.js"
+    outside.write_text("keep", encoding="utf-8")
+    (output_dir / "content.js").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="extension output path"):
+        write_bridge_extension(
+            "BW_Privat",
+            output_dir,
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+        )
+
+    assert outside.read_text(encoding="utf-8") == "keep"

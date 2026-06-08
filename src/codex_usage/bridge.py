@@ -234,7 +234,7 @@ def write_bridge_extension(
     endpoint: str,
     interval_seconds: int,
 ) -> Path:
-    output_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    _prepare_private_directory(output_dir, label="extension output directory")
     manifest = {
         "manifest_version": 3,
         "name": f"codex-usage bridge ({account_ref})",
@@ -269,12 +269,30 @@ def write_bridge_extension(
     }
     for filename, content in files.items():
         path = output_dir / filename
-        path.write_text(content, encoding="utf-8")
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
+        _write_private_text(path, content, label="extension output path")
     return output_dir
+
+
+def _prepare_private_directory(path: Path, *, label: str) -> None:
+    if path.is_symlink():
+        raise ValueError(f"{label} must not be a symlink: {path}")
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(f"{label} is not a real directory: {path}")
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def _write_private_text(path: Path, content: str, *, label: str) -> None:
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError(f"{label} must be a regular file: {path}")
+    path.write_text(content, encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def run_bridge_server(
