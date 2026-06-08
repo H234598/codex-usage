@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from codex_usage.cli import main
+from codex_usage.models import AccountUsage, LimitWindow
 
 
 def test_root_help_lists_all_commands(capsys):
@@ -323,9 +327,10 @@ def test_direct_rejects_global_auth_json_for_multiple_accounts(tmp_path, capsys)
     assert "can only override direct auth for one selected account" in capsys.readouterr().err
 
 
-def test_account_overview_shows_config_and_accounts(tmp_path, capsys):
+def test_account_overview_shows_config_and_accounts(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / "config.toml"
     profile_dir = tmp_path / "profile"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
     assert (
         main(
@@ -354,6 +359,67 @@ def test_account_overview_shows_config_and_accounts(tmp_path, capsys):
     assert "BW_Privat" in output
     assert "firefox" in output
     assert "vorhanden" in output
+    assert "5h Wert" in output
+    assert "Woche Wert" in output
+
+
+def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    def fake_fetch_direct(account):
+        assert account.id == "privat"
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+            five_hour=LimitWindow(
+                name="5h",
+                used=3,
+                limit=100,
+                remaining=97,
+                percent=97,
+                reset_at=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+            ),
+            weekly=LimitWindow(
+                name="weekly",
+                used=45,
+                limit=100,
+                remaining=55,
+                percent=55,
+                reset_at=datetime(2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")),
+            ),
+        )
+
+    monkeypatch.setattr("codex_usage.cli.fetch_account_usage_direct", fake_fetch_direct)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "BW_Privat",
+                "--auth-json",
+                str(auth_path),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config", str(config_path), "account", "overview"]) == 0
+
+    output = capsys.readouterr().out
+    assert "97% verbleibend" in output
+    assert "55% verbleibend" in output
+    assert "08.06.2026 06:50" in output
+    assert "10.06.2026 05:05" in output
+    assert "ok" in output
 
 
 def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):

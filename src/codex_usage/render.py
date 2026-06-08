@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -13,19 +13,37 @@ def render_json(usages: Iterable[AccountUsage]) -> str:
     return json.dumps([usage.as_dict() for usage in usages], ensure_ascii=False, indent=2)
 
 
-def render_account_overview(config: AppConfig, config_path: Path) -> str:
+def render_account_overview(
+    config: AppConfig,
+    config_path: Path,
+    usages: Mapping[str, AccountUsage] | None = None,
+) -> str:
+    usage_by_account = usages or {}
     rows = [
         [
             account.id,
             account.label,
             account.browser,
             _auth_state(account.auth_json_path),
+            *_overview_usage_values(usage_by_account.get(account.id)),
             _profile_state(account.profile_dir),
             str(Path(account.profile_dir).expanduser()),
         ]
         for account in sorted(config.accounts, key=lambda item: item.id)
     ]
-    headers = ["ID", "Label", "Browser", "Auth JSON", "Profil", "Pfad"]
+    headers = [
+        "ID",
+        "Label",
+        "Browser",
+        "Auth JSON",
+        "5h Wert",
+        "5h Reset",
+        "Woche Wert",
+        "Woche Reset",
+        "Status",
+        "Profil",
+        "Pfad",
+    ]
     widths = [
         max(len(headers[index]), *(len(row[index]) for row in rows)) if rows else len(header)
         for index, header in enumerate(headers)
@@ -97,6 +115,18 @@ def _auth_state(auth_json_path: str | None) -> str:
     if path.exists():
         return "keine Datei"
     return "fehlt"
+
+
+def _overview_usage_values(usage: AccountUsage | None) -> list[str]:
+    if usage is None:
+        return ["-", "-", "-", "-", "-"]
+    return [
+        _usage_value(usage.five_hour),
+        _reset_value(usage.five_hour),
+        _usage_value(usage.weekly),
+        _reset_value(usage.weekly),
+        _status_value(usage),
+    ]
 
 
 def _usage_value(window: LimitWindow | None) -> str:

@@ -23,8 +23,10 @@ from .config import (
     remove_account,
     resolve_account,
 )
+from .direct import fetch_account_usage_direct
 from .render import render_account_overview, render_json, render_table
 from .scheduler import fetch_all, watch
+from .state import load_usage_snapshot, save_usage_snapshot
 
 COMMAND_OVERVIEW = """\
 Komplette Command-Line-Usage:
@@ -118,7 +120,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     add.add_argument("--auth-json", type=Path, help="Codex auth.json fuer direkten Abruf")
     add.set_defaults(func=_cmd_account_add)
-    overview = account_sub.add_parser("overview", help="Account-Uebersicht anzeigen")
+    overview = account_sub.add_parser(
+        "overview",
+        help="Account-Uebersicht mit aktuellen Werten anzeigen",
+    )
     overview.set_defaults(func=_cmd_account_overview)
     delete = account_sub.add_parser("delete", help="Account aus der Config entfernen")
     delete.add_argument("account", help="Account-ID oder eindeutiges Label")
@@ -237,7 +242,8 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
 
 def _cmd_account_overview(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    print(render_account_overview(config, args.config or default_config_path()))
+    usages = _load_overview_usages(config)
+    print(render_account_overview(config, args.config or default_config_path(), usages))
     return 0
 
 
@@ -402,6 +408,21 @@ def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None
             "direct mode with multiple accounts requires per-account --auth-json; "
             f"missing: {joined}"
         )
+
+
+def _load_overview_usages(config):
+    usages = {}
+    for account in config.accounts:
+        if account.auth_json_path:
+            usage = fetch_account_usage_direct(account)
+            usages[account.id] = usage
+            if usage.error is None:
+                save_usage_snapshot(usage)
+            continue
+        snapshot = load_usage_snapshot(account.id)
+        if snapshot is not None:
+            usages[account.id] = snapshot
+    return usages
 
 
 def _validate_profile_delete_target(path: Path, *, force: bool) -> None:
