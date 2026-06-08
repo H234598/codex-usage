@@ -22,6 +22,7 @@ from .models import Account, AccountStatus, AccountUsage
 from .private_io import write_private_text as write_private_output_text
 
 JSON_MAX_BYTES = 2_000_000
+PROBE_OUTPUT_MAX_BYTES = 2_000_000
 DIAGNOSTIC_MAX_KEYS = 40
 DIAGNOSTIC_MAX_FIELD_CHARS = 200
 LOGIN_HINTS = ("log in", "sign in", "anmelden", "einloggen", "continue with")
@@ -574,10 +575,10 @@ def _save_probe_payloads(
             indent=2,
             allow_nan=False,
         )
-        _write_private_text(path, payload_text, label="probe output path")
+        _write_bounded_private_text(path, payload_text, label="probe output path")
         saved.append(str(path))
     body_path = save_dir / f"{account.id}-body.txt"
-    _write_private_text(body_path, body_text, label="probe output path")
+    _write_bounded_private_text(body_path, body_text, label="probe output path")
     saved.append(str(body_path))
     return saved
 
@@ -593,6 +594,12 @@ def _prepare_private_output_dir(path: Path, *, label: str) -> None:
 
 def _write_private_text(path: Path, text: str, *, label: str) -> None:
     write_private_output_text(path, text, label=label)
+
+
+def _write_bounded_private_text(path: Path, text: str, *, label: str) -> None:
+    if len(text.encode("utf-8")) > PROBE_OUTPUT_MAX_BYTES:
+        raise ValueError(f"{label} too large; max {PROBE_OUTPUT_MAX_BYTES} bytes")
+    _write_private_text(path, text, label=label)
 
 
 def _validate_private_output_path(path: Path, *, label: str) -> None:
