@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import errno
 import json
+import os
 import stat
 from datetime import datetime
 from pathlib import Path
@@ -85,11 +87,7 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
 
 
 def _load_access_token(path: Path) -> str:
-    validate_auth_json_file(path)
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise DirectAuthError(f"cannot read auth.json: {path}") from exc
+    raw, _ = read_auth_json_file(path)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -105,6 +103,39 @@ def _load_access_token(path: Path) -> str:
     return access_token
 
 
+def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise DirectAuthError(f"auth.json is not a regular file: {path}") from exc
+        raise DirectAuthError(f"cannot read auth.json: {path}") from exc
+
+    try:
+        file_stat = os.fstat(fd)
+        _validate_auth_json_stat(path, file_stat)
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            raw = handle.read(MAX_AUTH_JSON_BYTES + 1)
+    except OSError as exc:
+        raise DirectAuthError(f"cannot read auth.json: {path}") from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+    if len(raw) > MAX_AUTH_JSON_BYTES:
+        raise DirectAuthError(f"auth.json too large; max {MAX_AUTH_JSON_BYTES} bytes")
+    try:
+        return raw.decode("utf-8"), file_stat
+    except UnicodeDecodeError as exc:
+        raise DirectAuthError(f"invalid auth.json: {path}") from exc
+
+
 def validate_auth_json_file(path: Path):
     if path.is_symlink():
         raise DirectAuthError(f"auth.json is not a regular file: {path}")
@@ -112,13 +143,17 @@ def validate_auth_json_file(path: Path):
         file_stat = path.stat()
     except OSError as exc:
         raise DirectAuthError(f"cannot read auth.json: {path}") from exc
+    _validate_auth_json_stat(path, file_stat)
+    return file_stat
+
+
+def _validate_auth_json_stat(path: Path, file_stat: os.stat_result) -> None:
     if not stat.S_ISREG(file_stat.st_mode):
         raise DirectAuthError(f"auth.json is not a regular file: {path}")
     if file_stat.st_size > MAX_AUTH_JSON_BYTES:
         raise DirectAuthError(f"auth.json too large; max {MAX_AUTH_JSON_BYTES} bytes")
     if file_stat.st_mode & 0o077:
         raise DirectAuthError(f"auth.json permissions too broad; run chmod 600 {path}")
-    return file_stat
 
 
 def _fetch_wham_usage(token: str, *, timeout_seconds: int) -> dict[str, Any]:

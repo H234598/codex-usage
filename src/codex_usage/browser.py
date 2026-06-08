@@ -15,7 +15,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from .config import AppConfig
-from .direct import DirectAuthError, validate_auth_json_file
+from .direct import DirectAuthError, read_auth_json_file
 from .extractor import JsonCandidate, extract_windows
 from .models import Account, AccountStatus, AccountUsage
 
@@ -257,8 +257,8 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
     if not expanded.exists():
         return result
     try:
-        file_stat = validate_auth_json_file(expanded)
-        payload = json.loads(expanded.read_text(encoding="utf-8"))
+        raw, file_stat = read_auth_json_file(expanded)
+        payload = json.loads(raw)
     except DirectAuthError as exc:
         result.update({"readable": False, "error": str(exc)})
         return result
