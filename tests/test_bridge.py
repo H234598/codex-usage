@@ -104,7 +104,12 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
         "BW/Privat",
         {
             "url": "https://chatgpt.com/codex/cloud/settings/analytics?secret=1",
-            "htmlText": "<html>debug</html>",
+            "bodyText": "user@example.test 1 / 2",
+            "htmlText": (
+                "<html><script>"
+                '"accessToken":"aaa.bbb.ccc","sessionToken":"ddd.eee.fff"'
+                "</script><body>debug</body></html>"
+            ),
         },
         tmp_path / "snapshots",
     )
@@ -112,7 +117,11 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert path.name == "BW_Privat-last-ingest.json"
     assert payload["url"] == "https://chatgpt.com/codex/cloud/settings/analytics"
-    assert payload["htmlText"] == "<html>debug</html>"
+    assert payload["bodyText"] == "[redacted.email] 1 / 2"
+    assert "accessToken" not in payload["htmlText"]
+    assert "sessionToken" not in payload["htmlText"]
+    assert "<script>[redacted]</script>" in payload["htmlText"]
+    assert "<body>debug</body>" in payload["htmlText"]
     assert path.stat().st_mode & 0o077 == 0
 
 
@@ -149,13 +158,16 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     ]
     assert "fetch(ENDPOINT" in background
     assert "chrome.runtime.sendMessage" in content
-    assert "document.documentElement.innerText" in content
-    assert "document.documentElement.textContent" in content
-    assert "document.documentElement.outerHTML" in content
+    assert "document.body.innerText" in content
+    assert "sanitizedCodexUsageRoot" in content
+    assert "script, style, link, meta, noscript, template" in content
+    assert "sanitizedRoot.outerHTML" in content
     assert "collectCodexUsageAttributeText" in content
     assert "collectCodexUsageSvgText" in content
     assert "fieldLengths" in content
     assert "truncatedFields" in content
+    assert "visibleTextLength" in content
+    assert "CODEX_USAGE_READY_TIMEOUT_MS = 60000" in content
     assert "htmlText" in content
     assert "MutationObserver" in content
     assert "readyState" in content

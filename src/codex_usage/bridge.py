@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,6 +71,10 @@ def save_bridge_debug_payload(
     debug_payload = dict(payload)
     if "url" in debug_payload:
         debug_payload["url"] = _redact_url(str(debug_payload.get("url") or ""))
+    for field in TEXT_PAYLOAD_FIELDS:
+        value = debug_payload.get(field)
+        if isinstance(value, str):
+            debug_payload[field] = _sanitize_debug_text(value)
     path.write_text(json.dumps(debug_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
         path.chmod(0o600)
@@ -103,6 +108,34 @@ def _safe_excerpt(value: str, limit: int = 240) -> str:
 
 def _safe_filename(value: str) -> str:
     return "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in value)
+
+
+def _sanitize_debug_text(value: str) -> str:
+    text = re.sub(
+        r"<script\b[^>]*>.*?</script>",
+        "<script>[redacted]</script>",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    text = re.sub(
+        r"<style\b[^>]*>.*?</style>",
+        "<style>[redacted]</style>",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    text = re.sub(
+        r'("(?:accessToken|sessionToken|refreshToken|idToken|apiKey)"\s*:\s*")[^"]+',
+        r"\1[redacted]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b",
+        "[redacted.jwt]",
+        text,
+    )
+    text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[redacted.email]", text)
+    return text
 
 
 
@@ -342,6 +375,7 @@ def _render_extension_content(account_ref: str, interval_seconds: int) -> str:
 const CODEX_USAGE_INTERVAL_MS = {interval_ms};
 const CODEX_USAGE_MIN_TEXT = 40;
 const CODEX_USAGE_MAX_FIELD_CHARS = 2000000;
+const CODEX_USAGE_READY_TIMEOUT_MS = 60000;
 let codexUsageLastTextLength = -1;
 
 function limitCodexUsageText(value) {{
@@ -371,19 +405,25 @@ function collectCodexUsageSvgText() {{
     .join("\\n");
 }}
 
+function sanitizedCodexUsageRoot() {{
+  if (!document.documentElement) {{
+    return null;
+  }}
+  const clone = document.documentElement.cloneNode(true);
+  clone
+    .querySelectorAll("script, style, link, meta, noscript, template")
+    .forEach((element) => element.remove());
+  return clone;
+}}
+
 function collectCodexUsage() {{
   const bodyText = document.body ? (document.body.innerText || "") : "";
-  const domText = document.documentElement
-    ? (document.documentElement.textContent || document.documentElement.innerText || "")
-    : "";
+  const sanitizedRoot = sanitizedCodexUsageRoot();
+  const domText = sanitizedRoot ? (sanitizedRoot.textContent || "") : "";
   const accessibilityText = collectCodexUsageAttributeText();
   const svgText = collectCodexUsageSvgText();
-  const htmlText = document.documentElement ? (document.documentElement.outerHTML || "") : "";
-  const rootText = document.documentElement
-    ? (document.documentElement.innerText || document.documentElement.textContent || "")
-    : "";
-  const visibleText = bodyText.trim() ? bodyText : rootText;
-  const searchText = [visibleText, domText, accessibilityText, svgText, htmlText]
+  const htmlText = sanitizedRoot ? (sanitizedRoot.outerHTML || "") : "";
+  const searchText = [bodyText, domText, accessibilityText, svgText, htmlText]
     .filter((value) => value && String(value).trim())
     .join("\\n\\n");
   return {{
@@ -408,7 +448,8 @@ function collectCodexUsage() {{
       svgText: isCodexUsageTruncated(svgText),
       htmlText: isCodexUsageTruncated(htmlText)
     }},
-    bodyText: limitCodexUsageText(visibleText),
+    visibleTextLength: bodyText.length,
+    bodyText: limitCodexUsageText(bodyText),
     domText: limitCodexUsageText(domText),
     accessibilityText: limitCodexUsageText(accessibilityText),
     svgText: limitCodexUsageText(svgText),
@@ -434,28 +475,47 @@ function sendCodexUsage() {{
   );
 }}
 
-function sendWhenReady() {{
+function sendWhenReady(startedAt = Date.now()) {{
+  let sent = false;
+  const sendAndStop = (observer, timer) => {{
+    if (sent) {{
+      return;
+    }}
+    sent = true;
+    if (observer) {{
+      observer.disconnect();
+    }}
+    if (timer) {{
+      clearInterval(timer);
+    }}
+    sendCodexUsage();
+  }};
+  const isReady = () => {{
+    const payload = collectCodexUsage();
+    const hasEnoughVisibleText = payload.bodyText.trim().length >= CODEX_USAGE_MIN_TEXT;
+    const waitedLongEnough = Date.now() - startedAt >= CODEX_USAGE_READY_TIMEOUT_MS;
+    return hasEnoughVisibleText || (document.readyState === "complete" && waitedLongEnough);
+  }};
   const payload = collectCodexUsage();
-  const hasEnoughText = payload.bodyText.trim().length >= CODEX_USAGE_MIN_TEXT;
-  if (hasEnoughText || document.readyState === "complete") {{
+  const hasEnoughVisibleText = payload.bodyText.trim().length >= CODEX_USAGE_MIN_TEXT;
+  if (hasEnoughVisibleText) {{
     sendCodexUsage();
     return;
   }}
   const observer = new MutationObserver(() => {{
-    const updated = collectCodexUsage();
-    if (updated.bodyText.trim().length >= CODEX_USAGE_MIN_TEXT) {{
-      observer.disconnect();
-      sendCodexUsage();
+    if (isReady()) {{
+      sendAndStop(observer, timer);
     }}
   }});
   observer.observe(
     document.documentElement,
     {{ childList: true, subtree: true, characterData: true }}
   );
-  setTimeout(() => {{
-    observer.disconnect();
-    sendCodexUsage();
-  }}, 10000);
+  const timer = setInterval(() => {{
+    if (isReady()) {{
+      sendAndStop(observer, timer);
+    }}
+  }}, 1000);
 }}
 
 sendWhenReady();
