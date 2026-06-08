@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -388,11 +389,13 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
         return None
     if isinstance(value, (int, float)):
         timestamp = float(value)
+        if not math.isfinite(timestamp):
+            return None
         if timestamp > 10_000_000_000:
             timestamp /= 1000
         try:
             return datetime.fromtimestamp(timestamp, tz=captured_at.tzinfo)
-        except (OSError, ValueError):
+        except (OSError, OverflowError, ValueError):
             return None
     raw = str(value).strip()
     for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y, %H:%M"):
@@ -428,7 +431,7 @@ def _coerce_number(value: Any) -> float | None:
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        return _finite_float(value)
     return _parse_number(str(value))
 
 
@@ -437,9 +440,14 @@ def _parse_number(raw: str | None) -> float | None:
         return None
     cleaned = raw.strip().replace(",", ".")
     try:
-        return float(cleaned)
+        return _finite_float(float(cleaned))
     except ValueError:
         return None
+
+
+def _finite_float(value: float) -> float | None:
+    coerced = float(value)
+    return coerced if math.isfinite(coerced) else None
 
 
 def _flatten_mapping(obj: dict[str, Any], prefix: str = "") -> dict[str, Any]:

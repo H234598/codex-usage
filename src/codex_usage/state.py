@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -96,7 +97,11 @@ def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:
 def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
-    return float(value)
+    try:
+        coerced = float(value)
+    except (TypeError, ValueError):
+        return None
+    return coerced if math.isfinite(coerced) else None
 
 
 def _validate_snapshot_account_id(account_id: str) -> None:
