@@ -12,6 +12,9 @@ from .json_utils import loads_strict
 from .models import LimitWindow
 
 LOCAL_TZ = datetime.now().astimezone().tzinfo or ZoneInfo("UTC")
+MAX_JSON_WALK_DEPTH = 24
+MAX_JSON_WALK_ITEMS = 1000
+MAX_JSON_FLATTEN_FIELDS = 2000
 
 FIVE_HOUR_LABELS = (
     "5 stunden nutzungsgrenze",
@@ -450,25 +453,52 @@ def _finite_float(value: float) -> float | None:
     return coerced if math.isfinite(coerced) else None
 
 
-def _flatten_mapping(obj: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+def _flatten_mapping(
+    obj: dict[str, Any],
+    prefix: str = "",
+    *,
+    depth: int = 0,
+    max_fields: int = MAX_JSON_FLATTEN_FIELDS,
+) -> dict[str, Any]:
     flat: dict[str, Any] = {}
-    for key, value in obj.items():
+    if depth >= MAX_JSON_WALK_DEPTH:
+        return flat
+    for index, (key, value) in enumerate(obj.items()):
+        if index >= MAX_JSON_WALK_ITEMS or len(flat) >= max_fields:
+            break
         path = f"{prefix}.{key}" if prefix else str(key)
         if isinstance(value, dict):
-            flat.update(_flatten_mapping(value, path))
+            for child_key, child_value in _flatten_mapping(
+                value,
+                path,
+                depth=depth + 1,
+                max_fields=max_fields - len(flat),
+            ).items():
+                flat[child_key] = child_value
+                if len(flat) >= max_fields:
+                    break
         else:
             flat[path] = value
     return flat
 
 
-def _walk_dicts(value: Any, path: str = "$") -> Iterable[tuple[str, dict[str, Any]]]:
+def _walk_dicts(
+    value: Any,
+    path: str = "$",
+    *,
+    depth: int = 0,
+) -> Iterable[tuple[str, dict[str, Any]]]:
+    if depth > MAX_JSON_WALK_DEPTH:
+        return
     if isinstance(value, dict):
         yield path, value
-        for key, child in value.items():
-            yield from _walk_dicts(child, f"{path}.{key}")
+        for index, (key, child) in enumerate(value.items()):
+            if index >= MAX_JSON_WALK_ITEMS:
+                break
+            yield from _walk_dicts(child, f"{path}.{key}", depth=depth + 1)
     elif isinstance(value, list):
-        for index, child in enumerate(value):
-            yield from _walk_dicts(child, f"{path}[{index}]")
+        for index, child in enumerate(value[:MAX_JSON_WALK_ITEMS]):
+            yield from _walk_dicts(child, f"{path}[{index}]", depth=depth + 1)
 
 
 def _normalize_ws(value: str) -> str:
