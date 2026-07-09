@@ -113,6 +113,26 @@ Check output:
 journalctl --user -u codex-usage.service -n 100 --no-pager
 ```
 
+## Cinnamon Applet
+
+Install the local Cinnamon applet and add `Codex Usage` to the panel:
+
+```bash
+make install-local
+```
+
+The applet loads saved snapshots immediately and runs a fresh mixed-mode poll
+every five minutes. Its settings control whether the panel shows one value per
+account or one combined value for the most constrained account. The displayed
+percentage can use the five-hour limit, the weekly limit, or the mean of both.
+Warnings are available but disabled by default.
+
+Remove the applet files with:
+
+```bash
+make uninstall-local
+```
+
 ## Output
 
 Example:

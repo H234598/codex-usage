@@ -42,6 +42,8 @@ CodexUsageApplet.prototype = {
         this.refreshInterval = 300;
         this.refreshOnOpen = true;
         this.showPanelLabel = true;
+        this.panelAccountMode = "combined";
+        this.panelPercentSource = "average";
         this.warningThreshold = 20;
         this.notifyWarnings = false;
         this.notifyErrors = false;
@@ -92,6 +94,8 @@ CodexUsageApplet.prototype = {
         bind("refresh-interval", "refreshInterval", this._onRefreshSettingsChanged);
         bind("refresh-on-open", "refreshOnOpen", null);
         bind("show-panel-label", "showPanelLabel", this._updatePanel);
+        bind("panel-account-mode", "panelAccountMode", this._updatePanel);
+        bind("panel-percent-source", "panelPercentSource", this._updatePanel);
         bind("warning-threshold", "warningThreshold", this._updatePanel);
         bind("notify-warnings", "notifyWarnings", null);
         bind("notify-errors", "notifyErrors", null);
@@ -482,25 +486,24 @@ CodexUsageApplet.prototype = {
 
     _updatePanel: function() {
         this._clearPanelClasses();
-        let worst = null;
+        let selected = [];
         let hasError = false;
         for (let i = 0; i < this._usages.length; i++) {
             let usage = this._usages[i];
             if (["error", "login_required"].indexOf(usage.status) !== -1) {
                 hasError = true;
             }
-            let values = [
-                this._remainingPercent(usage.five_hour),
-                this._remainingPercent(usage.weekly)
-            ];
-            for (let j = 0; j < values.length; j++) {
-                if (values[j] !== null && (worst === null || values[j] < worst)) {
-                    worst = values[j];
-                }
-            }
+            selected.push({
+                usage: usage,
+                value: this._selectedPercent(usage)
+            });
         }
+        let available = selected
+            .map(function(item) { return item.value; })
+            .filter(function(value) { return value !== null; });
+        let worst = available.length ? Math.min.apply(Math, available) : null;
         if (this.showPanelLabel) {
-            this.set_applet_label(worst === null ? "--" : Math.round(worst) + "%");
+            this.set_applet_label(this._panelLabel(selected, worst));
         } else {
             this.set_applet_label("");
         }
@@ -516,6 +519,52 @@ CodexUsageApplet.prototype = {
             tooltip = _("Aktualisiere …") + (tooltip ? "\n" + tooltip : "");
         }
         this.set_applet_tooltip(tooltip || _("Keine Codex-Nutzungswerte"));
+    },
+
+    _panelLabel: function(selected, combinedValue) {
+        if (this.panelAccountMode === "per-account") {
+            if (!selected.length) {
+                return "--";
+            }
+            return selected.map(Lang.bind(this, function(item) {
+                let value = item.value === null ? "--" : Math.round(item.value) + "%";
+                return this._accountTag(item.usage.label) + " " + value;
+            })).join(" · ");
+        }
+        return combinedValue === null ? "--" : Math.round(combinedValue) + "%";
+    },
+
+    _selectedPercent: function(usage) {
+        let five = this._remainingPercent(usage.five_hour);
+        let week = this._remainingPercent(usage.weekly);
+        if (this.panelPercentSource === "five-hour") {
+            return five;
+        }
+        if (this.panelPercentSource === "weekly") {
+            return week;
+        }
+        let values = [five, week].filter(function(value) { return value !== null; });
+        if (!values.length) {
+            return null;
+        }
+        return values.reduce(function(total, value) { return total + value; }, 0) / values.length;
+    },
+
+    _accountTag: function(label) {
+        let text = String(label || "?").trim();
+        let parts = text.split(/[^A-Za-z0-9ÄÖÜäöüß]+/).filter(function(part) {
+            return part.length > 0;
+        });
+        if (parts.length >= 2) {
+            return parts.slice(0, 3).map(function(part) {
+                return part.slice(0, 1).toUpperCase();
+            }).join("");
+        }
+        if (!parts.length) {
+            return "?";
+        }
+        let word = parts[0];
+        return word.slice(0, Math.min(2, word.length));
     },
 
     _clearPanelClasses: function() {

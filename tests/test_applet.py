@@ -21,6 +21,17 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     assert metadata["max-instances"] == 1
     assert settings["refresh-interval"]["default"] == 300
     assert settings["refresh-interval"]["min"] >= 60
+    assert settings["panel-account-mode"]["default"] == "combined"
+    assert set(settings["panel-account-mode"]["options"].values()) == {
+        "combined",
+        "per-account",
+    }
+    assert settings["panel-percent-source"]["default"] == "average"
+    assert set(settings["panel-percent-source"]["options"].values()) == {
+        "average",
+        "five-hour",
+        "weekly",
+    }
 
     layout = settings["layout"]
     referenced_keys: set[str] = set()
@@ -39,6 +50,8 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "COMMAND_TIMEOUT_MS" in source
     assert "Gio.SubprocessLauncher" in source
     assert "force_exit" in source
+    assert "_selectedPercent" in source
+    assert "_accountTag" in source
     for forbidden in (
         "spawnCommandLine",
         "Util.spawn",

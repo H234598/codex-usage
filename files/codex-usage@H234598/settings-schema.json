@@ -42,7 +42,9 @@
       "type": "section",
       "title": "Panel",
       "keys": [
-        "show-panel-label"
+        "show-panel-label",
+        "panel-account-mode",
+        "panel-percent-source"
       ]
     },
     "alerts-section": {
@@ -89,6 +91,26 @@
     "type": "switch",
     "description": "Knappsten Restwert im Panel anzeigen",
     "default": true
+  },
+  "panel-account-mode": {
+    "type": "combobox",
+    "description": "Anzahl der Prozentwerte im Panel",
+    "tooltip": "Pro Account zeigt einen Wert je Account. Gesamt zeigt den Wert des knappsten Accounts.",
+    "options": {
+      "Ein Wert pro Account": "per-account",
+      "Ein Gesamtwert für alle Accounts": "combined"
+    },
+    "default": "combined"
+  },
+  "panel-percent-source": {
+    "type": "combobox",
+    "description": "Berechnung des angezeigten Prozentwerts",
+    "options": {
+      "Nur 5-Stunden-Limit": "five-hour",
+      "Nur Wochenlimit": "weekly",
+      "Mittelwert aus beiden Limits": "average"
+    },
+    "default": "average"
   },
   "warning-threshold": {
     "type": "spinbutton",
