@@ -216,14 +216,14 @@ def _is_remaining_percent_window(window: LimitWindow) -> bool:
 def _reset_value(window: LimitWindow | None) -> str:
     if window is None or window.reset_at is None:
         return "-"
-    return window.reset_at.astimezone().strftime("%d.%m.%Y %H:%M")
+    return window.reset_at.strftime("%d.%m.%Y %H:%M")
 
 
 def _status_value(usage: AccountUsage) -> str:
     if usage.status == AccountStatus.BLOCKED:
         parts = ["blocked"]
         if usage.blocked_until is not None:
-            parts.append(f"bis {usage.blocked_until.astimezone().strftime('%d.%m.%Y %H:%M')}")
+            parts.append(f"bis {usage.blocked_until.strftime('%d.%m.%Y %H:%M')}")
         if usage.blocked_reason:
             parts.append(f": {_shorten(usage.blocked_reason, 30)}")
         return " ".join(parts)
@@ -239,8 +239,8 @@ def _auth_value(usage: AccountUsage | None) -> str:
     if expiry is None:
         if usage.auth_last_refresh is None:
             return "-"
-        return f"refresh {usage.auth_last_refresh.astimezone().strftime('%d.%m.%Y %H:%M')}"
-    stamp = expiry.astimezone().strftime("%d.%m.%Y %H:%M")
+        return f"refresh {usage.auth_last_refresh.strftime('%d.%m.%Y %H:%M')}"
+    stamp = expiry.strftime("%d.%m.%Y %H:%M")
     if expiry <= datetime.now().astimezone():
         return f"abgelaufen {stamp}"
     return f"bis {stamp}"

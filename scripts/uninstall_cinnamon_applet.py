@@ -6,7 +6,20 @@ import shutil
 import sys
 from pathlib import Path
 
-from install_cinnamon_applet import APPLET_UUID, _assert_real_directory_chain
+APPLET_UUID = "codex-usage@H234598"
+
+
+def _assert_real_directory_chain(path: Path) -> None:
+    absolute = path.absolute()
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("directory chain must not contain symlinks")
+        if current.exists() and not current.is_dir():
+            raise ValueError("directory chain contains a non-directory")
+        if not current.exists():
+            break
 
 
 def main(argv: list[str] | None = None) -> int:
