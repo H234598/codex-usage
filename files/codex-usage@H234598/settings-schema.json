@@ -1,0 +1,111 @@
+{
+  "layout": {
+    "type": "layout",
+    "pages": [
+      "general-page",
+      "alerts-page"
+    ],
+    "general-page": {
+      "type": "page",
+      "title": "Codex Usage",
+      "sections": [
+        "command-section",
+        "refresh-section",
+        "display-section"
+      ]
+    },
+    "alerts-page": {
+      "type": "page",
+      "title": "Warnungen",
+      "sections": [
+        "alerts-section"
+      ]
+    },
+    "command-section": {
+      "type": "section",
+      "title": "Datenquelle",
+      "keys": [
+        "command-path",
+        "config-path"
+      ]
+    },
+    "refresh-section": {
+      "type": "section",
+      "title": "Aktualisierung",
+      "keys": [
+        "auto-refresh",
+        "refresh-interval",
+        "refresh-on-open"
+      ]
+    },
+    "display-section": {
+      "type": "section",
+      "title": "Panel",
+      "keys": [
+        "show-panel-label"
+      ]
+    },
+    "alerts-section": {
+      "type": "section",
+      "title": "Benachrichtigungen",
+      "keys": [
+        "warning-threshold",
+        "notify-warnings",
+        "notify-errors"
+      ]
+    }
+  },
+  "command-path": {
+    "type": "entry",
+    "description": "Pfad zum codex-usage-Befehl",
+    "tooltip": "Ein absoluter Pfad ist am zuverlässigsten. Bei 'codex-usage' wird zusätzlich ~/.local/bin geprüft.",
+    "default": "codex-usage"
+  },
+  "config-path": {
+    "type": "entry",
+    "description": "Alternative config.toml",
+    "tooltip": "Leer lassen, um den Standardpfad der CLI zu verwenden.",
+    "default": ""
+  },
+  "auto-refresh": {
+    "type": "switch",
+    "description": "Werte automatisch frisch abrufen",
+    "default": true
+  },
+  "refresh-interval": {
+    "type": "spinbutton",
+    "description": "Aktualisierungsintervall in Sekunden",
+    "min": 60,
+    "max": 3600,
+    "step": 60,
+    "default": 300
+  },
+  "refresh-on-open": {
+    "type": "switch",
+    "description": "Beim Öffnen des Menüs aktualisieren",
+    "default": true
+  },
+  "show-panel-label": {
+    "type": "switch",
+    "description": "Knappsten Restwert im Panel anzeigen",
+    "default": true
+  },
+  "warning-threshold": {
+    "type": "spinbutton",
+    "description": "Warnschwelle für verbleibende Prozent",
+    "min": 0,
+    "max": 100,
+    "step": 5,
+    "default": 20
+  },
+  "notify-warnings": {
+    "type": "switch",
+    "description": "Bei Unterschreiten der Warnschwelle benachrichtigen",
+    "default": false
+  },
+  "notify-errors": {
+    "type": "switch",
+    "description": "Bei Abruf- oder Loginfehlern benachrichtigen",
+    "default": false
+  }
+}

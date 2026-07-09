@@ -1,0 +1,32 @@
+.codex-usage-account {
+  color: #f4f6f8;
+  font-weight: bold;
+  padding-top: 5px;
+}
+
+.codex-usage-detail {
+  color: #c8cdd3;
+  padding-bottom: 3px;
+}
+
+.codex-usage-warning {
+  color: #f6c85f;
+}
+
+.codex-usage-critical,
+.codex-usage-error {
+  color: #ef6a67;
+}
+
+.codex-usage-stale {
+  color: #aeb4be;
+}
+
+.codex-usage-panel-warning {
+  color: #f6c85f;
+}
+
+.codex-usage-panel-critical,
+.codex-usage-panel-error {
+  color: #ef6a67;
+}

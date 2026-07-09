@@ -30,5 +30,7 @@ jobs:
         run: python -m pip check
       - name: Lint
         run: python -m ruff check .
+      - name: Applet syntax
+        run: node --check files/codex-usage@H234598/applet.js
       - name: Test
         run: python -m pytest
