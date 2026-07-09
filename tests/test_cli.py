@@ -34,6 +34,7 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage login ACCOUNT" in output
     assert "codex-usage once" in output
     assert "codex-usage watch" in output
+    assert "codex-usage watchdog" in output
     assert "--direct" in output
     assert "codex-usage probe ACCOUNT" in output
     assert "codex-usage diagnose ACCOUNT" in output
@@ -47,9 +48,31 @@ def test_root_help_lists_all_commands(capsys):
     assert "--allow-remote" in output
     assert "codex-usage paths" in output
     assert "Direct-Modus mit mehreren Accounts braucht pro Account auth_json_path" in output
-    assert "once/watch nutzen automatisch Direct-Modus" in output
+    assert "once/watch/watchdog nutzen automatisch Direct-Modus" in output
     assert "codex-usage values" in output
     assert "codex-usage watch --direct" in output
+    assert "codex-usage watchdog" in output
+
+
+def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    called = {}
+
+    def fake_once(args):
+        called["account_ids"] = args.account_ids
+        called["format"] = args.format
+        called["direct"] = args.direct
+        return 0
+
+    monkeypatch.setattr("codex_usage.cli._cmd_once", fake_once)
+
+    assert main(["--config", str(config_path), "--format", "json"]) == 0
+
+    assert called == {
+        "account_ids": None,
+        "format": "json",
+        "direct": False,
+    }
 
 
 def test_account_add_prints_login_id_hint(tmp_path, capsys):
@@ -279,7 +302,9 @@ def test_watch_direct_passes_auth_json(tmp_path, monkeypatch, capsys):
     }
 
 
-def test_watch_without_account_selects_all_accounts_and_auto_direct(tmp_path, monkeypatch, capsys):
+def test_watch_without_account_selects_all_accounts_and_defers_mode_to_scheduler(
+    tmp_path, monkeypatch, capsys
+):
     config_path = tmp_path / "config.toml"
     called = {}
 
@@ -338,9 +363,58 @@ def test_watch_without_account_selects_all_accounts_and_auto_direct(tmp_path, mo
         "accounts": ["privat", "work"],
         "output": "table",
         "headed": False,
-        "direct": True,
+        "direct": False,
         "auth_json_path": None,
         "interval_seconds": None,
+    }
+
+
+def test_watchdog_routes_through_watchdog_scheduler(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    called = {}
+
+    def fake_watchdog(
+        config,
+        accounts,
+        *,
+        output,
+        headed,
+        direct,
+        auth_json_path,
+    ):
+        called["accounts"] = [account.id for account in accounts]
+        called["output"] = output
+        called["headed"] = headed
+        called["direct"] = direct
+        called["auth_json_path"] = auth_json_path
+        return []
+
+    monkeypatch.setattr("codex_usage.cli.watchdog", fake_watchdog)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--auth-json",
+                str(tmp_path / "privat-auth.json"),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["--config", str(config_path), "watchdog", "--format", "json"]) == 0
+
+    assert called == {
+        "accounts": ["privat"],
+        "output": "json",
+        "headed": False,
+        "direct": False,
+        "auth_json_path": None,
     }
 
 
@@ -537,6 +611,8 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
             account_id=account.id,
             label=account.label,
             captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+            auth_last_refresh=datetime(2026, 7, 9, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
+            auth_access_expires_at=datetime(2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
             five_hour=LimitWindow(
                 name="5h",
                 used=3,
@@ -582,6 +658,7 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
     assert "55% verbleibend" in output
     assert "08.06.2026 06:50" in output
     assert "10.06.2026 05:05" in output
+    assert "bis 19.07.2026 23:17" in output
     assert "ok" in output
 
 

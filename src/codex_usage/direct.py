@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 import errno
+import json
 import os
 import stat
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -32,8 +34,20 @@ def fetch_account_usage_direct(
 ) -> AccountUsage:
     captured_at = datetime.now().astimezone()
     path = _resolve_auth_json_path(account, auth_json_path)
+    auth_metadata: dict[str, datetime | None] = {}
     try:
-        token = _load_access_token(path)
+        token, auth_metadata = _load_auth_token_and_metadata(path)
+        if _is_access_token_expired(auth_metadata.get("auth_access_expires_at"), now=captured_at):
+            return AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                status=AccountStatus.LOGIN_REQUIRED,
+                error=_expired_auth_error(account.id, auth_metadata.get("auth_access_expires_at")),
+                auth_last_refresh=auth_metadata.get("auth_last_refresh"),
+                auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
+                auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
+            )
         payload = _fetch_wham_usage(token, timeout_seconds=timeout_seconds)
         candidate = JsonCandidate(url=WHAM_USAGE_URL, payload=payload)
         five_hour, weekly = extract_windows(
@@ -51,6 +65,9 @@ def fetch_account_usage_direct(
             weekly=weekly,
             status=status,
             error=error,
+            auth_last_refresh=auth_metadata.get("auth_last_refresh"),
+            auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
+            auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             source_urls=(_redact_url(WHAM_USAGE_URL),),
         )
     except DirectAuthError as exc:
@@ -60,6 +77,9 @@ def fetch_account_usage_direct(
             captured_at=captured_at,
             status=AccountStatus.LOGIN_REQUIRED,
             error=str(exc),
+            auth_last_refresh=auth_metadata.get("auth_last_refresh"),
+            auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
+            auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
         )
     except DirectFetchError as exc:
         return AccountUsage(
@@ -68,6 +88,9 @@ def fetch_account_usage_direct(
             captured_at=captured_at,
             status=AccountStatus.ERROR,
             error=str(exc),
+            auth_last_refresh=auth_metadata.get("auth_last_refresh"),
+            auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
+            auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
         )
 
 
@@ -87,7 +110,7 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
     return default_auth_json_path()
 
 
-def _load_access_token(path: Path) -> str:
+def _load_auth_token_and_metadata(path: Path) -> tuple[str, dict[str, datetime | None]]:
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -95,6 +118,27 @@ def _load_access_token(path: Path) -> str:
         raise DirectAuthError(f"invalid auth.json: {path}") from exc
     if not isinstance(payload, dict):
         raise DirectAuthError(f"invalid auth.json structure: {path}")
+    return _extract_auth_details(payload, path=path)
+
+
+def auth_metadata_from_payload(payload: dict[str, Any]) -> dict[str, datetime | None]:
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, dict):
+        return {
+            "auth_last_refresh": _parse_iso_datetime(payload.get("last_refresh")),
+            "auth_access_expires_at": None,
+            "auth_id_expires_at": None,
+        }
+    return {
+        "auth_last_refresh": _parse_iso_datetime(payload.get("last_refresh")),
+        "auth_access_expires_at": _jwt_expiry(tokens.get("access_token")),
+        "auth_id_expires_at": _jwt_expiry(tokens.get("id_token")),
+    }
+
+
+def _extract_auth_details(
+    payload: dict[str, Any], *, path: Path
+) -> tuple[str, dict[str, datetime | None]]:
     tokens = payload.get("tokens")
     if not isinstance(tokens, dict):
         raise DirectAuthError(f"auth.json has no tokens object: {path}")
@@ -109,7 +153,7 @@ def _load_access_token(path: Path) -> str:
         for char in access_token
     ):
         raise DirectAuthError("auth.json access_token contains invalid characters")
-    return access_token
+    return access_token, auth_metadata_from_payload(payload)
 
 
 def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
@@ -218,3 +262,48 @@ def _response_content_type(response: Any) -> str:
 def _redact_url(url: str) -> str:
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _jwt_expiry(token: Any) -> datetime | None:
+    if not isinstance(token, str):
+        return None
+    parts = token.split(".")
+    if len(parts) < 2:
+        return None
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload.encode("ascii"))
+        claims = json.loads(decoded)
+    except (ValueError, OSError, json.JSONDecodeError, UnicodeError):
+        return None
+    exp = claims.get("exp")
+    if not isinstance(exp, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(float(exp), tz=UTC).astimezone()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _is_access_token_expired(expiry: datetime | None, *, now: datetime) -> bool:
+    return bool(expiry is not None and expiry <= now)
+
+
+def _expired_auth_error(account_id: str, expiry: datetime | None) -> str:
+    if expiry is None:
+        return f"auth.json access_token expired; run `codex-usage login {account_id}`"
+    return (
+        "auth.json access_token expired at "
+        f"{expiry.astimezone().strftime('%d.%m.%Y %H:%M')}; "
+        f"run `codex-usage login {account_id}`"
+    )

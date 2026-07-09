@@ -83,6 +83,14 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         weekly=_window_from_dict(payload.get("weekly")),
         status=AccountStatus(str(payload.get("status", "ok"))),
         error=_optional_snapshot_text(payload.get("error"), limit=MAX_SNAPSHOT_TEXT),
+        blocked_until=_optional_datetime(payload.get("blocked_until")),
+        blocked_reason=_optional_snapshot_text(
+            payload.get("blocked_reason"),
+            limit=MAX_SNAPSHOT_TEXT,
+        ),
+        auth_last_refresh=_optional_datetime(payload.get("auth_last_refresh")),
+        auth_access_expires_at=_optional_datetime(payload.get("auth_access_expires_at")),
+        auth_id_expires_at=_optional_datetime(payload.get("auth_id_expires_at")),
         source_urls=_snapshot_source_urls(payload.get("source_urls")),
     )
 
@@ -111,6 +119,15 @@ def _optional_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return coerced if math.isfinite(coerced) else None
+
+
+def _optional_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _snapshot_text(value: Any, *, limit: int) -> str:

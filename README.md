@@ -54,14 +54,28 @@ codex-usage account delete privat --delete-profile
 One poll:
 
 ```bash
+codex-usage
 codex-usage once
 codex-usage once --format json
 ```
+
+`codex-usage` ohne Subcommand ist gleichbedeutend mit `codex-usage once`.
+`once`, `watch` und `watchdog` holen Accounts mit `auth_json_path` direkt ab
+und fallen fuer die anderen Accounts auf den Browser zurueck, solange
+`--headed` nicht gesetzt ist.
 
 Terminal dashboard, refreshed every five minutes:
 
 ```bash
 codex-usage watch --interval 300
+```
+
+One-shot watchdog that blocks exhausted accounts until the next reset and
+releases them afterwards:
+
+```bash
+codex-usage watchdog --format table
+codex-usage watchdog --format json
 ```
 
 Probe one account if extraction is incomplete:
@@ -83,7 +97,7 @@ codex-usage diagnose privat --auth-json ~/.codex/auth.json
 
 ## systemd User Timer
 
-Install the one-shot poller and timer:
+Install the one-shot watchdog and timer:
 
 ```bash
 mkdir -p ~/.config/systemd/user

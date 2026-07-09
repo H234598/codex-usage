@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import base64
 import json
+from datetime import UTC, datetime
 
 from codex_usage.direct import MAX_AUTH_JSON_BYTES, fetch_account_usage_direct
 from codex_usage.models import Account, AccountStatus
+
+
+def _jwt_with_exp(expiry: int) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": expiry}).encode("utf-8")).rstrip(
+        b"="
+    ).decode()
+    return f"{header}.{payload}.signature"
 
 
 def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkeypatch):
@@ -183,6 +193,34 @@ def test_fetch_account_usage_direct_rejects_non_json_content_type(tmp_path, monk
 
     assert usage.status == AccountStatus.ERROR
     assert usage.error == "direct response is not JSON content"
+
+
+def test_fetch_account_usage_direct_marks_expired_auth_before_network(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    expired_at = int(datetime.now(tz=UTC).timestamp()) - 3600
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": _jwt_with_exp(expired_at)}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    def fake_urlopen(request, *, timeout):
+        raise AssertionError("network must not be reached for expired auth")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", fake_urlopen)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error is not None
+    assert "expired" in usage.error
+    assert "login privat" in usage.error
 
 
 def test_fetch_account_usage_direct_reports_missing_auth_json(tmp_path):

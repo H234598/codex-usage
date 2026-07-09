@@ -31,7 +31,7 @@ from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
 from .private_io import read_private_text
 from .render import render_account_overview, render_account_values, render_json, render_table
-from .scheduler import fetch_all, watch
+from .scheduler import fetch_all, watch, watchdog
 from .state import load_usage_snapshot, save_usage_snapshot
 
 COMMAND_OVERVIEW = """\
@@ -39,6 +39,7 @@ Komplette Command-Line-Usage:
 
 Globale Optionen:
   codex-usage [--config CONFIG] COMMAND ...
+  codex-usage [--config CONFIG]
 
 Accounts:
   codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
@@ -51,6 +52,8 @@ Browser-Modus:
   codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
   codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN]
                     [--headed]
+  codex-usage watchdog [--account ACCOUNT] [--format table|json]
+                       [--headed] [--direct]
 
 Direct-Modus ohne Browser:
   codex-usage once --direct [--account ACCOUNT] [--format table|json]
@@ -88,15 +91,34 @@ Beispiele:
   codex-usage latest --format json
 
 Hinweis:
-  once/watch nutzen automatisch Direct-Modus, wenn alle ausgewaehlten Accounts
-  auth_json_path haben und --headed nicht gesetzt ist.
+  `codex-usage` ohne Subcommand entspricht `codex-usage once`.
+  once/watch/watchdog nutzen automatisch Direct-Modus fuer Accounts mit auth_json_path,
+  solange --headed nicht gesetzt ist.
   bridge-server lauscht ohne --allow-remote nur auf Loopback/localhost.
 """
+
+KNOWN_COMMANDS = {
+    "account",
+    "login",
+    "once",
+    "watch",
+    "watchdog",
+    "probe",
+    "diagnose",
+    "ingest",
+    "latest",
+    "values",
+    "bridge-snippet",
+    "bridge-extension",
+    "bridge-server",
+    "paths",
+}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    normalized_argv = _default_root_command(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(normalized_argv)
     try:
         return int(args.func(args))
     except KeyboardInterrupt:
@@ -180,6 +202,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="auth.json fuer direkten Abruf ueberschreiben",
     )
     watch_cmd.set_defaults(func=_cmd_watch)
+
+    watchdog_cmd = sub.add_parser(
+        "watchdog",
+        help="Einmalig pruefen, limitierte Accounts zu sperren und spaeter freizugeben",
+    )
+    watchdog_cmd.add_argument("--account", action="append", dest="account_ids")
+    watchdog_cmd.add_argument("--format", choices=("table", "json"), default="table")
+    watchdog_cmd.add_argument("--headed", action="store_true", help="Browser sichtbar starten")
+    watchdog_cmd.add_argument(
+        "--direct",
+        action="store_true",
+        help="Ohne Browser ueber auth.json abrufen",
+    )
+    watchdog_cmd.add_argument(
+        "--auth-json",
+        type=Path,
+        help="auth.json fuer direkten Abruf ueberschreiben",
+    )
+    watchdog_cmd.set_defaults(func=_cmd_watchdog)
 
     probe = sub.add_parser("probe", help="Extraktionsquellen fuer einen Account untersuchen")
     probe.add_argument("account", help="Account-ID oder eindeutiges Label")
@@ -297,7 +338,7 @@ def _cmd_login(args: argparse.Namespace) -> int:
 def _cmd_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
-    direct = _should_use_direct(args, accounts)
+    direct = bool(args.direct or args.auth_json)
     if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     usages = fetch_all(
@@ -306,7 +347,7 @@ def _cmd_once(args: argparse.Namespace) -> int:
         headed=args.headed,
         direct=direct,
         auth_json_path=args.auth_json,
-        save_snapshots=direct,
+        save_snapshots=True,
     )
     print(render_json(usages) if args.format == "json" else render_table(usages))
     return 0 if all(_is_successful_usage(usage) for usage in usages) else 2
@@ -317,7 +358,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     accounts = _select_accounts(config, args.account_ids)
     if args.interval is not None and args.interval < 60:
         raise ValueError("--interval must be at least 60 seconds")
-    direct = _should_use_direct(args, accounts)
+    direct = bool(args.direct or args.auth_json)
     if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     watch(
@@ -330,6 +371,23 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         interval_seconds=args.interval,
     )
     return 0
+
+
+def _cmd_watchdog(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    accounts = _select_accounts(config, args.account_ids)
+    direct = bool(args.direct or args.auth_json)
+    if direct:
+        _validate_direct_auth_mapping(accounts, args.auth_json)
+    usages = watchdog(
+        config,
+        accounts,
+        output=args.format,
+        headed=args.headed,
+        direct=direct,
+        auth_json_path=args.auth_json,
+    )
+    return 0 if all(usage.status != AccountStatus.ERROR for usage in usages) else 2
 
 
 def _cmd_probe(args: argparse.Namespace) -> int:
@@ -427,6 +485,34 @@ def _cmd_paths(args: argparse.Namespace) -> int:
     return 0
 
 
+def _default_root_command(argv: list[str]) -> list[str]:
+    if not argv:
+        return ["once"]
+    if argv[0] in {"-h", "--help"}:
+        return argv
+
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in {"-h", "--help"}:
+            return argv
+        if token == "--config":
+            index += 2
+            continue
+        if token.startswith("--config="):
+            index += 1
+            continue
+        break
+
+    if index >= len(argv):
+        return [*argv, "once"]
+    if argv[index] in KNOWN_COMMANDS:
+        return argv
+    if argv[index].startswith("-"):
+        return [*argv[:index], "once", *argv[index:]]
+    return argv
+
+
 def _select_accounts(config, account_ids: list[str] | None):
     if not config.accounts:
         raise ValueError("no accounts configured; run `codex-usage account add <id>` first")
@@ -484,15 +570,6 @@ def _validate_min_interval(interval_seconds: int) -> None:
         or interval_seconds < 60
     ):
         raise ValueError("--interval must be at least 60 seconds")
-
-
-def _should_use_direct(args: argparse.Namespace, accounts) -> bool:
-    account_list = list(accounts)
-    if args.direct:
-        return True
-    if getattr(args, "headed", False):
-        return False
-    return bool(account_list) and all(account.auth_json_path for account in account_list)
 
 
 def _load_overview_usages(config, accounts=None):

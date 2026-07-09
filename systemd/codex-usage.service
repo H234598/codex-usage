@@ -1,16 +1,18 @@
 [Unit]
-Description=Poll ChatGPT Codex usage analytics
+Description=Watch ChatGPT Codex usage analytics and block exhausted accounts
 Documentation=man:systemd.service(5)
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/codex-usage once --format table
+ExecStart=%h/.local/bin/codex-usage watchdog --format table
 Environment=PYTHONUNBUFFERED=1
 TimeoutStartSec=120
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=%h/.config/codex-usage %h/.local/share/codex-usage %h/.cache/ms-playwright

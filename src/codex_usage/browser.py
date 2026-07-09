@@ -15,7 +15,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from .config import AppConfig
-from .direct import DirectAuthError, read_auth_json_file
+from .direct import DirectAuthError, auth_metadata_from_payload, read_auth_json_file
 from .extractor import JsonCandidate, extract_windows
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
@@ -290,6 +290,7 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
         return result
 
     tokens = payload.get("tokens")
+    auth_metadata = auth_metadata_from_payload(payload)
     result.update(
         {
             "top_level_keys": _diagnostic_keys(payload),
@@ -300,6 +301,11 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
             "has_browser_storage_state": any(
                 key in payload for key in ("cookies", "origins", "localStorage", "sessionStorage")
             ),
+            "auth_last_refresh": _format_datetime(auth_metadata.get("auth_last_refresh")),
+            "auth_access_expires_at": _format_datetime(
+                auth_metadata.get("auth_access_expires_at")
+            ),
+            "auth_id_expires_at": _format_datetime(auth_metadata.get("auth_id_expires_at")),
         }
     )
     if isinstance(tokens, dict):
@@ -330,6 +336,12 @@ def _diagnostic_value(value: Any) -> str | bool | int | float | None:
 def _diagnostic_text(value: Any, *, limit: int) -> str:
     text = _clean_error(str(value))
     return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _format_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.astimezone().isoformat()
 
 
 def _capture_diagnostic_response(response: Any, responses: list[dict[str, Any]]) -> None:

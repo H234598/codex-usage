@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from codex_usage.models import Account, AccountUsage, LimitWindow
+from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.render import render_account_values, render_json, render_table
 
 
@@ -12,6 +12,8 @@ def test_render_table_contains_values():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        auth_last_refresh=datetime(2026, 7, 9, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
+        auth_access_expires_at=datetime(2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
         five_hour=LimitWindow(
             name="5h",
             used=42,
@@ -34,6 +36,8 @@ def test_render_table_contains_values():
     assert "42 / 100" in rendered
     assert "08.06.2026 04:26" in rendered
     assert "310 / 1000" in rendered
+    assert "Auth" in rendered
+    assert "bis 19.07.2026 23:17" in rendered
 
 
 def test_render_table_labels_remaining_percent_windows():
@@ -115,3 +119,19 @@ def test_render_json_is_machine_readable():
 
     assert '"account": "privat"' in rendered
     assert '"status": "ok"' in rendered
+
+
+def test_render_table_shows_blocked_state():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.BLOCKED,
+        blocked_until=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+        blocked_reason="usage limit reached: weekly",
+    )
+
+    rendered = render_table([usage])
+
+    assert "blocked bis 08.06.2026 06:50" in rendered
+    assert "usage limit reached" in rendered

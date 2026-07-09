@@ -11,6 +11,7 @@ class AccountStatus(StrEnum):
     LOGIN_REQUIRED = "login_required"
     PARTIAL = "partial"
     ERROR = "error"
+    BLOCKED = "blocked"
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,11 @@ class AccountUsage:
     weekly: LimitWindow | None = None
     status: AccountStatus = AccountStatus.OK
     error: str | None = None
+    blocked_until: datetime | None = None
+    blocked_reason: str | None = None
+    auth_last_refresh: datetime | None = None
+    auth_access_expires_at: datetime | None = None
+    auth_id_expires_at: datetime | None = None
     source_urls: tuple[str, ...] = field(default_factory=tuple)
 
     def as_dict(self) -> dict[str, Any]:
@@ -58,6 +64,17 @@ class AccountUsage:
             "weekly": _window_to_dict(self.weekly),
             "status": self.status.value,
             "error": self.error,
+            "blocked_until": self.blocked_until.isoformat() if self.blocked_until else None,
+            "blocked_reason": self.blocked_reason,
+            "auth_last_refresh": self.auth_last_refresh.isoformat()
+            if self.auth_last_refresh
+            else None,
+            "auth_access_expires_at": self.auth_access_expires_at.isoformat()
+            if self.auth_access_expires_at
+            else None,
+            "auth_id_expires_at": self.auth_id_expires_at.isoformat()
+            if self.auth_id_expires_at
+            else None,
             "source_urls": list(self.source_urls),
         }
 

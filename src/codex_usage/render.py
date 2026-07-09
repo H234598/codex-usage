@@ -7,12 +7,13 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
-from .models import Account, AccountUsage, LimitWindow
+from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
 ACCOUNT_CELL_MAX = 40
 PATH_CELL_MAX = 80
 STATUS_CELL_MAX = 40
 VALUE_CELL_MAX = 28
+AUTH_CELL_MAX = 28
 
 
 def render_json(usages: Iterable[AccountUsage]) -> str:
@@ -36,6 +37,7 @@ def render_account_overview(
             _cell(account.label, ACCOUNT_CELL_MAX),
             _cell(account.browser, 16),
             _auth_state(account.auth_json_path),
+            _auth_value(usage_by_account.get(account.id)),
             *_overview_usage_values(usage_by_account.get(account.id)),
             _profile_state(account.profile_dir),
             _cell(str(Path(account.profile_dir).expanduser()), PATH_CELL_MAX),
@@ -47,6 +49,7 @@ def render_account_overview(
         "Label",
         "Browser",
         "Auth JSON",
+        "Auth",
         "5h Wert",
         "5h Reset",
         "Woche Wert",
@@ -102,7 +105,15 @@ def render_account_values(
 def render_table(usages: Iterable[AccountUsage]) -> str:
     rows = list(usages)
     now = datetime.now().astimezone().strftime("%d.%m.%Y %H:%M")
-    headers = ["Account", "5h Wert", "5h Reset", "Woche Wert", "Woche Reset", "Status"]
+    headers = [
+        "Account",
+        "5h Wert",
+        "5h Reset",
+        "Woche Wert",
+        "Woche Reset",
+        "Auth",
+        "Status",
+    ]
     data = [
         [
             _cell(usage.label, ACCOUNT_CELL_MAX),
@@ -110,6 +121,7 @@ def render_table(usages: Iterable[AccountUsage]) -> str:
             _reset_value(usage.five_hour),
             _usage_value(usage.weekly),
             _reset_value(usage.weekly),
+            _auth_value(usage),
             _status_value(usage),
         ]
         for usage in rows
@@ -208,9 +220,30 @@ def _reset_value(window: LimitWindow | None) -> str:
 
 
 def _status_value(usage: AccountUsage) -> str:
+    if usage.status == AccountStatus.BLOCKED:
+        parts = ["blocked"]
+        if usage.blocked_until is not None:
+            parts.append(f"bis {usage.blocked_until.astimezone().strftime('%d.%m.%Y %H:%M')}")
+        if usage.blocked_reason:
+            parts.append(f": {_shorten(usage.blocked_reason, 30)}")
+        return " ".join(parts)
     if usage.error:
         return f"{usage.status.value}: {_shorten(usage.error, 30)}"
     return usage.status.value
+
+
+def _auth_value(usage: AccountUsage | None) -> str:
+    if usage is None:
+        return "-"
+    expiry = usage.auth_access_expires_at
+    if expiry is None:
+        if usage.auth_last_refresh is None:
+            return "-"
+        return f"refresh {usage.auth_last_refresh.astimezone().strftime('%d.%m.%Y %H:%M')}"
+    stamp = expiry.astimezone().strftime("%d.%m.%Y %H:%M")
+    if expiry <= datetime.now().astimezone():
+        return f"abgelaufen {stamp}"
+    return f"bis {stamp}"
 
 
 def _fmt_number(value: float) -> str:
