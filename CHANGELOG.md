@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.28 - 2026-07-11
+
+### Fixed
+
+- Stale systemd timer repair now completes before the follow-up account
+  overview request, so the overview cannot cancel the repair process.
+
 ## 0.6.27 - 2026-07-11
 
 ### Fixed

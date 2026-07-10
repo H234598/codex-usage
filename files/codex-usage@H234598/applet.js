@@ -892,7 +892,8 @@ CodexUsageApplet.prototype = {
             ) {
                 this._refreshFresh(false);
             } else if (this._systemdActive && this._cacheIsStale()) {
-                this._repairStaleService();
+                this._repairStaleService(callback);
+                return;
             }
             callback();
         }));
@@ -910,13 +911,16 @@ CodexUsageApplet.prototype = {
         return Date.now() - captured > grace;
     },
 
-    _repairStaleService: function() {
+    _repairStaleService: function(after) {
         let now = Date.now();
         if (now - this._serviceRepairAt < CIRCUIT_BREAKER_MS) {
+            if (after) {
+                this._runSafely("stale service continuation", after);
+            }
             return;
         }
         this._serviceRepairAt = now;
-        this._enableBackgroundService();
+        this._enableBackgroundService(after);
         this._removeSource("_staleCheckId");
         this._setSource("_staleCheckId", Mainloop.timeout_add(60000, Lang.bind(this, function() {
             this._clearSource("_staleCheckId");

@@ -944,6 +944,44 @@ test("a valid inactive service status retries after a previous activation", () =
   assert.equal(applet._serviceAutoAttempted, true);
 });
 
+test("stale service repair finishes before the auxiliary continuation", () => {
+  const applet = makeApplet();
+  const calls = [];
+  let enableCallback = null;
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._serviceChecked = true;
+  applet._systemdActive = true;
+  applet._serviceRepairAt = 0;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._cacheIsStale = () => true;
+  applet._loadAccountBackends = () => calls.push("account overview");
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv.slice(1).join(" "));
+    if (argv.includes("status")) {
+      callback({ enabled: true, active: true }, null);
+    } else if (argv.includes("enable")) {
+      enableCallback = callback;
+    }
+  };
+
+  applet._checkServiceStatus(applet._loadAccountBackends);
+  assert.deepEqual(calls, [
+    "service status --format json",
+    "service enable --format json",
+  ]);
+  assert.equal(enableCallback !== null, true);
+
+  enableCallback({ enabled: true, active: true }, null);
+  assert.deepEqual(calls, [
+    "service status --format json",
+    "service enable --format json",
+    "account overview",
+  ]);
+});
+
 test("service argv errors preserve a previously active systemd owner", () => {
   const applet = makeApplet();
   applet._serviceChecked = true;
