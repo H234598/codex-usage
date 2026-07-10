@@ -84,6 +84,29 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         assert set(table["columns"][8]["options"].values()) == set(range(7))
     assert set(date_table["columns"][1]["options"].values()) == set(range(4))
     assert set(time_table["columns"][1]["options"].values()) == set(range(3))
+    percent_table = settings["account-percent-styles"]
+    assert [column["id"] for column in percent_table["columns"]] == [
+        "account",
+        "conditional",
+        "threshold",
+        "font",
+        "size",
+        "bold",
+        "italic",
+        "background",
+    ]
+    assert percent_table["columns"][1]["default"] is False
+    assert percent_table["columns"][2]["default"] == 20
+    targets = settings["account-style-targets"]
+    assert [column["id"] for column in targets["columns"]] == [
+        "account",
+        "element",
+        "panel",
+        "hover",
+        "click",
+    ]
+    assert set(targets["columns"][1]["options"].values()) == {0, 1, 2}
+    assert targets["show-buttons"] is False
 
     layout = settings["layout"]
     referenced_keys: set[str] = set()
@@ -105,19 +128,26 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "_selectedPercent" in source
     assert "_accountTag" in source
     assert "showPanelLabel" not in source
-    assert "this.set_applet_label(this._panelLabel(selected, worst));" in source
+    assert "this.set_applet_label(panel.plain);" in source
+    assert "this._setPanelMarkup(panel.markup);" in source
     assert "_reactivateAccount" in source
     assert '"system-log-in-symbolic"' in source
     assert '"reactivate"' in source
     assert "codex-usage login " not in source
     assert 'bind("account-backends"' in source
+    assert 'bind("account-percent-styles"' in source
     assert 'bind("account-date-styles"' in source
     assert 'bind("account-time-styles"' in source
+    assert 'bind("account-style-targets"' in source
     assert "changed.backend" in source
     assert '"service", "status"' in source
     assert "_onAccountBackendsChanged" in source
     assert "backend_configured" in source
     assert "_normalizeStyleRow" in source
+    assert "_normalizeTargetRow" in source
+    assert "_percentPartsFromValue" in source
+    assert "_tooltipContent" in source
+    assert "_targetEnabled" in source
     assert "_formatDatePart" in source
     assert "_formatTimePart" in source
     assert "_styleSpan" in source
@@ -125,6 +155,8 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "remaining < style.threshold" in source
     assert "row.conditional === undefined ? false" in source
     assert "text.set_markup(markup)" in source
+    assert "this.set_applet_tooltip(" in source
+    assert "tooltip.markup" in source
     assert '.replace(/&/g, "&amp;")' in source
     for forbidden in (
         "spawnCommandLine",

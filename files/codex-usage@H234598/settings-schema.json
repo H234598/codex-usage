@@ -19,10 +19,12 @@
     },
     "format-page": {
       "type": "page",
-      "title": "Datum & Uhrzeit",
+      "title": "Formatierung",
       "sections": [
+        "percent-style-section",
         "date-style-section",
-        "time-style-section"
+        "time-style-section",
+        "style-target-section"
       ]
     },
     "alerts-page": {
@@ -72,6 +74,13 @@
         "panel-percent-source"
       ]
     },
+    "percent-style-section": {
+      "type": "section",
+      "title": "Prozentanzeige pro Account",
+      "keys": [
+        "account-percent-styles"
+      ]
+    },
     "date-style-section": {
       "type": "section",
       "title": "Datum pro Account",
@@ -84,6 +93,13 @@
       "title": "Uhrzeit pro Account",
       "keys": [
         "account-time-styles"
+      ]
+    },
+    "style-target-section": {
+      "type": "section",
+      "title": "Formatierungsorte",
+      "keys": [
+        "account-style-targets"
       ]
     },
     "alerts-section": {
@@ -153,6 +169,81 @@
         "options": {
           "Bisheriger Direktabruf": 0,
           "Codex App Server": 1
+        }
+      }
+    ],
+    "height": 180,
+    "show-buttons": false,
+    "default": []
+  },
+  "account-percent-styles": {
+    "type": "list",
+    "description": "Prozentdarstellung pro Account",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "conditional",
+        "title": "Nur unter",
+        "tooltip": "Formatierung nur anwenden, wenn der angezeigte Restwert die Schwelle unterschreitet.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "threshold",
+        "title": "Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
+      },
+      {
+        "id": "font",
+        "title": "Schriftart",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Sans": 1,
+          "Serif": 2,
+          "Monospace": 3
+        }
+      },
+      {
+        "id": "size",
+        "title": "Größe",
+        "tooltip": "0 übernimmt die Schriftgröße des Cinnamon-Themes.",
+        "type": "integer",
+        "min": 0,
+        "max": 48,
+        "default": 0
+      },
+      {
+        "id": "bold",
+        "title": "Fett",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "italic",
+        "title": "Kursiv",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "background",
+        "title": "Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
         }
       }
     ],
@@ -328,6 +419,49 @@
       }
     ],
     "height": 180,
+    "show-buttons": false,
+    "default": []
+  },
+  "account-style-targets": {
+    "type": "list",
+    "description": "Oberflächen für die Formatierung",
+    "tooltip": "Datum und Uhrzeit werden in Statusleiste und Hover-Text eingeblendet, wenn der jeweilige Ort aktiviert ist. Im Klick-Menü bleiben sie bei deaktivierter Formatierung als normaler Text sichtbar.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "element",
+        "title": "Element",
+        "type": "integer",
+        "options": {
+          "Prozent": 0,
+          "Datum": 1,
+          "Uhrzeit": 2
+        }
+      },
+      {
+        "id": "panel",
+        "title": "Statusleiste",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "hover",
+        "title": "Hover",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "click",
+        "title": "Klick-Menü",
+        "type": "boolean",
+        "default": true
+      }
+    ],
+    "height": 300,
     "show-buttons": false,
     "default": []
   },
