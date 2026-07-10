@@ -848,8 +848,12 @@ CodexUsageApplet.prototype = {
         try {
             argv = this._baseCommandArgv();
         } catch (e) {
+            let wasChecked = this._serviceChecked;
             this._serviceChecked = true;
-            this._systemdActive = false;
+            if (!wasChecked) {
+                this._serviceStatus = {};
+                this._systemdActive = false;
+            }
             callback();
             return;
         }

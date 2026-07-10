@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.24 - 2026-07-11
+
+### Fixed
+
+- Service ownership now remains fail-closed when either command resolution or
+  the status subprocess fails after a systemd timer was known to be active.
+
 ## 0.6.23 - 2026-07-11
 
 ### Fixed

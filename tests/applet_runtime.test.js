@@ -915,6 +915,20 @@ test("service status errors preserve a previously active systemd owner", () => {
   assert.equal(continuationCalls, 1);
 });
 
+test("service argv errors preserve a previously active systemd owner", () => {
+  const applet = makeApplet();
+  applet._serviceChecked = true;
+  applet._systemdActive = true;
+  applet._serviceStatus = { enabled: true, active: true };
+  applet._baseCommandArgv = () => { throw new Error("command unavailable"); };
+  let continuationCalls = 0;
+
+  applet._checkServiceStatus(() => { continuationCalls += 1; });
+  assert.equal(applet._systemdActive, true);
+  assert.deepEqual(applet._serviceStatus, { enabled: true, active: true });
+  assert.equal(continuationCalls, 1);
+});
+
 test("cleanup is idempotent across 100 applet removals", () => {
   for (let index = 0; index < 100; index += 1) {
     const applet = makeApplet();
