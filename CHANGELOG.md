@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.31 - 2026-07-11
+
+### Fixed
+
+- Account-level warning and error toggles now rebuild an open menu immediately,
+  keeping status and severity synchronized with the changed setting.
+
 ## 0.6.30 - 2026-07-11
 
 ### Fixed

@@ -2230,6 +2230,9 @@ CodexUsageApplet.prototype = {
             global.log("[" + UUID + "] alert account setting failed: " + String(e));
         }
         this._updatePanel();
+        if (this.menu && this.menu.isOpen) {
+            this._buildUsageMenu();
+        }
     },
 
     _addResetDetail: function(usage) {

@@ -445,6 +445,33 @@ test("alert setting changes refresh the panel immediately", () => {
   assert.equal(refreshed, 1);
 });
 
+test("account alert toggles rebuild an open menu immediately", () => {
+  const applet = makeApplet();
+  applet.accountAlertSettings = [
+    {
+      account: "alpha",
+      "five-threshold": 20,
+      "weekly-threshold": 20,
+      warnings: true,
+      errors: true,
+    },
+    {
+      account: "beta",
+      "five-threshold": 20,
+      "weekly-threshold": 20,
+      warnings: true,
+      errors: true,
+    },
+  ];
+  applet.settings = { setValue() {} };
+  applet.menu = { isOpen: true };
+  let rebuilds = 0;
+  applet._buildUsageMenu = () => { rebuilds += 1; };
+  applet._updateAccountAlertSetting("alpha", { warnings: false });
+  assert.equal(rebuilds, 1);
+  assert.equal(applet._alertSettings.alpha.warnings, false);
+});
+
 test("account synchronization refreshes cached values immediately", () => {
   const applet = makeApplet();
   applet._baseCommandArgv = () => ["codex-usage"];
