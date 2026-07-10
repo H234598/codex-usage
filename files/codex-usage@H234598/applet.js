@@ -85,10 +85,10 @@ CodexUsageApplet.prototype = {
         this._process = null;
         this._refreshing = false;
         this._usages = [];
-        this._warningState = {};
-        this._errorState = {};
-        this._reactivations = {};
-        this._reactivationErrors = {};
+        this._warningState = Object.create(null);
+        this._errorState = Object.create(null);
+        this._reactivations = Object.create(null);
+        this._reactivationErrors = Object.create(null);
         this._reactivationRefreshPending = false;
         this._auxProcess = null;
         this._auxTimeoutId = 0;
@@ -99,16 +99,16 @@ CodexUsageApplet.prototype = {
         this._lastHealthReportAt = 0;
         this._backendRowsReady = false;
         this._syncingBackendRows = false;
-        this._backendAccounts = {};
+        this._backendAccounts = Object.create(null);
         this._syncingAccountSettings = false;
-        this._panelSettings = {};
-        this._alertSettings = {};
+        this._panelSettings = Object.create(null);
+        this._alertSettings = Object.create(null);
         this._syncingStyleRows = false;
-        this._percentStyles = {};
-        this._dateStyles = {};
-        this._timeStyles = {};
-        this._durationStyles = {};
-        this._styleTargets = {};
+        this._percentStyles = Object.create(null);
+        this._dateStyles = Object.create(null);
+        this._timeStyles = Object.create(null);
+        this._durationStyles = Object.create(null);
+        this._styleTargets = Object.create(null);
         this._systemdActive = false;
         this._serviceChecked = false;
         this._serviceStatus = {};
@@ -860,7 +860,7 @@ CodexUsageApplet.prototype = {
                 return;
             }
             let rows = [];
-            let accounts = {};
+            let accounts = Object.create(null);
             for (let i = 0; i < payload.accounts.length && i < MAX_ACCOUNTS; i++) {
                 let item = payload.accounts[i];
                 if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -928,7 +928,7 @@ CodexUsageApplet.prototype = {
     },
 
     _mergedPanelRows: function(accounts, currentRows) {
-        let current = {};
+        let current = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._safeText(currentRows[i] && currentRows[i].account, 64);
@@ -990,7 +990,7 @@ CodexUsageApplet.prototype = {
     },
 
     _mergedAlertRows: function(accounts, currentRows) {
-        let current = {};
+        let current = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._safeText(currentRows[i] && currentRows[i].account, 64);
@@ -1045,7 +1045,7 @@ CodexUsageApplet.prototype = {
     },
 
     _panelSettingsMap: function(rows) {
-        let result = {};
+        let result = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             result[rows[i].account] = rows[i];
         }
@@ -1053,7 +1053,7 @@ CodexUsageApplet.prototype = {
     },
 
     _alertSettingsMap: function(rows) {
-        let result = {};
+        let result = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             result[rows[i].account] = rows[i];
         }
@@ -1079,7 +1079,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let normalized = [];
-        let seen = {};
+        let seen = Object.create(null);
         for (let i = 0; i < this.accountPanelSettings.length; i++) {
             let account = this._safeText(this.accountPanelSettings[i] && this.accountPanelSettings[i].account, 64);
             let row = this._normalizePanelRow(this.accountPanelSettings[i], account);
@@ -1105,7 +1105,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let normalized = [];
-        let seen = {};
+        let seen = Object.create(null);
         for (let i = 0; i < this.accountAlertSettings.length; i++) {
             let account = this._safeText(this.accountAlertSettings[i] && this.accountAlertSettings[i].account, 64);
             let row = this._normalizeAlertRow(this.accountAlertSettings[i], account);
@@ -1184,7 +1184,7 @@ CodexUsageApplet.prototype = {
     },
 
     _mergedStyleRows: function(accounts, currentRows, kind) {
-        let current = {};
+        let current = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._safeText(
@@ -1339,7 +1339,7 @@ CodexUsageApplet.prototype = {
     },
 
     _styleMap: function(rows) {
-        let result = {};
+        let result = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             result[rows[i].account] = rows[i];
         }
@@ -1347,7 +1347,7 @@ CodexUsageApplet.prototype = {
     },
 
     _mergedTargetRows: function(accounts, currentRows) {
-        let current = {};
+        let current = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._safeText(currentRows[i] && currentRows[i].account, 64);
@@ -1405,7 +1405,7 @@ CodexUsageApplet.prototype = {
     },
 
     _targetMap: function(rows) {
-        let result = {};
+        let result = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             result[rows[i].account + ":" + rows[i].element] = rows[i];
         }
@@ -1443,7 +1443,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let normalized = [];
-        let seen = {};
+        let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             let account = this._safeText(rows[i] && rows[i].account, 64);
             if (!account || seen[account] || !this._backendAccounts[account]) {
@@ -1481,7 +1481,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let normalized = [];
-        let seen = {};
+        let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             let account = this._safeText(rows[i] && rows[i].account, 64);
             let item = this._normalizeTargetRow(rows[i], account);
@@ -1781,7 +1781,7 @@ CodexUsageApplet.prototype = {
     },
 
     _mergeFreshPayload: function(fresh) {
-        let previous = {};
+        let previous = Object.create(null);
         for (let i = 0; i < this._usages.length; i++) {
             previous[this._usages[i].account] = this._usages[i];
         }
@@ -2501,8 +2501,8 @@ CodexUsageApplet.prototype = {
     },
 
     _notifyForPayload: function() {
-        let currentWarnings = {};
-        let currentErrors = {};
+        let currentWarnings = Object.create(null);
+        let currentErrors = Object.create(null);
         for (let i = 0; i < this._usages.length; i++) {
             let usage = this._usages[i];
             let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
@@ -3025,7 +3025,7 @@ CodexUsageApplet.prototype = {
                 }
             }
         }
-        this._reactivations = {};
+        this._reactivations = Object.create(null);
     },
 
     on_applet_clicked: function() {

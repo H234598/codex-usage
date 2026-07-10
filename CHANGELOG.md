@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.10 - 2026-07-10
+
+### Fixed
+
+- Account-keyed applet maps now use null prototypes, so IDs such as
+  `__proto__`, `constructor`, and `toString` cannot corrupt or shadow state.
+
 ## 0.6.9 - 2026-07-10
 
 ### Fixed

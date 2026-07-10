@@ -446,6 +446,25 @@ test("payload validation rejects duplicate account identities", () => {
   );
 });
 
+test("backend account maps preserve prototype-like account ids", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "__proto__", label: "Prototype", backend: "direct" }],
+  }, null);
+  applet._syncAccountSettings = () => {};
+  applet._syncStyleRows = () => {};
+  applet._addIdle = () => {};
+  applet._refreshFormattedSurfaces = () => {};
+  applet._loadAccountBackends();
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(applet._backendAccounts, "__proto__"),
+    true
+  );
+  assert.equal(applet._backendAccounts["__proto__"].label, "Prototype");
+});
+
 test("old three-surface target rows migrate with a duration row", () => {
   const applet = makeApplet();
   const rows = applet._mergedTargetRows(
