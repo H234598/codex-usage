@@ -6,7 +6,12 @@ import pytest
 
 from codex_usage.config import AppConfig
 from codex_usage.models import Account
-from codex_usage.service import ServiceError, service_enable, service_uninstall
+from codex_usage.service import (
+    ServiceError,
+    managed_service_config_path,
+    service_enable,
+    service_uninstall,
+)
 
 
 def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
@@ -75,12 +80,16 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     assert f'ReadWritePaths="{auth_home}"' in service
     assert "OnUnitActiveSec=420s" in timer
     assert oct(service_path.stat().st_mode & 0o777) == "0o600"
-    assert ("enable", "--now", "codex-usage.timer") in calls
+    assert ("enable", "codex-usage.timer") in calls
+    assert ("restart", "codex-usage.timer") in calls
     assert result["installed"] is True
     assert result["enabled"] is True
     assert result["active"] is True
     assert result["service_result"] == "success"
     assert result["service_exit_status"] == "0"
+    assert managed_service_config_path() == (
+        tmp_path / "config" / "codex-usage" / "config.toml"
+    ).absolute()
 
 
 def test_service_uninstall_refuses_unmanaged_unit(tmp_path, monkeypatch):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,7 +23,8 @@ class ServiceError(Exception):
 
 def service_enable(config: AppConfig, config_path: Path | None = None) -> dict[str, Any]:
     result = service_install(config, config_path)
-    _systemctl("enable", "--now", TIMER_NAME)
+    _systemctl("enable", TIMER_NAME)
+    _systemctl("restart", TIMER_NAME)
     return {**result, **service_status()}
 
 
@@ -87,6 +89,33 @@ def service_status() -> dict[str, Any]:
         "service": SERVICE_NAME,
         "timer": TIMER_NAME,
     }
+
+
+def managed_service_config_path() -> Path | None:
+    service_path = _unit_directory(create=False) / SERVICE_NAME
+    if not _is_managed_unit(service_path):
+        return None
+    try:
+        text, _ = read_private_text(
+            service_path,
+            regular_label="systemd service",
+            read_label="systemd service",
+            max_bytes=MAX_UNIT_BYTES,
+            too_large_label="systemd service",
+            invalid_utf8_label="systemd service",
+        )
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    for line in text.splitlines():
+        if not line.startswith("ExecStart="):
+            continue
+        try:
+            argv = shlex.split(line[len("ExecStart="):])
+            config_index = argv.index("--config")
+            return Path(argv[config_index + 1]).expanduser().absolute()
+        except (ValueError, IndexError):
+            return None
+    return None
 
 
 def _render_service(config: AppConfig, executable: Path, config_path: Path) -> str:

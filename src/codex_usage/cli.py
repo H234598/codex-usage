@@ -35,6 +35,7 @@ from .reactivate import REACTIVATION_BROWSERS, ReactivationError, reactivate_acc
 from .render import render_account_overview, render_account_values, render_json, render_table
 from .scheduler import fetch_all, watch, watchdog
 from .service import (
+    managed_service_config_path,
     render_service_json,
     service_disable,
     service_enable,
@@ -683,8 +684,12 @@ def _cmd_paths(args: argparse.Namespace) -> int:
 
 def _sync_managed_service(config, config_path: Path | None) -> None:
     try:
-        if service_status().get("installed"):
-            service_install(config, config_path)
+        if not service_status().get("installed"):
+            return
+        requested = (config_path or default_config_path()).expanduser().absolute()
+        if managed_service_config_path() != requested:
+            return
+        service_install(config, config_path)
     except Exception as exc:
         print(
             f"Warnung: systemd-Konfiguration nicht aktualisiert: {type(exc).__name__}",

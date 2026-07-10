@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 - 2026-07-10
+
+### Fixed
+
+- Existing managed systemd units are no longer rebound to an unrelated
+  temporary or custom `--config` path by account-management commands.
+- `service enable` restarts the managed timer after unit regeneration so a
+  pending timer run cannot use stale unit state.
+
 ## 0.6.0 - 2026-07-10
 
 ### Added

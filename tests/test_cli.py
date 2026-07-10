@@ -12,6 +12,27 @@ from codex_usage.cli import main
 from codex_usage.models import AccountUsage, LimitWindow
 
 
+def test_sync_managed_service_does_not_rebind_another_config(tmp_path, monkeypatch):
+    calls = []
+    configured = tmp_path / "configured.toml"
+    requested = tmp_path / "requested.toml"
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: configured.absolute(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.cli.service_install",
+        lambda *args: calls.append(args),
+    )
+
+    from codex_usage.cli import _sync_managed_service
+
+    _sync_managed_service(object(), requested)
+
+    assert calls == []
+
+
 def test_root_help_lists_all_commands(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["--help"])
@@ -98,7 +119,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.0\ncodex-usage 0.6.0\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.1\ncodex-usage 0.6.1\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
