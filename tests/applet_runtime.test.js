@@ -440,6 +440,38 @@ test("partial fresh payload preserves each missing window from stale cache", () 
   assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
 });
 
+test("fresh payload preserves configured accounts omitted from the response", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha" },
+    beta: { account: "beta" },
+  };
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "ok",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: { remaining: 70 },
+    weekly: { remaining: 50 },
+    stale: false,
+  }]);
+  assert.deepEqual(Array.from(merged, (item) => item.account), ["alpha", "beta"]);
+  assert.equal(merged[1].status, "partial");
+  assert.equal(merged[1].stale, true);
+  assert.equal(merged[1].values_captured_at, merged[1].captured_at);
+
+  applet._backendAccounts = { alpha: { account: "alpha" } };
+  const filtered = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "ok",
+    captured_at: "2026-07-10T10:06:00.000Z",
+    five_hour: { remaining: 69 },
+    weekly: { remaining: 49 },
+    stale: false,
+  }]);
+  assert.deepEqual(Array.from(filtered, (item) => item.account), ["alpha"]);
+});
+
 test("payload validation rejects duplicate account identities", () => {
   const applet = makeApplet();
   assert.equal(applet._validatePayload([{ account: "constructor" }])[0].account, "constructor");

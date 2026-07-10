@@ -1884,8 +1884,10 @@ CodexUsageApplet.prototype = {
             previous[this._usages[i].account] = this._usages[i];
         }
         let merged = [];
+        let freshAccounts = Object.create(null);
         for (let j = 0; j < fresh.length; j++) {
             let item = fresh[j];
+            freshAccounts[item.account] = true;
             let old = previous[item.account];
             if (old && item.status !== "ok") {
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
@@ -1911,6 +1913,27 @@ CodexUsageApplet.prototype = {
                 }
             }
             merged.push(item);
+        }
+        for (let k = 0; k < this._usages.length; k++) {
+            let old = this._usages[k];
+            if (
+                freshAccounts[old.account] ||
+                (this._backendRowsReady && !this._backendAccounts[old.account])
+            ) {
+                continue;
+            }
+            let stale = {};
+            for (let key in old) {
+                if (Object.prototype.hasOwnProperty.call(old, key)) {
+                    stale[key] = old[key];
+                }
+            }
+            stale.stale = true;
+            stale.values_captured_at = stale.values_captured_at || stale.captured_at;
+            if (stale.status === "ok") {
+                stale.status = "partial";
+            }
+            merged.push(stale);
         }
         return merged;
     },

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.16 - 2026-07-11
+
+### Fixed
+
+- Fresh payloads now retain configured accounts omitted by a partial response as
+  stale/partial instead of dropping them from the panel.
+
 ## 0.6.15 - 2026-07-11
 
 ### Fixed
