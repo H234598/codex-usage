@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.20 - 2026-07-11
+
+### Fixed
+
+- Primary request queue draining now runs in a guaranteed `finally` path, so
+  an exception during cache or fresh payload handling cannot strand a queued
+  follow-up request.
+
 ## 0.6.19 - 2026-07-11
 
 ### Fixed

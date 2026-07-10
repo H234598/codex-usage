@@ -528,7 +528,6 @@ CodexUsageApplet.prototype = {
                 this._primaryFreshPending = true;
             }
             this._refreshAuxiliaryState();
-            this._drainPrimaryRequests();
         }));
     },
 
@@ -583,7 +582,6 @@ CodexUsageApplet.prototype = {
             if (refreshAfterReactivation && !this._removed && !this._safeMode) {
                 this._refreshFresh(false);
             }
-            this._drainPrimaryRequests();
         }));
     },
 
@@ -612,25 +610,32 @@ CodexUsageApplet.prototype = {
     },
 
     _spawnUsageCommand: function(subcommand, callback) {
+        let guardedCallback = Lang.bind(this, function(payload, error) {
+            try {
+                callback(payload, error);
+            } finally {
+                this._drainPrimaryRequests();
+            }
+        });
         let executable;
         try {
             executable = this._resolveCommand();
         } catch (e) {
-            callback(null, String(e));
+            guardedCallback(null, String(e));
             return;
         }
         let argv = [executable];
         let config = String(this.configPath || "").trim();
         if (config) {
             if (config.length > 1024 || config.indexOf("\u0000") !== -1) {
-                callback(null, _("Ungültiger Config-Pfad"));
+                guardedCallback(null, _("Ungültiger Config-Pfad"));
                 return;
             }
             argv.push("--config", config);
         }
         argv.push(subcommand, "--format", "json");
         let request = { subcommand: subcommand };
-        this._spawnJsonArray(argv, callback, request);
+        this._spawnJsonArray(argv, guardedCallback, request);
     },
 
     _resolveCommand: function() {

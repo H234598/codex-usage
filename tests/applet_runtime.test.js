@@ -369,6 +369,29 @@ test("primary cache and fresh requests are queued instead of cancelling each oth
   assert.equal(applet._primaryCachePending, false);
 });
 
+test("primary request queue drains even when payload handling throws", () => {
+  const applet = makeApplet();
+  applet._resolveCommand = () => "/usr/bin/codex-usage";
+  applet._updatePanel = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._buildLoadingMenu = () => {};
+  applet._applyPayload = () => { throw new Error("payload handler failed"); };
+  applet._primaryFreshPending = true;
+  const callbacks = [];
+  applet._spawnJsonArray = (_argv, callback, request) => {
+    applet._primaryRequest = request;
+    callbacks.push(callback);
+  };
+
+  applet._loadCached(false);
+  assert.equal(callbacks.length, 1);
+  applet._primaryRequest = null;
+  assert.throws(() => callbacks[0]([{ account: "alpha" }], null), /payload handler failed/);
+  assert.equal(callbacks.length, 2);
+  assert.equal(applet._primaryRequest.subcommand, "once");
+  assert.equal(applet._refreshing, true);
+});
+
 test("legacy conditional style rows migrate to the corresponding mode", () => {
   const applet = makeApplet();
   const migrated = applet._normalizeStyleRow(
