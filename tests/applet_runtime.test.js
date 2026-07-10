@@ -83,6 +83,7 @@ function makeApplet(onReady) {
   applet._reactivationRefreshPending = false;
   applet._backendChangeQueue = [];
   applet._backendChangeCurrent = null;
+  applet._backendAuxQueue = [];
   applet._process = null;
   applet._auxProcess = null;
   applet._healthProcess = null;
@@ -577,6 +578,34 @@ test("backend setting queue follows reverted rows while a command is running", (
   assert.equal(reloads, 1);
 });
 
+test("backend queue waits for another auxiliary process instead of canceling it", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._backendChangeQueue = [{ account: "alpha", backend: "app-server" }];
+  applet._auxProcess = {};
+  let started = 0;
+  applet._spawnAuxJson = () => { started += 1; };
+  applet._drainBackendChanges();
+  assert.equal(started, 0);
+  assert.equal(applet._backendChangeCurrent, null);
+  assert.equal(applet._backendChangeQueue.length, 1);
+
+  applet._auxProcess = null;
+  applet._drainBackendChanges();
+  assert.equal(started, 1);
+  assert.equal(applet._backendChangeCurrent.account, "alpha");
+});
+
+test("auxiliary requests defer while backend changes are active", () => {
+  const applet = makeApplet();
+  applet._backendChangeCurrent = { account: "alpha", backend: "app-server" };
+  let called = 0;
+  applet._spawnAuxJson(["codex-usage", "health"], () => { called += 1; });
+  assert.equal(called, 0);
+  assert.equal(applet._backendAuxQueue.length, 1);
+  assert.equal(applet._backendAuxQueue[0].argv[1], "health");
+});
+
 test("old three-surface target rows migrate with a duration row", () => {
   const applet = makeApplet();
   const rows = applet._mergedTargetRows(
@@ -627,9 +656,15 @@ test("cleanup is idempotent across 100 applet removals", () => {
     applet.settings = { finalize() {} };
     applet._displayTimerId = 77;
     applet._sources._displayTimerId = 77;
+    applet._backendChangeQueue = [{ account: "alpha", backend: "direct" }];
+    applet._backendChangeCurrent = { account: "beta", backend: "app-server" };
+    applet._backendAuxQueue = [{ argv: ["codex-usage", "health"], callback() {} }];
     assert.doesNotThrow(() => applet.on_applet_removed_from_panel());
     assert.equal(applet._removed, true);
     assert.equal(applet._displayTimerId, 0);
+    assert.equal(JSON.stringify(applet._backendChangeQueue), "[]");
+    assert.equal(applet._backendChangeCurrent, null);
+    assert.equal(JSON.stringify(applet._backendAuxQueue), "[]");
     assert.equal(applet.menu, null);
   }
 });

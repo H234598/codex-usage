@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.14 - 2026-07-11
+
+### Fixed
+
+- Backend setting changes now survive competing service or health auxiliary
+  requests without leaving the queue permanently blocked.
+
 ## 0.6.13 - 2026-07-10
 
 ### Fixed

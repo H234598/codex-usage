@@ -102,6 +102,7 @@ CodexUsageApplet.prototype = {
         this._backendAccounts = Object.create(null);
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
+        this._backendAuxQueue = [];
         this._syncingAccountSettings = false;
         this._panelSettings = Object.create(null);
         this._alertSettings = Object.create(null);
@@ -312,6 +313,9 @@ CodexUsageApplet.prototype = {
         this._safeMode = true;
         this._safeModeReason = this._shortText(reason || _("Interner Appletfehler"), 240);
         this._refreshing = false;
+        this._backendChangeQueue = [];
+        this._backendChangeCurrent = null;
+        this._backendAuxQueue = [];
         this._cancelProcess();
         this._cancelAuxProcess();
         this._clearPanelClasses();
@@ -368,6 +372,7 @@ CodexUsageApplet.prototype = {
         this._refreshFailures = 0;
         this._circuitOpenUntil = 0;
         this._lastRefreshError = "";
+        this._refreshAuxiliaryState();
         this._refreshFresh(false);
     },
 
@@ -1544,7 +1549,10 @@ CodexUsageApplet.prototype = {
     },
 
     _drainBackendChanges: function() {
-        if (this._removed || this._backendChangeCurrent || !this._backendChangeQueue.length) {
+        if (
+            this._removed || this._backendChangeCurrent || this._auxProcess ||
+            !this._backendChangeQueue.length
+        ) {
             return;
         }
         let changed = this._backendChangeQueue.shift();
@@ -1578,7 +1586,19 @@ CodexUsageApplet.prototype = {
             } else {
                 this._loadAccountBackends();
             }
-        }));
+        }), true);
+    },
+
+    _drainDeferredAuxRequests: function() {
+        if (
+            this._removed || this._safeMode || this._backendChangeCurrent ||
+            this._backendChangeQueue.length || this._auxProcess ||
+            !this._backendAuxQueue.length
+        ) {
+            return;
+        }
+        let request = this._backendAuxQueue.shift();
+        this._spawnAuxJson(request.argv, request.callback);
     },
 
     _onAccountBackendsChanged: function() {
@@ -1649,7 +1669,14 @@ CodexUsageApplet.prototype = {
         }));
     },
 
-    _spawnAuxJson: function(argv, callback) {
+    _spawnAuxJson: function(argv, callback, backendRequest) {
+        if (
+            !backendRequest &&
+            (this._backendChangeCurrent || this._backendChangeQueue.length)
+        ) {
+            this._backendAuxQueue.push({ argv: argv, callback: callback });
+            return;
+        }
         this._cancelAuxProcess();
         let generation = ++this._auxGeneration;
         let process = null;
@@ -1669,6 +1696,8 @@ CodexUsageApplet.prototype = {
             this._runSafely("auxiliary callback", Lang.bind(this, function() {
                 callback(payload, error);
             }));
+            this._drainBackendChanges();
+            this._drainDeferredAuxRequests();
         });
         try {
             let launcher = Gio.SubprocessLauncher.new(
@@ -3094,6 +3123,9 @@ CodexUsageApplet.prototype = {
 
     on_applet_removed_from_panel: function() {
         this._removed = true;
+        this._backendChangeQueue = [];
+        this._backendChangeCurrent = null;
+        this._backendAuxQueue = [];
         this._removeSource("_timerId");
         this._removeSource("_displayTimerId");
         this._removeSource("_staleCheckId");
