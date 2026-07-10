@@ -130,6 +130,7 @@ def _read_rate_limits(
     timeout_seconds: int,
     codex_command: str | None,
 ) -> dict[str, Any]:
+    _validate_codex_home(codex_home)
     command = _resolve_codex(codex_command)
     deadline = time.monotonic() + timeout_seconds
     process = _start_app_server(command, codex_home)
@@ -243,9 +244,7 @@ def _resolve_codex(explicit: str | None) -> str:
 
 
 def _start_app_server(command: str, codex_home: Path) -> subprocess.Popen[bytes]:
-    _assert_no_symlink_ancestors(codex_home)
-    if codex_home.is_symlink() or not codex_home.is_dir():
-        raise AppServerAuthError("CODEX_HOME must be a real directory")
+    _validate_codex_home(codex_home)
     env = _app_server_environment(codex_home)
     try:
         return subprocess.Popen(
@@ -259,6 +258,12 @@ def _start_app_server(command: str, codex_home: Path) -> subprocess.Popen[bytes]
         )
     except OSError as exc:
         raise AppServerUnavailableError("could not start codex app server") from exc
+
+
+def _validate_codex_home(codex_home: Path) -> None:
+    _assert_no_symlink_ancestors(codex_home)
+    if codex_home.is_symlink() or not codex_home.is_dir():
+        raise AppServerAuthError("CODEX_HOME must be a real directory")
 
 
 def _assert_no_symlink_ancestors(path: Path) -> None:
