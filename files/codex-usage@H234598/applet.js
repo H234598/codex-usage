@@ -1202,12 +1202,19 @@ CodexUsageApplet.prototype = {
     _defaultStyleRow: function(account, kind) {
         let row = {
             account: account,
-            conditional: false,
+            mode: 0,
             threshold: kind === "duration" ? 120 : 20,
             font: 0,
             size: 0,
             bold: false,
             italic: false,
+            color: 0,
+            "below-font": 0,
+            "below-size": 0,
+            "below-bold": true,
+            "below-italic": false,
+            "below-color": 3,
+            "below-background": 0,
             background: 0
         };
         if (kind !== "percent") {
@@ -1215,12 +1222,19 @@ CodexUsageApplet.prototype = {
             return {
                 account: row.account,
                 format: row.format,
-                conditional: row.conditional,
+                mode: row.mode,
                 threshold: row.threshold,
                 font: row.font,
                 size: row.size,
                 bold: row.bold,
                 italic: row.italic,
+                color: row.color,
+                "below-font": row["below-font"],
+                "below-size": row["below-size"],
+                "below-bold": row["below-bold"],
+                "below-italic": row["below-italic"],
+                "below-color": row["below-color"],
+                "below-background": row["below-background"],
                 background: row.background
             };
         }
@@ -1231,37 +1245,65 @@ CodexUsageApplet.prototype = {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
-        let format = kind === "percent" ? 0 : Number(row.format);
-        let conditional = row.conditional === undefined ? false : row.conditional;
+        let format = kind === "percent"
+            ? 0
+            : (row.format === undefined ? 0 : Number(row.format));
+        let mode = row.mode === undefined
+            ? (row.conditional === true ? 1 : 0)
+            : Number(row.mode);
         let threshold = row.threshold === undefined
             ? (kind === "duration" ? 120 : 20)
             : Number(row.threshold);
-        let font = Number(row.font);
-        let size = Number(row.size);
-        let background = Number(row.background);
+        let font = row.font === undefined ? 0 : Number(row.font);
+        let size = row.size === undefined ? 0 : Number(row.size);
+        let bold = row.bold === undefined ? false : row.bold;
+        let italic = row.italic === undefined ? false : row.italic;
+        let color = row.color === undefined ? 0 : Number(row.color);
+        let background = row.background === undefined ? 0 : Number(row.background);
+        let belowFont = row["below-font"] === undefined ? 0 : Number(row["below-font"]);
+        let belowSize = row["below-size"] === undefined ? 0 : Number(row["below-size"]);
+        let belowBold = row["below-bold"] === undefined ? true : row["below-bold"];
+        let belowItalic = row["below-italic"] === undefined ? false : row["below-italic"];
+        let belowColor = row["below-color"] === undefined ? 3 : Number(row["below-color"]);
+        let belowBackground = row["below-background"] === undefined
+            ? 0
+            : Number(row["below-background"]);
         let maxFormat = kind === "date" ? 3 : (kind === "duration" ? 3 : 2);
         let maxThreshold = kind === "duration" ? 10080 : 100;
         if (
             (kind !== "percent" && (
                 !Number.isInteger(format) || format < 0 || format > maxFormat
             )) ||
-            typeof conditional !== "boolean" ||
+            !Number.isInteger(mode) || mode < 0 || mode > 3 ||
             !Number.isInteger(threshold) || threshold < 0 || threshold > maxThreshold ||
             !Number.isInteger(font) || font < 0 || font > 3 ||
             !Number.isInteger(size) || size < 0 || size > 48 ||
+            !Number.isInteger(color) || color < 0 || color > 7 ||
             !Number.isInteger(background) || background < 0 || background > 6 ||
-            typeof row.bold !== "boolean" || typeof row.italic !== "boolean"
+            typeof bold !== "boolean" || typeof italic !== "boolean" ||
+            !Number.isInteger(belowFont) || belowFont < 0 || belowFont > 3 ||
+            !Number.isInteger(belowSize) || belowSize < 0 || belowSize > 48 ||
+            typeof belowBold !== "boolean" || typeof belowItalic !== "boolean" ||
+            !Number.isInteger(belowColor) || belowColor < 0 || belowColor > 7 ||
+            !Number.isInteger(belowBackground) || belowBackground < 0 || belowBackground > 6
         ) {
             return null;
         }
         let normalized = {
             account: account,
-            conditional: conditional,
+            mode: mode,
             threshold: threshold,
             font: font,
             size: size,
-            bold: row.bold,
-            italic: row.italic,
+            bold: bold,
+            italic: italic,
+            color: color,
+            "below-font": belowFont,
+            "below-size": belowSize,
+            "below-bold": belowBold,
+            "below-italic": belowItalic,
+            "below-color": belowColor,
+            "below-background": belowBackground,
             background: background
         };
         if (kind === "percent") {
@@ -1270,12 +1312,19 @@ CodexUsageApplet.prototype = {
         return {
             account: normalized.account,
             format: format,
-            conditional: normalized.conditional,
+            mode: normalized.mode,
             threshold: normalized.threshold,
             font: normalized.font,
             size: normalized.size,
             bold: normalized.bold,
             italic: normalized.italic,
+            color: normalized.color,
+            "below-font": normalized["below-font"],
+            "below-size": normalized["below-size"],
+            "below-bold": normalized["below-bold"],
+            "below-italic": normalized["below-italic"],
+            "below-color": normalized["below-color"],
+            "below-background": normalized["below-background"],
             background: normalized.background
         };
     },
@@ -2670,23 +2719,51 @@ CodexUsageApplet.prototype = {
         if (!this._styleIsActive(style, remaining)) {
             return escaped;
         }
+        let mode = this._styleMode(style);
+        let below = remaining !== null && Number.isFinite(remaining) &&
+            remaining < Number(style.threshold);
+        let useBelow = mode === 2 && below;
+        let fontValue = useBelow ? style["below-font"] : style.font;
+        let sizeValue = useBelow ? style["below-size"] : style.size;
+        let boldValue = useBelow ? style["below-bold"] : style.bold;
+        let italicValue = useBelow ? style["below-italic"] : style.italic;
+        let colorValue = useBelow ? style["below-color"] : style.color;
+        let backgroundValue = useBelow ? style["below-background"] : style.background;
+        if (fontValue === undefined) {
+            fontValue = style.font;
+        }
+        if (sizeValue === undefined) {
+            sizeValue = style.size;
+        }
+        if (boldValue === undefined) {
+            boldValue = style.bold;
+        }
+        if (italicValue === undefined) {
+            italicValue = style.italic;
+        }
+        if (colorValue === undefined) {
+            colorValue = style.color === undefined ? 0 : style.color;
+        }
+        if (backgroundValue === undefined) {
+            backgroundValue = style.background === undefined ? 0 : style.background;
+        }
         let attrs = [];
         let fonts = [null, "Sans", "Serif", "Monospace"];
-        let font = fonts[style.font] || null;
+        let font = fonts[fontValue] || null;
         if (font) {
             attrs.push('font_family="' + font + '"');
         }
-        if (style.size > 0) {
+        if (sizeValue > 0) {
             let maximum = surface === "panel"
                 ? Math.max(8, Math.floor(this.panelHeight * 0.55))
                 : 48;
-            let size = Math.max(6, Math.min(maximum, style.size));
+            let size = Math.max(6, Math.min(maximum, sizeValue));
             attrs.push('size="' + size + 'pt"');
         }
-        if (style.bold) {
+        if (boldValue) {
             attrs.push('weight="bold"');
         }
-        if (style.italic) {
+        if (italicValue) {
             attrs.push('style="italic"');
         }
         let backgrounds = [
@@ -2698,20 +2775,47 @@ CodexUsageApplet.prototype = {
             { background: "#1d4ed8", foreground: "#ffffff" },
             { background: "#facc15", foreground: "#111111" }
         ];
-        let colors = backgrounds[style.background] || null;
+        let fontColors = [
+            null,
+            "#111111",
+            "#ffffff",
+            "#dc2626",
+            "#16a34a",
+            "#2563eb",
+            "#ca8a04",
+            "#6b7280"
+        ];
+        let colors = backgrounds[backgroundValue] || null;
         if (colors) {
             attrs.push('background="' + colors.background + '"');
-            attrs.push('foreground="' + colors.foreground + '"');
+        }
+        let foreground = fontColors[colorValue] || (colors ? colors.foreground : null);
+        if (foreground) {
+            attrs.push('foreground="' + foreground + '"');
         }
         return attrs.length ? "<span " + attrs.join(" ") + ">" + escaped + "</span>" : escaped;
     },
 
+    _styleMode: function(style) {
+        if (style.mode !== undefined) {
+            let mode = Number(style.mode);
+            if (Number.isInteger(mode) && mode >= 0 && mode <= 3) {
+                return mode;
+            }
+        }
+        return style.conditional === true ? 1 : 0;
+    },
+
     _styleIsActive: function(style, remaining) {
-        if (!style.conditional) {
+        let mode = this._styleMode(style);
+        if (mode === 3) {
+            return false;
+        }
+        if (mode !== 1) {
             return true;
         }
         return remaining !== null && Number.isFinite(remaining) &&
-            remaining < style.threshold;
+            remaining < Number(style.threshold);
     },
 
     _escapeMarkup: function(value) {

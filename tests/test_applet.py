@@ -82,22 +82,36 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         assert [column["id"] for column in table["columns"]] == [
             "account",
             "format",
-            "conditional",
+            "mode",
             "threshold",
             "font",
             "size",
             "bold",
             "italic",
+            "color",
             "background",
+            "below-font",
+            "below-size",
+            "below-bold",
+            "below-italic",
+            "below-color",
+            "below-background",
         ]
-        assert table["columns"][2]["default"] is False
+        assert set(table["columns"][2]["options"].values()) == set(range(4))
+        assert table["columns"][2]["default"] == 0
         assert table["columns"][3]["default"] == 20
         assert table["columns"][3]["min"] == 0
         assert table["columns"][3]["max"] == 100
         assert table["columns"][5]["max"] == 48
         assert table["columns"][6]["type"] == "boolean"
         assert table["columns"][7]["type"] == "boolean"
-        assert set(table["columns"][8]["options"].values()) == set(range(7))
+        assert set(table["columns"][8]["options"].values()) == set(range(8))
+        assert set(table["columns"][9]["options"].values()) == set(range(7))
+        assert table["columns"][11]["max"] == 48
+        assert table["columns"][12]["default"] is True
+        assert table["columns"][13]["type"] == "boolean"
+        assert set(table["columns"][14]["options"].values()) == set(range(8))
+        assert set(table["columns"][15]["options"].values()) == set(range(7))
     assert set(date_table["columns"][1]["options"].values()) == set(range(4))
     assert set(time_table["columns"][1]["options"].values()) == set(range(3))
     duration_table = settings["account-duration-styles"]
@@ -106,30 +120,54 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     assert [column["id"] for column in duration_table["columns"]] == [
         "account",
         "format",
-        "conditional",
+        "mode",
         "threshold",
         "font",
         "size",
         "bold",
         "italic",
+        "color",
         "background",
+        "below-font",
+        "below-size",
+        "below-bold",
+        "below-italic",
+        "below-color",
+        "below-background",
     ]
     assert set(duration_table["columns"][1]["options"].values()) == set(range(4))
+    assert set(duration_table["columns"][2]["options"].values()) == set(range(4))
     assert duration_table["columns"][3]["default"] == 120
     assert duration_table["columns"][3]["max"] == 10080
+    assert set(duration_table["columns"][8]["options"].values()) == set(range(8))
+    assert set(duration_table["columns"][9]["options"].values()) == set(range(7))
+    assert set(duration_table["columns"][14]["options"].values()) == set(range(8))
+    assert set(duration_table["columns"][15]["options"].values()) == set(range(7))
     percent_table = settings["account-percent-styles"]
     assert [column["id"] for column in percent_table["columns"]] == [
         "account",
-        "conditional",
+        "mode",
         "threshold",
         "font",
         "size",
         "bold",
         "italic",
+        "color",
         "background",
+        "below-font",
+        "below-size",
+        "below-bold",
+        "below-italic",
+        "below-color",
+        "below-background",
     ]
-    assert percent_table["columns"][1]["default"] is False
+    assert set(percent_table["columns"][1]["options"].values()) == set(range(4))
+    assert percent_table["columns"][1]["default"] == 0
     assert percent_table["columns"][2]["default"] == 20
+    assert set(percent_table["columns"][7]["options"].values()) == set(range(8))
+    assert set(percent_table["columns"][8]["options"].values()) == set(range(7))
+    assert set(percent_table["columns"][13]["options"].values()) == set(range(8))
+    assert set(percent_table["columns"][14]["options"].values()) == set(range(7))
     alert_table = settings["account-alert-settings"]
     assert [column["id"] for column in alert_table["columns"]] == [
         "account",
@@ -224,8 +262,9 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "generation === this._generation" in source
     assert "this._timeoutId = 0" in source
     assert "record.timeoutId = 0" in source
-    assert "remaining < style.threshold" in source
-    assert "row.conditional === undefined ? false" in source
+    assert "remaining < Number(style.threshold)" in source
+    assert "row.conditional === true ? 1 : 0" in source
+    assert "style.mode !== undefined" in source
     assert "text.set_markup(markup)" in source
     assert "this.set_applet_tooltip(" in source
     assert "tooltip.markup" in source

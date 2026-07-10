@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.3 - 2026-07-10
+
+### Added
+
+- Independent font colors for percentage, date, time, and restlaufzeit
+  formatting profiles.
+- Four formatting modes per account and value: always, below threshold only,
+  always with an alternate below-threshold profile, or off.
+- Separate below-threshold font, size, emphasis, color, and background settings
+  with migration from the former `conditional` setting.
+
 ## 0.6.2 - 2026-07-10
 
 ### Added

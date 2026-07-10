@@ -193,13 +193,16 @@ test("restlaufzeit is rendered, styled and uses the per-surface target", () => {
     alpha: {
       account: "alpha",
       format: 3,
-      conditional: false,
+      mode: 2,
       threshold: 120,
       font: 0,
       size: 0,
       bold: true,
       italic: false,
+      color: 5,
       background: 0,
+      "below-bold": true,
+      "below-color": 3,
     },
   };
   applet._styleTargets = {
@@ -216,10 +219,62 @@ test("restlaufzeit is rendered, styled and uses the per-surface target", () => {
   );
   assert.match(parts.plain, /^Rest 2h 05m$/);
   assert.match(parts.markup, /weight="bold"/);
+  assert.match(parts.markup, /foreground="#2563eb"/);
   assert.equal(applet._formatDurationPart(150, 0), "2h 30m");
   assert.equal(applet._formatDurationPart(150, 1), "02:30");
   assert.equal(applet._formatDurationPart(150, 2), "2 Stunden 30 Minuten");
   assert.equal(applet._formatDurationPart(150, 3), "2h 30m");
+});
+
+test("style modes control normal, threshold and disabled formatting", () => {
+  const applet = makeApplet();
+  const style = {
+    mode: 0,
+    threshold: 20,
+    font: 0,
+    size: 0,
+    bold: false,
+    italic: false,
+    color: 4,
+    background: 0,
+    "below-bold": true,
+    "below-color": 3,
+    "below-background": 0,
+  };
+  assert.match(applet._styleSpan("80%", style, 80, "panel"), /foreground="#16a34a"/);
+
+  style.mode = 1;
+  assert.equal(applet._styleSpan("80%", style, 80, "panel"), "80%");
+  assert.match(applet._styleSpan("10%", style, 10, "panel"), /foreground="#16a34a"/);
+
+  style.mode = 2;
+  assert.match(applet._styleSpan("80%", style, 80, "panel"), /foreground="#16a34a"/);
+  assert.match(applet._styleSpan("10%", style, 10, "panel"), /foreground="#dc2626"/);
+  assert.match(applet._styleSpan("10%", style, 10, "panel"), /weight="bold"/);
+
+  style.mode = 3;
+  assert.equal(applet._styleSpan("<80%>", style, 10, "panel"), "&lt;80%&gt;");
+});
+
+test("legacy conditional style rows migrate to the corresponding mode", () => {
+  const applet = makeApplet();
+  const migrated = applet._normalizeStyleRow(
+    {
+      account: "alpha",
+      conditional: true,
+      threshold: 20,
+      font: 0,
+      size: 0,
+      bold: false,
+      italic: false,
+      background: 0,
+    },
+    "alpha",
+    "percent"
+  );
+  assert.equal(migrated.mode, 1);
+  assert.equal(migrated.color, 0);
+  assert.equal(migrated["below-color"], 3);
 });
 
 test("old three-surface target rows migrate with a duration row", () => {

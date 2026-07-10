@@ -196,11 +196,17 @@
         "type": "string"
       },
       {
-        "id": "conditional",
-        "title": "Nur unter",
-        "tooltip": "Formatierung nur anwenden, wenn der angezeigte Restwert die Schwelle unterschreitet.",
-        "type": "boolean",
-        "default": false
+        "id": "mode",
+        "title": "Formatierungsmodus",
+        "tooltip": "Immer, nur unter Schwelle, immer mit Alternativformat unter Schwelle oder aus.",
+        "type": "integer",
+        "options": {
+          "Immer": 0,
+          "Nur unter Schwelle": 1,
+          "Immer, unter Schwelle anders": 2,
+          "Aus": 3
+        },
+        "default": 0
       },
       {
         "id": "threshold",
@@ -243,6 +249,23 @@
         "default": false
       },
       {
+        "id": "color",
+        "title": "Schriftfarbe",
+        "tooltip": "Theme übernimmt die Standardfarbe. Eine gewählte Farbe gilt unabhängig vom Hintergrund.",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Schwarz": 1,
+          "Weiß": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6,
+          "Grau": 7
+        },
+        "default": 0
+      },
+      {
         "id": "background",
         "title": "Hintergrund",
         "type": "integer",
@@ -255,6 +278,69 @@
           "Blau": 5,
           "Gelb": 6
         }
+      },
+      {
+        "id": "below-font",
+        "title": "Unter Schwelle Schriftart",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Sans": 1,
+          "Serif": 2,
+          "Monospace": 3
+        },
+        "default": 0
+      },
+      {
+        "id": "below-size",
+        "title": "Unter Schwelle Größe",
+        "type": "integer",
+        "min": 0,
+        "max": 48,
+        "default": 0
+      },
+      {
+        "id": "below-bold",
+        "title": "Unter Schwelle Fett",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "below-italic",
+        "title": "Unter Schwelle Kursiv",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "below-color",
+        "title": "Unter Schwelle Schriftfarbe",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Schwarz": 1,
+          "Weiß": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6,
+          "Grau": 7
+        },
+        "default": 3
+      },
+      {
+        "id": "below-background",
+        "title": "Unter Schwelle Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
       }
     ],
     "height": 180,
@@ -282,11 +368,17 @@
         }
       },
       {
-        "id": "conditional",
-        "title": "Nur unter",
-        "tooltip": "Optische Formatierung nur anwenden, wenn der Restwert des jeweiligen Limits die Schwelle unterschreitet.",
-        "type": "boolean",
-        "default": false
+        "id": "mode",
+        "title": "Formatierungsmodus",
+        "tooltip": "Immer, nur unter Schwelle, immer mit Alternativformat unter Schwelle oder aus.",
+        "type": "integer",
+        "options": {
+          "Immer": 0,
+          "Nur unter Schwelle": 1,
+          "Immer, unter Schwelle anders": 2,
+          "Aus": 3
+        },
+        "default": 0
       },
       {
         "id": "threshold",
@@ -329,6 +421,23 @@
         "default": false
       },
       {
+        "id": "color",
+        "title": "Schriftfarbe",
+        "tooltip": "Theme übernimmt die Standardfarbe. Eine gewählte Farbe gilt unabhängig vom Hintergrund.",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Schwarz": 1,
+          "Weiß": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6,
+          "Grau": 7
+        },
+        "default": 0
+      },
+      {
         "id": "background",
         "title": "Hintergrund",
         "type": "integer",
@@ -341,6 +450,69 @@
           "Blau": 5,
           "Gelb": 6
         }
+      },
+      {
+        "id": "below-font",
+        "title": "Unter Schwelle Schriftart",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Sans": 1,
+          "Serif": 2,
+          "Monospace": 3
+        },
+        "default": 0
+      },
+      {
+        "id": "below-size",
+        "title": "Unter Schwelle Größe",
+        "type": "integer",
+        "min": 0,
+        "max": 48,
+        "default": 0
+      },
+      {
+        "id": "below-bold",
+        "title": "Unter Schwelle Fett",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "below-italic",
+        "title": "Unter Schwelle Kursiv",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "below-color",
+        "title": "Unter Schwelle Schriftfarbe",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Schwarz": 1,
+          "Weiß": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6,
+          "Grau": 7
+        },
+        "default": 3
+      },
+      {
+        "id": "below-background",
+        "title": "Unter Schwelle Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
       }
     ],
     "height": 180,
@@ -367,11 +539,17 @@
         }
       },
       {
-        "id": "conditional",
-        "title": "Nur unter",
-        "tooltip": "Optische Formatierung nur anwenden, wenn der Restwert des jeweiligen Limits die Schwelle unterschreitet.",
-        "type": "boolean",
-        "default": false
+        "id": "mode",
+        "title": "Formatierungsmodus",
+        "tooltip": "Immer, nur unter Schwelle, immer mit Alternativformat unter Schwelle oder aus.",
+        "type": "integer",
+        "options": {
+          "Immer": 0,
+          "Nur unter Schwelle": 1,
+          "Immer, unter Schwelle anders": 2,
+          "Aus": 3
+        },
+        "default": 0
       },
       {
         "id": "threshold",
@@ -414,6 +592,23 @@
         "default": false
       },
       {
+        "id": "color",
+        "title": "Schriftfarbe",
+        "tooltip": "Theme übernimmt die Standardfarbe. Eine gewählte Farbe gilt unabhängig vom Hintergrund.",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Schwarz": 1,
+          "Weiß": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6,
+          "Grau": 7
+        },
+        "default": 0
+      },
+      {
         "id": "background",
         "title": "Hintergrund",
         "type": "integer",
@@ -426,6 +621,69 @@
           "Blau": 5,
           "Gelb": 6
         }
+      },
+      {
+        "id": "below-font",
+        "title": "Unter Schwelle Schriftart",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Sans": 1,
+          "Serif": 2,
+          "Monospace": 3
+        },
+        "default": 0
+      },
+      {
+        "id": "below-size",
+        "title": "Unter Schwelle Größe",
+        "type": "integer",
+        "min": 0,
+        "max": 48,
+        "default": 0
+      },
+      {
+        "id": "below-bold",
+        "title": "Unter Schwelle Fett",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "below-italic",
+        "title": "Unter Schwelle Kursiv",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "below-color",
+        "title": "Unter Schwelle Schriftfarbe",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Schwarz": 1,
+          "Weiß": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6,
+          "Grau": 7
+        },
+        "default": 3
+      },
+      {
+        "id": "below-background",
+        "title": "Unter Schwelle Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
       }
     ],
     "height": 180,
@@ -454,11 +712,17 @@
         }
       },
       {
-        "id": "conditional",
-        "title": "Nur unter",
-        "tooltip": "Optische Formatierung nur anwenden, wenn die Restlaufzeit die Schwelle unterschreitet.",
-        "type": "boolean",
-        "default": false
+        "id": "mode",
+        "title": "Formatierungsmodus",
+        "tooltip": "Immer, nur unter Schwelle, immer mit Alternativformat unter Schwelle oder aus.",
+        "type": "integer",
+        "options": {
+          "Immer": 0,
+          "Nur unter Schwelle": 1,
+          "Immer, unter Schwelle anders": 2,
+          "Aus": 3
+        },
+        "default": 0
       },
       {
         "id": "threshold",
@@ -501,6 +765,23 @@
         "default": false
       },
       {
+        "id": "color",
+        "title": "Schriftfarbe",
+        "tooltip": "Theme übernimmt die Standardfarbe. Eine gewählte Farbe gilt unabhängig vom Hintergrund.",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Schwarz": 1,
+          "Weiß": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6,
+          "Grau": 7
+        },
+        "default": 0
+      },
+      {
         "id": "background",
         "title": "Hintergrund",
         "type": "integer",
@@ -513,6 +794,69 @@
           "Blau": 5,
           "Gelb": 6
         }
+      },
+      {
+        "id": "below-font",
+        "title": "Unter Schwelle Schriftart",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Sans": 1,
+          "Serif": 2,
+          "Monospace": 3
+        },
+        "default": 0
+      },
+      {
+        "id": "below-size",
+        "title": "Unter Schwelle Größe",
+        "type": "integer",
+        "min": 0,
+        "max": 48,
+        "default": 0
+      },
+      {
+        "id": "below-bold",
+        "title": "Unter Schwelle Fett",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "below-italic",
+        "title": "Unter Schwelle Kursiv",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "below-color",
+        "title": "Unter Schwelle Schriftfarbe",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Schwarz": 1,
+          "Weiß": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6,
+          "Grau": 7
+        },
+        "default": 3
+      },
+      {
+        "id": "below-background",
+        "title": "Unter Schwelle Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
       }
     ],
     "height": 180,
