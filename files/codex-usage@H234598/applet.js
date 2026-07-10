@@ -17,6 +17,7 @@ const MAX_ACCOUNTS = 100;
 const MAX_TEXT_CHARS = 500;
 const COMMAND_TIMEOUT_MS = 120000;
 const AUX_COMMAND_TIMEOUT_MS = 30000;
+const MAX_DEFERRED_AUX_REQUESTS = 8;
 const REACTIVATION_TIMEOUT_MS = 900000;
 const CIRCUIT_BREAKER_MS = 900000;
 const INTERNAL_FAILURE_WINDOW_MS = 300000;
@@ -1601,6 +1602,14 @@ CodexUsageApplet.prototype = {
         this._spawnAuxJson(request.argv, request.callback);
     },
 
+    _auxRequestKey: function(argv) {
+        let parts = [];
+        for (let i = 0; i < argv.length; i++) {
+            parts.push(String(argv[i]));
+        }
+        return parts.join("\u0000");
+    },
+
     _onAccountBackendsChanged: function() {
         if (!this._backendRowsReady || this._syncingBackendRows || this._removed) {
             return;
@@ -1674,7 +1683,20 @@ CodexUsageApplet.prototype = {
             !backendRequest &&
             (this._backendChangeCurrent || this._backendChangeQueue.length)
         ) {
-            this._backendAuxQueue.push({ argv: argv, callback: callback });
+            let key = this._auxRequestKey(argv);
+            for (let i = 0; i < this._backendAuxQueue.length; i++) {
+                if (this._backendAuxQueue[i].key === key) {
+                    this._backendAuxQueue[i].callback = callback;
+                    return;
+                }
+            }
+            if (this._backendAuxQueue.length >= MAX_DEFERRED_AUX_REQUESTS) {
+                this._runSafely("auxiliary queue overflow", Lang.bind(this, function() {
+                    callback(null, _("Zu viele wartende Hilfsanfragen"));
+                }));
+                return;
+            }
+            this._backendAuxQueue.push({ argv: argv, callback: callback, key: key });
             return;
         }
         this._cancelAuxProcess();

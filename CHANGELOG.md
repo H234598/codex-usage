@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.15 - 2026-07-11
+
+### Fixed
+
+- Deferred auxiliary requests are now coalesced and bounded, with controlled
+  errors when the queue is full.
+
 ## 0.6.14 - 2026-07-11
 
 ### Fixed

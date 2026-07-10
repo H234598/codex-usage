@@ -606,6 +606,34 @@ test("auxiliary requests defer while backend changes are active", () => {
   assert.equal(applet._backendAuxQueue[0].argv[1], "health");
 });
 
+test("deferred auxiliary requests coalesce and stay bounded", () => {
+  const applet = makeApplet();
+  applet._backendChangeCurrent = { account: "alpha", backend: "app-server" };
+  applet._runSafely = (_context, callback) => callback();
+  let overflowError = "";
+  for (let index = 0; index < 8; index += 1) {
+    applet._spawnAuxJson(
+      ["codex-usage", "health", String(index)],
+      () => {}
+    );
+  }
+  applet._spawnAuxJson(
+    ["codex-usage", "health", "duplicate"],
+    () => {}
+  );
+  applet._spawnAuxJson(
+    ["codex-usage", "health", "overflow"],
+    (_payload, error) => { overflowError = error; }
+  );
+  assert.equal(applet._backendAuxQueue.length, 8);
+  assert.match(overflowError, /wartende Hilfsanfragen/);
+
+  const latestCallback = () => {};
+  applet._spawnAuxJson(["codex-usage", "health", "0"], latestCallback);
+  assert.equal(applet._backendAuxQueue.length, 8);
+  assert.equal(applet._backendAuxQueue[0].callback, latestCallback);
+});
+
 test("old three-surface target rows migrate with a duration row", () => {
   const applet = makeApplet();
   const rows = applet._mergedTargetRows(
