@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.33 - 2026-07-11
+
+### Fixed
+
+- Backend account removal now cancels only the matching reactivation process,
+  preventing a deleted account from completing a browser login in the
+  background.
+
 ## 0.6.32 - 2026-07-11
 
 ### Fixed

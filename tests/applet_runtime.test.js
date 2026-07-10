@@ -546,6 +546,31 @@ test("backend synchronization removes cache rows for deleted accounts", () => {
   assert.deepEqual(Array.from(applet._usages, (item) => item.account), ["alpha"]);
 });
 
+test("backend synchronization cancels reactivation for removed accounts only", () => {
+  const applet = makeApplet();
+  let removedForced = 0;
+  let retainedForced = 0;
+  applet._reactivations = {
+    removed: { process: { force_exit() { removedForced += 1; } }, timeoutId: 11, done: false },
+    retained: { process: { force_exit() { retainedForced += 1; } }, timeoutId: 12, done: false },
+  };
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._syncAccountSettings = () => {};
+  applet._syncStyleRows = () => {};
+  applet._addIdle = () => {};
+  applet._refreshFormattedSurfaces = () => {};
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "retained", label: "Retained", backend: "direct" }],
+  }, null);
+
+  applet._loadAccountBackends();
+  assert.equal(removedForced, 1);
+  assert.equal(retainedForced, 0);
+  assert.equal(applet._reactivations.removed, undefined);
+  assert.notEqual(applet._reactivations.retained, undefined);
+});
+
 test("account severity honors the threshold belonging to each limit", () => {
   const applet = makeApplet();
   applet._alertSettings = {

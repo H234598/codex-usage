@@ -979,6 +979,7 @@ CodexUsageApplet.prototype = {
             }
             this._backendAccounts = accounts;
             this._backendRowsReady = true;
+            this._cancelRemovedReactivations(accounts);
             let usageRowsChanged = this._ensureBackendUsageRows();
             this._syncingBackendRows = true;
             this.accountBackends = rows;
@@ -3315,27 +3316,45 @@ CodexUsageApplet.prototype = {
         }
     },
 
+    _cancelRemovedReactivations: function(accounts) {
+        let active = Object.keys(this._reactivations);
+        for (let i = 0; i < active.length; i++) {
+            if (!Object.prototype.hasOwnProperty.call(accounts, active[i])) {
+                this._cancelReactivation(active[i]);
+            }
+        }
+    },
+
+    _cancelReactivation: function(account) {
+        let record = this._reactivations[account];
+        if (!record) {
+            return;
+        }
+        record.done = true;
+        let timeoutId = record.timeoutId;
+        record.timeoutId = 0;
+        if (timeoutId) {
+            try {
+                Mainloop.source_remove(timeoutId);
+            } catch (e) {
+                global.log("[" + UUID + "] reactivation source cleanup failed: " + this._shortText(e, 180));
+            }
+        }
+        if (record.process) {
+            try {
+                record.process.force_exit();
+            } catch (e) {
+                global.log("[" + UUID + "] reactivation process cleanup failed: " + String(e));
+            }
+        }
+        delete this._reactivations[account];
+        delete this._reactivationErrors[account];
+    },
+
     _cancelReactivations: function() {
         let accounts = Object.keys(this._reactivations);
         for (let i = 0; i < accounts.length; i++) {
-            let record = this._reactivations[accounts[i]];
-            record.done = true;
-            let timeoutId = record.timeoutId;
-            record.timeoutId = 0;
-            if (timeoutId) {
-                try {
-                    Mainloop.source_remove(timeoutId);
-                } catch (e) {
-                    global.log("[" + UUID + "] reactivation source cleanup failed: " + this._shortText(e, 180));
-                }
-            }
-            if (record.process) {
-                try {
-                    record.process.force_exit();
-                } catch (e) {
-                    global.log("[" + UUID + "] reactivation process cleanup failed: " + String(e));
-                }
-            }
+            this._cancelReactivation(accounts[i]);
         }
         this._reactivations = Object.create(null);
     },
