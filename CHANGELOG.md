@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.22 - 2026-07-11
+
+### Fixed
+
+- Enabling automatic refresh now rechecks the systemd poll owner, so an
+  applet started with refresh disabled no longer silently keeps polling itself.
+
 ## 0.6.21 - 2026-07-11
 
 ### Fixed

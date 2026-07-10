@@ -449,6 +449,9 @@ CodexUsageApplet.prototype = {
 
     _onRefreshSettingsChanged: function() {
         this._scheduleTimer();
+        if (this.autoRefresh && this.pollOwner === "auto") {
+            this._refreshAuxiliaryState();
+        }
     },
 
     _onPollOwnerChanged: function() {

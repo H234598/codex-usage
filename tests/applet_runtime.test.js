@@ -521,6 +521,25 @@ test("refresh-on-open does not refresh when the menu is closed", () => {
   assert.equal(refreshes, 1);
 });
 
+test("enabling automatic refresh rechecks the automatic poll owner", () => {
+  const applet = makeApplet();
+  applet.autoRefresh = false;
+  applet.pollOwner = "auto";
+  let scheduled = 0;
+  let auxiliaryRefreshes = 0;
+  applet._scheduleTimer = () => { scheduled += 1; };
+  applet._refreshAuxiliaryState = () => { auxiliaryRefreshes += 1; };
+
+  applet._onRefreshSettingsChanged();
+  assert.equal(scheduled, 1);
+  assert.equal(auxiliaryRefreshes, 0);
+
+  applet.autoRefresh = true;
+  applet._onRefreshSettingsChanged();
+  assert.equal(scheduled, 2);
+  assert.equal(auxiliaryRefreshes, 1);
+});
+
 test("health timeout clears the process even when force_exit fails", () => {
   let timeout = null;
   const process = { force_exit() { throw new Error("already exited"); } };
