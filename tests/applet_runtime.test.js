@@ -415,6 +415,28 @@ test("successful reactivation queues a refresh behind an active refresh", () => 
   assert.equal(applet._reactivationRefreshPending, false);
 });
 
+test("partial fresh payload preserves each missing window from stale cache", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: { remaining: 70 },
+    weekly: null,
+    stale: false,
+  }]);
+  assert.equal(merged[0].five_hour.remaining, 70);
+  assert.equal(merged[0].weekly.remaining, 60);
+  assert.equal(merged[0].stale, true);
+  assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
+});
+
 test("old three-surface target rows migrate with a duration row", () => {
   const applet = makeApplet();
   const rows = applet._mergedTargetRows(

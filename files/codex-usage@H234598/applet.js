@@ -1784,11 +1784,28 @@ CodexUsageApplet.prototype = {
         for (let j = 0; j < fresh.length; j++) {
             let item = fresh[j];
             let old = previous[item.account];
-            if (old && item.status !== "ok" && !item.five_hour && !item.weekly) {
-                item.five_hour = old.five_hour;
-                item.weekly = old.weekly;
-                item.captured_at = old.captured_at;
-                item.stale = true;
+            if (old && item.status !== "ok") {
+                let hadFreshWindow = Boolean(item.five_hour || item.weekly);
+                let usedCachedWindow = false;
+                if (!item.five_hour && old.five_hour) {
+                    item.five_hour = old.five_hour;
+                    usedCachedWindow = true;
+                }
+                if (!item.weekly && old.weekly) {
+                    item.weekly = old.weekly;
+                    usedCachedWindow = true;
+                }
+                if (usedCachedWindow) {
+                    item.values_captured_at = item.values_captured_at ||
+                        old.values_captured_at || old.captured_at;
+                    item.stale = true;
+                }
+                if (usedCachedWindow && !hadFreshWindow) {
+                    item.captured_at = old.captured_at;
+                }
+                if (usedCachedWindow && !item.captured_at) {
+                    item.captured_at = old.captured_at;
+                }
             }
             merged.push(item);
         }

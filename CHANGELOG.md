@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.8 - 2026-07-10
+
+### Fixed
+
+- Partial fresh payloads now preserve missing five-hour or weekly windows
+  independently from the stale cache and retain the cached-value timestamp.
+
 ## 0.6.7 - 2026-07-10
 
 ### Fixed
