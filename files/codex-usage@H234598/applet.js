@@ -6,6 +6,7 @@ const Main = imports.ui.main;
 const Mainloop = imports.mainloop;
 const PopupMenu = imports.ui.popupMenu;
 const Settings = imports.ui.settings;
+const St = imports.gi.St;
 
 const UUID = "codex-usage@H234598";
 const ANALYTICS_URL = "https://chatgpt.com/codex/cloud/settings/analytics";
@@ -14,6 +15,7 @@ const MAX_STDERR_CHARS = 4096;
 const MAX_ACCOUNTS = 100;
 const MAX_TEXT_CHARS = 500;
 const COMMAND_TIMEOUT_MS = 120000;
+const REACTIVATION_TIMEOUT_MS = 900000;
 const PANEL_CLASSES = [
     "codex-usage-panel-warning",
     "codex-usage-panel-critical",
@@ -47,6 +49,8 @@ CodexUsageApplet.prototype = {
         this.warningThreshold = 20;
         this.notifyWarnings = false;
         this.notifyErrors = false;
+        this.showReactivationActions = true;
+        this.reactivationBrowser = "auto";
 
         this._removed = false;
         this._generation = 0;
@@ -57,6 +61,8 @@ CodexUsageApplet.prototype = {
         this._usages = [];
         this._warningState = {};
         this._errorState = {};
+        this._reactivations = {};
+        this._reactivationErrors = {};
 
         this.set_applet_icon_symbolic_name("view-statistics-symbolic");
         this.set_applet_label("--");
@@ -99,6 +105,12 @@ CodexUsageApplet.prototype = {
         bind("warning-threshold", "warningThreshold", this._updatePanel);
         bind("notify-warnings", "notifyWarnings", null);
         bind("notify-errors", "notifyErrors", null);
+        bind(
+            "show-reactivation-actions",
+            "showReactivationActions",
+            this._rebuildMenu
+        );
+        bind("reactivation-browser", "reactivationBrowser", null);
     },
 
     _onCommandSettingsChanged: function() {
@@ -107,6 +119,10 @@ CodexUsageApplet.prototype = {
 
     _onRefreshSettingsChanged: function() {
         this._scheduleTimer();
+    },
+
+    _rebuildMenu: function() {
+        this._buildUsageMenu();
     },
 
     _scheduleTimer: function() {
@@ -440,7 +456,7 @@ CodexUsageApplet.prototype = {
             status += " · gespeichert vom " + this._formatDate(usage.captured_at);
         }
         let detail = usage.status === "login_required"
-            ? "Token abgelaufen · codex-usage login " + usage.account
+            ? "Token abgelaufen · codex-usage reactivate " + usage.account
             : usage.error || usage.blocked_reason;
         if (detail) {
             status += " · " + this._shortText(detail, 100);
@@ -451,6 +467,154 @@ CodexUsageApplet.prototype = {
                 status,
                 usage.status === "ok" ? "codex-usage-stale" : "codex-usage-error"
             );
+        }
+        if (usage.status === "login_required" && this.showReactivationActions) {
+            this._addReactivationAction(usage);
+        }
+    },
+
+    _addReactivationAction: function(usage) {
+        let running = Boolean(this._reactivations[usage.account]);
+        if (running) {
+            this._addDisabled(
+                this.menu,
+                usage.label + ": Login läuft im isolierten Browser …",
+                "codex-usage-warning"
+            );
+            return;
+        }
+        let item = new PopupMenu.PopupIconMenuItem(
+            usage.label + " reaktivieren",
+            "system-log-in-symbolic",
+            St.IconType.SYMBOLIC
+        );
+        item.connect("activate", Lang.bind(this, function() {
+            this._reactivateAccount(usage);
+        }));
+        this.menu.addMenuItem(item);
+        if (this._reactivationErrors[usage.account]) {
+            this._addDisabled(
+                this.menu,
+                this._shortText(this._reactivationErrors[usage.account], 140),
+                "codex-usage-error"
+            );
+        }
+    },
+
+    _reactivateAccount: function(usage) {
+        if (this._reactivations[usage.account] || this._removed) {
+            return;
+        }
+        let executable;
+        try {
+            executable = this._resolveCommand();
+        } catch (e) {
+            this._reactivationErrors[usage.account] = String(e);
+            this._buildUsageMenu();
+            return;
+        }
+        let argv = [executable];
+        let config = String(this.configPath || "").trim();
+        if (config) {
+            if (config.length > 1024 || config.indexOf("\u0000") !== -1) {
+                this._reactivationErrors[usage.account] = _("Ungültiger Config-Pfad");
+                this._buildUsageMenu();
+                return;
+            }
+            argv.push("--config", config);
+        }
+        argv.push(
+            "reactivate",
+            usage.account,
+            "--browser",
+            this.reactivationBrowser || "auto",
+            "--format",
+            "json"
+        );
+        this._spawnReactivation(usage, argv);
+    },
+
+    _spawnReactivation: function(usage, argv) {
+        let record = { process: null, timeoutId: 0, done: false };
+        this._reactivations[usage.account] = record;
+        delete this._reactivationErrors[usage.account];
+        this._buildUsageMenu();
+        let finish = Lang.bind(this, function(payload, error) {
+            if (record.done) {
+                return;
+            }
+            record.done = true;
+            if (record.timeoutId) {
+                Mainloop.source_remove(record.timeoutId);
+                record.timeoutId = 0;
+            }
+            delete this._reactivations[usage.account];
+            if (this._removed) {
+                return;
+            }
+            if (error || !payload || payload.ok !== true || payload.account !== usage.account) {
+                this._reactivationErrors[usage.account] = this._shortText(
+                    error || (payload && payload.error) || _("Reaktivierung fehlgeschlagen"),
+                    240
+                );
+                this._buildUsageMenu();
+                return;
+            }
+            delete this._reactivationErrors[usage.account];
+            this._refreshFresh(false);
+        });
+        try {
+            let launcher = Gio.SubprocessLauncher.new(
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+            );
+            launcher.setenv("PYTHONUNBUFFERED", "1", true);
+            record.process = launcher.spawnv(argv);
+            record.timeoutId = Mainloop.timeout_add(
+                REACTIVATION_TIMEOUT_MS,
+                Lang.bind(this, function() {
+                    try {
+                        record.process.force_exit();
+                    } catch (e) {
+                        global.log("[" + UUID + "] reactivation cleanup failed: " + String(e));
+                    }
+                    finish(null, _("Login nach 15 Minuten abgebrochen"));
+                    return false;
+                })
+            );
+            record.process.communicate_utf8_async(
+                null,
+                null,
+                Lang.bind(this, function(proc, result) {
+                    let stdout = "";
+                    let stderr = "";
+                    try {
+                        let response = proc.communicate_utf8_finish(result);
+                        stdout = String(response[1] || "");
+                        stderr = String(response[2] || "");
+                    } catch (e) {
+                        finish(null, _("Login-Prozessfehler: ") + String(e));
+                        return;
+                    }
+                    if (stdout.length > MAX_JSON_CHARS) {
+                        finish(null, _("Login-Ausgabe ist zu groß"));
+                        return;
+                    }
+                    try {
+                        let payload = JSON.parse(stdout);
+                        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+                            throw new Error("invalid login result");
+                        }
+                        finish(payload, null);
+                    } catch (e) {
+                        finish(
+                            null,
+                            this._shortText(stderr || _("Ungültige Login-Ausgabe"), 240)
+                        );
+                    }
+                })
+            );
+        } catch (e) {
+            finish(null, _("Login konnte nicht gestartet werden: ") + String(e));
         }
     },
 
@@ -802,6 +966,24 @@ CodexUsageApplet.prototype = {
         }
     },
 
+    _cancelReactivations: function() {
+        let accounts = Object.keys(this._reactivations);
+        for (let i = 0; i < accounts.length; i++) {
+            let record = this._reactivations[accounts[i]];
+            if (record.timeoutId) {
+                Mainloop.source_remove(record.timeoutId);
+            }
+            if (record.process) {
+                try {
+                    record.process.force_exit();
+                } catch (e) {
+                    global.log("[" + UUID + "] reactivation process cleanup failed: " + String(e));
+                }
+            }
+        }
+        this._reactivations = {};
+    },
+
     on_applet_clicked: function() {
         this.menu.toggle();
         if (this.refreshOnOpen) {
@@ -816,6 +998,7 @@ CodexUsageApplet.prototype = {
             this._timerId = 0;
         }
         this._cancelProcess();
+        this._cancelReactivations();
         if (this.settings && this.settings.finalize) {
             this.settings.finalize();
         }

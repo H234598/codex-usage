@@ -127,6 +127,18 @@ account or one combined value for the most constrained account. The displayed
 percentage can use the five-hour limit, the weekly limit, or the mean of both.
 Warnings are available but disabled by default.
 
+Expired direct-auth accounts get a reactivation action in the applet menu. It
+runs `codex login` against that account's configured `auth_json_path` and opens
+the OAuth page in a dedicated browser profile. Normal Vivaldi, Chrome, or
+Firefox cookies are not reused. The isolated browser can be selected in the
+applet settings; automatic mode prefers Vivaldi.
+
+The same flow is available from the terminal:
+
+```bash
+codex-usage reactivate ACCOUNT --browser auto
+```
+
 Remove the applet files with:
 
 ```bash

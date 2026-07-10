@@ -32,6 +32,14 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "five-hour",
         "weekly",
     }
+    assert settings["show-reactivation-actions"]["default"] is True
+    assert settings["reactivation-browser"]["default"] == "auto"
+    assert set(settings["reactivation-browser"]["options"].values()) == {
+        "auto",
+        "chromium",
+        "firefox",
+        "vivaldi",
+    }
 
     layout = settings["layout"]
     referenced_keys: set[str] = set()
@@ -52,6 +60,9 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "force_exit" in source
     assert "_selectedPercent" in source
     assert "_accountTag" in source
+    assert "_reactivateAccount" in source
+    assert '"system-log-in-symbolic"' in source
+    assert '"reactivate"' in source
     for forbidden in (
         "spawnCommandLine",
         "Util.spawn",

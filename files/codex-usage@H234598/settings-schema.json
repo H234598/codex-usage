@@ -3,6 +3,7 @@
     "type": "layout",
     "pages": [
       "general-page",
+      "login-page",
       "alerts-page"
     ],
     "general-page": {
@@ -19,6 +20,13 @@
       "title": "Warnungen",
       "sections": [
         "alerts-section"
+      ]
+    },
+    "login-page": {
+      "type": "page",
+      "title": "Reaktivierung",
+      "sections": [
+        "reactivation-section"
       ]
     },
     "command-section": {
@@ -54,6 +62,14 @@
         "warning-threshold",
         "notify-warnings",
         "notify-errors"
+      ]
+    },
+    "reactivation-section": {
+      "type": "section",
+      "title": "Abgelaufene Accounts",
+      "keys": [
+        "show-reactivation-actions",
+        "reactivation-browser"
       ]
     }
   },
@@ -129,5 +145,22 @@
     "type": "switch",
     "description": "Bei Abruf- oder Loginfehlern benachrichtigen",
     "default": false
+  },
+  "show-reactivation-actions": {
+    "type": "switch",
+    "description": "Reaktivierungsaktionen bei abgelaufenen Accounts anzeigen",
+    "tooltip": "Startet Codex-OAuth in einem eigenen Browserprofil. Cookies des normalen Hauptprofils werden nicht verwendet.",
+    "default": true
+  },
+  "reactivation-browser": {
+    "type": "combobox",
+    "description": "Isolierter Browser für die Reaktivierung",
+    "options": {
+      "Automatisch (Vivaldi bevorzugt)": "auto",
+      "Vivaldi": "vivaldi",
+      "Chromium / Chrome": "chromium",
+      "Firefox": "firefox"
+    },
+    "default": "auto"
   }
 }

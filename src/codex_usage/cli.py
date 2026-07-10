@@ -30,6 +30,7 @@ from .direct import fetch_account_usage_direct
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
 from .private_io import read_private_text
+from .reactivate import REACTIVATION_BROWSERS, ReactivationError, reactivate_account
 from .render import render_account_overview, render_account_values, render_json, render_table
 from .scheduler import fetch_all, watch, watchdog
 from .state import load_usage_snapshot, save_usage_snapshot
@@ -49,6 +50,8 @@ Accounts:
 
 Browser-Modus:
   codex-usage login ACCOUNT
+  codex-usage reactivate ACCOUNT [--browser auto|vivaldi|chromium|firefox]
+                                 [--format table|json]
   codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
   codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN]
                     [--headed]
@@ -100,6 +103,7 @@ Hinweis:
 KNOWN_COMMANDS = {
     "account",
     "login",
+    "reactivate",
     "once",
     "watch",
     "watchdog",
@@ -177,6 +181,25 @@ def _build_parser() -> argparse.ArgumentParser:
     login = sub.add_parser("login", help="Sichtbaren Browser fuer einen Account oeffnen")
     login.add_argument("account", help="Account-ID oder eindeutiges Label")
     login.set_defaults(func=_cmd_login)
+
+    reactivate = sub.add_parser(
+        "reactivate",
+        help="Abgelaufene Codex-auth.json in isoliertem Browser erneuern",
+    )
+    reactivate.add_argument("account", help="Account-ID oder eindeutiges Label")
+    reactivate.add_argument(
+        "--browser",
+        choices=REACTIVATION_BROWSERS,
+        default="auto",
+        help="Isolierter OAuth-Browser, Standard: auto (Vivaldi bevorzugt)",
+    )
+    reactivate.add_argument(
+        "--format",
+        choices=("table", "json"),
+        default="table",
+        help="Ausgabeformat, Standard: table",
+    )
+    reactivate.set_defaults(func=_cmd_reactivate)
 
     once = sub.add_parser("once", help="Alle oder einzelne Accounts einmal auslesen")
     once.add_argument("--account", action="append", dest="account_ids")
@@ -333,6 +356,29 @@ def _cmd_login(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     login_account(resolve_account(config, args.account), config)
     return 0
+
+
+def _cmd_reactivate(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
+    try:
+        result = reactivate_account(account, browser=args.browser)
+    except ReactivationError as exc:
+        result = {
+            "ok": False,
+            "account": account.id,
+            "label": account.label,
+            "browser": args.browser,
+            "error": str(exc),
+        }
+    if args.format == "json":
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    elif result["ok"]:
+        print(f"Account reaktiviert: {account.id} ({account.label})")
+        print(f"Browserprofil: isoliert ({result['browser']})")
+    else:
+        print(f"Reaktivierung fehlgeschlagen: {result['error']}")
+    return 0 if result["ok"] else 2
 
 
 def _cmd_once(args: argparse.Namespace) -> int:
