@@ -166,6 +166,23 @@ test("internal failures enter safe mode after the configured limit", () => {
   assert.match(applet._safeModeReason, /test/);
 });
 
+test("safe mode cancels reactivation processes and pending refreshes", () => {
+  const applet = makeApplet();
+  let forced = 0;
+  applet._reactivations = {
+    alpha: {
+      done: false,
+      timeoutId: 0,
+      process: { force_exit() { forced += 1; } },
+    },
+  };
+  applet._reactivationRefreshPending = true;
+  applet._enterSafeMode("reactivation test");
+  assert.equal(forced, 1);
+  assert.equal(Object.keys(applet._reactivations).length, 0);
+  assert.equal(applet._reactivationRefreshPending, false);
+});
+
 test("refresh circuit opens after three failures and leaves the last panel intact", () => {
   const applet = makeApplet();
   applet._recordRefreshFailure(new Error("first"));

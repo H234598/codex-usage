@@ -314,11 +314,13 @@ CodexUsageApplet.prototype = {
         this._safeMode = true;
         this._safeModeReason = this._shortText(reason || _("Interner Appletfehler"), 240);
         this._refreshing = false;
+        this._reactivationRefreshPending = false;
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
         this._backendAuxQueue = [];
         this._cancelProcess();
         this._cancelAuxProcess();
+        this._cancelReactivations();
         this._clearPanelClasses();
         try {
             this.actor.add_style_class_name("codex-usage-panel-error");

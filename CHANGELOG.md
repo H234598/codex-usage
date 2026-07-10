@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.18 - 2026-07-11
+
+### Fixed
+
+- Safe Mode now cancels active account reactivation processes and pending
+  reactivation refreshes.
+
 ## 0.6.17 - 2026-07-11
 
 ### Fixed
