@@ -80,6 +80,11 @@ CodexUsageApplet.prototype = {
         this._lastGoodPanel = { plain: "--", markup: "--" };
         this._lastGoodTooltip = "";
         this._generation = 0;
+        this._primaryRequest = null;
+        this._primaryCachePending = false;
+        this._primaryCacheRefreshAfter = false;
+        this._primaryFreshPending = false;
+        this._primaryFreshOpenAfter = false;
         this._timerId = 0;
         this._displayTimerId = 0;
         this._timeoutId = 0;
@@ -314,6 +319,10 @@ CodexUsageApplet.prototype = {
         this._safeMode = true;
         this._safeModeReason = this._shortText(reason || _("Interner Appletfehler"), 240);
         this._refreshing = false;
+        this._primaryCachePending = false;
+        this._primaryCacheRefreshAfter = false;
+        this._primaryFreshPending = false;
+        this._primaryFreshOpenAfter = false;
         this._reactivationRefreshPending = false;
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
@@ -498,6 +507,14 @@ CodexUsageApplet.prototype = {
     },
 
     _loadCached: function(refreshAfter) {
+        if (this._removed || this._safeMode) {
+            return;
+        }
+        if (this._refreshing || this._primaryRequest) {
+            this._primaryCachePending = true;
+            this._primaryCacheRefreshAfter = this._primaryCacheRefreshAfter || Boolean(refreshAfter);
+            return;
+        }
         this._spawnUsageCommand("latest", Lang.bind(this, function(payload, error) {
             if (this._safeMode) {
                 return;
@@ -507,12 +524,11 @@ CodexUsageApplet.prototype = {
             } else if (!this._usages.length && error) {
                 this._showCommandError(error);
             }
-            if (refreshAfter && this.autoRefresh) {
-                if (this._usesAppletPolling()) {
-                    this._refreshFresh(false);
-                }
+            if (refreshAfter && this.autoRefresh && this._usesAppletPolling()) {
+                this._primaryFreshPending = true;
             }
             this._refreshAuxiliaryState();
+            this._drainPrimaryRequests();
         }));
     },
 
@@ -528,6 +544,11 @@ CodexUsageApplet.prototype = {
 
     _refreshFresh: function(openAfter) {
         if (this._refreshing || this._removed || this._safeMode) {
+            return;
+        }
+        if (this._primaryRequest) {
+            this._primaryFreshPending = true;
+            this._primaryFreshOpenAfter = this._primaryFreshOpenAfter || Boolean(openAfter);
             return;
         }
         if (this._circuitOpen()) {
@@ -562,7 +583,32 @@ CodexUsageApplet.prototype = {
             if (refreshAfterReactivation && !this._removed && !this._safeMode) {
                 this._refreshFresh(false);
             }
+            this._drainPrimaryRequests();
         }));
+    },
+
+    _drainPrimaryRequests: function() {
+        if (
+            this._removed ||
+            this._safeMode ||
+            this._refreshing ||
+            this._primaryRequest
+        ) {
+            return;
+        }
+        if (this._primaryCachePending) {
+            let refreshAfter = this._primaryCacheRefreshAfter;
+            this._primaryCachePending = false;
+            this._primaryCacheRefreshAfter = false;
+            this._loadCached(refreshAfter);
+            return;
+        }
+        if (this._primaryFreshPending) {
+            let openAfter = this._primaryFreshOpenAfter;
+            this._primaryFreshPending = false;
+            this._primaryFreshOpenAfter = false;
+            this._refreshFresh(openAfter);
+        }
     },
 
     _spawnUsageCommand: function(subcommand, callback) {
@@ -583,7 +629,8 @@ CodexUsageApplet.prototype = {
             argv.push("--config", config);
         }
         argv.push(subcommand, "--format", "json");
-        this._spawnJsonArray(argv, callback);
+        let request = { subcommand: subcommand };
+        this._spawnJsonArray(argv, callback, request);
     },
 
     _resolveCommand: function() {
@@ -698,9 +745,10 @@ CodexUsageApplet.prototype = {
         read("stderr", process.get_stderr_pipe(), MAX_STDERR_CHARS);
     },
 
-    _spawnJsonArray: function(argv, callback) {
+    _spawnJsonArray: function(argv, callback, request) {
         this._cancelProcess();
         let generation = ++this._generation;
+        this._primaryRequest = request || null;
         let done = false;
         let process = null;
         let finish = Lang.bind(this, function(payload, error) {
@@ -710,6 +758,9 @@ CodexUsageApplet.prototype = {
             done = true;
             if (generation === this._generation) {
                 this._removeSource("_timeoutId");
+                if (this._primaryRequest === request) {
+                    this._primaryRequest = null;
+                }
             }
             if (this._removed || generation !== this._generation) {
                 return;
@@ -3141,6 +3192,7 @@ CodexUsageApplet.prototype = {
 
     _cancelProcess: function() {
         this._generation += 1;
+        this._primaryRequest = null;
         this._removeSource("_timeoutId");
         if (this._process) {
             try {
@@ -3225,6 +3277,10 @@ CodexUsageApplet.prototype = {
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
         this._backendAuxQueue = [];
+        this._primaryCachePending = false;
+        this._primaryCacheRefreshAfter = false;
+        this._primaryFreshPending = false;
+        this._primaryFreshOpenAfter = false;
         this._removeSource("_timerId");
         this._removeSource("_displayTimerId");
         this._removeSource("_staleCheckId");

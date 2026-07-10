@@ -85,6 +85,11 @@ function makeApplet(onReady) {
   applet._backendChangeCurrent = null;
   applet._backendAuxQueue = [];
   applet._process = null;
+  applet._primaryRequest = null;
+  applet._primaryCachePending = false;
+  applet._primaryCacheRefreshAfter = false;
+  applet._primaryFreshPending = false;
+  applet._primaryFreshOpenAfter = false;
   applet._auxProcess = null;
   applet._healthProcess = null;
   applet._healthGeneration = 0;
@@ -177,10 +182,18 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
     },
   };
   applet._reactivationRefreshPending = true;
+  applet._primaryCachePending = true;
+  applet._primaryCacheRefreshAfter = true;
+  applet._primaryFreshPending = true;
+  applet._primaryFreshOpenAfter = true;
   applet._enterSafeMode("reactivation test");
   assert.equal(forced, 1);
   assert.equal(Object.keys(applet._reactivations).length, 0);
   assert.equal(applet._reactivationRefreshPending, false);
+  assert.equal(applet._primaryCachePending, false);
+  assert.equal(applet._primaryCacheRefreshAfter, false);
+  assert.equal(applet._primaryFreshPending, false);
+  assert.equal(applet._primaryFreshOpenAfter, false);
 });
 
 test("refresh circuit opens after three failures and leaves the last panel intact", () => {
@@ -292,6 +305,68 @@ test("style modes control normal, threshold and disabled formatting", () => {
 
   style.mode = 3;
   assert.equal(applet._styleSpan("<80%>", style, 10, "panel"), "&lt;80%&gt;");
+});
+
+test("date, time and restlaufzeit styles honor all modes and font colors", () => {
+  const applet = makeApplet();
+  const kinds = ["date", "time", "duration"];
+  for (const kind of kinds) {
+    const style = {
+      mode: 0,
+      threshold: kind === "duration" ? 120 : 20,
+      format: 0,
+      font: 0,
+      size: 0,
+      bold: false,
+      italic: false,
+      color: 4,
+      background: 0,
+      "below-font": 0,
+      "below-size": 0,
+      "below-bold": true,
+      "below-italic": false,
+      "below-color": 3,
+      "below-background": 0,
+    };
+    const high = kind === "duration" ? 180 : 80;
+    const low = kind === "duration" ? 60 : 10;
+    assert.match(applet._styleSpan("value", style, high, "panel"), /foreground="#16a34a"/);
+    style.mode = 1;
+    assert.equal(applet._styleSpan("value", style, high, "panel"), "value");
+    assert.match(applet._styleSpan("value", style, low, "panel"), /foreground="#16a34a"/);
+    style.mode = 2;
+    assert.match(applet._styleSpan("value", style, high, "panel"), /foreground="#16a34a"/);
+    assert.match(applet._styleSpan("value", style, low, "panel"), /foreground="#dc2626"/);
+    style.mode = 3;
+    assert.equal(applet._styleSpan("value", style, low, "panel"), "value");
+  }
+});
+
+test("primary cache and fresh requests are queued instead of cancelling each other", () => {
+  const applet = makeApplet();
+  applet._updatePanel = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._buildLoadingMenu = () => {};
+  applet._primaryRequest = { subcommand: "latest" };
+  let calls = [];
+  applet._spawnUsageCommand = (subcommand, callback) => {
+    calls.push({ subcommand, callback });
+  };
+
+  applet._refreshFresh(true);
+  applet._loadCached(true);
+  assert.equal(calls.length, 0);
+  assert.equal(applet._primaryFreshPending, true);
+  assert.equal(applet._primaryFreshOpenAfter, true);
+  assert.equal(applet._primaryCachePending, true);
+  assert.equal(applet._primaryCacheRefreshAfter, true);
+
+  applet._primaryRequest = null;
+  applet._drainPrimaryRequests();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].subcommand, "latest");
+  assert.equal(applet._primaryFreshPending, true);
+  assert.equal(applet._primaryCachePending, false);
 });
 
 test("legacy conditional style rows migrate to the corresponding mode", () => {

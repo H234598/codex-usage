@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.19 - 2026-07-11
+
+### Fixed
+
+- Primary cache and fresh usage requests are now serialized and coalesced, so
+  a concurrent request cannot cancel a refresh and leave the applet stuck in
+  its loading state.
+
 ## 0.6.18 - 2026-07-11
 
 ### Fixed
