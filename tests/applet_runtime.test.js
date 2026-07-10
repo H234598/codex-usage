@@ -277,6 +277,74 @@ test("legacy conditional style rows migrate to the corresponding mode", () => {
   assert.equal(migrated["below-color"], 3);
 });
 
+test("alert setting changes refresh the panel immediately", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._syncingAccountSettings = false;
+  applet.accountAlertSettings = [
+    {
+      account: "alpha",
+      "five-threshold": 20,
+      "weekly-threshold": 20,
+      warnings: true,
+      errors: true,
+    },
+    {
+      account: "beta",
+      "five-threshold": 20,
+      "weekly-threshold": 20,
+      warnings: true,
+      errors: true,
+    },
+  ];
+  let refreshed = 0;
+  applet._refreshFormattedSurfaces = () => { refreshed += 1; };
+  applet._onAlertSettingsChanged();
+  assert.equal(refreshed, 1);
+});
+
+test("account synchronization refreshes cached values immediately", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [
+      { id: "alpha", label: "Alpha", backend: "direct" },
+      { id: "beta", label: "Beta", backend: "app-server" },
+    ],
+  }, null);
+  applet._syncAccountSettings = () => {};
+  applet._syncStyleRows = () => {};
+  applet._addIdle = () => {};
+  let refreshed = 0;
+  applet._refreshFormattedSurfaces = () => { refreshed += 1; };
+  applet._loadAccountBackends();
+  assert.equal(refreshed, 1);
+});
+
+test("account severity honors the threshold belonging to each limit", () => {
+  const applet = makeApplet();
+  applet._alertSettings = {
+    alpha: {
+      account: "alpha",
+      "five-threshold": 50,
+      "weekly-threshold": 5,
+      warnings: true,
+      errors: true,
+    },
+  };
+  assert.equal(
+    applet._usageSeverity({
+      account: "alpha",
+      status: "ok",
+      stale: false,
+      five_hour: { remaining: 30 },
+      weekly: { remaining: 10 },
+    }),
+    "codex-usage-warning"
+  );
+});
+
 test("old three-surface target rows migrate with a duration row", () => {
   const applet = makeApplet();
   const rows = applet._mergedTargetRows(

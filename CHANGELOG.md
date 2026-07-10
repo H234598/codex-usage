@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.4 - 2026-07-10
+
+### Fixed
+
+- Per-account alert severity now compares each limit with its own threshold.
+- Alert setting changes immediately refresh the panel and menu.
+- Account, style, and target synchronization immediately reapplies settings to
+  already cached usage values.
+
 ## 0.6.3 - 2026-07-10
 
 ### Added

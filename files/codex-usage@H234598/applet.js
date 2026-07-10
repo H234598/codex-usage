@@ -885,6 +885,9 @@ CodexUsageApplet.prototype = {
             }
             this._syncAccountSettings(rows);
             this._syncStyleRows(rows);
+            if (this._usages.length) {
+                this._refreshFormattedSurfaces();
+            }
             this._addIdle(Lang.bind(this, function() {
                 this._syncingBackendRows = false;
                 return false;
@@ -1109,7 +1112,7 @@ CodexUsageApplet.prototype = {
         }
         this._alertSettings = this._alertSettingsMap(normalized);
         this.accountAlertSettings = normalized;
-        this._buildUsageMenu();
+        this._refreshFormattedSurfaces();
     },
 
     _panelSourceValue: function(source) {
@@ -2835,16 +2838,16 @@ CodexUsageApplet.prototype = {
         if (!values.length) {
             return usage.stale ? "codex-usage-stale" : "";
         }
-        let worst = Math.min.apply(Math, values);
         let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
-        let threshold = Math.min(
-            Number(alert["five-threshold"]),
-            Number(alert["weekly-threshold"])
-        );
-        if (worst <= 5) {
+        let fiveThreshold = Number(alert["five-threshold"]);
+        let weeklyThreshold = Number(alert["weekly-threshold"]);
+        let critical = values.some(function(value) { return value <= 5; });
+        let warning = (five !== null && five <= fiveThreshold) ||
+            (week !== null && week <= weeklyThreshold);
+        if (critical) {
             return "codex-usage-critical";
         }
-        if (worst <= threshold) {
+        if (warning) {
             return "codex-usage-warning";
         }
         return usage.stale ? "codex-usage-stale" : "";
