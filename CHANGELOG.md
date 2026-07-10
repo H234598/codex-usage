@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.7 - 2026-07-10
+
+### Fixed
+
+- A successful account reactivation now queues a fresh usage request when
+  another request is already running, preventing the old login-required state
+  from surviving until the next timer cycle.
+
 ## 0.6.6 - 2026-07-10
 
 ### Fixed

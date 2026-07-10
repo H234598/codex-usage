@@ -89,6 +89,7 @@ CodexUsageApplet.prototype = {
         this._errorState = {};
         this._reactivations = {};
         this._reactivationErrors = {};
+        this._reactivationRefreshPending = false;
         this._auxProcess = null;
         this._auxTimeoutId = 0;
         this._auxGeneration = 0;
@@ -536,6 +537,8 @@ CodexUsageApplet.prototype = {
         }
         this._spawnUsageCommand("once", Lang.bind(this, function(payload, error) {
             this._refreshing = false;
+            let refreshAfterReactivation = this._reactivationRefreshPending;
+            this._reactivationRefreshPending = false;
             if (payload) {
                 this._recordRefreshSuccess();
                 this._applyPayload(payload, true);
@@ -545,6 +548,9 @@ CodexUsageApplet.prototype = {
             }
             if (openAfter && !this.menu.isOpen) {
                 this.menu.toggle();
+            }
+            if (refreshAfterReactivation && !this._removed && !this._safeMode) {
+                this._refreshFresh(false);
             }
         }));
     },
@@ -2059,7 +2065,11 @@ CodexUsageApplet.prototype = {
                 return;
             }
             delete this._reactivationErrors[usage.account];
-            this._refreshFresh(false);
+            if (this._refreshing) {
+                this._reactivationRefreshPending = true;
+            } else {
+                this._refreshFresh(false);
+            }
         });
         try {
             let launcher = Gio.SubprocessLauncher.new(

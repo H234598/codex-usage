@@ -80,6 +80,7 @@ function makeApplet(onReady) {
   applet._sources = {};
   applet._idleSources = {};
   applet._reactivations = {};
+  applet._reactivationRefreshPending = false;
   applet._process = null;
   applet._auxProcess = null;
   applet._healthProcess = null;
@@ -394,6 +395,24 @@ test("health timeout clears the process even when force_exit fails", () => {
   assert.equal(typeof timeout, "function");
   timeout();
   assert.equal(applet._healthProcess, null);
+});
+
+test("successful reactivation queues a refresh behind an active refresh", () => {
+  const applet = makeApplet();
+  applet._reactivationRefreshPending = true;
+  applet._refreshing = false;
+  let requests = 0;
+  applet._updatePanel = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._buildLoadingMenu = () => {};
+  applet._applyPayload = () => {};
+  applet._spawnUsageCommand = (_subcommand, callback) => {
+    requests += 1;
+    callback([], null);
+  };
+  applet._refreshFresh(false);
+  assert.equal(requests, 2);
+  assert.equal(applet._reactivationRefreshPending, false);
 });
 
 test("old three-surface target rows migrate with a duration row", () => {
