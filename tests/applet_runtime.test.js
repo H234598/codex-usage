@@ -81,6 +81,8 @@ function makeApplet(onReady) {
   applet._idleSources = {};
   applet._reactivations = {};
   applet._reactivationRefreshPending = false;
+  applet._backendChangeQueue = [];
+  applet._backendChangeCurrent = null;
   applet._process = null;
   applet._auxProcess = null;
   applet._healthProcess = null;
@@ -506,6 +508,72 @@ test("backend setting changes reject duplicate account rows", () => {
   let reloads = 0;
   applet._loadAccountBackends = () => { reloads += 1; };
   applet._onAccountBackendsChanged();
+  assert.equal(reloads, 1);
+});
+
+test("backend setting changes apply every changed account serially", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+    beta: { account: "beta", label: "Beta", backend: 0 },
+  };
+  applet.accountBackends = [
+    { account: "alpha", label: "Alpha", backend: 1 },
+    { account: "beta", label: "Beta", backend: 1 },
+  ];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  const calls = [];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv[3]);
+    callback({ ok: true, account: argv[3] }, null);
+  };
+  applet._refreshFresh = () => {};
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._onAccountBackendsChanged();
+  assert.deepEqual(calls, ["alpha", "beta"]);
+  assert.equal(reloads, 1);
+  assert.equal(applet._backendChangeCurrent, null);
+  assert.equal(JSON.stringify(applet._backendChangeQueue), "[]");
+});
+
+test("backend setting queue follows reverted rows while a command is running", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+    beta: { account: "beta", label: "Beta", backend: 0 },
+  };
+  applet.accountBackends = [
+    { account: "alpha", label: "Alpha", backend: 1 },
+    { account: "beta", label: "Beta", backend: 1 },
+  ];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  const calls = [];
+  const callbacks = [];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv[3]);
+    callbacks.push(callback);
+  };
+  applet._refreshFresh = () => {};
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._onAccountBackendsChanged();
+  assert.deepEqual(calls, ["alpha"]);
+  assert.equal(
+    JSON.stringify(applet._backendChangeQueue),
+    JSON.stringify([{ account: "beta", backend: "app-server" }])
+  );
+
+  applet.accountBackends = [
+    { account: "alpha", label: "Alpha", backend: 1 },
+    { account: "beta", label: "Beta", backend: 0 },
+  ];
+  applet._onAccountBackendsChanged();
+  assert.equal(JSON.stringify(applet._backendChangeQueue), "[]");
+  callbacks[0]({ ok: true, account: "alpha" }, null);
+  assert.deepEqual(calls, ["alpha"]);
   assert.equal(reloads, 1);
 });
 

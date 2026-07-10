@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.13 - 2026-07-10
+
+### Fixed
+
+- Account backend changes are now applied serially for all changed rows, while
+  in-flight settings edits reconcile to the latest desired state.
+
 ## 0.6.12 - 2026-07-10
 
 ### Fixed

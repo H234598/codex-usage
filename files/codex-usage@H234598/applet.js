@@ -100,6 +100,8 @@ CodexUsageApplet.prototype = {
         this._backendRowsReady = false;
         this._syncingBackendRows = false;
         this._backendAccounts = Object.create(null);
+        this._backendChangeQueue = [];
+        this._backendChangeCurrent = null;
         this._syncingAccountSettings = false;
         this._panelSettings = Object.create(null);
         this._alertSettings = Object.create(null);
@@ -848,6 +850,9 @@ CodexUsageApplet.prototype = {
     },
 
     _loadAccountBackends: function() {
+        if (this._backendChangeCurrent || this._backendChangeQueue.length) {
+            return;
+        }
         let argv;
         try {
             argv = this._baseCommandArgv();
@@ -1510,6 +1515,72 @@ CodexUsageApplet.prototype = {
         this._updatePanel();
     },
 
+    _reconcileBackendChanges: function(rows) {
+        let desired = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            desired[rows[i].account] = rows[i].backend === 1 ? "app-server" : "direct";
+        }
+        let queue = [];
+        let accounts = Object.keys(this._backendAccounts);
+        for (let i = 0; i < accounts.length; i++) {
+            let account = accounts[i];
+            let target = desired[account];
+            let current = this._backendChangeCurrent;
+            if (current && current.account === account) {
+                if (current.backend !== target) {
+                    queue.push({ account: account, backend: target });
+                }
+                continue;
+            }
+            let canonical = this._backendAccounts[account].backend === 1
+                ? "app-server"
+                : "direct";
+            if (target !== canonical) {
+                queue.push({ account: account, backend: target });
+            }
+        }
+        this._backendChangeQueue = queue;
+        this._drainBackendChanges();
+    },
+
+    _drainBackendChanges: function() {
+        if (this._removed || this._backendChangeCurrent || !this._backendChangeQueue.length) {
+            return;
+        }
+        let changed = this._backendChangeQueue.shift();
+        this._backendChangeCurrent = changed;
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._backendChangeCurrent = null;
+            this._backendChangeQueue = [];
+            this._loadAccountBackends();
+            return;
+        }
+        argv.push(
+            "account",
+            "backend",
+            changed.account,
+            changed.backend,
+            "--format",
+            "json"
+        );
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (error || !payload || payload.ok !== true || payload.account !== changed.account) {
+                this._showCommandError(error || _("Abrufweg konnte nicht gespeichert werden"));
+            } else {
+                this._refreshFresh(false);
+            }
+            this._backendChangeCurrent = null;
+            if (this._backendChangeQueue.length) {
+                this._drainBackendChanges();
+            } else {
+                this._loadAccountBackends();
+            }
+        }));
+    },
+
     _onAccountBackendsChanged: function() {
         if (!this._backendRowsReady || this._syncingBackendRows || this._removed) {
             return;
@@ -1519,7 +1590,7 @@ CodexUsageApplet.prototype = {
             this._loadAccountBackends();
             return;
         }
-        let changed = null;
+        let desiredRows = [];
         let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             let row = rows[i];
@@ -1539,39 +1610,9 @@ CodexUsageApplet.prototype = {
                 this._loadAccountBackends();
                 return;
             }
-            if (backendValue !== canonical.backend && !changed) {
-                changed = {
-                    account: account,
-                    backend: backendValue === 1 ? "app-server" : "direct"
-                };
-            }
+            desiredRows.push({ account: account, backend: backendValue });
         }
-        if (!changed) {
-            return;
-        }
-        let argv;
-        try {
-            argv = this._baseCommandArgv();
-        } catch (e) {
-            this._loadAccountBackends();
-            return;
-        }
-        argv.push(
-            "account",
-            "backend",
-            changed.account,
-            changed.backend,
-            "--format",
-            "json"
-        );
-        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
-            if (error || !payload || payload.ok !== true || payload.account !== changed.account) {
-                this._showCommandError(error || _("Abrufweg konnte nicht gespeichert werden"));
-            } else {
-                this._refreshFresh(false);
-            }
-            this._loadAccountBackends();
-        }));
+        this._reconcileBackendChanges(desiredRows);
     },
 
     _enableBackgroundService: function(after) {
