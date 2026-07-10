@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.11 - 2026-07-10
+
+### Fixed
+
+- Account backend setting changes now reject duplicate rows before applying a
+  backend update.
+
 ## 0.6.10 - 2026-07-10
 
 ### Fixed

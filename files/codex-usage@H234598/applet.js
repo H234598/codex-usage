@@ -1516,6 +1516,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let changed = null;
+        let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             let row = rows[i];
             if (!row || typeof row !== "object" || Array.isArray(row)) {
@@ -1524,10 +1525,11 @@ CodexUsageApplet.prototype = {
             }
             let account = this._safeText(row.account, 64);
             let canonical = this._backendAccounts[account];
-            if (!canonical || this._safeText(row.label, 120) !== canonical.label) {
+            if (!account || seen[account] || !canonical || this._safeText(row.label, 120) !== canonical.label) {
                 this._loadAccountBackends();
                 return;
             }
+            seen[account] = true;
             let backendValue = Number(row.backend);
             if (backendValue !== 0 && backendValue !== 1) {
                 this._loadAccountBackends();

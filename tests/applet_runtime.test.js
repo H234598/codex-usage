@@ -465,6 +465,24 @@ test("backend account maps preserve prototype-like account ids", () => {
   assert.equal(applet._backendAccounts["__proto__"].label, "Prototype");
 });
 
+test("backend setting changes reject duplicate account rows", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._syncingBackendRows = false;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+    beta: { account: "beta", label: "Beta", backend: 0 },
+  };
+  applet.accountBackends = [
+    { account: "alpha", label: "Alpha", backend: 0 },
+    { account: "alpha", label: "Alpha", backend: 1 },
+  ];
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._onAccountBackendsChanged();
+  assert.equal(reloads, 1);
+});
+
 test("old three-surface target rows migrate with a duration row", () => {
   const applet = makeApplet();
   const rows = applet._mergedTargetRows(
