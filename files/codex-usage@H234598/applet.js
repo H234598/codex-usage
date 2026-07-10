@@ -64,6 +64,7 @@ CodexUsageApplet.prototype = {
         this.accountPercentStyles = [];
         this.accountDateStyles = [];
         this.accountTimeStyles = [];
+        this.accountDurationStyles = [];
         this.accountStyleTargets = [];
 
         this._removed = false;
@@ -79,6 +80,7 @@ CodexUsageApplet.prototype = {
         this._lastGoodTooltip = "";
         this._generation = 0;
         this._timerId = 0;
+        this._displayTimerId = 0;
         this._timeoutId = 0;
         this._process = null;
         this._refreshing = false;
@@ -104,6 +106,7 @@ CodexUsageApplet.prototype = {
         this._percentStyles = {};
         this._dateStyles = {};
         this._timeStyles = {};
+        this._durationStyles = {};
         this._styleTargets = {};
         this._systemdActive = false;
         this._serviceChecked = false;
@@ -181,6 +184,7 @@ CodexUsageApplet.prototype = {
         bind("account-percent-styles", "accountPercentStyles", this._onPercentStylesChanged);
         bind("account-date-styles", "accountDateStyles", this._onDateStylesChanged);
         bind("account-time-styles", "accountTimeStyles", this._onTimeStylesChanged);
+        bind("account-duration-styles", "accountDurationStyles", this._onDurationStylesChanged);
         bind("account-style-targets", "accountStyleTargets", this._onStyleTargetsChanged);
     },
 
@@ -438,6 +442,7 @@ CodexUsageApplet.prototype = {
 
     _scheduleTimer: function() {
         this._removeSource("_timerId");
+        this._scheduleDisplayTimer();
         if (!this.autoRefresh || this._removed) {
             return;
         }
@@ -452,6 +457,29 @@ CodexUsageApplet.prototype = {
                     this._refreshFresh(false);
                 } else {
                     this._loadCached(false);
+                }
+            }));
+            return true;
+        })));
+    },
+
+    _scheduleDisplayTimer: function() {
+        this._removeSource("_displayTimerId");
+        if (this._removed) {
+            return;
+        }
+        this._setSource("_displayTimerId", Mainloop.timeout_add_seconds(60, Lang.bind(this, function() {
+            if (this._removed) {
+                this._clearSource("_displayTimerId");
+                return false;
+            }
+            this._runSafely("display timer", Lang.bind(this, function() {
+                if (this._safeMode) {
+                    return;
+                }
+                this._updatePanel();
+                if (this.menu && this.menu.isOpen) {
+                    this._buildUsageMenu();
                 }
             }));
             return true;
@@ -1096,19 +1124,23 @@ CodexUsageApplet.prototype = {
         let percentRows = this._mergedStyleRows(accounts, this.accountPercentStyles, "percent");
         let dateRows = this._mergedStyleRows(accounts, this.accountDateStyles, "date");
         let timeRows = this._mergedStyleRows(accounts, this.accountTimeStyles, "time");
+        let durationRows = this._mergedStyleRows(accounts, this.accountDurationStyles, "duration");
         let targetRows = this._mergedTargetRows(accounts, this.accountStyleTargets);
         let percentChanged = !this._styleRowsEqual(this.accountPercentStyles, percentRows);
         let dateChanged = !this._styleRowsEqual(this.accountDateStyles, dateRows);
         let timeChanged = !this._styleRowsEqual(this.accountTimeStyles, timeRows);
+        let durationChanged = !this._styleRowsEqual(this.accountDurationStyles, durationRows);
         let targetsChanged = !this._styleRowsEqual(this.accountStyleTargets, targetRows);
         this._percentStyles = this._styleMap(percentRows);
         this._dateStyles = this._styleMap(dateRows);
         this._timeStyles = this._styleMap(timeRows);
+        this._durationStyles = this._styleMap(durationRows);
         this._styleTargets = this._targetMap(targetRows);
         this._syncingStyleRows = true;
         this.accountPercentStyles = percentRows;
         this.accountDateStyles = dateRows;
         this.accountTimeStyles = timeRows;
+        this.accountDurationStyles = durationRows;
         this.accountStyleTargets = targetRows;
         try {
             if (percentChanged) {
@@ -1119,6 +1151,9 @@ CodexUsageApplet.prototype = {
             }
             if (timeChanged) {
                 this.settings.setValue("account-time-styles", timeRows);
+            }
+            if (durationChanged) {
+                this.settings.setValue("account-duration-styles", durationRows);
             }
             if (targetsChanged) {
                 this.settings.setValue("account-style-targets", targetRows);
@@ -1168,7 +1203,7 @@ CodexUsageApplet.prototype = {
         let row = {
             account: account,
             conditional: false,
-            threshold: 20,
+            threshold: kind === "duration" ? 120 : 20,
             font: 0,
             size: 0,
             bold: false,
@@ -1198,17 +1233,20 @@ CodexUsageApplet.prototype = {
         }
         let format = kind === "percent" ? 0 : Number(row.format);
         let conditional = row.conditional === undefined ? false : row.conditional;
-        let threshold = row.threshold === undefined ? 20 : Number(row.threshold);
+        let threshold = row.threshold === undefined
+            ? (kind === "duration" ? 120 : 20)
+            : Number(row.threshold);
         let font = Number(row.font);
         let size = Number(row.size);
         let background = Number(row.background);
-        let maxFormat = kind === "date" ? 3 : 2;
+        let maxFormat = kind === "date" ? 3 : (kind === "duration" ? 3 : 2);
+        let maxThreshold = kind === "duration" ? 10080 : 100;
         if (
             (kind !== "percent" && (
                 !Number.isInteger(format) || format < 0 || format > maxFormat
             )) ||
             typeof conditional !== "boolean" ||
-            !Number.isInteger(threshold) || threshold < 0 || threshold > 100 ||
+            !Number.isInteger(threshold) || threshold < 0 || threshold > maxThreshold ||
             !Number.isInteger(font) || font < 0 || font > 3 ||
             !Number.isInteger(size) || size < 0 || size > 48 ||
             !Number.isInteger(background) || background < 0 || background > 6 ||
@@ -1268,7 +1306,7 @@ CodexUsageApplet.prototype = {
         }
         let rows = [];
         for (let i = 0; i < accounts.length; i++) {
-            for (let element = 0; element < 3; element++) {
+            for (let element = 0; element < 4; element++) {
                 let key = accounts[i].account + ":" + element;
                 rows.push(current[key] || this._defaultTargetRow(accounts[i].account, element));
             }
@@ -1293,7 +1331,7 @@ CodexUsageApplet.prototype = {
         }
         let element = Number(row.element);
         if (
-            !Number.isInteger(element) || element < 0 || element > 2 ||
+            !Number.isInteger(element) || element < 0 || element > 3 ||
             typeof row.panel !== "boolean" || typeof row.hover !== "boolean" ||
             typeof row.click !== "boolean"
         ) {
@@ -1328,13 +1366,19 @@ CodexUsageApplet.prototype = {
         this._onStyleRowsChanged("time");
     },
 
+    _onDurationStylesChanged: function() {
+        this._onStyleRowsChanged("duration");
+    },
+
     _onStyleRowsChanged: function(kind) {
         if (!this._backendRowsReady || this._syncingStyleRows || this._removed) {
             return;
         }
         let rows = kind === "percent"
             ? this.accountPercentStyles
-            : (kind === "date" ? this.accountDateStyles : this.accountTimeStyles);
+            : (kind === "date"
+                ? this.accountDateStyles
+                : (kind === "time" ? this.accountTimeStyles : this.accountDurationStyles));
         let expected = Object.keys(this._backendAccounts).length;
         if (!Array.isArray(rows) || rows.length !== expected) {
             this._loadAccountBackends();
@@ -1360,8 +1404,10 @@ CodexUsageApplet.prototype = {
             this._percentStyles = this._styleMap(normalized);
         } else if (kind === "date") {
             this._dateStyles = this._styleMap(normalized);
-        } else {
+        } else if (kind === "time") {
             this._timeStyles = this._styleMap(normalized);
+        } else {
+            this._durationStyles = this._styleMap(normalized);
         }
         this._refreshFormattedSurfaces();
     },
@@ -1371,7 +1417,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let rows = this.accountStyleTargets;
-        let expected = Object.keys(this._backendAccounts).length * 3;
+        let expected = Object.keys(this._backendAccounts).length * 4;
         if (!Array.isArray(rows) || rows.length !== expected) {
             this._loadAccountBackends();
             return;
@@ -2476,7 +2522,8 @@ CodexUsageApplet.prototype = {
     _windowResetParts: function(window, account, surface, includeUnselected) {
         let showDate = includeUnselected || this._targetEnabled(account, "date", surface);
         let showTime = includeUnselected || this._targetEnabled(account, "time", surface);
-        if (!showDate && !showTime) {
+        let showDuration = includeUnselected || this._targetEnabled(account, "duration", surface);
+        if (!showDate && !showTime && !showDuration) {
             return { plain: "", markup: "" };
         }
         if (!window || !window.reset_at) {
@@ -2489,9 +2536,12 @@ CodexUsageApplet.prototype = {
         let date = new Date(millis);
         let dateStyle = this._dateStyles[account] || this._defaultStyleRow(account, "date");
         let timeStyle = this._timeStyles[account] || this._defaultStyleRow(account, "time");
+        let durationStyle = this._durationStyles[account] || this._defaultStyleRow(account, "duration");
         let remaining = this._remainingPercent(window);
+        let durationMinutes = this._durationMinutes(window);
         let dateText = this._formatDatePart(date, dateStyle.format);
         let timeText = this._formatTimePart(date, timeStyle.format);
+        let durationText = this._formatDurationPart(durationMinutes, durationStyle.format);
         let plainParts = [];
         let markupParts = [];
         if (showDate) {
@@ -2506,6 +2556,13 @@ CodexUsageApplet.prototype = {
                 ? this._styleSpan(timeText, timeStyle, remaining, surface)
                 : this._escapeMarkup(timeText));
         }
+        if (showDuration) {
+            let labeledDuration = "Rest " + durationText;
+            plainParts.push(labeledDuration);
+            markupParts.push(this._targetEnabled(account, "duration", surface)
+                ? this._escapeMarkup("Rest ") + this._styleSpan(durationText, durationStyle, durationMinutes, surface)
+                : this._escapeMarkup(labeledDuration));
+        }
         return {
             plain: plainParts.join(" "),
             markup: markupParts.join(" ")
@@ -2513,7 +2570,7 @@ CodexUsageApplet.prototype = {
     },
 
     _targetEnabled: function(account, element, surface) {
-        let elements = { percent: 0, date: 1, time: 2 };
+        let elements = { percent: 0, date: 1, time: 2, duration: 3 };
         let elementId = elements[element];
         let target = this._styleTargets[account + ":" + elementId];
         if (!target) {
@@ -2558,6 +2615,54 @@ CodexUsageApplet.prototype = {
             return pad(twelveHour) + ":" + minutes + " " + suffix;
         }
         return pad(hours) + ":" + minutes;
+    },
+
+    _durationMinutes: function(window) {
+        if (!window || !window.reset_at) {
+            return null;
+        }
+        let millis = this._dateMillis(window.reset_at);
+        if (!millis) {
+            return null;
+        }
+        return Math.max(0, Math.ceil((millis - Date.now()) / 60000));
+    },
+
+    _formatDurationPart: function(minutes, format) {
+        if (minutes === null || !Number.isFinite(minutes)) {
+            return "–";
+        }
+        let total = Math.max(0, Math.round(minutes));
+        let days = Math.floor(total / 1440);
+        let hours = Math.floor((total % 1440) / 60);
+        let rest = total % 60;
+        let pad = function(number) { return String(number).padStart(2, "0"); };
+        if (format === 1) {
+            return (days ? days + "d " : "") + pad(hours) + ":" + pad(rest);
+        }
+        if (format === 2) {
+            let parts = [];
+            if (days) {
+                parts.push(days + (days === 1 ? " Tag" : " Tage"));
+            }
+            if (hours || days) {
+                parts.push(hours + (hours === 1 ? " Stunde" : " Stunden"));
+            }
+            if (rest || !parts.length) {
+                parts.push(rest + (rest === 1 ? " Minute" : " Minuten"));
+            }
+            return parts.join(" ");
+        }
+        if (format === 3) {
+            return Math.floor(total / 60) + "h " + pad(rest) + "m";
+        }
+        if (days) {
+            return days + "d " + hours + "h" + (rest ? " " + rest + "m" : "");
+        }
+        if (hours) {
+            return hours + "h" + (rest ? " " + rest + "m" : "");
+        }
+        return rest + "m";
     },
 
     _styleSpan: function(text, style, remaining, surface) {
@@ -2803,6 +2908,7 @@ CodexUsageApplet.prototype = {
     on_applet_removed_from_panel: function() {
         this._removed = true;
         this._removeSource("_timerId");
+        this._removeSource("_displayTimerId");
         this._removeSource("_staleCheckId");
         this._removeIdleSources();
         this._cancelProcess();

@@ -71,6 +71,7 @@ function makeApplet() {
   applet._auxTimeoutId = 0;
   applet._healthTimeoutId = 0;
   applet._timerId = 0;
+  applet._displayTimerId = 0;
   applet._lastGoodPanel = { plain: "--", markup: "--" };
   applet._lastGoodTooltip = "";
   applet._internalFailures = [];
@@ -83,6 +84,7 @@ function makeApplet() {
   applet._percentStyles = {};
   applet._dateStyles = {};
   applet._timeStyles = {};
+  applet._durationStyles = {};
   applet._styleTargets = {};
   applet.panelHeight = 24;
   applet.panelAccountSeparator = "bar";
@@ -111,6 +113,7 @@ function makeApplet() {
     alpha: { account: "alpha", tag: "A", order: 2, muted: false, slot1: 1, slot2: 2 },
     beta: { account: "beta", tag: "B", order: 1, muted: true, slot1: 3, slot2: 3 },
   };
+  applet._backendAccounts = { alpha: {}, beta: {} };
   return applet;
 }
 
@@ -184,6 +187,57 @@ test("safe menu construction contains menu failures", () => {
   assert.doesNotThrow(() => applet._buildSafeMenu());
 });
 
+test("restlaufzeit is rendered, styled and uses the per-surface target", () => {
+  const applet = makeApplet();
+  applet._durationStyles = {
+    alpha: {
+      account: "alpha",
+      format: 3,
+      conditional: false,
+      threshold: 120,
+      font: 0,
+      size: 0,
+      bold: true,
+      italic: false,
+      background: 0,
+    },
+  };
+  applet._styleTargets = {
+    "alpha:3": { panel: true, hover: true, click: true },
+  };
+  applet._usages[0].five_hour.reset_at = new Date(
+    Date.now() + 124 * 60000 + 30000
+  ).toISOString();
+  const parts = applet._windowResetParts(
+    applet._usages[0].five_hour,
+    "alpha",
+    "panel",
+    false
+  );
+  assert.match(parts.plain, /^Rest 2h 05m$/);
+  assert.match(parts.markup, /weight="bold"/);
+  assert.equal(applet._formatDurationPart(150, 0), "2h 30m");
+  assert.equal(applet._formatDurationPart(150, 1), "02:30");
+  assert.equal(applet._formatDurationPart(150, 2), "2 Stunden 30 Minuten");
+  assert.equal(applet._formatDurationPart(150, 3), "2h 30m");
+});
+
+test("old three-surface target rows migrate with a duration row", () => {
+  const applet = makeApplet();
+  const rows = applet._mergedTargetRows(
+    [{ account: "alpha" }, { account: "beta" }],
+    [
+      { account: "alpha", element: 0, panel: true, hover: true, click: true },
+      { account: "alpha", element: 1, panel: false, hover: false, click: true },
+      { account: "alpha", element: 2, panel: false, hover: false, click: true },
+    ]
+  );
+  assert.equal(rows.length, 8);
+  assert.equal(rows[3].element, 3);
+  assert.equal(rows[3].click, true);
+  assert.equal(rows[3].panel, false);
+});
+
 test("automatic service activation finishes before the next auxiliary request", () => {
   const applet = makeApplet();
   const calls = [];
@@ -216,8 +270,11 @@ test("cleanup is idempotent across 100 applet removals", () => {
     const applet = makeApplet();
     applet.menu = { destroy() {} };
     applet.settings = { finalize() {} };
+    applet._displayTimerId = 77;
+    applet._sources._displayTimerId = 77;
     assert.doesNotThrow(() => applet.on_applet_removed_from_panel());
     assert.equal(applet._removed, true);
+    assert.equal(applet._displayTimerId, 0);
     assert.equal(applet.menu, null);
   }
 });

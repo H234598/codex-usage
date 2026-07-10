@@ -162,11 +162,19 @@ Date and time styling can each be limited to values below a per-account
 threshold. The corresponding five-hour or weekly remaining value is evaluated
 independently for each reset timestamp.
 
+`Restlaufzeit` is the live countdown until the corresponding five-hour or
+weekly reset. It has its own per-account format, threshold, font, size, bold,
+italic, and background settings. The formats are compact (`2h 05m`),
+clock-like (`02:05`), long German text, and total hours. It can independently
+be enabled for the status bar, hover tooltip, and click menu, and refreshes
+once per minute without triggering a new backend fetch.
+
 Percentage values have the same font, size, emphasis, background and threshold
-controls. A separate per-account target table selects whether percentage, date
-and time formatting applies to the panel status line, hover tooltip and click
-menu. Enabling date or time for the panel or tooltip also shows the relevant
-reset component there; the click menu always keeps its reset text visible.
+controls. A separate per-account target table selects whether percentage, date,
+time, and restlaufzeit formatting applies to the panel status line, hover
+tooltip and click menu. Enabling date, time, or restlaufzeit for the panel or
+tooltip also shows the relevant reset component there; the click menu always
+keeps its reset text visible.
 
 Expired direct-auth accounts get a reactivation action in the applet menu. It
 runs `codex login` against that account's configured `auth_json_path` and opens

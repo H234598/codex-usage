@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2 - 2026-07-10
+
+### Added
+
+- Live per-account restlaufzeit until each five-hour or weekly reset, with
+  compact, clock-like, long-text, and total-hours formats.
+- Restlaufzeit styling and visibility targets for the status bar, hover
+  tooltip, and click menu, plus a minute display refresh independent of fetches.
+
 ## 0.6.1 - 2026-07-10
 
 ### Fixed

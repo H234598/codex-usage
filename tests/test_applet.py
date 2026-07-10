@@ -100,6 +100,23 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         assert set(table["columns"][8]["options"].values()) == set(range(7))
     assert set(date_table["columns"][1]["options"].values()) == set(range(4))
     assert set(time_table["columns"][1]["options"].values()) == set(range(3))
+    duration_table = settings["account-duration-styles"]
+    assert duration_table["type"] == "list"
+    assert duration_table["show-buttons"] is False
+    assert [column["id"] for column in duration_table["columns"]] == [
+        "account",
+        "format",
+        "conditional",
+        "threshold",
+        "font",
+        "size",
+        "bold",
+        "italic",
+        "background",
+    ]
+    assert set(duration_table["columns"][1]["options"].values()) == set(range(4))
+    assert duration_table["columns"][3]["default"] == 120
+    assert duration_table["columns"][3]["max"] == 10080
     percent_table = settings["account-percent-styles"]
     assert [column["id"] for column in percent_table["columns"]] == [
         "account",
@@ -133,7 +150,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "hover",
         "click",
     ]
-    assert set(targets["columns"][1]["options"].values()) == {0, 1, 2}
+    assert set(targets["columns"][1]["options"].values()) == {0, 1, 2, 3}
     assert targets["show-buttons"] is False
 
     layout = settings["layout"]
@@ -170,6 +187,7 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert 'bind("account-percent-styles"' in source
     assert 'bind("account-date-styles"' in source
     assert 'bind("account-time-styles"' in source
+    assert 'bind("account-duration-styles"' in source
     assert 'bind("account-style-targets"' in source
     assert "changed.backend" in source
     assert '"service", "status"' in source
@@ -182,6 +200,9 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "_targetEnabled" in source
     assert "_formatDatePart" in source
     assert "_formatTimePart" in source
+    assert "_durationMinutes" in source
+    assert "_formatDurationPart" in source
+    assert "_displayTimerId" in source
     assert "_styleSpan" in source
     assert "_styleIsActive" in source
     assert "_runSafely" in source

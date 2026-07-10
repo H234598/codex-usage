@@ -24,6 +24,7 @@
         "percent-style-section",
         "date-style-section",
         "time-style-section",
+        "duration-style-section",
         "style-target-section"
       ]
     },
@@ -94,6 +95,13 @@
       "title": "Uhrzeit pro Account",
       "keys": [
         "account-time-styles"
+      ]
+    },
+    "duration-style-section": {
+      "type": "section",
+      "title": "Restlaufzeit pro Account",
+      "keys": [
+        "account-duration-styles"
       ]
     },
     "style-target-section": {
@@ -424,10 +432,97 @@
     "show-buttons": false,
     "default": []
   },
+  "account-duration-styles": {
+    "type": "list",
+    "description": "Restlaufzeitdarstellung pro Account",
+    "tooltip": "Restlaufzeit bis zum jeweiligen Limit-Reset. Die Schwelle ist in Minuten.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "format",
+        "title": "Format",
+        "type": "integer",
+        "options": {
+          "Kompakt": 0,
+          "Uhrzeit": 1,
+          "Ausführlich": 2,
+          "Gesamtstunden": 3
+        }
+      },
+      {
+        "id": "conditional",
+        "title": "Nur unter",
+        "tooltip": "Optische Formatierung nur anwenden, wenn die Restlaufzeit die Schwelle unterschreitet.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "threshold",
+        "title": "Schwelle Minuten",
+        "type": "integer",
+        "min": 0,
+        "max": 10080,
+        "default": 120
+      },
+      {
+        "id": "font",
+        "title": "Schriftart",
+        "type": "integer",
+        "options": {
+          "Theme": 0,
+          "Sans": 1,
+          "Serif": 2,
+          "Monospace": 3
+        }
+      },
+      {
+        "id": "size",
+        "title": "Größe",
+        "tooltip": "0 übernimmt die Schriftgröße des Cinnamon-Themes.",
+        "type": "integer",
+        "min": 0,
+        "max": 48,
+        "default": 0
+      },
+      {
+        "id": "bold",
+        "title": "Fett",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "italic",
+        "title": "Kursiv",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "background",
+        "title": "Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        }
+      }
+    ],
+    "height": 180,
+    "show-buttons": false,
+    "default": []
+  },
   "account-style-targets": {
     "type": "list",
     "description": "Oberflächen für die Formatierung",
-    "tooltip": "Datum und Uhrzeit werden in Statusleiste und Hover-Text eingeblendet, wenn der jeweilige Ort aktiviert ist. Im Klick-Menü bleiben sie bei deaktivierter Formatierung als normaler Text sichtbar.",
+    "tooltip": "Prozent, Datum, Uhrzeit und Restlaufzeit können je Oberfläche formatiert werden. Im Klick-Menü bleiben deaktivierte Werte als normaler Text sichtbar.",
     "columns": [
       {
         "id": "account",
@@ -441,7 +536,8 @@
         "options": {
           "Prozent": 0,
           "Datum": 1,
-          "Uhrzeit": 2
+          "Uhrzeit": 2,
+          "Restlaufzeit": 3
         }
       },
       {
