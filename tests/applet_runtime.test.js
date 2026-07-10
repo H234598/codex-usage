@@ -437,6 +437,15 @@ test("partial fresh payload preserves each missing window from stale cache", () 
   assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
 });
 
+test("payload validation rejects duplicate account identities", () => {
+  const applet = makeApplet();
+  assert.equal(applet._validatePayload([{ account: "constructor" }])[0].account, "constructor");
+  assert.throws(
+    () => applet._validatePayload([{ account: "constructor" }, { account: "constructor" }]),
+    /duplicate account id/
+  );
+});
+
 test("old three-surface target rows migrate with a duration row", () => {
   const applet = makeApplet();
   const rows = applet._mergedTargetRows(

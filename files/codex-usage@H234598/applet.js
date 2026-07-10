@@ -1675,6 +1675,7 @@ CodexUsageApplet.prototype = {
             throw new Error("too many accounts");
         }
         let result = [];
+        let seenAccounts = Object.create(null);
         for (let i = 0; i < payload.length; i++) {
             let item = payload[i];
             if (!item || typeof item !== "object" || Array.isArray(item)) {
@@ -1684,6 +1685,10 @@ CodexUsageApplet.prototype = {
             if (!account) {
                 throw new Error("account id missing");
             }
+            if (seenAccounts[account]) {
+                throw new Error("duplicate account id");
+            }
+            seenAccounts[account] = true;
             result.push({
                 account: account,
                 label: this._safeText(item.label, 120) || account,

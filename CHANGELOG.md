@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.9 - 2026-07-10
+
+### Fixed
+
+- Payload validation now rejects duplicate account identities without treating
+  prototype property names such as `constructor` as already seen.
+
 ## 0.6.8 - 2026-07-10
 
 ### Fixed
