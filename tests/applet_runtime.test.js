@@ -950,6 +950,15 @@ test("cancelling service enable allows automatic activation to retry", () => {
   assert.equal(applet._serviceAutoAttempted, false);
 });
 
+test("service enable argv errors release the automatic activation attempt", () => {
+  const applet = makeApplet();
+  applet._serviceAutoAttempted = true;
+  applet._baseCommandArgv = () => { throw new Error("command unavailable"); };
+  applet._showCommandError = () => {};
+  applet._enableBackgroundService();
+  assert.equal(applet._serviceAutoAttempted, false);
+});
+
 test("cleanup is idempotent across 100 applet removals", () => {
   for (let index = 0; index < 100; index += 1) {
     const applet = makeApplet();

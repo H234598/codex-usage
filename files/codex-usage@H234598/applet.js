@@ -1781,6 +1781,7 @@ CodexUsageApplet.prototype = {
         try {
             argv = this._baseCommandArgv();
         } catch (e) {
+            this._serviceAutoAttempted = false;
             this._showCommandError(String(e));
             continueAfter();
             return;

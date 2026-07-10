@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.26 - 2026-07-11
+
+### Fixed
+
+- Synchronous service-enable command-resolution failures now also release the
+  automatic activation attempt for future retries.
+
 ## 0.6.25 - 2026-07-11
 
 ### Fixed
