@@ -710,6 +710,35 @@ test("backend setting changes apply every changed account serially", () => {
   assert.equal(JSON.stringify(applet._backendChangeQueue), "[]");
 });
 
+test("backend queue advances when backend result handling throws", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+    beta: { account: "beta", label: "Beta", backend: 0 },
+  };
+  applet._baseCommandArgv = () => ["codex-usage"];
+  const calls = [];
+  const callbacks = [];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv[3]);
+    callbacks.push(callback);
+  };
+  applet._showCommandError = () => { throw new Error("menu failed"); };
+  applet._loadAccountBackends = () => {};
+
+  applet._backendChangeQueue = [
+    { account: "alpha", backend: "app-server" },
+    { account: "beta", backend: "app-server" },
+  ];
+  applet._drainBackendChanges();
+  assert.deepEqual(calls, ["alpha"]);
+  assert.throws(() => callbacks[0](null, "backend failed"), /menu failed/);
+  assert.deepEqual(calls, ["alpha", "beta"]);
+  assert.equal(applet._backendChangeCurrent.account, "beta");
+  assert.equal(applet._backendChangeQueue.length, 0);
+});
+
 test("backend setting queue follows reverted rows while a command is running", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

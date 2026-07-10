@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.21 - 2026-07-11
+
+### Fixed
+
+- Backend settings queues now clear the active change and continue with the
+  next account even when result handling raises an exception.
+
 ## 0.6.20 - 2026-07-11
 
 ### Fixed

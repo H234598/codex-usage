@@ -1686,16 +1686,19 @@ CodexUsageApplet.prototype = {
             "json"
         );
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
-            if (error || !payload || payload.ok !== true || payload.account !== changed.account) {
-                this._showCommandError(error || _("Abrufweg konnte nicht gespeichert werden"));
-            } else {
-                this._refreshFresh(false);
-            }
-            this._backendChangeCurrent = null;
-            if (this._backendChangeQueue.length) {
-                this._drainBackendChanges();
-            } else {
-                this._loadAccountBackends();
+            try {
+                if (error || !payload || payload.ok !== true || payload.account !== changed.account) {
+                    this._showCommandError(error || _("Abrufweg konnte nicht gespeichert werden"));
+                } else {
+                    this._refreshFresh(false);
+                }
+            } finally {
+                this._backendChangeCurrent = null;
+                if (this._backendChangeQueue.length) {
+                    this._drainBackendChanges();
+                } else {
+                    this._loadAccountBackends();
+                }
             }
         }), true);
     },
