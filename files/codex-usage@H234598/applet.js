@@ -854,11 +854,17 @@ CodexUsageApplet.prototype = {
             return;
         }
         argv.push("service", "status", "--format", "json");
-        this._spawnAuxJson(argv, Lang.bind(this, function(payload) {
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
             let wasChecked = this._serviceChecked;
+            let validStatus = !error && payload && typeof payload === "object" && !Array.isArray(payload);
             this._serviceChecked = true;
-            this._serviceStatus = payload && typeof payload === "object" ? payload : {};
-            this._systemdActive = Boolean(payload && payload.enabled && payload.active);
+            if (validStatus) {
+                this._serviceStatus = payload;
+                this._systemdActive = Boolean(payload.enabled && payload.active);
+            } else if (!wasChecked) {
+                this._serviceStatus = {};
+                this._systemdActive = false;
+            }
             this._scheduleTimer();
             if (
                 this.pollOwner === "auto" &&

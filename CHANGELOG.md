@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.23 - 2026-07-11
+
+### Fixed
+
+- Failed systemd status checks now preserve the last known active poll owner,
+  preventing a transient diagnostic error from starting a second applet poller.
+
 ## 0.6.22 - 2026-07-11
 
 ### Fixed
