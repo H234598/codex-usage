@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.29 - 2026-07-11
+
+### Fixed
+
+- Child processes are now force-stopped when primary, auxiliary, health or
+  reactivation setup fails after `spawnv()`.
+
 ## 0.6.28 - 2026-07-11
 
 ### Fixed

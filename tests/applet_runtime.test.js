@@ -80,10 +80,12 @@ function makeApplet(onReady) {
   applet._sources = {};
   applet._idleSources = {};
   applet._reactivations = {};
+  applet._reactivationErrors = {};
   applet._reactivationRefreshPending = false;
   applet._backendChangeQueue = [];
   applet._backendChangeCurrent = null;
   applet._backendAuxQueue = [];
+  applet._generation = 0;
   applet._process = null;
   applet._primaryRequest = null;
   applet._primaryCachePending = false;
@@ -92,6 +94,7 @@ function makeApplet(onReady) {
   applet._primaryFreshOpenAfter = false;
   applet._auxProcess = null;
   applet._auxCommand = "";
+  applet._auxGeneration = 0;
   applet._healthProcess = null;
   applet._healthGeneration = 0;
   applet._timeoutId = 0;
@@ -559,6 +562,52 @@ test("health timeout clears the process even when force_exit fails", () => {
   assert.equal(typeof timeout, "function");
   timeout();
   assert.equal(applet._healthProcess, null);
+});
+
+test("startup failures terminate every spawned child process", () => {
+  const invoke = [
+    (applet) => {
+      let callbacks = 0;
+      applet._spawnJsonArray(
+        ["codex-usage", "once"],
+        () => { callbacks += 1; },
+        { subcommand: "once" }
+      );
+      assert.equal(callbacks, 1);
+      assert.equal(applet._process, null);
+    },
+    (applet) => {
+      let callbacks = 0;
+      applet._spawnAuxJson(["codex-usage", "health"], () => { callbacks += 1; });
+      assert.equal(callbacks, 1);
+      assert.equal(applet._auxProcess, null);
+    },
+    (applet) => {
+      applet._spawnHealthEvent(["codex-usage", "health"]);
+      assert.equal(applet._healthProcess, null);
+    },
+    (applet) => {
+      applet._buildUsageMenu = () => {};
+      applet._spawnReactivation(
+        { account: "alpha", label: "Alpha" },
+        ["codex-usage", "reactivate", "alpha"]
+      );
+      assert.equal(Object.keys(applet._reactivations).length, 0);
+    },
+  ];
+
+  for (const start of invoke) {
+    let forced = 0;
+    const applet = makeApplet((runtime) => {
+      runtime.timeoutAdd = () => { throw new Error("timer setup failed"); };
+      runtime.launcherFactory = () => ({
+        setenv() {},
+        spawnv() { return { force_exit() { forced += 1; } }; },
+      });
+    });
+    start(applet);
+    assert.equal(forced, 1);
+  }
 });
 
 test("successful reactivation queues a refresh behind an active refresh", () => {

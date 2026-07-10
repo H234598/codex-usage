@@ -305,6 +305,7 @@ CodexUsageApplet.prototype = {
                 finish();
             }));
         } catch (e) {
+            this._terminateChild(process, "health process startup cleanup");
             finish();
         }
     },
@@ -820,6 +821,7 @@ CodexUsageApplet.prototype = {
                 }
             }));
         } catch (e) {
+            this._terminateChild(process, "primary process startup cleanup");
             finish(null, _("codex-usage konnte nicht gestartet werden: ") + String(e));
         }
     },
@@ -1903,6 +1905,7 @@ CodexUsageApplet.prototype = {
                 }
             }));
         } catch (e) {
+            this._terminateChild(process, "auxiliary process startup cleanup");
             finish(null, _("Hilfsbefehl konnte nicht gestartet werden: ") + String(e));
         }
     },
@@ -2394,6 +2397,7 @@ CodexUsageApplet.prototype = {
                     }
             }));
         } catch (e) {
+            this._terminateChild(record.process, "reactivation process startup cleanup");
             finish(null, _("Login konnte nicht gestartet werden: ") + String(e));
         }
     },
@@ -3224,6 +3228,17 @@ CodexUsageApplet.prototype = {
             );
         } catch (e) {
             this._showCommandError(_("Einstellungen konnten nicht geöffnet werden: ") + String(e));
+        }
+    },
+
+    _terminateChild: function(process, context) {
+        if (!process) {
+            return;
+        }
+        try {
+            process.force_exit();
+        } catch (e) {
+            global.log("[" + UUID + "] " + context + " failed: " + this._shortText(e, 180));
         }
     },
 
