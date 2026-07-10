@@ -37,6 +37,7 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage once" in output
     assert "codex-usage watch" in output
     assert "codex-usage watchdog" in output
+    assert "codex-usage health" in output
     assert "--direct" in output
     assert "--backend direct|app-server" in output
     assert "codex-usage probe ACCOUNT" in output
@@ -62,13 +63,42 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage watchdog" in output
 
 
+def test_health_command_records_reads_and_clears(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    assert main(
+        [
+            "health",
+            "--format",
+            "json",
+            "--record-component",
+            "watch",
+            "--record-event",
+            "cycle_error",
+            "--account",
+            "work",
+            "--error-class",
+            "ValueError",
+            "--duration-ms",
+            "12",
+        ]
+    ) == 0
+    recorded = json.loads(capsys.readouterr().out)
+    assert recorded["event_count"] == 1
+    assert recorded["events"][0]["account"] == "work"
+
+    assert main(["health", "--clear", "--format", "json"]) == 0
+    cleared = json.loads(capsys.readouterr().out)
+    assert cleared["event_count"] == 0
+
+
 def test_root_version_reports_package_version(capsys):
     for argv in (["--version"], ["--config", "/tmp/unused.toml", "--version"]):
         with pytest.raises(SystemExit) as exc:
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.5.3\ncodex-usage 0.5.3\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.0\ncodex-usage 0.6.0\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):

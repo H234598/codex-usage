@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from codex_usage.config import (
@@ -12,6 +14,24 @@ from codex_usage.config import (
     save_config,
 )
 from codex_usage.models import Account
+
+
+def test_concurrent_account_updates_keep_each_valid_account(tmp_path):
+    config_path = tmp_path / "config.toml"
+
+    def add(account_id):
+        add_or_update_account(
+            account_id,
+            label=account_id.upper(),
+            profile_dir=str(tmp_path / "profiles" / account_id),
+            path=config_path,
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(add, ("one", "two", "three", "four")))
+
+    config = load_config(config_path)
+    assert {account.id for account in config.accounts} == {"one", "two", "three", "four"}
 
 
 def test_add_account_rejects_dot_segments(tmp_path):

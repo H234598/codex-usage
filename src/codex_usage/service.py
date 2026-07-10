@@ -64,11 +64,26 @@ def service_status() -> dict[str, Any]:
     enabled = _systemctl_state("is-enabled", TIMER_NAME) == "enabled"
     active = _systemctl_state("is-active", TIMER_NAME) == "active"
     service_active = _systemctl_state("is-active", SERVICE_NAME) in {"active", "activating"}
+    details = _systemctl_show(
+        SERVICE_NAME,
+        (
+            "Result",
+            "ExecMainStatus",
+            "ExecMainCode",
+            "ExecMainStartTimestamp",
+            "ExecMainExitTimestamp",
+        ),
+    ) if installed else {}
     return {
         "installed": installed,
         "enabled": enabled,
         "active": active,
         "service_active": service_active,
+        "service_result": details.get("Result", "unknown"),
+        "service_exit_status": details.get("ExecMainStatus", "unknown"),
+        "service_exit_code": details.get("ExecMainCode", "unknown"),
+        "service_last_start": details.get("ExecMainStartTimestamp", ""),
+        "service_last_exit": details.get("ExecMainExitTimestamp", ""),
         "service": SERVICE_NAME,
         "timer": TIMER_NAME,
     }
@@ -107,10 +122,17 @@ Documentation=https://github.com/H234598/codex-usage
 {MANAGED_MARKER}
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart={exec_start}
 Environment=PYTHONUNBUFFERED=1
 TimeoutStartSec=180
+RuntimeMaxSec=180
+TimeoutStopSec=15
+KillMode=mixed
+MemoryMax=1G
+TasksMax=256
+OOMPolicy=kill
+Restart=no
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
@@ -217,6 +239,22 @@ def _systemctl_state(command: str, unit: str) -> str:
     except ServiceError:
         return "unknown"
     return completed.stdout.strip().lower()
+
+
+def _systemctl_show(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
+    args = ["show", unit]
+    for property_name in properties:
+        args.extend(["-p", property_name])
+    try:
+        completed = _systemctl(*args, check=False)
+    except ServiceError:
+        return {}
+    result: dict[str, str] = {}
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in properties:
+            result[key] = value[:500]
+    return result
 
 
 def _is_managed_unit(path: Path) -> bool:

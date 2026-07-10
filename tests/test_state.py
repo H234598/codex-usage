@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -114,3 +115,45 @@ def test_current_status_keeps_last_success_values_separate(tmp_path):
     assert merged.values_captured_at == captured
     assert merged.stale is True
     assert merged.backend_used == "app-server"
+
+
+def test_save_current_usage_does_not_overwrite_newer_capture(tmp_path):
+    current_dir = tmp_path / "current"
+    newer = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 5, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+    older = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    save_current_usage(newer, current_dir)
+    save_current_usage(older, current_dir)
+
+    loaded = load_current_usage("privat", current_dir)
+    assert loaded is not None
+    assert loaded.captured_at == newer.captured_at
+
+
+def test_concurrent_current_writes_keep_the_newest_capture(tmp_path):
+    current_dir = tmp_path / "current"
+    captures = [
+        datetime(2026, 6, 8, hour, tzinfo=ZoneInfo("Europe/Berlin"))
+        for hour in (1, 2, 3, 4, 5)
+    ]
+
+    def save(captured_at):
+        save_current_usage(
+            AccountUsage(account_id="privat", label="Privat", captured_at=captured_at),
+            current_dir,
+        )
+
+    with ThreadPoolExecutor(max_workers=len(captures)) as executor:
+        list(executor.map(save, captures))
+
+    loaded = load_current_usage("privat", current_dir)
+    assert loaded is not None
+    assert loaded.captured_at == max(captures)

@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .models import Account
-from .private_io import read_private_text, write_private_text
+from .private_io import private_path_lock, read_private_text, write_private_text
 
 APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
@@ -89,13 +89,18 @@ def _read_config_text(config_path: Path) -> str:
 
 def save_config(config: AppConfig, path: Path | None = None) -> Path:
     _validate_config(config)
+    config_path = path or default_config_path()
+    _prepare_config_directory(config_path.parent)
+    with private_path_lock(config_path, label="config lock"):
+        _save_config_unlocked(config, config_path)
+    return config_path
+
+
+def _save_config_unlocked(config: AppConfig, config_path: Path) -> None:
     text = _to_toml(config)
     if len(text.encode("utf-8")) > MAX_CONFIG_BYTES:
         raise ValueError(f"config file too large; max {MAX_CONFIG_BYTES} bytes")
-    config_path = path or default_config_path()
-    _prepare_config_directory(config_path.parent)
     write_private_text(config_path, text, label="config path")
-    return config_path
 
 
 def _prepare_config_directory(config_dir: Path) -> None:
@@ -124,43 +129,51 @@ def add_or_update_account(
         _validate_browser(browser)
     if backend is not None:
         _validate_backend(backend)
-    config = load_config(path)
-    existing = next((item for item in config.accounts if item.id == account_id), None)
-    account = Account(
-        id=account_id,
-        label=label or (existing.label if existing else account_id),
-        profile_dir=profile_dir
-        or (existing.profile_dir if existing else str(_default_profile_root(account_id))),
-        browser=browser or (existing.browser if existing else "firefox"),
-        auth_json_path=auth_json_path
-        if auth_json_path is not None
-        else (existing.auth_json_path if existing else None),
-        backend=backend or (existing.backend if existing else "direct"),
-    )
+    config_path = path or default_config_path()
+    _prepare_config_directory(config_path.parent)
+    with private_path_lock(config_path, label="config lock"):
+        config = load_config(config_path)
+        existing = next((item for item in config.accounts if item.id == account_id), None)
+        account = Account(
+            id=account_id,
+            label=label or (existing.label if existing else account_id),
+            profile_dir=profile_dir
+            or (existing.profile_dir if existing else str(_default_profile_root(account_id))),
+            browser=browser or (existing.browser if existing else "firefox"),
+            auth_json_path=auth_json_path
+            if auth_json_path is not None
+            else (existing.auth_json_path if existing else None),
+            backend=backend or (existing.backend if existing else "direct"),
+        )
 
-    accounts = [item for item in config.accounts if item.id != account_id]
-    accounts.append(account)
-    updated = AppConfig(
-        accounts=tuple(accounts),
-        interval_seconds=config.interval_seconds,
-        analytics_url=config.analytics_url,
-        headless=config.headless,
-    )
-    _prepare_profile_dir(account.profile_dir)
-    save_config(updated, path)
+        accounts = [item for item in config.accounts if item.id != account_id]
+        accounts.append(account)
+        updated = AppConfig(
+            accounts=tuple(accounts),
+            interval_seconds=config.interval_seconds,
+            analytics_url=config.analytics_url,
+            headless=config.headless,
+        )
+        _prepare_profile_dir(account.profile_dir)
+        _validate_config(updated)
+        _save_config_unlocked(updated, config_path)
     return updated, account
 
 
 def remove_account(account_ref: str, path: Path | None = None) -> tuple[AppConfig, Account]:
-    config = load_config(path)
-    account = resolve_account(config, account_ref)
-    updated = AppConfig(
-        accounts=tuple(item for item in config.accounts if item.id != account.id),
-        interval_seconds=config.interval_seconds,
-        analytics_url=config.analytics_url,
-        headless=config.headless,
-    )
-    save_config(updated, path)
+    config_path = path or default_config_path()
+    _prepare_config_directory(config_path.parent)
+    with private_path_lock(config_path, label="config lock"):
+        config = load_config(config_path)
+        account = resolve_account(config, account_ref)
+        updated = AppConfig(
+            accounts=tuple(item for item in config.accounts if item.id != account.id),
+            interval_seconds=config.interval_seconds,
+            analytics_url=config.analytics_url,
+            headless=config.headless,
+        )
+        _validate_config(updated)
+        _save_config_unlocked(updated, config_path)
     return updated, account
 
 

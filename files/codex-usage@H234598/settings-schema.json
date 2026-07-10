@@ -70,7 +70,8 @@
       "type": "section",
       "title": "Panel",
       "keys": [
-        "panel-account-mode",
+        "account-panel-settings",
+        "panel-account-separator",
         "panel-percent-source"
       ]
     },
@@ -106,6 +107,7 @@
       "type": "section",
       "title": "Benachrichtigungen",
       "keys": [
+        "account-alert-settings",
         "warning-threshold",
         "notify-warnings",
         "notify-errors"
@@ -478,19 +480,78 @@
     "description": "Beim Öffnen des Menüs aktualisieren",
     "default": true
   },
-  "panel-account-mode": {
+  "account-panel-settings": {
+    "type": "list",
+    "description": "Panelwerte pro Account",
+    "tooltip": "Jeder Account kann bis zu zwei Quellen anzeigen. Stumm betrifft nur die Statusleiste.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "tag",
+        "title": "Kürzel",
+        "tooltip": "Leer lassen für ein automatisch erzeugtes Kürzel; maximal 8 Zeichen.",
+        "type": "string"
+      },
+      {
+        "id": "order",
+        "title": "Reihenfolge",
+        "type": "integer",
+        "min": 1,
+        "max": 100,
+        "default": 1
+      },
+      {
+        "id": "muted",
+        "title": "Stumm",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "slot1",
+        "title": "Wert 1",
+        "type": "integer",
+        "options": {
+          "Aus": 0,
+          "5h": 1,
+          "Woche": 2,
+          "Mittelwert": 3
+        }
+      },
+      {
+        "id": "slot2",
+        "title": "Wert 2",
+        "type": "integer",
+        "options": {
+          "Aus": 0,
+          "5h": 1,
+          "Woche": 2,
+          "Mittelwert": 3
+        }
+      }
+    ],
+    "height": 220,
+    "show-buttons": false,
+    "default": []
+  },
+  "panel-account-separator": {
     "type": "combobox",
-    "description": "Anzahl der Prozentwerte im Panel",
-    "tooltip": "Pro Account zeigt einen Wert je Account. Gesamt zeigt den Wert des knappsten Accounts.",
+    "description": "Trennung zwischen Accounts",
     "options": {
-      "Ein Wert pro Account": "per-account",
-      "Ein Gesamtwert für alle Accounts": "combined"
+      "Vertikaler Strich": "bar",
+      "Mittelpunkt": "dot",
+      "Doppelstrich": "slash",
+      "Eckige Gruppierung": "brackets"
     },
-    "default": "combined"
+    "default": "bar"
   },
   "panel-percent-source": {
     "type": "combobox",
-    "description": "Berechnung des angezeigten Prozentwerts",
+    "description": "Standardquelle für neue Accounts",
+    "tooltip": "Wird bei der Migration als Wert 1 übernommen und für neue Accounts verwendet.",
     "options": {
       "Nur 5-Stunden-Limit": "five-hour",
       "Nur Wochenlimit": "weekly",
@@ -500,11 +561,55 @@
   },
   "warning-threshold": {
     "type": "spinbutton",
-    "description": "Warnschwelle für verbleibende Prozent",
+    "description": "Standard-Warnschwelle für neue Accounts",
+    "tooltip": "Die individuellen 5h- und Wochenwerte werden in der Accounttabelle eingestellt.",
     "min": 0,
     "max": 100,
     "step": 5,
     "default": 20
+  },
+  "account-alert-settings": {
+    "type": "list",
+    "description": "Benachrichtigungen pro Account",
+    "tooltip": "Warnungen und Fehler können je Account getrennt abgeschaltet werden.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "five-threshold",
+        "title": "5h Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
+      },
+      {
+        "id": "weekly-threshold",
+        "title": "Woche Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
+      },
+      {
+        "id": "warnings",
+        "title": "Warnungen",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "errors",
+        "title": "Fehler",
+        "type": "boolean",
+        "default": true
+      }
+    ],
+    "height": 220,
+    "show-buttons": false,
+    "default": []
   },
   "notify-warnings": {
     "type": "switch",

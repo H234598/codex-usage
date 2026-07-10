@@ -26,16 +26,32 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     assert settings["refresh-interval"]["default"] == 300
     assert settings["refresh-interval"]["min"] >= 60
     assert "show-panel-label" not in settings
-    assert settings["panel-account-mode"]["default"] == "combined"
-    assert set(settings["panel-account-mode"]["options"].values()) == {
-        "combined",
-        "per-account",
-    }
+    assert "panel-account-mode" not in settings
     assert settings["panel-percent-source"]["default"] == "average"
     assert set(settings["panel-percent-source"]["options"].values()) == {
         "average",
         "five-hour",
         "weekly",
+    }
+    panel_table = settings["account-panel-settings"]
+    assert [column["id"] for column in panel_table["columns"]] == [
+        "account",
+        "tag",
+        "order",
+        "muted",
+        "slot1",
+        "slot2",
+    ]
+    assert panel_table["columns"][2]["min"] == 1
+    assert panel_table["columns"][2]["max"] == 100
+    assert set(panel_table["columns"][4]["options"].values()) == set(range(4))
+    assert panel_table["columns"][3]["default"] is False
+    assert settings["panel-account-separator"]["default"] == "bar"
+    assert set(settings["panel-account-separator"]["options"].values()) == {
+        "bar",
+        "dot",
+        "slash",
+        "brackets",
     }
     assert settings["show-reactivation-actions"]["default"] is True
     assert settings["reactivation-browser"]["default"] == "auto"
@@ -97,6 +113,18 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     ]
     assert percent_table["columns"][1]["default"] is False
     assert percent_table["columns"][2]["default"] == 20
+    alert_table = settings["account-alert-settings"]
+    assert [column["id"] for column in alert_table["columns"]] == [
+        "account",
+        "five-threshold",
+        "weekly-threshold",
+        "warnings",
+        "errors",
+    ]
+    assert alert_table["columns"][1]["default"] == 20
+    assert alert_table["columns"][2]["default"] == 20
+    assert alert_table["columns"][3]["default"] is True
+    assert alert_table["columns"][4]["default"] is True
     targets = settings["account-style-targets"]
     assert [column["id"] for column in targets["columns"]] == [
         "account",
@@ -125,7 +153,9 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "COMMAND_TIMEOUT_MS" in source
     assert "Gio.SubprocessLauncher" in source
     assert "force_exit" in source
-    assert "_selectedPercent" in source
+    assert "_panelItems" in source
+    assert "_panelSourceLabel" in source
+    assert "_panelSeparator" in source
     assert "_accountTag" in source
     assert "showPanelLabel" not in source
     assert "this.set_applet_label(panel.plain);" in source
@@ -135,6 +165,8 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert '"reactivate"' in source
     assert "codex-usage login " not in source
     assert 'bind("account-backends"' in source
+    assert 'bind("account-panel-settings"' in source
+    assert 'bind("account-alert-settings"' in source
     assert 'bind("account-percent-styles"' in source
     assert 'bind("account-date-styles"' in source
     assert 'bind("account-time-styles"' in source
@@ -152,6 +184,25 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "_formatTimePart" in source
     assert "_styleSpan" in source
     assert "_styleIsActive" in source
+    assert "_runSafely" in source
+    assert "_removeSource" in source
+    assert "_readBoundedProcessOutput" in source
+    assert "read_bytes_async" in source
+    assert "communicate_utf8_async" not in source
+    assert "CIRCUIT_BREAKER_MS" in source
+    assert "_buildSafeMenu" in source
+    assert "_addHealthAction" in source
+    assert 'this._runSafely("health action"' in source
+    assert "Settings konnten nicht initialisiert werden" in source
+    assert "this.menu = null" in source
+    assert "_cacheIsStale" in source
+    assert "_repairStaleService" in source
+    assert "_serviceAutoAttempted" in source
+    assert "this._enableBackgroundService(callback);" in source
+    assert 'this._runSafely("service continuation"' in source
+    assert "generation === this._generation" in source
+    assert "this._timeoutId = 0" in source
+    assert "record.timeoutId = 0" in source
     assert "remaining < style.threshold" in source
     assert "row.conditional === undefined ? false" in source
     assert "text.set_markup(markup)" in source

@@ -3,10 +3,17 @@ Description=Watch ChatGPT Codex usage analytics and block exhausted accounts
 Documentation=man:systemd.service(5)
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart=%h/.local/bin/codex-usage watchdog --format table
 Environment=PYTHONUNBUFFERED=1
 TimeoutStartSec=120
+RuntimeMaxSec=180
+TimeoutStopSec=15
+KillMode=mixed
+MemoryMax=1G
+TasksMax=256
+OOMPolicy=kill
+Restart=no
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

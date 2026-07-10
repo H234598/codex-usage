@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import signal
+import sys
 import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 from .account_lock import account_lock
@@ -13,6 +16,7 @@ from .app_server import AppServerUnavailableError, fetch_account_usage_app_serve
 from .browser import fetch_account_usage
 from .config import AppConfig
 from .direct import fetch_account_usage_direct
+from .health import record_health_event
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
 from .state import load_usage_snapshot, save_current_usage, save_usage_snapshot
@@ -57,6 +61,14 @@ def fetch_all(
                     status=AccountStatus.ERROR,
                     error=f"snapshot save failed: {type(exc).__name__}",
                 )
+    for usage in usages:
+        if usage.status == AccountStatus.ERROR:
+            _record_health(
+                "scheduler",
+                "account_error",
+                account=usage.account_id,
+                error_class="UsageError",
+            )
     return usages
 
 
@@ -127,22 +139,74 @@ def watch(
 ) -> None:
     interval = interval_seconds or config.interval_seconds
     account_list = list(accounts)
-    while True:
-        usages = fetch_all(
-            config,
-            account_list,
-            headed=headed,
-            direct=direct,
-            backend_override=backend_override,
-            auth_json_path=auth_json_path,
-            save_snapshots=True,
-        )
-        if output == "json":
-            print(render_json(usages), flush=True)
-        else:
-            print("\033[2J\033[H", end="")
-            print(render_table(usages), flush=True)
-        time.sleep(interval)
+    stop_event = Event()
+    previous_handlers: dict[int, object] = {}
+
+    def stop(_signum, _frame) -> None:
+        stop_event.set()
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, stop)
+        except (OSError, RuntimeError, ValueError):
+            pass
+
+    consecutive_failures = 0
+    try:
+        while not stop_event.is_set():
+            started = time.monotonic()
+            try:
+                usages = fetch_all(
+                    config,
+                    account_list,
+                    headed=headed,
+                    direct=direct,
+                    backend_override=backend_override,
+                    auth_json_path=auth_json_path,
+                    save_snapshots=True,
+                )
+                if output == "json":
+                    print(render_json(usages), flush=True)
+                else:
+                    print("\033[2J\033[H", end="")
+                    print(render_table(usages), flush=True)
+                _record_health(
+                    "watch",
+                    "cycle_ok",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+                consecutive_failures = 0
+                delay = interval
+            except KeyboardInterrupt:
+                stop_event.set()
+                break
+            except Exception as exc:
+                consecutive_failures += 1
+                _record_health(
+                    "watch",
+                    "cycle_error",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    error_class=type(exc).__name__,
+                )
+                message = " ".join(str(exc).split())[:240] or type(exc).__name__
+                print(f"Fehler: watch cycle failed: {message}", file=sys.stderr, flush=True)
+                delay = min(interval, 5 * (2 ** min(consecutive_failures - 1, 6)))
+            if stop_event.wait(delay):
+                break
+    finally:
+        for signum, handler in previous_handlers.items():
+            try:
+                signal.signal(signum, handler)
+            except (OSError, RuntimeError, ValueError):
+                pass
+
+
+def _record_health(component: str, event: str, **kwargs) -> None:
+    try:
+        record_health_event(component, event, **kwargs)
+    except Exception:
+        pass
 
 
 def watchdog(

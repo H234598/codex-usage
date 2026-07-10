@@ -27,6 +27,7 @@ from .config import (
     remove_account,
     resolve_account,
 )
+from .health import clear_health, load_health, record_health_event
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
 from .private_io import read_private_text
@@ -82,6 +83,9 @@ Gespeicherte Werte und manuelle Aufnahme:
   codex-usage latest [--format table|json]
   codex-usage values [--account ACCOUNT]
 
+Stabilität und Diagnose:
+  codex-usage health [--format table|json] [--clear]
+
 Browser-Bridge:
   codex-usage bridge-snippet ACCOUNT [--port PORT] [--interval SEKUNDEN]
   codex-usage bridge-extension ACCOUNT [--output DIR] [--port PORT] [--interval SEKUNDEN]
@@ -126,6 +130,7 @@ KNOWN_COMMANDS = {
     "ingest",
     "latest",
     "values",
+    "health",
     "bridge-snippet",
     "bridge-extension",
     "bridge-server",
@@ -299,6 +304,16 @@ def _build_parser() -> argparse.ArgumentParser:
     values = sub.add_parser("values", help="Knappe Werte-Uebersicht aller Accounts anzeigen")
     values.add_argument("--account", action="append", dest="account_ids")
     values.set_defaults(func=_cmd_values)
+
+    health = sub.add_parser("health", help="Begrenztes Health-Protokoll anzeigen oder löschen")
+    health.add_argument("--format", choices=("table", "json"), default="table")
+    health.add_argument("--clear", action="store_true", help="Health-Protokoll löschen")
+    health.add_argument("--record-component", help=argparse.SUPPRESS)
+    health.add_argument("--record-event", help=argparse.SUPPRESS)
+    health.add_argument("--account", help=argparse.SUPPRESS)
+    health.add_argument("--duration-ms", type=int, help=argparse.SUPPRESS)
+    health.add_argument("--error-class", help=argparse.SUPPRESS)
+    health.set_defaults(func=_cmd_health)
 
     snippet = sub.add_parser(
         "bridge-snippet",
@@ -576,6 +591,30 @@ def _cmd_values(args: argparse.Namespace) -> int:
     usages = _load_overview_usages(config, accounts)
     print(render_account_values(accounts, usages))
     return 0 if all(_is_successful_usage(usage) for usage in usages.values()) else 2
+
+
+def _cmd_health(args: argparse.Namespace) -> int:
+    has_record = bool(args.record_component or args.record_event)
+    if has_record:
+        if args.clear or not args.record_component or not args.record_event:
+            raise ValueError("health recording requires component and event without --clear")
+        record_health_event(
+            args.record_component,
+            args.record_event,
+            account=args.account,
+            duration_ms=args.duration_ms,
+            error_class=args.error_class,
+        )
+    elif args.clear:
+        clear_health()
+    payload = load_health()
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        print(f"Health-Ereignisse: {payload['event_count']}")
+        for key, count in sorted(payload["event_counts"].items()):
+            print(f"{key}: {count}")
+    return 0
 
 
 def _cmd_bridge_snippet(args: argparse.Namespace) -> int:

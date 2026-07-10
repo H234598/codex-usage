@@ -32,5 +32,7 @@ jobs:
         run: python -m ruff check .
       - name: Applet syntax
         run: node --check files/codex-usage@H234598/applet.js
+      - name: Applet runtime harness
+        run: node --test tests/applet_runtime.test.js
       - name: Test
         run: python -m pytest

@@ -11,7 +11,7 @@ from typing import Any
 from .config import default_state_dir
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow
-from .private_io import read_private_text, write_private_text
+from .private_io import private_path_lock, read_private_text, write_private_text
 
 MAX_SNAPSHOT_BYTES = 1_000_000
 SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -50,11 +50,15 @@ def _save_usage(usage: AccountUsage, directory: Path) -> Path:
     text = json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False)
     if len(text.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
         raise ValueError(f"snapshot file too large; max {MAX_SNAPSHOT_BYTES} bytes")
-    write_private_text(
-        path,
-        text,
-        label="snapshot path",
-    )
+    with private_path_lock(path, label="snapshot lock"):
+        existing = _load_usage(usage.account_id, directory)
+        if existing is not None:
+            try:
+                if existing.captured_at > usage.captured_at:
+                    return path
+            except TypeError:
+                pass
+        write_private_text(path, text, label="snapshot path")
     return path
 
 

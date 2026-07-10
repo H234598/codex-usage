@@ -39,6 +39,14 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
             stdout = "enabled\n"
         if args[0] == "is-active" and args[1].endswith("timer"):
             stdout = "active\n"
+        if args[0] == "show":
+            stdout = (
+                "Result=success\n"
+                "ExecMainStatus=0\n"
+                "ExecMainCode=exited\n"
+                "ExecMainStartTimestamp=now\n"
+                "ExecMainExitTimestamp=later\n"
+            )
         return subprocess.CompletedProcess(args, 0, stdout, "")
 
     monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
@@ -53,8 +61,16 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     service = service_path.read_text(encoding="utf-8")
     timer = timer_path.read_text(encoding="utf-8")
     assert "ExecStart=" in service
+    assert "Type=simple" in service
     assert "watchdog" in service
     assert "ProtectSystem=strict" in service
+    assert "RuntimeMaxSec=180" in service
+    assert "TimeoutStopSec=15" in service
+    assert "KillMode=mixed" in service
+    assert "MemoryMax=1G" in service
+    assert "TasksMax=256" in service
+    assert "OOMPolicy=kill" in service
+    assert "Restart=no" in service
     assert f'ReadWritePaths="{profile_dir}"' in service
     assert f'ReadWritePaths="{auth_home}"' in service
     assert "OnUnitActiveSec=420s" in timer
@@ -63,6 +79,8 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     assert result["installed"] is True
     assert result["enabled"] is True
     assert result["active"] is True
+    assert result["service_result"] == "success"
+    assert result["service_exit_status"] == "0"
 
 
 def test_service_uninstall_refuses_unmanaged_unit(tmp_path, monkeypatch):

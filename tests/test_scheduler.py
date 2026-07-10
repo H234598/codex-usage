@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 from contextlib import nullcontext
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -7,7 +8,61 @@ from zoneinfo import ZoneInfo
 from codex_usage.app_server import AppServerUnavailableError
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
-from codex_usage.scheduler import fetch_all, watchdog
+from codex_usage.scheduler import fetch_all, watch, watchdog
+
+
+def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):
+    delays: list[int] = []
+    health_events: list[tuple[str, str]] = []
+    installed: list[tuple[int, object]] = []
+
+    class StopAfterWait:
+        def __init__(self):
+            self.stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def wait(self, delay):
+            delays.append(delay)
+            self.stopped = True
+            return True
+
+        def set(self):
+            self.stopped = True
+
+    monkeypatch.setattr("codex_usage.scheduler.Event", StopAfterWait)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_all",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.record_health_event",
+        lambda component, event, **kwargs: health_events.append((component, event)),
+    )
+    previous = {
+        signal.SIGINT: "old-int",
+        signal.SIGTERM: "old-term",
+    }
+    monkeypatch.setattr("codex_usage.scheduler.signal.getsignal", previous.__getitem__)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.signal.signal",
+        lambda signum, handler: installed.append((signum, handler)),
+    )
+
+    watch(AppConfig(accounts=()), (), output="table", interval_seconds=60)
+
+    assert delays == [5]
+    assert health_events == [("watch", "cycle_error")]
+    assert "watch cycle failed" in capsys.readouterr().err
+    assert [signum for signum, _ in installed] == [
+        signal.SIGINT,
+        signal.SIGTERM,
+        signal.SIGINT,
+        signal.SIGTERM,
+    ]
+    assert installed[2][1] == "old-int"
+    assert installed[3][1] == "old-term"
 
 
 def test_fetch_all_uses_direct_for_accounts_with_auth_and_browser_for_others(monkeypatch):

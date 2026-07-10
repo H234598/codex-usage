@@ -138,9 +138,17 @@ make install-local
 
 The applet loads saved snapshots immediately and runs a fresh mixed-mode poll
 every five minutes. Its settings control whether the panel shows one value per
-account or one combined value for the most constrained account. The displayed
-percentage can use the five-hour limit, the weekly limit, or the mean of both.
-Warnings are available but disabled by default.
+account slot. Each account has two independent slots; a slot can be off, show
+the five-hour value, the weekly value, or the mean of both. The slots can be
+ordered, muted, tagged with a short label, and separated with `|`, `·`, `//`,
+or brackets. Duplicate sources in one account are normalized to one visible
+slot. Muting affects only the panel; hover, click-menu values, polling, and
+notifications continue to work. Warnings are available but disabled by
+default.
+
+The panel always labels its sources as `5h`, `W`, or `Ø`. Reset dates and times
+remain attached to their corresponding values. The click menu exposes
+persistent per-account switches for panel visibility, warnings, and errors.
 
 The applet settings include an account table for switching each account between
 the direct and App Server readers. Poll ownership is selectable between the
@@ -172,6 +180,30 @@ The same flow is available from the terminal:
 codex-usage reactivate ACCOUNT --browser auto
 ```
 
+## Health and recovery
+
+The CLI keeps a bounded, redacted health log containing only timestamps,
+component/event codes, optional durations, account ids, and error classes:
+
+```bash
+codex-usage health
+codex-usage health --format json
+codex-usage health --clear
+```
+
+The applet protects Cinnamon with bounded incremental process output,
+generation checks for stale callbacks, idempotent timer/process cleanup, a
+15-minute circuit breaker after repeated refresh failures, and a safe mode
+after repeated internal failures. Safe mode keeps the last valid panel value
+and offers only retry, health, analytics, and settings. It never reloads
+Cinnamon or the applet automatically.
+
+The `auto` poll owner installs and enables the managed systemd user timer when
+needed. The timer has explicit runtime, memory, task, and stop limits. If the
+cache becomes stale, the applet repairs the managed timer first and allows at
+most one fallback poll every 15 minutes. Managed unit files, configuration,
+snapshots, current values, and health data are written atomically.
+
 Remove the applet files with:
 
 ```bash
@@ -192,6 +224,7 @@ Privat   42 / 100 42%  08.06.2026 04:26  310 / 1000 31% 14.06.2026 04:26 ok
 ## Checks
 
 ```bash
-ruff check .
-pytest
+python -m ruff check .
+python -m pytest
+node --test tests/applet_runtime.test.js
 ```

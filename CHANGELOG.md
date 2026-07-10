@@ -1,0 +1,36 @@
+# Changelog
+
+## 0.6.0 - 2026-07-10
+
+### Added
+
+- Two independently configurable panel slots per account: off, five-hour,
+  weekly, or mean value.
+- Per-account tags, ordering, mute state, separators, alert thresholds, and
+  warning/error switches.
+- `codex-usage health` with bounded, redacted event storage and JSON/table
+  output.
+- Node applet runtime harness and CI execution for JavaScript lifecycle tests.
+
+### Changed
+
+- Existing panel settings migrate into slot 1; slot 2 starts disabled and
+  duplicate sources are normalized away.
+- Configuration, snapshots, current values, health data, and managed systemd
+  units use atomic private writes with locks where concurrent writers can
+  overlap.
+- `watch` handles signals, unexpected cycle failures, and bounded exponential
+  backoff.
+- The Cinnamon applet uses bounded incremental process reads, stale-generation
+  guards, idempotent cleanup, a refresh circuit breaker, safe mode, and
+  managed systemd timer repair.
+- Managed services now expose execution status and enforce runtime, memory,
+  task, stop, and OOM limits.
+
+### Security
+
+- Oversized or unreadable applet process output terminates the affected child
+  process instead of leaving an unbounded or orphaned reader behind.
+- Health events contain no tokens, raw responses, or complete stderr output.
+- Re-activation callbacks cannot remove or overwrite a newer account login
+  process.

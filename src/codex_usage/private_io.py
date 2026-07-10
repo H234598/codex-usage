@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import errno
+import fcntl
 import os
+import secrets
 import stat
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+
+PRIVATE_LOCK_TIMEOUT_SECONDS = 30
 
 
 def read_private_text(
@@ -65,8 +72,17 @@ def read_private_text(
 def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) -> None:
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
+    if path.exists() and path.stat().st_nlink != 1:
+        raise ValueError(f"{label} must not be hard-linked: {path}")
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise ValueError(f"{label} parent must be a real directory: {parent}")
 
-    flags = os.O_WRONLY | os.O_CREAT
+    encoded = text.encode("utf-8")
+    temporary = parent / (
+        "." + path.name + ".tmp-" + str(os.getpid()) + "-" + secrets.token_hex(8)
+    )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_CLOEXEC"):
@@ -74,24 +90,102 @@ def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) 
     if hasattr(os, "O_NONBLOCK"):
         flags |= os.O_NONBLOCK
 
+    fd = -1
+    replaced = False
     try:
-        fd = os.open(path, flags, mode)
+        fd = os.open(temporary, flags, mode)
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+            raise ValueError(f"temporary {label} is not a private regular file")
+        os.fchmod(fd, mode)
+        offset = 0
+        while offset < len(encoded):
+            written = os.write(fd, encoded[offset:])
+            if written <= 0:
+                raise OSError(errno.EIO, f"short write for {label}")
+            offset += written
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.replace(temporary, path)
+        replaced = True
+        _fsync_directory(parent)
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
             raise ValueError(f"{label} must be a regular file: {path}") from exc
         raise
-
-    try:
-        file_stat = os.fstat(fd)
-        if not stat.S_ISREG(file_stat.st_mode):
-            raise ValueError(f"{label} must be a regular file: {path}")
-        if file_stat.st_nlink != 1:
-            raise ValueError(f"{label} must not be hard-linked: {path}")
-        os.fchmod(fd, mode)
-        os.ftruncate(fd, 0)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            fd = -1
-            handle.write(text)
     finally:
         if fd >= 0:
             os.close(fd)
+        if not replaced:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno in (errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP):
+            return
+        raise
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def private_path_lock(
+    path: Path,
+    *,
+    timeout_seconds: int = PRIVATE_LOCK_TIMEOUT_SECONDS,
+    label: str = "private lock",
+) -> Iterator[None]:
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise ValueError(f"{label} parent must be a real directory: {parent}")
+    lock_path = parent / (path.name + ".lock")
+    if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
+        raise ValueError(f"{label} must be a regular file: {lock_path}")
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        fd = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
+            raise ValueError(f"{label} must be a regular file: {lock_path}") from exc
+        raise
+    try:
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+            raise ValueError(f"{label} must be a private regular file: {lock_path}")
+        os.fchmod(fd, 0o600)
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"{label} is already in use") from exc
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+    finally:
+        os.close(fd)
