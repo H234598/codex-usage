@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.12 - 2026-07-10
+
+### Fixed
+
+- Backend account overviews now reject duplicate account IDs without replacing
+  the last valid state.
+
 ## 0.6.11 - 2026-07-10
 
 ### Fixed

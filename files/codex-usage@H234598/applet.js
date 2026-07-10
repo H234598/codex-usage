@@ -872,6 +872,10 @@ CodexUsageApplet.prototype = {
                 if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) || !backend) {
                     continue;
                 }
+                if (Object.prototype.hasOwnProperty.call(accounts, account)) {
+                    global.log("[" + UUID + "] duplicate account in backend overview");
+                    return;
+                }
                 let row = {
                     account: account,
                     label: label || account,

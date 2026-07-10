@@ -465,6 +465,32 @@ test("backend account maps preserve prototype-like account ids", () => {
   assert.equal(applet._backendAccounts["__proto__"].label, "Prototype");
 });
 
+test("backend overview rejects duplicate account ids without replacing state", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };
+  applet._backendRowsReady = true;
+  applet.accountBackends = [{ account: "alpha", label: "Alpha", backend: 0 }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  let settingsWrites = 0;
+  applet.settings = { setValue() { settingsWrites += 1; } };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [
+      { id: "beta", label: "Beta", backend: "direct" },
+      { id: "beta", label: "Beta duplicate", backend: "app-server" },
+    ],
+  }, null);
+  applet._syncAccountSettings = () => { throw new Error("must not sync"); };
+  applet._syncStyleRows = () => { throw new Error("must not sync"); };
+  applet._loadAccountBackends();
+  assert.deepEqual(applet._backendAccounts, {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  });
+  assert.deepEqual(applet.accountBackends, [
+    { account: "alpha", label: "Alpha", backend: 0 },
+  ]);
+  assert.equal(settingsWrites, 0);
+});
+
 test("backend setting changes reject duplicate account rows", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
