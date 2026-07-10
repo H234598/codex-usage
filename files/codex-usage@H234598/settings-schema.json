@@ -50,7 +50,6 @@
       "type": "section",
       "title": "Panel",
       "keys": [
-        "show-panel-label",
         "panel-account-mode",
         "panel-percent-source"
       ]
@@ -101,11 +100,6 @@
   "refresh-on-open": {
     "type": "switch",
     "description": "Beim Öffnen des Menüs aktualisieren",
-    "default": true
-  },
-  "show-panel-label": {
-    "type": "switch",
-    "description": "Knappsten Restwert im Panel anzeigen",
     "default": true
   },
   "panel-account-mode": {

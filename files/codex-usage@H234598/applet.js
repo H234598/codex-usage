@@ -43,7 +43,6 @@ CodexUsageApplet.prototype = {
         this.autoRefresh = true;
         this.refreshInterval = 300;
         this.refreshOnOpen = true;
-        this.showPanelLabel = true;
         this.panelAccountMode = "combined";
         this.panelPercentSource = "average";
         this.warningThreshold = 20;
@@ -99,7 +98,6 @@ CodexUsageApplet.prototype = {
         bind("auto-refresh", "autoRefresh", this._onRefreshSettingsChanged);
         bind("refresh-interval", "refreshInterval", this._onRefreshSettingsChanged);
         bind("refresh-on-open", "refreshOnOpen", null);
-        bind("show-panel-label", "showPanelLabel", this._updatePanel);
         bind("panel-account-mode", "panelAccountMode", this._updatePanel);
         bind("panel-percent-source", "panelPercentSource", this._updatePanel);
         bind("warning-threshold", "warningThreshold", this._updatePanel);
@@ -666,11 +664,7 @@ CodexUsageApplet.prototype = {
             .map(function(item) { return item.value; })
             .filter(function(value) { return value !== null; });
         let worst = available.length ? Math.min.apply(Math, available) : null;
-        if (this.showPanelLabel) {
-            this.set_applet_label(this._panelLabel(selected, worst));
-        } else {
-            this.set_applet_label("");
-        }
+        this.set_applet_label(this._panelLabel(selected, worst));
         if (hasError) {
             this.actor.add_style_class_name("codex-usage-panel-error");
         } else if (worst !== null && worst <= 5) {
@@ -765,7 +759,7 @@ CodexUsageApplet.prototype = {
                 currentErrors[errorKey] = true;
                 if (this.notifyErrors && !this._errorState[errorKey]) {
                     let errorMessage = usage.status === "login_required"
-                        ? "Token abgelaufen · codex-usage login " + usage.account
+                        ? "Token abgelaufen · codex-usage reactivate " + usage.account
                         : usage.error || this._statusLabel(usage.status);
                     Main.notify(
                         _("Codex Usage: ") + usage.label,

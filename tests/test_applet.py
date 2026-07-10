@@ -21,6 +21,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     assert metadata["max-instances"] == 1
     assert settings["refresh-interval"]["default"] == 300
     assert settings["refresh-interval"]["min"] >= 60
+    assert "show-panel-label" not in settings
     assert settings["panel-account-mode"]["default"] == "combined"
     assert set(settings["panel-account-mode"]["options"].values()) == {
         "combined",
@@ -60,9 +61,12 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "force_exit" in source
     assert "_selectedPercent" in source
     assert "_accountTag" in source
+    assert "showPanelLabel" not in source
+    assert "this.set_applet_label(this._panelLabel(selected, worst));" in source
     assert "_reactivateAccount" in source
     assert '"system-log-in-symbolic"' in source
     assert '"reactivate"' in source
+    assert "codex-usage login " not in source
     for forbidden in (
         "spawnCommandLine",
         "Util.spawn",
