@@ -53,6 +53,8 @@ CodexUsageApplet.prototype = {
         this.showReactivationActions = true;
         this.reactivationBrowser = "auto";
         this.accountBackends = [];
+        this.accountDateStyles = [];
+        this.accountTimeStyles = [];
 
         this._removed = false;
         this._generation = 0;
@@ -71,6 +73,9 @@ CodexUsageApplet.prototype = {
         this._backendRowsReady = false;
         this._syncingBackendRows = false;
         this._backendAccounts = {};
+        this._syncingStyleRows = false;
+        this._dateStyles = {};
+        this._timeStyles = {};
         this._systemdActive = false;
         this._serviceChecked = false;
 
@@ -122,6 +127,8 @@ CodexUsageApplet.prototype = {
         );
         bind("reactivation-browser", "reactivationBrowser", null);
         bind("account-backends", "accountBackends", this._onAccountBackendsChanged);
+        bind("account-date-styles", "accountDateStyles", this._onDateStylesChanged);
+        bind("account-time-styles", "accountTimeStyles", this._onTimeStylesChanged);
     },
 
     _onCommandSettingsChanged: function() {
@@ -417,11 +424,161 @@ CodexUsageApplet.prototype = {
             } catch (e) {
                 global.log("[" + UUID + "] backend settings sync failed: " + String(e));
             }
+            this._syncStyleRows(rows);
             Mainloop.idle_add(Lang.bind(this, function() {
                 this._syncingBackendRows = false;
                 return false;
             }));
         }));
+    },
+
+    _syncStyleRows: function(accounts) {
+        let dateRows = this._mergedStyleRows(accounts, this.accountDateStyles, "date");
+        let timeRows = this._mergedStyleRows(accounts, this.accountTimeStyles, "time");
+        let dateChanged = !this._styleRowsEqual(this.accountDateStyles, dateRows);
+        let timeChanged = !this._styleRowsEqual(this.accountTimeStyles, timeRows);
+        this._dateStyles = this._styleMap(dateRows);
+        this._timeStyles = this._styleMap(timeRows);
+        this._syncingStyleRows = true;
+        this.accountDateStyles = dateRows;
+        this.accountTimeStyles = timeRows;
+        try {
+            if (dateChanged) {
+                this.settings.setValue("account-date-styles", dateRows);
+            }
+            if (timeChanged) {
+                this.settings.setValue("account-time-styles", timeRows);
+            }
+        } catch (e) {
+            global.log("[" + UUID + "] date/time style sync failed: " + String(e));
+        }
+        Mainloop.idle_add(Lang.bind(this, function() {
+            this._syncingStyleRows = false;
+            return false;
+        }));
+    },
+
+    _styleRowsEqual: function(left, right) {
+        if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+            return false;
+        }
+        return JSON.stringify(left) === JSON.stringify(right);
+    },
+
+    _mergedStyleRows: function(accounts, currentRows, kind) {
+        let current = {};
+        if (Array.isArray(currentRows)) {
+            for (let i = 0; i < currentRows.length; i++) {
+                let account = this._safeText(
+                    currentRows[i] && currentRows[i].account,
+                    64
+                );
+                if (!account || current[account] || !this._backendAccounts[account]) {
+                    continue;
+                }
+                let normalized = this._normalizeStyleRow(currentRows[i], account, kind);
+                if (normalized) {
+                    current[account] = normalized;
+                }
+            }
+        }
+        let rows = [];
+        for (let i = 0; i < accounts.length; i++) {
+            let account = accounts[i].account;
+            rows.push(current[account] || this._defaultStyleRow(account));
+        }
+        return rows;
+    },
+
+    _defaultStyleRow: function(account) {
+        return {
+            account: account,
+            format: 0,
+            font: 0,
+            size: 0,
+            bold: false,
+            italic: false,
+            background: 0
+        };
+    },
+
+    _normalizeStyleRow: function(row, account, kind) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+            return null;
+        }
+        let format = Number(row.format);
+        let font = Number(row.font);
+        let size = Number(row.size);
+        let background = Number(row.background);
+        let maxFormat = kind === "date" ? 3 : 2;
+        if (
+            !Number.isInteger(format) || format < 0 || format > maxFormat ||
+            !Number.isInteger(font) || font < 0 || font > 3 ||
+            !Number.isInteger(size) || size < 0 || size > 48 ||
+            !Number.isInteger(background) || background < 0 || background > 6 ||
+            typeof row.bold !== "boolean" || typeof row.italic !== "boolean"
+        ) {
+            return null;
+        }
+        return {
+            account: account,
+            format: format,
+            font: font,
+            size: size,
+            bold: row.bold,
+            italic: row.italic,
+            background: background
+        };
+    },
+
+    _styleMap: function(rows) {
+        let result = {};
+        for (let i = 0; i < rows.length; i++) {
+            result[rows[i].account] = rows[i];
+        }
+        return result;
+    },
+
+    _onDateStylesChanged: function() {
+        this._onStyleRowsChanged("date");
+    },
+
+    _onTimeStylesChanged: function() {
+        this._onStyleRowsChanged("time");
+    },
+
+    _onStyleRowsChanged: function(kind) {
+        if (!this._backendRowsReady || this._syncingStyleRows || this._removed) {
+            return;
+        }
+        let rows = kind === "date" ? this.accountDateStyles : this.accountTimeStyles;
+        let expected = Object.keys(this._backendAccounts).length;
+        if (!Array.isArray(rows) || rows.length !== expected) {
+            this._loadAccountBackends();
+            return;
+        }
+        let normalized = [];
+        let seen = {};
+        for (let i = 0; i < rows.length; i++) {
+            let account = this._safeText(rows[i] && rows[i].account, 64);
+            if (!account || seen[account] || !this._backendAccounts[account]) {
+                this._loadAccountBackends();
+                return;
+            }
+            let item = this._normalizeStyleRow(rows[i], account, kind);
+            if (!item) {
+                this._loadAccountBackends();
+                return;
+            }
+            seen[account] = true;
+            normalized.push(item);
+        }
+        if (kind === "date") {
+            this._dateStyles = this._styleMap(normalized);
+        } else {
+            this._timeStyles = this._styleMap(normalized);
+        }
+        this._buildUsageMenu();
     },
 
     _onAccountBackendsChanged: function() {
@@ -740,13 +897,7 @@ CodexUsageApplet.prototype = {
         let severity = this._usageSeverity(usage);
         let summary = usage.label + "     5h " + five + "     Woche " + week;
         this._addDisabled(this.menu, summary, "codex-usage-account " + severity);
-        this._addDisabled(
-            this.menu,
-            "5h Reset " + this._windowReset(usage.five_hour) +
-                "     Woche Reset " + this._windowReset(usage.weekly) +
-                "     Abruf " + this._backendSummary(usage),
-            "codex-usage-detail"
-        );
+        this._addResetDetail(usage);
         let status = this._statusLabel(usage.status);
         if (usage.stale) {
             status += " · gespeichert vom " + this._formatDate(
@@ -769,6 +920,20 @@ CodexUsageApplet.prototype = {
         if (usage.status === "login_required" && this.showReactivationActions) {
             this._addReactivationAction(usage);
         }
+    },
+
+    _addResetDetail: function(usage) {
+        let five = this._windowResetParts(usage.five_hour, usage.account);
+        let week = this._windowResetParts(usage.weekly, usage.account);
+        let backend = this._backendSummary(usage);
+        let plain = "5h Reset " + five.plain +
+            "     Woche Reset " + week.plain +
+            "     Abruf " + backend;
+        let markup = this._escapeMarkup("5h Reset ") + five.markup +
+            this._escapeMarkup("     Woche Reset ") + week.markup +
+            this._escapeMarkup("     Abruf " + backend);
+        let item = this._addDisabled(this.menu, plain, "codex-usage-detail");
+        this._setItemMarkup(item, markup);
     },
 
     _backendSummary: function(usage) {
@@ -967,6 +1132,19 @@ CodexUsageApplet.prototype = {
         return item;
     },
 
+    _setItemMarkup: function(item, markup) {
+        try {
+            let text = item && item.label && (
+                item.label.clutter_text || item.label.get_clutter_text()
+            );
+            if (text && text.set_markup) {
+                text.set_markup(markup);
+            }
+        } catch (e) {
+            global.log("[" + UUID + "] reset markup failed: " + String(e));
+        }
+    },
+
     _updatePanel: function() {
         this._clearPanelClasses();
         let selected = [];
@@ -1159,11 +1337,102 @@ CodexUsageApplet.prototype = {
         return null;
     },
 
-    _windowReset: function(window) {
+    _windowResetParts: function(window, account) {
         if (!window || !window.reset_at) {
-            return "–";
+            return { plain: "–", markup: this._escapeMarkup("–") };
         }
-        return this._formatDate(window.reset_at);
+        let millis = this._dateMillis(window.reset_at);
+        if (!millis) {
+            return { plain: "–", markup: this._escapeMarkup("–") };
+        }
+        let date = new Date(millis);
+        let dateStyle = this._dateStyles[account] || this._defaultStyleRow(account);
+        let timeStyle = this._timeStyles[account] || this._defaultStyleRow(account);
+        let dateText = this._formatDatePart(date, dateStyle.format);
+        let timeText = this._formatTimePart(date, timeStyle.format);
+        return {
+            plain: dateText + " " + timeText,
+            markup: this._styleSpan(dateText, dateStyle) + " " +
+                this._styleSpan(timeText, timeStyle)
+        };
+    },
+
+    _formatDatePart: function(date, format) {
+        let pad = function(number) { return String(number).padStart(2, "0"); };
+        let day = pad(date.getDate());
+        let month = pad(date.getMonth() + 1);
+        let year = date.getFullYear();
+        if (format === 1) {
+            return year + "-" + month + "-" + day;
+        }
+        if (format === 2) {
+            return day + "." + month + "." + pad(year % 100);
+        }
+        if (format === 3) {
+            let months = [
+                "Januar", "Februar", "März", "April", "Mai", "Juni",
+                "Juli", "August", "September", "Oktober", "November", "Dezember"
+            ];
+            return Number(day) + ". " + months[date.getMonth()] + " " + year;
+        }
+        return day + "." + month + "." + year;
+    },
+
+    _formatTimePart: function(date, format) {
+        let pad = function(number) { return String(number).padStart(2, "0"); };
+        let hours = date.getHours();
+        let minutes = pad(date.getMinutes());
+        if (format === 1) {
+            return pad(hours) + ":" + minutes + ":" + pad(date.getSeconds());
+        }
+        if (format === 2) {
+            let suffix = hours >= 12 ? "PM" : "AM";
+            let twelveHour = hours % 12 || 12;
+            return pad(twelveHour) + ":" + minutes + " " + suffix;
+        }
+        return pad(hours) + ":" + minutes;
+    },
+
+    _styleSpan: function(text, style) {
+        let attrs = [];
+        let fonts = [null, "Sans", "Serif", "Monospace"];
+        let font = fonts[style.font] || null;
+        if (font) {
+            attrs.push('font_family="' + font + '"');
+        }
+        if (style.size > 0) {
+            let size = Math.max(6, Math.min(48, style.size));
+            attrs.push('size="' + size + 'pt"');
+        }
+        if (style.bold) {
+            attrs.push('weight="bold"');
+        }
+        if (style.italic) {
+            attrs.push('style="italic"');
+        }
+        let backgrounds = [
+            null,
+            { background: "#202020", foreground: "#ffffff" },
+            { background: "#f5f5f5", foreground: "#111111" },
+            { background: "#b91c1c", foreground: "#ffffff" },
+            { background: "#15803d", foreground: "#ffffff" },
+            { background: "#1d4ed8", foreground: "#ffffff" },
+            { background: "#facc15", foreground: "#111111" }
+        ];
+        let colors = backgrounds[style.background] || null;
+        if (colors) {
+            attrs.push('background="' + colors.background + '"');
+            attrs.push('foreground="' + colors.foreground + '"');
+        }
+        let escaped = this._escapeMarkup(text);
+        return attrs.length ? "<span " + attrs.join(" ") + ">" + escaped + "</span>" : escaped;
+    },
+
+    _escapeMarkup: function(value) {
+        return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
     },
 
     _usageSeverity: function(usage) {

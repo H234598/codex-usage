@@ -58,6 +58,26 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "Bisheriger Direktabruf": 0,
         "Codex App Server": 1,
     }
+    date_table = settings["account-date-styles"]
+    time_table = settings["account-time-styles"]
+    for table in (date_table, time_table):
+        assert table["type"] == "list"
+        assert table["show-buttons"] is False
+        assert [column["id"] for column in table["columns"]] == [
+            "account",
+            "format",
+            "font",
+            "size",
+            "bold",
+            "italic",
+            "background",
+        ]
+        assert table["columns"][3]["max"] == 48
+        assert table["columns"][4]["type"] == "boolean"
+        assert table["columns"][5]["type"] == "boolean"
+        assert set(table["columns"][6]["options"].values()) == set(range(7))
+    assert set(date_table["columns"][1]["options"].values()) == set(range(4))
+    assert set(time_table["columns"][1]["options"].values()) == set(range(3))
 
     layout = settings["layout"]
     referenced_keys: set[str] = set()
@@ -85,10 +105,18 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert '"reactivate"' in source
     assert "codex-usage login " not in source
     assert 'bind("account-backends"' in source
+    assert 'bind("account-date-styles"' in source
+    assert 'bind("account-time-styles"' in source
     assert "changed.backend" in source
     assert '"service", "status"' in source
     assert "_onAccountBackendsChanged" in source
     assert "backend_configured" in source
+    assert "_normalizeStyleRow" in source
+    assert "_formatDatePart" in source
+    assert "_formatTimePart" in source
+    assert "_styleSpan" in source
+    assert "text.set_markup(markup)" in source
+    assert '.replace(/&/g, "&amp;")' in source
     for forbidden in (
         "spawnCommandLine",
         "Util.spawn",

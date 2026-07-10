@@ -147,6 +147,10 @@ the direct and App Server readers. Poll ownership is selectable between the
 applet, the systemd user timer, and automatic detection. Per-account locks
 prevent concurrent token refreshes when both surfaces overlap.
 
+The `Date & Time` settings page keeps separate rows for every account's date
+and time. Each part has its own display format, font family, font size, bold,
+italic, and background setting; the theme remains the default until changed.
+
 Expired direct-auth accounts get a reactivation action in the applet menu. It
 runs `codex login` against that account's configured `auth_json_path` and opens
 the OAuth page in a dedicated browser profile. Normal Vivaldi, Chrome, or
