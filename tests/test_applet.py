@@ -15,9 +15,13 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     metadata = json.loads((APPLET_DIR / "metadata.json").read_text(encoding="utf-8"))
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    package_init = (ROOT / "src" / "codex_usage" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
 
     assert metadata["uuid"] == APPLET_UUID
     assert metadata["version"] == project["project"]["version"]
+    assert f'__version__ = "{metadata["version"]}"' in package_init
     assert metadata["max-instances"] == 1
     assert settings["refresh-interval"]["default"] == 300
     assert settings["refresh-interval"]["min"] >= 60
@@ -40,6 +44,19 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "chromium",
         "firefox",
         "vivaldi",
+    }
+    assert settings["poll-owner"]["default"] == "auto"
+    assert set(settings["poll-owner"]["options"].values()) == {
+        "applet",
+        "auto",
+        "systemd",
+    }
+    backend_table = settings["account-backends"]
+    assert backend_table["type"] == "list"
+    assert backend_table["show-buttons"] is False
+    assert backend_table["columns"][2]["options"] == {
+        "Bisheriger Direktabruf": 0,
+        "Codex App Server": 1,
     }
 
     layout = settings["layout"]
@@ -67,6 +84,11 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert '"system-log-in-symbolic"' in source
     assert '"reactivate"' in source
     assert "codex-usage login " not in source
+    assert 'bind("account-backends"' in source
+    assert "changed.backend" in source
+    assert '"service", "status"' in source
+    assert "_onAccountBackendsChanged" in source
+    assert "backend_configured" in source
     for forbidden in (
         "spawnCommandLine",
         "Util.spawn",

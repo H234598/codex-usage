@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .account_lock import AccountLockError, account_lock
 from .direct import DirectAuthError, auth_metadata_from_payload, read_auth_json_file
 from .json_utils import loads_strict
 from .models import Account
@@ -34,6 +35,27 @@ def reactivate_account(
     timeout_seconds: int = REACTIVATION_TIMEOUT_SECONDS,
     codex_command: str | None = None,
     browser_helper: str | None = None,
+) -> dict[str, Any]:
+    try:
+        with account_lock(account.id):
+            return _reactivate_account_unlocked(
+                account,
+                browser=browser,
+                timeout_seconds=timeout_seconds,
+                codex_command=codex_command,
+                browser_helper=browser_helper,
+            )
+    except AccountLockError as exc:
+        raise ReactivationError(str(exc)) from exc
+
+
+def _reactivate_account_unlocked(
+    account: Account,
+    *,
+    browser: str,
+    timeout_seconds: int,
+    codex_command: str | None,
+    browser_helper: str | None,
 ) -> dict[str, Any]:
     auth_path = _validate_auth_target(account)
     browser_kind, browser_executable = _select_browser(browser)

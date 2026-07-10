@@ -45,6 +45,29 @@ def test_config_round_trip_browser(tmp_path):
     assert loaded.accounts[0].browser == "chromium"
 
 
+def test_config_round_trip_backend_and_legacy_default(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("privat", backend="app-server", path=config_path)
+
+    loaded = load_config(config_path)
+
+    assert loaded.accounts[0].backend == "app-server"
+    assert 'backend = "app-server"' in config_path.read_text(encoding="utf-8")
+
+    legacy = tmp_path / "legacy.toml"
+    legacy.write_text('[[accounts]]\nid = "legacy"\n', encoding="utf-8")
+    assert load_config(legacy).accounts[0].backend == "direct"
+
+
+def test_config_rejects_unknown_backend(tmp_path):
+    with pytest.raises(ValueError, match="backend must be one of"):
+        add_or_update_account(
+            "privat",
+            backend="mystery",
+            path=tmp_path / "config.toml",
+        )
+
+
 def test_config_round_trip_auth_json_path(tmp_path):
     config_path = tmp_path / "config.toml"
     auth_path = tmp_path / "auth.json"

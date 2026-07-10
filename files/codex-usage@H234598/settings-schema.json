@@ -11,6 +11,7 @@
       "title": "Codex Usage",
       "sections": [
         "command-section",
+        "backend-section",
         "refresh-section",
         "display-section"
       ]
@@ -42,8 +43,16 @@
       "title": "Aktualisierung",
       "keys": [
         "auto-refresh",
+        "poll-owner",
         "refresh-interval",
         "refresh-on-open"
+      ]
+    },
+    "backend-section": {
+      "type": "section",
+      "title": "Abrufwege",
+      "keys": [
+        "account-backends"
       ]
     },
     "display-section": {
@@ -88,6 +97,45 @@
     "type": "switch",
     "description": "Werte automatisch frisch abrufen",
     "default": true
+  },
+  "poll-owner": {
+    "type": "combobox",
+    "description": "Regelmäßigen Abruf ausführen durch",
+    "options": {
+      "Automatisch": "auto",
+      "Cinnamon-Applet": "applet",
+      "systemd-User-Timer": "systemd"
+    },
+    "default": "auto"
+  },
+  "account-backends": {
+    "type": "list",
+    "description": "Abrufweg pro Account",
+    "tooltip": "Doppelklick auf eine Zeile ändert den Abrufweg. Account und Label werden aus der zentralen codex-usage-Konfiguration übernommen.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "label",
+        "title": "Label",
+        "type": "string"
+      },
+      {
+        "id": "backend",
+        "title": "Abrufweg",
+        "type": "integer",
+        "options": {
+          "Bisheriger Direktabruf": 0,
+          "Codex App Server": 1
+        }
+      }
+    ],
+    "height": 180,
+    "show-buttons": false,
+    "default": []
   },
   "refresh-interval": {
     "type": "spinbutton",

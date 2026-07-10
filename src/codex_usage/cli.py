@@ -5,9 +5,9 @@ import ipaddress
 import json
 import shutil
 import sys
-from dataclasses import replace
 from pathlib import Path
 
+from . import __version__
 from .bridge import (
     MAX_INGEST_BYTES,
     ingest_and_save,
@@ -18,6 +18,7 @@ from .bridge import (
 )
 from .browser import diagnose_account, login_account, probe_account
 from .config import (
+    SUPPORTED_BACKENDS,
     SUPPORTED_BROWSERS,
     add_or_update_account,
     default_config_path,
@@ -26,14 +27,20 @@ from .config import (
     remove_account,
     resolve_account,
 )
-from .direct import fetch_account_usage_direct
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
 from .private_io import read_private_text
 from .reactivate import REACTIVATION_BROWSERS, ReactivationError, reactivate_account
 from .render import render_account_overview, render_account_values, render_json, render_table
 from .scheduler import fetch_all, watch, watchdog
-from .state import load_usage_snapshot, save_usage_snapshot
+from .service import (
+    render_service_json,
+    service_disable,
+    service_enable,
+    service_install,
+    service_status,
+    service_uninstall,
+)
 
 COMMAND_OVERVIEW = """\
 Komplette Command-Line-Usage:
@@ -45,31 +52,32 @@ Globale Optionen:
 Accounts:
   codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
                                    [--browser BROWSER] [--auth-json PATH]
-  codex-usage account overview
+                                   [--backend direct|app-server]
+  codex-usage account backend ACCOUNT direct|app-server [--format table|json]
+  codex-usage account overview [--format table|json]
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
 
-Browser-Modus:
+Login und Reaktivierung:
   codex-usage login ACCOUNT
   codex-usage reactivate ACCOUNT [--browser auto|vivaldi|chromium|firefox]
                                  [--format table|json]
-  codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
-  codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN]
-                    [--headed]
-  codex-usage watchdog [--account ACCOUNT] [--format table|json]
-                       [--headed] [--direct]
 
-Direct-Modus ohne Browser:
-  codex-usage once --direct [--account ACCOUNT] [--format table|json]
-                          [--auth-json PATH]
-  codex-usage watch --direct [--account ACCOUNT] [--format table|json]
-                           [--interval SEKUNDEN] [--auth-json PATH]
+Abruf und Ueberwachung:
+  codex-usage once [--account ACCOUNT] [--format table|json] [--headed]
+                   [--backend direct|app-server] [--direct] [--auth-json PATH]
+  codex-usage watch [--account ACCOUNT] [--format table|json] [--interval SEKUNDEN]
+                    [--headed] [--backend direct|app-server] [--direct]
+                    [--auth-json PATH]
+  codex-usage watchdog [--account ACCOUNT] [--format table|json]
+                       [--headed] [--backend direct|app-server] [--direct]
+                       [--auth-json PATH]
 
 Analyse und Diagnose:
   codex-usage probe ACCOUNT [--headless] [--save-dir DIR]
   codex-usage diagnose ACCOUNT [--headed] [--screenshot] [--save-dir DIR]
                               [--auth-json PATH]
 
-Manuelle Aufnahme und Ausgabe:
+Gespeicherte Werte und manuelle Aufnahme:
   codex-usage ingest ACCOUNT (--stdin | --file FILE)
   codex-usage latest [--format table|json]
   codex-usage values [--account ACCOUNT]
@@ -80,23 +88,29 @@ Browser-Bridge:
   codex-usage bridge-server [--host HOST] [--port PORT] [--allow-remote]
 
 Sonstiges:
+  codex-usage service install|enable|disable|status|uninstall [--format table|json]
   codex-usage paths
 
 ACCOUNT kann eine Account-ID oder ein eindeutiges Label sein.
-Direct-Modus mit mehreren Accounts braucht pro Account auth_json_path.
+Direct- und App-Server-Abrufe mit mehreren Accounts brauchen pro Account auth_json_path.
 Ein globales --auth-json ist nur fuer genau einen ausgewaehlten Account erlaubt.
 
 Beispiele:
   codex-usage account add BW_Privat --auth-json ~/.codex/auth.json
-  codex-usage once --account BW_Privat --direct --auth-json ~/.codex/auth.json
+  codex-usage account backend BW_Privat app-server
+  codex-usage once --account BW_Privat --backend app-server
   codex-usage values
-  codex-usage watch --direct
+  codex-usage watch
+  codex-usage service enable
   codex-usage latest --format json
 
 Hinweis:
   `codex-usage` ohne Subcommand entspricht `codex-usage once`.
-  once/watch/watchdog nutzen automatisch Direct-Modus fuer Accounts mit auth_json_path,
-  solange --headed nicht gesetzt ist.
+  Ohne Override nutzt jeder Account seinen gespeicherten Abrufweg.
+  app-server aktualisiert ablaufende Codex-Anmeldedaten und faellt nur bei fehlender
+  App-Server-Kompatibilitaet auf direct zurueck. --direct erzwingt den alten Abrufweg.
+  App-Server-Kontostatusabfragen starten keine Modellanfrage und verbrauchen kein
+  Inferenzkontingent.
   bridge-server lauscht ohne --allow-remote nur auf Loopback/localhost.
 """
 
@@ -115,6 +129,7 @@ KNOWN_COMMANDS = {
     "bridge-snippet",
     "bridge-extension",
     "bridge-server",
+    "service",
     "paths",
 }
 
@@ -143,6 +158,7 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=COMMAND_OVERVIEW,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--config", type=Path, default=None, help="Pfad zur config.toml")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -158,12 +174,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Browser fuer Login und Polling, Standard: firefox",
     )
     add.add_argument("--auth-json", type=Path, help="Codex auth.json fuer direkten Abruf")
+    add.add_argument("--backend", choices=SUPPORTED_BACKENDS)
     add.set_defaults(func=_cmd_account_add)
     overview = account_sub.add_parser(
         "overview",
         help="Account-Uebersicht mit aktuellen Werten anzeigen",
     )
+    overview.add_argument("--format", choices=("table", "json"), default="table")
     overview.set_defaults(func=_cmd_account_overview)
+    backend = account_sub.add_parser("backend", help="Abrufweg eines Accounts setzen")
+    backend.add_argument("account", help="Account-ID oder eindeutiges Label")
+    backend.add_argument("backend", choices=SUPPORTED_BACKENDS)
+    backend.add_argument("--format", choices=("table", "json"), default="table")
+    backend.set_defaults(func=_cmd_account_backend)
     delete = account_sub.add_parser("delete", help="Account aus der Config entfernen")
     delete.add_argument("account", help="Account-ID oder eindeutiges Label")
     delete.add_argument(
@@ -206,6 +229,7 @@ def _build_parser() -> argparse.ArgumentParser:
     once.add_argument("--format", choices=("table", "json"), default="table")
     once.add_argument("--headed", action="store_true", help="Browser sichtbar starten")
     once.add_argument("--direct", action="store_true", help="Ohne Browser ueber auth.json abrufen")
+    once.add_argument("--backend", choices=SUPPORTED_BACKENDS)
     once.add_argument("--auth-json", type=Path, help="auth.json fuer direkten Abruf ueberschreiben")
     once.set_defaults(func=_cmd_once)
 
@@ -219,6 +243,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ohne Browser ueber auth.json abrufen",
     )
+    watch_cmd.add_argument("--backend", choices=SUPPORTED_BACKENDS)
     watch_cmd.add_argument(
         "--auth-json",
         type=Path,
@@ -238,6 +263,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ohne Browser ueber auth.json abrufen",
     )
+    watchdog_cmd.add_argument("--backend", choices=SUPPORTED_BACKENDS)
     watchdog_cmd.add_argument(
         "--auth-json",
         type=Path,
@@ -303,23 +329,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     bridge.set_defaults(func=_cmd_bridge_server)
 
+    service = sub.add_parser("service", help="systemd-User-Timer verwalten")
+    service.add_argument(
+        "action",
+        choices=("install", "enable", "disable", "status", "uninstall"),
+    )
+    service.add_argument("--format", choices=("table", "json"), default="table")
+    service.set_defaults(func=_cmd_service)
+
     paths = sub.add_parser("paths", help="Standardpfade anzeigen")
     paths.set_defaults(func=_cmd_paths)
     return parser
 
 
 def _cmd_account_add(args: argparse.Namespace) -> int:
-    _, account = add_or_update_account(
+    updated, account = add_or_update_account(
         args.account_id,
         label=args.label,
         profile_dir=args.profile_dir,
         browser=args.browser,
         auth_json_path=str(args.auth_json) if args.auth_json else None,
+        backend=args.backend,
         path=args.config,
     )
+    _sync_managed_service(updated, args.config)
     print(f"Account gespeichert: {account.id} ({account.label})")
     print(f"Profil: {account.profile_dir}")
     print(f"Browser: {account.browser}")
+    print(f"Backend: {account.backend}")
     if account.auth_json_path:
         print(f"Auth JSON: {account.auth_json_path}")
     print(f"Login: codex-usage login {account.id}")
@@ -328,8 +365,50 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
 
 def _cmd_account_overview(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    if args.format == "json":
+        usages = {usage.account_id: usage for usage in load_latest_usages(config)}
+        payload = {
+            "accounts": [
+                {
+                    "id": account.id,
+                    "label": account.label,
+                    "browser": account.browser,
+                    "backend": account.backend,
+                    "backend_used": usages.get(account.id).backend_used
+                    if usages.get(account.id)
+                    else None,
+                    "fallback_reason": usages.get(account.id).fallback_reason
+                    if usages.get(account.id)
+                    else None,
+                }
+                for account in config.accounts
+            ]
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
+        return 0
     usages = _load_overview_usages(config)
     print(render_account_overview(config, args.config or default_config_path(), usages))
+    return 0
+
+
+def _cmd_account_backend(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    current = resolve_account(config, args.account)
+    _, updated = add_or_update_account(
+        current.id,
+        backend=args.backend,
+        path=args.config,
+    )
+    payload = {
+        "ok": True,
+        "account": updated.id,
+        "label": updated.label,
+        "backend": updated.backend,
+    }
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        print(f"Abrufweg gespeichert: {updated.id} ({updated.label}) -> {updated.backend}")
     return 0
 
 
@@ -341,7 +420,8 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
     if args.delete_profile:
         _validate_profile_delete_target(profile_path, force=args.force_delete_profile)
 
-    remove_account(account.id, path=args.config)
+    updated, _ = remove_account(account.id, path=args.config)
+    _sync_managed_service(updated, args.config)
     if args.delete_profile:
         profile_state = _delete_profile_dir(profile_path, force=args.force_delete_profile)
     print(f"Account geloescht: {account.id} ({account.label})")
@@ -385,6 +465,7 @@ def _cmd_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
     direct = bool(args.direct or args.auth_json)
+    backend_override = _backend_override(args)
     if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     usages = fetch_all(
@@ -392,6 +473,7 @@ def _cmd_once(args: argparse.Namespace) -> int:
         accounts,
         headed=args.headed,
         direct=direct,
+        backend_override=backend_override,
         auth_json_path=args.auth_json,
         save_snapshots=True,
     )
@@ -405,6 +487,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     if args.interval is not None and args.interval < 60:
         raise ValueError("--interval must be at least 60 seconds")
     direct = bool(args.direct or args.auth_json)
+    backend_override = _backend_override(args)
     if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     watch(
@@ -413,6 +496,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
         output=args.format,
         headed=args.headed,
         direct=direct,
+        backend_override=backend_override,
         auth_json_path=args.auth_json,
         interval_seconds=args.interval,
     )
@@ -423,6 +507,7 @@ def _cmd_watchdog(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
     direct = bool(args.direct or args.auth_json)
+    backend_override = _backend_override(args)
     if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     usages = watchdog(
@@ -431,6 +516,7 @@ def _cmd_watchdog(args: argparse.Namespace) -> int:
         output=args.format,
         headed=args.headed,
         direct=direct,
+        backend_override=backend_override,
         auth_json_path=args.auth_json,
     )
     return 0 if all(usage.status != AccountStatus.ERROR for usage in usages) else 2
@@ -526,21 +612,57 @@ def _cmd_bridge_server(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_service(args: argparse.Namespace) -> int:
+    if args.action == "status":
+        result = service_status()
+    elif args.action == "disable":
+        result = service_disable()
+    elif args.action == "uninstall":
+        result = service_uninstall()
+    else:
+        config = load_config(args.config)
+        if args.action == "install":
+            result = service_install(config, args.config)
+        else:
+            result = service_enable(config, args.config)
+    if args.format == "json":
+        print(render_service_json(result))
+    else:
+        print(
+            "systemd: "
+            f"installiert={'ja' if result.get('installed') else 'nein'}, "
+            f"aktiviert={'ja' if result.get('enabled') else 'nein'}, "
+            f"aktiv={'ja' if result.get('active') else 'nein'}"
+        )
+    return 0
+
+
 def _cmd_paths(args: argparse.Namespace) -> int:
     print(f"config: {args.config or default_config_path()}")
     return 0
 
 
+def _sync_managed_service(config, config_path: Path | None) -> None:
+    try:
+        if service_status().get("installed"):
+            service_install(config, config_path)
+    except Exception as exc:
+        print(
+            f"Warnung: systemd-Konfiguration nicht aktualisiert: {type(exc).__name__}",
+            file=sys.stderr,
+        )
+
+
 def _default_root_command(argv: list[str]) -> list[str]:
     if not argv:
         return ["once"]
-    if argv[0] in {"-h", "--help"}:
+    if argv[0] in {"-h", "--help", "--version"}:
         return argv
 
     index = 0
     while index < len(argv):
         token = argv[index]
-        if token in {"-h", "--help"}:
+        if token in {"-h", "--help", "--version"}:
             return argv
         if token == "--config":
             index += 2
@@ -582,6 +704,17 @@ def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None
         )
 
 
+def _backend_override(args: argparse.Namespace) -> str | None:
+    backend = getattr(args, "backend", None)
+    direct = bool(getattr(args, "direct", False))
+    auth_json = getattr(args, "auth_json", None)
+    if direct and backend not in (None, "direct"):
+        raise ValueError("--direct cannot be combined with --backend app-server")
+    if auth_json is not None and backend == "app-server":
+        raise ValueError("--auth-json cannot be combined with --backend app-server")
+    return backend
+
+
 def _validate_bridge_host(host: str, *, allow_remote: bool) -> None:
     if allow_remote:
         return
@@ -619,25 +752,9 @@ def _validate_min_interval(interval_seconds: int) -> None:
 
 
 def _load_overview_usages(config, accounts=None):
-    usages = {}
-    for account in accounts or config.accounts:
-        if account.auth_json_path:
-            usage = fetch_account_usage_direct(account)
-            usages[account.id] = usage
-            if _is_successful_usage(usage):
-                try:
-                    save_usage_snapshot(usage)
-                except Exception as exc:
-                    usages[account.id] = replace(
-                        usage,
-                        status=AccountStatus.ERROR,
-                        error=f"snapshot save failed: {type(exc).__name__}",
-                    )
-            continue
-        snapshot = load_usage_snapshot(account.id)
-        if snapshot is not None:
-            usages[account.id] = snapshot
-    return usages
+    selected = tuple(accounts or config.accounts)
+    fetched = fetch_all(config, selected, save_snapshots=True)
+    return {usage.account_id: usage for usage in fetched}
 
 
 def _is_successful_usage(usage: AccountUsage) -> bool:

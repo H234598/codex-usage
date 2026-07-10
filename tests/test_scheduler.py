@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from codex_usage.app_server import AppServerUnavailableError
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.scheduler import fetch_all, watchdog
@@ -48,8 +50,41 @@ def test_fetch_all_uses_direct_for_accounts_with_auth_and_browser_for_others(mon
 
     usages = fetch_all(AppConfig(accounts=accounts), accounts, headed=False, direct=False)
 
-    assert calls == [("direct", "direct", None), ("browser", "browser", False)]
-    assert usages == [direct_usage, browser_usage]
+    assert sorted(calls) == sorted(
+        [("direct", "direct", None), ("browser", "browser", False)]
+    )
+    assert [usage.account_id for usage in usages] == ["direct", "browser"]
+    assert [usage.backend_used for usage in usages] == ["direct", "browser"]
+
+
+def test_configured_app_server_without_auth_does_not_silently_use_browser(monkeypatch):
+    account = Account(
+        id="app-server",
+        label="App Server",
+        profile_dir="/tmp/app-server",
+        backend="app-server",
+    )
+    usage = AccountUsage(
+        account_id=account.id,
+        label=account.label,
+        captured_at=datetime(2026, 6, 8, 4, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.LOGIN_REQUIRED,
+        backend_used="app-server",
+    )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_app_server",
+        lambda selected: usage,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("browser used")),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.account_lock", lambda account_id: nullcontext())
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,))
+
+    assert result == [usage]
 
 
 def test_fetch_all_direct_saves_only_successful_snapshots(monkeypatch):
@@ -86,8 +121,14 @@ def test_fetch_all_direct_saves_only_successful_snapshots(monkeypatch):
     def fake_save_usage_snapshot(usage):
         saved.append(usage.account_id)
 
+    current: list[str] = []
+
+    def fake_save_current_usage(usage):
+        current.append(usage.account_id)
+
     monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", fake_save_usage_snapshot)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", fake_save_current_usage)
 
     usages = fetch_all(
         AppConfig(accounts=accounts),
@@ -96,8 +137,10 @@ def test_fetch_all_direct_saves_only_successful_snapshots(monkeypatch):
         save_snapshots=True,
     )
 
-    assert usages == [ok_usage, error_usage]
+    assert [usage.account_id for usage in usages] == ["ok", "broken"]
+    assert [usage.backend_used for usage in usages] == ["direct", "direct"]
     assert saved == ["ok"]
+    assert sorted(current) == ["broken", "ok"]
 
 
 def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
@@ -128,7 +171,16 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
     def fake_load_usage_snapshot(account_id, snapshot_dir=None):
         return blocked_snapshot if account_id == "blocked" else None
 
-    def fake_fetch_all(config, fetch_accounts, *, headed, direct, auth_json_path, save_snapshots):
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
         seen_fetch_accounts.extend(account.id for account in fetch_accounts)
         return fetched
 
@@ -183,7 +235,16 @@ def test_watchdog_blocks_exhausted_usage_and_persists_state(monkeypatch):
     def fake_load_usage_snapshot(account_id, snapshot_dir=None):
         return None
 
-    def fake_fetch_all(config, fetch_accounts, *, headed, direct, auth_json_path, save_snapshots):
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
         return [exhausted_usage]
 
     def fake_save_usage_snapshot(usage, snapshot_dir=None):
@@ -205,6 +266,13 @@ def test_watchdog_blocks_exhausted_usage_and_persists_state(monkeypatch):
     assert result[0].blocked_until == datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin"))
     assert result[0].blocked_reason is not None
     assert saved and saved[0].status == AccountStatus.BLOCKED
+
+
+def test_window_exhaustion_percent_fallback_uses_remaining_semantics():
+    from codex_usage.scheduler import _window_is_exhausted
+
+    assert _window_is_exhausted(LimitWindow(name="5h", percent=0)) is True
+    assert _window_is_exhausted(LimitWindow(name="5h", percent=100)) is False
 
 
 def test_watchdog_blocks_until_latest_reset_when_multiple_windows_are_exhausted(monkeypatch):
@@ -234,7 +302,16 @@ def test_watchdog_blocks_until_latest_reset_when_multiple_windows_are_exhausted(
     def fake_load_usage_snapshot(account_id, snapshot_dir=None):
         return None
 
-    def fake_fetch_all(config, fetch_accounts, *, headed, direct, auth_json_path, save_snapshots):
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
         return [exhausted_usage]
 
     def fake_save_usage_snapshot(usage, snapshot_dir=None):
@@ -253,3 +330,34 @@ def test_watchdog_blocks_until_latest_reset_when_multiple_windows_are_exhausted(
 
     assert result[0].status == AccountStatus.BLOCKED
     assert result[0].blocked_until == datetime(2099, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin"))
+
+
+def test_app_server_falls_back_only_when_unavailable(monkeypatch):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        auth_json_path="/tmp/work/auth.json",
+        backend="app-server",
+    )
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    direct_usage = AccountUsage(
+        account_id="work",
+        label="Work",
+        captured_at=captured,
+    )
+
+    def unavailable(selected):
+        raise AppServerUnavailableError("unsupported")
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_app_server", unavailable)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_direct",
+        lambda selected, auth_json_path=None: direct_usage,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.account_lock", lambda account_id: nullcontext())
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,))
+
+    assert result[0].backend_used == "direct"
+    assert result[0].fallback_reason == "unsupported"

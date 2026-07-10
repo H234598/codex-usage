@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,9 +23,20 @@ def default_snapshot_dir() -> Path:
     return default_state_dir() / "snapshots"
 
 
+def default_current_dir() -> Path:
+    return default_state_dir() / "current"
+
+
 def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -> Path:
+    return _save_usage(usage, snapshot_dir or default_snapshot_dir())
+
+
+def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> Path:
+    return _save_usage(usage, current_dir or default_current_dir())
+
+
+def _save_usage(usage: AccountUsage, directory: Path) -> Path:
     _validate_snapshot_account_id(usage.account_id)
-    directory = snapshot_dir or default_snapshot_dir()
     if directory.is_symlink():
         raise ValueError(f"snapshot directory must not be a symlink: {directory}")
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -47,11 +59,19 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
 
 
 def load_usage_snapshot(account_id: str, snapshot_dir: Path | None = None) -> AccountUsage | None:
+    return _load_usage(account_id, snapshot_dir or default_snapshot_dir())
+
+
+def load_current_usage(account_id: str, current_dir: Path | None = None) -> AccountUsage | None:
+    return _load_usage(account_id, current_dir or default_current_dir())
+
+
+def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
     try:
         _validate_snapshot_account_id(account_id)
     except ValueError:
         return None
-    path = (snapshot_dir or default_snapshot_dir()) / f"{account_id}.json"
+    path = directory / f"{account_id}.json"
     if not path.exists():
         return None
     try:
@@ -92,6 +112,30 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         auth_access_expires_at=_optional_datetime(payload.get("auth_access_expires_at")),
         auth_id_expires_at=_optional_datetime(payload.get("auth_id_expires_at")),
         source_urls=_snapshot_source_urls(payload.get("source_urls")),
+        backend_configured=_optional_snapshot_text(
+            payload.get("backend_configured"), limit=40
+        ),
+        backend_used=_optional_snapshot_text(payload.get("backend_used"), limit=40),
+        fallback_reason=_optional_snapshot_text(
+            payload.get("fallback_reason"), limit=MAX_SNAPSHOT_TEXT
+        ),
+        values_captured_at=_optional_datetime(payload.get("values_captured_at")),
+        stale=payload.get("stale") is True,
+    )
+
+
+def merge_current_with_last_success(
+    current: AccountUsage,
+    last_success: AccountUsage | None,
+) -> AccountUsage:
+    if current.five_hour is not None or current.weekly is not None or last_success is None:
+        return current
+    return replace(
+        current,
+        five_hour=last_success.five_hour,
+        weekly=last_success.weekly,
+        values_captured_at=last_success.values_captured_at or last_success.captured_at,
+        stale=True,
     )
 
 

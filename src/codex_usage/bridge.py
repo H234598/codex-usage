@@ -15,7 +15,13 @@ from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
 from .private_io import write_private_text as write_private_output_text
 from .render import render_table
-from .state import load_usage_snapshot, save_usage_snapshot
+from .state import (
+    load_current_usage,
+    load_usage_snapshot,
+    merge_current_with_last_success,
+    save_current_usage,
+    save_usage_snapshot,
+)
 
 MAX_INGEST_BYTES = 10_000_000
 TEXT_PAYLOAD_FIELDS = (
@@ -451,15 +457,21 @@ def ingest_and_save(
     account = resolve_account(config, account_ref)
     usage = usage_from_ingest_payload(account, payload)
     path = save_usage_snapshot(usage, snapshot_dir)
+    current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
+    save_current_usage(usage, current_dir)
     return usage, path
 
 
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
     usages: list[AccountUsage] = []
+    current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     for account in config.accounts:
-        usage = load_usage_snapshot(account.id, snapshot_dir)
-        if usage is not None:
-            usages.append(usage)
+        last_success = load_usage_snapshot(account.id, snapshot_dir)
+        current = load_current_usage(account.id, current_dir)
+        if current is not None:
+            usages.append(merge_current_with_last_success(current, last_success))
+        elif last_success is not None:
+            usages.append(last_success)
     return usages
 
 

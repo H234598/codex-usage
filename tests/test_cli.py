@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from io import StringIO
 from zoneinfo import ZoneInfo
@@ -20,22 +21,24 @@ def test_root_help_lists_all_commands(capsys):
     assert "Komplette Command-Line-Usage:" in output
     assert "Globale Optionen:" in output
     assert "Accounts:" in output
-    assert "Browser-Modus:" in output
-    assert "Direct-Modus ohne Browser:" in output
+    assert "Login und Reaktivierung:" in output
+    assert "Abruf und Ueberwachung:" in output
     assert "Analyse und Diagnose:" in output
-    assert "Manuelle Aufnahme und Ausgabe:" in output
+    assert "Gespeicherte Werte und manuelle Aufnahme:" in output
     assert "Browser-Bridge:" in output
     assert "Beispiele:" in output
     assert "codex-usage account add ACCOUNT_ID" in output
     assert "--browser BROWSER" in output
     assert "codex-usage account list" not in output
     assert "codex-usage account overview" in output
+    assert "codex-usage account backend ACCOUNT direct|app-server" in output
     assert "codex-usage account delete ACCOUNT" in output
     assert "codex-usage login ACCOUNT" in output
     assert "codex-usage once" in output
     assert "codex-usage watch" in output
     assert "codex-usage watchdog" in output
     assert "--direct" in output
+    assert "--backend direct|app-server" in output
     assert "codex-usage probe ACCOUNT" in output
     assert "codex-usage diagnose ACCOUNT" in output
     assert "--auth-json PATH" in output
@@ -47,11 +50,25 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage bridge-server" in output
     assert "--allow-remote" in output
     assert "codex-usage paths" in output
-    assert "Direct-Modus mit mehreren Accounts braucht pro Account auth_json_path" in output
-    assert "once/watch/watchdog nutzen automatisch Direct-Modus" in output
+    assert (
+        "Direct- und App-Server-Abrufe mit mehreren Accounts brauchen pro Account "
+        "auth_json_path"
+    ) in output
+    assert "Ohne Override nutzt jeder Account seinen gespeicherten Abrufweg" in output
+    assert "App-Server-Kontostatusabfragen starten keine Modellanfrage" in output
     assert "codex-usage values" in output
-    assert "codex-usage watch --direct" in output
+    assert "codex-usage watch" in output
+    assert "codex-usage service enable" in output
     assert "codex-usage watchdog" in output
+
+
+def test_root_version_reports_package_version(capsys):
+    for argv in (["--version"], ["--config", "/tmp/unused.toml", "--version"]):
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+
+        assert exc.value.code == 0
+    assert capsys.readouterr().out == "codex-usage 0.5.0\ncodex-usage 0.5.0\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -215,10 +232,20 @@ def test_once_direct_passes_auth_json_and_saves_snapshots(tmp_path, monkeypatch,
     auth_path = tmp_path / "auth.json"
     called = {}
 
-    def fake_fetch_all(config, accounts, *, headed, direct, auth_json_path, save_snapshots):
+    def fake_fetch_all(
+        config,
+        accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
         called["accounts"] = [account.id for account in accounts]
         called["headed"] = headed
         called["direct"] = direct
+        called["backend_override"] = backend_override
         called["auth_json_path"] = auth_json_path
         called["save_snapshots"] = save_snapshots
         return []
@@ -245,6 +272,7 @@ def test_once_direct_passes_auth_json_and_saves_snapshots(tmp_path, monkeypatch,
         "accounts": ["privat"],
         "headed": False,
         "direct": True,
+        "backend_override": None,
         "auth_json_path": auth_path,
         "save_snapshots": True,
     }
@@ -262,6 +290,7 @@ def test_watch_direct_passes_auth_json(tmp_path, monkeypatch, capsys):
         output,
         headed,
         direct,
+        backend_override,
         auth_json_path,
         interval_seconds,
     ):
@@ -269,6 +298,7 @@ def test_watch_direct_passes_auth_json(tmp_path, monkeypatch, capsys):
         called["output"] = output
         called["headed"] = headed
         called["direct"] = direct
+        called["backend_override"] = backend_override
         called["auth_json_path"] = auth_json_path
         called["interval_seconds"] = interval_seconds
 
@@ -297,6 +327,7 @@ def test_watch_direct_passes_auth_json(tmp_path, monkeypatch, capsys):
         "output": "table",
         "headed": False,
         "direct": True,
+        "backend_override": None,
         "auth_json_path": auth_path,
         "interval_seconds": 300,
     }
@@ -315,6 +346,7 @@ def test_watch_without_account_selects_all_accounts_and_defers_mode_to_scheduler
         output,
         headed,
         direct,
+        backend_override,
         auth_json_path,
         interval_seconds,
     ):
@@ -322,6 +354,7 @@ def test_watch_without_account_selects_all_accounts_and_defers_mode_to_scheduler
         called["output"] = output
         called["headed"] = headed
         called["direct"] = direct
+        called["backend_override"] = backend_override
         called["auth_json_path"] = auth_json_path
         called["interval_seconds"] = interval_seconds
 
@@ -364,6 +397,7 @@ def test_watch_without_account_selects_all_accounts_and_defers_mode_to_scheduler
         "output": "table",
         "headed": False,
         "direct": False,
+        "backend_override": None,
         "auth_json_path": None,
         "interval_seconds": None,
     }
@@ -380,12 +414,14 @@ def test_watchdog_routes_through_watchdog_scheduler(tmp_path, monkeypatch, capsy
         output,
         headed,
         direct,
+        backend_override,
         auth_json_path,
     ):
         called["accounts"] = [account.id for account in accounts]
         called["output"] = output
         called["headed"] = headed
         called["direct"] = direct
+        called["backend_override"] = backend_override
         called["auth_json_path"] = auth_json_path
         return []
 
@@ -414,6 +450,7 @@ def test_watchdog_routes_through_watchdog_scheduler(tmp_path, monkeypatch, capsy
         "output": "json",
         "headed": False,
         "direct": False,
+        "backend_override": None,
         "auth_json_path": None,
     }
 
@@ -605,33 +642,40 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
     auth_path = tmp_path / "auth.json"
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
-    def fake_fetch_direct(account):
+    def fake_fetch_all(config, accounts, **kwargs):
+        account = next(iter(accounts))
         assert account.id == "privat"
-        return AccountUsage(
-            account_id=account.id,
-            label=account.label,
-            captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
-            auth_last_refresh=datetime(2026, 7, 9, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
-            auth_access_expires_at=datetime(2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
-            five_hour=LimitWindow(
-                name="5h",
-                used=3,
-                limit=100,
-                remaining=97,
-                percent=97,
-                reset_at=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
-            ),
-            weekly=LimitWindow(
-                name="weekly",
-                used=45,
-                limit=100,
-                remaining=55,
-                percent=55,
-                reset_at=datetime(2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")),
-            ),
-        )
+        return [
+            AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+                auth_last_refresh=datetime(
+                    2026, 7, 9, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")
+                ),
+                auth_access_expires_at=datetime(
+                    2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")
+                ),
+                five_hour=LimitWindow(
+                    name="5h",
+                    used=3,
+                    limit=100,
+                    remaining=97,
+                    percent=97,
+                    reset_at=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+                ),
+                weekly=LimitWindow(
+                    name="weekly",
+                    used=45,
+                    limit=100,
+                    remaining=55,
+                    percent=55,
+                    reset_at=datetime(2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")),
+                ),
+            )
+        ]
 
-    monkeypatch.setattr("codex_usage.cli.fetch_account_usage_direct", fake_fetch_direct)
+    monkeypatch.setattr("codex_usage.cli.fetch_all", fake_fetch_all)
 
     assert (
         main(
@@ -666,30 +710,33 @@ def test_values_shows_compact_live_values_for_all_accounts(tmp_path, monkeypatch
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
-    def fake_fetch_direct(account):
-        return AccountUsage(
-            account_id=account.id,
-            label=account.label,
-            captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
-            five_hour=LimitWindow(
-                name="5h",
-                used=3,
-                limit=100,
-                remaining=97,
-                percent=97,
-                reset_at=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
-            ),
-            weekly=LimitWindow(
-                name="weekly",
-                used=45,
-                limit=100,
-                remaining=55,
-                percent=55,
-                reset_at=datetime(2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")),
-            ),
-        )
+    def fake_fetch_all(config, accounts, **kwargs):
+        return [
+            AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+                five_hour=LimitWindow(
+                    name="5h",
+                    used=3,
+                    limit=100,
+                    remaining=97,
+                    percent=97,
+                    reset_at=datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+                ),
+                weekly=LimitWindow(
+                    name="weekly",
+                    used=45,
+                    limit=100,
+                    remaining=55,
+                    percent=55,
+                    reset_at=datetime(2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")),
+                ),
+            )
+            for account in accounts
+        ]
 
-    monkeypatch.setattr("codex_usage.cli.fetch_account_usage_direct", fake_fetch_direct)
+    monkeypatch.setattr("codex_usage.cli.fetch_all", fake_fetch_all)
 
     assert (
         main(
@@ -940,3 +987,86 @@ browser = "firefox"
     assert target.is_dir()
     assert "privat" in config_path.read_text(encoding="utf-8")
     assert "symlink" in capsys.readouterr().err
+
+
+def test_account_backend_updates_config_and_json_overview(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "Privat",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "backend",
+                "privat",
+                "app-server",
+                "--format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    changed = json.loads(capsys.readouterr().out)
+    assert changed["backend"] == "app-server"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "overview",
+                "--format",
+                "json",
+            ]
+        )
+        == 0
+    )
+    overview = json.loads(capsys.readouterr().out)
+    assert overview["accounts"] == [
+        {
+            "id": "privat",
+            "label": "Privat",
+            "browser": "firefox",
+            "backend": "app-server",
+            "backend_used": None,
+            "fallback_reason": None,
+        }
+    ]
+
+
+def test_backend_override_rejects_conflicting_direct_flag(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "once",
+                "--direct",
+                "--backend",
+                "app-server",
+            ]
+        )
+        == 1
+    )
+    assert "cannot be combined" in capsys.readouterr().err

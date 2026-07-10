@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .account_lock import account_lock
+from .app_server import AppServerUnavailableError, fetch_account_usage_app_server
 from .browser import fetch_account_usage
 from .config import AppConfig
 from .direct import fetch_account_usage_direct
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
-from .state import load_usage_snapshot, save_usage_snapshot
+from .state import load_usage_snapshot, save_current_usage, save_usage_snapshot
 
 
 def fetch_all(
@@ -21,32 +24,39 @@ def fetch_all(
     *,
     headed: bool = False,
     direct: bool = False,
+    backend_override: str | None = None,
     auth_json_path: Path | None = None,
     save_snapshots: bool = False,
 ) -> list[AccountUsage]:
     account_list = list(accounts)
-    usages = [
-        _fetch_one(
+
+    def fetch(account: Account) -> AccountUsage:
+        return _fetch_one(
             config,
             account,
             headed=headed,
-            direct=direct
-            or _should_fetch_direct(account, headed=headed, auth_json_path=auth_json_path),
+            direct=direct,
+            backend_override=backend_override,
             auth_json_path=auth_json_path if (direct or auth_json_path is not None) else None,
         )
-        for account in account_list
-    ]
+
+    if len(account_list) > 1:
+        with ThreadPoolExecutor(max_workers=min(4, len(account_list))) as executor:
+            usages = list(executor.map(fetch, account_list))
+    else:
+        usages = [fetch(account) for account in account_list]
     if save_snapshots:
         for index, usage in enumerate(usages):
-            if usage.status == AccountStatus.OK:
-                try:
+            try:
+                save_current_usage(usage)
+                if usage.status == AccountStatus.OK:
                     save_usage_snapshot(usage)
-                except Exception as exc:
-                    usages[index] = replace(
-                        usage,
-                        status=AccountStatus.ERROR,
-                        error=f"snapshot save failed: {type(exc).__name__}",
-                    )
+            except Exception as exc:
+                usages[index] = replace(
+                    usage,
+                    status=AccountStatus.ERROR,
+                    error=f"snapshot save failed: {type(exc).__name__}",
+                )
     return usages
 
 
@@ -56,12 +66,42 @@ def _fetch_one(
     *,
     headed: bool,
     direct: bool,
+    backend_override: str | None,
     auth_json_path: Path | None,
 ) -> AccountUsage:
     try:
-        if direct:
-            return fetch_account_usage_direct(account, auth_json_path=auth_json_path)
-        return fetch_account_usage(account, config, headed=headed)
+        backend = "direct" if direct else (backend_override or account.backend)
+        use_auth_backend = (
+            direct
+            or backend == "app-server"
+            or backend_override is not None
+            or account.auth_json_path is not None
+        )
+        if not headed and use_auth_backend:
+            with account_lock(account.id):
+                if backend == "app-server":
+                    try:
+                        return fetch_account_usage_app_server(account)
+                    except AppServerUnavailableError as exc:
+                        usage = fetch_account_usage_direct(account, auth_json_path=auth_json_path)
+                        return replace(
+                            usage,
+                            backend_configured=account.backend,
+                            backend_used="direct",
+                            fallback_reason=" ".join(str(exc).split())[:500],
+                        )
+                usage = fetch_account_usage_direct(account, auth_json_path=auth_json_path)
+                return replace(
+                    usage,
+                    backend_configured=account.backend,
+                    backend_used="direct",
+                )
+        usage = fetch_account_usage(account, config, headed=headed)
+        return replace(
+            usage,
+            backend_configured=account.backend,
+            backend_used="browser",
+        )
     except Exception as exc:
         return AccountUsage(
             account_id=account.id,
@@ -69,20 +109,9 @@ def _fetch_one(
             captured_at=datetime.now().astimezone(),
             status=AccountStatus.ERROR,
             error=f"fetch failed: {type(exc).__name__}",
+            backend_configured=account.backend,
+            backend_used=backend_override or account.backend,
         )
-
-
-def _should_fetch_direct(
-    account: Account,
-    *,
-    headed: bool,
-    auth_json_path: Path | None,
-) -> bool:
-    if headed:
-        return False
-    if auth_json_path is not None:
-        return True
-    return account.auth_json_path is not None
 
 
 def watch(
@@ -92,6 +121,7 @@ def watch(
     output: str,
     headed: bool = False,
     direct: bool = False,
+    backend_override: str | None = None,
     auth_json_path: Path | None = None,
     interval_seconds: int | None = None,
 ) -> None:
@@ -103,6 +133,7 @@ def watch(
             account_list,
             headed=headed,
             direct=direct,
+            backend_override=backend_override,
             auth_json_path=auth_json_path,
             save_snapshots=True,
         )
@@ -121,6 +152,7 @@ def watchdog(
     output: str,
     headed: bool = False,
     direct: bool = False,
+    backend_override: str | None = None,
     auth_json_path: Path | None = None,
 ) -> list[AccountUsage]:
     now = datetime.now().astimezone()
@@ -139,6 +171,7 @@ def watchdog(
         fetch_accounts,
         headed=headed,
         direct=direct,
+        backend_override=backend_override,
         auth_json_path=auth_json_path,
         save_snapshots=False,
     )
@@ -151,17 +184,18 @@ def watchdog(
             continue
         if account.id not in blocked_snapshots:
             usage = _apply_watchdog_block(usage, now=now)
-            if usage.status in {AccountStatus.OK, AccountStatus.BLOCKED}:
-                try:
+            try:
+                save_current_usage(usage)
+                if usage.status in {AccountStatus.OK, AccountStatus.BLOCKED}:
                     save_usage_snapshot(usage)
-                except Exception as exc:
-                    usage = replace(
-                        usage,
-                        status=AccountStatus.ERROR,
-                        error=f"snapshot save failed: {type(exc).__name__}",
-                        blocked_until=usage.blocked_until,
-                        blocked_reason=usage.blocked_reason,
-                    )
+            except Exception as exc:
+                usage = replace(
+                    usage,
+                    status=AccountStatus.ERROR,
+                    error=f"snapshot save failed: {type(exc).__name__}",
+                    blocked_until=usage.blocked_until,
+                    blocked_reason=usage.blocked_reason,
+                )
         usages.append(usage)
 
     if output == "json":
@@ -221,6 +255,6 @@ def _window_is_exhausted(window: Any) -> bool:
         return True
     if window.used is not None and window.limit is not None and window.used >= window.limit:
         return True
-    if window.percent is not None and window.percent >= 100:
+    if window.percent is not None and window.percent <= 0:
         return True
     return False

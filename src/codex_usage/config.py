@@ -12,6 +12,7 @@ from .private_io import read_private_text, write_private_text
 
 APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
+SUPPORTED_BACKENDS = ("direct", "app-server")
 MAX_CONFIG_BYTES = 1_000_000
 MAX_CONFIG_ACCOUNTS = 100
 MAX_CONFIG_LABEL_CHARS = 256
@@ -115,11 +116,14 @@ def add_or_update_account(
     profile_dir: str | None = None,
     browser: str | None = None,
     auth_json_path: str | None = None,
+    backend: str | None = None,
     path: Path | None = None,
 ) -> tuple[AppConfig, Account]:
     _validate_account_id(account_id)
     if browser is not None:
         _validate_browser(browser)
+    if backend is not None:
+        _validate_backend(backend)
     config = load_config(path)
     existing = next((item for item in config.accounts if item.id == account_id), None)
     account = Account(
@@ -131,6 +135,7 @@ def add_or_update_account(
         auth_json_path=auth_json_path
         if auth_json_path is not None
         else (existing.auth_json_path if existing else None),
+        backend=backend or (existing.backend if existing else "direct"),
     )
 
     accounts = [item for item in config.accounts if item.id != account_id]
@@ -193,12 +198,15 @@ def _account_from_data(item: object) -> Account:
     browser = str(item.get("browser") or "firefox")
     _validate_browser(browser)
     auth_json_path = item.get("auth_json_path")
+    backend = str(item.get("backend") or "direct")
+    _validate_backend(backend)
     return Account(
         id=account_id,
         label=label,
         profile_dir=profile_dir,
         browser=browser,
         auth_json_path=str(auth_json_path) if auth_json_path else None,
+        backend=backend,
     )
 
 
@@ -281,6 +289,7 @@ def _validate_account(account: object) -> None:
     _validate_text_field(account.label, "account label", MAX_CONFIG_LABEL_CHARS)
     _validate_text_field(account.profile_dir, "profile_dir", MAX_CONFIG_PATH_CHARS)
     _validate_browser(account.browser)
+    _validate_backend(account.backend)
     if account.auth_json_path is not None:
         _validate_text_field(
             account.auth_json_path,
@@ -324,6 +333,12 @@ def _validate_browser(browser: str) -> None:
         raise ValueError(f"browser must be one of: {choices}")
 
 
+def _validate_backend(backend: str) -> None:
+    if backend not in SUPPORTED_BACKENDS:
+        choices = ", ".join(SUPPORTED_BACKENDS)
+        raise ValueError(f"backend must be one of: {choices}")
+
+
 def _strict_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{name} must be an integer")
@@ -351,6 +366,7 @@ def _to_toml(config: AppConfig) -> str:
                 f"label = {_quote(account.label)}",
                 f"profile_dir = {_quote(account.profile_dir)}",
                 f"browser = {_quote(account.browser)}",
+                f"backend = {_quote(account.backend)}",
                 *(
                     [f"auth_json_path = {_quote(account.auth_json_path)}"]
                     if account.auth_json_path

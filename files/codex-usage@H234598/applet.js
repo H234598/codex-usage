@@ -15,6 +15,7 @@ const MAX_STDERR_CHARS = 4096;
 const MAX_ACCOUNTS = 100;
 const MAX_TEXT_CHARS = 500;
 const COMMAND_TIMEOUT_MS = 120000;
+const AUX_COMMAND_TIMEOUT_MS = 30000;
 const REACTIVATION_TIMEOUT_MS = 900000;
 const PANEL_CLASSES = [
     "codex-usage-panel-warning",
@@ -41,6 +42,7 @@ CodexUsageApplet.prototype = {
         this.commandPath = "codex-usage";
         this.configPath = "";
         this.autoRefresh = true;
+        this.pollOwner = "auto";
         this.refreshInterval = 300;
         this.refreshOnOpen = true;
         this.panelAccountMode = "combined";
@@ -50,6 +52,7 @@ CodexUsageApplet.prototype = {
         this.notifyErrors = false;
         this.showReactivationActions = true;
         this.reactivationBrowser = "auto";
+        this.accountBackends = [];
 
         this._removed = false;
         this._generation = 0;
@@ -62,6 +65,14 @@ CodexUsageApplet.prototype = {
         this._errorState = {};
         this._reactivations = {};
         this._reactivationErrors = {};
+        this._auxProcess = null;
+        this._auxTimeoutId = 0;
+        this._auxGeneration = 0;
+        this._backendRowsReady = false;
+        this._syncingBackendRows = false;
+        this._backendAccounts = {};
+        this._systemdActive = false;
+        this._serviceChecked = false;
 
         this.set_applet_icon_symbolic_name("view-statistics-symbolic");
         this.set_applet_label("--");
@@ -96,6 +107,7 @@ CodexUsageApplet.prototype = {
         bind("command-path", "commandPath", this._onCommandSettingsChanged);
         bind("config-path", "configPath", this._onCommandSettingsChanged);
         bind("auto-refresh", "autoRefresh", this._onRefreshSettingsChanged);
+        bind("poll-owner", "pollOwner", this._onPollOwnerChanged);
         bind("refresh-interval", "refreshInterval", this._onRefreshSettingsChanged);
         bind("refresh-on-open", "refreshOnOpen", null);
         bind("panel-account-mode", "panelAccountMode", this._updatePanel);
@@ -109,6 +121,7 @@ CodexUsageApplet.prototype = {
             this._rebuildMenu
         );
         bind("reactivation-browser", "reactivationBrowser", null);
+        bind("account-backends", "accountBackends", this._onAccountBackendsChanged);
     },
 
     _onCommandSettingsChanged: function() {
@@ -116,6 +129,11 @@ CodexUsageApplet.prototype = {
     },
 
     _onRefreshSettingsChanged: function() {
+        this._scheduleTimer();
+    },
+
+    _onPollOwnerChanged: function() {
+        this._refreshAuxiliaryState();
         this._scheduleTimer();
     },
 
@@ -133,7 +151,11 @@ CodexUsageApplet.prototype = {
         }
         let seconds = this._boundedInteger(this.refreshInterval, 60, 3600, 300);
         this._timerId = Mainloop.timeout_add_seconds(seconds, Lang.bind(this, function() {
-            this._refreshFresh(false);
+            if (this._usesAppletPolling()) {
+                this._refreshFresh(false);
+            } else {
+                this._loadCached(false);
+            }
             return true;
         }));
     },
@@ -146,9 +168,22 @@ CodexUsageApplet.prototype = {
                 this._showCommandError(error);
             }
             if (refreshAfter && this.autoRefresh) {
-                this._refreshFresh(false);
+                if (this._usesAppletPolling()) {
+                    this._refreshFresh(false);
+                }
             }
+            this._refreshAuxiliaryState();
         }));
+    },
+
+    _usesAppletPolling: function() {
+        if (this.pollOwner === "applet") {
+            return true;
+        }
+        if (this.pollOwner === "systemd") {
+            return false;
+        }
+        return this._serviceChecked && !this._systemdActive;
     },
 
     _refreshFresh: function(openAfter) {
@@ -291,6 +326,256 @@ CodexUsageApplet.prototype = {
         }
     },
 
+    _baseCommandArgv: function() {
+        let argv = [this._resolveCommand()];
+        let config = String(this.configPath || "").trim();
+        if (config) {
+            if (config.length > 1024 || config.indexOf("\u0000") !== -1) {
+                throw new Error(_("Ungültiger Config-Pfad"));
+            }
+            argv.push("--config", config);
+        }
+        return argv;
+    },
+
+    _refreshAuxiliaryState: function() {
+        if (this._removed) {
+            return;
+        }
+        this._checkServiceStatus(Lang.bind(this, function() {
+            this._loadAccountBackends();
+        }));
+    },
+
+    _checkServiceStatus: function(callback) {
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._serviceChecked = true;
+            this._systemdActive = false;
+            callback();
+            return;
+        }
+        argv.push("service", "status", "--format", "json");
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload) {
+            let wasChecked = this._serviceChecked;
+            this._serviceChecked = true;
+            this._systemdActive = Boolean(payload && payload.enabled && payload.active);
+            this._scheduleTimer();
+            if (
+                !wasChecked &&
+                this.pollOwner === "auto" &&
+                !this._systemdActive &&
+                this.autoRefresh
+            ) {
+                this._refreshFresh(false);
+            }
+            callback();
+        }));
+    },
+
+    _loadAccountBackends: function() {
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            return;
+        }
+        argv.push("account", "overview", "--format", "json");
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (error || !payload || !Array.isArray(payload.accounts)) {
+                return;
+            }
+            let rows = [];
+            let accounts = {};
+            for (let i = 0; i < payload.accounts.length && i < MAX_ACCOUNTS; i++) {
+                let item = payload.accounts[i];
+                if (!item || typeof item !== "object" || Array.isArray(item)) {
+                    continue;
+                }
+                let account = this._safeText(item.id, 64);
+                let label = this._safeText(item.label, 120);
+                let backend = this._safeBackend(item.backend);
+                if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) || !backend) {
+                    continue;
+                }
+                let row = {
+                    account: account,
+                    label: label || account,
+                    backend: backend === "app-server" ? 1 : 0
+                };
+                rows.push(row);
+                accounts[account] = row;
+            }
+            this._backendAccounts = accounts;
+            this._backendRowsReady = true;
+            this._syncingBackendRows = true;
+            this.accountBackends = rows;
+            try {
+                this.settings.setValue("account-backends", rows);
+            } catch (e) {
+                global.log("[" + UUID + "] backend settings sync failed: " + String(e));
+            }
+            Mainloop.idle_add(Lang.bind(this, function() {
+                this._syncingBackendRows = false;
+                return false;
+            }));
+        }));
+    },
+
+    _onAccountBackendsChanged: function() {
+        if (!this._backendRowsReady || this._syncingBackendRows || this._removed) {
+            return;
+        }
+        let rows = this.accountBackends;
+        if (!Array.isArray(rows) || rows.length !== Object.keys(this._backendAccounts).length) {
+            this._loadAccountBackends();
+            return;
+        }
+        let changed = null;
+        for (let i = 0; i < rows.length; i++) {
+            let row = rows[i];
+            if (!row || typeof row !== "object" || Array.isArray(row)) {
+                this._loadAccountBackends();
+                return;
+            }
+            let account = this._safeText(row.account, 64);
+            let canonical = this._backendAccounts[account];
+            if (!canonical || this._safeText(row.label, 120) !== canonical.label) {
+                this._loadAccountBackends();
+                return;
+            }
+            let backendValue = Number(row.backend);
+            if (backendValue !== 0 && backendValue !== 1) {
+                this._loadAccountBackends();
+                return;
+            }
+            if (backendValue !== canonical.backend && !changed) {
+                changed = {
+                    account: account,
+                    backend: backendValue === 1 ? "app-server" : "direct"
+                };
+            }
+        }
+        if (!changed) {
+            return;
+        }
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._loadAccountBackends();
+            return;
+        }
+        argv.push(
+            "account",
+            "backend",
+            changed.account,
+            changed.backend,
+            "--format",
+            "json"
+        );
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (error || !payload || payload.ok !== true || payload.account !== changed.account) {
+                this._showCommandError(error || _("Abrufweg konnte nicht gespeichert werden"));
+            } else {
+                this._refreshFresh(false);
+            }
+            this._loadAccountBackends();
+        }));
+    },
+
+    _enableBackgroundService: function() {
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._showCommandError(String(e));
+            return;
+        }
+        argv.push("service", "enable", "--format", "json");
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (error || !payload || !payload.enabled || !payload.active) {
+                this._showCommandError(error || _("systemd-Timer konnte nicht aktiviert werden"));
+                return;
+            }
+            this._serviceChecked = true;
+            this._systemdActive = true;
+            this._scheduleTimer();
+            this._buildUsageMenu();
+        }));
+    },
+
+    _spawnAuxJson: function(argv, callback) {
+        this._cancelAuxProcess();
+        let generation = ++this._auxGeneration;
+        let process = null;
+        let done = false;
+        let finish = Lang.bind(this, function(payload, error) {
+            if (done) {
+                return;
+            }
+            done = true;
+            if (this._auxTimeoutId) {
+                Mainloop.source_remove(this._auxTimeoutId);
+                this._auxTimeoutId = 0;
+            }
+            if (this._removed || generation !== this._auxGeneration) {
+                return;
+            }
+            this._auxProcess = null;
+            callback(payload, error);
+        });
+        try {
+            let launcher = Gio.SubprocessLauncher.new(
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+            );
+            launcher.setenv("PYTHONUNBUFFERED", "1", true);
+            process = launcher.spawnv(argv);
+            this._auxProcess = process;
+            this._auxTimeoutId = Mainloop.timeout_add(
+                AUX_COMMAND_TIMEOUT_MS,
+                Lang.bind(this, function() {
+                    try {
+                        process.force_exit();
+                    } catch (e) {
+                        global.log("[" + UUID + "] auxiliary cleanup failed: " + String(e));
+                    }
+                    finish(null, _("Hilfsbefehl nach 30 Sekunden abgebrochen"));
+                    return false;
+                })
+            );
+            process.communicate_utf8_async(null, null, Lang.bind(this, function(proc, result) {
+                let stdout = "";
+                let stderr = "";
+                try {
+                    let response = proc.communicate_utf8_finish(result);
+                    stdout = String(response[1] || "");
+                    stderr = String(response[2] || "");
+                } catch (e) {
+                    finish(null, _("Hilfsprozessfehler: ") + String(e));
+                    return;
+                }
+                if (!stdout.trim() || stdout.length > MAX_JSON_CHARS) {
+                    finish(null, this._shortText(stderr || _("Ungültige Hilfsausgabe"), 240));
+                    return;
+                }
+                try {
+                    let payload = JSON.parse(stdout);
+                    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+                        throw new Error("invalid auxiliary result");
+                    }
+                    finish(payload, null);
+                } catch (e) {
+                    finish(null, this._shortText(stderr || _("Ungültige Hilfsausgabe"), 240));
+                }
+            }));
+        } catch (e) {
+            finish(null, _("Hilfsbefehl konnte nicht gestartet werden: ") + String(e));
+        }
+    },
+
     _validatePayload: function(payload) {
         if (!Array.isArray(payload)) {
             throw new Error("JSON root must be an array");
@@ -319,7 +604,11 @@ CodexUsageApplet.prototype = {
                 blocked_until: this._safeText(item.blocked_until, 80),
                 blocked_reason: this._safeText(item.blocked_reason, MAX_TEXT_CHARS),
                 auth_access_expires_at: this._safeText(item.auth_access_expires_at, 80),
-                stale: false
+                backend_configured: this._safeBackend(item.backend_configured),
+                backend_used: this._safeBackend(item.backend_used, true),
+                fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
+                values_captured_at: this._safeText(item.values_captured_at, 80),
+                stale: item.stale === true
             });
         }
         return result;
@@ -357,6 +646,14 @@ CodexUsageApplet.prototype = {
             return "error";
         }
         return status;
+    },
+
+    _safeBackend: function(value, allowBrowser) {
+        let backend = this._safeText(value, 32);
+        let allowed = allowBrowser
+            ? ["direct", "app-server", "browser"]
+            : ["direct", "app-server"];
+        return allowed.indexOf(backend) !== -1 ? backend : "";
     },
 
     _safeText: function(value, limit) {
@@ -446,12 +743,15 @@ CodexUsageApplet.prototype = {
         this._addDisabled(
             this.menu,
             "5h Reset " + this._windowReset(usage.five_hour) +
-                "     Woche Reset " + this._windowReset(usage.weekly),
+                "     Woche Reset " + this._windowReset(usage.weekly) +
+                "     Abruf " + this._backendSummary(usage),
             "codex-usage-detail"
         );
         let status = this._statusLabel(usage.status);
         if (usage.stale) {
-            status += " · gespeichert vom " + this._formatDate(usage.captured_at);
+            status += " · gespeichert vom " + this._formatDate(
+                usage.values_captured_at || usage.captured_at
+            );
         }
         let detail = usage.status === "login_required"
             ? "Token abgelaufen · codex-usage reactivate " + usage.account
@@ -469,6 +769,21 @@ CodexUsageApplet.prototype = {
         if (usage.status === "login_required" && this.showReactivationActions) {
             this._addReactivationAction(usage);
         }
+    },
+
+    _backendSummary: function(usage) {
+        let configured = usage.backend_configured || "direct";
+        let used = usage.backend_used || configured;
+        let labels = {
+            "direct": "Direkt",
+            "app-server": "App Server",
+            "browser": "Browser"
+        };
+        let text = labels[used] || used;
+        if (used !== configured) {
+            text = (labels[configured] || configured) + " → " + text;
+        }
+        return text;
     },
 
     _addReactivationAction: function(usage) {
@@ -623,6 +938,12 @@ CodexUsageApplet.prototype = {
         }));
         if (this._refreshing && refreshItem && refreshItem.setSensitive) {
             refreshItem.setSensitive(false);
+        }
+        if (this.pollOwner === "systemd" && this._serviceChecked && !this._systemdActive) {
+            this.menu.addAction(
+                _("Hintergrunddienst aktivieren"),
+                Lang.bind(this, this._enableBackgroundService)
+            );
         }
         this.menu.addAction(_("Codex Analytics öffnen"), Lang.bind(this, this._openAnalytics));
         this.menu.addAction(_("Einstellungen"), Lang.bind(this, this._openSettings));
@@ -960,6 +1281,22 @@ CodexUsageApplet.prototype = {
         }
     },
 
+    _cancelAuxProcess: function() {
+        this._auxGeneration += 1;
+        if (this._auxTimeoutId) {
+            Mainloop.source_remove(this._auxTimeoutId);
+            this._auxTimeoutId = 0;
+        }
+        if (this._auxProcess) {
+            try {
+                this._auxProcess.force_exit();
+            } catch (e) {
+                global.log("[" + UUID + "] auxiliary process cleanup failed: " + String(e));
+            }
+            this._auxProcess = null;
+        }
+    },
+
     _cancelReactivations: function() {
         let accounts = Object.keys(this._reactivations);
         for (let i = 0; i < accounts.length; i++) {
@@ -981,7 +1318,11 @@ CodexUsageApplet.prototype = {
     on_applet_clicked: function() {
         this.menu.toggle();
         if (this.refreshOnOpen) {
-            this._refreshFresh(false);
+            if (this._usesAppletPolling()) {
+                this._refreshFresh(false);
+            } else {
+                this._loadCached(false);
+            }
         }
     },
 
@@ -992,6 +1333,7 @@ CodexUsageApplet.prototype = {
             this._timerId = 0;
         }
         this._cancelProcess();
+        this._cancelAuxProcess();
         this._cancelReactivations();
         if (this.settings && this.settings.finalize) {
             this.settings.finalize();

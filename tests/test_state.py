@@ -5,8 +5,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from codex_usage.models import AccountStatus, AccountUsage
-from codex_usage.state import load_usage_snapshot, save_usage_snapshot
+from codex_usage.models import AccountStatus, AccountUsage, LimitWindow
+from codex_usage.state import (
+    load_current_usage,
+    load_usage_snapshot,
+    merge_current_with_last_success,
+    save_current_usage,
+    save_usage_snapshot,
+)
 
 
 def test_load_usage_snapshot_ignores_invalid_json(tmp_path):
@@ -76,3 +82,35 @@ def test_save_and_load_usage_snapshot_preserves_blocked_state(tmp_path):
     assert loaded.auth_access_expires_at == datetime(
         2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")
     )
+
+
+def test_current_status_keeps_last_success_values_separate(tmp_path):
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current_dir = tmp_path / "current"
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.LOGIN_REQUIRED,
+        error="token expired",
+        backend_configured="app-server",
+        backend_used="app-server",
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        five_hour=LimitWindow(name="5h", remaining=70),
+        weekly=LimitWindow(name="weekly", remaining=80),
+    )
+
+    save_current_usage(current, current_dir)
+    loaded = load_current_usage("privat", current_dir)
+    assert loaded is not None
+    merged = merge_current_with_last_success(loaded, last_success)
+
+    assert merged.status == AccountStatus.LOGIN_REQUIRED
+    assert merged.five_hour == last_success.five_hour
+    assert merged.values_captured_at == captured
+    assert merged.stale is True
+    assert merged.backend_used == "app-server"

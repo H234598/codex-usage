@@ -21,6 +21,7 @@ class Account:
     profile_dir: str
     browser: str = "firefox"
     auth_json_path: str | None = None
+    backend: str = "direct"
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,11 @@ class AccountUsage:
     auth_access_expires_at: datetime | None = None
     auth_id_expires_at: datetime | None = None
     source_urls: tuple[str, ...] = field(default_factory=tuple)
+    backend_configured: str | None = None
+    backend_used: str | None = None
+    fallback_reason: str | None = None
+    values_captured_at: datetime | None = None
+    stale: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +82,13 @@ class AccountUsage:
             if self.auth_id_expires_at
             else None,
             "source_urls": list(self.source_urls),
+            "backend_configured": self.backend_configured,
+            "backend_used": self.backend_used,
+            "fallback_reason": self.fallback_reason,
+            "values_captured_at": self.values_captured_at.isoformat()
+            if self.values_captured_at
+            else None,
+            "stale": self.stale,
         }
 
 

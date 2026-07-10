@@ -220,7 +220,7 @@ def test_fetch_account_usage_direct_marks_expired_auth_before_network(tmp_path, 
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error is not None
     assert "expired" in usage.error
-    assert "login privat" in usage.error
+    assert "reactivate privat" in usage.error
 
 
 def test_fetch_account_usage_direct_reports_missing_auth_json(tmp_path):

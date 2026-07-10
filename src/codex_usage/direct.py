@@ -301,9 +301,9 @@ def _is_access_token_expired(expiry: datetime | None, *, now: datetime) -> bool:
 
 def _expired_auth_error(account_id: str, expiry: datetime | None) -> str:
     if expiry is None:
-        return f"auth.json access_token expired; run `codex-usage login {account_id}`"
+        return f"auth.json access_token expired; run `codex-usage reactivate {account_id}`"
     return (
         "auth.json access_token expired at "
         f"{expiry.astimezone().strftime('%d.%m.%Y %H:%M')}; "
-        f"run `codex-usage login {account_id}`"
+        f"run `codex-usage reactivate {account_id}`"
     )
