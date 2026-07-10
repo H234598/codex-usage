@@ -320,6 +320,7 @@ CodexUsageApplet.prototype = {
         this._safeMode = true;
         this._safeModeReason = this._shortText(reason || _("Interner Appletfehler"), 240);
         this._refreshing = false;
+        this._serviceAutoAttempted = false;
         this._primaryCachePending = false;
         this._primaryCacheRefreshAfter = false;
         this._primaryFreshPending = false;
@@ -866,6 +867,9 @@ CodexUsageApplet.prototype = {
             if (validStatus) {
                 this._serviceStatus = payload;
                 this._systemdActive = Boolean(payload.enabled && payload.active);
+                if (!this._systemdActive) {
+                    this._serviceAutoAttempted = false;
+                }
             } else if (!wasChecked) {
                 this._serviceStatus = {};
                 this._systemdActive = false;

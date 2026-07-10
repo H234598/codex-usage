@@ -183,6 +183,7 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
     },
   };
   applet._reactivationRefreshPending = true;
+  applet._serviceAutoAttempted = true;
   applet._primaryCachePending = true;
   applet._primaryCacheRefreshAfter = true;
   applet._primaryFreshPending = true;
@@ -191,6 +192,7 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   assert.equal(forced, 1);
   assert.equal(Object.keys(applet._reactivations).length, 0);
   assert.equal(applet._reactivationRefreshPending, false);
+  assert.equal(applet._serviceAutoAttempted, false);
   assert.equal(applet._primaryCachePending, false);
   assert.equal(applet._primaryCacheRefreshAfter, false);
   assert.equal(applet._primaryFreshPending, false);
@@ -914,6 +916,32 @@ test("service status errors preserve a previously active systemd owner", () => {
   assert.equal(applet._systemdActive, true);
   assert.deepEqual(applet._serviceStatus, { enabled: true, active: true });
   assert.equal(continuationCalls, 1);
+});
+
+test("a valid inactive service status retries after a previous activation", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._serviceChecked = true;
+  applet._systemdActive = true;
+  applet._serviceAutoAttempted = true;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._cacheIsStale = () => false;
+  const calls = [];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv.slice(1).join(" "));
+    if (argv.includes("status")) {
+      callback({ enabled: false, active: false }, null);
+    }
+  };
+
+  applet._checkServiceStatus(() => {});
+  assert.deepEqual(calls, [
+    "service status --format json",
+    "service enable --format json",
+  ]);
+  assert.equal(applet._serviceAutoAttempted, true);
 });
 
 test("service argv errors preserve a previously active systemd owner", () => {

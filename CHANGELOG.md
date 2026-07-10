@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.27 - 2026-07-11
+
+### Fixed
+
+- A valid inactive systemd status now resets the automatic activation guard,
+  allowing recovery after the timer was stopped externally.
+- Safe Mode clears the same guard when queued activation requests are dropped.
+
 ## 0.6.26 - 2026-07-11
 
 ### Fixed
