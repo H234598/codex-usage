@@ -285,7 +285,7 @@ CodexUsageApplet.prototype = {
                 try {
                     process.force_exit();
                 } catch (e) {
-                    return false;
+                    global.log("[" + UUID + "] health process cleanup failed: " + this._shortText(e, 180));
                 }
                 finish();
                 return false;

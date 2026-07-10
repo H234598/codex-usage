@@ -9,12 +9,22 @@ const source = fs.readFileSync(
   "utf8"
 );
 
-function loadPrototype() {
+function loadPrototype(onReady) {
+  const runtime = {
+    timeoutAdd: () => 2,
+    launcherFactory: () => { throw new Error("launcher not configured"); },
+  };
   const mainloop = {
     idle_add: () => 1,
     source_remove: () => {},
-    timeout_add: () => 2,
+    timeout_add: (...args) => runtime.timeoutAdd(...args),
     timeout_add_seconds: () => 3,
+  };
+  const gio = {
+    SubprocessFlags: { STDOUT_PIPE: 1, STDERR_PIPE: 2 },
+    SubprocessLauncher: {
+      new: (...args) => runtime.launcherFactory(...args),
+    },
   };
   class PopupItem {
     constructor() {
@@ -25,7 +35,7 @@ function loadPrototype() {
   const sandbox = {
     imports: {
       byteArray: { toString: (value) => Buffer.from(value).toString("utf8") },
-      gi: { Gio: {}, GLib: {}, St: {} },
+      gi: { Gio: gio, GLib: {}, St: {} },
       lang: { bind: (object, callback) => callback.bind(object) },
       mainloop,
       ui: {
@@ -53,12 +63,18 @@ function loadPrototype() {
     Error,
     RegExp,
   };
-  vm.runInNewContext(`${source}\nglobalThis.__CodexUsageApplet = CodexUsageApplet;`, sandbox);
+  vm.runInNewContext(
+    `${source}\nglobalThis.__CodexUsageApplet = CodexUsageApplet;`,
+    sandbox
+  );
+  if (onReady) {
+    onReady(runtime);
+  }
   return sandbox.__CodexUsageApplet.prototype;
 }
 
-function makeApplet() {
-  const prototype = loadPrototype();
+function makeApplet(onReady) {
+  const prototype = loadPrototype(onReady);
   const applet = Object.create(prototype);
   applet._removed = false;
   applet._sources = {};
@@ -67,6 +83,7 @@ function makeApplet() {
   applet._process = null;
   applet._auxProcess = null;
   applet._healthProcess = null;
+  applet._healthGeneration = 0;
   applet._timeoutId = 0;
   applet._auxTimeoutId = 0;
   applet._healthTimeoutId = 0;
@@ -359,6 +376,24 @@ test("refresh-on-open does not refresh when the menu is closed", () => {
   assert.equal(refreshes, 1);
   applet.on_applet_clicked();
   assert.equal(refreshes, 1);
+});
+
+test("health timeout clears the process even when force_exit fails", () => {
+  let timeout = null;
+  const process = { force_exit() { throw new Error("already exited"); } };
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_ms, callback) => { timeout = callback; return 17; };
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() { return process; },
+    });
+  });
+  applet._readBoundedProcessOutput = () => {};
+  applet._spawnHealthEvent([]);
+  assert.equal(applet._healthProcess, process);
+  assert.equal(typeof timeout, "function");
+  timeout();
+  assert.equal(applet._healthProcess, null);
 });
 
 test("old three-surface target rows migrate with a duration row", () => {

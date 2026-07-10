@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.6 - 2026-07-10
+
+### Fixed
+
+- Health subprocess cleanup now completes even when `force_exit()` reports an
+  already-terminated process, so later health events are not blocked.
+
 ## 0.6.5 - 2026-07-10
 
 ### Fixed
