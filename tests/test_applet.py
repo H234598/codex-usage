@@ -66,16 +66,22 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         assert [column["id"] for column in table["columns"]] == [
             "account",
             "format",
+            "conditional",
+            "threshold",
             "font",
             "size",
             "bold",
             "italic",
             "background",
         ]
-        assert table["columns"][3]["max"] == 48
-        assert table["columns"][4]["type"] == "boolean"
-        assert table["columns"][5]["type"] == "boolean"
-        assert set(table["columns"][6]["options"].values()) == set(range(7))
+        assert table["columns"][2]["default"] is False
+        assert table["columns"][3]["default"] == 20
+        assert table["columns"][3]["min"] == 0
+        assert table["columns"][3]["max"] == 100
+        assert table["columns"][5]["max"] == 48
+        assert table["columns"][6]["type"] == "boolean"
+        assert table["columns"][7]["type"] == "boolean"
+        assert set(table["columns"][8]["options"].values()) == set(range(7))
     assert set(date_table["columns"][1]["options"].values()) == set(range(4))
     assert set(time_table["columns"][1]["options"].values()) == set(range(3))
 
@@ -115,6 +121,9 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "_formatDatePart" in source
     assert "_formatTimePart" in source
     assert "_styleSpan" in source
+    assert "_styleIsActive" in source
+    assert "remaining < style.threshold" in source
+    assert "row.conditional === undefined ? false" in source
     assert "text.set_markup(markup)" in source
     assert '.replace(/&/g, "&amp;")' in source
     for forbidden in (

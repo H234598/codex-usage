@@ -494,6 +494,8 @@ CodexUsageApplet.prototype = {
         return {
             account: account,
             format: 0,
+            conditional: false,
+            threshold: 20,
             font: 0,
             size: 0,
             bold: false,
@@ -507,12 +509,16 @@ CodexUsageApplet.prototype = {
             return null;
         }
         let format = Number(row.format);
+        let conditional = row.conditional === undefined ? false : row.conditional;
+        let threshold = row.threshold === undefined ? 20 : Number(row.threshold);
         let font = Number(row.font);
         let size = Number(row.size);
         let background = Number(row.background);
         let maxFormat = kind === "date" ? 3 : 2;
         if (
             !Number.isInteger(format) || format < 0 || format > maxFormat ||
+            typeof conditional !== "boolean" ||
+            !Number.isInteger(threshold) || threshold < 0 || threshold > 100 ||
             !Number.isInteger(font) || font < 0 || font > 3 ||
             !Number.isInteger(size) || size < 0 || size > 48 ||
             !Number.isInteger(background) || background < 0 || background > 6 ||
@@ -523,6 +529,8 @@ CodexUsageApplet.prototype = {
         return {
             account: account,
             format: format,
+            conditional: conditional,
+            threshold: threshold,
             font: font,
             size: size,
             bold: row.bold,
@@ -1348,12 +1356,13 @@ CodexUsageApplet.prototype = {
         let date = new Date(millis);
         let dateStyle = this._dateStyles[account] || this._defaultStyleRow(account);
         let timeStyle = this._timeStyles[account] || this._defaultStyleRow(account);
+        let remaining = this._remainingPercent(window);
         let dateText = this._formatDatePart(date, dateStyle.format);
         let timeText = this._formatTimePart(date, timeStyle.format);
         return {
             plain: dateText + " " + timeText,
-            markup: this._styleSpan(dateText, dateStyle) + " " +
-                this._styleSpan(timeText, timeStyle)
+            markup: this._styleSpan(dateText, dateStyle, remaining) + " " +
+                this._styleSpan(timeText, timeStyle, remaining)
         };
     },
 
@@ -1393,7 +1402,11 @@ CodexUsageApplet.prototype = {
         return pad(hours) + ":" + minutes;
     },
 
-    _styleSpan: function(text, style) {
+    _styleSpan: function(text, style, remaining) {
+        let escaped = this._escapeMarkup(text);
+        if (!this._styleIsActive(style, remaining)) {
+            return escaped;
+        }
         let attrs = [];
         let fonts = [null, "Sans", "Serif", "Monospace"];
         let font = fonts[style.font] || null;
@@ -1424,8 +1437,15 @@ CodexUsageApplet.prototype = {
             attrs.push('background="' + colors.background + '"');
             attrs.push('foreground="' + colors.foreground + '"');
         }
-        let escaped = this._escapeMarkup(text);
         return attrs.length ? "<span " + attrs.join(" ") + ">" + escaped + "</span>" : escaped;
+    },
+
+    _styleIsActive: function(style, remaining) {
+        if (!style.conditional) {
+            return true;
+        }
+        return remaining !== null && Number.isFinite(remaining) &&
+            remaining < style.threshold;
     },
 
     _escapeMarkup: function(value) {

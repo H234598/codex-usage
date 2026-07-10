@@ -181,6 +181,21 @@
         }
       },
       {
+        "id": "conditional",
+        "title": "Nur unter",
+        "tooltip": "Optische Formatierung nur anwenden, wenn der Restwert des jeweiligen Limits die Schwelle unterschreitet.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "threshold",
+        "title": "Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
+      },
+      {
         "id": "font",
         "title": "Schriftart",
         "type": "integer",
@@ -249,6 +264,21 @@
           "23:59:59": 1,
           "11:59 PM": 2
         }
+      },
+      {
+        "id": "conditional",
+        "title": "Nur unter",
+        "tooltip": "Optische Formatierung nur anwenden, wenn der Restwert des jeweiligen Limits die Schwelle unterschreitet.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "threshold",
+        "title": "Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
       },
       {
         "id": "font",

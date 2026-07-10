@@ -150,6 +150,9 @@ prevent concurrent token refreshes when both surfaces overlap.
 The `Date & Time` settings page keeps separate rows for every account's date
 and time. Each part has its own display format, font family, font size, bold,
 italic, and background setting; the theme remains the default until changed.
+Date and time styling can each be limited to values below a per-account
+threshold. The corresponding five-hour or weekly remaining value is evaluated
+independently for each reset timestamp.
 
 Expired direct-auth accounts get a reactivation action in the applet menu. It
 runs `codex login` against that account's configured `auth_json_path` and opens
