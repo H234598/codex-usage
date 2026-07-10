@@ -1057,7 +1057,10 @@ test("cancelling service enable allows automatic activation to retry", () => {
   applet._readBoundedProcessOutput = () => {};
   applet._serviceAutoAttempted = true;
   applet._systemdActive = false;
-  applet._spawnAuxJson(["codex-usage", "service", "enable", "--format", "json"], () => {});
+  applet._spawnAuxJson(
+    ["codex-usage", "--config", "service", "service", "enable", "--format", "json"],
+    () => {}
+  );
   assert.equal(applet._auxCommand, "service-enable");
   applet._cancelAuxProcess();
   assert.equal(forced, 1);

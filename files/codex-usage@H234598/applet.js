@@ -1840,10 +1840,14 @@ CodexUsageApplet.prototype = {
         }
         this._cancelAuxProcess();
         let generation = ++this._auxGeneration;
-        let serviceIndex = argv.indexOf("service");
-        this._auxCommand = serviceIndex !== -1 && argv[serviceIndex + 1] === "enable"
-            ? "service-enable"
-            : "";
+        let serviceEnable = false;
+        for (let index = argv.length - 2; index >= 0; index--) {
+            if (argv[index] === "service" && argv[index + 1] === "enable") {
+                serviceEnable = true;
+                break;
+            }
+        }
+        this._auxCommand = serviceEnable ? "service-enable" : "";
         let process = null;
         let done = false;
         let finish = Lang.bind(this, function(payload, error) {

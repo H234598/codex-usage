@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.30 - 2026-07-11
+
+### Fixed
+
+- Service-enable detection now matches the actual `service enable` argument
+  pair, even when a config argument contains the token `service`.
+
 ## 0.6.29 - 2026-07-11
 
 ### Fixed
