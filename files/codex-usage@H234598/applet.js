@@ -97,6 +97,7 @@ CodexUsageApplet.prototype = {
         this._reactivationErrors = Object.create(null);
         this._reactivationRefreshPending = false;
         this._auxProcess = null;
+        this._auxCommand = "";
         this._auxTimeoutId = 0;
         this._auxGeneration = 0;
         this._healthProcess = null;
@@ -1787,6 +1788,7 @@ CodexUsageApplet.prototype = {
         argv.push("service", "enable", "--format", "json");
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
             if (error || !payload || !payload.enabled || !payload.active) {
+                this._serviceAutoAttempted = false;
                 this._showCommandError(error || _("systemd-Timer konnte nicht aktiviert werden"));
                 if (this.pollOwner === "auto" && this.autoRefresh) {
                     this._systemdActive = false;
@@ -1827,6 +1829,10 @@ CodexUsageApplet.prototype = {
         }
         this._cancelAuxProcess();
         let generation = ++this._auxGeneration;
+        let serviceIndex = argv.indexOf("service");
+        this._auxCommand = serviceIndex !== -1 && argv[serviceIndex + 1] === "enable"
+            ? "service-enable"
+            : "";
         let process = null;
         let done = false;
         let finish = Lang.bind(this, function(payload, error) {
@@ -1836,6 +1842,7 @@ CodexUsageApplet.prototype = {
             done = true;
             if (generation === this._auxGeneration) {
                 this._removeSource("_auxTimeoutId");
+                this._auxCommand = "";
             }
             if (this._removed || generation !== this._auxGeneration) {
                 return;
@@ -3226,6 +3233,10 @@ CodexUsageApplet.prototype = {
     },
 
     _cancelAuxProcess: function() {
+        if (this._auxCommand === "service-enable" && !this._systemdActive) {
+            this._serviceAutoAttempted = false;
+        }
+        this._auxCommand = "";
         this._auxGeneration += 1;
         this._removeSource("_auxTimeoutId");
         if (this._auxProcess) {

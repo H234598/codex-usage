@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.25 - 2026-07-11
+
+### Fixed
+
+- Cancelled or failed service-enable auxiliary processes now release the
+  automatic activation attempt, allowing a later status check to retry.
+
 ## 0.6.24 - 2026-07-11
 
 ### Fixed

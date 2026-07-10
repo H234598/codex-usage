@@ -91,6 +91,7 @@ function makeApplet(onReady) {
   applet._primaryFreshPending = false;
   applet._primaryFreshOpenAfter = false;
   applet._auxProcess = null;
+  applet._auxCommand = "";
   applet._healthProcess = null;
   applet._healthGeneration = 0;
   applet._timeoutId = 0;
@@ -927,6 +928,26 @@ test("service argv errors preserve a previously active systemd owner", () => {
   assert.equal(applet._systemdActive, true);
   assert.deepEqual(applet._serviceStatus, { enabled: true, active: true });
   assert.equal(continuationCalls, 1);
+});
+
+test("cancelling service enable allows automatic activation to retry", () => {
+  let forced = 0;
+  const process = { force_exit() { forced += 1; } };
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() { return process; },
+    });
+  });
+  applet._readBoundedProcessOutput = () => {};
+  applet._serviceAutoAttempted = true;
+  applet._systemdActive = false;
+  applet._spawnAuxJson(["codex-usage", "service", "enable", "--format", "json"], () => {});
+  assert.equal(applet._auxCommand, "service-enable");
+  applet._cancelAuxProcess();
+  assert.equal(forced, 1);
+  assert.equal(applet._auxCommand, "");
+  assert.equal(applet._serviceAutoAttempted, false);
 });
 
 test("cleanup is idempotent across 100 applet removals", () => {
