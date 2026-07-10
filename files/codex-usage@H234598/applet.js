@@ -897,6 +897,7 @@ CodexUsageApplet.prototype = {
             }
             this._backendAccounts = accounts;
             this._backendRowsReady = true;
+            let usageRowsChanged = this._ensureBackendUsageRows();
             this._syncingBackendRows = true;
             this.accountBackends = rows;
             try {
@@ -906,7 +907,7 @@ CodexUsageApplet.prototype = {
             }
             this._syncAccountSettings(rows);
             this._syncStyleRows(rows);
-            if (this._usages.length) {
+            if (this._usages.length || usageRowsChanged) {
                 this._refreshFormattedSurfaces();
             }
             this._addIdle(Lang.bind(this, function() {
@@ -914,6 +915,57 @@ CodexUsageApplet.prototype = {
                 return false;
             }));
         }));
+    },
+
+    _ensureBackendUsageRows: function() {
+        if (!this._backendRowsReady) {
+            return false;
+        }
+        let known = Object.create(null);
+        let filtered = [];
+        let changed = false;
+        for (let i = 0; i < this._usages.length; i++) {
+            let usage = this._usages[i];
+            let account = usage && usage.account;
+            if (!account || !this._backendAccounts[account] || known[account]) {
+                changed = true;
+                continue;
+            }
+            known[account] = true;
+            filtered.push(usage);
+        }
+        let accounts = Object.keys(this._backendAccounts);
+        for (let i = 0; i < accounts.length; i++) {
+            let account = accounts[i];
+            if (known[account]) {
+                continue;
+            }
+            let backend = this._backendAccounts[account].backend === 1
+                ? "app-server"
+                : "direct";
+            filtered.push({
+                account: account,
+                label: this._backendAccounts[account].label || account,
+                captured_at: "",
+                five_hour: null,
+                weekly: null,
+                status: "partial",
+                error: _("Noch keine gespeicherten Nutzungswerte"),
+                blocked_until: "",
+                blocked_reason: "",
+                auth_access_expires_at: "",
+                backend_configured: backend,
+                backend_used: "",
+                fallback_reason: "",
+                values_captured_at: "",
+                stale: true
+            });
+            changed = true;
+        }
+        if (changed) {
+            this._usages = filtered;
+        }
+        return changed;
     },
 
     _syncAccountSettings: function(accounts) {

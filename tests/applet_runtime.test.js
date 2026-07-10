@@ -343,6 +343,30 @@ test("account synchronization refreshes cached values immediately", () => {
   assert.equal(refreshed, 1);
 });
 
+test("backend synchronization adds placeholders for accounts without cached values", () => {
+  const applet = makeApplet();
+  applet._usages = [];
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+    beta: { account: "beta", label: "Beta", backend: 1 },
+  };
+  assert.equal(applet._ensureBackendUsageRows(), true);
+  assert.deepEqual(Array.from(applet._usages, (item) => item.account), ["alpha", "beta"]);
+  assert.equal(applet._usages[0].status, "partial");
+  assert.equal(applet._usages[0].stale, true);
+  assert.equal(applet._usages[0].five_hour, null);
+  assert.equal(applet._usages[1].backend_configured, "app-server");
+});
+
+test("backend synchronization removes cache rows for deleted accounts", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };
+  assert.equal(applet._ensureBackendUsageRows(), true);
+  assert.deepEqual(Array.from(applet._usages, (item) => item.account), ["alpha"]);
+});
+
 test("account severity honors the threshold belonging to each limit", () => {
   const applet = makeApplet();
   applet._alertSettings = {

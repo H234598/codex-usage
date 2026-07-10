@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.17 - 2026-07-11
+
+### Fixed
+
+- Backend synchronization now keeps configured accounts visible when no cache
+  snapshot exists yet and removes rows for deleted accounts.
+
 ## 0.6.16 - 2026-07-11
 
 ### Fixed
