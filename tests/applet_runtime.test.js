@@ -472,6 +472,37 @@ test("account alert toggles rebuild an open menu immediately", () => {
   assert.equal(applet._alertSettings.alpha.warnings, false);
 });
 
+test("account controls preserve changes before backend settings synchronize", () => {
+  const applet = makeApplet();
+  applet.accountPanelSettings = [];
+  applet.accountAlertSettings = [];
+  applet.settings = { setValue() {} };
+  applet._updatePanel = () => {};
+
+  applet._updateAccountPanelSetting("alpha", { muted: true });
+  applet._updateAccountAlertSetting("alpha", { warnings: false });
+
+  assert.equal(applet.accountPanelSettings.length, 1);
+  assert.equal(applet.accountPanelSettings[0].muted, true);
+  assert.equal(applet.accountAlertSettings.length, 1);
+  assert.equal(applet.accountAlertSettings[0].warnings, false);
+
+  applet._backendAccounts = {
+    alpha: { account: "alpha" },
+    beta: { account: "beta" },
+  };
+  const panelRows = applet._mergedPanelRows(
+    [applet._backendAccounts.alpha, applet._backendAccounts.beta],
+    applet.accountPanelSettings
+  );
+  const alertRows = applet._mergedAlertRows(
+    [applet._backendAccounts.alpha, applet._backendAccounts.beta],
+    applet.accountAlertSettings
+  );
+  assert.equal(panelRows[0].muted, true);
+  assert.equal(alertRows[0].warnings, false);
+});
+
 test("account synchronization refreshes cached values immediately", () => {
   const applet = makeApplet();
   applet._baseCommandArgv = () => ["codex-usage"];

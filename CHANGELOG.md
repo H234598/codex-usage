@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.32 - 2026-07-11
+
+### Fixed
+
+- Direct account panel and alert changes now upsert their row, preserving
+  early user changes made before backend settings synchronization completes.
+
 ## 0.6.31 - 2026-07-11
 
 ### Fixed

@@ -2197,9 +2197,20 @@ CodexUsageApplet.prototype = {
         if (!normalized) {
             return;
         }
-        let rows = this.accountPanelSettings.map(function(row) {
-            return row.account === account ? normalized : row;
+        let rows = Array.isArray(this.accountPanelSettings)
+            ? this.accountPanelSettings.slice()
+            : [];
+        let found = false;
+        rows = rows.map(function(row) {
+            if (row.account !== account) {
+                return row;
+            }
+            found = true;
+            return normalized;
         });
+        if (!found) {
+            rows.push(normalized);
+        }
         this.accountPanelSettings = rows;
         this._panelSettings = this._panelSettingsMap(rows);
         try {
@@ -2219,9 +2230,20 @@ CodexUsageApplet.prototype = {
         if (!normalized) {
             return;
         }
-        let rows = this.accountAlertSettings.map(function(row) {
-            return row.account === account ? normalized : row;
+        let rows = Array.isArray(this.accountAlertSettings)
+            ? this.accountAlertSettings.slice()
+            : [];
+        let found = false;
+        rows = rows.map(function(row) {
+            if (row.account !== account) {
+                return row;
+            }
+            found = true;
+            return normalized;
         });
+        if (!found) {
+            rows.push(normalized);
+        }
         this.accountAlertSettings = rows;
         this._alertSettings = this._alertSettingsMap(rows);
         try {
