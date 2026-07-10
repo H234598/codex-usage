@@ -345,6 +345,22 @@ test("account severity honors the threshold belonging to each limit", () => {
   );
 });
 
+test("refresh-on-open does not refresh when the menu is closed", () => {
+  const applet = makeApplet();
+  applet.refreshOnOpen = true;
+  applet._usesAppletPolling = () => true;
+  let refreshes = 0;
+  applet._refreshFresh = () => { refreshes += 1; };
+  applet.menu = {
+    isOpen: false,
+    toggle() { this.isOpen = !this.isOpen; },
+  };
+  applet.on_applet_clicked();
+  assert.equal(refreshes, 1);
+  applet.on_applet_clicked();
+  assert.equal(refreshes, 1);
+});
+
 test("old three-surface target rows migrate with a duration row", () => {
   const applet = makeApplet();
   const rows = applet._mergedTargetRows(

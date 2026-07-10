@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.5 - 2026-07-10
+
+### Fixed
+
+- `refresh-on-open` no longer starts a refresh when the applet menu is closed.
+
 ## 0.6.4 - 2026-07-10
 
 ### Fixed

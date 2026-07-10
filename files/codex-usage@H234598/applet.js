@@ -3001,8 +3001,9 @@ CodexUsageApplet.prototype = {
             if (this._removed || !this.menu) {
                 return;
             }
+            let wasOpen = this.menu.isOpen;
             this.menu.toggle();
-            if (this.refreshOnOpen) {
+            if (this.refreshOnOpen && !wasOpen) {
                 if (this._usesAppletPolling()) {
                     this._refreshFresh(false);
                 } else {
