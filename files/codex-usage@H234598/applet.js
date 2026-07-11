@@ -2059,6 +2059,9 @@ CodexUsageApplet.prototype = {
         let freshAccounts = Object.create(null);
         for (let j = 0; j < fresh.length; j++) {
             let item = fresh[j];
+            if (this._backendRowsReady && !this._backendAccounts[item.account]) {
+                continue;
+            }
             freshAccounts[item.account] = true;
             let old = previous[item.account];
             if (old && item.status !== "ok") {

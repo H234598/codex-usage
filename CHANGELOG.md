@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.81 - 2026-07-11
+
+### Fixed
+
+- Fresh-Nutzungsdaten für nicht mehr konfigurierte Accounts werden nach der
+  Backend-Synchronisierung nicht wieder in den Applet-Zustand aufgenommen.
+- Regression für gelöschte Accounts im Fresh-Merge ergänzt.
+
 ## 0.6.80 - 2026-07-11
 
 ### Fixed

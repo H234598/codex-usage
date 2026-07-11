@@ -808,6 +808,32 @@ test("fresh payload preserves configured accounts omitted from the response", ()
   assert.deepEqual(Array.from(filtered, (item) => item.account), ["alpha"]);
 });
 
+test("fresh payload rejects accounts absent from synchronized backend state", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = { alpha: { account: "alpha" } };
+  const merged = applet._mergeFreshPayload([
+    {
+      account: "alpha",
+      status: "ok",
+      captured_at: "2026-07-10T10:05:00.000Z",
+      five_hour: { remaining: 70 },
+      weekly: { remaining: 50 },
+      stale: false,
+    },
+    {
+      account: "removed",
+      status: "ok",
+      captured_at: "2026-07-10T10:05:00.000Z",
+      five_hour: { remaining: 10 },
+      weekly: { remaining: 20 },
+      stale: false,
+    },
+  ]);
+
+  assert.deepEqual(Array.from(merged, (item) => item.account), ["alpha"]);
+});
+
 test("payload validation rejects duplicate account identities", () => {
   const applet = makeApplet();
   assert.equal(applet._validatePayload([{ account: "constructor" }])[0].account, "constructor");
