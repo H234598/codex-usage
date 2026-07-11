@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.149 - 2026-07-11
+
+### Fixed
+
+- Stale Fensterwerte werden beim Snapshot- und Applet-Merge nicht mehr
+  übernommen, wenn ihre gespeicherte Zurücksetzungszeit vor dem neuen Capture
+  liegt.
+- Der Applet-Status wird nur dann als stale markiert, wenn tatsächlich ein
+  gültiges Cachefenster übernommen wurde.
+- Regressionen für abgelaufene 5h-/Wochenfenster ergänzt.
+
 ## 0.6.148 - 2026-07-11
 
 ### Fixed

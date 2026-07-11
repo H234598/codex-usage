@@ -2247,8 +2247,13 @@ CodexUsageApplet.prototype = {
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
                 if (!this._windowHasUsageValue(item.five_hour) && old.five_hour) {
-                    item.five_hour = this._mergeCachedWindow(item.five_hour, old.five_hour);
-                    usedCachedWindow = true;
+                    let mergedFive = this._mergeCachedWindow(
+                        item.five_hour,
+                        old.five_hour,
+                        item.captured_at
+                    );
+                    usedCachedWindow = usedCachedWindow || mergedFive !== item.five_hour;
+                    item.five_hour = mergedFive;
                 } else if (
                     this._windowHasUsageValue(item.five_hour) &&
                     item.five_hour &&
@@ -2256,12 +2261,22 @@ CodexUsageApplet.prototype = {
                     old.five_hour &&
                     old.five_hour.reset_at
                 ) {
-                    item.five_hour = this._mergeMissingReset(item.five_hour, old.five_hour);
-                    usedCachedWindow = true;
+                    let mergedFive = this._mergeMissingReset(
+                        item.five_hour,
+                        old.five_hour,
+                        item.captured_at
+                    );
+                    usedCachedWindow = usedCachedWindow || mergedFive !== item.five_hour;
+                    item.five_hour = mergedFive;
                 }
                 if (!this._windowHasUsageValue(item.weekly) && old.weekly) {
-                    item.weekly = this._mergeCachedWindow(item.weekly, old.weekly);
-                    usedCachedWindow = true;
+                    let mergedWeekly = this._mergeCachedWindow(
+                        item.weekly,
+                        old.weekly,
+                        item.captured_at
+                    );
+                    usedCachedWindow = usedCachedWindow || mergedWeekly !== item.weekly;
+                    item.weekly = mergedWeekly;
                 } else if (
                     this._windowHasUsageValue(item.weekly) &&
                     item.weekly &&
@@ -2269,8 +2284,13 @@ CodexUsageApplet.prototype = {
                     old.weekly &&
                     old.weekly.reset_at
                 ) {
-                    item.weekly = this._mergeMissingReset(item.weekly, old.weekly);
-                    usedCachedWindow = true;
+                    let mergedWeekly = this._mergeMissingReset(
+                        item.weekly,
+                        old.weekly,
+                        item.captured_at
+                    );
+                    usedCachedWindow = usedCachedWindow || mergedWeekly !== item.weekly;
+                    item.weekly = mergedWeekly;
                 }
                 if (usedCachedWindow) {
                     item.values_captured_at = item.values_captured_at ||
@@ -2339,7 +2359,19 @@ CodexUsageApplet.prototype = {
         return this._remainingPercent(window) !== null;
     },
 
-    _mergeCachedWindow: function(fresh, cached) {
+    _windowResetExpired: function(window, referenceAt) {
+        if (!window || !window.reset_at) {
+            return false;
+        }
+        let resetMs = this._dateMillis(window.reset_at);
+        let referenceMs = this._dateMillis(referenceAt);
+        return resetMs !== null && referenceMs !== null && resetMs <= referenceMs;
+    },
+
+    _mergeCachedWindow: function(fresh, cached, referenceAt) {
+        if (this._windowResetExpired(cached, referenceAt)) {
+            return fresh;
+        }
         if (!fresh || !fresh.reset_at) {
             return cached;
         }
@@ -2352,7 +2384,10 @@ CodexUsageApplet.prototype = {
         return merged;
     },
 
-    _mergeMissingReset: function(fresh, cached) {
+    _mergeMissingReset: function(fresh, cached, referenceAt) {
+        if (this._windowResetExpired(cached, referenceAt)) {
+            return fresh;
+        }
         if (!fresh || fresh.reset_at || !cached || !cached.reset_at) {
             return fresh;
         }

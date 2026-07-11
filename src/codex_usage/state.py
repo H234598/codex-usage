@@ -169,8 +169,16 @@ def merge_current_with_last_success(
             return last_success
     except TypeError:
         pass
-    five_hour = _merge_window_with_last_success(current.five_hour, last_success.five_hour)
-    weekly = _merge_window_with_last_success(current.weekly, last_success.weekly)
+    five_hour = _merge_window_with_last_success(
+        current.five_hour,
+        last_success.five_hour,
+        reference_at=current.captured_at,
+    )
+    weekly = _merge_window_with_last_success(
+        current.weekly,
+        last_success.weekly,
+        reference_at=current.captured_at,
+    )
     if five_hour is current.five_hour and weekly is current.weekly:
         return current
     return replace(
@@ -194,18 +202,31 @@ def _authoritative_empty_limits(usage: AccountUsage) -> bool:
 def _merge_window_with_last_success(
     current: LimitWindow | None,
     last_success: LimitWindow | None,
+    *,
+    reference_at: datetime,
 ) -> LimitWindow | None:
     if current is None:
-        return last_success
+        return None if _window_reset_expired(last_success, reference_at) else last_success
     if last_success is None:
         return current
     if current.has_usage_value:
         if current.reset_at is None and last_success.reset_at is not None:
             return replace(current, reset_at=last_success.reset_at)
         return current
+    if _window_reset_expired(last_success, reference_at):
+        return current
     if current.reset_at is None:
         return last_success
     return replace(last_success, reset_at=current.reset_at)
+
+
+def _window_reset_expired(window: LimitWindow | None, reference_at: datetime) -> bool:
+    if window is None or window.reset_at is None:
+        return False
+    try:
+        return window.reset_at <= reference_at
+    except TypeError:
+        return False
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:

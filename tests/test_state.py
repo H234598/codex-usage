@@ -190,6 +190,40 @@ def test_merge_current_with_last_success_fills_missing_window():
     assert merged.stale is True
 
 
+def test_merge_drops_cached_windows_after_their_reset():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 15, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=97,
+            reset_at=datetime(2026, 6, 8, 15, 30, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=55,
+            reset_at=datetime(2026, 6, 9, 15, 30, tzinfo=timezone),
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour is None
+    assert merged.weekly is not None
+    assert merged.weekly.remaining == 55
+    assert merged.values_captured_at == last_success.captured_at
+    assert merged.stale is True
+
+
 def test_authoritative_empty_direct_limits_do_not_restore_old_values():
     captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
     current = AccountUsage(
