@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.140 - 2026-07-11
+
+### Fixed
+
+- Browser- und Page-Hook nummerieren WHAM-Anfragen jetzt beim Start.
+- Eine ältere Anfrage, die erst nach einer jüngeren Antwort fertig wird,
+  kann dadurch keine aktuelleren Nutzungswerte mehr überschreiben.
+- Regression für Antworten in umgekehrter Abschlussreihenfolge ergänzt.
+
 ## 0.6.139 - 2026-07-11
 
 ### Fixed

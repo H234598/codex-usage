@@ -77,6 +77,7 @@ DEBUG_API_RESPONSE_FIELDS = (
     "truncated",
     "source",
     "error",
+    "requestSequence",
 )
 
 
@@ -220,6 +221,7 @@ def _combined_payload_text(payload: dict[str, Any]) -> str:
 
 def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate]:
     candidates_by_key: dict[tuple[str, str], JsonCandidate] = {}
+    response_sequences: dict[tuple[str, str], int | None] = {}
     for item in payload.get("apiResponses") or payload.get("api_responses") or ():
         if not isinstance(item, dict):
             continue
@@ -235,10 +237,25 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
             continue
         candidate = load_json_candidate(url, body)
         if candidate is not None:
-            # Browser hooks retain a short response history. For one endpoint
-            # and status, the last response is the newest usable snapshot.
             key = (_redact_url(url), str(status if status is not None else ""))
+            sequence = item.get("requestSequence")
+            if isinstance(sequence, bool):
+                sequence = None
+            elif isinstance(sequence, int) and sequence >= 0:
+                pass
+            elif isinstance(sequence, str) and sequence.isdecimal():
+                sequence = int(sequence)
+            else:
+                sequence = None
+            previous_sequence = response_sequences.get(key)
+            if (
+                key in candidates_by_key
+                and previous_sequence is not None
+                and (sequence is None or sequence < previous_sequence)
+            ):
+                continue
             candidates_by_key[key] = candidate
+            response_sequences[key] = sequence
     return list(candidates_by_key.values())
 
 
@@ -329,12 +346,14 @@ def _sanitize_api_response(item: Any) -> dict[str, Any] | None:
     for field in ("ok", "truncated"):
         if field in redacted and not isinstance(redacted[field], bool):
             redacted.pop(field, None)
-    if "status" in redacted:
-        status = _sanitize_debug_number(redacted["status"])
-        if status is None:
-            redacted.pop("status", None)
+    for field in ("status", "requestSequence"):
+        if field not in redacted:
+            continue
+        number = _sanitize_debug_number(redacted[field])
+        if number is None:
+            redacted.pop(field, None)
         else:
-            redacted["status"] = status
+            redacted[field] = number
     return redacted
 
 
@@ -749,6 +768,20 @@ function codexUsageApiResponseKey(item) {{
   return [item.source || "", url, item.status || ""].join("\\n");
 }}
 
+function codexUsageApiResponseSequence(item) {{
+  const value = item && item.requestSequence;
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}}
+
+function codexUsageApiResponseIsNewer(candidate, current) {{
+  const candidateSequence = codexUsageApiResponseSequence(candidate);
+  const currentSequence = codexUsageApiResponseSequence(current);
+  return !(
+    currentSequence !== null
+    && (candidateSequence === null || candidateSequence < currentSequence)
+  );
+}}
+
 function stopCodexUsageBridge(reason) {{
   if (codexUsageStopped) {{
     return;
@@ -780,6 +813,9 @@ function rememberCodexUsageApiResponse(item) {{
   const key = codexUsageApiResponseKey(item);
   for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {{
     if (codexUsageApiResponseKey(codexUsageCapturedApiResponses[index]) === key) {{
+      if (!codexUsageApiResponseIsNewer(item, codexUsageCapturedApiResponses[index])) {{
+        return;
+      }}
       codexUsageCapturedApiResponses.splice(index, 1);
       break;
     }}
@@ -796,7 +832,11 @@ function dedupeCodexUsageApiResponses(items) {{
     if (!item || typeof item !== "object" || !item.url) {{
       continue;
     }}
-    byKey.set(codexUsageApiResponseKey(item), item);
+    const key = codexUsageApiResponseKey(item);
+    const current = byKey.get(key);
+    if (!current || codexUsageApiResponseIsNewer(item, current)) {{
+      byKey.set(key, item);
+    }}
   }}
   return Array.from(byKey.values()).slice(-CODEX_USAGE_CAPTURED_API_LIMIT);
 }}
@@ -1068,6 +1108,7 @@ def _render_extension_page_hook() -> str:
   const CODEX_USAGE_FLUSH_INTERVAL_MS = 1000;
   const CODEX_USAGE_FLUSH_TICKS = 120;
   const codexUsageCapturedApiResponses = [];
+  let codexUsageFetchSequence = 0;
   let codexUsageFlushTicks = 0;
 
   function limitCodexUsageText(value) {
@@ -1122,10 +1163,27 @@ def _render_extension_page_hook() -> str:
     return [item.source || "", url, item.status || ""].join("\\n");
   }
 
+  function codexUsageApiResponseSequence(item) {
+    const value = item && item.requestSequence;
+    return Number.isInteger(value) && value >= 0 ? value : null;
+  }
+
+  function codexUsageApiResponseIsNewer(candidate, current) {
+    const candidateSequence = codexUsageApiResponseSequence(candidate);
+    const currentSequence = codexUsageApiResponseSequence(current);
+    return !(
+      currentSequence !== null
+      && (candidateSequence === null || candidateSequence < currentSequence)
+    );
+  }
+
   function rememberCodexUsageApiResponse(item) {
     const key = codexUsageApiResponseKey(item);
     for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {
       if (codexUsageApiResponseKey(codexUsageCapturedApiResponses[index]) === key) {
+        if (!codexUsageApiResponseIsNewer(item, codexUsageCapturedApiResponses[index])) {
+          return;
+        }
         codexUsageCapturedApiResponses.splice(index, 1);
         break;
       }
@@ -1147,7 +1205,7 @@ def _render_extension_page_hook() -> str:
     }, location.origin);
   }
 
-  async function captureCodexUsageFetchResponse(url, response) {
+  async function captureCodexUsageFetchResponse(url, response, requestSequence) {
     if (!shouldCaptureCodexUsageUrl(url)) {
       return;
     }
@@ -1159,6 +1217,7 @@ def _render_extension_page_hook() -> str:
       rememberCodexUsageApiResponse({
         source: "page-fetch",
         url: new URL(url, location.origin).href,
+        requestSequence,
         status: clone.status,
         ok: clone.ok,
         contentType,
@@ -1170,6 +1229,7 @@ def _render_extension_page_hook() -> str:
       rememberCodexUsageApiResponse({
         source: "page-fetch",
         url: new URL(url, location.origin).href,
+        requestSequence,
         error: String(error)
       });
     }
@@ -1180,8 +1240,9 @@ def _render_extension_page_hook() -> str:
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (...args) => {
       const url = requestUrl(args[0]);
+      const requestSequence = ++codexUsageFetchSequence;
       const response = await originalFetch(...args);
-      captureCodexUsageFetchResponse(url, response);
+      captureCodexUsageFetchResponse(url, response, requestSequence);
       return response;
     };
   }
