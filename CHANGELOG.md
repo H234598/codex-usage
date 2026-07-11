@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.83 - 2026-07-11
+
+### Fixed
+
+- Der Backend-Synchronisations-Guard fällt auch dann synchron zurück, wenn
+  keine Idle-Source erzeugt werden kann.
+- Regressionen für fehlgeschlagene und leere Idle-Scheduling-Ergebnisse ergänzt.
+
 ## 0.6.82 - 2026-07-11
 
 ### Fixed

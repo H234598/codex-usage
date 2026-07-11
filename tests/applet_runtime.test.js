@@ -932,6 +932,34 @@ test("backend synchronization clears its guard after a settings exception", () =
   assert.equal(applet._syncingBackendRows, false);
 });
 
+test("backend synchronization releases its guard when idle scheduling fails", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._addIdle = () => { throw new Error("idle broken"); };
+  applet._syncAccountSettings = () => { throw new Error("settings broken"); };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }],
+  }, null);
+
+  assert.throws(() => applet._loadAccountBackends(), /settings broken/);
+  assert.equal(applet._syncingBackendRows, false);
+});
+
+test("backend synchronization releases its guard when idle scheduling returns zero", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._addIdle = () => 0;
+  applet._syncAccountSettings = () => { throw new Error("settings broken"); };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }],
+  }, null);
+
+  assert.throws(() => applet._loadAccountBackends(), /settings broken/);
+  assert.equal(applet._syncingBackendRows, false);
+});
+
 test("backend setting changes reject duplicate account rows", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

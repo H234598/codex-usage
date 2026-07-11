@@ -1011,10 +1011,19 @@ CodexUsageApplet.prototype = {
                     this._refreshFormattedSurfaces();
                 }
             } finally {
-                this._addIdle(Lang.bind(this, function() {
+                let releaseGuard = Lang.bind(this, function() {
                     this._syncingBackendRows = false;
                     return false;
-                }));
+                });
+                try {
+                    let idleId = this._addIdle(releaseGuard);
+                    if (!idleId) {
+                        releaseGuard();
+                    }
+                } catch (e) {
+                    global.log("[" + UUID + "] backend sync guard cleanup failed: " + String(e));
+                    releaseGuard();
+                }
             }
         }));
     },
