@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.144 - 2026-07-11
+
+### Fixed
+
+- Eine neue partielle Usage-Identität wird jetzt nicht mehr durch ein altes
+  vollständiges Identitätspaar vervollständigt.
+- Veraltete `account_id`-Werte können dadurch keine aktuellen Nutzungsdaten
+  mehr falsch binden.
+- Regression für neue `user_id` mit alter `account_id` ergänzt.
+
 ## 0.6.143 - 2026-07-11
 
 ### Fixed

@@ -23,7 +23,6 @@ def backend_identity_from_payload(
 def backend_identity_from_candidates(
     candidates: Iterable[JsonCandidate],
 ) -> tuple[str | None, str | None]:
-    partial: tuple[str | None, str | None] = (None, None)
     ordered_candidates = sorted(
         enumerate(candidates),
         key=lambda item: (_candidate_priority(item[1]), -item[0]),
@@ -32,11 +31,8 @@ def backend_identity_from_candidates(
         identity = backend_identity_from_payload(candidate.payload)
         if identity == (None, None):
             continue
-        if identity[0] is not None and identity[1] is not None:
-            return identity
-        if partial == (None, None):
-            partial = identity
-    return partial
+        return identity
+    return None, None
 
 
 def _candidate_priority(candidate: JsonCandidate) -> int:

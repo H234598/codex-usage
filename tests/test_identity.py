@@ -56,3 +56,18 @@ def test_latest_equal_priority_usage_identity_wins():
     ]
 
     assert backend_identity_from_candidates(candidates) == ("new-user", "new-account")
+
+
+def test_latest_partial_usage_identity_does_not_restore_older_account_id():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "old-user", "account_id": "old-account"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "new-user"},
+        ),
+    ]
+
+    assert backend_identity_from_candidates(candidates) == ("new-user", None)
