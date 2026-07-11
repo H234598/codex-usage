@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.66 - 2026-07-11
+
+### Fixed
+
+- Kompakte ISO-Datumswerte wie `YYYYMMDD` werden nicht mehr als Unix-
+  Timestamps fehlinterpretiert.
+
 ## 0.6.65 - 2026-07-11
 
 ### Fixed

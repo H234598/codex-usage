@@ -65,6 +65,15 @@ def test_parse_datetime_rejects_overflowing_numeric_timestamps():
     assert _parse_datetime("9" * 10000, captured_at) is None
 
 
+def test_parse_datetime_keeps_compact_iso_dates_out_of_timestamp_parsing():
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    parsed = _parse_datetime("20260608", captured_at)
+
+    assert parsed is not None
+    assert parsed.strftime("%d.%m.%Y %H:%M") == "08.06.2026 00:00"
+
+
 def test_extract_windows_from_short_english_dom_labels():
     body = """
     5-hour limit

@@ -407,11 +407,14 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
     timestamp_value: int | float | None = None
     if isinstance(value, (int, float)):
         timestamp_value = value
-    elif isinstance(value, str) and re.fullmatch(r"[+-]?\d+(?:\.\d+)?", value.strip()):
-        try:
-            timestamp_value = float(value.strip())
-        except (OverflowError, ValueError):
-            return None
+    elif isinstance(value, str):
+        numeric_text = value.strip()
+        is_compact_iso_date = len(numeric_text) == 8 and numeric_text.isdigit()
+        if not is_compact_iso_date and re.fullmatch(r"[+-]?\d+(?:\.\d+)?", numeric_text):
+            try:
+                timestamp_value = float(numeric_text)
+            except (OverflowError, ValueError):
+                return None
     if timestamp_value is not None:
         try:
             timestamp = float(timestamp_value)
