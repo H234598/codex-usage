@@ -275,6 +275,41 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
     assert loaded.values_captured_at == previous_capture
 
 
+def test_save_usage_snapshot_preserves_reset_when_usage_arrives_without_reset(tmp_path):
+    timezone = ZoneInfo("Europe/Berlin")
+    snapshot_dir = tmp_path / "snapshots"
+    previous_reset = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=timezone),
+            five_hour=LimitWindow(name="5h", remaining=97, reset_at=previous_reset),
+        ),
+        snapshot_dir,
+    )
+
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 25, tzinfo=timezone),
+            status=AccountStatus.PARTIAL,
+            five_hour=LimitWindow(name="5h", remaining=80),
+            error="reset time missing",
+        ),
+        snapshot_dir,
+    )
+
+    loaded = load_usage_snapshot("privat", snapshot_dir)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.remaining == 80
+    assert loaded.five_hour.reset_at == previous_reset
+    assert loaded.stale is True
+
+
 def test_merge_current_with_newer_success_prefers_success_snapshot():
     timezone = ZoneInfo("Europe/Berlin")
     current = AccountUsage(

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.97 - 2026-07-11
+
+### Fixed
+
+- Frische Nutzwerte ohne `reset_at` bewahren den letzten bekannten
+  Resetzeitpunkt für Datum, Uhrzeit und Restlaufzeit.
+- Regression für partielle Nutzdaten ohne Resetzeit ergänzt.
+
 ## 0.6.96 - 2026-07-11
 
 ### Fixed

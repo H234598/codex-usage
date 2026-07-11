@@ -176,7 +176,11 @@ def _merge_window_with_last_success(
 ) -> LimitWindow | None:
     if current is None:
         return last_success
-    if current.has_usage_value or last_success is None:
+    if last_success is None:
+        return current
+    if current.has_usage_value:
+        if current.reset_at is None and last_success.reset_at is not None:
+            return replace(current, reset_at=last_success.reset_at)
         return current
     if current.reset_at is None:
         return last_success
