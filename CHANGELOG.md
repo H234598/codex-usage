@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.58 - 2026-07-11
+
+### Fixed
+
+- `service status` now reports enabled/active state only for both locally
+  owned, managed units and no longer exposes foreign systemd state.
+
 ## 0.6.57 - 2026-07-11
 
 ### Fixed

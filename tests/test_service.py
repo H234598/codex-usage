@@ -12,6 +12,7 @@ from codex_usage.service import (
     service_disable,
     service_enable,
     service_install,
+    service_status,
     service_uninstall,
 )
 
@@ -133,6 +134,25 @@ def test_service_uninstall_does_not_stop_foreign_unit_without_managed_files(
     monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
 
     assert service_uninstall() == {"installed": False, "enabled": False, "active": False}
+    assert calls == []
+
+
+def test_service_status_hides_foreign_state_without_managed_units(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    calls: list[tuple[str, ...]] = []
+
+    def fake_systemctl(*args, check=True):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "active\n", "")
+
+    monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
+
+    result = service_status()
+
+    assert result["installed"] is False
+    assert result["enabled"] is False
+    assert result["active"] is False
+    assert result["service_active"] is False
     assert calls == []
 
 

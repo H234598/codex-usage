@@ -66,19 +66,28 @@ def service_status() -> dict[str, Any]:
     service_path = unit_dir / SERVICE_NAME
     timer_path = unit_dir / TIMER_NAME
     installed = _is_managed_unit(service_path) and _is_managed_unit(timer_path)
-    enabled = _systemctl_state("is-enabled", TIMER_NAME) == "enabled"
-    active = _systemctl_state("is-active", TIMER_NAME) == "active"
-    service_active = _systemctl_state("is-active", SERVICE_NAME) in {"active", "activating"}
-    details = _systemctl_show(
-        SERVICE_NAME,
-        (
-            "Result",
-            "ExecMainStatus",
-            "ExecMainCode",
-            "ExecMainStartTimestamp",
-            "ExecMainExitTimestamp",
-        ),
-    ) if installed else {}
+    if installed:
+        enabled = _systemctl_state("is-enabled", TIMER_NAME) == "enabled"
+        active = _systemctl_state("is-active", TIMER_NAME) == "active"
+        service_active = _systemctl_state("is-active", SERVICE_NAME) in {
+            "active",
+            "activating",
+        }
+        details = _systemctl_show(
+            SERVICE_NAME,
+            (
+                "Result",
+                "ExecMainStatus",
+                "ExecMainCode",
+                "ExecMainStartTimestamp",
+                "ExecMainExitTimestamp",
+            ),
+        )
+    else:
+        enabled = False
+        active = False
+        service_active = False
+        details = {}
     return {
         "installed": installed,
         "enabled": enabled,
