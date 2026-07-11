@@ -192,6 +192,25 @@ test("a missed five-minute poll marks cached values stale after one grace minute
   assert.equal(applet._cacheIsStale(), true);
 });
 
+test("a fresh account cannot hide another account's stale cache", () => {
+  const applet = makeApplet();
+  applet.refreshInterval = 300;
+  applet._usages = [
+    {
+      account: "alpha",
+      captured_at: new Date(Date.now() - 7 * 60 * 1000).toISOString(),
+      stale: false,
+    },
+    {
+      account: "beta",
+      captured_at: new Date(Date.now() - 30 * 1000).toISOString(),
+      stale: false,
+    },
+  ];
+
+  assert.equal(applet._cacheIsStale(), true);
+});
+
 test("epoch reset timestamps remain valid and report zero duration", () => {
   const applet = makeApplet();
   const epoch = "1970-01-01T00:00:00.000Z";

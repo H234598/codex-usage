@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.137 - 2026-07-11
+
+### Fixed
+
+- Die Applet-Stale-Pruefung bewertet jetzt jeden konfigurierten Account
+  einzeln.
+- Ein frischer Account kann dadurch keinen veralteten Account mehr verdecken;
+  der systemd-Reparaturpfad erkennt den alten Stand wieder.
+- Regression fuer gemischte frische und veraltete Account-Caches ergaenzt.
+
 ## 0.6.136 - 2026-07-11
 
 ### Fixed

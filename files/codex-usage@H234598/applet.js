@@ -1027,11 +1027,19 @@ CodexUsageApplet.prototype = {
         if (!this._usages.length) {
             return false;
         }
-        let captured = this._dateMillis(this._newestCapture());
-        if (captured === null) {
-            return true;
+        let nowMs = Date.now();
+        let staleAfterMs = this._staleAfterMs();
+        for (let i = 0; i < this._usages.length; i++) {
+            let usage = this._usages[i];
+            if (usage.stale) {
+                return true;
+            }
+            let captured = this._dateMillis(usage.captured_at);
+            if (captured === null || nowMs - captured > staleAfterMs) {
+                return true;
+            }
         }
-        return Date.now() - captured > this._staleAfterMs();
+        return false;
     },
 
     _staleAfterMs: function() {
