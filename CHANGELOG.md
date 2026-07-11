@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.90 - 2026-07-11
+
+### Fixed
+
+- Alte, bereits abgebrochene Prozess-Timeouts können die Timer einer jüngeren
+  Primär-, Hilfs- oder Health-Anfrage nicht mehr löschen.
+- Regression für den generationenübergreifenden Timeout-Race ergänzt.
+
 ## 0.6.89 - 2026-07-11
 
 ### Fixed

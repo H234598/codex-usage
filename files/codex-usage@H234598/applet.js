@@ -292,7 +292,9 @@ CodexUsageApplet.prototype = {
             process = launcher.spawnv(argv);
             this._healthProcess = process;
             let timeoutId = Mainloop.timeout_add(5000, Lang.bind(this, function() {
-                this._clearSource("_healthTimeoutId");
+                if (generation === this._healthGeneration) {
+                    this._clearSource("_healthTimeoutId");
+                }
                 try {
                     process.force_exit();
                 } catch (e) {
@@ -872,7 +874,9 @@ CodexUsageApplet.prototype = {
             process = launcher.spawnv(argv);
             this._process = process;
             let timeoutId = Mainloop.timeout_add(COMMAND_TIMEOUT_MS, Lang.bind(this, function() {
-                this._clearSource("_timeoutId");
+                if (generation === this._generation) {
+                    this._clearSource("_timeoutId");
+                }
                 try {
                     process.force_exit();
                 } catch (e) {
@@ -2011,7 +2015,9 @@ CodexUsageApplet.prototype = {
             let timeoutId = Mainloop.timeout_add(
                 AUX_COMMAND_TIMEOUT_MS,
                 Lang.bind(this, function() {
-                    this._clearSource("_auxTimeoutId");
+                    if (generation === this._auxGeneration) {
+                        this._clearSource("_auxTimeoutId");
+                    }
                     try {
                         process.force_exit();
                     } catch (e) {

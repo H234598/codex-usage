@@ -836,6 +836,72 @@ test("health timeout clears the process even when force_exit fails", () => {
   assert.equal(applet._healthProcess, null);
 });
 
+test("stale process timeouts cannot clear newer request timers", () => {
+  const cases = [
+    {
+      start(applet) {
+        applet._spawnJsonArray(
+          ["codex-usage", "once"],
+          () => {},
+          { subcommand: "once" }
+        );
+        applet._spawnJsonArray(
+          ["codex-usage", "once"],
+          () => {},
+          { subcommand: "once" }
+        );
+      },
+      property: "_timeoutId",
+      generation: "_generation",
+    },
+    {
+      start(applet) {
+        applet._spawnAuxJson(["codex-usage", "health"], () => {});
+        applet._spawnAuxJson(["codex-usage", "health"], () => {});
+      },
+      property: "_auxTimeoutId",
+      generation: "_auxGeneration",
+    },
+    {
+      start(applet) {
+        applet._spawnHealthEvent(["codex-usage", "health"]);
+        applet._cancelHealthProcess();
+        applet._spawnHealthEvent(["codex-usage", "health"]);
+      },
+      property: "_healthTimeoutId",
+      generation: "_healthGeneration",
+    },
+  ];
+
+  for (const scenario of cases) {
+    const timeouts = [];
+    const processes = [];
+    const applet = makeApplet((runtime) => {
+      runtime.timeoutAdd = (_ms, callback) => {
+        timeouts.push(callback);
+        return timeouts.length;
+      };
+      runtime.launcherFactory = () => ({
+        setenv() {},
+        spawnv() {
+          const process = { force_exit() {} };
+          processes.push(process);
+          return process;
+        },
+      });
+    });
+    applet._readBoundedProcessOutput = () => {};
+    scenario.start(applet);
+    assert.equal(timeouts.length, 2);
+    const currentTimer = applet[scenario.property];
+    assert.equal(currentTimer, 2);
+    timeouts[0]();
+    assert.equal(applet[scenario.property], currentTimer);
+    assert.ok(applet[scenario.generation] > 1);
+    assert.equal(processes.length, 2);
+  }
+});
+
 test("startup failures and missing timeout sources terminate every spawned child process", () => {
   const invoke = [
     (applet) => {
