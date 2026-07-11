@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.147 - 2026-07-11
+
+### Fixed
+
+- Der Browser-Abruf prüft die `auth.json`-Identität vor und nach dem
+  Playwright-Abruf.
+- Ein Accountwechsel während des Browserabrufs wird fail-closed als
+  `LOGIN_REQUIRED` behandelt, statt Seitenwerte dem falschen Account
+  zuzuordnen.
+- Regression für den Browser-Auth-Race ergänzt.
+
 ## 0.6.146 - 2026-07-11
 
 ### Fixed

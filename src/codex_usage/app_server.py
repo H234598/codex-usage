@@ -15,6 +15,7 @@ from typing import Any
 from . import __version__
 from .direct import (
     DirectAuthError,
+    auth_identity_changed,
     auth_identity_from_payload,
     auth_metadata_from_payload,
     read_auth_json_file,
@@ -74,7 +75,7 @@ def fetch_account_usage_app_server(
             codex_command=codex_command,
         )
         _, auth_metadata, auth_user_id, auth_account_id = _auth_context(account)
-        if _auth_identity_changed(
+        if auth_identity_changed(
             before_user_id=auth_user_id_before,
             before_account_id=auth_account_id_before,
             after_user_id=auth_user_id,
@@ -132,18 +133,6 @@ def fetch_account_usage_app_server(
             backend_configured=account.backend,
             backend_used=APP_SERVER_BACKEND,
         )
-
-
-def _auth_identity_changed(
-    *,
-    before_user_id: str | None,
-    before_account_id: str | None,
-    after_user_id: str | None,
-    after_account_id: str | None,
-) -> bool:
-    if before_account_id or after_account_id:
-        return before_account_id != after_account_id
-    return before_user_id != after_user_id
 
 
 def _auth_context(

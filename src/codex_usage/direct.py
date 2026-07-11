@@ -58,7 +58,7 @@ def fetch_account_usage_direct(
         _, refreshed_metadata, refreshed_user_id, refreshed_account_id = (
             _load_auth_token_and_metadata(path)
         )
-        if _auth_identity_changed(
+        if auth_identity_changed(
             before_user_id=auth_user_id,
             before_account_id=auth_account_id,
             after_user_id=refreshed_user_id,
@@ -137,7 +137,7 @@ class DirectFetchError(Exception):
     pass
 
 
-def _auth_identity_changed(
+def auth_identity_changed(
     *,
     before_user_id: str | None,
     before_account_id: str | None,

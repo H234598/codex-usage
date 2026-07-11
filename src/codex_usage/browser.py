@@ -17,6 +17,7 @@ from playwright.sync_api import sync_playwright
 from .config import AppConfig
 from .direct import (
     DirectAuthError,
+    auth_identity_changed,
     auth_identity_for_account,
     auth_metadata_from_payload,
     canonical_backend_identity,
@@ -96,6 +97,7 @@ def fetch_account_usage(
     source_urls: set[str] = set()
 
     try:
+        auth_user_id_before, auth_account_id_before = auth_identity_for_account(account)
         profile_dir = _prepare_profile(account)
         with _profile_lock(profile_dir):
             with sync_playwright() as playwright:
@@ -127,10 +129,23 @@ def fetch_account_usage(
                     _close_context(context)
 
         source_urls.update(_redact_url(candidate.url) for candidate in candidates)
+        auth_user_id, auth_account_id = auth_identity_for_account(account)
+        if auth_identity_changed(
+            before_user_id=auth_user_id_before,
+            before_account_id=auth_account_id_before,
+            after_user_id=auth_user_id,
+            after_account_id=auth_account_id,
+        ):
+            return AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                status=AccountStatus.LOGIN_REQUIRED,
+                error="auth.json identity changed during browser request",
+            )
         five_hour, weekly = extract_windows(body_text=body_text, json_candidates=candidates)
         backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
         try:
-            auth_user_id, auth_account_id = auth_identity_for_account(account)
             backend_user_id, backend_account_id = canonical_backend_identity(
                 backend_user_id,
                 backend_account_id,

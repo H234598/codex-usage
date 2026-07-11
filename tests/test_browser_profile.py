@@ -194,3 +194,79 @@ def test_fetch_canonicalizes_browser_identity_from_configured_auth(tmp_path, mon
     assert usage.status == "ok"
     assert usage.backend_user_id == "user-test"
     assert usage.backend_account_id == "account-uuid"
+
+
+def test_fetch_rejects_browser_auth_identity_changed_during_request(tmp_path, monkeypatch):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+
+    class FakeLocator:
+        def inner_text(self, *, timeout):
+            return "5-hour usage limit 97% Weekly usage limit 55%"
+
+    class FakePage:
+        url = "https://chatgpt.com/codex/cloud/settings/analytics"
+
+        def on(self, *_args):
+            return None
+
+        def goto(self, *_args, **_kwargs):
+            return None
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def locator(self, *_args):
+            return FakeLocator()
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "codex_usage.browser._prepare_profile",
+        lambda _account: tmp_path / "profile",
+    )
+    monkeypatch.setattr("codex_usage.browser._profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr("codex_usage.browser.sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        "codex_usage.browser._launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser.extract_windows",
+        lambda **_kwargs: (
+            LimitWindow(name="5h", remaining=97),
+            LimitWindow(name="weekly", remaining=55),
+        ),
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser.backend_identity_from_candidates",
+        lambda _candidates: ("old-user", "old-account"),
+    )
+    identities = iter(
+        [("old-user", "old-account"), ("new-user", "new-account")]
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser.auth_identity_for_account",
+        lambda _account: next(identities),
+    )
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status == "login_required"
+    assert usage.error == "auth.json identity changed during browser request"
