@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.73 - 2026-07-11
+
+### Fixed
+
+- Prozentfeld-Aliase mit `percentage` werden wie `percent` verarbeitet und
+  nicht als absolute Nutzwerte fehlinterpretiert.
+
 ## 0.6.72 - 2026-07-11
 
 ### Fixed
