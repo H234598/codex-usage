@@ -4,7 +4,7 @@ import base64
 import json
 from datetime import UTC, datetime
 
-from codex_usage.direct import MAX_AUTH_JSON_BYTES, fetch_account_usage_direct
+from codex_usage.direct import MAX_AUTH_JSON_BYTES, _jwt_expiry, fetch_account_usage_direct
 from codex_usage.models import Account, AccountStatus
 
 
@@ -14,6 +14,14 @@ def _jwt_with_exp(expiry: int) -> str:
         b"="
     ).decode()
     return f"{header}.{payload}.signature"
+
+
+def test_jwt_expiry_ignores_non_object_payloads():
+    for claims in ([], None, "not-an-object"):
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=")
+        token = f"e30.{payload.decode('ascii')}.signature"
+
+        assert _jwt_expiry(token) is None
 
 
 def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkeypatch):

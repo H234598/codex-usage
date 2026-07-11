@@ -286,6 +286,8 @@ def _jwt_expiry(token: Any) -> datetime | None:
         claims = json.loads(decoded)
     except (ValueError, OSError, json.JSONDecodeError, UnicodeError):
         return None
+    if not isinstance(claims, dict):
+        return None
     exp = claims.get("exp")
     if not isinstance(exp, (int, float)):
         return None

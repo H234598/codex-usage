@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.51 - 2026-07-11
+
+### Fixed
+
+- JWT payloads in `auth.json` that are valid JSON but not objects are rejected
+  as malformed metadata instead of crashing expiry parsing.
+
 ## 0.6.50 - 2026-07-11
 
 ### Fixed
