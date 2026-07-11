@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.107 - 2026-07-11
+
+### Fixed
+
+- Nicht unterstützte App-Server-Fenster, etwa 30-Tage-Limits, werden nicht
+  mehr fälschlich als 5h- oder Wochenlimit etikettiert.
+- Die App-Server-Zuordnung akzeptiert nur exakte Fensterdauern von 300 bzw.
+  10080 Minuten.
+- Regressionen für einzelne und gemischte unbekannte Fenster ergänzt.
+
 ## 0.6.106 - 2026-07-11
 
 ### Fixed

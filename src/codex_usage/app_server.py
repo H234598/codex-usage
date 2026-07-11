@@ -23,6 +23,8 @@ from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
 APP_SERVER_BACKEND = "app-server"
 APP_SERVER_TIMEOUT_SECONDS = 30
+FIVE_HOUR_WINDOW_MINUTES = 300
+WEEKLY_WINDOW_MINUTES = 10_080
 APP_SERVER_MAX_LINE_BYTES = 2_000_000
 APP_SERVER_MAX_MESSAGES = 100
 APP_SERVER_STDERR_BYTES = 4096
@@ -392,29 +394,14 @@ def _windows_from_response(
     if not candidates:
         return None, None
 
-    with_duration = [
-        item for item in candidates if _strict_int(item[1].get("windowDurationMins")) is not None
-    ]
-    if len(with_duration) == 1:
-        only_item = with_duration[0]
-        duration = _strict_int(only_item[1].get("windowDurationMins")) or 0
-        if abs(duration - 10080) < abs(duration - 300):
-            five_item = None
-            weekly_item = only_item
-        else:
-            five_item = only_item
-            weekly_item = None
-    elif with_duration:
-        five_item = min(
-            with_duration,
-            key=lambda item: abs((_strict_int(item[1].get("windowDurationMins")) or 0) - 300),
-        )
-        weekly_candidates = [item for item in with_duration if item is not five_item]
-        weekly_item = max(
-            weekly_candidates,
-            key=lambda item: _strict_int(item[1].get("windowDurationMins")) or 0,
-            default=None,
-        )
+    with_duration = {
+        _strict_int(item[1].get("windowDurationMins")): item
+        for item in candidates
+        if _strict_int(item[1].get("windowDurationMins")) is not None
+    }
+    if with_duration:
+        five_item = with_duration.get(FIVE_HOUR_WINDOW_MINUTES)
+        weekly_item = with_duration.get(WEEKLY_WINDOW_MINUTES)
     else:
         five_item = candidates[0]
         weekly_item = candidates[1] if len(candidates) > 1 else None

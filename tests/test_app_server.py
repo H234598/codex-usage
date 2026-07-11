@@ -231,6 +231,45 @@ def test_window_mapping_keeps_weekly_only_bucket_as_weekly():
     assert weekly is not None and weekly.used == 12
 
 
+def test_window_mapping_rejects_unsupported_single_duration():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 5,
+                    "windowDurationMins": 43_200,
+                    "resetsAt": 1786342835,
+                }
+            }
+        }
+    )
+
+    assert five is None
+    assert weekly is None
+
+
+def test_window_mapping_does_not_label_unsupported_duration_as_weekly():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 1,
+                    "windowDurationMins": 300,
+                    "resetsAt": 1783769000,
+                },
+                "secondary": {
+                    "usedPercent": 5,
+                    "windowDurationMins": 43_200,
+                    "resetsAt": 1786342835,
+                },
+            }
+        }
+    )
+
+    assert five is not None and five.used == 1
+    assert weekly is None
+
+
 def test_window_mapping_falls_back_when_codex_bucket_is_empty():
     five, weekly = _windows_from_response(
         {
