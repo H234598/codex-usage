@@ -357,6 +357,74 @@ def test_fetch_all_retains_direct_values_across_future_reset_jump(monkeypatch):
     assert result[0].stale is True
 
 
+def test_fetch_all_stabilizes_app_server_against_direct_snapshot(monkeypatch):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        auth_json_path="/tmp/account-auth.json",
+    )
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=91,
+            percent=91,
+            reset_at=datetime(2026, 7, 12, 4, 40, 41, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=89,
+            percent=89,
+            reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="five_hour",
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 12, 4, 41, 59, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 18, 8, 30, 25, tzinfo=timezone),
+        ),
+        backend_used="app-server",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_app_server",
+        lambda selected: current,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", lambda account_id: previous)
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        backend_override="app-server",
+    )
+
+    assert result[0].backend_used == "app-server"
+    assert result[0].five_hour is not None
+    assert result[0].five_hour.remaining == 91
+    assert result[0].weekly is not None
+    assert result[0].weekly.remaining == 89
+    assert result[0].stale is True
+
+
 def test_fetch_all_reuses_direct_reset_fallback_on_next_poll(monkeypatch):
     account = Account(
         id="direct",

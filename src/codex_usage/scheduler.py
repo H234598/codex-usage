@@ -31,8 +31,11 @@ from .state import (
     save_usage_snapshot,
 )
 
+AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 DIRECT_RESET_DISCONTINUITY_SECONDS = 30
-DIRECT_RESET_FALLBACK_REASON = "previous direct limits retained after reset transition"
+AUTHENTICATED_RESET_FALLBACK_REASON = (
+    "previous authenticated limits retained after reset transition"
+)
 
 
 def fetch_all(
@@ -63,10 +66,10 @@ def fetch_all(
             auth_json_path=auth_json_path if (direct or auth_json_path is not None) else None,
             global_lock_held=serial_fetch_required,
         )
-        if usage.status != AccountStatus.OK or usage.backend_used != "direct":
+        if usage.status != AccountStatus.OK or usage.backend_used not in AUTHENTICATED_BACKENDS:
             return usage
         previous = load_usage_snapshot(account.id)
-        return _stabilize_direct_usage(
+        return _stabilize_authenticated_usage(
             usage,
             previous,
             max_age_seconds=max(int(config.interval_seconds), 60) + 60,
@@ -187,7 +190,7 @@ def _fetch_one(
         )
 
 
-def _stabilize_direct_usage(
+def _stabilize_authenticated_usage(
     usage: AccountUsage,
     previous: AccountUsage | None,
     *,
@@ -196,11 +199,14 @@ def _stabilize_direct_usage(
     if (
         previous is None
         or previous.status != AccountStatus.OK
-        or previous.backend_used != "direct"
+        or previous.backend_used not in AUTHENTICATED_BACKENDS
         or not backend_identity_matches(usage, previous)
     ):
         return usage
-    if previous.stale and previous.fallback_reason != DIRECT_RESET_FALLBACK_REASON:
+    if (
+        previous.stale
+        and previous.fallback_reason != AUTHENTICATED_RESET_FALLBACK_REASON
+    ):
         return usage
     try:
         age_seconds = (usage.captured_at - previous.captured_at).total_seconds()
@@ -221,7 +227,7 @@ def _stabilize_direct_usage(
         auth_id_expires_at=usage.auth_id_expires_at,
         backend_configured=usage.backend_configured,
         backend_used=usage.backend_used,
-        fallback_reason=DIRECT_RESET_FALLBACK_REASON,
+        fallback_reason=AUTHENTICATED_RESET_FALLBACK_REASON,
         values_captured_at=previous.values_captured_at or previous.captured_at,
         stale=True,
     )

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.160 - 2026-07-12
+
+### Fixed
+
+- Die Snapshot-Kontinuitätsprüfung gilt jetzt für Direct und App-Server.
+- Ein einzelner inkonsistenter App-Server-Stand kann dadurch keine zuvor
+  bestätigten Werte eines kontengleichen Direct-/App-Server-Snapshots mehr
+  überschreiben.
+- Regression für den Querbackend-Fall mit wechselnden zukünftigen
+  Resetfenstern ergänzt.
+
 ## 0.6.159 - 2026-07-12
 
 ### Fixed
