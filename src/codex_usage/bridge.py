@@ -219,7 +219,7 @@ def _combined_payload_text(payload: dict[str, Any]) -> str:
 
 
 def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate]:
-    candidates: list[JsonCandidate] = []
+    candidates_by_key: dict[tuple[str, str], JsonCandidate] = {}
     for item in payload.get("apiResponses") or payload.get("api_responses") or ():
         if not isinstance(item, dict):
             continue
@@ -235,8 +235,11 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
             continue
         candidate = load_json_candidate(url, body)
         if candidate is not None:
-            candidates.append(candidate)
-    return candidates
+            # Browser hooks retain a short response history. For one endpoint
+            # and status, the last response is the newest usable snapshot.
+            key = (_redact_url(url), str(status if status is not None else ""))
+            candidates_by_key[key] = candidate
+    return list(candidates_by_key.values())
 
 
 def _safe_excerpt(value: str, limit: int = 240) -> str:
@@ -734,6 +737,18 @@ function isCodexUsageExtensionContextError(error) {{
     .includes("extension context invalidated");
 }}
 
+function codexUsageApiResponseKey(item) {{
+  let url = String((item && item.url) || "");
+  try {{
+    const parsed = new URL(url, location.origin);
+    const path = parsed.pathname.replace(/\\/+$/, "") || "/";
+    url = `${{parsed.origin}}${{path}}`;
+  }} catch (_error) {{
+    // Keep malformed diagnostic URLs isolated without breaking the bridge.
+  }}
+  return [item.source || "", url, item.status || ""].join("\\n");
+}}
+
 function stopCodexUsageBridge(reason) {{
   if (codexUsageStopped) {{
     return;
@@ -762,6 +777,13 @@ function rememberCodexUsageApiResponse(item) {{
   if (!item || typeof item !== "object" || !item.url) {{
     return;
   }}
+  const key = codexUsageApiResponseKey(item);
+  for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {{
+    if (codexUsageApiResponseKey(codexUsageCapturedApiResponses[index]) === key) {{
+      codexUsageCapturedApiResponses.splice(index, 1);
+      break;
+    }}
+  }}
   codexUsageCapturedApiResponses.push(item);
   while (codexUsageCapturedApiResponses.length > CODEX_USAGE_CAPTURED_API_LIMIT) {{
     codexUsageCapturedApiResponses.shift();
@@ -774,13 +796,7 @@ function dedupeCodexUsageApiResponses(items) {{
     if (!item || typeof item !== "object" || !item.url) {{
       continue;
     }}
-    const key = [
-      item.source || "",
-      item.url || "",
-      item.status || "",
-      String(item.bodyText || "").slice(0, 200)
-    ].join("\\n");
-    byKey.set(key, item);
+    byKey.set(codexUsageApiResponseKey(item), item);
   }}
   return Array.from(byKey.values()).slice(-CODEX_USAGE_CAPTURED_API_LIMIT);
 }}
@@ -1094,7 +1110,26 @@ def _render_extension_page_hook() -> str:
     }
   }
 
+  function codexUsageApiResponseKey(item) {
+    let url = String((item && item.url) || "");
+    try {
+      const parsed = new URL(url, location.origin);
+      const path = parsed.pathname.replace(/\\/+$/, "") || "/";
+      url = `${parsed.origin}${path}`;
+    } catch (_error) {
+      // Keep malformed diagnostic URLs isolated without breaking the hook.
+    }
+    return [item.source || "", url, item.status || ""].join("\\n");
+  }
+
   function rememberCodexUsageApiResponse(item) {
+    const key = codexUsageApiResponseKey(item);
+    for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {
+      if (codexUsageApiResponseKey(codexUsageCapturedApiResponses[index]) === key) {
+        codexUsageCapturedApiResponses.splice(index, 1);
+        break;
+      }
+    }
     codexUsageCapturedApiResponses.push(item);
     while (codexUsageCapturedApiResponses.length > CODEX_USAGE_CAPTURED_API_LIMIT) {
       codexUsageCapturedApiResponses.shift();

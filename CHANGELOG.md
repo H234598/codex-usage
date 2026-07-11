@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.139 - 2026-07-11
+
+### Fixed
+
+- Die Browser-Bridge ersetzt alte Antworten desselben WHAM-Endpunkts durch
+  die jüngste Antwort, statt eine kurze Historie als aktuelle Daten zu senden.
+- Der Ingest-Parser dedupliziert zusätzlich bereits gespeicherte Payloads pro
+  Endpunkt und HTTP-Status und verwendet den letzten Eintrag.
+- Regression gegen veraltete 5h-/Wochenwerte in einer Antwortliste ergänzt.
+
 ## 0.6.138 - 2026-07-11
 
 ### Fixed

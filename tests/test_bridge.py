@@ -178,6 +178,46 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     assert usage.backend_account_id == "account-test"
 
 
+def test_usage_from_ingest_payload_prefers_latest_response_for_endpoint():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+
+    def response(five_hour: int, weekly: int) -> dict[str, object]:
+        return {
+            "url": "https://chatgpt.com/backend-api/wham/usage?cache=refresh",
+            "status": 200,
+            "contentType": "application/json",
+            "bodyText": json.dumps(
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": five_hour,
+                            "limit_window_seconds": 18000,
+                        },
+                        "secondary_window": {
+                            "used_percent": weekly,
+                            "limit_window_seconds": 604800,
+                        },
+                    }
+                }
+            ),
+        }
+
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": "Codex analytics",
+            "apiResponses": [response(3, 45), response(20, 60)],
+        },
+    )
+
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is not None
+    assert usage.five_hour.used == 20
+    assert usage.weekly is not None
+    assert usage.weekly.used == 60
+
+
 def test_usage_from_ingest_payload_canonicalizes_personal_account_identity(tmp_path):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
@@ -526,6 +566,7 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "extension context invalidated" in content
     assert "codexUsageIntervalId = setInterval" in content
     assert "codexUsageCapturedApiResponses" in content
+    assert "codexUsageApiResponseKey" in content
     assert "window.addEventListener(\"message\"" in content
     assert "codexUsageCapturedApiResponses.length ? [] : await fetchCodexUsageApis()" in content
     assert "document.body.innerText" in content
@@ -548,6 +589,7 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "response.clone()" in page_hook
     assert "window.postMessage" in page_hook
     assert "codexUsageApiResponses" in page_hook
+    assert "codexUsageApiResponseKey" in page_hook
     assert "/backend-api/wham/" in page_hook
     assert 'source: "page-fetch"' in page_hook
 
@@ -629,6 +671,81 @@ setTimeout(() => process.exit(process.exitCode || 0), 40);
 
     result = subprocess.run(
         [node, "-e", harness, str(output / "content.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_page_hook_replaces_stale_endpoint_response(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+let fetchCount = 0;
+const window = {
+  fetch: async () => ({
+    clone() {
+      const bodyText = JSON.stringify({ value: fetchCount++ === 0 ? "old" : "new" });
+      return {
+        status: 200,
+        headers: { get() { return "application/json"; } },
+        text: async () => bodyText
+      };
+    }
+  }),
+  postMessage(message) {
+    messages.push(message);
+  }
+};
+const sandbox = {
+  window,
+  location: { origin: "https://chatgpt.com" },
+  URL,
+  String,
+  Object,
+  Array,
+  Promise,
+  JSON,
+  console,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+async function run() {
+  await window.fetch("https://chatgpt.com/backend-api/wham/usage");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await window.fetch("https://chatgpt.com/backend-api/wham/usage");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const responses = messages.at(-1)?.responses || [];
+  if (responses.length !== 1 || JSON.parse(responses[0].bodyText).value !== "new") {
+    throw new Error(JSON.stringify({ messages, responses }));
+  }
+}
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+setTimeout(() => process.exit(process.exitCode || 0), 100);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "page-hook.js")],
         check=False,
         capture_output=True,
         text=True,
