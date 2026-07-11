@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.113 - 2026-07-11
+
+### Fixed
+
+- Die CLI zeigt bei absoluten `used/limit`-Fenstern jetzt zusätzlich den
+  konsistenten Restprozentsatz an, statt den Nutzungsprozentsatz als aktuellen
+  Restwert erscheinen zu lassen.
+- Regression für `42 / 100` und `310 / 1000` mit `58%` bzw. `69%` Restwert
+  ergänzt.
+
 ## 0.6.112 - 2026-07-11
 
 ### Fixed

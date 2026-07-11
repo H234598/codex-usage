@@ -36,6 +36,8 @@ def test_render_table_contains_values():
     assert "42 / 100" in rendered
     assert "08.06.2026 04:26" in rendered
     assert "310 / 1000" in rendered
+    assert "58% verbleibend" in rendered
+    assert "69% verbleibend" in rendered
     assert "Auth" in rendered
     assert "bis 19.07.2026 23:17" in rendered
 
