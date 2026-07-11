@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.85 - 2026-07-11
+
+### Fixed
+
+- Alle Cinnamon-Timeoutpfade behandeln Exceptions und leere Source-IDs
+  fail-closed.
+- Fehlende Prozess-Timeouts beenden gestartete Kinder kontrolliert; fehlende
+  Refresh-, Anzeige- und Stale-Check-Timer führen in den Safe-Modus.
+- Regressionen für leere Timeout-Quellen ergänzt.
+
 ## 0.6.84 - 2026-07-11
 
 ### Fixed

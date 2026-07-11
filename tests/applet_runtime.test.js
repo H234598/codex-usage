@@ -13,13 +13,14 @@ function loadPrototype(onReady) {
   const runtime = {
     idleAdd: () => 1,
     timeoutAdd: () => 2,
+    timeoutAddSeconds: () => 3,
     launcherFactory: () => { throw new Error("launcher not configured"); },
   };
   const mainloop = {
     idle_add: (...args) => runtime.idleAdd(...args),
     source_remove: () => {},
     timeout_add: (...args) => runtime.timeoutAdd(...args),
-    timeout_add_seconds: () => 3,
+    timeout_add_seconds: (...args) => runtime.timeoutAddSeconds(...args),
   };
   const gio = {
     SubprocessFlags: { STDOUT_PIPE: 1, STDERR_PIPE: 2 },
@@ -699,7 +700,7 @@ test("health timeout clears the process even when force_exit fails", () => {
   assert.equal(applet._healthProcess, null);
 });
 
-test("startup failures terminate every spawned child process", () => {
+test("startup failures and missing timeout sources terminate every spawned child process", () => {
   const invoke = [
     (applet) => {
       let callbacks = 0;
@@ -731,18 +732,47 @@ test("startup failures terminate every spawned child process", () => {
     },
   ];
 
-  for (const start of invoke) {
-    let forced = 0;
-    const applet = makeApplet((runtime) => {
-      runtime.timeoutAdd = () => { throw new Error("timer setup failed"); };
-      runtime.launcherFactory = () => ({
-        setenv() {},
-        spawnv() { return { force_exit() { forced += 1; } }; },
+  for (const timeoutFailure of [
+    () => { throw new Error("timer setup failed"); },
+    () => 0,
+  ]) {
+    for (const start of invoke) {
+      let forced = 0;
+      const applet = makeApplet((runtime) => {
+        runtime.timeoutAdd = timeoutFailure;
+        runtime.launcherFactory = () => ({
+          setenv() {},
+          spawnv() { return { force_exit() { forced += 1; } }; },
+        });
       });
-    });
-    start(applet);
-    assert.equal(forced, 1);
+      start(applet);
+      assert.equal(forced, 1);
+    }
   }
+});
+
+test("refresh and display timers enter safe mode when a timeout source is unavailable", () => {
+  for (const sequence of [[0], [31, 0]]) {
+    let calls = 0;
+    const applet = makeApplet((runtime) => {
+      runtime.timeoutAddSeconds = () => sequence[calls++] || 0;
+    });
+    applet.autoRefresh = true;
+    applet._scheduleTimer();
+    assert.equal(applet._safeMode, true);
+    assert.equal(applet._timerId, 0);
+    assert.equal(applet._displayTimerId, 0);
+  }
+});
+
+test("stale service repair enters safe mode when its timeout source is unavailable", () => {
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = () => 0;
+  });
+  applet._enableBackgroundService = () => {};
+  applet._repairStaleService(() => {});
+  assert.equal(applet._safeMode, true);
+  assert.equal(applet._staleCheckId, 0);
 });
 
 test("successful reactivation queues a refresh behind an active refresh", () => {

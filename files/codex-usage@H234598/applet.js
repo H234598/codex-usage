@@ -291,7 +291,7 @@ CodexUsageApplet.prototype = {
             launcher.setenv("PYTHONUNBUFFERED", "1", true);
             process = launcher.spawnv(argv);
             this._healthProcess = process;
-            this._setSource("_healthTimeoutId", Mainloop.timeout_add(5000, Lang.bind(this, function() {
+            let timeoutId = Mainloop.timeout_add(5000, Lang.bind(this, function() {
                 this._clearSource("_healthTimeoutId");
                 try {
                     process.force_exit();
@@ -300,7 +300,11 @@ CodexUsageApplet.prototype = {
                 }
                 finish();
                 return false;
-            })));
+            }));
+            if (!timeoutId) {
+                throw new Error("health timeout source unavailable");
+            }
+            this._setSource("_healthTimeoutId", timeoutId);
             this._readBoundedProcessOutput(process, Lang.bind(this, function() {
                 finish();
             }));
@@ -490,48 +494,70 @@ CodexUsageApplet.prototype = {
 
     _scheduleTimer: function() {
         this._removeSource("_timerId");
-        this._scheduleDisplayTimer();
+        if (!this._scheduleDisplayTimer()) {
+            return;
+        }
         if (!this.autoRefresh || this._removed) {
             return;
         }
         let seconds = this._boundedInteger(this.refreshInterval, 60, 3600, 300);
-        this._setSource("_timerId", Mainloop.timeout_add_seconds(seconds, Lang.bind(this, function() {
-            if (this._removed) {
-                this._clearSource("_timerId");
-                return false;
-            }
-            this._runSafely("refresh timer", Lang.bind(this, function() {
-                if (this._usesAppletPolling()) {
-                    this._refreshFresh(false);
-                } else {
-                    this._loadCached(false);
+        try {
+            let timerId = Mainloop.timeout_add_seconds(seconds, Lang.bind(this, function() {
+                if (this._removed) {
+                    this._clearSource("_timerId");
+                    return false;
                 }
+                this._runSafely("refresh timer", Lang.bind(this, function() {
+                    if (this._usesAppletPolling()) {
+                        this._refreshFresh(false);
+                    } else {
+                        this._loadCached(false);
+                    }
+                }));
+                return true;
             }));
-            return true;
-        })));
+            if (!timerId) {
+                throw new Error("refresh timer source unavailable");
+            }
+            this._setSource("_timerId", timerId);
+        } catch (e) {
+            global.log("[" + UUID + "] refresh timer setup failed: " + this._shortText(e, 180));
+            this._enterSafeMode("Refresh-Timer konnte nicht eingerichtet werden");
+        }
     },
 
     _scheduleDisplayTimer: function() {
         this._removeSource("_displayTimerId");
         if (this._removed) {
-            return;
+            return false;
         }
-        this._setSource("_displayTimerId", Mainloop.timeout_add_seconds(60, Lang.bind(this, function() {
-            if (this._removed) {
-                this._clearSource("_displayTimerId");
-                return false;
-            }
-            this._runSafely("display timer", Lang.bind(this, function() {
-                if (this._safeMode) {
-                    return;
+        try {
+            let timerId = Mainloop.timeout_add_seconds(60, Lang.bind(this, function() {
+                if (this._removed) {
+                    this._clearSource("_displayTimerId");
+                    return false;
                 }
-                this._updatePanel();
-                if (this.menu && this.menu.isOpen) {
-                    this._buildUsageMenu();
-                }
+                this._runSafely("display timer", Lang.bind(this, function() {
+                    if (this._safeMode) {
+                        return;
+                    }
+                    this._updatePanel();
+                    if (this.menu && this.menu.isOpen) {
+                        this._buildUsageMenu();
+                    }
+                }));
+                return true;
             }));
+            if (!timerId) {
+                throw new Error("display timer source unavailable");
+            }
+            this._setSource("_displayTimerId", timerId);
             return true;
-        })));
+        } catch (e) {
+            global.log("[" + UUID + "] display timer setup failed: " + this._shortText(e, 180));
+            this._enterSafeMode("Anzeige-Timer konnte nicht eingerichtet werden");
+            return false;
+        }
     },
 
     _loadCached: function(refreshAfter) {
@@ -811,7 +837,7 @@ CodexUsageApplet.prototype = {
             launcher.setenv("PYTHONUNBUFFERED", "1", true);
             process = launcher.spawnv(argv);
             this._process = process;
-            this._setSource("_timeoutId", Mainloop.timeout_add(COMMAND_TIMEOUT_MS, Lang.bind(this, function() {
+            let timeoutId = Mainloop.timeout_add(COMMAND_TIMEOUT_MS, Lang.bind(this, function() {
                 this._clearSource("_timeoutId");
                 try {
                     process.force_exit();
@@ -820,7 +846,11 @@ CodexUsageApplet.prototype = {
                 }
                 finish(null, _("Abruf nach 120 Sekunden abgebrochen"));
                 return false;
-            })));
+            }));
+            if (!timeoutId) {
+                throw new Error("primary timeout source unavailable");
+            }
+            this._setSource("_timeoutId", timeoutId);
             this._readBoundedProcessOutput(process, Lang.bind(this, function(stdout, stderr, outputError) {
                 if (outputError) {
                     finish(null, outputError);
@@ -952,17 +982,26 @@ CodexUsageApplet.prototype = {
         this._serviceRepairAt = now;
         this._enableBackgroundService(after);
         this._removeSource("_staleCheckId");
-        this._setSource("_staleCheckId", Mainloop.timeout_add(60000, Lang.bind(this, function() {
-            this._clearSource("_staleCheckId");
-            if (this._removed || !this._cacheIsStale()) {
+        try {
+            let staleCheckId = Mainloop.timeout_add(60000, Lang.bind(this, function() {
+                this._clearSource("_staleCheckId");
+                if (this._removed || !this._cacheIsStale()) {
+                    return false;
+                }
+                if (Date.now() - this._staleFallbackAt >= CIRCUIT_BREAKER_MS) {
+                    this._staleFallbackAt = Date.now();
+                    this._refreshFresh(false);
+                }
                 return false;
+            }));
+            if (!staleCheckId) {
+                throw new Error("stale check source unavailable");
             }
-            if (Date.now() - this._staleFallbackAt >= CIRCUIT_BREAKER_MS) {
-                this._staleFallbackAt = Date.now();
-                this._refreshFresh(false);
-            }
-            return false;
-        })));
+            this._setSource("_staleCheckId", staleCheckId);
+        } catch (e) {
+            global.log("[" + UUID + "] stale check setup failed: " + this._shortText(e, 180));
+            this._enterSafeMode("Stale-Prüfung konnte nicht eingerichtet werden");
+        }
     },
 
     _loadAccountBackends: function() {
@@ -1920,7 +1959,7 @@ CodexUsageApplet.prototype = {
             launcher.setenv("PYTHONUNBUFFERED", "1", true);
             process = launcher.spawnv(argv);
             this._auxProcess = process;
-            this._setSource("_auxTimeoutId", Mainloop.timeout_add(
+            let timeoutId = Mainloop.timeout_add(
                 AUX_COMMAND_TIMEOUT_MS,
                 Lang.bind(this, function() {
                     this._clearSource("_auxTimeoutId");
@@ -1932,7 +1971,11 @@ CodexUsageApplet.prototype = {
                     finish(null, _("Hilfsbefehl nach 30 Sekunden abgebrochen"));
                     return false;
                 })
-            ));
+            );
+            if (!timeoutId) {
+                throw new Error("auxiliary timeout source unavailable");
+            }
+            this._setSource("_auxTimeoutId", timeoutId);
             this._readBoundedProcessOutput(process, Lang.bind(this, function(stdout, stderr, outputError) {
                 if (outputError) {
                     finish(null, outputError);
@@ -2441,7 +2484,7 @@ CodexUsageApplet.prototype = {
             );
             launcher.setenv("PYTHONUNBUFFERED", "1", true);
             record.process = launcher.spawnv(argv);
-            record.timeoutId = Mainloop.timeout_add(
+            let timeoutId = Mainloop.timeout_add(
                 REACTIVATION_TIMEOUT_MS,
                 Lang.bind(this, function() {
                     record.timeoutId = 0;
@@ -2454,6 +2497,10 @@ CodexUsageApplet.prototype = {
                     return false;
                 })
             );
+            if (!timeoutId) {
+                throw new Error("reactivation timeout source unavailable");
+            }
+            record.timeoutId = timeoutId;
             this._readBoundedProcessOutput(record.process, Lang.bind(this, function(stdout, stderr, outputError) {
                     if (outputError) {
                         finish(null, outputError);
