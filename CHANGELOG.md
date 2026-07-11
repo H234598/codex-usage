@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.45 - 2026-07-11
+
+### Fixed
+
+- Closed App Server pipes now produce a bounded reader error instead of
+  silently terminating the reader thread and waiting for a timeout.
+
 ## 0.6.44 - 2026-07-11
 
 ### Fixed

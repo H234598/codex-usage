@@ -263,3 +263,16 @@ def test_line_reader_keeps_oversize_error_when_queue_is_full():
     errors = [item for item in items if isinstance(item, AppServerProtocolError)]
     assert errors
     assert "response is too large" in str(errors[0])
+
+
+def test_line_reader_reports_closed_pipe_errors():
+    class ClosedStream:
+        def readline(self, _limit):
+            raise ValueError("I/O operation on closed file")
+
+    reader = _LineReader(ClosedStream())
+    reader.run()
+
+    item = reader.items.get_nowait()
+    assert isinstance(item, AppServerProtocolError)
+    assert "could not read" in str(item)

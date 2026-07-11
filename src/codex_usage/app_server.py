@@ -507,7 +507,7 @@ class _LineReader(threading.Thread):
                         replace_oldest=True,
                     )
                     return
-        except OSError:
+        except (OSError, ValueError):
             self._put_item(
                 AppServerProtocolError("could not read codex app server output"),
                 replace_oldest=True,
@@ -550,7 +550,7 @@ class _StderrReader(threading.Thread):
                     kept = chunk[: APP_SERVER_STDERR_BYTES - self._size]
                     self._chunks.append(kept)
                     self._size += len(kept)
-        except OSError:
+        except (OSError, ValueError):
             return
 
     def text(self) -> str:
