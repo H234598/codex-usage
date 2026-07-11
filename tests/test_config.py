@@ -200,6 +200,27 @@ id = "privat"
         load_config(config_path)
 
 
+def test_load_config_rejects_label_matching_another_account_id(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        """
+[[accounts]]
+id = "privat"
+label = "work"
+profile_dir = "/tmp/privat"
+
+[[accounts]]
+id = "work"
+label = "Work"
+profile_dir = "/tmp/work"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="label conflicts with another account id"):
+        load_config(config_path)
+
+
 def test_save_config_rejects_shared_profile_directory(tmp_path):
     profile = tmp_path / "profiles" / "shared"
     config = AppConfig(

@@ -270,9 +270,14 @@ def _prepare_profile_dir(profile_dir: str) -> Path:
 
 def _validate_unique_accounts(accounts: tuple[Account, ...]) -> None:
     seen: set[str] = set()
+    ids = {account.id for account in accounts}
     for account in accounts:
         if account.id in seen:
             raise ValueError(f"duplicate account id: {account.id}")
+        if account.label in ids and account.label != account.id:
+            raise ValueError(
+                f"account label conflicts with another account id: {account.label}"
+            )
         seen.add(account.id)
 
 

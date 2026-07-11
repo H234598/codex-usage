@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.136 - 2026-07-11
+
+### Fixed
+
+- Konfigurationen mit einem Account-Label, das exakt die ID eines anderen
+  Accounts verwendet, werden jetzt abgewiesen.
+- Dadurch kann eine CLI-Referenz nicht mehr stillschweigend wegen der
+  ID-vor-Label-Priorität auf das falsche Konto zeigen.
+- Regression für die Label-/ID-Kollision ergänzt.
+
 ## 0.6.135 - 2026-07-11
 
 ### Fixed
