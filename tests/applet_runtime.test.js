@@ -1405,6 +1405,32 @@ test("backend account maps preserve prototype-like account ids", () => {
   assert.equal(applet._backendAccounts["__proto__"].label, "Prototype");
 });
 
+test("backend synchronization requests configuration without a live usage poll", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._syncAccountSettings = () => {};
+  applet._syncStyleRows = () => {};
+  applet._addIdle = () => {};
+  applet._refreshFormattedSurfaces = () => {};
+  let argv = null;
+  applet._spawnAuxJson = (value, callback) => {
+    argv = value;
+    callback({ accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }] }, null);
+  };
+
+  applet._loadAccountBackends();
+
+  assert.deepEqual(argv, [
+    "codex-usage",
+    "account",
+    "overview",
+    "--format",
+    "json",
+    "--config-only",
+  ]);
+});
+
 test("backend overview rejects duplicate account ids without replacing state", () => {
   const applet = makeApplet();
   applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };

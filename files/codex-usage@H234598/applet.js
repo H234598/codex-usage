@@ -1101,7 +1101,7 @@ CodexUsageApplet.prototype = {
         } catch (e) {
             return;
         }
-        argv.push("account", "overview", "--format", "json");
+        argv.push("account", "overview", "--format", "json", "--config-only");
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
             if (error || !payload || !Array.isArray(payload.accounts)) {
                 return;

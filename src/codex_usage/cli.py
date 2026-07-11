@@ -56,7 +56,7 @@ Accounts:
                                    [--browser BROWSER] [--auth-json PATH]
                                    [--backend direct|app-server]
   codex-usage account backend ACCOUNT direct|app-server [--format table|json]
-  codex-usage account overview [--format table|json]
+  codex-usage account overview [--format table|json] [--config-only]
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
 
 Login und Reaktivierung:
@@ -187,6 +187,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Account-Uebersicht mit aktuellen Werten anzeigen",
     )
     overview.add_argument("--format", choices=("table", "json"), default="table")
+    overview.add_argument(
+        "--config-only",
+        action="store_true",
+        help="Nur konfigurierte Accounts ohne Live-Abruf anzeigen",
+    )
     overview.set_defaults(func=_cmd_account_overview)
     backend = account_sub.add_parser("backend", help="Abrufweg eines Accounts setzen")
     backend.add_argument("account", help="Account-ID oder eindeutiges Label")
@@ -381,7 +386,7 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
 
 def _cmd_account_overview(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    usages = _load_overview_usages(config)
+    usages = {} if args.config_only else _load_overview_usages(config)
     if args.format == "json":
         usages_by_account = {usage.account_id: usage for usage in usages.values()}
         payload = {

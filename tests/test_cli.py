@@ -54,6 +54,7 @@ def test_root_help_lists_all_commands(capsys):
     assert "--browser BROWSER" in output
     assert "codex-usage account list" not in output
     assert "codex-usage account overview" in output
+    assert "--config-only" in output
     assert "codex-usage account backend ACCOUNT direct|app-server" in output
     assert "codex-usage account delete ACCOUNT" in output
     assert "codex-usage login ACCOUNT" in output
@@ -121,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.137\ncodex-usage 0.6.137\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.138\ncodex-usage 0.6.138\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -717,6 +718,43 @@ def test_account_overview_shows_config_and_accounts(tmp_path, monkeypatch, capsy
     assert "vorhanden" in output
     assert "5h Wert" in output
     assert "Woche Wert" in output
+
+
+def test_account_overview_config_only_skips_live_fetch(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "privat",
+            "--label",
+            "BW_Privat",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    def fail_live_fetch(*_args, **_kwargs):
+        raise AssertionError("config-only overview must not fetch usage")
+
+    monkeypatch.setattr("codex_usage.cli._load_overview_usages", fail_live_fetch)
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "overview",
+            "--format",
+            "json",
+            "--config-only",
+        ]
+    ) == 0
+
+    account = json.loads(capsys.readouterr().out)["accounts"][0]
+    assert account["id"] == "privat"
+    assert account["backend"] == "direct"
+    assert account["usage"] is None
 
 
 def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys):

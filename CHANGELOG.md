@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.138 - 2026-07-11
+
+### Fixed
+
+- Das Applet synchronisiert Account-IDs, Labels und Abrufwege jetzt über
+  `account overview --config-only`, ohne dabei einen zweiten Live-Poll aller
+  Accounts auszulösen.
+- Die normale `account overview`-Ausgabe bleibt live und zeigt weiterhin die
+  aktuellen Werte.
+- Regressionen prüfen die CLI-Option und den Applet-Aufruf.
+
 ## 0.6.137 - 2026-07-11
 
 ### Fixed
