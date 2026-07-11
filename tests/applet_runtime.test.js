@@ -1080,7 +1080,7 @@ test("a valid inactive service status retries after a previous activation", () =
   applet._spawnAuxJson = (argv, callback) => {
     calls.push(argv.slice(1).join(" "));
     if (argv.includes("status")) {
-      callback({ enabled: false, active: false }, null);
+      callback({ installed: true, enabled: false, active: false }, null);
     }
   };
 
@@ -1116,6 +1116,52 @@ test("an active unmanaged timer is not treated as the poll owner", () => {
     "service status --format json",
     "service enable --format json",
   ]);
+});
+
+test("malformed service status values do not become the poll owner", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._serviceChecked = false;
+  applet._systemdActive = false;
+  applet._serviceAutoAttempted = false;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._cacheIsStale = () => false;
+  const calls = [];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv.slice(1).join(" "));
+    if (argv.includes("status")) {
+      callback({ installed: "false", enabled: true, active: true }, null);
+    }
+  };
+
+  applet._checkServiceStatus(() => {});
+  assert.equal(applet._systemdActive, false);
+  assert.deepEqual(calls, [
+    "service status --format json",
+    "service enable --format json",
+  ]);
+});
+
+test("service enable requires strict ownership booleans", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._refreshFresh = () => {};
+  applet._spawnAuxJson = (_argv, callback) => {
+    callback({ installed: true, enabled: "true", active: true }, null);
+  };
+  let error = "";
+  applet._showCommandError = (value) => { error = value; };
+
+  applet._enableBackgroundService();
+  assert.equal(applet._systemdActive, false);
+  assert.equal(applet._serviceAutoAttempted, false);
+  assert.notEqual(error, "");
 });
 
 test("stale service repair finishes before the auxiliary continuation", () => {

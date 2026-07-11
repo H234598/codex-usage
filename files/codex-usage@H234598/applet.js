@@ -865,7 +865,11 @@ CodexUsageApplet.prototype = {
         argv.push("service", "status", "--format", "json");
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
             let wasChecked = this._serviceChecked;
-            let validStatus = !error && payload && typeof payload === "object" && !Array.isArray(payload);
+            let validStatus = !error && payload && typeof payload === "object" &&
+                !Array.isArray(payload) &&
+                typeof payload.installed === "boolean" &&
+                typeof payload.enabled === "boolean" &&
+                typeof payload.active === "boolean";
             this._serviceChecked = true;
             if (validStatus) {
                 this._serviceStatus = payload;
@@ -1805,9 +1809,9 @@ CodexUsageApplet.prototype = {
             if (
                 error ||
                 !payload ||
-                !payload.installed ||
-                !payload.enabled ||
-                !payload.active
+                payload.installed !== true ||
+                payload.enabled !== true ||
+                payload.active !== true
             ) {
                 this._serviceAutoAttempted = false;
                 this._showCommandError(error || _("systemd-Timer konnte nicht aktiviert werden"));

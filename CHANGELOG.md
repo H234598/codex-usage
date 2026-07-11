@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.41 - 2026-07-11
+
+### Fixed
+
+- Applet systemd ownership detection now accepts only strict boolean status
+  fields, so malformed helper output cannot disable the applet poller.
+
 ## 0.6.40 - 2026-07-11
 
 ### Fixed
