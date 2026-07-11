@@ -9,6 +9,8 @@ import pytest
 from codex_usage.direct import (
     MAX_AUTH_JSON_BYTES,
     DirectAuthError,
+    DirectFetchError,
+    _fetch_stable_wham_usage,
     _jwt_expiry,
     auth_identity_from_payload,
     fetch_account_usage_direct,
@@ -201,6 +203,28 @@ def test_fetch_account_usage_direct_prefers_majority_response(tmp_path, monkeypa
     assert usage.five_hour.remaining == 97
     assert usage.weekly is not None
     assert usage.weekly.remaining == 55
+
+
+def test_fetch_stable_wham_usage_rejects_missing_quorum(monkeypatch):
+    responses = iter(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1780894250 + index * 600,
+                }
+            }
+        }
+        for index, used in enumerate((3, 4, 5))
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
 def test_fetch_account_usage_direct_rejects_auth_identity_changed_during_request(

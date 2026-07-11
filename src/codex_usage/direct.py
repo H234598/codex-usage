@@ -463,14 +463,17 @@ def _fetch_stable_wham_usage(
     groups: dict[tuple, list[tuple[int, dict[str, Any]]]] = {}
     for index, payload in enumerate(payloads):
         groups.setdefault(_usage_response_signature(payload), []).append((index, payload))
-    return max(
+    best_group = max(
         groups.values(),
         key=lambda group: (
             len(group),
             _usage_response_completeness(group[0][1]),
             -group[0][0],
         ),
-    )[0][1]
+    )
+    if len(best_group) * 2 <= len(payloads):
+        raise DirectFetchError("direct response limits were inconsistent across samples")
+    return best_group[0][1]
 
 
 def _usage_response_signature(payload: dict[str, Any]) -> tuple:

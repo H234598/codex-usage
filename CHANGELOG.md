@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.153 - 2026-07-12
+
+### Fixed
+
+- Der Direct-Abruf verwirft drei nicht übereinstimmende Backend-Samples
+  jetzt fail-closed, statt bei fehlendem Quorum die erste Antwort anzuzeigen.
+- Regression für drei unterschiedliche Limitstände ergänzt.
+
 ## 0.6.152 - 2026-07-11
 
 ### Fixed
