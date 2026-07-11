@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.115 - 2026-07-11
+
+### Fixed
+
+- Reaktivierung meldet ein `auth.json` mit leerem `access_token` nicht mehr
+  fälschlich als erfolgreich.
+- Regression für die Inhaltsprüfung des frisch geschriebenen Tokens ergänzt.
+
 ## 0.6.114 - 2026-07-11
 
 ### Fixed

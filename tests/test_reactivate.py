@@ -15,6 +15,7 @@ from codex_usage.models import Account
 from codex_usage.reactivate import (
     OAUTH_PROFILE_MARKER,
     ReactivationError,
+    _validate_refreshed_auth,
     reactivate_account,
 )
 
@@ -84,6 +85,18 @@ def test_reactivate_account_uses_isolated_codex_home(tmp_path, monkeypatch):
     )
     assert "OPENAI_API_KEY" not in captured["env"]
     assert (profile_root / "oauth" / "vivaldi" / OAUTH_PROFILE_MARKER).is_file()
+
+
+def test_validate_refreshed_auth_rejects_empty_access_token(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"auth_mode": "chatgpt", "tokens": {"access_token": ""}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    with pytest.raises(ReactivationError, match="without an access token"):
+        _validate_refreshed_auth(auth_path)
 
 
 def test_oauth_browser_launches_vivaldi_with_isolated_profile(tmp_path, monkeypatch):

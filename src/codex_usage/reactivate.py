@@ -200,7 +200,8 @@ def _validate_refreshed_auth(path: Path) -> dict[str, datetime | None]:
     if not isinstance(payload, dict):
         raise ReactivationError("login completed without a valid auth.json")
     tokens = payload.get("tokens")
-    if not isinstance(tokens, dict) or not isinstance(tokens.get("access_token"), str):
+    access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
+    if not isinstance(access_token, str) or not access_token.strip():
         raise ReactivationError("login completed without an access token")
     metadata = auth_metadata_from_payload(payload)
     expiry = metadata.get("auth_access_expires_at")
