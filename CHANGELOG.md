@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.88 - 2026-07-11
+
+### Fixed
+
+- Cache- und Reaktivierungs-Follow-ups gehen bei Payload- oder Menüfehlern
+  nicht mehr verloren.
+- UI-Fehler beim Start eines Fresh-Abrufs lassen `_refreshing` nicht dauerhaft
+  gesetzt; Applet-Entfernung bereinigt den Zustand ebenfalls.
+- Regressionen für Queue-Drain und Refresh-Setup ergänzt.
+
 ## 0.6.87 - 2026-07-11
 
 ### Fixed

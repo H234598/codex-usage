@@ -538,6 +538,55 @@ test("primary request queue drains even when payload handling throws", () => {
   assert.equal(applet._refreshing, true);
 });
 
+test("cache refresh intent survives a payload handling failure", () => {
+  const applet = makeApplet();
+  applet.autoRefresh = true;
+  applet._usesAppletPolling = () => true;
+  applet._resolveCommand = () => "/usr/bin/codex-usage";
+  applet._applyPayload = () => { throw new Error("payload handler failed"); };
+  applet._refreshAuxiliaryState = () => {};
+  let freshRequests = 0;
+  applet._refreshFresh = () => { freshRequests += 1; };
+  const callbacks = [];
+  applet._spawnJsonArray = (_argv, callback, request) => {
+    applet._primaryRequest = request;
+    callbacks.push(callback);
+  };
+
+  applet._loadCached(true);
+  applet._primaryRequest = null;
+  assert.throws(() => callbacks[0]([{ account: "alpha" }], null), /payload handler failed/);
+  assert.equal(freshRequests, 1);
+});
+
+test("fresh reactivation refresh survives a payload handling failure", () => {
+  const applet = makeApplet();
+  applet._applyPayload = () => { throw new Error("fresh payload failed"); };
+  applet._updatePanel = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._buildLoadingMenu = () => {};
+  applet._reactivationRefreshPending = true;
+  const callbacks = [];
+  applet._spawnUsageCommand = (_subcommand, callback) => {
+    callbacks.push(callback);
+  };
+
+  applet._refreshFresh(false);
+  assert.throws(() => callbacks[0]([{ account: "alpha" }], null), /fresh payload failed/);
+
+  assert.equal(callbacks.length, 2);
+  assert.equal(applet._refreshing, true);
+  assert.equal(applet._reactivationRefreshPending, false);
+});
+
+test("refresh setup failures do not leave the refreshing flag set", () => {
+  const applet = makeApplet();
+  applet._updatePanel = () => { throw new Error("panel update failed"); };
+
+  assert.throws(() => applet._refreshFresh(false), /panel update failed/);
+  assert.equal(applet._refreshing, false);
+});
+
 test("legacy conditional style rows migrate to the corresponding mode", () => {
   const applet = makeApplet();
   const migrated = applet._normalizeStyleRow(

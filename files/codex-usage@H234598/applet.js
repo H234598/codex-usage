@@ -583,15 +583,18 @@ CodexUsageApplet.prototype = {
             if (this._safeMode) {
                 return;
             }
-            if (payload) {
-                this._applyPayload(payload, false);
-            } else if (!this._usages.length && error) {
-                this._showCommandError(error);
+            try {
+                if (payload) {
+                    this._applyPayload(payload, false);
+                } else if (!this._usages.length && error) {
+                    this._showCommandError(error);
+                }
+            } finally {
+                if (refreshAfter && this.autoRefresh && this._usesAppletPolling()) {
+                    this._primaryFreshPending = true;
+                }
+                this._refreshAuxiliaryState();
             }
-            if (refreshAfter && this.autoRefresh && this._usesAppletPolling()) {
-                this._primaryFreshPending = true;
-            }
-            this._refreshAuxiliaryState();
         }));
     },
 
@@ -623,30 +626,46 @@ CodexUsageApplet.prototype = {
             this._refreshFailures = 0;
         }
         this._refreshing = true;
-        this._updatePanel();
-        if (this._usages.length) {
-            this._buildUsageMenu();
-        } else {
-            this._buildLoadingMenu(_("Aktualisiere Accounts …"));
-        }
-        this._spawnUsageCommand("once", Lang.bind(this, function(payload, error) {
-            this._refreshing = false;
-            let refreshAfterReactivation = this._reactivationRefreshPending;
-            this._reactivationRefreshPending = false;
-            if (payload) {
-                this._recordRefreshSuccess();
-                this._applyPayload(payload, true);
+        try {
+            this._updatePanel();
+            if (this._usages.length) {
+                this._buildUsageMenu();
             } else {
-                this._recordRefreshFailure(error || _("Abruf fehlgeschlagen"));
-                this._showCommandError(this._lastRefreshError);
+                this._buildLoadingMenu(_("Aktualisiere Accounts …"));
             }
-            if (openAfter && !this.menu.isOpen) {
-                this.menu.toggle();
-            }
-            if (refreshAfterReactivation && !this._removed && !this._safeMode) {
-                this._refreshFresh(false);
-            }
-        }));
+            this._spawnUsageCommand("once", Lang.bind(this, function(payload, error) {
+                this._refreshing = false;
+                let refreshAfterReactivation = this._reactivationRefreshPending;
+                this._reactivationRefreshPending = false;
+                try {
+                    if (payload) {
+                        this._recordRefreshSuccess();
+                        this._applyPayload(payload, true);
+                    } else {
+                        this._recordRefreshFailure(error || _("Abruf fehlgeschlagen"));
+                        this._showCommandError(this._lastRefreshError);
+                    }
+                } finally {
+                    if (
+                        openAfter &&
+                        !this._removed &&
+                        !this._safeMode &&
+                        this.menu &&
+                        !this.menu.isOpen
+                    ) {
+                        this._runSafely("open menu after refresh", Lang.bind(this, function() {
+                            this.menu.toggle();
+                        }));
+                    }
+                    if (refreshAfterReactivation && !this._removed && !this._safeMode) {
+                        this._refreshFresh(false);
+                    }
+                }
+            }));
+        } catch (e) {
+            this._refreshing = false;
+            throw e;
+        }
     },
 
     _drainPrimaryRequests: function() {
@@ -3498,6 +3517,7 @@ CodexUsageApplet.prototype = {
 
     on_applet_removed_from_panel: function() {
         this._removed = true;
+        this._refreshing = false;
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
         this._backendAuxQueue = [];
