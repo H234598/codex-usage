@@ -18,7 +18,7 @@ from .config import AppConfig
 from .direct import DirectAuthError, auth_metadata_from_payload, read_auth_json_file
 from .extractor import JsonCandidate, extract_windows
 from .json_utils import loads_strict
-from .models import Account, AccountStatus, AccountUsage
+from .models import Account, AccountStatus, AccountUsage, LimitWindow
 from .private_io import (
     assert_no_symlink_ancestors,
 )
@@ -495,17 +495,23 @@ def _status_for_result(
     *,
     body_text: str,
     current_url: str,
-    five_hour: object,
-    weekly: object,
+    five_hour: LimitWindow | None,
+    weekly: LimitWindow | None,
 ) -> AccountStatus:
     lower = body_text.lower()
     if "auth" in current_url.lower() or (
-        not five_hour and not weekly and any(hint in lower for hint in LOGIN_HINTS)
+        not _has_usage_value(five_hour)
+        and not _has_usage_value(weekly)
+        and any(hint in lower for hint in LOGIN_HINTS)
     ):
         return AccountStatus.LOGIN_REQUIRED
-    if not five_hour or not weekly:
+    if not _has_usage_value(five_hour) or not _has_usage_value(weekly):
         return AccountStatus.PARTIAL
     return AccountStatus.OK
+
+
+def _has_usage_value(window: LimitWindow | None) -> bool:
+    return window is not None and window.has_usage_value
 
 
 def _launch_persistent_context(

@@ -39,6 +39,13 @@ class LimitWindow:
     def is_complete(self) -> bool:
         return self.used is not None and self.limit is not None and self.reset_at is not None
 
+    @property
+    def has_usage_value(self) -> bool:
+        return any(
+            value is not None
+            for value in (self.used, self.limit, self.remaining, self.percent)
+        )
+
 
 @dataclass(frozen=True)
 class AccountUsage:

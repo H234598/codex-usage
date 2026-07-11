@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 
 from .extractor import JsonCandidate, extract_windows
 from .json_utils import loads_strict
-from .models import Account, AccountStatus, AccountUsage
+from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 MAX_RESPONSE_BYTES = 2_000_000
@@ -55,7 +55,11 @@ def fetch_account_usage_direct(
             json_candidates=(candidate,),
             now=captured_at,
         )
-        status = AccountStatus.OK if five_hour and weekly else AccountStatus.PARTIAL
+        status = (
+            AccountStatus.OK
+            if _has_usage_values(five_hour, weekly)
+            else AccountStatus.PARTIAL
+        )
         error = None if status == AccountStatus.OK else "usage limits not found in direct response"
         return AccountUsage(
             account_id=account.id,
@@ -308,4 +312,16 @@ def _expired_auth_error(account_id: str, expiry: datetime | None) -> str:
         "auth.json access_token expired at "
         f"{expiry.astimezone().strftime('%d.%m.%Y %H:%M')}; "
         f"run `codex-usage reactivate {account_id}`"
+    )
+
+
+def _has_usage_values(
+    five_hour: LimitWindow | None,
+    weekly: LimitWindow | None,
+) -> bool:
+    return bool(
+        five_hour is not None
+        and weekly is not None
+        and five_hour.has_usage_value
+        and weekly.has_usage_value
     )

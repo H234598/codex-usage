@@ -84,7 +84,14 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         json_candidates=json_candidates,
         now=captured_at,
     )
-    status = AccountStatus.OK if five_hour and weekly else AccountStatus.PARTIAL
+    status = (
+        AccountStatus.OK
+        if five_hour is not None
+        and weekly is not None
+        and five_hour.has_usage_value
+        and weekly.has_usage_value
+        else AccountStatus.PARTIAL
+    )
     error = _ingest_error(body_text, payload) if status != AccountStatus.OK else None
     source_urls = {_redact_url(str(payload.get("url") or ""))}
     source_urls.update(_redact_url(candidate.url) for candidate in json_candidates)

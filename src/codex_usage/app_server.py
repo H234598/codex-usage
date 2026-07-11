@@ -67,7 +67,14 @@ def fetch_account_usage_app_server(
         )
         _, auth_metadata = _auth_context(account)
         five_hour, weekly = _windows_from_response(payload)
-        status = AccountStatus.OK if five_hour and weekly else AccountStatus.PARTIAL
+        status = (
+            AccountStatus.OK
+            if five_hour is not None
+            and weekly is not None
+            and five_hour.has_usage_value
+            and weekly.has_usage_value
+            else AccountStatus.PARTIAL
+        )
         return AccountUsage(
             account_id=account.id,
             label=account.label,

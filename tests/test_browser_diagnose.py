@@ -10,10 +10,11 @@ from codex_usage.browser import (
     _redact_url,
     _save_diagnostic_screenshot,
     _save_probe_payloads,
+    _status_for_result,
 )
 from codex_usage.direct import MAX_AUTH_JSON_BYTES
 from codex_usage.extractor import JsonCandidate
-from codex_usage.models import Account
+from codex_usage.models import Account, AccountStatus, LimitWindow
 
 
 class FakeScreenshotPage:
@@ -105,6 +106,20 @@ def test_diagnose_detects_cloudflare_challenge_and_redacts_url():
             [{"status": 200, "url": challenge_url}],
         )
         == "cloudflare"
+    )
+
+
+def test_status_for_result_marks_reset_only_windows_partial():
+    window = LimitWindow(name="5h", reset_at=None)
+
+    assert (
+        _status_for_result(
+            body_text="Codex analytics",
+            current_url="https://chatgpt.com/codex/cloud/settings/analytics",
+            five_hour=window,
+            weekly=window,
+        )
+        == AccountStatus.PARTIAL
     )
 
 

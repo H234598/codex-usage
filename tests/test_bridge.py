@@ -61,6 +61,24 @@ def test_usage_from_ingest_payload_reports_empty_text_context():
     assert "textLength=0" in usage.error
 
 
+def test_usage_from_ingest_payload_marks_reset_only_windows_partial():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": """
+            5 Stunden Nutzungsgrenze
+            Zurücksetzungen 08.06.2026 04:26
+            Wöchentliches Nutzungslimit
+            Zurücksetzungen 14.06.2026 04:26
+            """,
+        },
+    )
+
+    assert usage.status == AccountStatus.PARTIAL
+
+
 def test_usage_from_ingest_payload_uses_full_dom_payload_fields():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(

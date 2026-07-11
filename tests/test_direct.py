@@ -86,6 +86,54 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert usage.weekly.remaining == 55
 
 
+def test_fetch_account_usage_direct_marks_reset_only_windows_partial(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    class FakeResponse:
+        def __init__(self):
+            self.headers = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "limit_window_seconds": 18000,
+                            "reset_at": 1893456000,
+                        },
+                        "secondary_window": {
+                            "limit_window_seconds": 604800,
+                            "reset_at": 1893456000,
+                        },
+                    }
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", lambda request, *, timeout: FakeResponse())
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.error == "usage limits not found in direct response"
+
+
 def test_fetch_account_usage_direct_rejects_broad_auth_json_permissions(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(

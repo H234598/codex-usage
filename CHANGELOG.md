@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.62 - 2026-07-11
+
+### Fixed
+
+- Abrufe werten ein Limitfenster nur noch dann als erfolgreich, wenn es neben
+  der Resetzeit mindestens einen echten Nutzwert enthält.
+
 ## 0.6.61 - 2026-07-11
 
 ### Fixed
