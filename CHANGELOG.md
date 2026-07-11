@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.94 - 2026-07-11
+
+### Fixed
+
+- Reset-only-Fenster aus partiellen Fresh-Abrufen überschreiben keine letzten
+  gültigen Nutzwerte mehr; ein neuer Resetzeitpunkt bleibt erhalten.
+- Regression für den Fresh-Merge mit Reset-only-Daten ergänzt.
+
 ## 0.6.93 - 2026-07-11
 
 ### Fixed

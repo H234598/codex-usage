@@ -2220,12 +2220,12 @@ CodexUsageApplet.prototype = {
             if (old && item.status !== "ok") {
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
-                if (!item.five_hour && old.five_hour) {
-                    item.five_hour = old.five_hour;
+                if (!this._windowHasUsageValue(item.five_hour) && old.five_hour) {
+                    item.five_hour = this._mergeCachedWindow(item.five_hour, old.five_hour);
                     usedCachedWindow = true;
                 }
-                if (!item.weekly && old.weekly) {
-                    item.weekly = old.weekly;
+                if (!this._windowHasUsageValue(item.weekly) && old.weekly) {
+                    item.weekly = this._mergeCachedWindow(item.weekly, old.weekly);
                     usedCachedWindow = true;
                 }
                 if (usedCachedWindow) {
@@ -2263,6 +2263,23 @@ CodexUsageApplet.prototype = {
             }
             merged.push(stale);
         }
+        return merged;
+    },
+
+    _windowHasUsageValue: function(window) {
+        return this._remainingPercent(window) !== null;
+    },
+
+    _mergeCachedWindow: function(fresh, cached) {
+        if (!fresh || !fresh.reset_at) {
+            return cached;
+        }
+        let merged = {};
+        let keys = Object.keys(cached);
+        for (let i = 0; i < keys.length; i++) {
+            merged[keys[i]] = cached[keys[i]];
+        }
+        merged.reset_at = fresh.reset_at;
         return merged;
     },
 

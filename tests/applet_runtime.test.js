@@ -1122,6 +1122,29 @@ test("partial fresh payload preserves each missing window from stale cache", () 
   assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
 });
 
+test("partial fresh payload preserves usage under reset-only windows", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
+    weekly: { remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: { reset_at: "2026-07-10T16:00:00.000Z" },
+    weekly: null,
+    stale: false,
+  }]);
+  assert.equal(merged[0].five_hour.remaining, 80);
+  assert.equal(merged[0].five_hour.reset_at, "2026-07-10T16:00:00.000Z");
+  assert.equal(merged[0].weekly.remaining, 60);
+  assert.equal(merged[0].stale, true);
+  assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
+});
+
 test("fresh payload preserves configured accounts omitted from the response", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
