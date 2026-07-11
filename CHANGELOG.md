@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.161 - 2026-07-12
+
+### Fixed
+
+- Stale Snapshot-Fallbacks aus `0.6.155` bleiben nach dem Upgrade auf die
+  authentifizierte Direct-/App-Server-Kontinuität als sichere Referenz gültig.
+- Beliebige stale Snapshots ohne bekannten Fallback-Marker werden weiterhin
+  nicht wiederverwendet.
+- Regression für die Migration des alten Direct-Fallback-Markers ergänzt.
+
 ## 0.6.160 - 2026-07-12
 
 ### Fixed

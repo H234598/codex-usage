@@ -33,8 +33,12 @@ from .state import (
 
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 DIRECT_RESET_DISCONTINUITY_SECONDS = 30
+LEGACY_DIRECT_RESET_FALLBACK_REASON = "previous direct limits retained after reset transition"
 AUTHENTICATED_RESET_FALLBACK_REASON = (
     "previous authenticated limits retained after reset transition"
+)
+REUSABLE_RESET_FALLBACK_REASONS = frozenset(
+    (LEGACY_DIRECT_RESET_FALLBACK_REASON, AUTHENTICATED_RESET_FALLBACK_REASON)
 )
 
 
@@ -205,7 +209,7 @@ def _stabilize_authenticated_usage(
         return usage
     if (
         previous.stale
-        and previous.fallback_reason != AUTHENTICATED_RESET_FALLBACK_REASON
+        and previous.fallback_reason not in REUSABLE_RESET_FALLBACK_REASONS
     ):
         return usage
     try:

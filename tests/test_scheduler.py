@@ -316,6 +316,8 @@ def test_fetch_all_retains_direct_values_across_future_reset_jump(monkeypatch):
         backend_used="direct",
         backend_user_id="user-direct",
         backend_account_id="account-direct",
+        fallback_reason="previous direct limits retained after reset transition",
+        stale=True,
     )
     current = AccountUsage(
         account_id="direct",
