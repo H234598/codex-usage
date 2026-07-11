@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from codex_usage.app_server import (
+    AppServerProtocolError,
     AppServerUnavailableError,
+    _LineReader,
     _should_refresh,
     _stop_process,
     _windows_from_response,
@@ -229,3 +231,19 @@ def test_stop_process_ignores_exit_races():
             raise ProcessLookupError
 
     _stop_process(FakeProcess())
+
+
+def test_line_reader_does_not_block_on_full_message_queue():
+    class FakeStream:
+        def readline(self, _limit):
+            return b"second\n"
+
+    reader = _LineReader(FakeStream())
+    for _ in range(reader.items.maxsize):
+        reader.items.put(b"first\n")
+    reader.run()
+
+    items = [reader.items.get_nowait() for _ in range(reader.items.qsize())]
+    errors = [item for item in items if isinstance(item, AppServerProtocolError)]
+    assert errors
+    assert "too many pending messages" in str(errors[0])

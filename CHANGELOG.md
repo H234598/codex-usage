@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.43 - 2026-07-11
+
+### Fixed
+
+- App Server output readers no longer block forever when their bounded message
+  queue is full; excess protocol traffic becomes a controlled error.
+
 ## 0.6.42 - 2026-07-11
 
 ### Fixed

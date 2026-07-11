@@ -479,20 +479,46 @@ class _LineReader(threading.Thread):
 
     def run(self) -> None:
         if self.stream is None:
-            self.items.put(AppServerProtocolError("app server stdout is unavailable"))
+            self._put_item(AppServerProtocolError("app server stdout is unavailable"))
             return
         try:
             while True:
                 line = self.stream.readline(APP_SERVER_MAX_LINE_BYTES + 1)
                 if not line:
-                    self.items.put(EOFError("codex app server closed stdout"))
+                    self._put_item(EOFError("codex app server closed stdout"))
                     return
                 if len(line) > APP_SERVER_MAX_LINE_BYTES or not line.endswith(b"\n"):
-                    self.items.put(AppServerProtocolError("codex app server response is too large"))
+                    self._put_item(
+                        AppServerProtocolError("codex app server response is too large")
+                    )
                     return
-                self.items.put(line)
+                if not self._put_item(line):
+                    self._put_item(
+                        AppServerProtocolError(
+                            "codex app server returned too many pending messages"
+                        ),
+                        replace_oldest=True,
+                    )
+                    return
         except OSError:
-            self.items.put(AppServerProtocolError("could not read codex app server output"))
+            self._put_item(AppServerProtocolError("could not read codex app server output"))
+
+    def _put_item(self, item: bytes | Exception, *, replace_oldest: bool = False) -> bool:
+        try:
+            self.items.put_nowait(item)
+            return True
+        except queue.Full:
+            if not replace_oldest:
+                return False
+            try:
+                self.items.get_nowait()
+            except queue.Empty:
+                return False
+            try:
+                self.items.put_nowait(item)
+                return True
+            except queue.Full:
+                return False
 
 
 class _StderrReader(threading.Thread):
