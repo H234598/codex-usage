@@ -33,14 +33,23 @@ def default_current_dir() -> Path:
 
 
 def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -> Path:
-    return _save_usage(usage, snapshot_dir or default_snapshot_dir())
+    return _save_usage(
+        usage,
+        snapshot_dir or default_snapshot_dir(),
+        preserve_existing_values=True,
+    )
 
 
 def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> Path:
     return _save_usage(usage, current_dir or default_current_dir())
 
 
-def _save_usage(usage: AccountUsage, directory: Path) -> Path:
+def _save_usage(
+    usage: AccountUsage,
+    directory: Path,
+    *,
+    preserve_existing_values: bool = False,
+) -> Path:
     _validate_snapshot_account_id(usage.account_id)
     usage = replace(usage, captured_at=_saved_datetime(usage.captured_at))
     assert_no_symlink_ancestors(directory, label="snapshot directory")
@@ -54,9 +63,6 @@ def _save_usage(usage: AccountUsage, directory: Path) -> Path:
     except OSError:
         pass
     path = directory / f"{usage.account_id}.json"
-    text = json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False)
-    if len(text.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
-        raise ValueError(f"snapshot file too large; max {MAX_SNAPSHOT_BYTES} bytes")
     with private_path_lock(path, label="snapshot lock"):
         existing = _load_usage(usage.account_id, directory)
         if existing is not None:
@@ -65,6 +71,11 @@ def _save_usage(usage: AccountUsage, directory: Path) -> Path:
                     return path
             except TypeError:
                 pass
+            if preserve_existing_values:
+                usage = merge_current_with_last_success(usage, existing)
+        text = json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False)
+        if len(text.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
+            raise ValueError(f"snapshot file too large; max {MAX_SNAPSHOT_BYTES} bytes")
         write_private_text(path, text, label="snapshot path")
     return path
 

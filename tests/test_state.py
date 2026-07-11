@@ -223,6 +223,58 @@ def test_merge_current_with_last_success_preserves_usage_under_reset_only_window
     assert merged.stale is True
 
 
+def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_path):
+    timezone = ZoneInfo("Europe/Berlin")
+    snapshot_dir = tmp_path / "snapshots"
+    previous_capture = datetime(2026, 6, 8, 4, 20, tzinfo=timezone)
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=previous_capture,
+            five_hour=LimitWindow(
+                name="5h",
+                remaining=97,
+                reset_at=datetime(2026, 6, 8, 16, 0, tzinfo=timezone),
+            ),
+            weekly=LimitWindow(
+                name="weekly",
+                remaining=55,
+                reset_at=datetime(2026, 6, 14, 16, 0, tzinfo=timezone),
+            ),
+        ),
+        snapshot_dir,
+    )
+
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 25, tzinfo=timezone),
+            status=AccountStatus.PARTIAL,
+            five_hour=LimitWindow(
+                name="5h",
+                reset_at=datetime(2026, 6, 8, 16, 5, tzinfo=timezone),
+            ),
+            error="usage limits not found",
+        ),
+        snapshot_dir,
+    )
+
+    loaded = load_usage_snapshot("privat", snapshot_dir)
+
+    assert loaded is not None
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.remaining == 97
+    assert loaded.five_hour.reset_at == datetime(2026, 6, 8, 16, 5, tzinfo=timezone)
+    assert loaded.weekly is not None
+    assert loaded.weekly.remaining == 55
+    assert loaded.captured_at == datetime(2026, 6, 8, 4, 25, tzinfo=timezone)
+    assert loaded.values_captured_at == previous_capture
+
+
 def test_merge_current_with_newer_success_prefers_success_snapshot():
     timezone = ZoneInfo("Europe/Berlin")
     current = AccountUsage(

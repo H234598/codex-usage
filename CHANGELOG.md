@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.96 - 2026-07-11
+
+### Fixed
+
+- Partielle Bridge-Snapshots überschreiben keine zuletzt gültigen Nutzwerte
+  mehr, bevor der `current`-/`last_success`-Merge greifen kann.
+- Regression für einen partiellen Snapshot mit neuer Resetzeit ergänzt.
+
 ## 0.6.95 - 2026-07-11
 
 ### Fixed
