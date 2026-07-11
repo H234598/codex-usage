@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.70 - 2026-07-11
+
+### Fixed
+
+- Die generische JSON-Feldwahl respektiert nun auch die fachliche Reihenfolge
+  von `used` vor `usage` und `limit` vor `total`.
+
 ## 0.6.69 - 2026-07-11
 
 ### Fixed

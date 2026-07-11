@@ -309,20 +309,24 @@ def test_extract_windows_prefers_later_json_usage_over_reset_only_match():
     assert five.source.endswith("fresh")
 
 
-def test_extract_windows_prefers_exact_generic_used_fields_over_used_percent():
+def test_extract_windows_prefers_specific_generic_fields_over_aggregates():
     candidates = [
         JsonCandidate(
             url="https://chatgpt.com/backend-api/generic",
             payload={
                 "five_hour_usage_limit": {
+                    "usage": 999,
                     "used_percent": 3,
                     "used": 8,
+                    "total": 9999,
                     "limit": 40,
                     "reset_at": "2026-06-08T06:50:00+02:00",
                 },
                 "weekly_usage_limit": {
+                    "usage": 999,
                     "used_percent": 45,
                     "used": 80,
+                    "total": 9999,
                     "limit": 400,
                     "reset_at": "2026-06-14T04:26:00+02:00",
                 },
