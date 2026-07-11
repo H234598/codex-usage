@@ -162,6 +162,15 @@ test("panel slots honor ordering, mute and duplicate-source normalization", () =
   );
 });
 
+test("remaining percentage prefers absolute used and limit values", () => {
+  const applet = makeApplet();
+  assert.equal(
+    applet._remainingPercent({ used: 8, limit: 40, remaining: 32, percent: 20 }),
+    80
+  );
+  assert.equal(applet._remainingPercent({ remaining: undefined, percent: undefined }), null);
+});
+
 test("internal failures enter safe mode after the configured limit", () => {
   const applet = makeApplet();
   applet._enterSafeMode = function(reason) {

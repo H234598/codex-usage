@@ -2904,13 +2904,15 @@ CodexUsageApplet.prototype = {
         if (!window) {
             return null;
         }
-        if (window.remaining !== null) {
-            return Math.max(0, Math.min(100, window.remaining));
-        }
-        if (window.used !== null && window.limit !== null && window.limit > 0) {
+        if (typeof window.used === "number" && Number.isFinite(window.used) &&
+            typeof window.limit === "number" && Number.isFinite(window.limit) &&
+            window.limit > 0) {
             return Math.max(0, Math.min(100, 100 - (window.used / window.limit * 100)));
         }
-        if (window.percent !== null) {
+        if (typeof window.remaining === "number" && Number.isFinite(window.remaining)) {
+            return Math.max(0, Math.min(100, window.remaining));
+        }
+        if (typeof window.percent === "number" && Number.isFinite(window.percent)) {
             return Math.max(0, Math.min(100, window.percent));
         }
         return null;

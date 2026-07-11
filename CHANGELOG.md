@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.78 - 2026-07-11
+
+### Fixed
+
+- Die Applet-Prozentberechnung bevorzugt bei absoluten `used`-/`limit`-Werten
+  das tatsächliche Verhältnis statt eines absoluten `remaining`-Zählers.
+- Ungültige oder fehlende Fensterzahlen erzeugen keinen `NaN`-Prozentwert.
+- Runtime-Regression für absolute Quoten ergänzt.
+
 ## 0.6.77 - 2026-07-11
 
 ### Fixed
