@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.84 - 2026-07-11
+
+### Fixed
+
+- Backend-, Account- und Formatierungs-Synchronisations-Guards werden auch
+  bei fehlgeschlagenem oder leerem Idle-Scheduling freigegeben.
+- Ungültige Idle-Source-IDs werden nicht mehr im Cleanup-Zustand gespeichert.
+- Regressionen für alle drei Guards und die leere Idle-Source ergänzt.
+
 ## 0.6.83 - 2026-07-11
 
 ### Fixed

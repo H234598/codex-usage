@@ -11,11 +11,12 @@ const source = fs.readFileSync(
 
 function loadPrototype(onReady) {
   const runtime = {
+    idleAdd: () => 1,
     timeoutAdd: () => 2,
     launcherFactory: () => { throw new Error("launcher not configured"); },
   };
   const mainloop = {
-    idle_add: () => 1,
+    idle_add: (...args) => runtime.idleAdd(...args),
     source_remove: () => {},
     timeout_add: (...args) => runtime.timeoutAdd(...args),
     timeout_add_seconds: () => 3,
@@ -177,6 +178,14 @@ test("epoch reset timestamps remain valid and report zero duration", () => {
   assert.equal(applet._dateMillis(epoch), 0);
   assert.notEqual(applet._formatDate(epoch), "–");
   assert.equal(applet._durationMinutes({ reset_at: epoch }), 0);
+});
+
+test("idle scheduling does not retain an invalid zero source", () => {
+  const applet = makeApplet((runtime) => {
+    runtime.idleAdd = () => 0;
+  });
+  assert.equal(applet._addIdle(() => {}), 0);
+  assert.deepEqual(applet._idleSources, {});
 });
 
 test("internal failures enter safe mode after the configured limit", () => {
@@ -958,6 +967,44 @@ test("backend synchronization releases its guard when idle scheduling returns ze
 
   assert.throws(() => applet._loadAccountBackends(), /settings broken/);
   assert.equal(applet._syncingBackendRows, false);
+});
+
+test("account and style synchronization release their guards when idle scheduling fails", () => {
+  const applet = makeApplet();
+  applet.settings = { setValue() {} };
+  applet.accountPanelSettings = [];
+  applet.accountAlertSettings = [];
+  applet.accountPercentStyles = [];
+  applet.accountDateStyles = [];
+  applet.accountTimeStyles = [];
+  applet.accountDurationStyles = [];
+  applet.accountStyleTargets = [];
+  applet._addIdle = () => { throw new Error("idle broken"); };
+  const accounts = [{ account: "alpha" }];
+
+  applet._syncAccountSettings(accounts);
+  assert.equal(applet._syncingAccountSettings, false);
+  applet._syncStyleRows(accounts);
+  assert.equal(applet._syncingStyleRows, false);
+});
+
+test("account and style synchronization release their guards when idle scheduling returns zero", () => {
+  const applet = makeApplet();
+  applet.settings = { setValue() {} };
+  applet.accountPanelSettings = [];
+  applet.accountAlertSettings = [];
+  applet.accountPercentStyles = [];
+  applet.accountDateStyles = [];
+  applet.accountTimeStyles = [];
+  applet.accountDurationStyles = [];
+  applet.accountStyleTargets = [];
+  applet._addIdle = () => 0;
+  const accounts = [{ account: "alpha" }];
+
+  applet._syncAccountSettings(accounts);
+  assert.equal(applet._syncingAccountSettings, false);
+  applet._syncStyleRows(accounts);
+  assert.equal(applet._syncingStyleRows, false);
 });
 
 test("backend setting changes reject duplicate account rows", () => {

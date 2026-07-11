@@ -434,8 +434,26 @@ CodexUsageApplet.prototype = {
             this._runSafely("idle callback", callback);
             return false;
         }));
-        this._idleSources[id] = true;
+        if (id) {
+            this._idleSources[id] = true;
+        }
         return id;
+    },
+
+    _deferGuardRelease: function(property, context) {
+        let release = Lang.bind(this, function() {
+            this[property] = false;
+            return false;
+        });
+        try {
+            let idleId = this._addIdle(release);
+            if (!idleId) {
+                release();
+            }
+        } catch (e) {
+            global.log("[" + UUID + "] " + context + " failed: " + String(e));
+            release();
+        }
     },
 
     _removeIdleSources: function() {
@@ -1011,19 +1029,10 @@ CodexUsageApplet.prototype = {
                     this._refreshFormattedSurfaces();
                 }
             } finally {
-                let releaseGuard = Lang.bind(this, function() {
-                    this._syncingBackendRows = false;
-                    return false;
-                });
-                try {
-                    let idleId = this._addIdle(releaseGuard);
-                    if (!idleId) {
-                        releaseGuard();
-                    }
-                } catch (e) {
-                    global.log("[" + UUID + "] backend sync guard cleanup failed: " + String(e));
-                    releaseGuard();
-                }
+                this._deferGuardRelease(
+                    "_syncingBackendRows",
+                    "backend sync guard cleanup"
+                );
             }
         }));
     },
@@ -1099,10 +1108,10 @@ CodexUsageApplet.prototype = {
         } catch (e) {
             global.log("[" + UUID + "] account settings sync failed: " + String(e));
         }
-        this._addIdle(Lang.bind(this, function() {
-            this._syncingAccountSettings = false;
-            return false;
-        }));
+        this._deferGuardRelease(
+            "_syncingAccountSettings",
+            "account settings guard cleanup"
+        );
     },
 
     _mergedPanelRows: function(accounts, currentRows) {
@@ -1348,10 +1357,10 @@ CodexUsageApplet.prototype = {
         } catch (e) {
             global.log("[" + UUID + "] formatting settings sync failed: " + String(e));
         }
-        this._addIdle(Lang.bind(this, function() {
-            this._syncingStyleRows = false;
-            return false;
-        }));
+        this._deferGuardRelease(
+            "_syncingStyleRows",
+            "formatting settings guard cleanup"
+        );
     },
 
     _styleRowsEqual: function(left, right) {
