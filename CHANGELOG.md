@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.123 - 2026-07-11
+
+### Fixed
+
+- Die Browser-/Bridge-Identität wird nicht mehr aus User-ID und Account-ID
+  verschiedener JSON-Antworten zusammengesetzt. Bevorzugt wird jetzt ein
+  vollständiges Identitätspaar aus derselben Antwort; unvollständige Antworten
+  bleiben unvollständig und werden nicht künstlich kombiniert.
+- Regression für widersprüchliche Kandidaten-Identitäten ergänzt.
+
 ## 0.6.122 - 2026-07-11
 
 ### Fixed
