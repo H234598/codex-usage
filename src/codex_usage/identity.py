@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import Any
+from urllib.parse import urlsplit
 
 from .extractor import JsonCandidate
 
@@ -24,7 +25,8 @@ def backend_identity_from_candidates(
 ) -> tuple[str | None, str | None]:
     user_id: str | None = None
     account_id: str | None = None
-    for candidate in candidates:
+    ordered_candidates = sorted(candidates, key=_candidate_priority)
+    for candidate in ordered_candidates:
         candidate_user_id, candidate_account_id = backend_identity_from_payload(
             candidate.payload
         )
@@ -33,6 +35,20 @@ def backend_identity_from_candidates(
         if user_id is not None and account_id is not None:
             break
     return user_id, account_id
+
+
+def _candidate_priority(candidate: JsonCandidate) -> int:
+    path = urlsplit(candidate.url).path.rstrip("/").lower()
+    if path == "/backend-api/wham/usage":
+        return 0
+    if path.startswith("/backend-api/wham/usage/"):
+        return 1
+    payload = candidate.payload
+    if isinstance(payload, dict) and any(
+        key in payload for key in ("rate_limit", "rateLimits", "rateLimitsByLimitId")
+    ):
+        return 1
+    return 2
 
 
 def _identity_value(value: Any) -> str | None:

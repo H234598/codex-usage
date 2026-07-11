@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.110 - 2026-07-11
+
+### Fixed
+
+- Browser- und Bridge-Identitäten priorisieren jetzt die Backend-Usage-Antwort
+  gegenüber früher geladenen Settings-Antworten.
+- Regression für die reale Antwortreihenfolge `wham/settings/user` vor
+  `wham/usage` ergänzt.
+
 ## 0.6.109 - 2026-07-11
 
 ### Fixed
