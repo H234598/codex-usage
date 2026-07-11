@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.68 - 2026-07-11
+
+### Fixed
+
+- DOM-Abschnitte mit ausschließlich einer Resetzeit blockieren spätere
+  Abschnitte mit echten Nutzwerten nicht mehr.
+
 ## 0.6.67 - 2026-07-11
 
 ### Fixed

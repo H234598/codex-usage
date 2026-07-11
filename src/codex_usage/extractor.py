@@ -239,6 +239,7 @@ def _extract_text_window(
 ) -> LimitWindow | None:
     text = _normalize_ws(body_text)
     lower = text.lower()
+    reset_only: LimitWindow | None = None
     for start in _label_offsets(lower, labels):
         end = _next_label_offset(lower, start + 1, stop_labels)
         chunk_end = min(start + 1500, end) if end is not None else start + 1500
@@ -273,7 +274,7 @@ def _extract_text_window(
         if percent is None and used is not None and limit:
             percent = used / limit * 100
 
-        return LimitWindow(
+        window = LimitWindow(
             name=name,
             used=used,
             limit=limit,
@@ -283,7 +284,11 @@ def _extract_text_window(
             raw=chunk[:500],
             source="dom-text",
         )
-    return None
+        if window.has_usage_value:
+            return window
+        if reset_only is None:
+            reset_only = window
+    return reset_only
 
 
 def _label_offsets(text: str, labels: tuple[str, ...]) -> list[int]:

@@ -215,6 +215,31 @@ def test_extract_windows_skips_label_occurrence_without_values():
     assert weekly.used == 310
 
 
+def test_extract_windows_prefers_later_dom_usage_over_reset_only_match():
+    body = """
+    5-hour limit
+    Reset 08.06.2026 04:26
+    5-hour limit
+    42 / 100 used
+    Reset 08.06.2026 04:26
+
+    Weekly limit
+    310 / 1000 used
+    Reset 14.06.2026 04:26
+    """
+
+    five, weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 42
+    assert five.remaining == 58
+    assert weekly is not None
+    assert weekly.used == 310
+
+
 def test_extract_windows_prefers_json_candidates():
     candidates = [
         JsonCandidate(
