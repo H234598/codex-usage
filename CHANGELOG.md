@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.82 - 2026-07-11
+
+### Fixed
+
+- Der Backend-Synchronisations-Guard wird auch bei Ausnahmen in der
+  Settings-Synchronisierung zuverlässig freigegeben.
+- Regression für blockierte Folgeänderungen ergänzt.
+
 ## 0.6.81 - 2026-07-11
 
 ### Fixed

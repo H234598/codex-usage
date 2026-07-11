@@ -910,6 +910,28 @@ test("backend overview rejects invalid rows without replacing state", () => {
   ]);
 });
 
+test("backend synchronization clears its guard after a settings exception", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  let idleCallback = null;
+  applet._addIdle = (callback) => {
+    idleCallback = callback;
+    return 1;
+  };
+  applet._syncAccountSettings = () => { throw new Error("settings broken"); };
+  applet._syncStyleRows = () => {};
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }],
+  }, null);
+
+  assert.throws(() => applet._loadAccountBackends(), /settings broken/);
+  assert.equal(applet._syncingBackendRows, true);
+  assert.equal(typeof idleCallback, "function");
+  idleCallback();
+  assert.equal(applet._syncingBackendRows, false);
+});
+
 test("backend setting changes reject duplicate account rows", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

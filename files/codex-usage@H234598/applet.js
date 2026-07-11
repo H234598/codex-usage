@@ -998,21 +998,24 @@ CodexUsageApplet.prototype = {
             this._cancelRemovedReactivations(accounts);
             let usageRowsChanged = this._ensureBackendUsageRows();
             this._syncingBackendRows = true;
-            this.accountBackends = rows;
             try {
-                this.settings.setValue("account-backends", rows);
-            } catch (e) {
-                global.log("[" + UUID + "] backend settings sync failed: " + String(e));
+                this.accountBackends = rows;
+                try {
+                    this.settings.setValue("account-backends", rows);
+                } catch (e) {
+                    global.log("[" + UUID + "] backend settings sync failed: " + String(e));
+                }
+                this._syncAccountSettings(rows);
+                this._syncStyleRows(rows);
+                if (this._usages.length || usageRowsChanged) {
+                    this._refreshFormattedSurfaces();
+                }
+            } finally {
+                this._addIdle(Lang.bind(this, function() {
+                    this._syncingBackendRows = false;
+                    return false;
+                }));
             }
-            this._syncAccountSettings(rows);
-            this._syncStyleRows(rows);
-            if (this._usages.length || usageRowsChanged) {
-                this._refreshFormattedSurfaces();
-            }
-            this._addIdle(Lang.bind(this, function() {
-                this._syncingBackendRows = false;
-                return false;
-            }));
         }));
     },
 
