@@ -9,6 +9,7 @@ from codex_usage.models import Account
 from codex_usage.service import (
     ServiceError,
     managed_service_config_path,
+    service_disable,
     service_enable,
     service_install,
     service_uninstall,
@@ -133,6 +134,40 @@ def test_service_uninstall_does_not_stop_foreign_unit_without_managed_files(
 
     assert service_uninstall() == {"installed": False, "enabled": False, "active": False}
     assert calls == []
+
+
+def test_service_disable_refuses_unmanaged_unit_without_stopping_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "codex-usage.timer").write_text("[Timer]\n", encoding="utf-8")
+    calls: list[tuple[str, ...]] = []
+
+    def fake_systemctl(*args, check=True):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "active\n", "")
+
+    monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
+
+    with pytest.raises(ServiceError, match="unmanaged"):
+        service_disable()
+    assert calls == []
+
+
+def test_service_disable_skips_mutation_without_managed_units(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    calls: list[tuple[str, ...]] = []
+
+    def fake_systemctl(*args, check=True):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "active\n", "")
+
+    monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
+
+    result = service_disable()
+
+    assert result["installed"] is False
+    assert all(args[:1] != ("disable",) for args in calls)
 
 
 def test_service_install_refuses_unmanaged_unit_without_overwriting(tmp_path, monkeypatch):

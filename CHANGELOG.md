@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.38 - 2026-07-11
+
+### Fixed
+
+- `service disable` now validates managed units before calling
+  `systemctl disable --now`, and becomes a no-op when no managed units exist,
+  so foreign timers cannot be stopped accidentally.
+
 ## 0.6.37 - 2026-07-11
 
 ### Fixed

@@ -42,19 +42,17 @@ def service_install(config: AppConfig, config_path: Path | None = None) -> dict[
 
 
 def service_disable() -> dict[str, Any]:
-    _systemctl("disable", "--now", TIMER_NAME, check=False)
+    unit_dir = _unit_directory(create=False)
+    if _require_complete_managed_units(unit_dir) is not None:
+        _systemctl("disable", "--now", TIMER_NAME, check=False)
     return service_status()
 
 
 def service_uninstall() -> dict[str, Any]:
     unit_dir = _unit_directory()
-    paths = [unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME]
-    present = [path.exists() or path.is_symlink() for path in paths]
-    if not any(present):
+    paths = _require_complete_managed_units(unit_dir)
+    if paths is None:
         return {"installed": False, "enabled": False, "active": False}
-    _validate_existing_managed_units(unit_dir)
-    if not all(present):
-        raise ServiceError("managed service and timer must both exist")
     service_disable()
     for path in paths:
         _validate_managed_unit(path)
@@ -304,6 +302,17 @@ def _validate_existing_managed_units(unit_dir: Path) -> None:
         path = unit_dir / name
         if path.exists() or path.is_symlink():
             _validate_managed_unit(path)
+
+
+def _require_complete_managed_units(unit_dir: Path) -> tuple[Path, Path] | None:
+    paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
+    present = [path.exists() or path.is_symlink() for path in paths]
+    if not any(present):
+        return None
+    _validate_existing_managed_units(unit_dir)
+    if not all(present):
+        raise ServiceError("managed service and timer must both exist")
+    return paths
 
 
 def _validate_managed_unit(path: Path) -> None:
