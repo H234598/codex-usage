@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.151 - 2026-07-11
+
+### Fixed
+
+- Der DOM-Parser bevorzugt bei mehreren vollständigen Blöcken desselben
+  Limits den späteren Block mit Resetzeit.
+- Alte/versteckte Limitwerte können dadurch aktuelle Seitenwerte nicht mehr
+  überschreiben.
+- Regression für doppelte vollständige DOM-Limitblöcke ergänzt.
+
 ## 0.6.150 - 2026-07-11
 
 ### Fixed

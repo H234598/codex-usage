@@ -445,7 +445,7 @@ def _extract_text_window(
     text = _normalize_ws(body_text)
     lower = text.lower()
     reset_only: LimitWindow | None = None
-    usage_windows: list[LimitWindow] = []
+    usage_windows: list[tuple[int, LimitWindow]] = []
     for start in _label_offsets(lower, labels):
         end = _next_label_offset(lower, start + 1, stop_labels)
         chunk_end = min(start + 1500, end) if end is not None else start + 1500
@@ -494,13 +494,15 @@ def _extract_text_window(
             source="dom-text",
         )
         if window.has_usage_value:
-            usage_windows.append(window)
+            usage_windows.append((start, window))
             continue
         if reset_only is None:
             reset_only = window
     if usage_windows:
-        usage_windows.sort(key=lambda window: window.reset_at is None)
-        return usage_windows[0]
+        usage_windows.sort(
+            key=lambda item: (item[1].reset_at is None, -item[0])
+        )
+        return usage_windows[0][1]
     return reset_only
 
 
