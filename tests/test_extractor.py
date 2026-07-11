@@ -155,6 +155,26 @@ def test_extract_windows_normalizes_used_percent_to_remaining_percent():
     assert weekly.percent == 55
 
 
+def test_extract_windows_prefers_absolute_usage_over_conflicting_used_percent():
+    body = """
+    5-hour limit
+    42 / 100 used
+    3% used
+    Reset 08.06.2026 04:26
+    """
+
+    five, _weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 42
+    assert five.limit == 100
+    assert five.remaining == 58
+    assert five.percent == 42
+
+
 def test_extract_windows_from_progress_bar_width_html():
     body = """
     <section>
@@ -343,9 +363,39 @@ def test_extract_windows_prefers_specific_generic_fields_over_aggregates():
     assert five is not None
     assert five.used == 8
     assert five.remaining == 32
+    assert five.percent == 20
     assert weekly is not None
     assert weekly.used == 80
     assert weekly.remaining == 320
+    assert weekly.percent == 20
+
+
+def test_extract_windows_prefers_absolute_usage_over_conflicting_json_used_percent():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/generic",
+            payload={
+                "five_hour_usage_limit": {
+                    "used": 8,
+                    "limit": 40,
+                    "used_percent": 3,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        )
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 8
+    assert five.limit == 40
+    assert five.remaining == 32
+    assert five.percent == 20
 
 
 def test_extract_windows_converts_generic_used_percent_to_remaining():

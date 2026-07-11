@@ -299,18 +299,32 @@ def _window_from_mapping(
         used_percent = used_ratio
     if percent is None:
         percent = ratio
-    if remaining is None and used is not None and limit is not None:
+    has_explicit_remaining_percent = (
+        remaining_percent is not None or remaining_ratio is not None
+    )
+    if used is not None and limit is not None:
         remaining = max(limit - used, 0)
-    if remaining is None:
-        remaining = remaining_percent if remaining_percent is not None else remaining_ratio
-    if remaining_percent is not None or remaining_ratio is not None:
-        percent = remaining
-    if used_percent is not None and used is None:
+        if limit > 0:
+            percent = (
+                remaining_percent
+                if has_explicit_remaining_percent
+                else used / limit * 100
+            )
+        else:
+            percent = None
+    else:
         if remaining is None:
-            remaining = max(100 - used_percent, 0)
-        percent = remaining
-    if percent is None and used is not None and limit:
-        percent = used / limit * 100
+            remaining = (
+                remaining_percent if remaining_percent is not None else remaining_ratio
+            )
+        if has_explicit_remaining_percent:
+            percent = remaining
+        if used_percent is not None and used is None:
+            if remaining is None:
+                remaining = max(100 - used_percent, 0)
+            percent = remaining
+        if percent is None and used is not None and limit:
+            percent = used / limit * 100
     if percent is not None and not 0 <= percent <= 100:
         percent = None
 
@@ -351,7 +365,10 @@ def _extract_text_window(
         used_percent = _extract_used_percent(chunk)
         reset_at = _extract_reset_at(chunk, captured_at)
 
-        if remaining is None and used_percent is not None:
+        if used is not None and limit is not None and used_percent is not None:
+            remaining = max(limit - used, 0)
+            percent = used / limit * 100 if limit > 0 else None
+        elif remaining is None and used_percent is not None:
             remaining = max(100 - used_percent, 0)
         if percent is None and progress_percent is not None:
             percent = progress_percent

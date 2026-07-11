@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.100 - 2026-07-11
+
+### Fixed
+
+- Absolute `used`-/`limit`-Werte dominieren widersprüchliche `used_percent`
+  Angaben in DOM- und JSON-Payloads.
+- CLI, Applet und Parser verwenden dadurch wieder konsistente Prozentwerte.
+- Regressionen für widersprüchliche Text- und JSON-Felder ergänzt.
+
 ## 0.6.99 - 2026-07-11
 
 ### Fixed
