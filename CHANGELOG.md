@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.143 - 2026-07-11
+
+### Fixed
+
+- Die Identitätsauflösung bevorzugt bei gleich priorisierten Usage-Antworten
+  jetzt ebenfalls den neuesten Kandidaten.
+- Dadurch bleiben aktuelle Nutzungsfenster und `account_id` konsistent.
+- Regression für alte und neue Identität desselben Usage-Endpunkts ergänzt.
+
 ## 0.6.142 - 2026-07-11
 
 ### Fixed
