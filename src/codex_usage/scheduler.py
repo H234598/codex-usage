@@ -352,13 +352,14 @@ def watch(
                 else:
                     print("\033[2J\033[H", end="")
                     print(render_table(usages), flush=True)
+                elapsed = max(time.monotonic() - started, 0.0)
                 _record_health(
                     "watch",
                     "cycle_ok",
-                    duration_ms=int((time.monotonic() - started) * 1000),
+                    duration_ms=int(elapsed * 1000),
                 )
                 consecutive_failures = 0
-                delay = interval
+                delay = max(interval - elapsed, 0.0)
             except KeyboardInterrupt:
                 stop_event.set()
                 break

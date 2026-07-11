@@ -71,6 +71,30 @@ def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):
     assert installed[3][1] == "old-term"
 
 
+def test_watch_subtracts_successful_cycle_duration_from_interval(monkeypatch):
+    delays: list[float] = []
+
+    class StopAfterWait:
+        def is_set(self):
+            return False
+
+        def wait(self, delay):
+            delays.append(delay)
+            return True
+
+        def set(self):
+            return None
+
+    monotonic_values = iter((100.0, 112.5))
+    monkeypatch.setattr("codex_usage.scheduler.Event", StopAfterWait)
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", lambda *args, **kwargs: [])
+    monkeypatch.setattr("codex_usage.scheduler.time.monotonic", lambda: next(monotonic_values))
+
+    watch(AppConfig(accounts=()), (), output="table", interval_seconds=60)
+
+    assert delays == [47.5]
+
+
 def test_fetch_all_uses_direct_for_accounts_with_auth_and_browser_for_others(monkeypatch):
     accounts = (
         Account(

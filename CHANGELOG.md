@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.162 - 2026-07-12
+
+### Fixed
+
+- `watch` zieht die Dauer einer erfolgreichen Abfrage vom nächsten Intervall
+  ab, statt Abrufzeit und Intervall zu addieren.
+- Mehrkonto-Polls bleiben dadurch näher am konfigurierten 5-Minuten-Takt.
+- Regression für die verbleibende Wartezeit nach einer erfolgreichen,
+  messbar langen Abfrage ergänzt.
+
 ## 0.6.161 - 2026-07-12
 
 ### Fixed
