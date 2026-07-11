@@ -385,7 +385,16 @@ def _windows_from_response(
     with_duration = [
         item for item in candidates if _strict_int(item[1].get("windowDurationMins")) is not None
     ]
-    if with_duration:
+    if len(with_duration) == 1:
+        only_item = with_duration[0]
+        duration = _strict_int(only_item[1].get("windowDurationMins")) or 0
+        if abs(duration - 10080) < abs(duration - 300):
+            five_item = None
+            weekly_item = only_item
+        else:
+            five_item = only_item
+            weekly_item = None
+    elif with_duration:
         five_item = min(
             with_duration,
             key=lambda item: abs((_strict_int(item[1].get("windowDurationMins")) or 0) - 300),
@@ -399,7 +408,7 @@ def _windows_from_response(
     else:
         five_item = candidates[0]
         weekly_item = candidates[1] if len(candidates) > 1 else None
-    five = _window("five_hour", five_item[1])
+    five = _window("five_hour", five_item[1]) if five_item else None
     weekly = _window("weekly", weekly_item[1]) if weekly_item else None
     return five, weekly
 

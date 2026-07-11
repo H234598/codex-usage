@@ -215,6 +215,22 @@ def test_window_mapping_prefers_codex_limit_bucket():
     assert weekly is not None and weekly.used == 2
 
 
+def test_window_mapping_keeps_weekly_only_bucket_as_weekly():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "secondary": {
+                    "usedPercent": 12,
+                    "windowDurationMins": 10080,
+                }
+            }
+        }
+    )
+
+    assert five is None
+    assert weekly is not None and weekly.used == 12
+
+
 def test_refresh_window_is_fifteen_minutes():
     now = datetime.now(UTC)
     assert _should_refresh(now + timedelta(minutes=14), now=now) is True

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.48 - 2026-07-11
+
+### Fixed
+
+- App Server partial responses with only a weekly bucket no longer mislabel
+  that bucket as the five-hour limit.
+
 ## 0.6.47 - 2026-07-11
 
 ### Fixed
