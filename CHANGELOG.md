@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.57 - 2026-07-11
+
+### Fixed
+
+- The browser-extension `sendMessage` callback now catches context invalidation
+  while reading `chrome.runtime.lastError` after an extension reload.
+
 ## 0.6.56 - 2026-07-11
 
 ### Fixed

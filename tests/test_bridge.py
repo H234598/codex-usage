@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 
 import pytest
 
@@ -340,6 +342,92 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "codexUsageApiResponses" in page_hook
     assert "/backend-api/wham/" in page_hook
     assert 'source: "page-fetch"' in page_hook
+
+
+def test_generated_extension_handles_invalidated_runtime_callback(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+process.on("uncaughtException", (error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+const runtime = {
+  id: "test-extension",
+  sendMessage(_message, callback) {
+    Promise.resolve().then(() => callback({}));
+  }
+};
+Object.defineProperty(runtime, "lastError", {
+  get() {
+    throw new Error("Extension context invalidated");
+  }
+});
+const text = "Codex analytics page text with enough content";
+const sandbox = {
+  window: { addEventListener() {} },
+  document: {
+    title: "Codex",
+    readyState: "complete",
+    body: { innerText: text },
+    documentElement: {
+      cloneNode() {
+        return {
+          textContent: text,
+          outerHTML: "<html><body>Codex</body></html>",
+          querySelectorAll() { return { forEach() {} }; }
+        };
+      }
+    },
+    querySelectorAll() { return []; }
+      },
+      chrome: { runtime },
+      location: {
+        href: "https://chatgpt.com/codex/cloud/settings/analytics",
+        origin: "https://chatgpt.com"
+      },
+      console,
+  Date,
+  JSON,
+  Map,
+  Array,
+  Number,
+  String,
+  Object,
+  Promise,
+  URL,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout,
+  fetch: async () => ({
+    headers: { get() { return "text/plain"; } },
+    text: async () => ""
+  })
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => process.exit(process.exitCode || 0), 40);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "content.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_write_bridge_extension_rejects_symlink_output_dir(tmp_path):

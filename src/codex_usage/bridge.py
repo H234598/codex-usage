@@ -897,16 +897,24 @@ async function sendCodexUsage() {{
     chrome.runtime.sendMessage(
       {{ type: "codexUsageIngest", payload }},
       (response) => {{
-        const lastError = chrome.runtime && chrome.runtime.lastError;
-        if (lastError) {{
-          if (isCodexUsageExtensionContextError(lastError)) {{
-            stopCodexUsageBridge(lastError.message);
+        try {{
+          const lastError = chrome.runtime && chrome.runtime.lastError;
+          if (lastError) {{
+            if (isCodexUsageExtensionContextError(lastError)) {{
+              stopCodexUsageBridge(lastError.message);
+              return;
+            }}
+            console.warn("codex-usage bridge", lastError.message);
             return;
           }}
-          console.warn("codex-usage bridge", lastError.message);
-          return;
+          console.log("codex-usage bridge", response);
+        }} catch (error) {{
+          if (isCodexUsageExtensionContextError(error)) {{
+            stopCodexUsageBridge(error.message || String(error));
+            return;
+          }}
+          console.warn("codex-usage bridge", error);
         }}
-        console.log("codex-usage bridge", response);
       }}
     );
   }} catch (error) {{
