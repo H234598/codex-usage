@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.157 - 2026-07-12
+
+### Fixed
+
+- Direct-Samples mit dynamisch fortgeschriebenem `reset_at` werden jetzt über
+  ein stabiles `reset_after_seconds`-Fenster gruppiert.
+- Ein 5-Sekunden-Bucketwechsel kann dadurch keinen konsistenten Mehrheitsstand
+  mehr in drei künstlich verschiedene Antworten aufspalten.
+- Regression für BW-Work-artige Antworten mit einem transienten Wochenstand
+  und gleichzeitigem Resetzeit-Bucketwechsel ergänzt.
+
 ## 0.6.156 - 2026-07-12
 
 ### Fixed

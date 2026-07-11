@@ -205,6 +205,70 @@ def test_fetch_account_usage_direct_prefers_majority_response(tmp_path, monkeypa
     assert usage.weekly.remaining == 55
 
 
+def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):
+    responses = iter(
+        (
+            {
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 1,
+                        "limit_window_seconds": 18000,
+                        "reset_at": 1783829134,
+                        "reset_after_seconds": 18000,
+                    },
+                    "secondary_window": {
+                        "used_percent": 0,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1784415934,
+                        "reset_after_seconds": 604800,
+                    },
+                }
+            },
+            {
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 1,
+                        "limit_window_seconds": 18000,
+                        "reset_at": 1783829134,
+                        "reset_after_seconds": 18000,
+                    },
+                    "secondary_window": {
+                        "used_percent": 51,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1784280925,
+                        "reset_after_seconds": 469832,
+                    },
+                }
+            },
+            {
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 1,
+                        "limit_window_seconds": 18000,
+                        "reset_at": 1783829135,
+                        "reset_after_seconds": 18000,
+                    },
+                    "secondary_window": {
+                        "used_percent": 51,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1784280925,
+                        "reset_after_seconds": 469832,
+                    },
+                }
+            },
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 1
+    assert payload["rate_limit"]["secondary_window"]["used_percent"] == 51
+
+
 def test_fetch_stable_wham_usage_rejects_missing_quorum(monkeypatch):
     responses = iter(
         {
@@ -248,6 +312,31 @@ def test_fetch_stable_wham_usage_accepts_progressive_same_window(monkeypatch):
     payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
 
     assert payload["rate_limit"]["primary_window"]["used_percent"] == 5
+
+
+def test_fetch_stable_wham_usage_accepts_dynamic_reset_progression(monkeypatch):
+    responses = iter(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 1,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1780894250 + index * 6,
+                    "reset_after_seconds": 18000,
+                }
+            }
+        }
+        for index in range(3)
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 1
+    assert payload["rate_limit"]["primary_window"]["reset_at"] == 1780894250
 
 
 def test_fetch_account_usage_direct_rejects_auth_identity_changed_during_request(

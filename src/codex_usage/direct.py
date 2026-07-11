@@ -496,7 +496,7 @@ def _usage_window_signature(value: Any) -> tuple | None:
     return (
         _signature_number(value.get("limit_window_seconds")),
         _signature_number(value.get("used_percent")),
-        _signature_reset(value.get("reset_at")),
+        _signature_reset_identity(value),
     )
 
 
@@ -520,22 +520,14 @@ def _usage_response_completeness(payload: dict[str, Any]) -> int:
 
 def _usage_response_progresses(payloads: list[dict[str, Any]]) -> bool:
     signatures = [_usage_response_signature(payload) for payload in payloads]
-    identities = tuple(
-        tuple(
-            None if window is None else (window[0], window[2])
-            for window in signature
-        )
-        for signature in signatures
-    )
-    if len(set(identities)) != 1:
-        return False
-
     observed_window = False
     for window_index in range(2):
         windows = [signature[window_index] for signature in signatures]
         if all(window is None for window in windows):
             continue
         if any(window is None or window[1] is None for window in windows):
+            return False
+        if not _progressive_window_identity_is_stable(windows):
             return False
         observed_window = True
         used_values = [window[1] for window in windows]
@@ -545,6 +537,25 @@ def _usage_response_progresses(payloads: list[dict[str, Any]]) -> bool:
         ):
             return False
     return observed_window
+
+
+def _progressive_window_identity_is_stable(windows: list[tuple]) -> bool:
+    durations = {window[0] for window in windows}
+    identities = {window[2] for window in windows}
+    return len(durations) == 1 and len(identities) == 1 and None not in identities
+
+
+def _signature_reset_identity(value: dict[str, Any]) -> tuple[str, int] | None:
+    duration = _signature_number(value.get("limit_window_seconds"))
+    reset_after = _signature_number(value.get("reset_after_seconds"))
+    if (
+        duration is not None
+        and reset_after is not None
+        and abs(reset_after - duration) <= DIRECT_RESET_BUCKET_SECONDS
+    ):
+        return ("after", int(reset_after // DIRECT_RESET_BUCKET_SECONDS))
+    reset_at = _signature_reset(value.get("reset_at"))
+    return None if reset_at is None else ("at", reset_at)
 
 
 def _response_content_type(response: Any) -> str:
