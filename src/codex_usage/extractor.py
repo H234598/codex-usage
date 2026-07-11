@@ -226,7 +226,26 @@ def _window_from_mapping(
         ("limit", "max", "quota", "total", "capacity"),
         exclude_suffixes=("_seconds", "_minutes", "_hours"),
     )
-    remaining = _pick_number(flat, ("remaining", "left", "available"))
+    remaining_percent = _pick_number(
+        flat,
+        (
+            "remaining_percent",
+            "remaining_percentage",
+            "available_percent",
+            "available_percentage",
+            "left_percent",
+            "left_percentage",
+        ),
+    )
+    remaining_ratio = _pick_number(
+        flat,
+        ("remaining_ratio", "available_ratio", "left_ratio"),
+    )
+    remaining = _pick_number(
+        flat,
+        ("remaining", "left", "available"),
+        exclude_suffixes=("_percent", "_percentage", "_ratio"),
+    )
     percent = _pick_number(flat, ("percent", "percentage", "ratio"))
     reset_at = _pick_datetime(flat, ("reset", "reset_at", "resets_at", "next_reset"), captured_at)
 
@@ -236,8 +255,20 @@ def _window_from_mapping(
         used_percent *= 100
     if used_percent is not None and not 0 <= used_percent <= 100:
         used_percent = None
+    if remaining_percent is not None and 0 <= remaining_percent <= 1:
+        remaining_percent *= 100
+    if remaining_ratio is not None and 0 <= remaining_ratio <= 1:
+        remaining_ratio *= 100
+    if remaining_percent is not None and not 0 <= remaining_percent <= 100:
+        remaining_percent = None
+    if remaining_ratio is not None and not 0 <= remaining_ratio <= 100:
+        remaining_ratio = None
     if remaining is None and used is not None and limit is not None:
         remaining = max(limit - used, 0)
+    if remaining is None:
+        remaining = remaining_percent if remaining_percent is not None else remaining_ratio
+    if remaining_percent is not None or remaining_ratio is not None:
+        percent = remaining
     if used_percent is not None and used is None:
         if remaining is None:
             remaining = max(100 - used_percent, 0)

@@ -432,6 +432,37 @@ def test_extract_windows_converts_used_percentage_alias_to_remaining():
     assert five.percent == 97
 
 
+def test_extract_windows_converts_remaining_ratio_to_percent():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/generic",
+            payload={
+                "five_hour_usage_limit": {
+                    "remaining_ratio": 0.97,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                },
+                "weekly_usage_limit": {
+                    "available_ratio": 0.55,
+                    "reset_at": "2026-06-10T05:05:00+02:00",
+                },
+            },
+        )
+    ]
+
+    five, weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.percent == 97
+    assert weekly is not None
+    assert round(weekly.remaining, 6) == 55
+    assert round(weekly.percent, 6) == 55
+
+
 def test_extract_windows_from_wham_usage_rate_limit_json():
     candidates = [
         JsonCandidate(
