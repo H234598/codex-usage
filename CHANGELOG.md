@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.164 - 2026-07-12
+
+### Fixed
+
+- Monoton fortschreitende Direct-Samples innerhalb desselben Reset-Fensters
+  überschreiben keinen neueren Prozentpunkt mehr durch den älteren Mehrheitswert.
+- Rückläufige oder sprunghafte Samples bleiben weiterhin gegen transient falsche
+  Limitwerte geschützt.
+- Regression für den real beobachteten Übergang von `22%` auf `23%` Nutzung ergänzt.
+
 ## 0.6.163 - 2026-07-12
 
 ### Fixed

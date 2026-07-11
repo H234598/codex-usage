@@ -477,6 +477,8 @@ def _fetch_stable_wham_usage(
         if _usage_response_progresses(payloads):
             return payloads[-1]
         raise DirectFetchError("direct response limits were inconsistent across samples")
+    if _latest_response_progresses_beyond_group(payloads, best_group):
+        return payloads[-1]
     return best_group[0][1]
 
 
@@ -537,6 +539,28 @@ def _usage_response_progresses(payloads: list[dict[str, Any]]) -> bool:
         ):
             return False
     return observed_window
+
+
+def _latest_response_progresses_beyond_group(
+    payloads: list[dict[str, Any]],
+    best_group: list[tuple[int, dict[str, Any]]],
+) -> bool:
+    if not _usage_response_progresses(payloads):
+        return False
+    latest = _usage_response_signature(payloads[-1])
+    stable = _usage_response_signature(best_group[0][1])
+    progressed = False
+    for latest_window, stable_window in zip(latest, stable, strict=True):
+        if latest_window is None and stable_window is None:
+            continue
+        if latest_window is None or stable_window is None:
+            return False
+        if latest_window[1] is None or stable_window[1] is None:
+            return False
+        if latest_window[1] < stable_window[1]:
+            return False
+        progressed = progressed or latest_window[1] > stable_window[1]
+    return progressed
 
 
 def _progressive_window_identity_is_stable(windows: list[tuple]) -> bool:

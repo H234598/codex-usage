@@ -269,6 +269,34 @@ def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):
     assert payload["rate_limit"]["secondary_window"]["used_percent"] == 51
 
 
+def test_fetch_stable_wham_usage_keeps_latest_monotonic_progress(monkeypatch):
+    def response(used: int) -> dict:
+        return {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1783829134,
+                },
+                "secondary_window": {
+                    "used_percent": 13,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784354562,
+                },
+            }
+        }
+
+    responses = iter((response(22), response(22), response(23)))
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 23
+
+
 def test_fetch_stable_wham_usage_rejects_missing_quorum(monkeypatch):
     responses = iter(
         {
