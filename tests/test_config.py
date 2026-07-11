@@ -200,6 +200,46 @@ id = "privat"
         load_config(config_path)
 
 
+def test_save_config_rejects_shared_profile_directory(tmp_path):
+    profile = tmp_path / "profiles" / "shared"
+    config = AppConfig(
+        accounts=(
+            Account(id="one", label="One", profile_dir=str(profile)),
+            Account(
+                id="two",
+                label="Two",
+                profile_dir=str(profile / ".." / "shared"),
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match="duplicate profile_dir"):
+        save_config(config, tmp_path / "config.toml")
+
+
+def test_save_config_rejects_shared_auth_json_path(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="one",
+                label="One",
+                profile_dir=str(tmp_path / "profiles" / "one"),
+                auth_json_path=str(auth_path),
+            ),
+            Account(
+                id="two",
+                label="Two",
+                profile_dir=str(tmp_path / "profiles" / "two"),
+                auth_json_path=str(auth_path.parent / "." / auth_path.name),
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match="duplicate auth_json_path"):
+        save_config(config, tmp_path / "config.toml")
+
+
 def test_save_config_sets_private_file_mode(tmp_path):
     config_path = tmp_path / "config.toml"
     save_config(

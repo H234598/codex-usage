@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.122 - 2026-07-11
+
+### Fixed
+
+- Die Konfiguration lehnt jetzt geteilte Browser-Profilordner und geteilte
+  `auth.json`-Pfade zwischen Accounts ab; dadurch können Cookies oder Tokens
+  nicht mehr versehentlich den Limitwert eines anderen Accounts liefern.
+- Auch Pfadvarianten mit `~`, `..` oder Symlink-Auflösung werden als derselbe
+  Ressourcenpfad erkannt.
+- Regressionen für beide Konten-Isolationsregeln ergänzt.
+
 ## 0.6.121 - 2026-07-11
 
 ### Fixed

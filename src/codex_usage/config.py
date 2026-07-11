@@ -276,6 +276,36 @@ def _validate_unique_accounts(accounts: tuple[Account, ...]) -> None:
         seen.add(account.id)
 
 
+def _normalized_config_path(value: str) -> str:
+    try:
+        return os.path.normcase(str(Path(value).expanduser().resolve(strict=False)))
+    except OSError:
+        return os.path.normcase(os.path.abspath(os.path.expanduser(value)))
+
+
+def _validate_unique_account_resources(accounts: tuple[Account, ...]) -> None:
+    profile_paths: dict[str, str] = {}
+    auth_paths: dict[str, str] = {}
+    for account in accounts:
+        profile_key = _normalized_config_path(account.profile_dir)
+        previous_profile = profile_paths.get(profile_key)
+        if previous_profile is not None:
+            raise ValueError(
+                f"duplicate profile_dir for accounts {previous_profile} and {account.id}"
+            )
+        profile_paths[profile_key] = account.id
+
+        if account.auth_json_path is None:
+            continue
+        auth_key = _normalized_config_path(account.auth_json_path)
+        previous_auth = auth_paths.get(auth_key)
+        if previous_auth is not None:
+            raise ValueError(
+                f"duplicate auth_json_path for accounts {previous_auth} and {account.id}"
+            )
+        auth_paths[auth_key] = account.id
+
+
 def _validate_config(config: AppConfig) -> None:
     if not isinstance(config, AppConfig):
         raise ValueError("config must be an AppConfig")
@@ -298,6 +328,7 @@ def _validate_config(config: AppConfig) -> None:
     for account in config.accounts:
         _validate_account(account)
     _validate_unique_accounts(config.accounts)
+    _validate_unique_account_resources(config.accounts)
 
 
 def _validate_account(account: object) -> None:
