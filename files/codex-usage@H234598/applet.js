@@ -869,7 +869,9 @@ CodexUsageApplet.prototype = {
             this._serviceChecked = true;
             if (validStatus) {
                 this._serviceStatus = payload;
-                this._systemdActive = Boolean(payload.enabled && payload.active);
+                this._systemdActive = Boolean(
+                    payload.installed && payload.enabled && payload.active
+                );
                 if (!this._systemdActive) {
                     this._serviceAutoAttempted = false;
                 }
@@ -1800,7 +1802,13 @@ CodexUsageApplet.prototype = {
         }
         argv.push("service", "enable", "--format", "json");
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
-            if (error || !payload || !payload.enabled || !payload.active) {
+            if (
+                error ||
+                !payload ||
+                !payload.installed ||
+                !payload.enabled ||
+                !payload.active
+            ) {
                 this._serviceAutoAttempted = false;
                 this._showCommandError(error || _("systemd-Timer konnte nicht aktiviert werden"));
                 if (this.pollOwner === "auto" && this.autoRefresh) {

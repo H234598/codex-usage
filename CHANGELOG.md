@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.36 - 2026-07-11
+
+### Fixed
+
+- The applet now treats a systemd timer as an active poll owner only when the
+  status reports that the units are managed by codex-usage.
+
 ## 0.6.35 - 2026-07-11
 
 ### Fixed

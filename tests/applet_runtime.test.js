@@ -1092,6 +1092,32 @@ test("a valid inactive service status retries after a previous activation", () =
   assert.equal(applet._serviceAutoAttempted, true);
 });
 
+test("an active unmanaged timer is not treated as the poll owner", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._serviceChecked = true;
+  applet._systemdActive = true;
+  applet._serviceAutoAttempted = false;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._cacheIsStale = () => false;
+  const calls = [];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv.slice(1).join(" "));
+    if (argv.includes("status")) {
+      callback({ installed: false, enabled: true, active: true }, null);
+    }
+  };
+
+  applet._checkServiceStatus(() => {});
+  assert.equal(applet._systemdActive, false);
+  assert.deepEqual(calls, [
+    "service status --format json",
+    "service enable --format json",
+  ]);
+});
+
 test("stale service repair finishes before the auxiliary continuation", () => {
   const applet = makeApplet();
   const calls = [];
@@ -1109,7 +1135,7 @@ test("stale service repair finishes before the auxiliary continuation", () => {
   applet._spawnAuxJson = (argv, callback) => {
     calls.push(argv.slice(1).join(" "));
     if (argv.includes("status")) {
-      callback({ enabled: true, active: true }, null);
+      callback({ installed: true, enabled: true, active: true }, null);
     } else if (argv.includes("enable")) {
       enableCallback = callback;
     }
@@ -1122,7 +1148,7 @@ test("stale service repair finishes before the auxiliary continuation", () => {
   ]);
   assert.equal(enableCallback !== null, true);
 
-  enableCallback({ enabled: true, active: true }, null);
+  enableCallback({ installed: true, enabled: true, active: true }, null);
   assert.deepEqual(calls, [
     "service status --format json",
     "service enable --format json",
