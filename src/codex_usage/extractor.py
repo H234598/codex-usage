@@ -247,12 +247,23 @@ def _extract_text_window(
         progress_percent = _extract_progress_width_percent(chunk)
         percent = _extract_percent(chunk)
         remaining = _extract_remaining(chunk)
+        used_percent = _extract_used_percent(chunk)
         reset_at = _extract_reset_at(chunk, captured_at)
 
+        if remaining is None and used_percent is not None:
+            remaining = max(100 - used_percent, 0)
         if percent is None and progress_percent is not None:
             percent = progress_percent
         if remaining is None and progress_percent is not None:
             remaining = progress_percent
+
+        if (
+            remaining is not None
+            and used is None
+            and limit is None
+            and 0 <= remaining <= 100
+        ):
+            percent = remaining
 
         if all(value is None for value in (used, limit, remaining, percent, reset_at)):
             continue
@@ -310,6 +321,18 @@ def _extract_used_limit(text: str) -> tuple[float | None, float | None]:
 def _extract_percent(text: str) -> float | None:
     match = re.search(r"(?P<percent>\d+(?:[.,]\d+)?)\s*%", text)
     return _parse_percent(match.group("percent")) if match else None
+
+
+def _extract_used_percent(text: str) -> float | None:
+    patterns = (
+        r"(?P<used>\d+(?:[.,]\d+)?)\s*%\s*(?:used|genutzt|verbraucht)",
+        r"(?:used|genutzt|verbraucht)\D{0,10}(?P<used>\d+(?:[.,]\d+)?)\s*%",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return _parse_percent(match.group("used"))
+    return None
 
 
 def _extract_progress_width_percent(text: str) -> float | None:

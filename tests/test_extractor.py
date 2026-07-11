@@ -131,6 +131,30 @@ def test_extract_windows_from_remaining_percent_dom_text():
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
 
 
+def test_extract_windows_normalizes_used_percent_to_remaining_percent():
+    body = """
+    5-hour limit
+    3% used
+    Reset 08.06.2026 04:26
+
+    Weekly limit
+    45% used
+    Reset 10.06.2026 05:05
+    """
+
+    five, weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.percent == 97
+    assert weekly is not None
+    assert weekly.remaining == 55
+    assert weekly.percent == 55
+
+
 def test_extract_windows_from_progress_bar_width_html():
     body = """
     <section>

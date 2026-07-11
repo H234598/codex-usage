@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.67 - 2026-07-11
+
+### Fixed
+
+- DOM-Text mit Nutzungsprozenten wird in konsistente Restprozente normalisiert,
+  damit CLI und Applet denselben aktuellen Wert anzeigen.
+
 ## 0.6.66 - 2026-07-11
 
 ### Fixed
