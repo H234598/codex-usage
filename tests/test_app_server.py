@@ -247,6 +247,29 @@ def test_stop_process_terminates_isolated_process_group(monkeypatch):
     assert calls == [(1234, signal.SIGTERM), ("wait", 2)]
 
 
+def test_stop_process_signals_group_after_parent_exit(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = 1234
+        stdin = None
+
+        def poll(self):
+            return 0
+
+        def terminate(self):
+            raise AssertionError("exited parent must not use process fallback")
+
+    monkeypatch.setattr(
+        "codex_usage.app_server.os.killpg",
+        lambda pid, signum: calls.append((pid, signum)),
+    )
+
+    _stop_process(FakeProcess())
+
+    assert calls == [(1234, signal.SIGTERM)]
+
+
 def test_stop_process_ignores_exit_races():
     class FakeProcess:
         stdin = None

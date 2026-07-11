@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.47 - 2026-07-11
+
+### Fixed
+
+- App Server cleanup also signals the isolated process group after the parent
+  process has already exited, preventing orphaned child processes.
+
 ## 0.6.46 - 2026-07-11
 
 ### Fixed

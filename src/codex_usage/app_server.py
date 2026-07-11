@@ -446,6 +446,7 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
         except OSError:
             pass
     if process.poll() is not None:
+        _signal_process_group(process, signal.SIGTERM, fallback=False)
         return
     if not _signal_process_group(process, signal.SIGTERM):
         return
@@ -462,7 +463,9 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
         return
 
 
-def _signal_process_group(process: subprocess.Popen[bytes], signum: int) -> bool:
+def _signal_process_group(
+    process: subprocess.Popen[bytes], signum: int, *, fallback: bool = True
+) -> bool:
     pid = getattr(process, "pid", None)
     if isinstance(pid, int) and pid > 0:
         try:
@@ -470,6 +473,8 @@ def _signal_process_group(process: subprocess.Popen[bytes], signum: int) -> bool
             return True
         except (OSError, ValueError):
             pass
+    if not fallback:
+        return False
     try:
         if signum == signal.SIGKILL:
             process.kill()
