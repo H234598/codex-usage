@@ -171,6 +171,14 @@ test("remaining percentage prefers absolute used and limit values", () => {
   assert.equal(applet._remainingPercent({ remaining: undefined, percent: undefined }), null);
 });
 
+test("epoch reset timestamps remain valid and report zero duration", () => {
+  const applet = makeApplet();
+  const epoch = "1970-01-01T00:00:00.000Z";
+  assert.equal(applet._dateMillis(epoch), 0);
+  assert.notEqual(applet._formatDate(epoch), "–");
+  assert.equal(applet._durationMinutes({ reset_at: epoch }), 0);
+});
+
 test("internal failures enter safe mode after the configured limit", () => {
   const applet = makeApplet();
   applet._enterSafeMode = function(reason) {

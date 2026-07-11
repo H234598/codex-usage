@@ -916,7 +916,7 @@ CodexUsageApplet.prototype = {
             return false;
         }
         let captured = this._dateMillis(this._newestCapture());
-        if (!captured) {
+        if (captured === null) {
             return true;
         }
         let grace = Math.max(60000, this._boundedInteger(this.refreshInterval, 60, 3600, 300) * 2000);
@@ -2036,7 +2036,7 @@ CodexUsageApplet.prototype = {
         let staleAfterMs = this._boundedInteger(this.refreshInterval, 60, 3600, 300) * 2000;
         for (let i = 0; i < usages.length; i++) {
             let capturedMs = this._dateMillis(usages[i].captured_at);
-            usages[i].stale = usages[i].stale || !capturedMs || nowMs - capturedMs > staleAfterMs;
+            usages[i].stale = usages[i].stale || capturedMs === null || nowMs - capturedMs > staleAfterMs;
         }
         this._usages = usages;
         this._buildUsageMenu();
@@ -2929,7 +2929,7 @@ CodexUsageApplet.prototype = {
             return { plain: "–", markup: this._escapeMarkup("–") };
         }
         let millis = this._dateMillis(window.reset_at);
-        if (!millis) {
+        if (millis === null) {
             return { plain: "–", markup: this._escapeMarkup("–") };
         }
         let date = new Date(millis);
@@ -3021,7 +3021,7 @@ CodexUsageApplet.prototype = {
             return null;
         }
         let millis = this._dateMillis(window.reset_at);
-        if (!millis) {
+        if (millis === null) {
             return null;
         }
         return Math.max(0, Math.ceil((millis - Date.now()) / 60000));
@@ -3213,11 +3213,11 @@ CodexUsageApplet.prototype = {
 
     _newestCapture: function() {
         let newest = "";
-        let newestMs = 0;
+        let newestMs = null;
         for (let i = 0; i < this._usages.length; i++) {
             let value = this._usages[i].captured_at;
             let millis = this._dateMillis(value);
-            if (millis > newestMs) {
+            if (millis !== null && (newestMs === null || millis > newestMs)) {
                 newestMs = millis;
                 newest = value;
             }
@@ -3226,16 +3226,16 @@ CodexUsageApplet.prototype = {
     },
 
     _dateMillis: function(value) {
-        if (!value) {
-            return 0;
+        if (typeof value !== "string" || value.length === 0) {
+            return null;
         }
         let parsed = Date.parse(value);
-        return Number.isFinite(parsed) ? parsed : 0;
+        return Number.isFinite(parsed) ? parsed : null;
     },
 
     _formatDate: function(value) {
         let millis = this._dateMillis(value);
-        if (!millis) {
+        if (millis === null) {
             return "–";
         }
         let date = new Date(millis);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.79 - 2026-07-11
+
+### Fixed
+
+- Gültige Epoch-Zeitstempel werden nicht mehr als fehlende Resetzeit behandelt.
+- Abgelaufene Resetzeiten zeigen eine Restlaufzeit von null statt `–`.
+- Datums- und Capture-Prüfungen unterscheiden nun sauber zwischen `0` und ungültig.
+
 ## 0.6.78 - 2026-07-11
 
 ### Fixed
