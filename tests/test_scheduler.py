@@ -158,6 +158,41 @@ def test_fetch_all_serializes_authenticated_multi_account_polls(monkeypatch):
     assert locks == ["__all_accounts__", "first", "second"]
 
 
+def test_fetch_all_serializes_visible_browser_multi_account_polls(monkeypatch):
+    accounts = (
+        Account(id="first", label="First", profile_dir="/tmp/first"),
+        Account(id="second", label="Second", profile_dir="/tmp/second"),
+    )
+    calls: list[tuple[str, bool]] = []
+    locks: list[str] = []
+
+    def fail_if_parallel(**_kwargs):
+        raise AssertionError("visible browser account polls must be serialized")
+
+    def fake_fetch_browser(account, _config, *, headed):
+        calls.append((account.id, headed))
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime(2026, 6, 8, 4, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.ThreadPoolExecutor", fail_if_parallel)
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage", fake_fetch_browser)
+
+    def fake_account_lock(account_id, **_kwargs):
+        locks.append(account_id)
+        return nullcontext()
+
+    monkeypatch.setattr("codex_usage.scheduler.account_lock", fake_account_lock)
+
+    result = fetch_all(AppConfig(accounts=accounts), accounts, headed=True)
+
+    assert [usage.account_id for usage in result] == ["first", "second"]
+    assert calls == [("first", True), ("second", True)]
+    assert locks == ["__all_accounts__", "first", "second"]
+
+
 def test_configured_app_server_without_auth_does_not_silently_use_browser(monkeypatch):
     account = Account(
         id="app-server",

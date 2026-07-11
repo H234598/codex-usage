@@ -92,14 +92,7 @@ def _serial_fetch_required(
     direct: bool,
     backend_override: str | None,
 ) -> bool:
-    if headed:
-        return False
-    if direct or backend_override is not None:
-        return True
-    return any(
-        account.auth_json_path is not None or account.backend == "app-server"
-        for account in accounts
-    )
+    return len(accounts) > 1
 
 
 def _fetch_one(
@@ -147,12 +140,20 @@ def _fetch_one(
                 return fetch_with_account_lock()
             with account_lock("__all_accounts__"):
                 return fetch_with_account_lock()
-        usage = fetch_account_usage(account, config, headed=headed)
-        return replace(
-            usage,
-            backend_configured=account.backend,
-            backend_used="browser",
-        )
+        def fetch_browser() -> AccountUsage:
+            usage = fetch_account_usage(account, config, headed=headed)
+            return replace(
+                usage,
+                backend_configured=account.backend,
+                backend_used="browser",
+            )
+
+        if global_lock_held:
+            with account_lock(account.id):
+                return fetch_browser()
+        with account_lock("__all_accounts__"):
+            with account_lock(account.id):
+                return fetch_browser()
     except Exception as exc:
         return AccountUsage(
             account_id=account.id,

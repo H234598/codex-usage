@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.125 - 2026-07-11
+
+### Fixed
+
+- Mehrkonten-Polls werden jetzt auch bei sichtbaren Browsern (`--headed`)
+  vollständig serialisiert und pro Account gesperrt. Gleichzeitige Browser-
+  Cookies-/WHAM-Anfragen können dadurch keine fremden Limit-Buckets mehr
+  übernehmen.
+- Regression für sichtbare Mehrkonten-Polls ergänzt.
+
 ## 0.6.124 - 2026-07-11
 
 ### Fixed
