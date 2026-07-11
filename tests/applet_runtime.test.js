@@ -387,6 +387,12 @@ test("safe menu construction contains menu failures", () => {
   assert.doesNotThrow(() => applet._buildSafeMenu());
 });
 
+test("command error handling survives menu failures", () => {
+  const applet = makeApplet();
+  applet.menu = { removeAll() { throw new Error("menu broken"); } };
+  assert.doesNotThrow(() => applet._showCommandError("backend failed"));
+});
+
 test("restlaufzeit is rendered, styled and uses the per-surface target", () => {
   const applet = makeApplet();
   applet._durationStyles = {
@@ -1776,6 +1782,20 @@ test("service enable argv errors release the automatic activation attempt", () =
   applet._baseCommandArgv = () => { throw new Error("command unavailable"); };
   applet._showCommandError = () => {};
   applet._enableBackgroundService();
+  assert.equal(applet._serviceAutoAttempted, false);
+});
+
+test("service error display failures do not block continuation", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._showCommandError = () => { throw new Error("menu failed"); };
+  applet._refreshFresh = () => {};
+  applet._spawnAuxJson = (_argv, callback) => callback(null, "service failed");
+  let continued = 0;
+  assert.doesNotThrow(() => applet._enableBackgroundService(() => { continued += 1; }));
+  assert.equal(continued, 1);
   assert.equal(applet._serviceAutoAttempted, false);
 });
 

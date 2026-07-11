@@ -1964,10 +1964,16 @@ CodexUsageApplet.prototype = {
                 payload.active !== true
             ) {
                 this._serviceAutoAttempted = false;
-                this._showCommandError(error || _("systemd-Timer konnte nicht aktiviert werden"));
+                try {
+                    this._showCommandError(error || _("systemd-Timer konnte nicht aktiviert werden"));
+                } catch (e) {
+                    global.log("[" + UUID + "] service error display failed: " + this._shortText(e, 180));
+                }
                 if (this.pollOwner === "auto" && this.autoRefresh) {
                     this._systemdActive = false;
-                    this._refreshFresh(false);
+                    this._runSafely("service fallback refresh", Lang.bind(this, function() {
+                        this._refreshFresh(false);
+                    }));
                 }
                 continueAfter();
                 return;
@@ -3028,25 +3034,41 @@ CodexUsageApplet.prototype = {
 
     _showCommandError: function(message) {
         let text = this._shortText(message || _("Unbekannter Fehler"), 240);
-        if (this._usages.length) {
-            this._buildUsageMenu();
-            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-            this._addDisabled(this.menu, text, "codex-usage-error");
-        } else {
-            this.menu.removeAll();
-            this._addDisabled(this.menu, _("Codex Usage konnte nicht geladen werden"), "codex-usage-error");
-            this._addDisabled(this.menu, text, "codex-usage-detail");
-            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-            this._addActions();
+        try {
+            if (Array.isArray(this._usages) && this._usages.length) {
+                this._buildUsageMenu();
+                this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+                this._addDisabled(this.menu, text, "codex-usage-error");
+            } else {
+                this.menu.removeAll();
+                this._addDisabled(this.menu, _("Codex Usage konnte nicht geladen werden"), "codex-usage-error");
+                this._addDisabled(this.menu, text, "codex-usage-detail");
+                this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+                this._addActions();
+            }
+        } catch (e) {
+            global.log("[" + UUID + "] command error display failed: " + this._shortText(e, 180));
         }
-        this._clearPanelClasses();
-        this.actor.add_style_class_name("codex-usage-panel-error");
-        this.set_applet_tooltip(text);
+        try {
+            this._clearPanelClasses();
+            this.actor.add_style_class_name("codex-usage-panel-error");
+        } catch (e) {
+            global.log("[" + UUID + "] command error panel state failed: " + this._shortText(e, 180));
+        }
+        try {
+            this.set_applet_tooltip(text);
+        } catch (e) {
+            global.log("[" + UUID + "] command error tooltip failed: " + this._shortText(e, 180));
+        }
         if (this.notifyErrors) {
-            let key = "command:" + text;
-            if (!this._errorState[key]) {
-                Main.notify(_("Codex Usage"), text);
-                this._errorState[key] = true;
+            try {
+                let key = "command:" + text;
+                if (!this._errorState[key]) {
+                    Main.notify(_("Codex Usage"), text);
+                    this._errorState[key] = true;
+                }
+            } catch (e) {
+                global.log("[" + UUID + "] command error notification failed: " + this._shortText(e, 180));
             }
         }
     },

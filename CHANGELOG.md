@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.93 - 2026-07-11
+
+### Fixed
+
+- Der Command-Fehlerhandler bleibt auch bei defektem Menü-, Panel- oder
+  Benachrichtigungs-UI nicht-werfend.
+- Die Service-Recovery verliert ihre Fortsetzung nicht mehr, wenn die
+  Fehleranzeige selbst fehlschlägt.
+- Regressionen für Fehleranzeige und Service-Fortsetzung ergänzt.
+
 ## 0.6.92 - 2026-07-11
 
 ### Fixed
