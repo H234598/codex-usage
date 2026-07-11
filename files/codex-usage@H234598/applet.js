@@ -87,6 +87,8 @@ CodexUsageApplet.prototype = {
         this._primaryFreshOpenAfter = false;
         this._timerId = 0;
         this._displayTimerId = 0;
+        this._timerGeneration = 0;
+        this._displayTimerGeneration = 0;
         this._timeoutId = 0;
         this._process = null;
         this._refreshing = false;
@@ -126,6 +128,7 @@ CodexUsageApplet.prototype = {
         this._serviceRepairAt = 0;
         this._staleFallbackAt = 0;
         this._staleCheckId = 0;
+        this._staleCheckGeneration = 0;
 
         this.set_applet_icon_symbolic_name("view-statistics-symbolic");
         this.set_applet_label("--");
@@ -333,6 +336,9 @@ CodexUsageApplet.prototype = {
         this._primaryFreshPending = false;
         this._primaryFreshOpenAfter = false;
         this._reactivationRefreshPending = false;
+        this._timerGeneration = (this._timerGeneration || 0) + 1;
+        this._displayTimerGeneration = (this._displayTimerGeneration || 0) + 1;
+        this._staleCheckGeneration = (this._staleCheckGeneration || 0) + 1;
         this._removeSource("_timerId");
         this._removeSource("_displayTimerId");
         this._removeSource("_staleCheckId");
@@ -510,6 +516,8 @@ CodexUsageApplet.prototype = {
     },
 
     _scheduleTimer: function() {
+        let generation = (this._timerGeneration || 0) + 1;
+        this._timerGeneration = generation;
         this._removeSource("_timerId");
         if (!this._scheduleDisplayTimer()) {
             return;
@@ -521,7 +529,12 @@ CodexUsageApplet.prototype = {
         try {
             let timerId = Mainloop.timeout_add_seconds(seconds, Lang.bind(this, function() {
                 if (this._removed) {
-                    this._clearSource("_timerId");
+                    if (generation === this._timerGeneration) {
+                        this._clearSource("_timerId");
+                    }
+                    return false;
+                }
+                if (generation !== this._timerGeneration) {
                     return false;
                 }
                 this._runSafely("refresh timer", Lang.bind(this, function() {
@@ -544,6 +557,8 @@ CodexUsageApplet.prototype = {
     },
 
     _scheduleDisplayTimer: function() {
+        let generation = (this._displayTimerGeneration || 0) + 1;
+        this._displayTimerGeneration = generation;
         this._removeSource("_displayTimerId");
         if (this._removed) {
             return false;
@@ -551,7 +566,12 @@ CodexUsageApplet.prototype = {
         try {
             let timerId = Mainloop.timeout_add_seconds(60, Lang.bind(this, function() {
                 if (this._removed) {
-                    this._clearSource("_displayTimerId");
+                    if (generation === this._displayTimerGeneration) {
+                        this._clearSource("_displayTimerId");
+                    }
+                    return false;
+                }
+                if (generation !== this._displayTimerGeneration) {
                     return false;
                 }
                 this._runSafely("display timer", Lang.bind(this, function() {
@@ -1027,10 +1047,18 @@ CodexUsageApplet.prototype = {
             return;
         }
         this._serviceRepairAt = now;
-        this._enableBackgroundService(after);
+        let generation = (this._staleCheckGeneration || 0) + 1;
+        this._staleCheckGeneration = generation;
         this._removeSource("_staleCheckId");
+        this._enableBackgroundService(after);
+        if (this._removed || this._safeMode) {
+            return;
+        }
         try {
             let staleCheckId = Mainloop.timeout_add(60000, Lang.bind(this, function() {
+                if (generation !== this._staleCheckGeneration) {
+                    return false;
+                }
                 this._clearSource("_staleCheckId");
                 if (this._removed || !this._cacheIsStale()) {
                     return false;

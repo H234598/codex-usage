@@ -104,6 +104,9 @@ function makeApplet(onReady) {
   applet._healthTimeoutId = 0;
   applet._timerId = 0;
   applet._displayTimerId = 0;
+  applet._timerGeneration = 0;
+  applet._displayTimerGeneration = 0;
+  applet._staleCheckGeneration = 0;
   applet._lastGoodPanel = { plain: "--", markup: "--" };
   applet._lastGoodTooltip = "";
   applet._internalFailures = [];
@@ -900,6 +903,91 @@ test("stale process timeouts cannot clear newer request timers", () => {
     assert.ok(applet[scenario.generation] > 1);
     assert.equal(processes.length, 2);
   }
+});
+
+test("stale periodic timer callbacks stop without touching newer timers", () => {
+  const callbacks = [];
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = (_seconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+  });
+  applet.autoRefresh = true;
+  applet._usesAppletPolling = () => true;
+  let refreshes = 0;
+  let displayUpdates = 0;
+  applet._refreshFresh = () => { refreshes += 1; };
+  applet._updatePanel = () => { displayUpdates += 1; };
+
+  applet._scheduleTimer();
+  applet._scheduleTimer();
+  assert.equal(callbacks.length, 4);
+  assert.equal(applet._displayTimerId, 3);
+  assert.equal(applet._timerId, 4);
+
+  assert.equal(callbacks[0](), false);
+  assert.equal(callbacks[1](), false);
+  assert.equal(refreshes, 0);
+  assert.equal(displayUpdates, 0);
+  assert.equal(applet._displayTimerId, 3);
+  assert.equal(applet._timerId, 4);
+
+  assert.equal(callbacks[2](), true);
+  assert.equal(callbacks[3](), true);
+  assert.equal(refreshes, 1);
+  assert.equal(displayUpdates, 1);
+});
+
+test("safe mode invalidates already queued periodic timer callbacks", () => {
+  const callbacks = [];
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = (_seconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+  });
+  applet.autoRefresh = true;
+  applet._usesAppletPolling = () => true;
+  let refreshes = 0;
+  let displayUpdates = 0;
+  applet._refreshFresh = () => { refreshes += 1; };
+  applet._updatePanel = () => { displayUpdates += 1; };
+  applet._scheduleTimer();
+  applet._enterSafeMode("timer test");
+
+  assert.equal(applet._displayTimerId, 0);
+  assert.equal(applet._timerId, 0);
+  assert.equal(callbacks[0](), false);
+  assert.equal(callbacks[1](), false);
+  assert.equal(refreshes, 0);
+  assert.equal(displayUpdates, 0);
+});
+
+test("stale service checks cannot clear newer checks", () => {
+  const callbacks = [];
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_ms, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+  });
+  applet._enableBackgroundService = () => {};
+  applet._cacheIsStale = () => true;
+  applet._repairStaleService(() => {});
+  applet._serviceRepairAt = 0;
+  applet._repairStaleService(() => {});
+  assert.equal(callbacks.length, 2);
+  assert.equal(applet._staleCheckId, 2);
+  assert.equal(callbacks[0](), false);
+  assert.equal(applet._staleCheckId, 2);
+});
+
+test("stale service repair does not schedule after safe mode starts", () => {
+  const applet = makeApplet();
+  applet._enableBackgroundService = () => { applet._safeMode = true; };
+  applet._repairStaleService(() => {});
+  assert.equal(applet._staleCheckId, 0);
 });
 
 test("startup failures and missing timeout sources terminate every spawned child process", () => {

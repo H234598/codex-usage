@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.91 - 2026-07-11
+
+### Fixed
+
+- Neu geplante Refresh-, Anzeige- und Stale-Check-Timer werden durch alte
+  bereits zugestellte Callbacks nicht mehr doppelt ausgeführt oder entwertet.
+- Safe Mode invalidiert bereits zugestellte periodische Timer-Callbacks und
+  die Stale-Recovery plant nach einem synchronen Safe-Mode-Eintritt keinen
+  neuen Check mehr.
+- Regressionen für Neuplanung, Safe Mode und konkurrierende Stale-Checks
+  ergänzt.
+
 ## 0.6.90 - 2026-07-11
 
 ### Fixed
