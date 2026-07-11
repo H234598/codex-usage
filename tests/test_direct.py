@@ -110,6 +110,57 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert usage.backend_account_id == "server-account"
 
 
+def test_fetch_account_usage_direct_rejects_auth_identity_changed_during_request(
+    tmp_path, monkeypatch
+):
+    auth_path = tmp_path / "auth.json"
+
+    def write_auth(user_id: str, account_id: str) -> None:
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": _jwt_with_claims(
+                            {"https://api.openai.com/auth": {"chatgpt_user_id": user_id}}
+                        ),
+                        "id_token": _jwt_with_claims(
+                            {"https://api.openai.com/auth": {"chatgpt_user_id": user_id}}
+                        ),
+                        "account_id": account_id,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        auth_path.chmod(0o600)
+
+    write_auth("old-user", "old-account")
+
+    def fake_fetch(*_args, **_kwargs):
+        write_auth("new-user", "new-account")
+        return {
+            "user_id": "old-user",
+            "account_id": "old-account",
+            "rate_limit": {
+                "primary_window": {"used_percent": 3, "limit_window_seconds": 18000},
+                "secondary_window": {"used_percent": 45, "limit_window_seconds": 604800},
+            },
+        }
+
+    monkeypatch.setattr("codex_usage.direct._fetch_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "auth.json identity changed during usage request"
+
+
 def test_fetch_account_usage_direct_rejects_response_from_different_account(
     tmp_path,
     monkeypatch,

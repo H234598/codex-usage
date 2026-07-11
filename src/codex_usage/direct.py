@@ -55,6 +55,19 @@ def fetch_account_usage_direct(
             account_id=auth_account_id,
             timeout_seconds=timeout_seconds,
         )
+        _, refreshed_metadata, refreshed_user_id, refreshed_account_id = (
+            _load_auth_token_and_metadata(path)
+        )
+        if _auth_identity_changed(
+            before_user_id=auth_user_id,
+            before_account_id=auth_account_id,
+            after_user_id=refreshed_user_id,
+            after_account_id=refreshed_account_id,
+        ):
+            raise DirectAuthError("auth.json identity changed during usage request")
+        auth_metadata = refreshed_metadata
+        auth_user_id = refreshed_user_id
+        auth_account_id = refreshed_account_id
         backend_user_id, backend_account_id = backend_identity_from_payload(payload)
         try:
             backend_user_id, backend_account_id = canonical_backend_identity(
@@ -122,6 +135,18 @@ class DirectAuthError(Exception):
 
 class DirectFetchError(Exception):
     pass
+
+
+def _auth_identity_changed(
+    *,
+    before_user_id: str | None,
+    before_account_id: str | None,
+    after_user_id: str | None,
+    after_account_id: str | None,
+) -> bool:
+    if before_account_id or after_account_id:
+        return before_account_id != after_account_id
+    return before_user_id != after_user_id
 
 
 def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:

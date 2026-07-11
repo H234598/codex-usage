@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.146 - 2026-07-11
+
+### Fixed
+
+- Der Direct-Abruf prüft die Auth-Identität nach dem Netzwerkabruf erneut.
+- Ein Wechsel von `auth.json` während der Anfrage wird fail-closed als
+  `LOGIN_REQUIRED` behandelt, statt alte Limits unter einem neuen Account
+  zu speichern.
+- Regression für den Direct-Auth-Race ergänzt.
+
 ## 0.6.145 - 2026-07-11
 
 ### Fixed
