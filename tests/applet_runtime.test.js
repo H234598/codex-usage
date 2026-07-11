@@ -1122,6 +1122,32 @@ test("partial fresh payload preserves each missing window from stale cache", () 
   assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
 });
 
+test("fresh data from another backend account cannot reuse cached windows", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    backend_user_id: "user-shared",
+    backend_account_id: "account-old",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    backend_user_id: "user-shared",
+    backend_account_id: "account-new",
+    five_hour: null,
+    weekly: null,
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].five_hour, null);
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].stale, false);
+});
+
 test("partial fresh payload preserves usage under reset-only windows", () => {
   const applet = makeApplet();
   applet._usages = [{

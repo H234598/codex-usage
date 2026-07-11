@@ -33,6 +33,12 @@ def fetch_all(
     save_snapshots: bool = False,
 ) -> list[AccountUsage]:
     account_list = list(accounts)
+    serial_fetch_required = _serial_fetch_required(
+        account_list,
+        headed=headed,
+        direct=direct,
+        backend_override=backend_override,
+    )
 
     def fetch(account: Account) -> AccountUsage:
         return _fetch_one(
@@ -42,9 +48,16 @@ def fetch_all(
             direct=direct,
             backend_override=backend_override,
             auth_json_path=auth_json_path if (direct or auth_json_path is not None) else None,
+            global_lock_held=serial_fetch_required,
         )
 
-    if len(account_list) > 1:
+    if serial_fetch_required:
+        # The authenticated usage endpoints can return a shared/cached bucket
+        # when multiple account requests overlap. Keep the whole poll cycle
+        # exclusive, including separate codex-usage processes.
+        with account_lock("__all_accounts__"):
+            usages = [fetch(account) for account in account_list]
+    elif len(account_list) > 1:
         with ThreadPoolExecutor(max_workers=min(4, len(account_list))) as executor:
             usages = list(executor.map(fetch, account_list))
     else:
@@ -72,6 +85,23 @@ def fetch_all(
     return usages
 
 
+def _serial_fetch_required(
+    accounts: list[Account],
+    *,
+    headed: bool,
+    direct: bool,
+    backend_override: str | None,
+) -> bool:
+    if headed:
+        return False
+    if direct or backend_override is not None:
+        return True
+    return any(
+        account.auth_json_path is not None or account.backend == "app-server"
+        for account in accounts
+    )
+
+
 def _fetch_one(
     config: AppConfig,
     account: Account,
@@ -80,6 +110,7 @@ def _fetch_one(
     direct: bool,
     backend_override: str | None,
     auth_json_path: Path | None,
+    global_lock_held: bool = False,
 ) -> AccountUsage:
     try:
         backend = "direct" if direct else (backend_override or account.backend)
@@ -90,7 +121,7 @@ def _fetch_one(
             or account.auth_json_path is not None
         )
         if not headed and use_auth_backend:
-            with account_lock(account.id):
+            def fetch_authenticated() -> AccountUsage:
                 if backend == "app-server":
                     try:
                         return fetch_account_usage_app_server(account)
@@ -108,6 +139,14 @@ def _fetch_one(
                     backend_configured=account.backend,
                     backend_used="direct",
                 )
+            def fetch_with_account_lock() -> AccountUsage:
+                with account_lock(account.id):
+                    return fetch_authenticated()
+
+            if global_lock_held:
+                return fetch_with_account_lock()
+            with account_lock("__all_accounts__"):
+                return fetch_with_account_lock()
         usage = fetch_account_usage(account, config, headed=headed)
         return replace(
             usage,

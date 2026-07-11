@@ -190,6 +190,58 @@ def test_merge_current_with_last_success_fills_missing_window():
     assert merged.stale is True
 
 
+def test_merge_rejects_identified_current_data_from_unknown_cached_account():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_used="direct",
+        backend_user_id="user-current",
+        backend_account_id="account-current",
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour is None
+    assert merged.weekly is None
+    assert merged.stale is False
+
+
+def test_merge_rejects_different_identified_backend_account():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_user_id="user-shared",
+        backend_account_id="account-current",
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        backend_user_id="user-shared",
+        backend_account_id="account-other",
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour is None
+    assert merged.weekly is None
+
+
 def test_merge_current_with_last_success_preserves_usage_under_reset_only_window():
     timezone = ZoneInfo("Europe/Berlin")
     captured = datetime(2026, 6, 8, 4, 20, tzinfo=timezone)

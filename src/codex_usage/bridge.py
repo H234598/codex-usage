@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .config import AppConfig, default_state_dir, resolve_account
 from .extractor import JsonCandidate, extract_windows, load_json_candidate
+from .identity import backend_identity_from_candidates
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
 from .private_io import (
@@ -21,6 +22,7 @@ from .private_io import (
 )
 from .render import render_table
 from .state import (
+    backend_identity_matches,
     load_current_usage,
     load_usage_snapshot,
     merge_current_with_last_success,
@@ -84,6 +86,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         json_candidates=json_candidates,
         now=captured_at,
     )
+    backend_user_id, backend_account_id = backend_identity_from_candidates(json_candidates)
     status = (
         AccountStatus.OK
         if five_hour is not None
@@ -105,6 +108,8 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         status=status,
         error=error,
         source_urls=tuple(sorted(source_urls)),
+        backend_user_id=backend_user_id,
+        backend_account_id=backend_account_id,
     )
 
 
@@ -470,6 +475,12 @@ def ingest_and_save(
 ) -> tuple[AccountUsage, Path]:
     account = resolve_account(config, account_ref)
     usage = usage_from_ingest_payload(account, payload)
+    known = load_usage_snapshot(account.id, snapshot_dir)
+    if known is None:
+        current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
+        known = load_current_usage(account.id, current_dir)
+    if known is not None and not backend_identity_matches(usage, known):
+        raise ValueError("bridge payload belongs to a different backend account")
     path = save_usage_snapshot(usage, snapshot_dir)
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     save_current_usage(usage, current_dir)

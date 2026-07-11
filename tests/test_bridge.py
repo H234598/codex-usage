@@ -3,16 +3,21 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from codex_usage.bridge import (
+    ingest_and_save,
     render_bridge_snippet,
     save_bridge_debug_payload,
     usage_from_ingest_payload,
     write_bridge_extension,
 )
-from codex_usage.models import Account, AccountStatus
+from codex_usage.config import AppConfig
+from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
+from codex_usage.state import save_usage_snapshot
 
 
 def test_usage_from_ingest_payload_extracts_visible_values():
@@ -114,6 +119,8 @@ def test_usage_from_ingest_payload_extracts_api_responses():
                     "contentType": "application/json",
                     "bodyText": json.dumps(
                         {
+                            "user_id": "user-test",
+                            "account_id": "account-test",
                             "five_hour_usage_limit": {
                                 "used": 42,
                                 "limit": 100,
@@ -140,6 +147,59 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     assert usage.five_hour.used == 42
     assert usage.weekly is not None
     assert usage.weekly.limit == 1000
+    assert usage.backend_user_id == "user-test"
+    assert usage.backend_account_id == "account-test"
+
+
+def test_ingest_rejects_payload_from_different_backend_account(tmp_path):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+            backend_user_id="user-shared",
+            backend_account_id="account-current",
+        ),
+        snapshot_dir,
+    )
+
+    with pytest.raises(ValueError, match="different backend account"):
+        ingest_and_save(
+            config,
+            "privat",
+            {
+                "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+                "apiResponses": [
+                    {
+                        "url": "https://chatgpt.com/backend-api/wham/usage",
+                        "status": 200,
+                        "contentType": "application/json",
+                        "bodyText": json.dumps(
+                            {
+                                "user_id": "user-shared",
+                                "account_id": "account-other",
+                                "rate_limit": {
+                                    "primary_window": {
+                                        "used_percent": 3,
+                                        "limit_window_seconds": 18000,
+                                    },
+                                    "secondary_window": {
+                                        "used_percent": 45,
+                                        "limit_window_seconds": 604800,
+                                    },
+                                },
+                            }
+                        ),
+                    }
+                ],
+            },
+            snapshot_dir,
+        )
 
 
 def test_usage_from_ingest_payload_ignores_failed_html_api_responses():

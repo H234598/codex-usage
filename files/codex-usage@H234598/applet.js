@@ -2125,6 +2125,8 @@ CodexUsageApplet.prototype = {
                 auth_access_expires_at: this._safeText(item.auth_access_expires_at, 80),
                 backend_configured: this._safeBackend(item.backend_configured),
                 backend_used: this._safeBackend(item.backend_used, true),
+                backend_user_id: this._safeText(item.backend_user_id, 256),
+                backend_account_id: this._safeText(item.backend_account_id, 256),
                 fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
                 values_captured_at: this._safeText(item.values_captured_at, 80),
                 stale: item.stale === true
@@ -2221,7 +2223,7 @@ CodexUsageApplet.prototype = {
                 merged.push(old);
                 continue;
             }
-            if (old) {
+            if (old && this._backendIdentityMatches(item, old)) {
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
                 if (!this._windowHasUsageValue(item.five_hour) && old.five_hour) {
@@ -2286,6 +2288,21 @@ CodexUsageApplet.prototype = {
             merged.push(stale);
         }
         return merged;
+    },
+
+    _backendIdentityMatches: function(left, right) {
+        let fields = ["backend_user_id", "backend_account_id"];
+        for (let i = 0; i < fields.length; i++) {
+            let leftValue = this._safeText(left && left[fields[i]], 256);
+            let rightValue = this._safeText(right && right[fields[i]], 256);
+            if (Boolean(leftValue) !== Boolean(rightValue)) {
+                return false;
+            }
+            if (leftValue && leftValue !== rightValue) {
+                return false;
+            }
+        }
+        return true;
     },
 
     _windowHasUsageValue: function(window) {

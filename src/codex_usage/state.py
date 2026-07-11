@@ -71,7 +71,7 @@ def _save_usage(
                     return path
             except TypeError:
                 pass
-            if preserve_existing_values:
+            if preserve_existing_values and backend_identity_matches(usage, existing):
                 usage = merge_current_with_last_success(usage, existing)
         text = json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False)
         if len(text.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
@@ -138,6 +138,10 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             payload.get("backend_configured"), limit=40
         ),
         backend_used=_optional_snapshot_text(payload.get("backend_used"), limit=40),
+        backend_user_id=_optional_snapshot_text(payload.get("backend_user_id"), limit=256),
+        backend_account_id=_optional_snapshot_text(
+            payload.get("backend_account_id"), limit=256
+        ),
         fallback_reason=_optional_snapshot_text(
             payload.get("fallback_reason"), limit=MAX_SNAPSHOT_TEXT
         ),
@@ -151,6 +155,8 @@ def merge_current_with_last_success(
     last_success: AccountUsage | None,
 ) -> AccountUsage:
     if last_success is None:
+        return current
+    if not backend_identity_matches(current, last_success):
         return current
     try:
         if last_success.captured_at > current.captured_at:
@@ -185,6 +191,17 @@ def _merge_window_with_last_success(
     if current.reset_at is None:
         return last_success
     return replace(last_success, reset_at=current.reset_at)
+
+
+def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
+    for field in ("backend_user_id", "backend_account_id"):
+        left_value = getattr(left, field)
+        right_value = getattr(right, field)
+        if bool(left_value) != bool(right_value):
+            return False
+        if left_value and left_value != right_value:
+            return False
+    return True
 
 
 def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:

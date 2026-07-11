@@ -17,6 +17,7 @@ from playwright.sync_api import sync_playwright
 from .config import AppConfig
 from .direct import DirectAuthError, auth_metadata_from_payload, read_auth_json_file
 from .extractor import JsonCandidate, extract_windows
+from .identity import backend_identity_from_candidates
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 from .private_io import (
@@ -121,6 +122,7 @@ def fetch_account_usage(
 
         source_urls.update(_redact_url(candidate.url) for candidate in candidates)
         five_hour, weekly = extract_windows(body_text=body_text, json_candidates=candidates)
+        backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
         status = _status_for_result(
             body_text=body_text,
             current_url=current_url,
@@ -135,6 +137,8 @@ def fetch_account_usage(
             weekly=weekly,
             status=status,
             source_urls=tuple(sorted(source_urls)),
+            backend_user_id=backend_user_id,
+            backend_account_id=backend_account_id,
         )
     except PlaywrightError as exc:
         return AccountUsage(

@@ -54,7 +54,9 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
                             "limit_window_seconds": 604800,
                             "reset_at": 1781060750,
                         },
-                    }
+                    },
+                    "user_id": "user-test",
+                    "account_id": "account-test",
                 }
             ).encode("utf-8")
 
@@ -84,6 +86,8 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert usage.five_hour.remaining == 97
     assert usage.weekly is not None
     assert usage.weekly.remaining == 55
+    assert usage.backend_user_id == "user-test"
+    assert usage.backend_account_id == "account-test"
 
 
 def test_fetch_account_usage_direct_marks_reset_only_windows_partial(tmp_path, monkeypatch):

@@ -13,6 +13,7 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from .extractor import JsonCandidate, extract_windows
+from .identity import backend_identity_from_payload
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
@@ -49,6 +50,7 @@ def fetch_account_usage_direct(
                 auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             )
         payload = _fetch_wham_usage(token, timeout_seconds=timeout_seconds)
+        backend_user_id, backend_account_id = backend_identity_from_payload(payload)
         candidate = JsonCandidate(url=WHAM_USAGE_URL, payload=payload)
         five_hour, weekly = extract_windows(
             body_text="",
@@ -73,6 +75,8 @@ def fetch_account_usage_direct(
             auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             source_urls=(_redact_url(WHAM_USAGE_URL),),
+            backend_user_id=backend_user_id,
+            backend_account_id=backend_account_id,
         )
     except DirectAuthError as exc:
         return AccountUsage(

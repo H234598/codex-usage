@@ -64,6 +64,8 @@ class AccountUsage:
     source_urls: tuple[str, ...] = field(default_factory=tuple)
     backend_configured: str | None = None
     backend_used: str | None = None
+    backend_user_id: str | None = None
+    backend_account_id: str | None = None
     fallback_reason: str | None = None
     values_captured_at: datetime | None = None
     stale: bool = False
@@ -91,6 +93,8 @@ class AccountUsage:
             "source_urls": list(self.source_urls),
             "backend_configured": self.backend_configured,
             "backend_used": self.backend_used,
+            "backend_user_id": self.backend_user_id,
+            "backend_account_id": self.backend_account_id,
             "fallback_reason": self.fallback_reason,
             "values_captured_at": self.values_captured_at.isoformat()
             if self.values_captured_at

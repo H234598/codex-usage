@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.108 - 2026-07-11
+
+### Fixed
+
+- Direct-, Browser- und Bridge-Abrufe führen die vom Backend gemeldete User-
+  und Account-ID mit.
+- Alte oder kontenfremde Snapshotwerte werden bei partiellen Abrufen nicht
+  mehr als aktuelle 5h-/Wochenwerte angezeigt.
+- Bridge- und Applet-Fallbacks lehnen eine abweichende Backend-Account-ID ab;
+  damit können Browser-Cookies eines anderen Kontos keine Werte übernehmen.
+- Authentifizierte Pollzyklen laufen exklusiv und seriell; auch einzelne
+  manuelle Abrufe respektieren denselben Gesamt-Lock, damit gemeinsam
+  gecachte Backend-Antworten nicht zwischen Accounts vertauscht werden.
+- Regressionen für identitätslose Legacy-Snapshots und geteilte Benutzer mit
+  unterschiedlichen Accounts ergänzt.
+
 ## 0.6.107 - 2026-07-11
 
 ### Fixed
