@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.104 - 2026-07-11
+
+### Fixed
+
+- Ein strukturierter JSON-Reset bleibt auch bei vollständigen, aber
+  widersprüchlichen DOM-Werten maßgeblich.
+- Reset-only-JSON-Fenster ergänzen weiterhin DOM-Nutzwerte, ohne ihre
+  Resetzeit zu verlieren.
+- Regression für konkurrierende Resetzeiten ergänzt.
+
 ## 0.6.103 - 2026-07-11
 
 ### Fixed

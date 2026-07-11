@@ -366,6 +366,7 @@ def test_extract_windows_merges_dom_usage_into_reset_only_json_window():
     body = """
     5-hour limit
     97% remaining
+    Reset 09.06.2026 08:00
     """
 
     five, _weekly = extract_windows(

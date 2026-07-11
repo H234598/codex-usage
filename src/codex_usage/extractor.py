@@ -107,7 +107,7 @@ def _merge_window_sources(
         return primary
 
     if secondary.has_usage_value:
-        if secondary.reset_at is None and primary.reset_at is not None:
+        if primary.reset_at is not None:
             return replace(
                 secondary,
                 reset_at=primary.reset_at,
