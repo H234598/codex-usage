@@ -151,6 +151,7 @@ def fetch_account_usage(
                 backend_account_id,
                 auth_user_id=auth_user_id,
                 auth_account_id=auth_account_id,
+                require_backend_identity=True,
             )
         except DirectAuthError as exc:
             return AccountUsage(

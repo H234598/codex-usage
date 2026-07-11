@@ -75,6 +75,7 @@ def fetch_account_usage_direct(
                 backend_account_id,
                 auth_user_id=auth_user_id,
                 auth_account_id=auth_account_id,
+                require_backend_identity=True,
             )
         except ValueError as exc:
             raise DirectFetchError(str(exc)) from exc
@@ -278,7 +279,14 @@ def canonical_backend_identity(
     *,
     auth_user_id: str | None,
     auth_account_id: str | None,
+    require_backend_identity: bool = False,
 ) -> tuple[str | None, str | None]:
+    if (
+        require_backend_identity
+        and (auth_user_id or auth_account_id)
+        and not (backend_user_id or backend_account_id)
+    ):
+        raise ValueError("backend response has no account identity")
     if not _response_identity_matches_auth(
         backend_user_id=backend_user_id,
         backend_account_id=backend_account_id,

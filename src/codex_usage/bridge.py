@@ -97,6 +97,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         backend_account_id,
         auth_user_id=auth_user_id,
         auth_account_id=auth_account_id,
+        require_backend_identity=True,
     )
     status = (
         AccountStatus.OK

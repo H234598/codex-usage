@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.148 - 2026-07-11
+
+### Fixed
+
+- Auth-gebundene Direct-, Browser- und Bridge-Abrufe akzeptieren keine
+  Nutzungswerte mehr, wenn der Backend-Response keine Account-Identität
+  liefert.
+- DOM-Werte aus einem falschen Browserprofil können dadurch nicht mehr unter
+  die Identität der lokalen `auth.json` umetikettiert werden.
+- Regressionen für Browser- und Bridge-Payloads ohne Backend-Identität ergänzt.
+
 ## 0.6.147 - 2026-07-11
 
 ### Fixed

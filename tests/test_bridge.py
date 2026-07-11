@@ -366,6 +366,42 @@ def test_usage_from_ingest_payload_rejects_mismatched_auth_account(tmp_path):
         )
 
 
+def test_usage_from_ingest_payload_rejects_auth_values_without_backend_identity(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
+                    "account_id": "account-uuid",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+
+    with pytest.raises(ValueError, match="no account identity"):
+        usage_from_ingest_payload(
+            account,
+            {
+                "bodyText": (
+                    "5-hour usage limit 97% remaining "
+                    "Weekly usage limit 55% remaining"
+                )
+            },
+        )
+
+
 def test_ingest_rejects_payload_from_different_backend_account(tmp_path):
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     config = AppConfig(accounts=(account,))
