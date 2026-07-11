@@ -1170,6 +1170,41 @@ test("fresh successful payload preserves cached reset under missing reset times"
   assert.equal(merged[0].captured_at, "2026-07-10T10:05:00.000Z");
 });
 
+test("older or invalid fresh captures cannot regress newer cached usage", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:10:00.000Z",
+    five_hour: { remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
+    weekly: { remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
+    status: "ok",
+    stale: false,
+  }];
+  const older = applet._mergeFreshPayload([{
+    account: "alpha",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: { remaining: 20, reset_at: "2026-07-10T14:00:00.000Z" },
+    weekly: { remaining: 30, reset_at: "2026-07-11T14:00:00.000Z" },
+    status: "ok",
+    stale: false,
+  }]);
+  assert.equal(older[0].captured_at, "2026-07-10T10:10:00.000Z");
+  assert.equal(older[0].five_hour.remaining, 80);
+  assert.equal(older[0].weekly.remaining, 60);
+
+  const invalid = applet._mergeFreshPayload([{
+    account: "alpha",
+    captured_at: "not-a-timestamp",
+    five_hour: { remaining: 10 },
+    weekly: { remaining: 15 },
+    status: "ok",
+    stale: false,
+  }]);
+  assert.equal(invalid[0].captured_at, "2026-07-10T10:10:00.000Z");
+  assert.equal(invalid[0].five_hour.remaining, 80);
+  assert.equal(invalid[0].weekly.remaining, 60);
+});
+
 test("fresh payload preserves configured accounts omitted from the response", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

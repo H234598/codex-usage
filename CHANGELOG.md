@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.99 - 2026-07-11
+
+### Fixed
+
+- Ältere oder ungültig datierte Fresh-Payloads können im Applet keine neueren
+  Cachewerte mehr zurücksetzen.
+- Regressionen für verspätete und zeitlose Fresh-Abrufe ergänzt.
+
 ## 0.6.98 - 2026-07-11
 
 ### Fixed

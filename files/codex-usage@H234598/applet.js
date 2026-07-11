@@ -2217,6 +2217,10 @@ CodexUsageApplet.prototype = {
             }
             freshAccounts[item.account] = true;
             let old = previous[item.account];
+            if (old && this._captureIsOlder(item.captured_at, old.captured_at)) {
+                merged.push(old);
+                continue;
+            }
             if (old) {
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
@@ -3472,6 +3476,12 @@ CodexUsageApplet.prototype = {
         }
         let parsed = Date.parse(value);
         return Number.isFinite(parsed) ? parsed : null;
+    },
+
+    _captureIsOlder: function(candidate, existing) {
+        let candidateMs = this._dateMillis(candidate);
+        let existingMs = this._dateMillis(existing);
+        return existingMs !== null && (candidateMs === null || candidateMs < existingMs);
     },
 
     _formatDate: function(value) {
