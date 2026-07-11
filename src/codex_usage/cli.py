@@ -481,6 +481,7 @@ def _cmd_reactivate(args: argparse.Namespace) -> int:
 def _cmd_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
+    _validate_fetch_mode_flags(args)
     direct = bool(args.direct or args.auth_json)
     backend_override = _backend_override(args)
     if direct:
@@ -501,6 +502,7 @@ def _cmd_once(args: argparse.Namespace) -> int:
 def _cmd_watch(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
+    _validate_fetch_mode_flags(args)
     if args.interval is not None and args.interval < 60:
         raise ValueError("--interval must be at least 60 seconds")
     direct = bool(args.direct or args.auth_json)
@@ -523,6 +525,7 @@ def _cmd_watch(args: argparse.Namespace) -> int:
 def _cmd_watchdog(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
+    _validate_fetch_mode_flags(args)
     direct = bool(args.direct or args.auth_json)
     backend_override = _backend_override(args)
     if direct:
@@ -746,6 +749,19 @@ def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None
         raise ValueError(
             "direct mode with multiple accounts requires per-account --auth-json; "
             f"missing: {joined}"
+        )
+
+
+def _validate_fetch_mode_flags(args: argparse.Namespace) -> None:
+    if not getattr(args, "headed", False):
+        return
+    if (
+        getattr(args, "direct", False)
+        or getattr(args, "auth_json", None) is not None
+        or getattr(args, "backend", None) is not None
+    ):
+        raise ValueError(
+            "--headed cannot be combined with --direct, --auth-json or --backend"
         )
 
 

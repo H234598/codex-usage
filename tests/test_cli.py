@@ -119,7 +119,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.125\ncodex-usage 0.6.125\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.126\ncodex-usage 0.6.126\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -650,6 +650,35 @@ def test_direct_rejects_global_auth_json_for_multiple_accounts(tmp_path, capsys)
     )
 
     assert "can only override direct auth for one selected account" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    (
+        ("--direct",),
+        ("--auth-json", "auth.json"),
+        ("--backend", "app-server"),
+    ),
+)
+def test_headed_rejects_non_browser_fetch_overrides(tmp_path, capsys, extra_args):
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "once",
+                "--headed",
+                *extra_args,
+            ]
+        )
+        == 1
+    )
+
+    assert "cannot be combined" in capsys.readouterr().err
 
 
 def test_account_overview_shows_config_and_accounts(tmp_path, monkeypatch, capsys):

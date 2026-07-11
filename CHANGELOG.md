@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.126 - 2026-07-11
+
+### Fixed
+
+- Widersprüchliche Abrufoptionen werden jetzt abgewiesen: `--headed` kann
+  nicht zusammen mit `--direct`, `--auth-json` oder `--backend` verwendet
+  werden. Dadurch wird ein expliziter Direct-/App-Server-Wunsch nicht mehr
+  stillschweigend in einen Browserabruf umgebogen.
+- Regressionen für alle drei Konfliktkombinationen ergänzt.
+
 ## 0.6.125 - 2026-07-11
 
 ### Fixed
