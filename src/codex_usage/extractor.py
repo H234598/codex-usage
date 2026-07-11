@@ -416,9 +416,12 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
         parsed = datetime.fromisoformat(iso)
     except ValueError:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=captured_at.tzinfo)
-    return parsed.astimezone(captured_at.tzinfo)
+    try:
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=captured_at.tzinfo)
+        return parsed.astimezone(captured_at.tzinfo)
+    except (OSError, OverflowError, ValueError):
+        return None
 
 
 def _parse_time_today_or_next(raw: str, captured_at: datetime) -> datetime | None:

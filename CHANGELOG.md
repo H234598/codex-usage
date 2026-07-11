@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.63 - 2026-07-11
+
+### Fixed
+
+- Extractor-Resetzeitpunkte, die bei der Zeitzonenumrechnung nicht darstellbar
+  sind, werden kontrolliert verworfen statt den Abruf abstürzen zu lassen.
+
 ## 0.6.62 - 2026-07-11
 
 ### Fixed

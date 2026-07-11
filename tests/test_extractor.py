@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from codex_usage.extractor import JsonCandidate, extract_windows
+from codex_usage.extractor import JsonCandidate, _parse_datetime, extract_windows
 
 
 def test_extract_windows_from_german_dom_text():
@@ -32,6 +32,12 @@ def test_extract_windows_from_german_dom_text():
     assert weekly.used == 310
     assert weekly.limit == 1000
     assert weekly.remaining == 690
+
+
+def test_parse_datetime_rejects_unrepresentable_timezone_conversion():
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    assert _parse_datetime("9999-12-31T23:59:59+00:00", captured_at) is None
 
 
 def test_extract_windows_from_short_english_dom_labels():
