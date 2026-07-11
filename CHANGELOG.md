@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.134 - 2026-07-11
+
+### Fixed
+
+- Der Watchdog prüft beim expliziten `--auth-json`-Override ebenfalls die
+  tatsächlich verwendete Auth-Identität, bevor ein aktiver Block-Snapshot
+  wiederverwendet wird.
+- Regression für einen alten Blockstatus ohne kontoindividuelle Auth-Datei
+  und einen neuen Override-Account ergänzt.
+
 ## 0.6.133 - 2026-07-11
 
 ### Fixed

@@ -15,7 +15,12 @@ from .account_lock import account_lock
 from .app_server import AppServerUnavailableError, fetch_account_usage_app_server
 from .browser import fetch_account_usage
 from .config import AppConfig
-from .direct import DirectAuthError, auth_identity_for_account, fetch_account_usage_direct
+from .direct import (
+    DirectAuthError,
+    auth_identity_for_account,
+    auth_identity_from_file,
+    fetch_account_usage_direct,
+)
 from .health import record_health_event
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
@@ -268,7 +273,11 @@ def watchdog(
         if (
             snapshot is not None
             and _blocked_until_active(snapshot, now=now)
-            and _blocked_snapshot_matches_account(account, snapshot)
+            and _blocked_snapshot_matches_account(
+                account,
+                snapshot,
+                auth_json_path=auth_json_path,
+            )
         ):
             blocked_snapshots[account.id] = snapshot
             continue
@@ -321,11 +330,19 @@ def _blocked_until_active(usage: AccountUsage, *, now: datetime) -> bool:
     )
 
 
-def _blocked_snapshot_matches_account(account: Account, snapshot: AccountUsage) -> bool:
-    if not account.auth_json_path:
-        return True
+def _blocked_snapshot_matches_account(
+    account: Account,
+    snapshot: AccountUsage,
+    *,
+    auth_json_path: Path | None,
+) -> bool:
     try:
-        auth_user_id, auth_account_id = auth_identity_for_account(account)
+        if auth_json_path is not None:
+            auth_user_id, auth_account_id = auth_identity_from_file(auth_json_path)
+        elif account.auth_json_path:
+            auth_user_id, auth_account_id = auth_identity_for_account(account)
+        else:
+            return True
     except DirectAuthError:
         return False
     identities = {value for value in (auth_user_id, auth_account_id) if value}

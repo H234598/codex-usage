@@ -406,6 +406,66 @@ def test_watchdog_refetches_block_after_auth_identity_changes(tmp_path, monkeypa
     assert result == [fresh_usage]
 
 
+def test_watchdog_override_auth_identity_releases_old_block(tmp_path, monkeypatch):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.BLOCKED,
+        blocked_until=datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_account_id="account-old",
+    )
+    fresh_usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        backend_account_id="account-new",
+    )
+    seen_fetch_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        seen_fetch_accounts.extend(account.id for account in fetch_accounts)
+        return [fresh_usage]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_from_file",
+        lambda path: ("user-new", "account-new"),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        direct=True,
+        auth_json_path=tmp_path / "override-auth.json",
+    )
+
+    assert seen_fetch_accounts == ["blocked"]
+    assert result == [fresh_usage]
+
+
 def test_watchdog_blocks_exhausted_usage_and_persists_state(monkeypatch):
     accounts = (Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked"),)
     now = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
