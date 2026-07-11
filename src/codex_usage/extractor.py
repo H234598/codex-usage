@@ -269,13 +269,15 @@ def _window_from_wham_rate_limit_mapping(
 
 
 def _target_rank(path: str, haystack: str, target: str) -> int:
-    compact = f"{path} {haystack}".lower()
-    if target == "five_hour":
-        if any(marker in compact for marker in ("five_hour", "5_hour", "five-hour", "5-hour")):
-            return 0
-    if target == "weekly" and any(marker in compact for marker in ("weekly", "week", "woche")):
+    path_lower = path.lower()
+    markers = (
+        ("five_hour", "5_hour", "five-hour", "5-hour")
+        if target == "five_hour"
+        else ("weekly", "week", "woche")
+    )
+    if any(marker in path_lower for marker in markers):
         return 0
-    return 1 if path != "$" else 2
+    return 2 if path == "$" else 1
 
 
 def _window_from_mapping(

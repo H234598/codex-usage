@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.106 - 2026-07-11
+
+### Fixed
+
+- Aggregierte JSON-Roots können keine Resetzeit eines anderen Fensters mehr
+  in ein spezifisches 5h- oder Wochenfenster übernehmen.
+- Kandidaten mit fensterspezifischem JSON-Pfad werden vor Root-Aggregaten
+  ausgewertet.
+- Regression für getrennte 5h-/Wochenwerte mit partieller Resetmetadatenlage
+  ergänzt.
+
 ## 0.6.105 - 2026-07-11
 
 ### Fixed

@@ -512,6 +512,36 @@ def test_extract_windows_prefers_specific_generic_fields_over_aggregates():
     assert weekly.percent == 20
 
 
+def test_extract_windows_does_not_mix_aggregate_reset_between_windows():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/aggregate",
+            payload={
+                "five_hour_usage_limit": {"used_percent": 3},
+                "weekly_usage_limit": {
+                    "used_percent": 45,
+                    "reset_at": "2026-06-10T05:05:00+02:00",
+                },
+            },
+        )
+    ]
+
+    five, weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.reset_at is None
+    assert five.source.endswith("aggregate")
+    assert weekly is not None
+    assert weekly.remaining == 55
+    assert weekly.reset_at is not None
+    assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
+
+
 def test_extract_windows_prefers_absolute_usage_over_conflicting_json_used_percent():
     candidates = [
         JsonCandidate(
