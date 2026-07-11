@@ -102,6 +102,7 @@ def _extract_json_window(
 ) -> LimitWindow | None:
     matches: list[tuple[str, str, dict[str, Any], str]] = []
     reset_only: LimitWindow | None = None
+    usage_windows: list[LimitWindow] = []
     for candidate in candidates:
         for path, obj in _walk_dicts(candidate.payload):
             obj_preview = _json_preview(obj)
@@ -114,7 +115,7 @@ def _extract_json_window(
             )
             if wham_window is not None:
                 if wham_window.has_usage_value:
-                    return wham_window
+                    usage_windows.append(wham_window)
                 if reset_only is None:
                     reset_only = wham_window
                 continue
@@ -126,12 +127,11 @@ def _extract_json_window(
             if any(word in haystack for word in ("limit", "usage", "nutzung", "reset")):
                 matches.append((candidate.url, path, obj, haystack))
 
-    matches.sort(
-        key=lambda item: (
-            _target_rank(item[1], item[3], target),
-            len(_flatten_mapping(item[2])),
-        )
-    )
+    if usage_windows:
+        usage_windows.sort(key=lambda window: window.reset_at is None)
+        return usage_windows[0]
+
+    ranked_windows: list[tuple[int, int, int, int, LimitWindow]] = []
     for url, _path, obj, haystack in matches:
         window = _window_from_mapping(
             obj,
@@ -142,9 +142,20 @@ def _extract_json_window(
         )
         if window is not None:
             if window.has_usage_value:
-                return window
-            if reset_only is None:
+                ranked_windows.append(
+                    (
+                        _target_rank(_path, haystack, target),
+                        0,
+                        0 if window.reset_at is not None else 1,
+                        len(_flatten_mapping(obj)),
+                        window,
+                    )
+                )
+            elif reset_only is None:
                 reset_only = window
+    if ranked_windows:
+        ranked_windows.sort(key=lambda item: item[:4])
+        return ranked_windows[0][4]
     return reset_only
 
 

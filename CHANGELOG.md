@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.102 - 2026-07-11
+
+### Fixed
+
+- Vollständige spätere JSON-Fenster gewinnen gegen frühere Nutzwert-Treffer
+  ohne Resetzeit.
+- Spezifische Fensterknoten gewinnen bei gleichem Zielrang gegen den
+  Sammel-Root, ohne die 5h-/Wochenzuordnung zu vertauschen.
+- Regressionen für generische und WHAM-Kandidaten ergänzt.
+
 ## 0.6.101 - 2026-07-11
 
 ### Fixed

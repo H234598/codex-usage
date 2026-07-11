@@ -329,6 +329,40 @@ def test_extract_windows_prefers_later_json_usage_over_reset_only_match():
     assert five.source.endswith("fresh")
 
 
+def test_extract_windows_prefers_complete_json_usage_over_earlier_partial_usage():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/partial",
+            payload={
+                "five_hour_usage_limit": {
+                    "used_percent": 3,
+                }
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/fresh",
+            payload={
+                "five_hour_usage_limit": {
+                    "used_percent": 3,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        ),
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "08.06.2026 06:50"
+    assert five.source.endswith("fresh")
+
+
 def test_extract_windows_prefers_specific_generic_fields_over_aggregates():
     candidates = [
         JsonCandidate(
@@ -680,6 +714,45 @@ def test_extract_windows_from_wham_numeric_string_reset_timestamps():
     assert weekly is not None
     assert weekly.reset_at is not None
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
+
+
+def test_extract_windows_prefers_complete_wham_usage_over_earlier_partial_usage():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/partial",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                    }
+                }
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/fresh",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                        "reset_at": "1780894250",
+                    }
+                }
+            },
+        ),
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.reset_at is not None
+    assert five.source.endswith("fresh")
 
 
 def test_extract_windows_ignores_camel_case_relative_reset_before_absolute_reset():
