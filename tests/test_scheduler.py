@@ -862,6 +862,50 @@ def test_watchdog_blocks_exhausted_usage_and_persists_state(monkeypatch):
     assert saved and saved[0].status == AccountStatus.BLOCKED
 
 
+def test_watchdog_does_not_block_when_reset_expires_during_fetch(monkeypatch):
+    account = Account(id="free", label="Free", profile_dir="/tmp/free")
+    before_fetch = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    after_fetch = datetime(2026, 6, 8, 4, 21, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="free",
+        label="Free",
+        captured_at=after_fetch,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=0,
+            reset_at=datetime(2026, 6, 8, 4, 20, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+        ),
+        weekly=LimitWindow(name="weekly", remaining=99),
+    )
+    clock_values = iter((before_fetch, after_fetch))
+
+    class Clock:
+        @classmethod
+        def now(cls):
+            return next(clock_values)
+
+    monkeypatch.setattr("codex_usage.scheduler.datetime", Clock)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_all",
+        lambda *args, **kwargs: [usage],
+    )
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+    )
+
+    assert result[0].status == AccountStatus.OK
+    assert result[0].blocked_until is None
+
+
 def test_window_exhaustion_percent_fallback_uses_remaining_semantics():
     from codex_usage.scheduler import _window_is_exhausted
 

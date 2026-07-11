@@ -429,6 +429,7 @@ def watchdog(
         auth_json_path=auth_json_path,
         save_snapshots=False,
     )
+    evaluation_now = datetime.now().astimezone()
     fetched_by_id = {usage.account_id: usage for usage in fetched}
 
     usages: list[AccountUsage] = []
@@ -437,7 +438,7 @@ def watchdog(
         if usage is None:
             continue
         if account.id not in blocked_snapshots:
-            usage = _apply_watchdog_block(usage, now=now)
+            usage = _apply_watchdog_block(usage, now=evaluation_now)
             try:
                 save_current_usage(usage)
                 if usage.status in {AccountStatus.OK, AccountStatus.BLOCKED}:

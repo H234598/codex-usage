@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.163 - 2026-07-12
+
+### Fixed
+
+- `watchdog` bewertet frisch abgerufene Limits erst mit einer Uhrzeit nach
+  dem Fetch.
+- Läuft ein Reset während eines langen Mehrkonto-Abrufs ab, wird der Account
+  nicht mehr für einen zusätzlichen Zyklus fälschlich als `BLOCKED` persistiert.
+- Regression für einen während des Fetchs abgelaufenen Reset ergänzt.
+
 ## 0.6.162 - 2026-07-12
 
 ### Fixed
