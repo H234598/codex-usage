@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.158 - 2026-07-12
+
+### Fixed
+
+- Der App-Server ordnet ein `primary`- oder `secondary`-Fenster ohne
+  `windowDurationMins` wieder anhand seiner expliziten Position zu, wenn das
+  jeweils andere Fenster eine bekannte Dauer liefert.
+- Explizit unterstützte fremde Fensterdauern werden weiterhin nicht als 5h-
+  oder Wochenlimit umetikettiert.
+- Regressionen für beide Richtungen des unvollständigen Duration-Payloads
+  ergänzt.
+
 ## 0.6.157 - 2026-07-12
 
 ### Fixed

@@ -305,6 +305,44 @@ def test_window_mapping_keeps_weekly_only_bucket_as_weekly():
     assert weekly is not None and weekly.used == 12
 
 
+def test_window_mapping_keeps_unknown_duration_for_known_primary_bucket():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 7,
+                    "windowDurationMins": 300,
+                },
+                "secondary": {
+                    "usedPercent": 18,
+                },
+            }
+        }
+    )
+
+    assert five is not None and five.used == 7
+    assert weekly is not None and weekly.used == 18
+
+
+def test_window_mapping_keeps_unknown_duration_for_known_secondary_bucket():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 7,
+                },
+                "secondary": {
+                    "usedPercent": 18,
+                    "windowDurationMins": 10080,
+                },
+            }
+        }
+    )
+
+    assert five is not None and five.used == 7
+    assert weekly is not None and weekly.used == 18
+
+
 def test_window_mapping_rejects_unsupported_single_duration():
     five, weekly = _windows_from_response(
         {

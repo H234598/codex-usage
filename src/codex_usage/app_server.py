@@ -406,6 +406,12 @@ def _windows_from_response(
     if with_duration:
         five_item = with_duration.get(FIVE_HOUR_WINDOW_MINUTES)
         weekly_item = with_duration.get(WEEKLY_WINDOW_MINUTES)
+        if five_item is None and _strict_int(candidates[0][1].get("windowDurationMins")) is None:
+            five_item = candidates[0] if candidates[0][0] == "primary" else None
+        if weekly_item is None and len(candidates) > 1:
+            secondary = candidates[1]
+            if _strict_int(secondary[1].get("windowDurationMins")) is None:
+                weekly_item = secondary if secondary[0] == "secondary" else None
     else:
         five_item = candidates[0]
         weekly_item = candidates[1] if len(candidates) > 1 else None
