@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.65 - 2026-07-11
+
+### Fixed
+
+- Numerische Reset-Timestamps als JSON-Strings werden wie numerische Werte
+  verarbeitet; übergroße Timestamp-Werte werden kontrolliert verworfen.
+
 ## 0.6.64 - 2026-07-11
 
 ### Fixed

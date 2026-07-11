@@ -404,8 +404,19 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
         return None
     if isinstance(value, bool):
         return None
+    timestamp_value: int | float | None = None
     if isinstance(value, (int, float)):
-        timestamp = float(value)
+        timestamp_value = value
+    elif isinstance(value, str) and re.fullmatch(r"[+-]?\d+(?:\.\d+)?", value.strip()):
+        try:
+            timestamp_value = float(value.strip())
+        except (OverflowError, ValueError):
+            return None
+    if timestamp_value is not None:
+        try:
+            timestamp = float(timestamp_value)
+        except (OverflowError, ValueError):
+            return None
         if not math.isfinite(timestamp):
             return None
         if timestamp > 10_000_000_000:

@@ -58,6 +58,13 @@ def test_parse_datetime_rejects_boolean_timestamp_values():
     assert _parse_datetime(False, captured_at) is None
 
 
+def test_parse_datetime_rejects_overflowing_numeric_timestamps():
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    assert _parse_datetime(10**10000, captured_at) is None
+    assert _parse_datetime("9" * 10000, captured_at) is None
+
+
 def test_extract_windows_from_short_english_dom_labels():
     body = """
     5-hour limit
@@ -286,5 +293,40 @@ def test_extract_windows_from_wham_usage_rate_limit_json():
     assert weekly.limit == 100
     assert weekly.remaining == 55
     assert weekly.percent == 55
+    assert weekly.reset_at is not None
+    assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
+
+
+def test_extract_windows_from_wham_numeric_string_reset_timestamps():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                        "reset_at": "1780894250",
+                    },
+                    "secondary_window": {
+                        "used_percent": 45,
+                        "limit_window_seconds": 604_800,
+                        "reset_at": "1781060750",
+                    },
+                }
+            },
+        )
+    ]
+
+    five, weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "08.06.2026 06:50"
+    assert weekly is not None
     assert weekly.reset_at is not None
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
