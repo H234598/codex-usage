@@ -47,12 +47,16 @@ def service_disable() -> dict[str, Any]:
 
 
 def service_uninstall() -> dict[str, Any]:
-    service_disable()
     unit_dir = _unit_directory()
-    for name in (SERVICE_NAME, TIMER_NAME):
-        path = unit_dir / name
-        if not path.exists() and not path.is_symlink():
-            continue
+    paths = [unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME]
+    present = [path.exists() or path.is_symlink() for path in paths]
+    if not any(present):
+        return {"installed": False, "enabled": False, "active": False}
+    _validate_existing_managed_units(unit_dir)
+    if not all(present):
+        raise ServiceError("managed service and timer must both exist")
+    service_disable()
+    for path in paths:
         _validate_managed_unit(path)
         path.unlink()
     _systemctl("daemon-reload")

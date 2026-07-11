@@ -103,16 +103,36 @@ def test_service_uninstall_refuses_unmanaged_unit(tmp_path, monkeypatch):
     timer_path.write_text("[Timer]\n", encoding="utf-8")
     service_path.chmod(0o600)
     timer_path.chmod(0o600)
-    monkeypatch.setattr(
-        "codex_usage.service._systemctl",
-        lambda *args, check=True: subprocess.CompletedProcess(args, 0, "", ""),
-    )
+    calls: list[tuple[str, ...]] = []
+
+    def fake_systemctl(*args, check=True):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
 
     with pytest.raises(ServiceError, match="unmanaged"):
         service_uninstall()
 
     assert service_path.exists()
     assert timer_path.exists()
+    assert calls == []
+
+
+def test_service_uninstall_does_not_stop_foreign_unit_without_managed_files(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    calls: list[tuple[str, ...]] = []
+
+    def fake_systemctl(*args, check=True):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "active\n", "")
+
+    monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
+
+    assert service_uninstall() == {"installed": False, "enabled": False, "active": False}
+    assert calls == []
 
 
 def test_service_install_refuses_unmanaged_unit_without_overwriting(tmp_path, monkeypatch):
