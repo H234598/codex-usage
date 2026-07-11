@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.129 - 2026-07-11
+
+### Fixed
+
+- Die Reaktivierung bindet eine vorhandene `auth.json` vor dem Login an ihre
+  bisherige Kontoidentität.
+- Ein erfolgreicher Login für ein anderes Konto wird abgewiesen und die alte
+  Datei wird wiederhergestellt.
+- Auch bei Loginfehlern oder unvollständigen neuen Dateien wird die vorherige
+  `auth.json` atomar zurückgesetzt.
+- Regressionen für Kontowechsel und fehlgeschlagenen Login ergänzt.
+
 ## 0.6.128 - 2026-07-11
 
 ### Fixed

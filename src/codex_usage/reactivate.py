@@ -3,13 +3,19 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .account_lock import AccountLockError, account_lock
-from .direct import DirectAuthError, _extract_auth_details, read_auth_json_file
+from .direct import (
+    DirectAuthError,
+    _extract_auth_details,
+    auth_identity_from_payload,
+    read_auth_json_file,
+)
 from .json_utils import loads_strict
 from .models import Account
 from .private_io import write_private_text
@@ -80,25 +86,43 @@ def _reactivate_account_unlocked(
         }
     )
 
+    auth_backup = _capture_auth_backup(auth_path)
+    expected_identity = _identity_from_auth_backup(auth_path, auth_backup)
+
     try:
-        completed = subprocess.run(
-            [codex, "login"],
-            check=False,
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=timeout_seconds,
-            env=env,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise ReactivationError("login timed out; close the login browser and try again") from exc
-    except OSError as exc:
-        raise ReactivationError("could not start codex login") from exc
+        try:
+            completed = subprocess.run(
+                [codex, "login"],
+                check=False,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ReactivationError(
+                "login timed out; close the login browser and try again"
+            ) from exc
+        except OSError as exc:
+            raise ReactivationError("could not start codex login") from exc
 
-    if completed.returncode != 0:
-        raise ReactivationError(f"codex login failed with exit code {completed.returncode}")
+        if completed.returncode != 0:
+            raise ReactivationError(
+                f"codex login failed with exit code {completed.returncode}"
+            )
 
-    metadata = _validate_refreshed_auth(auth_path)
+        metadata = _validate_refreshed_auth(auth_path)
+        _validate_refreshed_identity(auth_path, expected_identity)
+    except Exception as exc:
+        try:
+            _restore_auth_backup(auth_path, auth_backup)
+        except ReactivationError as restore_exc:
+            raise restore_exc from exc
+        if isinstance(exc, ReactivationError):
+            raise
+        raise ReactivationError("login failed unexpectedly") from exc
+
     return {
         "ok": True,
         "account": account.id,
@@ -109,6 +133,86 @@ def _reactivate_account_unlocked(
         if metadata["auth_access_expires_at"]
         else None,
     }
+
+
+def _capture_auth_backup(path: Path) -> tuple[str, int] | None:
+    if not path.exists():
+        return None
+    try:
+        raw, file_stat = read_auth_json_file(path)
+    except DirectAuthError as exc:
+        raise ReactivationError("could not preserve previous auth.json") from exc
+    if file_stat.st_nlink != 1:
+        raise ReactivationError("auth.json must not be hard-linked")
+    return raw, stat.S_IMODE(file_stat.st_mode)
+
+
+def _identity_from_auth_backup(
+    path: Path,
+    backup: tuple[str, int] | None,
+) -> tuple[str | None, str | None]:
+    if backup is None:
+        return None, None
+    try:
+        payload = loads_strict(backup[0])
+        if not isinstance(payload, dict):
+            return None, None
+        return auth_identity_from_payload(payload, path=path)
+    except (DirectAuthError, ValueError):
+        return None, None
+
+
+def _validate_refreshed_identity(
+    path: Path,
+    expected: tuple[str | None, str | None],
+) -> None:
+    expected_user_id, expected_account_id = expected
+    if expected_user_id is None and expected_account_id is None:
+        return
+    try:
+        raw, _ = read_auth_json_file(path)
+        payload = loads_strict(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("auth.json is not an object")
+        actual_user_id, actual_account_id = auth_identity_from_payload(
+            payload,
+            path=path,
+        )
+    except (DirectAuthError, ValueError) as exc:
+        raise ReactivationError(
+            "login completed without a verifiable account identity"
+        ) from exc
+
+    if expected_account_id and actual_account_id:
+        accepted_account_ids = {expected_account_id}
+        if expected_user_id:
+            accepted_account_ids.add(expected_user_id)
+        matches = actual_account_id in accepted_account_ids
+    else:
+        matches = bool(expected_user_id and actual_user_id == expected_user_id)
+    if not matches:
+        raise ReactivationError("login completed for a different account")
+
+
+def _restore_auth_backup(path: Path, backup: tuple[str, int] | None) -> None:
+    try:
+        if backup is not None:
+            write_private_text(
+                path,
+                backup[0],
+                label="auth.json restore",
+                mode=backup[1],
+            )
+            return
+        _assert_no_symlink_ancestors(path.parent, label="auth.json restore parent")
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("auth.json restore target must be a regular file")
+        if path.exists() and path.stat().st_nlink != 1:
+            raise ValueError("auth.json restore target must not be hard-linked")
+        if path.exists():
+            path.unlink()
+    except (OSError, ValueError) as exc:
+        raise ReactivationError("could not restore previous auth.json") from exc
 
 
 def _validate_auth_target(account: Account) -> Path:

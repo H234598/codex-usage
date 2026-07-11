@@ -87,6 +87,106 @@ def test_reactivate_account_uses_isolated_codex_home(tmp_path, monkeypatch):
     assert (profile_root / "oauth" / "vivaldi" / OAUTH_PROFILE_MARKER).is_file()
 
 
+def test_reactivate_rejects_different_account_and_restores_auth_json(tmp_path, monkeypatch):
+    auth_home = tmp_path / "agent-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    expiry = int((datetime.now(UTC) + timedelta(days=10)).timestamp())
+    old_raw = json.dumps(
+        {
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "account_id": "account-old",
+                "access_token": _jwt_with_exp(expiry),
+            },
+        }
+    )
+    auth_path.write_text(old_raw, encoding="utf-8")
+    auth_path.chmod(0o600)
+    profile_root = tmp_path / "profiles" / "work"
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(profile_root),
+        auth_json_path=str(auth_path),
+    )
+    codex = _executable(tmp_path / "codex")
+    helper = _executable(tmp_path / "codex-usage-browser")
+    browser = _executable(tmp_path / "vivaldi-stable")
+    monkeypatch.setattr(
+        "codex_usage.reactivate._select_browser",
+        lambda requested: ("vivaldi", browser),
+    )
+
+    def fake_run(argv, **kwargs):
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "auth_mode": "chatgpt",
+                    "tokens": {
+                        "account_id": "account-new",
+                        "access_token": _jwt_with_exp(expiry),
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        auth_path.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("codex_usage.reactivate.subprocess.run", fake_run)
+
+    with pytest.raises(ReactivationError, match="different account"):
+        reactivate_account(account, codex_command=codex, browser_helper=helper)
+
+    assert auth_path.read_text(encoding="utf-8") == old_raw
+    assert auth_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_reactivate_login_failure_restores_auth_json(tmp_path, monkeypatch):
+    auth_home = tmp_path / "agent-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    expiry = int((datetime.now(UTC) + timedelta(days=10)).timestamp())
+    old_raw = json.dumps(
+        {
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "account_id": "account-old",
+                "access_token": _jwt_with_exp(expiry),
+            },
+        }
+    )
+    auth_path.write_text(old_raw, encoding="utf-8")
+    auth_path.chmod(0o600)
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        auth_json_path=str(auth_path),
+    )
+    codex = _executable(tmp_path / "codex")
+    helper = _executable(tmp_path / "codex-usage-browser")
+    browser = _executable(tmp_path / "vivaldi-stable")
+    monkeypatch.setattr(
+        "codex_usage.reactivate._select_browser",
+        lambda requested: ("vivaldi", browser),
+    )
+
+    def fake_run(argv, **kwargs):
+        auth_path.write_text('{"partial": true}\n', encoding="utf-8")
+        auth_path.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 1, "", "")
+
+    monkeypatch.setattr("codex_usage.reactivate.subprocess.run", fake_run)
+
+    with pytest.raises(ReactivationError, match="exit code 1"):
+        reactivate_account(account, codex_command=codex, browser_helper=helper)
+
+    assert auth_path.read_text(encoding="utf-8") == old_raw
+    assert auth_path.stat().st_mode & 0o777 == 0o600
+
+
 def test_validate_refreshed_auth_rejects_empty_access_token(tmp_path):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
