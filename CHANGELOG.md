@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.74 - 2026-07-11
+
+### Fixed
+
+- Restprozent-Verhältnisse wie `remaining_ratio` und `available_ratio` werden
+  vor der Darstellung auf Prozentwerte normalisiert.
+
 ## 0.6.73 - 2026-07-11
 
 ### Fixed
