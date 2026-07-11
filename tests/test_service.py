@@ -10,6 +10,7 @@ from codex_usage.service import (
     ServiceError,
     managed_service_config_path,
     service_enable,
+    service_install,
     service_uninstall,
 )
 
@@ -112,3 +113,34 @@ def test_service_uninstall_refuses_unmanaged_unit(tmp_path, monkeypatch):
 
     assert service_path.exists()
     assert timer_path.exists()
+
+
+def test_service_install_refuses_unmanaged_unit_without_overwriting(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    service_path = unit_dir / "codex-usage.service"
+    timer_path = unit_dir / "codex-usage.timer"
+    service_path.write_text("[Service]\nType=oneshot\n", encoding="utf-8")
+    timer_path.write_text(
+        "[Unit]\nX-Codex-Usage-Managed=true\n",
+        encoding="utf-8",
+    )
+    service_path.chmod(0o600)
+    timer_path.chmod(0o600)
+    executable = tmp_path / "bin" / "codex-usage"
+    executable.parent.mkdir()
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    monkeypatch.setattr("codex_usage.service._resolve_codex_usage", lambda: executable)
+    monkeypatch.setattr(
+        "codex_usage.service._systemctl",
+        lambda *args, check=True: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    with pytest.raises(ServiceError, match="unmanaged"):
+        service_install(AppConfig(accounts=(), interval_seconds=300), tmp_path / "config.toml")
+
+    assert service_path.read_text(encoding="utf-8") == "[Service]\nType=oneshot\n"
+    assert timer_path.read_text(encoding="utf-8") == "[Unit]\nX-Codex-Usage-Managed=true\n"

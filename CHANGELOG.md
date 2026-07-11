@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.35 - 2026-07-11
+
+### Fixed
+
+- Service installation now rejects existing unmanaged systemd units before
+  writing either managed unit, preserving both files unchanged.
+
 ## 0.6.34 - 2026-07-11
 
 ### Fixed

@@ -30,6 +30,7 @@ def service_enable(config: AppConfig, config_path: Path | None = None) -> dict[s
 
 def service_install(config: AppConfig, config_path: Path | None = None) -> dict[str, Any]:
     unit_dir = _unit_directory()
+    _validate_existing_managed_units(unit_dir)
     executable = _resolve_codex_usage()
     config_file = (config_path or default_config_path()).expanduser().absolute()
     service_text = _render_service(config, executable, config_file)
@@ -292,6 +293,13 @@ def _is_managed_unit(path: Path) -> bool:
         return True
     except (OSError, ValueError, ServiceError):
         return False
+
+
+def _validate_existing_managed_units(unit_dir: Path) -> None:
+    for name in (SERVICE_NAME, TIMER_NAME):
+        path = unit_dir / name
+        if path.exists() or path.is_symlink():
+            _validate_managed_unit(path)
 
 
 def _validate_managed_unit(path: Path) -> None:
