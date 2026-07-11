@@ -235,7 +235,11 @@ def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
     if bool(left_account_id) != bool(right_account_id):
         return False
     if left_account_id:
-        return left_account_id == right_account_id
+        if left_account_id != right_account_id:
+            return False
+        if left.backend_user_id and right.backend_user_id:
+            return left.backend_user_id == right.backend_user_id
+        return True
 
     return left.backend_user_id == right.backend_user_id
 

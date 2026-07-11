@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.156 - 2026-07-12
+
+### Fixed
+
+- Snapshot- und Current-Merges akzeptieren dieselbe Backend-Account-ID nicht
+  mehr, wenn gleichzeitig widersprüchliche Backend-User-IDs vorliegen.
+- Ein Kontenwechsel kann dadurch keine alten Limitfenster unter einer
+  wiederverwendeten Account-ID weitertragen.
+- Regression für widersprüchliche User-Identitäten bei gleicher Account-ID
+  ergänzt.
+
 ## 0.6.155 - 2026-07-12
 
 ### Fixed
