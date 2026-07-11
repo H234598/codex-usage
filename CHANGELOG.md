@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.105 - 2026-07-11
+
+### Fixed
+
+- Vollständige spätere DOM-Fenster gewinnen gegen frühere Nutzwert-Treffer
+  ohne Resetzeit.
+- Mehrere DOM-Kandidaten werden wie JSON-Kandidaten nach vorhandener
+  Resetzeit ausgewertet.
+- Regression für partielle und vollständige DOM-Abschnitte ergänzt.
+
 ## 0.6.104 - 2026-07-11
 
 ### Fixed

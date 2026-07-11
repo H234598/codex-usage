@@ -260,6 +260,27 @@ def test_extract_windows_prefers_later_dom_usage_over_reset_only_match():
     assert weekly.used == 310
 
 
+def test_extract_windows_prefers_complete_later_dom_usage_over_partial_value():
+    body = """
+    5-hour limit
+    97% remaining
+    {filler}
+    5-hour limit
+    97% remaining
+    Reset 08.06.2026 06:50
+    """.format(filler="x" * 1600)
+
+    five, _weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "08.06.2026 06:50"
+
+
 def test_extract_windows_prefers_json_candidates():
     candidates = [
         JsonCandidate(
