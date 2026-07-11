@@ -990,6 +990,17 @@ test("stale service repair does not schedule after safe mode starts", () => {
   assert.equal(applet._staleCheckId, 0);
 });
 
+test("reactivation setup failure does not leave a phantom running account", () => {
+  const applet = makeApplet();
+  applet._buildUsageMenu = () => { throw new Error("menu unavailable"); };
+  applet._spawnReactivation(
+    { account: "alpha", label: "Alpha" },
+    ["codex-usage", "reactivate", "alpha"]
+  );
+  assert.equal(applet._reactivations.alpha, undefined);
+  assert.match(applet._reactivationErrors.alpha, /nicht angezeigt/);
+});
+
 test("startup failures and missing timeout sources terminate every spawned child process", () => {
   const invoke = [
     (applet) => {

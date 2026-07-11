@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.92 - 2026-07-11
+
+### Fixed
+
+- Ein Fehler beim Aufbau der Reaktivierungs-Ladeanzeige hinterlässt keinen
+  phantomhaft laufenden Account mehr in der Reaktivierungsverwaltung.
+- Die Reaktivierungs-Regression prüft den frühen Setup-Abbruch und den
+  kontrollierten Fehlerstatus.
+
 ## 0.6.91 - 2026-07-11
 
 ### Fixed

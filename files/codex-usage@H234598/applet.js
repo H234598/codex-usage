@@ -2526,7 +2526,18 @@ CodexUsageApplet.prototype = {
         let record = { process: null, timeoutId: 0, done: false };
         this._reactivations[usage.account] = record;
         delete this._reactivationErrors[usage.account];
-        this._buildUsageMenu();
+        try {
+            this._buildUsageMenu();
+        } catch (e) {
+            record.done = true;
+            delete this._reactivations[usage.account];
+            this._reactivationErrors[usage.account] = this._shortText(
+                _("Reaktivierung konnte nicht angezeigt werden: ") + String(e),
+                240
+            );
+            global.log("[" + UUID + "] reactivation loading menu failed: " + this._shortText(e, 180));
+            return;
+        }
         let finish = Lang.bind(this, function(payload, error) {
             if (record.done) {
                 return;
