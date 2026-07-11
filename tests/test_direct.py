@@ -227,6 +227,29 @@ def test_fetch_stable_wham_usage_rejects_missing_quorum(monkeypatch):
         _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_stable_wham_usage_accepts_progressive_same_window(monkeypatch):
+    responses = iter(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1780894250,
+                }
+            }
+        }
+        for used in (3, 4, 5)
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 5
+
+
 def test_fetch_account_usage_direct_rejects_auth_identity_changed_during_request(
     tmp_path, monkeypatch
 ):

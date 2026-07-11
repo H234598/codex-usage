@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.154 - 2026-07-12
+
+### Fixed
+
+- Kleine fortlaufende Prozentänderungen im selben Limitfenster werden jetzt
+  als zeitliche Entwicklung erkannt und verwenden den letzten Samplewert.
+- Große Sprünge oder wechselnde Fensteridentitäten bleiben fail-closed.
+- Regressionen für fortlaufende und sprunghafte Samples ergänzt.
+
 ## 0.6.153 - 2026-07-12
 
 ### Fixed

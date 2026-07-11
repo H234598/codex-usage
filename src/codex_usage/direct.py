@@ -6,6 +6,7 @@ import json
 import os
 import stat
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -20,6 +21,7 @@ from .models import Account, AccountStatus, AccountUsage, LimitWindow
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DIRECT_RESPONSE_SAMPLE_COUNT = 3
 DIRECT_RESET_BUCKET_SECONDS = 5
+DIRECT_PROGRESSIVE_STEP_PERCENT = 1
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_AUTH_JSON_BYTES = 1_000_000
 MAX_ACCESS_TOKEN_CHARS = 16_384
@@ -472,6 +474,8 @@ def _fetch_stable_wham_usage(
         ),
     )
     if len(best_group) * 2 <= len(payloads):
+        if _usage_response_progresses(payloads):
+            return payloads[-1]
         raise DirectFetchError("direct response limits were inconsistent across samples")
     return best_group[0][1]
 
@@ -512,6 +516,35 @@ def _signature_reset(value: Any) -> int | None:
 def _usage_response_completeness(payload: dict[str, Any]) -> int:
     signature = _usage_response_signature(payload)
     return sum(value is not None for value in signature)
+
+
+def _usage_response_progresses(payloads: list[dict[str, Any]]) -> bool:
+    signatures = [_usage_response_signature(payload) for payload in payloads]
+    identities = tuple(
+        tuple(
+            None if window is None else (window[0], window[2])
+            for window in signature
+        )
+        for signature in signatures
+    )
+    if len(set(identities)) != 1:
+        return False
+
+    observed_window = False
+    for window_index in range(2):
+        windows = [signature[window_index] for signature in signatures]
+        if all(window is None for window in windows):
+            continue
+        if any(window is None or window[1] is None for window in windows):
+            return False
+        observed_window = True
+        used_values = [window[1] for window in windows]
+        if any(
+            abs(current - previous) > DIRECT_PROGRESSIVE_STEP_PERCENT
+            for previous, current in pairwise(used_values)
+        ):
+            return False
+    return observed_window
 
 
 def _response_content_type(response: Any) -> str:
