@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.59 - 2026-07-11
+
+### Fixed
+
+- Browser login, fetch, probe and diagnose now close persistent Playwright
+  contexts even when navigation, DOM access or user interaction fails.
+
 ## 0.6.58 - 2026-07-11
 
 ### Fixed

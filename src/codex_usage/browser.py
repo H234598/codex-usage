@@ -49,14 +49,32 @@ def login_account(account: Account, config: AppConfig) -> None:
     profile_dir = _prepare_profile(account)
     with _profile_lock(profile_dir):
         with sync_playwright() as playwright:
-            context = _launch_persistent_context(playwright, account, profile_dir, headless=False)
-            page = context.new_page()
-            page.goto(config.analytics_url, wait_until="domcontentloaded", timeout=60_000)
-            print(f"Browserprofil: {profile_dir}")
-            print(f"Browser: {account.browser}")
-            print("Melde dich im geoeffneten Browser an und oeffne ggf. die Codex-Analytics-Seite.")
-            input("Druecke Enter, wenn der Account eingeloggt ist und die Seite sichtbar ist ... ")
-            context.close()
+            context = None
+            try:
+                context = _launch_persistent_context(
+                    playwright,
+                    account,
+                    profile_dir,
+                    headless=False,
+                )
+                page = context.new_page()
+                page.goto(
+                    config.analytics_url,
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+                print(f"Browserprofil: {profile_dir}")
+                print(f"Browser: {account.browser}")
+                print(
+                    "Melde dich im geoeffneten Browser an und oeffne ggf. "
+                    "die Codex-Analytics-Seite."
+                )
+                input(
+                    "Druecke Enter, wenn der Account eingeloggt ist und die "
+                    "Seite sichtbar ist ... "
+                )
+            finally:
+                _close_context(context)
 
 
 def fetch_account_usage(
@@ -74,22 +92,32 @@ def fetch_account_usage(
         profile_dir = _prepare_profile(account)
         with _profile_lock(profile_dir):
             with sync_playwright() as playwright:
-                context = _launch_persistent_context(
-                    playwright,
-                    account,
-                    profile_dir,
-                    headless=not headed and config.headless,
-                )
-                page = context.new_page()
-                page.on("response", lambda response: _capture_json_response(response, candidates))
-                page.goto(config.analytics_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                context = None
                 try:
-                    page.wait_for_load_state("networkidle", timeout=12_000)
-                except PlaywrightTimeoutError:
-                    pass
-                body_text = _safe_body_text(page)
-                current_url = page.url
-                context.close()
+                    context = _launch_persistent_context(
+                        playwright,
+                        account,
+                        profile_dir,
+                        headless=not headed and config.headless,
+                    )
+                    page = context.new_page()
+                    page.on(
+                        "response",
+                        lambda response: _capture_json_response(response, candidates),
+                    )
+                    page.goto(
+                        config.analytics_url,
+                        wait_until="domcontentloaded",
+                        timeout=timeout_ms,
+                    )
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=12_000)
+                    except PlaywrightTimeoutError:
+                        pass
+                    body_text = _safe_body_text(page)
+                    current_url = page.url
+                finally:
+                    _close_context(context)
 
         source_urls.update(_redact_url(candidate.url) for candidate in candidates)
         five_hour, weekly = extract_windows(body_text=body_text, json_candidates=candidates)
@@ -130,21 +158,31 @@ def probe_account(
     profile_dir = _prepare_profile(account)
     with _profile_lock(profile_dir):
         with sync_playwright() as playwright:
-            context = _launch_persistent_context(
-                playwright,
-                account,
-                profile_dir,
-                headless=not headed,
-            )
-            page = context.new_page()
-            page.on("response", lambda response: _capture_json_response(response, candidates))
-            page.goto(config.analytics_url, wait_until="domcontentloaded", timeout=60_000)
+            context = None
             try:
-                page.wait_for_load_state("networkidle", timeout=12_000)
-            except PlaywrightTimeoutError:
-                pass
-            body_text = _safe_body_text(page)
-            context.close()
+                context = _launch_persistent_context(
+                    playwright,
+                    account,
+                    profile_dir,
+                    headless=not headed,
+                )
+                page = context.new_page()
+                page.on(
+                    "response",
+                    lambda response: _capture_json_response(response, candidates),
+                )
+                page.goto(
+                    config.analytics_url,
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+                try:
+                    page.wait_for_load_state("networkidle", timeout=12_000)
+                except PlaywrightTimeoutError:
+                    pass
+                body_text = _safe_body_text(page)
+            finally:
+                _close_context(context)
 
     five_hour, weekly = extract_windows(
         body_text=body_text,
@@ -192,41 +230,44 @@ def diagnose_account(
     try:
         with _profile_lock(profile_dir):
             with sync_playwright() as playwright:
-                context = _launch_persistent_context(
-                    playwright,
-                    account,
-                    profile_dir,
-                    headless=not headed,
-                )
-                page = context.new_page()
-                page.on(
-                    "response",
-                    lambda response: _capture_diagnostic_response(response, responses),
-                )
-                main_response = page.goto(
-                    config.analytics_url,
-                    wait_until="domcontentloaded",
-                    timeout=timeout_ms,
-                )
+                context = None
                 try:
-                    page.wait_for_load_state("networkidle", timeout=12_000)
-                except PlaywrightTimeoutError:
-                    pass
-                body_text = _safe_body_text(page)
-                title = _safe_title(page)
-                screenshot_path = _save_diagnostic_screenshot(page, account, screenshot_dir)
-                result.update(
-                    {
-                        "final_url": _redact_url(page.url),
-                        "title": title,
-                        "main_status": main_response.status if main_response else None,
-                        "detected": _detect_page_state(page.url, title, body_text, responses),
-                        "body_excerpt": _safe_excerpt(body_text),
-                        "responses": responses[-20:],
-                        "screenshot": screenshot_path,
-                    }
-                )
-                context.close()
+                    context = _launch_persistent_context(
+                        playwright,
+                        account,
+                        profile_dir,
+                        headless=not headed,
+                    )
+                    page = context.new_page()
+                    page.on(
+                        "response",
+                        lambda response: _capture_diagnostic_response(response, responses),
+                    )
+                    main_response = page.goto(
+                        config.analytics_url,
+                        wait_until="domcontentloaded",
+                        timeout=timeout_ms,
+                    )
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=12_000)
+                    except PlaywrightTimeoutError:
+                        pass
+                    body_text = _safe_body_text(page)
+                    title = _safe_title(page)
+                    screenshot_path = _save_diagnostic_screenshot(page, account, screenshot_dir)
+                    result.update(
+                        {
+                            "final_url": _redact_url(page.url),
+                            "title": title,
+                            "main_status": main_response.status if main_response else None,
+                            "detected": _detect_page_state(page.url, title, body_text, responses),
+                            "body_excerpt": _safe_excerpt(body_text),
+                            "responses": responses[-20:],
+                            "screenshot": screenshot_path,
+                        }
+                    )
+                finally:
+                    _close_context(context)
     except PlaywrightError as exc:
         result.update({"detected": "browser_error", "error": _clean_error(str(exc))})
     return result
@@ -481,6 +522,15 @@ def _launch_persistent_context(
     if browser == "chromium":
         return playwright.chromium.launch_persistent_context(**kwargs)
     raise RuntimeError(f"unsupported browser: {browser}")
+
+
+def _close_context(context: Any) -> None:
+    if context is None:
+        return
+    try:
+        context.close()
+    except Exception:
+        pass
 
 
 def _prepare_profile(account: Account) -> Path:

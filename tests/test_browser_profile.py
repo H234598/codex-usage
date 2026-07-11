@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-import pytest
+from contextlib import nullcontext
 
-from codex_usage.browser import _prepare_profile, _profile_lock
+import pytest
+from playwright.sync_api import Error as PlaywrightError
+
+from codex_usage.browser import _prepare_profile, _profile_lock, fetch_account_usage
+from codex_usage.config import AppConfig
 from codex_usage.models import Account
 
 
@@ -73,3 +77,46 @@ def test_profile_lock_rejects_symlink_lock_without_overwriting_target(tmp_path):
             pass
 
     assert target.read_text(encoding="utf-8") == "keep"
+
+
+def test_fetch_closes_context_when_navigation_fails(tmp_path, monkeypatch):
+    account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
+    context_state = {"closed": False}
+
+    class FakePage:
+        def on(self, *_args):
+            return None
+
+        def goto(self, *_args, **_kwargs):
+            raise PlaywrightError("navigation failed")
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            context_state["closed"] = True
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    context = FakeContext()
+    monkeypatch.setattr(
+        "codex_usage.browser._prepare_profile",
+        lambda _account: tmp_path / "profile",
+    )
+    monkeypatch.setattr("codex_usage.browser._profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr("codex_usage.browser.sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        "codex_usage.browser._launch_persistent_context",
+        lambda *_args, **_kwargs: context,
+    )
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status.value == "error"
+    assert context_state["closed"] is True
