@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 import subprocess
@@ -18,6 +19,12 @@ from codex_usage.bridge import (
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.state import save_usage_snapshot
+
+
+def _jwt_with_claims(claims: dict) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=").decode()
+    return f"{header}.{payload}.signature"
 
 
 def test_usage_from_ingest_payload_extracts_visible_values():
@@ -169,6 +176,109 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     assert usage.weekly.limit == 1000
     assert usage.backend_user_id == "user-test"
     assert usage.backend_account_id == "account-test"
+
+
+def test_usage_from_ingest_payload_canonicalizes_personal_account_identity(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
+                    "account_id": "account-uuid",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": json.dumps(
+                        {
+                            "user_id": "user-test",
+                            "account_id": "user-test",
+                            "rate_limit": {
+                                "primary_window": {
+                                    "used_percent": 3,
+                                    "limit_window_seconds": 18000,
+                                },
+                                "secondary_window": {
+                                    "used_percent": 45,
+                                    "limit_window_seconds": 604800,
+                                },
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert usage.backend_user_id == "user-test"
+    assert usage.backend_account_id == "account-uuid"
+
+
+def test_usage_from_ingest_payload_rejects_mismatched_auth_account(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
+                    "account_id": "account-uuid",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+
+    with pytest.raises(ValueError, match="different account"):
+        usage_from_ingest_payload(
+            account,
+            {
+                "apiResponses": [
+                    {
+                        "url": "https://chatgpt.com/backend-api/wham/usage",
+                        "status": 200,
+                        "contentType": "application/json",
+                        "bodyText": json.dumps(
+                            {
+                                "user_id": "user-test",
+                                "account_id": "other-account",
+                            }
+                        ),
+                    }
+                ]
+            },
+        )
 
 
 def test_ingest_rejects_payload_from_different_backend_account(tmp_path):

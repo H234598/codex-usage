@@ -56,13 +56,15 @@ def fetch_account_usage_direct(
             timeout_seconds=timeout_seconds,
         )
         backend_user_id, backend_account_id = backend_identity_from_payload(payload)
-        if not _response_identity_matches_auth(
-            backend_user_id=backend_user_id,
-            backend_account_id=backend_account_id,
-            auth_user_id=auth_user_id,
-            auth_account_id=auth_account_id,
-        ):
-            raise DirectFetchError("direct response belongs to a different account")
+        try:
+            backend_user_id, backend_account_id = canonical_backend_identity(
+                backend_user_id,
+                backend_account_id,
+                auth_user_id=auth_user_id,
+                auth_account_id=auth_account_id,
+            )
+        except ValueError as exc:
+            raise DirectFetchError(str(exc)) from exc
         candidate = JsonCandidate(url=WHAM_USAGE_URL, payload=payload)
         five_hour, weekly = extract_windows(
             body_text="",
@@ -176,6 +178,24 @@ def auth_identity_from_payload(
     return user_id, account_id
 
 
+def auth_identity_from_file(path: Path) -> tuple[str | None, str | None]:
+    path = path.expanduser()
+    raw, _ = read_auth_json_file(path)
+    try:
+        payload = loads_strict(raw)
+    except ValueError as exc:
+        raise DirectAuthError(f"invalid auth.json: {path}") from exc
+    if not isinstance(payload, dict):
+        raise DirectAuthError(f"invalid auth.json structure: {path}")
+    return auth_identity_from_payload(payload, path=path)
+
+
+def auth_identity_for_account(account: Account) -> tuple[str | None, str | None]:
+    if not account.auth_json_path:
+        return None, None
+    return auth_identity_from_file(Path(account.auth_json_path))
+
+
 def _auth_account_id_from_payload(
     payload: dict[str, Any],
     *,
@@ -226,6 +246,23 @@ def _response_identity_matches_auth(
         if backend_account_id not in accepted_account_ids:
             return False
     return True
+
+
+def canonical_backend_identity(
+    backend_user_id: str | None,
+    backend_account_id: str | None,
+    *,
+    auth_user_id: str | None,
+    auth_account_id: str | None,
+) -> tuple[str | None, str | None]:
+    if not _response_identity_matches_auth(
+        backend_user_id=backend_user_id,
+        backend_account_id=backend_account_id,
+        auth_user_id=auth_user_id,
+        auth_account_id=auth_account_id,
+    ):
+        raise ValueError("backend response belongs to a different account")
+    return auth_user_id or backend_user_id, auth_account_id or backend_account_id
 
 
 def auth_metadata_from_payload(payload: dict[str, Any]) -> dict[str, datetime | None]:

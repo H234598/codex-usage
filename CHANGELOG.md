@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.121 - 2026-07-11
+
+### Fixed
+
+- Browser- und Bridge-Abrufe kanonisieren persönliche Account-Identitäten jetzt
+  ebenfalls über die konfigurierte `auth.json`, damit Direct-, App-Server-,
+  Browser- und Bridge-Snapshots nicht als verschiedene Konten behandelt werden.
+- Ein ungültiges oder fehlendes konfiguriertes `auth.json` führt beim Browser-
+  und Bridge-Abruf nicht mehr zu einem unkontrollierten Fehler oder einer
+  möglichen Fremddatenübernahme.
+- Regressionen für die Browser-/Bridge-Identitätsnormalisierung und die
+  Ablehnung fremder Bridge-Payloads ergänzt.
+
 ## 0.6.120 - 2026-07-11
 
 ### Fixed

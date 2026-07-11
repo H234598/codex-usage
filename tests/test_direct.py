@@ -161,7 +161,7 @@ def test_fetch_account_usage_direct_rejects_response_from_different_account(
     usage = fetch_account_usage_direct(account)
 
     assert usage.status == AccountStatus.ERROR
-    assert usage.error == "direct response belongs to a different account"
+    assert usage.error == "backend response belongs to a different account"
 
 
 @pytest.mark.parametrize("account_id", ["account\nforged", " ", 42])

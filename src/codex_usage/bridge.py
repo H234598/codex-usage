@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .config import AppConfig, default_state_dir, resolve_account
+from .direct import DirectAuthError, auth_identity_for_account, canonical_backend_identity
 from .extractor import JsonCandidate, extract_windows, load_json_candidate
 from .identity import backend_identity_from_candidates
 from .json_utils import loads_strict
@@ -88,6 +89,13 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         now=captured_at,
     )
     backend_user_id, backend_account_id = backend_identity_from_candidates(json_candidates)
+    auth_user_id, auth_account_id = auth_identity_for_account(account)
+    backend_user_id, backend_account_id = canonical_backend_identity(
+        backend_user_id,
+        backend_account_id,
+        auth_user_id=auth_user_id,
+        auth_account_id=auth_account_id,
+    )
     status = (
         AccountStatus.OK
         if five_hour is not None
@@ -541,7 +549,7 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
             except KeyError:
                 self._send_json(400, {"error": "unknown or ambiguous account"})
                 return
-            except ValueError as exc:
+            except (DirectAuthError, ValueError) as exc:
                 _log_bridge_error("Bridge ingest rejected", exc)
                 self._send_json(400, {"error": "ingest rejected"})
                 return
