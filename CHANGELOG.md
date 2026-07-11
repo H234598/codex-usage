@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.133 - 2026-07-11
+
+### Fixed
+
+- Der Watchdog überspringt einen aktiven `blocked`-Snapshot nur noch, wenn
+  dessen Backend-Identität zur konfigurierten `auth.json` passt.
+- Nach einer Reaktivierung oder einem Kontowechsel kann ein alter Blockstatus
+  dadurch keinen frischen Abruf bis zum fremden Resetzeitpunkt unterdrücken.
+- Regression für den Wechsel von `account-old` zu `account-new` ergänzt.
+
 ## 0.6.132 - 2026-07-11
 
 ### Fixed

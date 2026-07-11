@@ -15,7 +15,7 @@ from .account_lock import account_lock
 from .app_server import AppServerUnavailableError, fetch_account_usage_app_server
 from .browser import fetch_account_usage
 from .config import AppConfig
-from .direct import fetch_account_usage_direct
+from .direct import DirectAuthError, auth_identity_for_account, fetch_account_usage_direct
 from .health import record_health_event
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
@@ -265,7 +265,11 @@ def watchdog(
     fetch_accounts: list[Account] = []
     for account in account_list:
         snapshot = load_usage_snapshot(account.id)
-        if snapshot is not None and _blocked_until_active(snapshot, now=now):
+        if (
+            snapshot is not None
+            and _blocked_until_active(snapshot, now=now)
+            and _blocked_snapshot_matches_account(account, snapshot)
+        ):
             blocked_snapshots[account.id] = snapshot
             continue
         fetch_accounts.append(account)
@@ -315,6 +319,18 @@ def _blocked_until_active(usage: AccountUsage, *, now: datetime) -> bool:
         and usage.blocked_until is not None
         and usage.blocked_until > now
     )
+
+
+def _blocked_snapshot_matches_account(account: Account, snapshot: AccountUsage) -> bool:
+    if not account.auth_json_path:
+        return True
+    try:
+        auth_user_id, auth_account_id = auth_identity_for_account(account)
+    except DirectAuthError:
+        return False
+    identities = {value for value in (auth_user_id, auth_account_id) if value}
+    snapshot_identity = snapshot.backend_account_id or snapshot.backend_user_id
+    return bool(snapshot_identity and snapshot_identity in identities)
 
 
 def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage:
