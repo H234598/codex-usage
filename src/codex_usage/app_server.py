@@ -370,8 +370,11 @@ def _windows_from_response(
 ) -> tuple[LimitWindow | None, LimitWindow | None]:
     snapshot = payload.get("rateLimits")
     by_id = payload.get("rateLimitsByLimitId")
-    if isinstance(by_id, dict) and isinstance(by_id.get("codex"), dict):
-        snapshot = by_id["codex"]
+    codex_snapshot = by_id.get("codex") if isinstance(by_id, dict) else None
+    if isinstance(codex_snapshot, dict) and any(
+        isinstance(codex_snapshot.get(key), dict) for key in ("primary", "secondary")
+    ):
+        snapshot = codex_snapshot
     if not isinstance(snapshot, dict):
         raise AppServerProtocolError("app server response has no rateLimits object")
     candidates: list[tuple[str, dict[str, Any]]] = []

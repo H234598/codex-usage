@@ -231,6 +231,21 @@ def test_window_mapping_keeps_weekly_only_bucket_as_weekly():
     assert weekly is not None and weekly.used == 12
 
 
+def test_window_mapping_falls_back_when_codex_bucket_is_empty():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 3, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 4, "windowDurationMins": 10080},
+            },
+            "rateLimitsByLimitId": {"codex": {}},
+        }
+    )
+
+    assert five is not None and five.used == 3
+    assert weekly is not None and weekly.used == 4
+
+
 def test_refresh_window_is_fifteen_minutes():
     now = datetime.now(UTC)
     assert _should_refresh(now + timedelta(minutes=14), now=now) is True

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.49 - 2026-07-11
+
+### Fixed
+
+- An empty `rateLimitsByLimitId.codex` container no longer hides valid legacy
+  rate-limit data from the App Server response.
+
 ## 0.6.48 - 2026-07-11
 
 ### Fixed
