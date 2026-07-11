@@ -210,12 +210,17 @@ def _window_from_mapping(
             "consumed_percentage",
         ),
     )
+    used_ratio = _pick_number(
+        flat,
+        ("used_ratio", "usage_ratio", "consumed_ratio"),
+    )
     used = _pick_number(
         flat,
         ("used", "usage", "current", "consumed", "num_used"),
         exclude_suffixes=(
             "_percent",
             "_percentage",
+            "_ratio",
             "_seconds",
             "_minutes",
             "_hours",
@@ -255,6 +260,12 @@ def _window_from_mapping(
         used_percent *= 100
     if used_percent is not None and not 0 <= used_percent <= 100:
         used_percent = None
+    if used_ratio is not None and 0 <= used_ratio <= 1:
+        used_ratio *= 100
+    if used_ratio is not None and not 0 <= used_ratio <= 100:
+        used_ratio = None
+    if used_percent is None:
+        used_percent = used_ratio
     if remaining_percent is not None and 0 <= remaining_percent <= 1:
         remaining_percent *= 100
     if remaining_ratio is not None and 0 <= remaining_ratio <= 1:
