@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.60 - 2026-07-11
+
+### Fixed
+
+- Safe-Modus stoppt seine Refresh-, Anzeige- und Stale-Check-Timer sofort,
+  damit nach einem internen Fehler keine leeren Dauer-Callbacks weiterlaufen.
+
 ## 0.6.59 - 2026-07-11
 
 ### Fixed

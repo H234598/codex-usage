@@ -327,6 +327,9 @@ CodexUsageApplet.prototype = {
         this._primaryFreshPending = false;
         this._primaryFreshOpenAfter = false;
         this._reactivationRefreshPending = false;
+        this._removeSource("_timerId");
+        this._removeSource("_displayTimerId");
+        this._removeSource("_staleCheckId");
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
         this._backendAuxQueue = [];
