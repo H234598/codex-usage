@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import signal
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from codex_usage.app_server import AppServerUnavailableError
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
-from codex_usage.scheduler import fetch_all, watch, watchdog
+from codex_usage.scheduler import (
+    _is_more_conservative_direct_usage,
+    fetch_all,
+    watch,
+    watchdog,
+)
 
 
 def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):
@@ -277,6 +283,240 @@ def test_fetch_all_direct_saves_only_successful_snapshots(monkeypatch):
     assert [usage.backend_used for usage in usages] == ["direct", "direct"]
     assert saved == ["ok"]
     assert sorted(current) == ["broken", "ok"]
+
+
+def test_fetch_all_retains_direct_values_across_future_reset_jump(monkeypatch):
+    account = Account(
+        id="direct",
+        label="Direct",
+        profile_dir="/tmp/direct",
+        auth_json_path="/tmp/direct-auth.json",
+    )
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            used=9,
+            limit=100,
+            remaining=91,
+            percent=91,
+            reset_at=datetime(2026, 7, 12, 4, 40, 41, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            used=11,
+            limit=100,
+            remaining=89,
+            percent=89,
+            reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            used=1,
+            limit=100,
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 12, 4, 41, 59, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            used=1,
+            limit=100,
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 18, 8, 30, 25, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_direct",
+        lambda selected, *, auth_json_path=None: current,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", lambda account_id: previous)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,))
+
+    assert result[0].five_hour is not None
+    assert result[0].five_hour.remaining == 91
+    assert result[0].weekly is not None
+    assert result[0].weekly.remaining == 89
+    assert result[0].captured_at == current.captured_at
+    assert result[0].stale is True
+
+
+def test_fetch_all_reuses_direct_reset_fallback_on_next_poll(monkeypatch):
+    account = Account(
+        id="direct",
+        label="Direct",
+        profile_dir="/tmp/direct",
+        auth_json_path="/tmp/direct-auth.json",
+    )
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=91,
+            percent=91,
+            reset_at=datetime(2026, 7, 12, 4, 40, 41, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=89,
+            percent=89,
+            reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    inconsistent = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 12, 4, 41, 59, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 18, 8, 30, 25, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    snapshots = [previous]
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_direct",
+        lambda selected, *, auth_json_path=None: inconsistent,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id: snapshots[0],
+    )
+
+    first = fetch_all(AppConfig(accounts=(account,)), (account,))[0]
+    snapshots[0] = first
+    second = fetch_all(AppConfig(accounts=(account,)), (account,))[0]
+
+    assert first.stale is True
+    assert second.stale is True
+    assert second.five_hour is not None
+    assert second.five_hour.remaining == 91
+    assert second.weekly is not None
+    assert second.weekly.remaining == 89
+
+
+def test_fetch_all_accepts_more_conservative_direct_reset_transition(monkeypatch):
+    account = Account(
+        id="direct",
+        label="Direct",
+        profile_dir="/tmp/direct",
+        auth_json_path="/tmp/direct-auth.json",
+    )
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 12, 4, 41, 59, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 18, 8, 30, 25, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=replace(
+            previous.five_hour,
+            remaining=91,
+            percent=91,
+            reset_at=datetime(2026, 7, 12, 4, 40, 41, tzinfo=timezone),
+        ),
+        weekly=replace(
+            previous.weekly,
+            remaining=89,
+            percent=89,
+            reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
+        ),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_direct",
+        lambda selected, *, auth_json_path=None: current,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", lambda account_id: previous)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,))
+
+    assert result[0].five_hour is not None
+    assert result[0].five_hour.remaining == 91
+    assert result[0].stale is False
+
+
+def test_direct_reset_guard_rejects_earlier_reset_with_more_remaining():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=91,
+            percent=91,
+            reset_at=datetime(2026, 7, 12, 4, 40, 41, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=89,
+            percent=89,
+            reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        five_hour=replace(
+            previous.five_hour,
+            remaining=100,
+            percent=100,
+            reset_at=datetime(2026, 7, 12, 4, 39, 41, tzinfo=timezone),
+        ),
+    )
+
+    assert _is_more_conservative_direct_usage(current, previous) is False
 
 
 def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.155 - 2026-07-12
+
+### Fixed
+
+- Ein als stale markierter Direct-Fallback bleibt bei nachfolgenden Polls als
+  Kontinuitätsreferenz erhalten, statt den nächsten inkonsistenten Backendwert
+  wieder zu übernehmen.
+- Gleichbleibende Restwerte mit dynamisch fortgeschriebenen Resetzeiten werden
+  nicht mehr unnötig als stale markiert.
+- Ein früheres Resetfenster mit gleichzeitig höherem Restwert wird weiterhin
+  fail-closed verworfen.
+- Regressionen für mehrfache Fallback-Polls und widersprüchliche Resetwechsel
+  ergänzt.
+
 ## 0.6.154 - 2026-07-12
 
 ### Fixed
