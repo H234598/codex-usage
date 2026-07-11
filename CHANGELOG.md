@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.72 - 2026-07-11
+
+### Fixed
+
+- Generische Zeitfelder wie `limit_window_seconds` werden nicht mehr als
+  absolute Quota-Limits interpretiert.
+
 ## 0.6.71 - 2026-07-11
 
 ### Fixed
