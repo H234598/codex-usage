@@ -102,7 +102,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
     return AccountUsage(
         account_id=_snapshot_text(payload["account"], limit=64),
         label=_snapshot_text(payload.get("label") or payload["account"], limit=120),
-        captured_at=datetime.fromisoformat(str(payload["captured_at"])),
+        captured_at=_snapshot_datetime(payload["captured_at"]),
         five_hour=_window_from_dict(payload.get("five_hour")),
         weekly=_window_from_dict(payload.get("weekly")),
         status=AccountStatus(str(payload.get("status", "ok"))),
@@ -153,7 +153,7 @@ def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:
         limit=_optional_float(payload.get("limit")),
         remaining=_optional_float(payload.get("remaining")),
         percent=_optional_float(payload.get("percent")),
-        reset_at=datetime.fromisoformat(reset_at) if reset_at else None,
+        reset_at=_snapshot_datetime(reset_at) if reset_at else None,
         raw=_optional_snapshot_text(payload.get("raw"), limit=MAX_SNAPSHOT_TEXT),
         source=_snapshot_text(payload.get("source") or "unknown", limit=120),
     )
@@ -173,9 +173,16 @@ def _optional_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     try:
-        return datetime.fromisoformat(value)
+        return _snapshot_datetime(value)
     except ValueError:
         return None
+
+
+def _snapshot_datetime(value: Any) -> datetime:
+    parsed = datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return parsed.astimezone()
+    return parsed
 
 
 def _snapshot_text(value: Any, *, limit: int) -> str:

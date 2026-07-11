@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.50 - 2026-07-11
+
+### Fixed
+
+- Legacy snapshots without timezone information are normalized to local time,
+  so watchdog comparisons cannot crash on naive datetimes.
+
 ## 0.6.49 - 2026-07-11
 
 ### Fixed

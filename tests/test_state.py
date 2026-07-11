@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -83,6 +84,36 @@ def test_save_and_load_usage_snapshot_preserves_blocked_state(tmp_path):
     assert loaded.auth_access_expires_at == datetime(
         2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")
     )
+
+
+def test_load_legacy_snapshot_localizes_naive_datetimes(tmp_path):
+    payload = {
+        "account": "legacy",
+        "label": "Legacy",
+        "captured_at": "2099-06-08T04:20:00",
+        "status": "blocked",
+        "blocked_until": "2099-06-08T06:50:00",
+        "five_hour": {
+            "name": "5h",
+            "remaining": 0,
+            "reset_at": "2099-06-08T05:05:00",
+        },
+        "auth_last_refresh": "2099-06-07T23:17:00",
+    }
+    (tmp_path / "legacy.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_usage_snapshot("legacy", tmp_path)
+
+    assert loaded is not None
+    assert loaded.captured_at.tzinfo is not None
+    assert loaded.captured_at.utcoffset() is not None
+    assert loaded.blocked_until is not None
+    assert loaded.blocked_until.tzinfo is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.reset_at is not None
+    assert loaded.five_hour.reset_at.tzinfo is not None
+    assert loaded.auth_last_refresh is not None
+    assert loaded.auth_last_refresh.tzinfo is not None
 
 
 def test_current_status_keeps_last_success_values_separate(tmp_path):
