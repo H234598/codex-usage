@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.116 - 2026-07-11
+
+### Fixed
+
+- Reaktivierung verwendet jetzt dieselbe Inhalts-, Größen- und Zeichenprüfung
+  für `access_token` wie der Direct-Abruf.
+- Auch ein nichtleerer, aber syntaktisch ungültiger Token wird nicht mehr als
+  erfolgreicher Login gemeldet.
+
 ## 0.6.115 - 2026-07-11
 
 ### Fixed

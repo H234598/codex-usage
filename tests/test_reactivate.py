@@ -95,7 +95,19 @@ def test_validate_refreshed_auth_rejects_empty_access_token(tmp_path):
     )
     auth_path.chmod(0o600)
 
-    with pytest.raises(ReactivationError, match="without an access token"):
+    with pytest.raises(ReactivationError, match=r"without a valid auth\.json"):
+        _validate_refreshed_auth(auth_path)
+
+
+def test_validate_refreshed_auth_rejects_malformed_access_token(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"auth_mode": "chatgpt", "tokens": {"access_token": "bad token"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    with pytest.raises(ReactivationError, match=r"without a valid auth\.json"):
         _validate_refreshed_auth(auth_path)
 
 

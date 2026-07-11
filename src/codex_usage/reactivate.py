@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .account_lock import AccountLockError, account_lock
-from .direct import DirectAuthError, auth_metadata_from_payload, read_auth_json_file
+from .direct import DirectAuthError, _extract_auth_details, read_auth_json_file
 from .json_utils import loads_strict
 from .models import Account
 from .private_io import write_private_text
@@ -199,11 +199,10 @@ def _validate_refreshed_auth(path: Path) -> dict[str, datetime | None]:
         raise ReactivationError("login completed without a valid auth.json") from exc
     if not isinstance(payload, dict):
         raise ReactivationError("login completed without a valid auth.json")
-    tokens = payload.get("tokens")
-    access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
-    if not isinstance(access_token, str) or not access_token.strip():
-        raise ReactivationError("login completed without an access token")
-    metadata = auth_metadata_from_payload(payload)
+    try:
+        _access_token, metadata = _extract_auth_details(payload, path=path)
+    except DirectAuthError as exc:
+        raise ReactivationError("login completed without a valid auth.json") from exc
     expiry = metadata.get("auth_access_expires_at")
     if expiry is not None and expiry <= datetime.now().astimezone():
         raise ReactivationError("login completed with an expired access token")
