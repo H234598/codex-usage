@@ -148,6 +148,30 @@ def test_current_status_keeps_last_success_values_separate(tmp_path):
     assert merged.backend_used == "app-server"
 
 
+def test_merge_current_with_last_success_fills_missing_window():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        five_hour=LimitWindow(name="5h", remaining=97),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour == current.five_hour
+    assert merged.weekly == last_success.weekly
+    assert merged.values_captured_at == captured
+    assert merged.stale is True
+
+
 def test_save_current_usage_does_not_overwrite_newer_capture(tmp_path):
     current_dir = tmp_path / "current"
     newer = AccountUsage(

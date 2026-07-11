@@ -132,12 +132,16 @@ def merge_current_with_last_success(
     current: AccountUsage,
     last_success: AccountUsage | None,
 ) -> AccountUsage:
-    if current.five_hour is not None or current.weekly is not None or last_success is None:
+    if last_success is None:
+        return current
+    five_hour = current.five_hour or last_success.five_hour
+    weekly = current.weekly or last_success.weekly
+    if five_hour is current.five_hour and weekly is current.weekly:
         return current
     return replace(
         current,
-        five_hour=last_success.five_hour,
-        weekly=last_success.weekly,
+        five_hour=five_hour,
+        weekly=weekly,
         values_captured_at=last_success.values_captured_at or last_success.captured_at,
         stale=True,
     )

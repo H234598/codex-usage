@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.53 - 2026-07-11
+
+### Fixed
+
+- Partial current snapshots now fill each missing limit window from the last
+  successful snapshot and remain explicitly marked as stale.
+
 ## 0.6.52 - 2026-07-11
 
 ### Fixed
