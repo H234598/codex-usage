@@ -42,6 +42,7 @@ def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> 
 
 def _save_usage(usage: AccountUsage, directory: Path) -> Path:
     _validate_snapshot_account_id(usage.account_id)
+    usage = replace(usage, captured_at=_saved_datetime(usage.captured_at))
     assert_no_symlink_ancestors(directory, label="snapshot directory")
     if directory.is_symlink():
         raise ValueError(f"snapshot directory must not be a symlink: {directory}")
@@ -198,6 +199,14 @@ def _snapshot_datetime(value: Any) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return parsed.astimezone()
     return parsed
+
+
+def _saved_datetime(value: Any) -> datetime:
+    if not isinstance(value, datetime):
+        raise ValueError("captured_at must be a datetime")
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.astimezone()
+    return value
 
 
 def _snapshot_text(value: Any, *, limit: int) -> str:

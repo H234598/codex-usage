@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.61 - 2026-07-11
+
+### Fixed
+
+- Snapshot-Schreibvorgänge normalisieren naive `captured_at`-Zeitpunkte vor
+  dem Monotoniecheck, damit ältere Daten keine neueren Werte überschreiben.
+
 ## 0.6.60 - 2026-07-11
 
 ### Fixed

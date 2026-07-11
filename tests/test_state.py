@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -233,6 +233,29 @@ def test_save_current_usage_does_not_overwrite_newer_capture(tmp_path):
     loaded = load_current_usage("privat", current_dir)
     assert loaded is not None
     assert loaded.captured_at == newer.captured_at
+
+
+def test_save_current_usage_normalizes_naive_capture_before_order_check(tmp_path):
+    current_dir = tmp_path / "current"
+    newer = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2099, 1, 2, 12, tzinfo=UTC),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+    older_naive = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2099, 1, 1, 0),
+    )
+
+    save_current_usage(newer, current_dir)
+    save_current_usage(older_naive, current_dir)
+
+    loaded = load_current_usage("privat", current_dir)
+    assert loaded is not None
+    assert loaded.captured_at == newer.captured_at
+    assert loaded.weekly == newer.weekly
 
 
 def test_concurrent_current_writes_keep_the_newest_capture(tmp_path):
