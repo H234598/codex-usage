@@ -119,7 +119,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.39\ncodex-usage 0.6.39\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.40\ncodex-usage 0.6.40\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):

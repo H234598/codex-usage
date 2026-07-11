@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.40 - 2026-07-11
+
+### Fixed
+
+- `service uninstall` now keeps managed unit files when `systemctl disable
+  --now` fails, preventing an active timer from losing its control files.
+
 ## 0.6.39 - 2026-07-11
 
 ### Fixed

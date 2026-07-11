@@ -170,6 +170,31 @@ def test_service_disable_skips_mutation_without_managed_units(tmp_path, monkeypa
     assert all(args[:1] != ("disable",) for args in calls)
 
 
+def test_service_uninstall_keeps_units_when_disable_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    service_path = unit_dir / "codex-usage.service"
+    timer_path = unit_dir / "codex-usage.timer"
+    service_path.write_text("X-Codex-Usage-Managed=true\n", encoding="utf-8")
+    timer_path.write_text("X-Codex-Usage-Managed=true\n", encoding="utf-8")
+    calls: list[tuple[str, ...]] = []
+
+    def fake_systemctl(*args, check=True):
+        calls.append(args)
+        if args[0] == "disable" and check:
+            raise ServiceError("systemctl disable failed")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
+
+    with pytest.raises(ServiceError, match="systemctl disable failed"):
+        service_uninstall()
+
+    assert service_path.exists()
+    assert timer_path.exists()
+
+
 def test_service_install_refuses_unmanaged_unit_without_overwriting(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))

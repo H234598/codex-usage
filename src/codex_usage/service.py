@@ -44,7 +44,7 @@ def service_install(config: AppConfig, config_path: Path | None = None) -> dict[
 def service_disable() -> dict[str, Any]:
     unit_dir = _unit_directory(create=False)
     if _require_complete_managed_units(unit_dir) is not None:
-        _systemctl("disable", "--now", TIMER_NAME, check=False)
+        _systemctl("disable", "--now", TIMER_NAME)
     return service_status()
 
 
