@@ -21,6 +21,7 @@ WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_AUTH_JSON_BYTES = 1_000_000
 MAX_ACCESS_TOKEN_CHARS = 16_384
+MAX_AUTH_ID_CHARS = 256
 
 
 def default_auth_json_path() -> Path:
@@ -37,7 +38,7 @@ def fetch_account_usage_direct(
     path = _resolve_auth_json_path(account, auth_json_path)
     auth_metadata: dict[str, datetime | None] = {}
     try:
-        token, auth_metadata, auth_account_id = _load_auth_token_and_metadata(path)
+        token, auth_metadata, auth_user_id, auth_account_id = _load_auth_token_and_metadata(path)
         if _is_access_token_expired(auth_metadata.get("auth_access_expires_at"), now=captured_at):
             return AccountUsage(
                 account_id=account.id,
@@ -55,6 +56,13 @@ def fetch_account_usage_direct(
             timeout_seconds=timeout_seconds,
         )
         backend_user_id, backend_account_id = backend_identity_from_payload(payload)
+        if not _response_identity_matches_auth(
+            backend_user_id=backend_user_id,
+            backend_account_id=backend_account_id,
+            auth_user_id=auth_user_id,
+            auth_account_id=auth_account_id,
+        ):
+            raise DirectFetchError("direct response belongs to a different account")
         candidate = JsonCandidate(url=WHAM_USAGE_URL, payload=payload)
         five_hour, weekly = extract_windows(
             body_text="",
@@ -79,7 +87,7 @@ def fetch_account_usage_direct(
             auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             source_urls=(_redact_url(WHAM_USAGE_URL),),
-            backend_user_id=backend_user_id,
+            backend_user_id=auth_user_id or backend_user_id,
             backend_account_id=auth_account_id or backend_account_id,
         )
     except DirectAuthError as exc:
@@ -124,7 +132,7 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
 
 def _load_auth_token_and_metadata(
     path: Path,
-) -> tuple[str, dict[str, datetime | None], str | None]:
+) -> tuple[str, dict[str, datetime | None], str | None, str | None]:
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -133,7 +141,39 @@ def _load_auth_token_and_metadata(
     if not isinstance(payload, dict):
         raise DirectAuthError(f"invalid auth.json structure: {path}")
     token, metadata = _extract_auth_details(payload, path=path)
-    return token, metadata, _auth_account_id_from_payload(payload, path=path)
+    auth_user_id, auth_account_id = auth_identity_from_payload(payload, path=path)
+    return token, metadata, auth_user_id, auth_account_id
+
+
+def auth_identity_from_payload(
+    payload: dict[str, Any],
+    *,
+    path: Path,
+) -> tuple[str | None, str | None]:
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, dict):
+        return None, None
+
+    user_id: str | None = None
+    account_id = _auth_account_id_from_payload(payload, path=path)
+    for token_name in ("id_token", "access_token"):
+        claims = _jwt_claims(tokens.get(token_name))
+        if not isinstance(claims, dict):
+            continue
+        auth_claims = claims.get("https://api.openai.com/auth")
+        if isinstance(auth_claims, dict):
+            user_id = _safe_auth_identity(
+                auth_claims.get("chatgpt_user_id") or auth_claims.get("user_id")
+            )
+            if account_id is None:
+                account_id = _safe_auth_identity(auth_claims.get("chatgpt_account_id"))
+        if user_id is None:
+            user_id = _safe_auth_identity(
+                claims.get("chatgpt_user_id") or claims.get("user_id")
+            )
+        if user_id is not None and account_id is not None:
+            break
+    return user_id, account_id
 
 
 def _auth_account_id_from_payload(
@@ -150,12 +190,42 @@ def _auth_account_id_from_payload(
     if not isinstance(value, str):
         raise DirectAuthError(f"auth.json account_id is invalid: {path}")
     value = value.strip()
-    if not value or len(value) > 256 or any(
+    if not value or len(value) > MAX_AUTH_ID_CHARS or any(
         char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
         for char in value
     ):
         raise DirectAuthError(f"auth.json account_id is invalid: {path}")
     return value
+
+
+def _safe_auth_identity(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > MAX_AUTH_ID_CHARS or any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in value
+    ):
+        return None
+    return value
+
+
+def _response_identity_matches_auth(
+    *,
+    backend_user_id: str | None,
+    backend_account_id: str | None,
+    auth_user_id: str | None,
+    auth_account_id: str | None,
+) -> bool:
+    if auth_user_id and backend_user_id and backend_user_id != auth_user_id:
+        return False
+    if auth_account_id and backend_account_id:
+        accepted_account_ids = {auth_account_id}
+        if auth_user_id:
+            accepted_account_ids.add(auth_user_id)
+        if backend_account_id not in accepted_account_ids:
+            return False
+    return True
 
 
 def auth_metadata_from_payload(payload: dict[str, Any]) -> dict[str, datetime | None]:
@@ -320,6 +390,19 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
 
 
 def _jwt_expiry(token: Any) -> datetime | None:
+    claims = _jwt_claims(token)
+    if not isinstance(claims, dict):
+        return None
+    exp = claims.get("exp")
+    if not isinstance(exp, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(float(exp), tz=UTC).astimezone()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _jwt_claims(token: Any) -> dict[str, Any] | None:
     if not isinstance(token, str):
         return None
     parts = token.split(".")
@@ -331,15 +414,7 @@ def _jwt_expiry(token: Any) -> datetime | None:
         claims = json.loads(decoded)
     except (ValueError, OSError, json.JSONDecodeError, UnicodeError):
         return None
-    if not isinstance(claims, dict):
-        return None
-    exp = claims.get("exp")
-    if not isinstance(exp, (int, float)):
-        return None
-    try:
-        return datetime.fromtimestamp(float(exp), tz=UTC).astimezone()
-    except (OverflowError, OSError, ValueError):
-        return None
+    return claims if isinstance(claims, dict) else None
 
 
 def _is_access_token_expired(expiry: datetime | None, *, now: datetime) -> bool:

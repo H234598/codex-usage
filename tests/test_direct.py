@@ -18,6 +18,12 @@ def _jwt_with_exp(expiry: int) -> str:
     return f"{header}.{payload}.signature"
 
 
+def _jwt_with_claims(claims: dict) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=").decode()
+    return f"{header}.{payload}.signature"
+
+
 def test_jwt_expiry_ignores_non_object_payloads():
     for claims in ([], None, "not-an-object"):
         payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=")
@@ -33,6 +39,9 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
             {
                 "tokens": {
                     "access_token": "secret-access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
                     "account_id": "server-account",
                 }
             }
@@ -65,7 +74,7 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
                         },
                     },
                     "user_id": "user-test",
-                    "account_id": "account-test",
+                    "account_id": "user-test",
                 }
             ).encode("utf-8")
 
@@ -99,6 +108,60 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert usage.weekly.remaining == 55
     assert usage.backend_user_id == "user-test"
     assert usage.backend_account_id == "server-account"
+
+
+def test_fetch_account_usage_direct_rejects_response_from_different_account(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
+                    "account_id": "server-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "rate_limit": {},
+                    "user_id": "user-test",
+                    "account_id": "other-account",
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "codex_usage.direct.urlopen",
+        lambda request, *, timeout: FakeResponse(),
+    )
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.ERROR
+    assert usage.error == "direct response belongs to a different account"
 
 
 @pytest.mark.parametrize("account_id", ["account\nforged", " ", 42])

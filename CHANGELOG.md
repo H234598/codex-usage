@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.120 - 2026-07-11
+
+### Fixed
+
+- Direct-Abfragen validieren die Backend-User- und Account-ID jetzt gegen die
+  Identität aus `auth.json`, bevor Limitwerte gespeichert werden.
+- Bekannte persönliche `account_id=user_id`-Antworten bleiben zulässig; fremde
+  Limit-Buckets werden kontrolliert als Fehler verworfen.
+- Regression für die Ablehnung eines fremden WHAM-Accounts ergänzt.
+
 ## 0.6.119 - 2026-07-11
 
 ### Fixed

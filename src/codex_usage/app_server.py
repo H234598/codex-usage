@@ -15,7 +15,7 @@ from typing import Any
 from . import __version__
 from .direct import (
     DirectAuthError,
-    _auth_account_id_from_payload,
+    auth_identity_from_payload,
     auth_metadata_from_payload,
     read_auth_json_file,
 )
@@ -60,7 +60,7 @@ def fetch_account_usage_app_server(
 ) -> AccountUsage:
     captured_at = datetime.now().astimezone()
     try:
-        auth_path, auth_metadata, auth_account_id = _auth_context(account)
+        auth_path, auth_metadata, auth_user_id, auth_account_id = _auth_context(account)
         refresh = _should_refresh(auth_metadata.get("auth_access_expires_at"), now=captured_at)
         payload = _read_rate_limits(
             auth_path.parent,
@@ -68,7 +68,7 @@ def fetch_account_usage_app_server(
             timeout_seconds=timeout_seconds,
             codex_command=codex_command,
         )
-        _, auth_metadata, auth_account_id = _auth_context(account)
+        _, auth_metadata, auth_user_id, auth_account_id = _auth_context(account)
         five_hour, weekly = _windows_from_response(payload)
         status = (
             AccountStatus.OK
@@ -95,6 +95,7 @@ def fetch_account_usage_app_server(
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             backend_configured=account.backend,
             backend_used=APP_SERVER_BACKEND,
+            backend_user_id=auth_user_id,
             backend_account_id=auth_account_id,
         )
     except (DirectAuthError, AppServerAuthError) as exc:
@@ -123,7 +124,7 @@ def fetch_account_usage_app_server(
 
 def _auth_context(
     account: Account,
-) -> tuple[Path, dict[str, datetime | None], str | None]:
+) -> tuple[Path, dict[str, datetime | None], str | None, str | None]:
     if not account.auth_json_path:
         raise DirectAuthError("account has no auth_json_path")
     path = Path(account.auth_json_path).expanduser()
@@ -134,11 +135,8 @@ def _auth_context(
         raise DirectAuthError("invalid auth.json") from exc
     if not isinstance(payload, dict):
         raise DirectAuthError("invalid auth.json structure")
-    return (
-        path,
-        auth_metadata_from_payload(payload),
-        _auth_account_id_from_payload(payload, path=path),
-    )
+    auth_user_id, auth_account_id = auth_identity_from_payload(payload, path=path)
+    return path, auth_metadata_from_payload(payload), auth_user_id, auth_account_id
 
 
 def _read_rate_limits(
