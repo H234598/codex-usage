@@ -190,12 +190,14 @@ def _usage_value(window: LimitWindow | None) -> str:
         used = _fmt_number(window.used)
         if used != "-":
             parts.append(f"{used} genutzt")
-    elif window.limit is not None:
+    elif window.limit is not None and window.remaining is None:
         limit = _fmt_number(window.limit)
         if limit != "-":
             parts.append(f"Limit {limit}")
     remaining_percent = _remaining_percent(window)
-    if window.used is not None and window.limit is not None and remaining_percent is not None:
+    if remaining_percent is not None and (
+        window.used is not None or window.remaining is not None
+    ):
         parts.append(f"{_fmt_number(remaining_percent)}% verbleibend")
     elif window.percent is not None:
         percent = _fmt_number(window.percent)
@@ -226,16 +228,12 @@ def _remaining_percent(window: LimitWindow) -> float | None:
     ):
         remaining = (float(window.limit) - float(window.used)) * 100 / float(window.limit)
         return max(0.0, min(100.0, remaining))
-    if (
-        _is_finite_number(window.remaining)
-        and (
-            window.limit is None
-            or (
-                _is_finite_number(window.limit)
-                and abs(float(window.limit) - 100) < 0.01
+    if _is_finite_number(window.remaining):
+        if _is_finite_number(window.limit) and float(window.limit) > 0:
+            return max(
+                0.0,
+                min(100.0, float(window.remaining) * 100 / float(window.limit)),
             )
-        )
-    ):
         return max(0.0, min(100.0, float(window.remaining)))
     return None
 

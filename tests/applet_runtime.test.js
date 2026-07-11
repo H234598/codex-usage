@@ -174,6 +174,7 @@ test("remaining percentage prefers absolute used and limit values", () => {
     80
   );
   assert.equal(applet._remainingPercent({ remaining: undefined, percent: undefined }), null);
+  assert.equal(applet._remainingPercent({ remaining: 690, limit: 1000 }), 69);
 });
 
 test("a missed five-minute poll marks cached values stale after one grace minute", () => {

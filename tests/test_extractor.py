@@ -603,6 +603,33 @@ def test_extract_windows_converts_generic_used_percent_to_remaining():
     assert weekly.percent == 55
 
 
+def test_extract_windows_converts_absolute_remaining_with_limit_to_percent():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/generic",
+            payload={
+                "five_hour_usage_limit": {
+                    "remaining": 690,
+                    "limit": 1000,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        )
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used is None
+    assert five.limit == 1000
+    assert five.remaining == 690
+    assert five.percent == 69
+
+
 def test_extract_windows_preserves_generic_one_percent_fields():
     candidates = [
         JsonCandidate(

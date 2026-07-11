@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.131 - 2026-07-11
+
+### Fixed
+
+- Absolute Restmengen mit eigenem Limit, etwa `remaining=690` und
+  `limit=1000`, werden jetzt zuverlässig in `69%` Restwert umgerechnet.
+- Parser, CLI und Applet verwenden diese Berechnung einheitlich, statt die
+  Restmenge im Applet auf `100%` zu klemmen oder in der CLI nur das Limit zu
+  zeigen.
+- Regressionen für Parser, CLI-Darstellung und Applet-Restwert ergänzt.
+
 ## 0.6.130 - 2026-07-11
 
 ### Fixed

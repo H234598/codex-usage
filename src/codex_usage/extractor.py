@@ -406,6 +406,13 @@ def _window_from_mapping(
             if remaining is None:
                 remaining = max(100 - used_percent, 0)
             percent = remaining
+        if (
+            percent is None
+            and remaining is not None
+            and limit is not None
+            and limit > 0
+        ):
+            percent = remaining / limit * 100
         if percent is None and used is not None and limit:
             percent = used / limit * 100
     if percent is not None and not 0 <= percent <= 100:

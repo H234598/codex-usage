@@ -3194,6 +3194,10 @@ CodexUsageApplet.prototype = {
             return Math.max(0, Math.min(100, 100 - (window.used / window.limit * 100)));
         }
         if (typeof window.remaining === "number" && Number.isFinite(window.remaining)) {
+            if (typeof window.limit === "number" && Number.isFinite(window.limit) &&
+                window.limit > 0) {
+                return Math.max(0, Math.min(100, window.remaining / window.limit * 100));
+            }
             return Math.max(0, Math.min(100, window.remaining));
         }
         if (typeof window.percent === "number" && Number.isFinite(window.percent)) {

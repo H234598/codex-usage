@@ -73,6 +73,20 @@ def test_render_table_labels_remaining_percent_windows():
     assert "10.06.2026 05:05" in rendered
 
 
+def test_render_table_converts_absolute_remaining_to_percent():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(name="5h", limit=1000, remaining=690),
+    )
+
+    rendered = render_table([usage])
+
+    assert "69% verbleibend" in rendered
+    assert "Limit 1000" not in rendered
+
+
 def test_render_account_values_is_compact_and_includes_missing_accounts():
     accounts = (
         Account(id="privat", label="Privat", profile_dir="/tmp/privat"),
