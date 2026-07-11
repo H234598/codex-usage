@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.114 - 2026-07-11
+
+### Fixed
+
+- Der App-Server refresht abgelaufene oder ungültige Tokens nun auch dann,
+  wenn bereits `account/read` selbst mit einem Auth-Fehler antwortet.
+- Regression für den Auth-Fehler beim initialen `account/read` ergänzt.
+
 ## 0.6.113 - 2026-07-11
 
 ### Fixed

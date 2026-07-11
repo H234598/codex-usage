@@ -44,7 +44,13 @@ def _auth(path: Path, expiry: datetime) -> None:
     path.chmod(0o600)
 
 
-def _fake_codex(path: Path, requests_path: Path) -> str:
+def _fake_codex(
+    path: Path,
+    requests_path: Path,
+    *,
+    reject_initial_account_read: bool = False,
+) -> str:
+    reject_initial = str(reject_initial_account_read)
     source = f"""#!/usr/bin/env python3
 import json
 import sys
@@ -59,13 +65,19 @@ for line in sys.stdin:
     if method == "initialize":
         print(json.dumps({{"id": message["id"], "result": {{}}}}), flush=True)
     elif method == "account/read":
-        response = {{
-            "id": message["id"],
-            "result": {{
-                "account": {{"type": "chatgpt"}},
-                "requiresOpenaiAuth": True,
-            }},
-        }}
+        if {reject_initial} and not message.get("params", {{}}).get("refreshToken"):
+            response = {{
+                "id": message["id"],
+                "error": {{"code": 401, "message": "unauthorized"}},
+            }}
+        else:
+            response = {{
+                "id": message["id"],
+                "result": {{
+                    "account": {{"type": "chatgpt"}},
+                    "requiresOpenaiAuth": True,
+                }},
+            }}
         print(json.dumps(response), flush=True)
     elif method == "account/rateLimits/read":
         response = {{
@@ -144,6 +156,33 @@ def test_app_server_requests_refresh_for_expiring_token(tmp_path):
     requests = json.loads(requests_path.read_text())
     account_read = next(item for item in requests if item["method"] == "account/read")
     assert account_read["params"]["refreshToken"] is True
+
+
+def test_app_server_refreshes_when_initial_account_read_is_unauthorized(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    requests_path = tmp_path / "requests.json"
+    command = _fake_codex(
+        tmp_path / "codex",
+        requests_path,
+        reject_initial_account_read=True,
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status == AccountStatus.OK
+    requests = json.loads(requests_path.read_text())
+    account_reads = [item for item in requests if item["method"] == "account/read"]
+    assert [item["params"]["refreshToken"] for item in account_reads] == [False, True]
 
 
 def test_app_server_requires_configured_auth_json(tmp_path):

@@ -165,25 +165,27 @@ def _read_rate_limits(
         )
         _response_for(reader, 1, deadline=deadline, stderr_reader=stderr_reader)
         _send(process, {"method": "initialized", "params": {}})
-        _send(
-            process,
-            {
-                "method": "account/read",
-                "id": 2,
-                "params": {"refreshToken": refresh},
-            },
-        )
-        account_result = _response_for(
-            reader,
-            2,
-            deadline=deadline,
-            stderr_reader=stderr_reader,
-        )
-        account = account_result.get("account")
-        if not isinstance(account, dict) or account.get("type") != "chatgpt":
-            raise AppServerAuthError("Codex app server requires ChatGPT login")
+        def read_account(request_id: int, *, refresh_token: bool) -> None:
+            _send(
+                process,
+                {
+                    "method": "account/read",
+                    "id": request_id,
+                    "params": {"refreshToken": refresh_token},
+                },
+            )
+            account_result = _response_for(
+                reader,
+                request_id,
+                deadline=deadline,
+                stderr_reader=stderr_reader,
+            )
+            account = account_result.get("account")
+            if not isinstance(account, dict) or account.get("type") != "chatgpt":
+                raise AppServerAuthError("Codex app server requires ChatGPT login")
 
         try:
+            read_account(2, refresh_token=refresh)
             return _request_rate_limits(
                 process,
                 reader,
@@ -194,24 +196,7 @@ def _read_rate_limits(
         except AppServerAuthError:
             if refresh:
                 raise
-            _send(
-                process,
-                {
-                    "method": "account/read",
-                    "id": 4,
-                    "params": {"refreshToken": True},
-                },
-            )
-            refreshed = _response_for(
-                reader,
-                4,
-                deadline=deadline,
-                stderr_reader=stderr_reader,
-            )
-            if not isinstance(refreshed.get("account"), dict):
-                raise AppServerAuthError(
-                    "Codex token refresh did not return an account"
-                ) from None
+            read_account(4, refresh_token=True)
             return _request_rate_limits(
                 process,
                 reader,
