@@ -199,3 +199,24 @@ def test_service_install_refuses_unmanaged_unit_without_overwriting(tmp_path, mo
 
     assert service_path.read_text(encoding="utf-8") == "[Service]\nType=oneshot\n"
     assert timer_path.read_text(encoding="utf-8") == "[Unit]\nX-Codex-Usage-Managed=true\n"
+
+
+def test_service_install_restricts_existing_unit_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    unit_dir.chmod(0o755)
+    executable = tmp_path / "bin" / "codex-usage"
+    executable.parent.mkdir()
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    monkeypatch.setattr("codex_usage.service._resolve_codex_usage", lambda: executable)
+    monkeypatch.setattr(
+        "codex_usage.service._systemctl",
+        lambda *args, check=True: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    service_install(AppConfig(accounts=()), tmp_path / "config.toml")
+
+    assert oct(unit_dir.stat().st_mode & 0o777) == "0o700"

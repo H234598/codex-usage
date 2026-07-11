@@ -211,6 +211,12 @@ def _unit_directory(*, create: bool = True) -> Path:
         path.mkdir(parents=True, mode=0o700, exist_ok=True)
     if path.exists() and (path.is_symlink() or not path.is_dir()):
         raise ServiceError("systemd user unit directory must be a real directory")
+    if not path.exists():
+        return path
+    try:
+        path.chmod(0o700)
+    except OSError as exc:
+        raise ServiceError("could not secure systemd user unit directory") from exc
     return path
 
 

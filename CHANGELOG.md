@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.39 - 2026-07-11
+
+### Fixed
+
+- Existing systemd user unit directories are restricted to mode `0700` before
+  managed units are inspected or written.
+
 ## 0.6.38 - 2026-07-11
 
 ### Fixed
