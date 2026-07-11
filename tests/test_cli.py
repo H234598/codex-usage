@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import StringIO
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from codex_usage.bridge import MAX_INGEST_BYTES
+from codex_usage.bridge import MAX_INGEST_BYTES, load_latest_usages
 from codex_usage.cli import main
-from codex_usage.models import AccountUsage, LimitWindow
+from codex_usage.config import AppConfig
+from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
+from codex_usage.state import save_current_usage
 
 
 def test_sync_managed_service_does_not_rebind_another_config(tmp_path, monkeypatch):
@@ -119,7 +121,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.131\ncodex-usage 0.6.131\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.132\ncodex-usage 0.6.132\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -952,6 +954,30 @@ def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):
     latest = capsys.readouterr().out
     assert "42 / 100" in latest
     assert "310 / 1000" in latest
+
+
+def test_latest_marks_old_current_values_stale(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    config = AppConfig(accounts=(account,), interval_seconds=300)
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime.now().astimezone() - timedelta(minutes=7),
+            five_hour=LimitWindow(name="5h", remaining=97),
+            status=AccountStatus.OK,
+        )
+    )
+
+    usages = load_latest_usages(config)
+
+    assert len(usages) == 1
+    assert usages[0].stale is True
 
 
 def test_ingest_file_rejects_oversized_payload_before_saving(tmp_path, monkeypatch, capsys):

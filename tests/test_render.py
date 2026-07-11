@@ -151,3 +151,16 @@ def test_render_table_shows_blocked_state():
 
     assert "blocked bis 08.06.2026 06:50" in rendered
     assert "usage limit reached" in rendered
+
+
+def test_render_table_marks_stale_values_as_saved():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        stale=True,
+    )
+
+    rendered = render_table([usage])
+
+    assert "ok (gespeichert)" in rendered

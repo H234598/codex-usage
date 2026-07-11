@@ -251,10 +251,14 @@ def _status_value(usage: AccountUsage) -> str:
             parts.append(f"bis {usage.blocked_until.strftime('%d.%m.%Y %H:%M')}")
         if usage.blocked_reason:
             parts.append(f": {_shorten(usage.blocked_reason, 30)}")
-        return " ".join(parts)
-    if usage.error:
-        return f"{usage.status.value}: {_shorten(usage.error, 30)}"
-    return usage.status.value
+        status = " ".join(parts)
+    elif usage.error:
+        status = f"{usage.status.value}: {_shorten(usage.error, 30)}"
+    else:
+        status = usage.status.value
+    if usage.stale:
+        status += " (gespeichert)"
+    return status
 
 
 def _auth_value(usage: AccountUsage | None) -> str:

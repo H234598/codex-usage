@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from dataclasses import replace
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -503,10 +504,24 @@ def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> l
         last_success = load_usage_snapshot(account.id, snapshot_dir)
         current = load_current_usage(account.id, current_dir)
         if current is not None:
-            usages.append(merge_current_with_last_success(current, last_success))
+            usage = merge_current_with_last_success(current, last_success)
         elif last_success is not None:
-            usages.append(last_success)
+            usage = last_success
+        else:
+            continue
+        usages.append(_mark_latest_stale(usage, config.interval_seconds))
     return usages
+
+
+def _mark_latest_stale(usage: AccountUsage, interval_seconds: int) -> AccountUsage:
+    grace_seconds = max(60, interval_seconds + 60)
+    try:
+        age_seconds = (datetime.now().astimezone() - usage.captured_at).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        age_seconds = grace_seconds + 1
+    if usage.stale or age_seconds > grace_seconds:
+        return replace(usage, stale=True)
+    return usage
 
 
 def _make_handler(config: AppConfig, snapshot_dir: Path | None):

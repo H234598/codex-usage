@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.132 - 2026-07-11
+
+### Fixed
+
+- `codex-usage latest` kennzeichnet gespeicherte `current`-/Snapshotwerte
+  jetzt anhand des konfigurierten Pollintervalls plus 60 Sekunden als veraltet.
+- Die Tabellenansicht zeigt diesen Zustand zusätzlich mit `(gespeichert)` an,
+  damit alte Werte nicht wie aktuelle Livewerte wirken.
+- Regressionen für sieben Minuten alten `current`-Stand und die Statusanzeige
+  ergänzt.
+
 ## 0.6.131 - 2026-07-11
 
 ### Fixed
