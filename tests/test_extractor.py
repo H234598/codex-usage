@@ -682,6 +682,32 @@ def test_extract_windows_from_wham_numeric_string_reset_timestamps():
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
 
 
+def test_extract_windows_ignores_camel_case_relative_reset_before_absolute_reset():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/generic",
+            payload={
+                "five_hour_usage_limit": {
+                    "resetAfterSeconds": 13665,
+                    "resetsAt": "2026-06-08T06:50:00+02:00",
+                    "used": 42,
+                    "limit": 100,
+                }
+            },
+        )
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "08.06.2026 06:50"
+
+
 def test_extract_windows_from_wham_normalizes_ratio_fields():
     candidates = [
         JsonCandidate(

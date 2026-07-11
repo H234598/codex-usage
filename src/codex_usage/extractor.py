@@ -544,7 +544,7 @@ def _pick_datetime(
 ) -> datetime | None:
     for key, value in flat.items():
         lower = key.lower().rsplit(".", 1)[-1]
-        if "reset_after" in lower:
+        if _is_relative_reset_key(lower):
             continue
         if lower in hints:
             parsed = _parse_datetime(value, captured_at)
@@ -552,13 +552,17 @@ def _pick_datetime(
                 return parsed
     for key, value in flat.items():
         lower = key.lower().rsplit(".", 1)[-1]
-        if "reset_after" in lower:
+        if _is_relative_reset_key(lower):
             continue
         if any(hint in lower for hint in hints):
             parsed = _parse_datetime(value, captured_at)
             if parsed:
                 return parsed
     return None
+
+
+def _is_relative_reset_key(key: str) -> bool:
+    return "reset_after" in key or "resetafter" in key
 
 
 def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:

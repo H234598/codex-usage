@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.101 - 2026-07-11
+
+### Fixed
+
+- Relative Resetfelder wie `resetAfterSeconds` werden auch in camelCase nicht
+  mehr als absolute Unix-Zeitstempel interpretiert.
+- Eine vorhandene absolute Resetzeit gewinnt dadurch zuverlässig.
+- Regression für die Reihenfolge `resetAfterSeconds` vor `resetsAt` ergänzt.
+
 ## 0.6.100 - 2026-07-11
 
 ### Fixed
