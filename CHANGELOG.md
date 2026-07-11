@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.159 - 2026-07-12
+
+### Fixed
+
+- App-Server-Antworten ohne Dauerfelder ordnen einzelne Fenster jetzt anhand
+  der expliziten `primary`-/`secondary`-Schlüssel zu.
+- Ein einzelnes `secondary`-Fenster wird dadurch nicht mehr fälschlich als
+  5h-Wert angezeigt.
+- Regression für den unvollständigen Single-`secondary`-Payload ergänzt.
+
 ## 0.6.158 - 2026-07-12
 
 ### Fixed

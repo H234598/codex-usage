@@ -413,8 +413,13 @@ def _windows_from_response(
             if _strict_int(secondary[1].get("windowDurationMins")) is None:
                 weekly_item = secondary if secondary[0] == "secondary" else None
     else:
-        five_item = candidates[0]
-        weekly_item = candidates[1] if len(candidates) > 1 else None
+        by_key = dict(candidates)
+        five_item = ("primary", by_key["primary"]) if "primary" in by_key else None
+        weekly_item = (
+            ("secondary", by_key["secondary"])
+            if "secondary" in by_key
+            else None
+        )
     five = _window("five_hour", five_item[1]) if five_item else None
     weekly = _window("weekly", weekly_item[1]) if weekly_item else None
     return five, weekly
