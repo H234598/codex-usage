@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.117 - 2026-07-11
+
+### Fixed
+
+- Direkte WHAM-Abfragen senden jetzt die `tokens.account_id` aus `auth.json`
+  als `ChatGPT-Account-Id`, damit mehrere Konten derselben Benutzer-ID nicht
+  denselben oder den falschen Limit-Bucket anzeigen.
+- Ungültige Account-IDs aus `auth.json` werden vor jedem Netzwerkabruf
+  abgewiesen.
+
 ## 0.6.116 - 2026-07-11
 
 ### Fixed

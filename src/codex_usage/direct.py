@@ -37,7 +37,7 @@ def fetch_account_usage_direct(
     path = _resolve_auth_json_path(account, auth_json_path)
     auth_metadata: dict[str, datetime | None] = {}
     try:
-        token, auth_metadata = _load_auth_token_and_metadata(path)
+        token, auth_metadata, auth_account_id = _load_auth_token_and_metadata(path)
         if _is_access_token_expired(auth_metadata.get("auth_access_expires_at"), now=captured_at):
             return AccountUsage(
                 account_id=account.id,
@@ -49,7 +49,11 @@ def fetch_account_usage_direct(
                 auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
                 auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             )
-        payload = _fetch_wham_usage(token, timeout_seconds=timeout_seconds)
+        payload = _fetch_wham_usage(
+            token,
+            account_id=auth_account_id,
+            timeout_seconds=timeout_seconds,
+        )
         backend_user_id, backend_account_id = backend_identity_from_payload(payload)
         candidate = JsonCandidate(url=WHAM_USAGE_URL, payload=payload)
         five_hour, weekly = extract_windows(
@@ -118,7 +122,9 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
     return default_auth_json_path()
 
 
-def _load_auth_token_and_metadata(path: Path) -> tuple[str, dict[str, datetime | None]]:
+def _load_auth_token_and_metadata(
+    path: Path,
+) -> tuple[str, dict[str, datetime | None], str | None]:
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -126,7 +132,30 @@ def _load_auth_token_and_metadata(path: Path) -> tuple[str, dict[str, datetime |
         raise DirectAuthError(f"invalid auth.json: {path}") from exc
     if not isinstance(payload, dict):
         raise DirectAuthError(f"invalid auth.json structure: {path}")
-    return _extract_auth_details(payload, path=path)
+    token, metadata = _extract_auth_details(payload, path=path)
+    return token, metadata, _auth_account_id_from_payload(payload, path=path)
+
+
+def _auth_account_id_from_payload(
+    payload: dict[str, Any],
+    *,
+    path: Path,
+) -> str | None:
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, dict):
+        return None
+    value = tokens.get("account_id")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise DirectAuthError(f"auth.json account_id is invalid: {path}")
+    value = value.strip()
+    if not value or len(value) > 256 or any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in value
+    ):
+        raise DirectAuthError(f"auth.json account_id is invalid: {path}")
+    return value
 
 
 def auth_metadata_from_payload(payload: dict[str, Any]) -> dict[str, datetime | None]:
@@ -221,13 +250,21 @@ def _validate_auth_json_stat(path: Path, file_stat: os.stat_result) -> None:
         raise DirectAuthError(f"auth.json permissions too broad; run chmod 600 {path}")
 
 
-def _fetch_wham_usage(token: str, *, timeout_seconds: int) -> dict[str, Any]:
+def _fetch_wham_usage(
+    token: str,
+    *,
+    account_id: str | None,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
+    if account_id:
+        headers["ChatGPT-Account-Id"] = account_id
     request = Request(
         WHAM_USAGE_URL,
-        headers={
-            "Accept": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
+        headers=headers,
     )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:

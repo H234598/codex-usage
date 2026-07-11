@@ -4,6 +4,8 @@ import base64
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from codex_usage.direct import MAX_AUTH_JSON_BYTES, _jwt_expiry, fetch_account_usage_direct
 from codex_usage.models import Account, AccountStatus
 
@@ -27,7 +29,14 @@ def test_jwt_expiry_ignores_non_object_payloads():
 def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
-        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "account_id": "account-test",
+                }
+            }
+        ),
         encoding="utf-8",
     )
     auth_path.chmod(0o600)
@@ -63,6 +72,7 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     def fake_urlopen(request, *, timeout):
         captured["url"] = request.full_url
         captured["authorization"] = request.get_header("Authorization")
+        captured["account_id"] = request.get_header("Chatgpt-account-id")
         captured["timeout"] = timeout
         return FakeResponse()
 
@@ -79,6 +89,7 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert captured == {
         "url": "https://chatgpt.com/backend-api/wham/usage",
         "authorization": "Bearer secret-access-token",
+        "account_id": "account-test",
         "timeout": 7,
     }
     assert usage.status == AccountStatus.OK
@@ -88,6 +99,43 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert usage.weekly.remaining == 55
     assert usage.backend_user_id == "user-test"
     assert usage.backend_account_id == "account-test"
+
+
+@pytest.mark.parametrize("account_id", ["account\nforged", " ", 42])
+def test_fetch_account_usage_direct_rejects_invalid_auth_account_id(
+    tmp_path,
+    monkeypatch,
+    account_id,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "account_id": account_id,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    def fake_urlopen(request, *, timeout):
+        raise AssertionError("network must not be reached for invalid account id")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", fake_urlopen)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == f"auth.json account_id is invalid: {auth_path}"
 
 
 def test_fetch_account_usage_direct_marks_reset_only_windows_partial(tmp_path, monkeypatch):
