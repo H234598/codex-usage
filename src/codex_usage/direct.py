@@ -182,26 +182,37 @@ def auth_identity_from_payload(
     if not isinstance(tokens, dict):
         return None, None
 
-    user_id: str | None = None
-    account_id = _auth_account_id_from_payload(payload, path=path)
+    user_ids: list[str] = []
+    account_ids: list[str] = []
+    top_level_account_id = _auth_account_id_from_payload(payload, path=path)
+    if top_level_account_id is not None:
+        account_ids.append(top_level_account_id)
     for token_name in ("id_token", "access_token"):
         claims = _jwt_claims(tokens.get(token_name))
         if not isinstance(claims, dict):
             continue
+        token_user_id: str | None = None
+        token_account_id: str | None = None
         auth_claims = claims.get("https://api.openai.com/auth")
         if isinstance(auth_claims, dict):
-            user_id = _safe_auth_identity(
+            token_user_id = _safe_auth_identity(
                 auth_claims.get("chatgpt_user_id") or auth_claims.get("user_id")
             )
-            if account_id is None:
-                account_id = _safe_auth_identity(auth_claims.get("chatgpt_account_id"))
-        if user_id is None:
-            user_id = _safe_auth_identity(
+            token_account_id = _safe_auth_identity(auth_claims.get("chatgpt_account_id"))
+        if token_user_id is None:
+            token_user_id = _safe_auth_identity(
                 claims.get("chatgpt_user_id") or claims.get("user_id")
             )
-        if user_id is not None and account_id is not None:
-            break
-    return user_id, account_id
+        if token_user_id is not None:
+            user_ids.append(token_user_id)
+        if token_account_id is not None:
+            account_ids.append(token_account_id)
+    if len(set(user_ids)) > 1 or len(set(account_ids)) > 1:
+        raise DirectAuthError(f"auth.json token identities disagree: {path}")
+    return (
+        user_ids[0] if user_ids else None,
+        account_ids[0] if account_ids else None,
+    )
 
 
 def auth_identity_from_file(path: Path) -> tuple[str | None, str | None]:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.150 - 2026-07-11
+
+### Fixed
+
+- `id_token`, `access_token` und `tokens.account_id` werden jetzt gemeinsam
+  auf widerspruchsfreie Auth-Identität geprüft.
+- Ein veralteter `id_token` kann dadurch keinen neueren Accountwechsel im
+  `access_token` mehr verdecken.
+- Regression für widersprüchliche Token-Claims ergänzt.
+
 ## 0.6.149 - 2026-07-11
 
 ### Fixed

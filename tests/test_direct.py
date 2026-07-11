@@ -6,7 +6,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from codex_usage.direct import MAX_AUTH_JSON_BYTES, _jwt_expiry, fetch_account_usage_direct
+from codex_usage.direct import (
+    MAX_AUTH_JSON_BYTES,
+    DirectAuthError,
+    _jwt_expiry,
+    auth_identity_from_payload,
+    fetch_account_usage_direct,
+)
 from codex_usage.models import Account, AccountStatus
 
 
@@ -30,6 +36,24 @@ def test_jwt_expiry_ignores_non_object_payloads():
         token = f"e30.{payload.decode('ascii')}.signature"
 
         assert _jwt_expiry(token) is None
+
+
+def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
+    path = tmp_path / "auth.json"
+    payload = {
+        "tokens": {
+            "id_token": _jwt_with_claims(
+                {"https://api.openai.com/auth": {"chatgpt_user_id": "old-user"}}
+            ),
+            "access_token": _jwt_with_claims(
+                {"https://api.openai.com/auth": {"chatgpt_user_id": "new-user"}}
+            ),
+            "account_id": "account-uuid",
+        }
+    }
+
+    with pytest.raises(DirectAuthError, match="token identities disagree"):
+        auth_identity_from_payload(payload, path=path)
 
 
 def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkeypatch):
