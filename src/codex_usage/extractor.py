@@ -142,8 +142,8 @@ def _extract_json_window(
 ) -> LimitWindow | None:
     matches: list[tuple[str, str, dict[str, Any], str]] = []
     reset_only: LimitWindow | None = None
-    usage_windows: list[tuple[int, int, bool, LimitWindow]] = []
-    for candidate in candidates:
+    usage_windows: list[tuple[int, int, bool, int, LimitWindow]] = []
+    for candidate_index, candidate in enumerate(candidates):
         candidate_priority = _wham_candidate_priority(candidate.url)
         for path, obj in _walk_dicts(candidate.payload):
             obj_preview = _json_preview(obj)
@@ -161,6 +161,7 @@ def _extract_json_window(
                             candidate_priority,
                             _wham_window_path_priority(path, target),
                             wham_window.reset_at is None,
+                            -candidate_index,
                             wham_window,
                         )
                     )
@@ -176,8 +177,8 @@ def _extract_json_window(
                 matches.append((candidate.url, path, obj, haystack))
 
     if usage_windows:
-        usage_windows.sort(key=lambda item: item[:3])
-        return usage_windows[0][3]
+        usage_windows.sort(key=lambda item: item[:4])
+        return usage_windows[0][4]
 
     ranked_windows: list[tuple[int, int, int, int, LimitWindow]] = []
     for url, _path, obj, haystack in matches:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.142 - 2026-07-11
+
+### Fixed
+
+- Der Browser-Extractor bevorzugt bei gleich priorisierten WHAM-Endpunkt-
+  und Pfad-Treffern jetzt die zuletzt eingetroffene Antwort.
+- Dadurch bleiben auch Browser-Fallbacks gegen alte Werte aus derselben
+  Seitennavigation geschützt.
+- Regression für doppelte gleich priorisierte WHAM-Antworten ergänzt.
+
 ## 0.6.141 - 2026-07-11
 
 ### Fixed

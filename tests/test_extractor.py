@@ -846,6 +846,35 @@ def test_extract_windows_from_wham_usage_rate_limit_json():
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
 
 
+def test_extract_windows_prefers_latest_equal_priority_wham_response():
+    def candidate(five_hour: int, weekly: int) -> JsonCandidate:
+        return JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": five_hour,
+                        "limit_window_seconds": 18000,
+                    },
+                    "secondary_window": {
+                        "used_percent": weekly,
+                        "limit_window_seconds": 604800,
+                    },
+                }
+            },
+        )
+
+    five, weekly = extract_windows(
+        body_text="",
+        json_candidates=[candidate(3, 45), candidate(20, 60)],
+    )
+
+    assert five is not None
+    assert five.used == 20
+    assert weekly is not None
+    assert weekly.used == 60
+
+
 def test_extract_windows_prefers_main_rate_limit_over_additional_limits():
     candidates = [
         JsonCandidate(
