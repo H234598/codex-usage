@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.109 - 2026-07-11
+
+### Fixed
+
+- Der Watchdog wertet einen vorhandenen positiven Restwert jetzt vorrangig
+  aus und interpretiert einen widersprüchlichen Nutzungs-Prozentwert nicht
+  mehr als Erschöpfung.
+- Regression für `used=0`, `limit=100`, `remaining=100`, `percent=0` ergänzt.
+
 ## 0.6.108 - 2026-07-11
 
 ### Fixed
