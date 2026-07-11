@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.128 - 2026-07-11
+
+### Fixed
+
+- Ein gültiger Direct-/App-Server-Abruf ohne angeforderte 5h-/Wochenfenster
+  restauriert keine alten Nutzwerte mehr. Das verhindert, dass ein Account mit
+  einem anderen Limitmodell als vermeintlich aktuelle Werte erscheint.
+- Browser-/Bridge-Partials behalten ihre bisherigen Fallbackwerte weiterhin,
+  wenn sie nicht als autoritativ leer gekennzeichnet sind.
+- Regressionen für State- und Applet-Merges ergänzt.
+
 ## 0.6.127 - 2026-07-11
 
 ### Fixed

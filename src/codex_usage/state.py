@@ -71,7 +71,11 @@ def _save_usage(
                     return path
             except TypeError:
                 pass
-            if preserve_existing_values and backend_identity_matches(usage, existing):
+            if (
+                preserve_existing_values
+                and not _authoritative_empty_limits(usage)
+                and backend_identity_matches(usage, existing)
+            ):
                 usage = merge_current_with_last_success(usage, existing)
         text = json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False)
         if len(text.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
@@ -156,6 +160,8 @@ def merge_current_with_last_success(
 ) -> AccountUsage:
     if last_success is None:
         return current
+    if _authoritative_empty_limits(current):
+        return current
     if not backend_identity_matches(current, last_success):
         return current
     try:
@@ -173,6 +179,15 @@ def merge_current_with_last_success(
         weekly=weekly,
         values_captured_at=last_success.values_captured_at or last_success.captured_at,
         stale=True,
+    )
+
+
+def _authoritative_empty_limits(usage: AccountUsage) -> bool:
+    return (
+        usage.status == AccountStatus.PARTIAL
+        and usage.five_hour is None
+        and usage.weekly is None
+        and usage.backend_used in {"direct", "app-server"}
     )
 
 

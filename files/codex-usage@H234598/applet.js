@@ -2227,7 +2227,11 @@ CodexUsageApplet.prototype = {
                 merged.push(old);
                 continue;
             }
-            if (old && this._backendIdentityMatches(item, old)) {
+            if (
+                old &&
+                this._backendIdentityMatches(item, old) &&
+                !this._authoritativeEmptyLimits(item)
+            ) {
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
                 if (!this._windowHasUsageValue(item.five_hour) && old.five_hour) {
@@ -2307,6 +2311,16 @@ CodexUsageApplet.prototype = {
             }
         }
         return true;
+    },
+
+    _authoritativeEmptyLimits: function(item) {
+        return Boolean(
+            item &&
+            item.status === "partial" &&
+            !item.five_hour &&
+            !item.weekly &&
+            ["direct", "app-server"].indexOf(item.backend_used) !== -1
+        );
     },
 
     _windowHasUsageValue: function(window) {
