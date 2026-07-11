@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.71 - 2026-07-11
+
+### Fixed
+
+- Generische `used_percent`-Felder werden als Prozentwerte behandelt und zu
+  Restprozenten umgerechnet, statt als absolute Nutzwerte zu erscheinen.
+
 ## 0.6.70 - 2026-07-11
 
 ### Fixed

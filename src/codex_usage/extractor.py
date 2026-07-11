@@ -199,7 +199,15 @@ def _window_from_mapping(
     raw: str,
 ) -> LimitWindow | None:
     flat = _flatten_mapping(obj)
-    used = _pick_number(flat, ("used", "usage", "current", "consumed", "num_used"))
+    used_percent = _pick_number(
+        flat,
+        ("used_percent", "usage_percent", "consumed_percent"),
+    )
+    used = _pick_number(
+        flat,
+        ("used", "usage", "current", "consumed", "num_used"),
+        exclude_suffixes=("_percent",),
+    )
     limit = _pick_number(flat, ("limit", "max", "quota", "total", "capacity"))
     remaining = _pick_number(flat, ("remaining", "left", "available"))
     percent = _pick_number(flat, ("percent", "percentage", "ratio"))
@@ -207,8 +215,16 @@ def _window_from_mapping(
 
     if percent is not None and 0 <= percent <= 1:
         percent *= 100
+    if used_percent is not None and 0 <= used_percent <= 1:
+        used_percent *= 100
+    if used_percent is not None and not 0 <= used_percent <= 100:
+        used_percent = None
     if remaining is None and used is not None and limit is not None:
         remaining = max(limit - used, 0)
+    if used_percent is not None and used is None:
+        if remaining is None:
+            remaining = max(100 - used_percent, 0)
+        percent = remaining
     if percent is None and used is not None and limit:
         percent = used / limit * 100
     if percent is not None and not 0 <= percent <= 100:
@@ -393,10 +409,17 @@ def _extract_reset_at(text: str, captured_at: datetime) -> datetime | None:
     return None
 
 
-def _pick_number(flat: dict[str, Any], hints: tuple[str, ...]) -> float | None:
+def _pick_number(
+    flat: dict[str, Any],
+    hints: tuple[str, ...],
+    *,
+    exclude_suffixes: tuple[str, ...] = (),
+) -> float | None:
     for hint in hints:
         for key, value in flat.items():
             lower = key.lower().rsplit(".", 1)[-1]
+            if lower.endswith(exclude_suffixes):
+                continue
             if lower == hint:
                 number = _coerce_number(value)
                 if number is not None:
@@ -404,6 +427,8 @@ def _pick_number(flat: dict[str, Any], hints: tuple[str, ...]) -> float | None:
     for hint in hints:
         for key, value in flat.items():
             lower = key.lower().rsplit(".", 1)[-1]
+            if lower.endswith(exclude_suffixes):
+                continue
             if hint in lower:
                 number = _coerce_number(value)
                 if number is not None:
