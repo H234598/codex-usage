@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.130 - 2026-07-11
+
+### Fixed
+
+- Das Applet markiert einen ausgebliebenen 5-Minuten-Poll nach einer
+  Pollperiode plus 60 Sekunden als veraltet, statt alte Werte bis zu zwei
+  Pollperioden als aktuell erscheinen zu lassen.
+- Die Stale-Grenze wird für Cacheprüfung und Payload-Anwendung gemeinsam
+  berechnet; eine Regression deckt die 5-Minuten-Grenze ab.
+
 ## 0.6.129 - 2026-07-11
 
 ### Fixed

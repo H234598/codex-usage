@@ -1031,8 +1031,12 @@ CodexUsageApplet.prototype = {
         if (captured === null) {
             return true;
         }
-        let grace = Math.max(60000, this._boundedInteger(this.refreshInterval, 60, 3600, 300) * 2000);
-        return Date.now() - captured > grace;
+        return Date.now() - captured > this._staleAfterMs();
+    },
+
+    _staleAfterMs: function() {
+        let interval = this._boundedInteger(this.refreshInterval, 60, 3600, 300);
+        return (interval + 60) * 1000;
     },
 
     _repairStaleService: function(after) {
@@ -2194,7 +2198,7 @@ CodexUsageApplet.prototype = {
     _applyPayload: function(payload, fresh) {
         let usages = fresh ? this._mergeFreshPayload(payload) : payload;
         let nowMs = Date.now();
-        let staleAfterMs = this._boundedInteger(this.refreshInterval, 60, 3600, 300) * 2000;
+        let staleAfterMs = this._staleAfterMs();
         for (let i = 0; i < usages.length; i++) {
             let capturedMs = this._dateMillis(usages[i].captured_at);
             usages[i].stale = usages[i].stale || capturedMs === null || nowMs - capturedMs > staleAfterMs;
