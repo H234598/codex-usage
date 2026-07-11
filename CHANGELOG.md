@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.87 - 2026-07-11
+
+### Fixed
+
+- Der Safe-Modus beendet jetzt auch laufende Health-Prozesse und lässt keine
+  Diagnose-Subprozesse außerhalb des Cleanup-Lebenszyklus zurück.
+- Regression für Health-Prozess-Cleanup beim Safe-Mode-Eintritt ergänzt.
+
 ## 0.6.86 - 2026-07-11
 
 ### Fixed

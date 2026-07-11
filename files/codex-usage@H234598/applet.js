@@ -339,6 +339,7 @@ CodexUsageApplet.prototype = {
         this._backendAuxQueue = [];
         this._cancelProcess();
         this._cancelAuxProcess();
+        this._cancelHealthProcess();
         this._cancelReactivations();
         this._clearPanelClasses();
         try {

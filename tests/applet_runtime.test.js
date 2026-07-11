@@ -205,6 +205,8 @@ test("internal failures enter safe mode after the configured limit", () => {
 test("safe mode cancels reactivation processes and pending refreshes", () => {
   const applet = makeApplet();
   let forced = 0;
+  let healthForced = 0;
+  applet._healthProcess = { force_exit() { healthForced += 1; } };
   applet._reactivations = {
     alpha: {
       done: false,
@@ -226,6 +228,8 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   applet._sources._staleCheckId = 13;
   applet._enterSafeMode("reactivation test");
   assert.equal(forced, 1);
+  assert.equal(healthForced, 1);
+  assert.equal(applet._healthProcess, null);
   assert.equal(Object.keys(applet._reactivations).length, 0);
   assert.equal(applet._reactivationRefreshPending, false);
   assert.equal(applet._serviceAutoAttempted, false);
