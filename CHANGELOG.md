@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.118 - 2026-07-11
+
+### Fixed
+
+- Der App-Server übernimmt jetzt die `tokens.account_id` als Backend-Identität
+  in `AccountUsage`, damit Cache- und Applet-Merges auch bei diesem Abrufweg
+  keine Werte verschiedener Konten vermischen.
+- Regression für die Kontenidentität des App-Server-Abrufs ergänzt.
+
 ## 0.6.117 - 2026-07-11
 
 ### Fixed

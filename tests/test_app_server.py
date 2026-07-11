@@ -27,7 +27,7 @@ def _jwt(expiry: datetime) -> str:
     return f"e30.{payload.decode()}.signature"
 
 
-def _auth(path: Path, expiry: datetime) -> None:
+def _auth(path: Path, expiry: datetime, account_id: str = "account-test") -> None:
     path.write_text(
         json.dumps(
             {
@@ -36,6 +36,7 @@ def _auth(path: Path, expiry: datetime) -> None:
                     "access_token": _jwt(expiry),
                     "id_token": _jwt(expiry),
                     "refresh_token": "refresh-test",
+                    "account_id": account_id,
                 },
             }
         ),
@@ -123,6 +124,7 @@ def test_app_server_fetch_uses_only_account_methods(tmp_path):
 
     assert usage.status == AccountStatus.OK
     assert usage.backend_used == "app-server"
+    assert usage.backend_account_id == "account-test"
     assert usage.five_hour is not None and usage.five_hour.remaining == 83
     assert usage.weekly is not None and usage.weekly.remaining == 58
     methods = [item["method"] for item in json.loads(requests_path.read_text())]
