@@ -396,6 +396,12 @@ def _extract_reset_at(text: str, captured_at: datetime) -> datetime | None:
 def _pick_number(flat: dict[str, Any], hints: tuple[str, ...]) -> float | None:
     for key, value in flat.items():
         lower = key.lower().rsplit(".", 1)[-1]
+        if lower in hints:
+            number = _coerce_number(value)
+            if number is not None:
+                return number
+    for key, value in flat.items():
+        lower = key.lower().rsplit(".", 1)[-1]
         if any(hint in lower for hint in hints):
             number = _coerce_number(value)
             if number is not None:

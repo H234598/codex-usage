@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.69 - 2026-07-11
+
+### Fixed
+
+- Die generische JSON-Extraktion bevorzugt exakte Nutzwertfelder vor
+  Teilstring-Treffern wie `used_percent`.
+
 ## 0.6.68 - 2026-07-11
 
 ### Fixed
