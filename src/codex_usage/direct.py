@@ -18,6 +18,8 @@ from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+DIRECT_RESPONSE_SAMPLE_COUNT = 3
+DIRECT_RESET_BUCKET_SECONDS = 5
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_AUTH_JSON_BYTES = 1_000_000
 MAX_ACCESS_TOKEN_CHARS = 16_384
@@ -50,7 +52,7 @@ def fetch_account_usage_direct(
                 auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
                 auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             )
-        payload = _fetch_wham_usage(
+        payload = _fetch_stable_wham_usage(
             token,
             account_id=auth_account_id,
             timeout_seconds=timeout_seconds,
@@ -409,6 +411,8 @@ def _fetch_wham_usage(
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {token}",
+        "Cache-Control": "no-cache, no-store",
+        "Pragma": "no-cache",
     }
     if account_id:
         headers["ChatGPT-Account-Id"] = account_id
@@ -440,6 +444,71 @@ def _fetch_wham_usage(
     if not isinstance(payload, dict):
         raise DirectFetchError("direct response is not a JSON object")
     return payload
+
+
+def _fetch_stable_wham_usage(
+    token: str,
+    *,
+    account_id: str | None,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    payloads = [
+        _fetch_wham_usage(
+            token,
+            account_id=account_id,
+            timeout_seconds=timeout_seconds,
+        )
+        for _ in range(DIRECT_RESPONSE_SAMPLE_COUNT)
+    ]
+    groups: dict[tuple, list[tuple[int, dict[str, Any]]]] = {}
+    for index, payload in enumerate(payloads):
+        groups.setdefault(_usage_response_signature(payload), []).append((index, payload))
+    return max(
+        groups.values(),
+        key=lambda group: (
+            len(group),
+            _usage_response_completeness(group[0][1]),
+            -group[0][0],
+        ),
+    )[0][1]
+
+
+def _usage_response_signature(payload: dict[str, Any]) -> tuple:
+    rate_limit = payload.get("rate_limit")
+    if not isinstance(rate_limit, dict):
+        return (None, None)
+    return tuple(
+        _usage_window_signature(rate_limit.get(key))
+        for key in ("primary_window", "secondary_window")
+    )
+
+
+def _usage_window_signature(value: Any) -> tuple | None:
+    if not isinstance(value, dict):
+        return None
+    return (
+        _signature_number(value.get("limit_window_seconds")),
+        _signature_number(value.get("used_percent")),
+        _signature_reset(value.get("reset_at")),
+    )
+
+
+def _signature_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _signature_reset(value: Any) -> int | None:
+    number = _signature_number(value)
+    if number is None:
+        return None
+    return int(number // DIRECT_RESET_BUCKET_SECONDS)
+
+
+def _usage_response_completeness(payload: dict[str, Any]) -> int:
+    signature = _usage_response_signature(payload)
+    return sum(value is not None for value in signature)
 
 
 def _response_content_type(response: Any) -> str:

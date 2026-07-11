@@ -134,6 +134,75 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert usage.backend_account_id == "server-account"
 
 
+def test_fetch_account_usage_direct_prefers_majority_response(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
+                    "account_id": "server-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    stable = {
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 3,
+                "limit_window_seconds": 18000,
+                "reset_at": 1780894250,
+            },
+            "secondary_window": {
+                "used_percent": 45,
+                "limit_window_seconds": 604800,
+                "reset_at": 1781060750,
+            },
+        },
+        "user_id": "user-test",
+        "account_id": "server-account",
+    }
+    transient = {
+        **stable,
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 80,
+                "limit_window_seconds": 18000,
+                "reset_at": 1780894850,
+            },
+            "secondary_window": {
+                "used_percent": 90,
+                "limit_window_seconds": 604800,
+                "reset_at": 1781061350,
+            },
+        },
+    }
+    responses = iter((transient, stable, stable))
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is not None
+    assert usage.five_hour.remaining == 97
+    assert usage.weekly is not None
+    assert usage.weekly.remaining == 55
+
+
 def test_fetch_account_usage_direct_rejects_auth_identity_changed_during_request(
     tmp_path, monkeypatch
 ):

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.152 - 2026-07-11
+
+### Fixed
+
+- Der Direct-Abruf gleicht drei identische Backend-Samples ab und verwendet
+  bei flackernden Antworten den am häufigsten gelieferten Limitstand.
+- Cache-Vermeidungsheader verhindern, dass ein alter HTTP-Zwischenstand als
+  aktueller Accountwert gespeichert wird.
+- Regression für einen transienten falschen Backend-Stand ergänzt.
+
 ## 0.6.151 - 2026-07-11
 
 ### Fixed
