@@ -206,9 +206,13 @@ def _window_from_mapping(
     used = _pick_number(
         flat,
         ("used", "usage", "current", "consumed", "num_used"),
-        exclude_suffixes=("_percent",),
+        exclude_suffixes=("_percent", "_seconds", "_minutes", "_hours"),
     )
-    limit = _pick_number(flat, ("limit", "max", "quota", "total", "capacity"))
+    limit = _pick_number(
+        flat,
+        ("limit", "max", "quota", "total", "capacity"),
+        exclude_suffixes=("_seconds", "_minutes", "_hours"),
+    )
     remaining = _pick_number(flat, ("remaining", "left", "available"))
     percent = _pick_number(flat, ("percent", "percentage", "ratio"))
     reset_at = _pick_datetime(flat, ("reset", "reset_at", "resets_at", "next_reset"), captured_at)
