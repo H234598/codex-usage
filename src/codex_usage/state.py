@@ -194,14 +194,14 @@ def _merge_window_with_last_success(
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
-    for field in ("backend_user_id", "backend_account_id"):
-        left_value = getattr(left, field)
-        right_value = getattr(right, field)
-        if bool(left_value) != bool(right_value):
-            return False
-        if left_value and left_value != right_value:
-            return False
-    return True
+    left_account_id = left.backend_account_id
+    right_account_id = right.backend_account_id
+    if bool(left_account_id) != bool(right_account_id):
+        return False
+    if left_account_id:
+        return left_account_id == right_account_id
+
+    return left.backend_user_id == right.backend_user_id
 
 
 def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:

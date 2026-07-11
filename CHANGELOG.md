@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.119 - 2026-07-11
+
+### Fixed
+
+- Direct-Abfragen verwenden die stabile Account-UUID aus `auth.json` als
+  kanonische Backend-Identität, auch wenn die WHAM-Antwort eine andere
+  Darstellung der User-ID liefert.
+- Identitätsvergleiche priorisieren jetzt eine gleiche Account-ID gegenüber
+  abweichenden User-ID-Formaten; verschiedene Account-IDs bleiben strikt
+  getrennt.
+- Regression für den Wechsel zwischen Direct- und App-Server-Abruf ergänzt.
+
 ## 0.6.118 - 2026-07-11
 
 ### Fixed

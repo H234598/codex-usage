@@ -80,7 +80,7 @@ def fetch_account_usage_direct(
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             source_urls=(_redact_url(WHAM_USAGE_URL),),
             backend_user_id=backend_user_id,
-            backend_account_id=backend_account_id,
+            backend_account_id=auth_account_id or backend_account_id,
         )
     except DirectAuthError as exc:
         return AccountUsage(

@@ -33,7 +33,7 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
             {
                 "tokens": {
                     "access_token": "secret-access-token",
-                    "account_id": "account-test",
+                    "account_id": "server-account",
                 }
             }
         ),
@@ -89,7 +89,7 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert captured == {
         "url": "https://chatgpt.com/backend-api/wham/usage",
         "authorization": "Bearer secret-access-token",
-        "account_id": "account-test",
+        "account_id": "server-account",
         "timeout": 7,
     }
     assert usage.status == AccountStatus.OK
@@ -98,7 +98,7 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     assert usage.weekly is not None
     assert usage.weekly.remaining == 55
     assert usage.backend_user_id == "user-test"
-    assert usage.backend_account_id == "account-test"
+    assert usage.backend_account_id == "server-account"
 
 
 @pytest.mark.parametrize("account_id", ["account\nforged", " ", 42])

@@ -242,6 +242,32 @@ def test_merge_rejects_different_identified_backend_account():
     assert merged.weekly is None
 
 
+def test_merge_accepts_same_account_id_when_backend_user_id_format_differs():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_user_id="api-user",
+        backend_account_id="account-uuid",
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        backend_user_id=None,
+        backend_account_id="account-uuid",
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour == last_success.five_hour
+    assert merged.weekly == last_success.weekly
+
+
 def test_merge_current_with_last_success_preserves_usage_under_reset_only_window():
     timezone = ZoneInfo("Europe/Berlin")
     captured = datetime(2026, 6, 8, 4, 20, tzinfo=timezone)
