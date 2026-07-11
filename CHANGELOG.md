@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.77 - 2026-07-11
+
+### Fixed
+
+- Generische `*_percent`-Felder mit Wert 1 werden als 1 % verarbeitet.
+- Nur Ratio-Felder werden von Bruchteilen auf Prozentwerte normalisiert.
+- Regressionstests für Grenzwerte und eigenständige `ratio`-Felder ergänzt.
+
 ## 0.6.76 - 2026-07-11
 
 ### Fixed

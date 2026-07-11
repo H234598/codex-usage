@@ -237,20 +237,21 @@ def _window_from_mapping(
     raw: str,
 ) -> LimitWindow | None:
     flat = _flatten_mapping(obj)
-    used_percent = _pick_number(
-        flat,
-        (
-            "used_percent",
-            "used_percentage",
-            "usage_percent",
-            "usage_percentage",
-            "consumed_percent",
-            "consumed_percentage",
-        ),
+    used_percent = _coerce_percent(
+        _pick_number(
+            flat,
+            (
+                "used_percent",
+                "used_percentage",
+                "usage_percent",
+                "usage_percentage",
+                "consumed_percent",
+                "consumed_percentage",
+            ),
+        )
     )
-    used_ratio = _pick_number(
-        flat,
-        ("used_ratio", "usage_ratio", "consumed_ratio"),
+    used_ratio = _normalize_ratio_value(
+        _pick_number(flat, ("used_ratio", "usage_ratio", "consumed_ratio"))
     )
     used = _pick_number(
         flat,
@@ -269,49 +270,35 @@ def _window_from_mapping(
         ("limit", "max", "quota", "total", "capacity"),
         exclude_suffixes=("_seconds", "_minutes", "_hours"),
     )
-    remaining_percent = _pick_number(
-        flat,
-        (
-            "remaining_percent",
-            "remaining_percentage",
-            "available_percent",
-            "available_percentage",
-            "left_percent",
-            "left_percentage",
-        ),
+    remaining_percent = _coerce_percent(
+        _pick_number(
+            flat,
+            (
+                "remaining_percent",
+                "remaining_percentage",
+                "available_percent",
+                "available_percentage",
+                "left_percent",
+                "left_percentage",
+            ),
+        )
     )
-    remaining_ratio = _pick_number(
-        flat,
-        ("remaining_ratio", "available_ratio", "left_ratio"),
+    remaining_ratio = _normalize_ratio_value(
+        _pick_number(flat, ("remaining_ratio", "available_ratio", "left_ratio"))
     )
     remaining = _pick_number(
         flat,
         ("remaining", "left", "available"),
         exclude_suffixes=("_percent", "_percentage", "_ratio"),
     )
-    percent = _pick_number(flat, ("percent", "percentage", "ratio"))
+    percent = _coerce_percent(_pick_number(flat, ("percent", "percentage")))
+    ratio = _normalize_ratio_value(_pick_number(flat, ("ratio",)))
     reset_at = _pick_datetime(flat, ("reset", "reset_at", "resets_at", "next_reset"), captured_at)
 
-    if percent is not None and 0 <= percent <= 1:
-        percent *= 100
-    if used_percent is not None and 0 <= used_percent <= 1:
-        used_percent *= 100
-    if used_percent is not None and not 0 <= used_percent <= 100:
-        used_percent = None
-    if used_ratio is not None and 0 <= used_ratio <= 1:
-        used_ratio *= 100
-    if used_ratio is not None and not 0 <= used_ratio <= 100:
-        used_ratio = None
     if used_percent is None:
         used_percent = used_ratio
-    if remaining_percent is not None and 0 <= remaining_percent <= 1:
-        remaining_percent *= 100
-    if remaining_ratio is not None and 0 <= remaining_ratio <= 1:
-        remaining_ratio *= 100
-    if remaining_percent is not None and not 0 <= remaining_percent <= 100:
-        remaining_percent = None
-    if remaining_ratio is not None and not 0 <= remaining_ratio <= 100:
-        remaining_ratio = None
+    if percent is None:
+        percent = ratio
     if remaining is None and used is not None and limit is not None:
         remaining = max(limit - used, 0)
     if remaining is None:
