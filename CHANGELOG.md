@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.135 - 2026-07-11
+
+### Fixed
+
+- `bridge-snippet` normalisiert eine eingegebene Account-Label-Referenz jetzt
+  auf die stabile Account-ID, wie es `bridge-extension` bereits tut.
+- Nachträgliche Labeländerungen oder gleichnamige Labeltexte können dadurch
+  keinen bestehenden Snippet mehr auf eine falsche Zuordnung lenken.
+- Regression für `BW_Privat` als Label und `privat` als Account-ID ergänzt.
+
 ## 0.6.134 - 2026-07-11
 
 ### Fixed

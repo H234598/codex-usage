@@ -121,7 +121,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.134\ncodex-usage 0.6.134\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.135\ncodex-usage 0.6.135\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -1027,11 +1027,43 @@ def test_ingest_stdin_rejects_oversized_payload_before_saving(tmp_path, monkeypa
     assert not (tmp_path / "data" / "codex-usage" / "snapshots" / "privat.json").exists()
 
 
-def test_bridge_snippet_command_prints_javascript(capsys):
-    assert main(["bridge-snippet", "BW_Privat", "--port", "8765", "--interval", "300"]) == 0
+def test_bridge_snippet_command_normalizes_label_to_account_id(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "BW_Privat",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "bridge-snippet",
+                "BW_Privat",
+                "--port",
+                "8765",
+                "--interval",
+                "300",
+            ]
+        )
+        == 0
+    )
 
     output = capsys.readouterr().out
-    assert "BW_Privat" in output
+    assert 'const account = "privat";' in output
+    assert "BW_Privat" not in output
     assert "http://127.0.0.1:8765/ingest" in output
     assert "setInterval" in output
 

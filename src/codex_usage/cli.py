@@ -625,8 +625,10 @@ def _cmd_health(args: argparse.Namespace) -> int:
 def _cmd_bridge_snippet(args: argparse.Namespace) -> int:
     _validate_port(args.port)
     _validate_min_interval(args.interval)
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
     endpoint = f"http://127.0.0.1:{args.port}/ingest"
-    print(render_bridge_snippet(args.account, endpoint=endpoint, interval_seconds=args.interval))
+    print(render_bridge_snippet(account.id, endpoint=endpoint, interval_seconds=args.interval))
     return 0
 
 
