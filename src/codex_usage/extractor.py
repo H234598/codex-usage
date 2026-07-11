@@ -101,6 +101,7 @@ def _extract_json_window(
     captured_at: datetime,
 ) -> LimitWindow | None:
     matches: list[tuple[str, str, dict[str, Any], str]] = []
+    reset_only: LimitWindow | None = None
     for candidate in candidates:
         for path, obj in _walk_dicts(candidate.payload):
             obj_preview = _json_preview(obj)
@@ -112,7 +113,11 @@ def _extract_json_window(
                 raw=f"{path} {obj_preview}"[:500],
             )
             if wham_window is not None:
-                return wham_window
+                if wham_window.has_usage_value:
+                    return wham_window
+                if reset_only is None:
+                    reset_only = wham_window
+                continue
             haystack = f"{path} {obj_preview}".lower()
             if target == "five_hour" and not _looks_like_five_hour(haystack):
                 continue
@@ -136,8 +141,11 @@ def _extract_json_window(
             raw=haystack[:500],
         )
         if window is not None:
-            return window
-    return None
+            if window.has_usage_value:
+                return window
+            if reset_only is None:
+                reset_only = window
+    return reset_only
 
 
 def _window_from_wham_rate_limit_mapping(
@@ -394,6 +402,8 @@ def _pick_datetime(
 def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
     if value is None:
         return None
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)):
         timestamp = float(value)
         if not math.isfinite(timestamp):
@@ -433,7 +443,10 @@ def _parse_time_today_or_next(raw: str, captured_at: datetime) -> datetime | Non
         return None
     parsed = captured_at.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if parsed < captured_at:
-        parsed += timedelta(days=1)
+        try:
+            parsed += timedelta(days=1)
+        except (OverflowError, ValueError):
+            return None
     return parsed
 
 

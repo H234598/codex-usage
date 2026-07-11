@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.64 - 2026-07-11
+
+### Fixed
+
+- JSON-Extraktion bevorzugt Nutzwerte vor einem früheren Treffer, der nur eine
+  Resetzeit enthält; Reset-only-Daten bleiben als Fallback erhalten.
+- Zeitparser lehnen Bool-Timestamps ab und behandeln einen nicht darstellbaren
+  Folgetag kontrolliert.
+
 ## 0.6.63 - 2026-07-11
 
 ### Fixed

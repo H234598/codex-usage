@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from codex_usage.extractor import JsonCandidate, _parse_datetime, extract_windows
+from codex_usage.extractor import (
+    JsonCandidate,
+    _parse_datetime,
+    _parse_time_today_or_next,
+    extract_windows,
+)
 
 
 def test_extract_windows_from_german_dom_text():
@@ -38,6 +43,19 @@ def test_parse_datetime_rejects_unrepresentable_timezone_conversion():
     captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
 
     assert _parse_datetime("9999-12-31T23:59:59+00:00", captured_at) is None
+
+
+def test_parse_time_today_or_next_rejects_unrepresentable_next_day():
+    captured_at = datetime(9999, 12, 31, 23, 59, 1)
+
+    assert _parse_time_today_or_next("23:59", captured_at) is None
+
+
+def test_parse_datetime_rejects_boolean_timestamp_values():
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    assert _parse_datetime(True, captured_at) is None
+    assert _parse_datetime(False, captured_at) is None
 
 
 def test_extract_windows_from_short_english_dom_labels():
@@ -190,6 +208,40 @@ def test_extract_windows_prefers_json_candidates():
     assert weekly.used == 80
     assert weekly.limit == 400
     assert weekly.source.startswith("json:")
+
+
+def test_extract_windows_prefers_later_json_usage_over_reset_only_match():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/partial",
+            payload={
+                "five_hour": {
+                    "limit_window_seconds": 18_000,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/fresh",
+            payload={
+                "five_hour": {
+                    "limit_window_seconds": 18_000,
+                    "used_percent": 3,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        ),
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.source.endswith("fresh")
 
 
 def test_extract_windows_from_wham_usage_rate_limit_json():
