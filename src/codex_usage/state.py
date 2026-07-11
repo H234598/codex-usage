@@ -11,7 +11,12 @@ from typing import Any
 from .config import default_state_dir
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow
-from .private_io import private_path_lock, read_private_text, write_private_text
+from .private_io import (
+    assert_no_symlink_ancestors,
+    private_path_lock,
+    read_private_text,
+    write_private_text,
+)
 
 MAX_SNAPSHOT_BYTES = 1_000_000
 SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -37,6 +42,7 @@ def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> 
 
 def _save_usage(usage: AccountUsage, directory: Path) -> Path:
     _validate_snapshot_account_id(usage.account_id)
+    assert_no_symlink_ancestors(directory, label="snapshot directory")
     if directory.is_symlink():
         raise ValueError(f"snapshot directory must not be a symlink: {directory}")
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)

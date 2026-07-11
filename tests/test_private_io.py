@@ -18,6 +18,18 @@ def test_write_private_text_replaces_atomically_and_keeps_mode(tmp_path):
     assert list(tmp_path.glob(".value.json.tmp-*")) == []
 
 
+def test_private_io_rejects_symlinked_ancestor(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink ancestors"):
+        write_private_text(redirected / "value.json", "secret", label="value")
+
+    assert not (outside / "value.json").exists()
+
+
 def test_write_private_text_keeps_old_value_when_replace_fails(tmp_path, monkeypatch):
     path = tmp_path / "value.json"
     path.write_text("old", encoding="utf-8")

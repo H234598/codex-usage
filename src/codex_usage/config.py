@@ -8,7 +8,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .models import Account
-from .private_io import private_path_lock, read_private_text, write_private_text
+from .private_io import (
+    assert_no_symlink_ancestors,
+    private_path_lock,
+    read_private_text,
+    write_private_text,
+)
 
 APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
@@ -104,6 +109,7 @@ def _save_config_unlocked(config: AppConfig, config_path: Path) -> None:
 
 
 def _prepare_config_directory(config_dir: Path) -> None:
+    assert_no_symlink_ancestors(config_dir, label="config directory")
     if config_dir.is_symlink():
         raise ValueError(f"config directory must not be a symlink: {config_dir}")
     config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -238,6 +244,7 @@ def _default_profile_root(account_id: str) -> Path:
 
 def _prepare_profile_dir(profile_dir: str) -> Path:
     path = Path(profile_dir).expanduser()
+    assert_no_symlink_ancestors(path, label="profile dir")
     if path.is_symlink():
         raise ValueError(f"profile dir must not be a symlink: {path}")
     path.mkdir(parents=True, mode=0o700, exist_ok=True)

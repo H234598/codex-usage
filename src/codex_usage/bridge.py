@@ -13,7 +13,12 @@ from .config import AppConfig, default_state_dir, resolve_account
 from .extractor import JsonCandidate, extract_windows, load_json_candidate
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
-from .private_io import write_private_text as write_private_output_text
+from .private_io import (
+    assert_no_symlink_ancestors,
+)
+from .private_io import (
+    write_private_text as write_private_output_text,
+)
 from .render import render_table
 from .state import (
     load_current_usage,
@@ -115,6 +120,7 @@ def save_bridge_debug_payload(
     snapshot_dir: Path | None = None,
 ) -> Path:
     directory = (snapshot_dir.parent if snapshot_dir else default_state_dir()) / "debug"
+    assert_no_symlink_ancestors(directory, label="debug directory")
     if directory.is_symlink():
         raise ValueError(f"debug directory must not be a symlink: {directory}")
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -416,6 +422,7 @@ def write_bridge_extension(
 
 
 def _prepare_private_directory(path: Path, *, label: str) -> None:
+    assert_no_symlink_ancestors(path, label=label)
     if path.is_symlink():
         raise ValueError(f"{label} must not be a symlink: {path}")
     path.mkdir(parents=True, mode=0o700, exist_ok=True)

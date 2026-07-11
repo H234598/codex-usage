@@ -55,6 +55,24 @@ def test_save_usage_snapshot_rejects_unsafe_account_id(tmp_path):
     assert not (tmp_path / "escape.json").exists()
 
 
+def test_save_usage_snapshot_rejects_symlinked_data_home(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    data_home = tmp_path / "data-home"
+    data_home.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    with pytest.raises(ValueError, match="symlink ancestors"):
+        save_usage_snapshot(usage)
+
+    assert not (outside / "codex-usage").exists()
+
+
 def test_save_and_load_usage_snapshot_preserves_blocked_state(tmp_path):
     snapshot_dir = tmp_path / "snapshots"
     blocked_until = datetime(2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin"))

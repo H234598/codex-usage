@@ -13,6 +13,17 @@ from pathlib import Path
 PRIVATE_LOCK_TIMEOUT_SECONDS = 30
 
 
+def assert_no_symlink_ancestors(path: Path, *, label: str) -> None:
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError(f"{label} must not contain symlink ancestors: {current}")
+        if not current.exists():
+            break
+
+
 def read_private_text(
     path: Path,
     *,
@@ -22,6 +33,7 @@ def read_private_text(
     too_large_label: str | None = None,
     invalid_utf8_label: str | None = None,
 ) -> tuple[str, os.stat_result]:
+    assert_no_symlink_ancestors(path, label=regular_label)
     if path.is_symlink():
         raise ValueError(f"{regular_label} must be a regular file: {path}")
 
@@ -70,6 +82,7 @@ def read_private_text(
 
 
 def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) -> None:
+    assert_no_symlink_ancestors(path, label=label)
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
     if path.exists() and path.stat().st_nlink != 1:
@@ -150,6 +163,7 @@ def private_path_lock(
     label: str = "private lock",
 ) -> Iterator[None]:
     parent = path.parent
+    assert_no_symlink_ancestors(parent, label=label)
     if parent.is_symlink() or not parent.is_dir():
         raise ValueError(f"{label} parent must be a real directory: {parent}")
     lock_path = parent / (path.name + ".lock")

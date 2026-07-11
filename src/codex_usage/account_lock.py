@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .config import default_state_dir
+from .private_io import assert_no_symlink_ancestors
 
 ACCOUNT_LOCK_TIMEOUT_SECONDS = 30
 
@@ -69,6 +70,10 @@ def account_lock(
 
 
 def _prepare_lock_directory(path: Path) -> None:
+    try:
+        assert_no_symlink_ancestors(path, label="account lock directory")
+    except ValueError as exc:
+        raise AccountLockError(str(exc)) from exc
     if path.is_symlink():
         raise AccountLockError("account lock directory must not be a symlink")
     path.mkdir(parents=True, mode=0o700, exist_ok=True)

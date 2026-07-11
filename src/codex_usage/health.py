@@ -8,7 +8,12 @@ from typing import Any
 
 from .config import default_state_dir
 from .json_utils import loads_strict
-from .private_io import private_path_lock, read_private_text, write_private_text
+from .private_io import (
+    assert_no_symlink_ancestors,
+    private_path_lock,
+    read_private_text,
+    write_private_text,
+)
 
 HEALTH_FILENAME = "health.json"
 HEALTH_VERSION = 1
@@ -81,6 +86,7 @@ def clear_health(path: Path | None = None) -> None:
 
 
 def _prepare_health_directory(directory: Path) -> None:
+    assert_no_symlink_ancestors(directory, label="health directory")
     if directory.is_symlink():
         raise ValueError(f"health directory must not be a symlink: {directory}")
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)

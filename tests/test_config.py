@@ -113,6 +113,19 @@ def test_add_account_rejects_symlink_profile_dir_without_marking_target(tmp_path
     assert not (target / ".codex-usage-profile").exists()
 
 
+def test_add_account_rejects_symlinked_config_home(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    config_home = tmp_path / "config-home"
+    config_home.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    with pytest.raises(ValueError, match="symlink ancestors"):
+        add_or_update_account("privat")
+
+    assert not (outside / "codex-usage").exists()
+
+
 def test_config_rejects_unknown_browser(tmp_path):
     with pytest.raises(ValueError, match="browser must be one of"):
         add_or_update_account("privat", browser="netscape", path=tmp_path / "config.toml")

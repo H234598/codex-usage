@@ -19,7 +19,12 @@ from .direct import DirectAuthError, auth_metadata_from_payload, read_auth_json_
 from .extractor import JsonCandidate, extract_windows
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
-from .private_io import write_private_text as write_private_output_text
+from .private_io import (
+    assert_no_symlink_ancestors,
+)
+from .private_io import (
+    write_private_text as write_private_output_text,
+)
 
 JSON_MAX_BYTES = 2_000_000
 PROBE_OUTPUT_MAX_BYTES = 2_000_000
@@ -605,6 +610,7 @@ def _save_probe_payloads(
 
 
 def _prepare_private_output_dir(path: Path, *, label: str) -> None:
+    assert_no_symlink_ancestors(path, label=label)
     if path.is_symlink():
         raise ValueError(f"{label} must not be a symlink: {path}")
     path.mkdir(parents=True, mode=0o700, exist_ok=True)

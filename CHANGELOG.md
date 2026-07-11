@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.56 - 2026-07-11
+
+### Fixed
+
+- Private Config-, State-, Health-, Lock-, Bridge- and Browser-Ausgaben lehnen
+  symlinked Ancestors vor dem Anlegen von Verzeichnissen und Dateien ab.
+
 ## 0.6.55 - 2026-07-11
 
 ### Fixed
