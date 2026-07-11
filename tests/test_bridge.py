@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -64,6 +64,26 @@ def test_usage_from_ingest_payload_reports_empty_text_context():
     assert "missing page text" in usage.error
     assert "ready=complete" in usage.error
     assert "textLength=0" in usage.error
+
+
+def test_usage_from_ingest_payload_clamps_far_future_capture_time():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    before = datetime.now().astimezone()
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "capturedAt": (before + timedelta(hours=1)).isoformat(),
+            "bodyText": "".join(
+                (
+                    "5-hour limit 42 / 100 Reset 08.06.2026 04:26 ",
+                    "Weekly limit 310 / 1000 Reset 14.06.2026 04:26",
+                )
+            ),
+        },
+    )
+    after = datetime.now().astimezone()
+
+    assert before <= usage.captured_at <= after
 
 
 def test_usage_from_ingest_payload_marks_reset_only_windows_partial():

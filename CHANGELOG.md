@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.111 - 2026-07-11
+
+### Fixed
+
+- Bridge-Payloads können mit weit in der Zukunft liegenden `capturedAt`-Werten
+  keine späteren echten Messungen mehr aus dem Snapshot verdrängen.
+- Zukunftszeitstempel außerhalb einer fünfminütigen Toleranz werden auf die
+  lokale Empfangszeit begrenzt; eine Regression deckt diesen Fall ab.
+
 ## 0.6.110 - 2026-07-11
 
 ### Fixed

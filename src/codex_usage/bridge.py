@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -31,6 +31,7 @@ from .state import (
 )
 
 MAX_INGEST_BYTES = 10_000_000
+MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
 TEXT_PAYLOAD_FIELDS = (
     "bodyText",
     "body_text",
@@ -617,14 +618,17 @@ def _log_bridge_error(message: str, exc: Exception) -> None:
 
 
 def _parse_captured_at(value: Any) -> datetime:
+    received_at = datetime.now().astimezone()
     if value:
         try:
             parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError:
+            parsed = parsed.astimezone()
+        except (OSError, OverflowError, ValueError):
             pass
         else:
-            return parsed.astimezone()
-    return datetime.now().astimezone()
+            if parsed <= received_at + timedelta(seconds=MAX_CAPTURE_FUTURE_SECONDS):
+                return parsed
+    return received_at
 
 
 def _redact_url(url: str) -> str:
