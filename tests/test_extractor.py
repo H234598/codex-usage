@@ -575,3 +575,71 @@ def test_extract_windows_from_wham_numeric_string_reset_timestamps():
     assert weekly is not None
     assert weekly.reset_at is not None
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
+
+
+def test_extract_windows_from_wham_normalizes_ratio_fields():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_ratio": 0.03,
+                        "limit_window_seconds": 18_000,
+                        "reset_at": "1780894250",
+                    },
+                    "secondary_window": {
+                        "remaining_ratio": 0.55,
+                        "limit_window_seconds": 604_800,
+                        "reset_at": "1781060750",
+                    },
+                }
+            },
+        )
+    ]
+
+    five, weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 3
+    assert five.limit == 100
+    assert five.remaining == 97
+    assert five.percent == 97
+    assert weekly is not None
+    assert weekly.used is None
+    assert weekly.limit is None
+    assert round(weekly.remaining, 6) == 55
+    assert round(weekly.percent, 6) == 55
+
+
+def test_extract_windows_from_wham_preserves_one_percent():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 1,
+                        "limit_window_seconds": 18_000,
+                        "reset_at": "1780894250",
+                    }
+                }
+            },
+        )
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 1
+    assert five.limit == 100
+    assert five.remaining == 99
+    assert five.percent == 99

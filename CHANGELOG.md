@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.76 - 2026-07-11
+
+### Fixed
+
+- WHAM-Ratio-Felder werden auch im direkten Nutzungs-Payload verarbeitet.
+- Echte Prozentfelder behalten ihre Semantik, sodass `used_percent: 1`
+  korrekt als 1 % Nutzung und 99 % Restwert erscheint.
+
 ## 0.6.75 - 2026-07-11
 
 ### Fixed

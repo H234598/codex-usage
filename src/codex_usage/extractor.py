@@ -162,18 +162,56 @@ def _window_from_wham_rate_limit_mapping(
     if target == "weekly" and window_seconds != 604_800:
         return None
 
-    used_percent = _coerce_percent(obj.get("used_percent"))
+    flat = _flatten_mapping(obj)
+    used_percent = _coerce_percent(
+        _pick_number(
+            flat,
+            (
+                "used_percent",
+                "used_percentage",
+                "usage_percent",
+                "usage_percentage",
+                "consumed_percent",
+                "consumed_percentage",
+            ),
+        )
+    )
+    if used_percent is None:
+        used_percent = _normalize_ratio_value(
+            _pick_number(flat, ("used_ratio", "usage_ratio", "consumed_ratio"))
+        )
+    remaining_percent = _coerce_percent(
+        _pick_number(
+            flat,
+            (
+                "remaining_percent",
+                "remaining_percentage",
+                "available_percent",
+                "available_percentage",
+                "left_percent",
+                "left_percentage",
+            ),
+        )
+    )
+    if remaining_percent is None:
+        remaining_percent = _normalize_ratio_value(
+            _pick_number(flat, ("remaining_ratio", "available_ratio", "left_ratio"))
+        )
     reset_at = _parse_datetime(obj.get("reset_at"), captured_at)
-    if used_percent is None and reset_at is None:
+    if used_percent is None and remaining_percent is None and reset_at is None:
         return None
 
-    remaining_percent = max(100 - used_percent, 0) if used_percent is not None else None
+    remaining = (
+        max(100 - used_percent, 0)
+        if used_percent is not None
+        else remaining_percent
+    )
     return LimitWindow(
         name="5h" if target == "five_hour" else "weekly",
         used=used_percent,
         limit=100 if used_percent is not None else None,
-        remaining=remaining_percent,
-        percent=remaining_percent,
+        remaining=remaining,
+        percent=remaining,
         reset_at=reset_at,
         raw=raw,
         source=source,
@@ -595,6 +633,15 @@ def _coerce_number(value: Any) -> float | None:
 def _coerce_percent(value: Any) -> float | None:
     number = _coerce_number(value)
     return number if number is not None and 0 <= number <= 100 else None
+
+
+def _normalize_ratio_value(value: Any) -> float | None:
+    number = _coerce_number(value)
+    if number is None:
+        return None
+    if 0 <= number <= 1:
+        number *= 100
+    return number if 0 <= number <= 100 else None
 
 
 def _parse_number(raw: str | None) -> float | None:
