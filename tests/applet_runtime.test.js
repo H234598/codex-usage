@@ -1173,6 +1173,34 @@ test("account and style synchronization release their guards when idle schedulin
   assert.equal(applet._syncingStyleRows, false);
 });
 
+test("stale synchronization idle callbacks cannot clear a newer guard", () => {
+  const applet = makeApplet();
+  const callbacks = [];
+  applet._addIdle = (callback) => {
+    callbacks.push(callback);
+    return callbacks.length;
+  };
+  const guards = [
+    "_syncingBackendRows",
+    "_syncingAccountSettings",
+    "_syncingStyleRows",
+  ];
+
+  for (const guard of guards) {
+    applet[guard] = true;
+    applet._deferGuardRelease(guard, "test guard cleanup");
+    applet[guard] = true;
+    applet._deferGuardRelease(guard, "test guard cleanup");
+  }
+
+  for (let index = 0; index < guards.length; index += 1) {
+    callbacks[index * 2]();
+    assert.equal(applet[guards[index]], true);
+    callbacks[index * 2 + 1]();
+    assert.equal(applet[guards[index]], false);
+  }
+});
+
 test("backend setting changes reject duplicate account rows", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

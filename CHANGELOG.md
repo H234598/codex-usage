@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.89 - 2026-07-11
+
+### Fixed
+
+- Synchronisations-Guards werden tokenisiert freigegeben, sodass ein alter
+  Idle-Callback keine jüngere Synchronisierung vorzeitig entsperren kann.
+- Regression für überlappende Backend-, Account- und Style-Synchronisierungen
+  ergänzt.
+
 ## 0.6.88 - 2026-07-11
 
 ### Fixed

@@ -449,8 +449,13 @@ CodexUsageApplet.prototype = {
     },
 
     _deferGuardRelease: function(property, context) {
+        this._guardReleaseTokens = this._guardReleaseTokens || Object.create(null);
+        let token = (this._guardReleaseTokens[property] || 0) + 1;
+        this._guardReleaseTokens[property] = token;
         let release = Lang.bind(this, function() {
-            this[property] = false;
+            if (this._guardReleaseTokens[property] === token) {
+                this[property] = false;
+            }
             return false;
         });
         try {
