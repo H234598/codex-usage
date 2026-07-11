@@ -2217,15 +2217,33 @@ CodexUsageApplet.prototype = {
             }
             freshAccounts[item.account] = true;
             let old = previous[item.account];
-            if (old && item.status !== "ok") {
+            if (old) {
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
                 if (!this._windowHasUsageValue(item.five_hour) && old.five_hour) {
                     item.five_hour = this._mergeCachedWindow(item.five_hour, old.five_hour);
                     usedCachedWindow = true;
+                } else if (
+                    this._windowHasUsageValue(item.five_hour) &&
+                    item.five_hour &&
+                    !item.five_hour.reset_at &&
+                    old.five_hour &&
+                    old.five_hour.reset_at
+                ) {
+                    item.five_hour = this._mergeMissingReset(item.five_hour, old.five_hour);
+                    usedCachedWindow = true;
                 }
                 if (!this._windowHasUsageValue(item.weekly) && old.weekly) {
                     item.weekly = this._mergeCachedWindow(item.weekly, old.weekly);
+                    usedCachedWindow = true;
+                } else if (
+                    this._windowHasUsageValue(item.weekly) &&
+                    item.weekly &&
+                    !item.weekly.reset_at &&
+                    old.weekly &&
+                    old.weekly.reset_at
+                ) {
+                    item.weekly = this._mergeMissingReset(item.weekly, old.weekly);
                     usedCachedWindow = true;
                 }
                 if (usedCachedWindow) {
@@ -2280,6 +2298,19 @@ CodexUsageApplet.prototype = {
             merged[keys[i]] = cached[keys[i]];
         }
         merged.reset_at = fresh.reset_at;
+        return merged;
+    },
+
+    _mergeMissingReset: function(fresh, cached) {
+        if (!fresh || fresh.reset_at || !cached || !cached.reset_at) {
+            return fresh;
+        }
+        let merged = {};
+        let keys = Object.keys(fresh);
+        for (let i = 0; i < keys.length; i++) {
+            merged[keys[i]] = fresh[keys[i]];
+        }
+        merged.reset_at = cached.reset_at;
         return merged;
     },
 

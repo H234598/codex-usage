@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.98 - 2026-07-11
+
+### Fixed
+
+- Das Applet übernimmt fehlende Resetzeiten auch bei erfolgreichen frischen
+  Nutzdaten aus dem letzten Cache.
+- Datum, Uhrzeit und Restlaufzeit bleiben dadurch bei `status: ok` ohne
+  `reset_at` verfügbar; die frischen Prozentwerte bleiben führend.
+- Runtime-Regression für diesen erfolgreichen Teilabruf ergänzt.
+
 ## 0.6.97 - 2026-07-11
 
 ### Fixed
