@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.55 - 2026-07-11
+
+### Fixed
+
+- Service unit operations now reject symlinked ancestors of the user unit
+  directory, preventing writes through a redirected `XDG_CONFIG_HOME`.
+
 ## 0.6.54 - 2026-07-11
 
 ### Fixed

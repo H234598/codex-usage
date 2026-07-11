@@ -245,3 +245,16 @@ def test_service_install_restricts_existing_unit_directory(tmp_path, monkeypatch
     service_install(AppConfig(accounts=()), tmp_path / "config.toml")
 
     assert oct(unit_dir.stat().st_mode & 0o777) == "0o700"
+
+
+def test_service_install_rejects_symlinked_config_home(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    config_home = tmp_path / "config"
+    config_home.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    with pytest.raises(ServiceError, match="must not contain symlinks"):
+        service_install(AppConfig(accounts=()), tmp_path / "config.toml")
+
+    assert not (outside / "systemd" / "user").exists()

@@ -205,8 +205,7 @@ def _unit_directory(*, create: bool = True) -> Path:
     config_home = os.environ.get("XDG_CONFIG_HOME")
     root = Path(config_home).expanduser() if config_home else Path.home() / ".config"
     path = root / "systemd" / "user"
-    if path.is_symlink():
-        raise ServiceError("systemd user unit directory must not be a symlink")
+    _assert_no_symlink_ancestors(path)
     if create:
         path.mkdir(parents=True, mode=0o700, exist_ok=True)
     if path.exists() and (path.is_symlink() or not path.is_dir()):
@@ -218,6 +217,17 @@ def _unit_directory(*, create: bool = True) -> Path:
     except OSError as exc:
         raise ServiceError("could not secure systemd user unit directory") from exc
     return path
+
+
+def _assert_no_symlink_ancestors(path: Path) -> None:
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current /= part
+        if current.is_symlink():
+            raise ServiceError("systemd user unit path must not contain symlinks")
+        if not current.exists():
+            break
 
 
 def _resolve_codex_usage() -> Path:
