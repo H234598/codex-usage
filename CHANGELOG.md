@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.34 - 2026-07-11
+
+### Fixed
+
+- Safe Mode retry now reinstates the refresh and display timers before
+  starting recovery requests.
+
 ## 0.6.33 - 2026-07-11
 
 ### Fixed

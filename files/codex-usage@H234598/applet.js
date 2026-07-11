@@ -387,6 +387,7 @@ CodexUsageApplet.prototype = {
         this._refreshFailures = 0;
         this._circuitOpenUntil = 0;
         this._lastRefreshError = "";
+        this._scheduleTimer();
         this._refreshAuxiliaryState();
         this._refreshFresh(false);
     },

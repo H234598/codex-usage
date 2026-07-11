@@ -202,6 +202,22 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   assert.equal(applet._primaryFreshOpenAfter, false);
 });
 
+test("safe mode retry reinstates the refresh timer", () => {
+  const applet = makeApplet();
+  let scheduled = 0;
+  let auxiliaryRefreshes = 0;
+  let freshRefreshes = 0;
+  applet._safeMode = true;
+  applet._scheduleTimer = () => { scheduled += 1; };
+  applet._refreshAuxiliaryState = () => { auxiliaryRefreshes += 1; };
+  applet._refreshFresh = () => { freshRefreshes += 1; };
+  applet._leaveSafeModeAndRetry();
+  assert.equal(scheduled, 1);
+  assert.equal(auxiliaryRefreshes, 1);
+  assert.equal(freshRefreshes, 1);
+  assert.equal(applet._safeMode, false);
+});
+
 test("refresh circuit opens after three failures and leaves the last panel intact", () => {
   const applet = makeApplet();
   applet._recordRefreshFailure(new Error("first"));
