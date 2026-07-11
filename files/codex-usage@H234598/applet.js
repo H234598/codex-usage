@@ -395,6 +395,9 @@ CodexUsageApplet.prototype = {
         this._circuitOpenUntil = 0;
         this._lastRefreshError = "";
         this._scheduleTimer();
+        if (this._safeMode || this._removed) {
+            return;
+        }
         this._refreshAuxiliaryState();
         this._refreshFresh(false);
     },
@@ -477,6 +480,9 @@ CodexUsageApplet.prototype = {
     },
 
     _onRefreshSettingsChanged: function() {
+        if (this._removed || this._safeMode) {
+            return;
+        }
         this._scheduleTimer();
         if (this.autoRefresh && this.pollOwner === "auto") {
             this._refreshAuxiliaryState();
@@ -484,6 +490,9 @@ CodexUsageApplet.prototype = {
     },
 
     _onPollOwnerChanged: function() {
+        if (this._removed || this._safeMode) {
+            return;
+        }
         this._refreshAuxiliaryState();
         this._scheduleTimer();
     },
@@ -891,7 +900,7 @@ CodexUsageApplet.prototype = {
     },
 
     _refreshAuxiliaryState: function() {
-        if (this._removed) {
+        if (this._removed || this._safeMode) {
             return;
         }
         this._checkServiceStatus(Lang.bind(this, function() {
@@ -900,6 +909,9 @@ CodexUsageApplet.prototype = {
     },
 
     _checkServiceStatus: function(callback) {
+        if (this._removed || this._safeMode) {
+            return;
+        }
         let argv;
         try {
             argv = this._baseCommandArgv();
@@ -935,6 +947,9 @@ CodexUsageApplet.prototype = {
                 this._systemdActive = false;
             }
             this._scheduleTimer();
+            if (this._removed || this._safeMode) {
+                return;
+            }
             if (
                 this.pollOwner === "auto" &&
                 !this._systemdActive &&
@@ -972,6 +987,9 @@ CodexUsageApplet.prototype = {
     },
 
     _repairStaleService: function(after) {
+        if (this._removed || this._safeMode) {
+            return;
+        }
         let now = Date.now();
         if (now - this._serviceRepairAt < CIRCUIT_BREAKER_MS) {
             if (after) {
@@ -1005,7 +1023,7 @@ CodexUsageApplet.prototype = {
     },
 
     _loadAccountBackends: function() {
-        if (this._backendChangeCurrent || this._backendChangeQueue.length) {
+        if (this._removed || this._safeMode || this._backendChangeCurrent || this._backendChangeQueue.length) {
             return;
         }
         let argv;
@@ -1287,6 +1305,9 @@ CodexUsageApplet.prototype = {
     },
 
     _onPanelDefaultsChanged: function() {
+        if (this._removed || this._safeMode) {
+            return;
+        }
         if (this._backendRowsReady && !this._syncingAccountSettings) {
             this._syncAccountSettings(Object.keys(this._backendAccounts).map(Lang.bind(this, function(account) {
                 return this._backendAccounts[account];
@@ -1296,7 +1317,7 @@ CodexUsageApplet.prototype = {
     },
 
     _onPanelSettingsChanged: function() {
-        if (!this._backendRowsReady || this._syncingAccountSettings || this._removed) {
+        if (!this._backendRowsReady || this._syncingAccountSettings || this._removed || this._safeMode) {
             return;
         }
         let expected = Object.keys(this._backendAccounts).length;
@@ -1322,7 +1343,7 @@ CodexUsageApplet.prototype = {
     },
 
     _onAlertSettingsChanged: function() {
-        if (!this._backendRowsReady || this._syncingAccountSettings || this._removed) {
+        if (!this._backendRowsReady || this._syncingAccountSettings || this._removed || this._safeMode) {
             return;
         }
         let expected = Object.keys(this._backendAccounts).length;
@@ -1655,7 +1676,7 @@ CodexUsageApplet.prototype = {
     },
 
     _onStyleRowsChanged: function(kind) {
-        if (!this._backendRowsReady || this._syncingStyleRows || this._removed) {
+        if (!this._backendRowsReady || this._syncingStyleRows || this._removed || this._safeMode) {
             return;
         }
         let rows = kind === "percent"
@@ -1697,7 +1718,7 @@ CodexUsageApplet.prototype = {
     },
 
     _onStyleTargetsChanged: function() {
-        if (!this._backendRowsReady || this._syncingStyleRows || this._removed) {
+        if (!this._backendRowsReady || this._syncingStyleRows || this._removed || this._safeMode) {
             return;
         }
         let rows = this.accountStyleTargets;
@@ -1762,7 +1783,7 @@ CodexUsageApplet.prototype = {
 
     _drainBackendChanges: function() {
         if (
-            this._removed || this._backendChangeCurrent || this._auxProcess ||
+            this._removed || this._safeMode || this._backendChangeCurrent || this._auxProcess ||
             !this._backendChangeQueue.length
         ) {
             return;
@@ -1825,7 +1846,7 @@ CodexUsageApplet.prototype = {
     },
 
     _onAccountBackendsChanged: function() {
-        if (!this._backendRowsReady || this._syncingBackendRows || this._removed) {
+        if (!this._backendRowsReady || this._syncingBackendRows || this._removed || this._safeMode) {
             return;
         }
         let rows = this.accountBackends;
@@ -1860,10 +1881,13 @@ CodexUsageApplet.prototype = {
 
     _enableBackgroundService: function(after) {
         let continueAfter = Lang.bind(this, function() {
-            if (after) {
+            if (after && !this._removed && !this._safeMode) {
                 this._runSafely("service continuation", after);
             }
         });
+        if (this._removed || this._safeMode) {
+            return;
+        }
         let argv;
         try {
             argv = this._baseCommandArgv();

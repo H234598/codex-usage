@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.86 - 2026-07-11
+
+### Fixed
+
+- Safe-Mode-Recovery startet nach fehlgeschlagener Timer-Neuplanung keine
+  Auxiliary-, Backend- oder Folgeprozesse mehr.
+- Status-, Service-, Backend- und Einstellungs-Callbacks prüfen den Safe-Modus
+  vor jeder Folgearbeit.
+- Regressionen für abgebrochene Safe-Mode-Recovery ergänzt.
+
 ## 0.6.85 - 2026-07-11
 
 ### Fixed

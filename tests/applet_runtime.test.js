@@ -255,6 +255,89 @@ test("safe mode retry reinstates the refresh timer", () => {
   assert.equal(applet._safeMode, false);
 });
 
+test("safe mode retry does not start auxiliary work after timer recovery fails", () => {
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = () => 0;
+  });
+  let auxiliaryRefreshes = 0;
+  let freshRefreshes = 0;
+  applet._safeMode = true;
+  applet._refreshAuxiliaryState = () => { auxiliaryRefreshes += 1; };
+  applet._refreshFresh = () => { freshRefreshes += 1; };
+
+  applet._leaveSafeModeAndRetry();
+
+  assert.equal(applet._safeMode, true);
+  assert.equal(auxiliaryRefreshes, 0);
+  assert.equal(freshRefreshes, 0);
+});
+
+test("safe mode ignores settings callbacks that could start background work", () => {
+  const applet = makeApplet();
+  let schedules = 0;
+  let auxiliaryRefreshes = 0;
+  let backendLoads = 0;
+  let accountSyncs = 0;
+  let styleSyncs = 0;
+  applet._safeMode = true;
+  applet._backendRowsReady = true;
+  applet._backendAccounts = { alpha: { account: "alpha" } };
+  applet._scheduleTimer = () => { schedules += 1; };
+  applet._refreshAuxiliaryState = () => { auxiliaryRefreshes += 1; };
+  applet._loadAccountBackends = () => { backendLoads += 1; };
+  applet._syncAccountSettings = () => { accountSyncs += 1; };
+  applet._syncStyleRows = () => { styleSyncs += 1; };
+
+  applet._onRefreshSettingsChanged();
+  applet._onPollOwnerChanged();
+  applet._onPanelDefaultsChanged();
+  applet._onPanelSettingsChanged();
+  applet._onAlertSettingsChanged();
+  applet._onPercentStylesChanged();
+  applet._onStyleTargetsChanged();
+  applet._onAccountBackendsChanged();
+
+  assert.equal(schedules, 0);
+  assert.equal(auxiliaryRefreshes, 0);
+  assert.equal(backendLoads, 0);
+  assert.equal(accountSyncs, 0);
+  assert.equal(styleSyncs, 0);
+});
+
+test("service status recovery stops when timer setup enters safe mode", () => {
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = () => 0;
+  });
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (_argv, callback) => callback(
+    { installed: true, enabled: true, active: true },
+    null
+  );
+  let continuations = 0;
+
+  applet._checkServiceStatus(() => { continuations += 1; });
+
+  assert.equal(applet._safeMode, true);
+  assert.equal(continuations, 0);
+});
+
+test("service enable does not invoke its continuation after timer setup fails", () => {
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = () => 0;
+  });
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (_argv, callback) => callback(
+    { installed: true, enabled: true, active: true },
+    null
+  );
+  let continuations = 0;
+
+  applet._enableBackgroundService(() => { continuations += 1; });
+
+  assert.equal(applet._safeMode, true);
+  assert.equal(continuations, 0);
+});
+
 test("refresh circuit opens after three failures and leaves the last panel intact", () => {
   const applet = makeApplet();
   applet._recordRefreshFailure(new Error("first"));
