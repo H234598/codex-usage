@@ -201,12 +201,25 @@ def _window_from_mapping(
     flat = _flatten_mapping(obj)
     used_percent = _pick_number(
         flat,
-        ("used_percent", "usage_percent", "consumed_percent"),
+        (
+            "used_percent",
+            "used_percentage",
+            "usage_percent",
+            "usage_percentage",
+            "consumed_percent",
+            "consumed_percentage",
+        ),
     )
     used = _pick_number(
         flat,
         ("used", "usage", "current", "consumed", "num_used"),
-        exclude_suffixes=("_percent", "_seconds", "_minutes", "_hours"),
+        exclude_suffixes=(
+            "_percent",
+            "_percentage",
+            "_seconds",
+            "_minutes",
+            "_hours",
+        ),
     )
     limit = _pick_number(
         flat,

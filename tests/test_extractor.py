@@ -407,6 +407,31 @@ def test_extract_windows_does_not_treat_duration_as_generic_limit():
     assert five.remaining is None
 
 
+def test_extract_windows_converts_used_percentage_alias_to_remaining():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/generic",
+            payload={
+                "five_hour_usage_limit": {
+                    "used_percentage": 3,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        )
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used is None
+    assert five.remaining == 97
+    assert five.percent == 97
+
+
 def test_extract_windows_from_wham_usage_rate_limit_json():
     candidates = [
         JsonCandidate(
