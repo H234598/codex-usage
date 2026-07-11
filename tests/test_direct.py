@@ -164,6 +164,70 @@ def test_fetch_account_usage_direct_rejects_response_from_different_account(
     assert usage.error == "backend response belongs to a different account"
 
 
+def test_fetch_account_usage_direct_accepts_same_account_with_different_user_id(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "auth-user"}}
+                    ),
+                    "account_id": "server-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 3,
+                            "limit_window_seconds": 18_000,
+                        },
+                        "secondary_window": {
+                            "used_percent": 45,
+                            "limit_window_seconds": 604_800,
+                        },
+                    },
+                    "user_id": "response-user",
+                    "account_id": "server-account",
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "codex_usage.direct.urlopen",
+        lambda request, *, timeout: FakeResponse(),
+    )
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.OK
+    assert usage.backend_user_id == "auth-user"
+    assert usage.backend_account_id == "server-account"
+
+
 @pytest.mark.parametrize("account_id", ["account\nforged", " ", 42])
 def test_fetch_account_usage_direct_rejects_invalid_auth_account_id(
     tmp_path,

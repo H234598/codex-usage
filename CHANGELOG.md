@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.127 - 2026-07-11
+
+### Fixed
+
+- Bei vorhandener gleicher Account-UUID wird eine abweichende User-ID-
+  Darstellung jetzt akzeptiert und auf die Auth-Identität normalisiert.
+  Unterschiedliche Account-UUIDs bleiben strikt verboten.
+- Regression für gleiche Account-UUID mit abweichender User-ID ergänzt.
+
 ## 0.6.126 - 2026-07-11
 
 ### Fixed
