@@ -4,7 +4,7 @@ import json
 import math
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -65,26 +65,65 @@ def extract_windows(
     captured_at = now or datetime.now(tz=LOCAL_TZ)
     candidates = list(json_candidates)
 
-    five = _extract_json_window(candidates, "five_hour", captured_at)
-    weekly = _extract_json_window(candidates, "weekly", captured_at)
+    five_json = _extract_json_window(candidates, "five_hour", captured_at)
+    weekly_json = _extract_json_window(candidates, "weekly", captured_at)
+    five_text = _extract_text_window(
+        body_text,
+        name="5h",
+        labels=FIVE_HOUR_LABELS,
+        stop_labels=WEEKLY_LABELS,
+        captured_at=captured_at,
+    )
+    weekly_text = _extract_text_window(
+        body_text,
+        name="weekly",
+        labels=WEEKLY_LABELS,
+        stop_labels=FIVE_HOUR_LABELS,
+        captured_at=captured_at,
+    )
 
-    if five is None:
-        five = _extract_text_window(
-            body_text,
-            name="5h",
-            labels=FIVE_HOUR_LABELS,
-            stop_labels=WEEKLY_LABELS,
-            captured_at=captured_at,
-        )
-    if weekly is None:
-        weekly = _extract_text_window(
-            body_text,
-            name="weekly",
-            labels=WEEKLY_LABELS,
-            stop_labels=FIVE_HOUR_LABELS,
-            captured_at=captured_at,
-        )
+    five = _merge_window_sources(five_json, five_text)
+    weekly = _merge_window_sources(weekly_json, weekly_text)
     return five, weekly
+
+
+def _merge_window_sources(
+    primary: LimitWindow | None,
+    secondary: LimitWindow | None,
+) -> LimitWindow | None:
+    """Prefer structured data while filling a missing reset from the DOM."""
+    if primary is None:
+        return secondary
+    if secondary is None:
+        return primary
+
+    if primary.has_usage_value:
+        if primary.reset_at is None and secondary.reset_at is not None:
+            return replace(
+                primary,
+                reset_at=secondary.reset_at,
+                source=_merge_window_source_names(primary, secondary),
+            )
+        return primary
+
+    if secondary.has_usage_value:
+        if secondary.reset_at is None and primary.reset_at is not None:
+            return replace(
+                secondary,
+                reset_at=primary.reset_at,
+                source=_merge_window_source_names(secondary, primary),
+            )
+        return secondary
+
+    return primary if primary.reset_at is not None else secondary
+
+
+def _merge_window_source_names(first: LimitWindow, second: LimitWindow) -> str:
+    names: list[str] = []
+    for source in (first.source, second.source):
+        if source and source not in names:
+            names.append(source)
+    return "+".join(names) or "unknown"
 
 
 def load_json_candidate(url: str, payload_text: str) -> JsonCandidate | None:

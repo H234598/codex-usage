@@ -295,6 +295,92 @@ def test_extract_windows_prefers_json_candidates():
     assert weekly.source.startswith("json:")
 
 
+def test_extract_windows_merges_dom_reset_into_partial_json_window():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/partial",
+            payload={"five_hour_usage_limit": {"used_percent": 3}},
+        )
+    ]
+    body = """
+    5-hour limit
+    <div style="width: 97%;"></div>
+    Reset 08.06.2026 06:50
+    """
+
+    five, _weekly = extract_windows(
+        body_text=body,
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "08.06.2026 06:50"
+    assert five.source == "json:https://chatgpt.com/backend-api/partial+dom-text"
+
+
+def test_extract_windows_keeps_complete_json_over_conflicting_dom_window():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/fresh",
+            payload={
+                "five_hour_usage_limit": {
+                    "used_percent": 3,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        )
+    ]
+    body = """
+    5-hour limit
+    50% remaining
+    Reset 09.06.2026 08:00
+    """
+
+    five, _weekly = extract_windows(
+        body_text=body,
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "08.06.2026 06:50"
+    assert five.source == "json:https://chatgpt.com/backend-api/fresh"
+
+
+def test_extract_windows_merges_dom_usage_into_reset_only_json_window():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/reset-only",
+            payload={
+                "five_hour_usage_limit": {
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        )
+    ]
+    body = """
+    5-hour limit
+    97% remaining
+    """
+
+    five, _weekly = extract_windows(
+        body_text=body,
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "08.06.2026 06:50"
+    assert five.source == "dom-text+json:https://chatgpt.com/backend-api/reset-only"
+
+
 def test_extract_windows_prefers_later_json_usage_over_reset_only_match():
     candidates = [
         JsonCandidate(

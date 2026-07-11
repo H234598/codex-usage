@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.103 - 2026-07-11
+
+### Fixed
+
+- Partielle JSON-Fenster blockieren nicht mehr die vollständigen DOM-Werte.
+- Fehlende Resetzeiten werden aus dem DOM ergänzt, während strukturierte
+  JSON-Nutzwerte und vollständige JSON-Fenster Vorrang behalten.
+- Regressionen für beide Richtungen der JSON-/DOM-Zusammenführung ergänzt.
+
 ## 0.6.102 - 2026-07-11
 
 ### Fixed
