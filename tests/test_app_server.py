@@ -10,6 +10,7 @@ import pytest
 from codex_usage.app_server import (
     AppServerUnavailableError,
     _should_refresh,
+    _stop_process,
     _windows_from_response,
     fetch_account_usage_app_server,
 )
@@ -215,3 +216,16 @@ def test_refresh_window_is_fifteen_minutes():
     now = datetime.now(UTC)
     assert _should_refresh(now + timedelta(minutes=14), now=now) is True
     assert _should_refresh(now + timedelta(minutes=16), now=now) is False
+
+
+def test_stop_process_ignores_exit_races():
+    class FakeProcess:
+        stdin = None
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            raise ProcessLookupError
+
+    _stop_process(FakeProcess())

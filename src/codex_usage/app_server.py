@@ -446,12 +446,23 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
             pass
     if process.poll() is not None:
         return
-    process.terminate()
+    try:
+        process.terminate()
+    except OSError:
+        return
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=2)
+        try:
+            process.kill()
+        except OSError:
+            return
+        try:
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            return
+    except OSError:
+        return
 
 
 def _bounded_error(exc: Exception) -> str:

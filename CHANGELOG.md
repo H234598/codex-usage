@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.42 - 2026-07-11
+
+### Fixed
+
+- App Server process cleanup now tolerates exit races, so a completed usage
+  response is not replaced by a shutdown exception.
+
 ## 0.6.41 - 2026-07-11
 
 ### Fixed
