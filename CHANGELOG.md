@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.141 - 2026-07-11
+
+### Fixed
+
+- Eine aktuelle fehlerhafte WHAM-Antwort (`401`/`403`) verdrängt jetzt ältere
+  erfolgreiche Antworten desselben Endpunkts.
+- Dadurch werden alte Nutzungswerte bei abgelaufener oder blockierter
+  Authentifizierung nicht mehr als aktuell angezeigt.
+- Regression für `200` gefolgt von `403` ergänzt.
+
 ## 0.6.140 - 2026-07-11
 
 ### Fixed

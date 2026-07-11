@@ -220,11 +220,36 @@ def _combined_payload_text(payload: dict[str, Any]) -> str:
 
 
 def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate]:
-    candidates_by_key: dict[tuple[str, str], JsonCandidate] = {}
-    response_sequences: dict[tuple[str, str], int | None] = {}
+    responses_by_key: dict[str, dict[str, Any]] = {}
+    response_sequences: dict[str, int | None] = {}
     for item in payload.get("apiResponses") or payload.get("api_responses") or ():
         if not isinstance(item, dict):
             continue
+        url = _redact_url(str(item.get("url") or ""))
+        if not url:
+            continue
+        key = url
+        sequence = item.get("requestSequence")
+        if isinstance(sequence, bool):
+            sequence = None
+        elif isinstance(sequence, int) and sequence >= 0:
+            pass
+        elif isinstance(sequence, str) and sequence.isdecimal():
+            sequence = int(sequence)
+        else:
+            sequence = None
+        previous_sequence = response_sequences.get(key)
+        if (
+            key in responses_by_key
+            and previous_sequence is not None
+            and (sequence is None or sequence < previous_sequence)
+        ):
+            continue
+        responses_by_key[key] = item
+        response_sequences[key] = sequence
+
+    candidates: list[JsonCandidate] = []
+    for item in responses_by_key.values():
         status = item.get("status")
         if isinstance(status, int) and status >= 400:
             continue
@@ -237,26 +262,8 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
             continue
         candidate = load_json_candidate(url, body)
         if candidate is not None:
-            key = (_redact_url(url), str(status if status is not None else ""))
-            sequence = item.get("requestSequence")
-            if isinstance(sequence, bool):
-                sequence = None
-            elif isinstance(sequence, int) and sequence >= 0:
-                pass
-            elif isinstance(sequence, str) and sequence.isdecimal():
-                sequence = int(sequence)
-            else:
-                sequence = None
-            previous_sequence = response_sequences.get(key)
-            if (
-                key in candidates_by_key
-                and previous_sequence is not None
-                and (sequence is None or sequence < previous_sequence)
-            ):
-                continue
-            candidates_by_key[key] = candidate
-            response_sequences[key] = sequence
-    return list(candidates_by_key.values())
+            candidates.append(candidate)
+    return candidates
 
 
 def _safe_excerpt(value: str, limit: int = 240) -> str:
@@ -765,7 +772,7 @@ function codexUsageApiResponseKey(item) {{
   }} catch (_error) {{
     // Keep malformed diagnostic URLs isolated without breaking the bridge.
   }}
-  return [item.source || "", url, item.status || ""].join("\\n");
+  return [item.source || "", url].join("\\n");
 }}
 
 function codexUsageApiResponseSequence(item) {{
@@ -1160,7 +1167,7 @@ def _render_extension_page_hook() -> str:
     } catch (_error) {
       // Keep malformed diagnostic URLs isolated without breaking the hook.
     }
-    return [item.source || "", url, item.status || ""].join("\\n");
+    return [item.source || "", url].join("\\n");
   }
 
   function codexUsageApiResponseSequence(item) {
