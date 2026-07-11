@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.112 - 2026-07-11
+
+### Fixed
+
+- Das Applet verwirft einen Fresh-Eintrag mit anderer Backend-Identität nicht
+  mehr wegen eines älteren Capture-Zeitstempels und zeigt dadurch keine alten
+  Kontowerte weiter an.
+- Regression für Identitätswechsel bei älterem Capture ergänzt.
+
 ## 0.6.111 - 2026-07-11
 
 ### Fixed

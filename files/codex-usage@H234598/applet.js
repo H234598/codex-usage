@@ -2219,6 +2219,10 @@ CodexUsageApplet.prototype = {
             }
             freshAccounts[item.account] = true;
             let old = previous[item.account];
+            if (old && !this._backendIdentityMatches(item, old)) {
+                merged.push(item);
+                continue;
+            }
             if (old && this._captureIsOlder(item.captured_at, old.captured_at)) {
                 merged.push(old);
                 continue;
