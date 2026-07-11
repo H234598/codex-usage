@@ -146,8 +146,8 @@ def merge_current_with_last_success(
             return last_success
     except TypeError:
         pass
-    five_hour = current.five_hour or last_success.five_hour
-    weekly = current.weekly or last_success.weekly
+    five_hour = _merge_window_with_last_success(current.five_hour, last_success.five_hour)
+    weekly = _merge_window_with_last_success(current.weekly, last_success.weekly)
     if five_hour is current.five_hour and weekly is current.weekly:
         return current
     return replace(
@@ -157,6 +157,19 @@ def merge_current_with_last_success(
         values_captured_at=last_success.values_captured_at or last_success.captured_at,
         stale=True,
     )
+
+
+def _merge_window_with_last_success(
+    current: LimitWindow | None,
+    last_success: LimitWindow | None,
+) -> LimitWindow | None:
+    if current is None:
+        return last_success
+    if current.has_usage_value or last_success is None:
+        return current
+    if current.reset_at is None:
+        return last_success
+    return replace(last_success, reset_at=current.reset_at)
 
 
 def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.95 - 2026-07-11
+
+### Fixed
+
+- Die Snapshot-Merge behandelt Reset-only-Fenster wie fehlende Nutzwerte und
+  bewahrt den letzten gültigen Nutzwert mit neuer Resetzeit.
+- Regression für den vorgelagerten `current`-/`last_success`-Merge ergänzt.
+
 ## 0.6.94 - 2026-07-11
 
 ### Fixed
