@@ -962,18 +962,24 @@ CodexUsageApplet.prototype = {
             if (error || !payload || !Array.isArray(payload.accounts)) {
                 return;
             }
+            if (payload.accounts.length > MAX_ACCOUNTS) {
+                global.log("[" + UUID + "] too many accounts in backend overview");
+                return;
+            }
             let rows = [];
             let accounts = Object.create(null);
-            for (let i = 0; i < payload.accounts.length && i < MAX_ACCOUNTS; i++) {
+            for (let i = 0; i < payload.accounts.length; i++) {
                 let item = payload.accounts[i];
                 if (!item || typeof item !== "object" || Array.isArray(item)) {
-                    continue;
+                    global.log("[" + UUID + "] invalid account in backend overview");
+                    return;
                 }
                 let account = this._safeText(item.id, 64);
                 let label = this._safeText(item.label, 120);
                 let backend = this._safeBackend(item.backend);
                 if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) || !backend) {
-                    continue;
+                    global.log("[" + UUID + "] invalid account in backend overview");
+                    return;
                 }
                 if (Object.prototype.hasOwnProperty.call(accounts, account)) {
                     global.log("[" + UUID + "] duplicate account in backend overview");

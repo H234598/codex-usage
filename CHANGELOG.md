@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.80 - 2026-07-11
+
+### Fixed
+
+- Backend-Accountübersichten werden bei ungültigen oder zu vielen Zeilen
+  vollständig verworfen, statt den bestehenden Zustand teilweise zu ersetzen.
+- Regression für den atomaren Zustandsschutz ergänzt.
+
 ## 0.6.79 - 2026-07-11
 
 ### Fixed

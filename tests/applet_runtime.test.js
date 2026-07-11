@@ -862,6 +862,28 @@ test("backend overview rejects duplicate account ids without replacing state", (
   assert.equal(settingsWrites, 0);
 });
 
+test("backend overview rejects invalid rows without replacing state", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };
+  applet._backendRowsReady = true;
+  applet.accountBackends = [{ account: "alpha", label: "Alpha", backend: 0 }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() { throw new Error("must not write"); } };
+  applet._syncAccountSettings = () => { throw new Error("must not sync"); };
+  applet._syncStyleRows = () => { throw new Error("must not sync"); };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "unsupported" }],
+  }, null);
+
+  assert.doesNotThrow(() => applet._loadAccountBackends());
+  assert.deepEqual(applet._backendAccounts, {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  });
+  assert.deepEqual(applet.accountBackends, [
+    { account: "alpha", label: "Alpha", backend: 0 },
+  ]);
+});
+
 test("backend setting changes reject duplicate account rows", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
