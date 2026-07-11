@@ -60,7 +60,12 @@ def fetch_account_usage_app_server(
 ) -> AccountUsage:
     captured_at = datetime.now().astimezone()
     try:
-        auth_path, auth_metadata, auth_user_id, auth_account_id = _auth_context(account)
+        (
+            auth_path,
+            auth_metadata,
+            auth_user_id_before,
+            auth_account_id_before,
+        ) = _auth_context(account)
         refresh = _should_refresh(auth_metadata.get("auth_access_expires_at"), now=captured_at)
         payload = _read_rate_limits(
             auth_path.parent,
@@ -69,6 +74,13 @@ def fetch_account_usage_app_server(
             codex_command=codex_command,
         )
         _, auth_metadata, auth_user_id, auth_account_id = _auth_context(account)
+        if _auth_identity_changed(
+            before_user_id=auth_user_id_before,
+            before_account_id=auth_account_id_before,
+            after_user_id=auth_user_id,
+            after_account_id=auth_account_id,
+        ):
+            raise AppServerAuthError("auth.json identity changed during rate-limit request")
         five_hour, weekly = _windows_from_response(payload)
         status = (
             AccountStatus.OK
@@ -120,6 +132,18 @@ def fetch_account_usage_app_server(
             backend_configured=account.backend,
             backend_used=APP_SERVER_BACKEND,
         )
+
+
+def _auth_identity_changed(
+    *,
+    before_user_id: str | None,
+    before_account_id: str | None,
+    after_user_id: str | None,
+    after_account_id: str | None,
+) -> bool:
+    if before_account_id or after_account_id:
+        return before_account_id != after_account_id
+    return before_user_id != after_user_id
 
 
 def _auth_context(

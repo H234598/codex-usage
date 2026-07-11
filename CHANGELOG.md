@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.145 - 2026-07-11
+
+### Fixed
+
+- Der App-Server verwirft jetzt einen Abruf, wenn sich die konfigurierte
+  Auth-Identität während der Rate-Limit-Anfrage ändert.
+- Dadurch werden Limits einer alten Sitzung nicht mehr unter einer neuen
+  `account_id` gespeichert oder angezeigt.
+- Regression für den Auth-Identitätswechsel während des Abrufs ergänzt.
+
 ## 0.6.144 - 2026-07-11
 
 ### Fixed

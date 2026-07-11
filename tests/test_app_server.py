@@ -187,6 +187,39 @@ def test_app_server_refreshes_when_initial_account_read_is_unauthorized(tmp_path
     assert [item["params"]["refreshToken"] for item in account_reads] == [False, True]
 
 
+def test_app_server_rejects_auth_identity_changed_during_rate_limit_read(
+    tmp_path, monkeypatch
+):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    expiry = datetime.now(UTC) + timedelta(hours=1)
+    _auth(auth_path, expiry, account_id="old-account")
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    def mutate_auth(*_args, **_kwargs):
+        _auth(auth_path, expiry, account_id="new-account")
+        return {
+            "rateLimits": {
+                "primary": {"usedPercent": 17, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 42, "windowDurationMins": 10080},
+            }
+        }
+
+    monkeypatch.setattr("codex_usage.app_server._read_rate_limits", mutate_auth)
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "auth.json identity changed during rate-limit request"
+
+
 def test_app_server_requires_configured_auth_json(tmp_path):
     account = Account(
         id="work",
