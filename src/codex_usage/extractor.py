@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from .json_utils import loads_strict
@@ -141,8 +142,9 @@ def _extract_json_window(
 ) -> LimitWindow | None:
     matches: list[tuple[str, str, dict[str, Any], str]] = []
     reset_only: LimitWindow | None = None
-    usage_windows: list[LimitWindow] = []
+    usage_windows: list[tuple[int, int, bool, LimitWindow]] = []
     for candidate in candidates:
+        candidate_priority = _wham_candidate_priority(candidate.url)
         for path, obj in _walk_dicts(candidate.payload):
             obj_preview = _json_preview(obj)
             wham_window = _window_from_wham_rate_limit_mapping(
@@ -154,7 +156,14 @@ def _extract_json_window(
             )
             if wham_window is not None:
                 if wham_window.has_usage_value:
-                    usage_windows.append(wham_window)
+                    usage_windows.append(
+                        (
+                            candidate_priority,
+                            _wham_window_path_priority(path, target),
+                            wham_window.reset_at is None,
+                            wham_window,
+                        )
+                    )
                 if reset_only is None:
                     reset_only = wham_window
                 continue
@@ -167,8 +176,8 @@ def _extract_json_window(
                 matches.append((candidate.url, path, obj, haystack))
 
     if usage_windows:
-        usage_windows.sort(key=lambda window: window.reset_at is None)
-        return usage_windows[0]
+        usage_windows.sort(key=lambda item: item[:3])
+        return usage_windows[0][3]
 
     ranked_windows: list[tuple[int, int, int, int, LimitWindow]] = []
     for url, _path, obj, haystack in matches:
@@ -196,6 +205,28 @@ def _extract_json_window(
         ranked_windows.sort(key=lambda item: item[:4])
         return ranked_windows[0][4]
     return reset_only
+
+
+def _wham_candidate_priority(url: str) -> int:
+    path = urlsplit(url).path.rstrip("/").lower()
+    if path == "/backend-api/wham/usage":
+        return 0
+    if path.startswith("/backend-api/wham/usage/"):
+        return 1
+    return 2
+
+
+def _wham_window_path_priority(path: str, target: str) -> int:
+    lower = path.lower()
+    expected = "primary_window" if target == "five_hour" else "secondary_window"
+    is_additional = "additional_rate_limits" in lower
+    if not is_additional and lower.endswith(f".rate_limit.{expected}"):
+        return 0
+    if not is_additional and expected in lower:
+        return 1
+    if is_additional:
+        return 2
+    return 3
 
 
 def _window_from_wham_rate_limit_mapping(

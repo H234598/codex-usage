@@ -819,6 +819,50 @@ def test_extract_windows_from_wham_usage_rate_limit_json():
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
 
 
+def test_extract_windows_prefers_main_rate_limit_over_additional_limits():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "additional_rate_limits": [
+                    {
+                        "limit_name": "GPT-5.3-Codex-Spark",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 0,
+                                "limit_window_seconds": 18_000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 0,
+                                "limit_window_seconds": 604_800,
+                            },
+                        },
+                    }
+                ],
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 9,
+                        "limit_window_seconds": 18_000,
+                    },
+                    "secondary_window": {
+                        "used_percent": 4,
+                        "limit_window_seconds": 604_800,
+                    },
+                },
+            },
+        )
+    ]
+
+    five, weekly = extract_windows(body_text="", json_candidates=candidates)
+
+    assert five is not None
+    assert five.used == 9
+    assert five.remaining == 91
+    assert weekly is not None
+    assert weekly.used == 4
+    assert weekly.remaining == 96
+
+
 def test_extract_windows_from_wham_numeric_string_reset_timestamps():
     candidates = [
         JsonCandidate(

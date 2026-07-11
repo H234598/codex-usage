@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.124 - 2026-07-11
+
+### Fixed
+
+- Der allgemeine `rate_limit`-Knoten gewinnt jetzt deterministisch gegen
+  zusätzliche modellbezogene WHAM-Limits. Die Auswahl hängt nicht mehr von
+  der Reihenfolge der JSON-Schlüssel ab.
+- Regression mit vorangestelltem `GPT-5.3-Codex-Spark`-Limit ergänzt.
+
 ## 0.6.123 - 2026-07-11
 
 ### Fixed
