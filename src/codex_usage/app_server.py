@@ -479,17 +479,24 @@ class _LineReader(threading.Thread):
 
     def run(self) -> None:
         if self.stream is None:
-            self._put_item(AppServerProtocolError("app server stdout is unavailable"))
+            self._put_item(
+                AppServerProtocolError("app server stdout is unavailable"),
+                replace_oldest=True,
+            )
             return
         try:
             while True:
                 line = self.stream.readline(APP_SERVER_MAX_LINE_BYTES + 1)
                 if not line:
-                    self._put_item(EOFError("codex app server closed stdout"))
+                    self._put_item(
+                        EOFError("codex app server closed stdout"),
+                        replace_oldest=True,
+                    )
                     return
                 if len(line) > APP_SERVER_MAX_LINE_BYTES or not line.endswith(b"\n"):
                     self._put_item(
-                        AppServerProtocolError("codex app server response is too large")
+                        AppServerProtocolError("codex app server response is too large"),
+                        replace_oldest=True,
                     )
                     return
                 if not self._put_item(line):
@@ -501,7 +508,10 @@ class _LineReader(threading.Thread):
                     )
                     return
         except OSError:
-            self._put_item(AppServerProtocolError("could not read codex app server output"))
+            self._put_item(
+                AppServerProtocolError("could not read codex app server output"),
+                replace_oldest=True,
+            )
 
     def _put_item(self, item: bytes | Exception, *, replace_oldest: bool = False) -> bool:
         try:

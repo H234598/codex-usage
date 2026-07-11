@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.44 - 2026-07-11
+
+### Fixed
+
+- App Server reader error sentinels are retained even when the bounded queue
+  is full, avoiding silent 30-second timeouts on malformed output.
+
 ## 0.6.43 - 2026-07-11
 
 ### Fixed

@@ -247,3 +247,19 @@ def test_line_reader_does_not_block_on_full_message_queue():
     errors = [item for item in items if isinstance(item, AppServerProtocolError)]
     assert errors
     assert "too many pending messages" in str(errors[0])
+
+
+def test_line_reader_keeps_oversize_error_when_queue_is_full():
+    class FakeStream:
+        def readline(self, _limit):
+            return b"x" * (2_000_000 + 1)
+
+    reader = _LineReader(FakeStream())
+    for _ in range(reader.items.maxsize):
+        reader.items.put(b"first\n")
+    reader.run()
+
+    items = [reader.items.get_nowait() for _ in range(reader.items.qsize())]
+    errors = [item for item in items if isinstance(item, AppServerProtocolError)]
+    assert errors
+    assert "response is too large" in str(errors[0])
