@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -446,16 +447,12 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
             pass
     if process.poll() is not None:
         return
-    try:
-        process.terminate()
-    except OSError:
+    if not _signal_process_group(process, signal.SIGTERM):
         return
     try:
         process.wait(timeout=2)
     except subprocess.TimeoutExpired:
-        try:
-            process.kill()
-        except OSError:
+        if not _signal_process_group(process, signal.SIGKILL):
             return
         try:
             process.wait(timeout=2)
@@ -463,6 +460,24 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
             return
     except OSError:
         return
+
+
+def _signal_process_group(process: subprocess.Popen[bytes], signum: int) -> bool:
+    pid = getattr(process, "pid", None)
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signum)
+            return True
+        except (OSError, ValueError):
+            pass
+    try:
+        if signum == signal.SIGKILL:
+            process.kill()
+        else:
+            process.terminate()
+        return True
+    except OSError:
+        return False
 
 
 def _bounded_error(exc: Exception) -> str:

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.46 - 2026-07-11
+
+### Fixed
+
+- App Server shutdown now signals its isolated process group, so child
+  processes do not survive timeout or cleanup paths.
+
 ## 0.6.45 - 2026-07-11
 
 ### Fixed

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import signal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -218,6 +219,32 @@ def test_refresh_window_is_fifteen_minutes():
     now = datetime.now(UTC)
     assert _should_refresh(now + timedelta(minutes=14), now=now) is True
     assert _should_refresh(now + timedelta(minutes=16), now=now) is False
+
+
+def test_stop_process_terminates_isolated_process_group(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = 1234
+        stdin = None
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            calls.append(("wait", timeout))
+
+        def terminate(self):
+            raise AssertionError("process fallback must not be used")
+
+    monkeypatch.setattr(
+        "codex_usage.app_server.os.killpg",
+        lambda pid, signum: calls.append((pid, signum)),
+    )
+
+    _stop_process(FakeProcess())
+
+    assert calls == [(1234, signal.SIGTERM), ("wait", 2)]
 
 
 def test_stop_process_ignores_exit_races():
