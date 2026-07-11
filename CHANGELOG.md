@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.75 - 2026-07-11
+
+### Fixed
+
+- Nutzungs-Ratio-Felder wie `used_ratio` und `usage_ratio` werden vor der
+  Restwertberechnung auf Prozentwerte normalisiert.
+
 ## 0.6.74 - 2026-07-11
 
 ### Fixed
