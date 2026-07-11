@@ -134,6 +134,11 @@ def merge_current_with_last_success(
 ) -> AccountUsage:
     if last_success is None:
         return current
+    try:
+        if last_success.captured_at > current.captured_at:
+            return last_success
+    except TypeError:
+        pass
     five_hour = current.five_hour or last_success.five_hour
     weekly = current.weekly or last_success.weekly
     if five_hour is current.five_hour and weekly is current.weekly:

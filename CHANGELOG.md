@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.54 - 2026-07-11
+
+### Fixed
+
+- A newer successful snapshot now supersedes an older current snapshot during
+  bridge/latest merging, preventing stale complete values from winning.
+
 ## 0.6.53 - 2026-07-11
 
 ### Fixed
