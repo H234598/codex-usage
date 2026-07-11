@@ -381,8 +381,9 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
 
 def _cmd_account_overview(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    usages = _load_overview_usages(config)
     if args.format == "json":
-        usages = {usage.account_id: usage for usage in load_latest_usages(config)}
+        usages_by_account = {usage.account_id: usage for usage in usages.values()}
         payload = {
             "accounts": [
                 {
@@ -390,19 +391,19 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
                     "label": account.label,
                     "browser": account.browser,
                     "backend": account.backend,
-                    "backend_used": usages.get(account.id).backend_used
-                    if usages.get(account.id)
+                    "backend_used": usages_by_account.get(account.id).backend_used
+                    if usages_by_account.get(account.id)
                     else None,
-                    "fallback_reason": usages.get(account.id).fallback_reason
-                    if usages.get(account.id)
+                    "fallback_reason": usages_by_account.get(account.id).fallback_reason
+                    if usages_by_account.get(account.id)
                     else None,
+                    "usage": _overview_usage_json(usages_by_account.get(account.id)),
                 }
                 for account in config.accounts
             ]
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
         return 0
-    usages = _load_overview_usages(config)
     print(render_account_overview(config, args.config or default_config_path(), usages))
     return 0
 
@@ -799,6 +800,31 @@ def _load_overview_usages(config, accounts=None):
     selected = tuple(accounts or config.accounts)
     fetched = fetch_all(config, selected, save_snapshots=True)
     return {usage.account_id: usage for usage in fetched}
+
+
+def _overview_usage_json(usage: AccountUsage | None) -> dict | None:
+    if usage is None:
+        return None
+    return {
+        "captured_at": usage.captured_at.isoformat(),
+        "five_hour": _overview_window_json(usage.five_hour),
+        "weekly": _overview_window_json(usage.weekly),
+        "status": usage.status.value,
+        "error": usage.error,
+        "stale": usage.stale,
+    }
+
+
+def _overview_window_json(window) -> dict | None:
+    if window is None:
+        return None
+    return {
+        "used": window.used,
+        "limit": window.limit,
+        "remaining": window.remaining,
+        "percent": window.percent,
+        "reset_at": window.reset_at.isoformat() if window.reset_at else None,
+    }
 
 
 def _is_successful_usage(usage: AccountUsage) -> bool:

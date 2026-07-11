@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.52 - 2026-07-11
+
+### Fixed
+
+- `account overview --format json` now performs the same live fetch as the
+  table output and includes current limit values, reset times, status, and
+  capture time without exposing raw payload fields.
+
 ## 0.6.51 - 2026-07-11
 
 ### Fixed

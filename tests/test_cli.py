@@ -119,7 +119,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.51\ncodex-usage 0.6.51\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.52\ncodex-usage 0.6.52\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -757,6 +757,66 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
     assert "ok" in output
 
 
+def test_account_overview_json_shows_live_values(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    def fake_fetch_all(config, accounts, **kwargs):
+        account = next(iter(accounts))
+        captured_at = datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin"))
+        return [
+            AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                five_hour=LimitWindow(
+                    name="5h",
+                    used=3,
+                    limit=100,
+                    remaining=97,
+                    percent=97,
+                    reset_at=datetime(
+                        2026, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")
+                    ),
+                ),
+                weekly=LimitWindow(
+                    name="weekly",
+                    used=45,
+                    limit=100,
+                    remaining=55,
+                    percent=55,
+                    reset_at=datetime(
+                        2026, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin")
+                    ),
+                ),
+            )
+        ]
+
+    monkeypatch.setattr("codex_usage.cli.fetch_all", fake_fetch_all)
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "privat",
+            "--label",
+            "BW_Privat",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(
+        ["--config", str(config_path), "account", "overview", "--format", "json"]
+    ) == 0
+
+    account = json.loads(capsys.readouterr().out)["accounts"][0]
+    assert account["usage"]["status"] == "ok"
+    assert account["usage"]["five_hour"]["remaining"] == 97
+    assert account["usage"]["weekly"]["remaining"] == 55
+    assert account["usage"]["five_hour"]["reset_at"] == "2026-06-08T06:50:00+02:00"
+
+
 def test_values_shows_compact_live_values_for_all_accounts(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
@@ -1086,20 +1146,19 @@ def test_account_backend_updates_config_and_json_overview(tmp_path, capsys):
                 "--format",
                 "json",
             ]
-        )
-        == 0
+    )
+    == 0
     )
     overview = json.loads(capsys.readouterr().out)
-    assert overview["accounts"] == [
-        {
-            "id": "privat",
-            "label": "Privat",
-            "browser": "firefox",
-            "backend": "app-server",
-            "backend_used": None,
-            "fallback_reason": None,
-        }
-    ]
+    account = overview["accounts"][0]
+    assert account["id"] == "privat"
+    assert account["label"] == "Privat"
+    assert account["browser"] == "firefox"
+    assert account["backend"] == "app-server"
+    assert account["backend_used"] == "app-server"
+    assert account["fallback_reason"] is None
+    assert account["usage"]["status"] == "login_required"
+    assert account["usage"]["five_hour"] is None
 
 
 def test_backend_override_rejects_conflicting_direct_flag(tmp_path, capsys):
