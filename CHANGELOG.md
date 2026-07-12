@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.209 - 2026-07-12
+
+### Fixed
+
+- Der Cinnamon-Cache markiert einen unveränderten Snapshot nach einem
+  erfolgreichen `latest`-Reload nicht mehr sofort erneut als unsynchronisiert.
+  Dadurch entfallen unnötige Reload-Schleifen im Minuten-Takt und die Anzeige
+  bleibt bis zum nächsten systemd-Poll stabil.
+- Regressionen für den Cache-Sync-Cooldown und das Erfassen des Sync-Zeitpunkts
+  ergänzt.
+
 ## 0.6.208 - 2026-07-12
 
 ### Fixed

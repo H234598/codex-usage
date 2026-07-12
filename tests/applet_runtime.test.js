@@ -107,6 +107,7 @@ function makeApplet(onReady) {
   applet._timerGeneration = 0;
   applet._displayTimerGeneration = 0;
   applet._staleCheckGeneration = 0;
+  applet._lastCacheSyncAt = 0;
   applet._lastGoodPanel = { plain: "--", markup: "--" };
   applet._lastGoodTooltip = "";
   applet._internalFailures = [];
@@ -238,6 +239,32 @@ test("systemd display cadence reloads a locally stale cache without fresh pollin
   assert.ok(displayCallback);
   displayCallback();
   assert.equal(cachedLoads, 1);
+});
+
+test("cache sync cooldown does not repeat an unchanged reload immediately", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    stale: false,
+  }];
+  applet._lastCacheSyncAt = Date.now();
+  assert.equal(applet._cacheNeedsSync(), false);
+
+  applet._lastCacheSyncAt = Date.now() - 61 * 1000;
+  assert.equal(applet._cacheNeedsSync(), true);
+});
+
+test("cached load records a sync timestamp for an unchanged snapshot", () => {
+  const applet = makeApplet();
+  applet._applyPayload = () => {};
+  applet._spawnUsageCommand = (_subcommand, callback) => callback([], null);
+  const before = Date.now();
+
+  applet._loadCached(false, false);
+
+  assert.ok(applet._lastCacheSyncAt >= before);
+  assert.equal(applet._cacheNeedsSync(), false);
 });
 
 test("cached payloads preserve omitted accounts and newer values", () => {

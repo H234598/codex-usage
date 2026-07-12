@@ -130,6 +130,7 @@ CodexUsageApplet.prototype = {
         this._staleFallbackAt = 0;
         this._staleCheckId = 0;
         this._staleCheckGeneration = 0;
+        this._lastCacheSyncAt = 0;
 
         this.set_applet_icon_symbolic_name("view-statistics-symbolic");
         this.set_applet_label("--");
@@ -618,6 +619,7 @@ CodexUsageApplet.prototype = {
             if (this._safeMode) {
                 return;
             }
+            this._lastCacheSyncAt = Date.now();
             try {
                 if (payload) {
                     this._applyPayload(payload, false);
@@ -1057,6 +1059,13 @@ CodexUsageApplet.prototype = {
             return true;
         }
         let nowMs = Date.now();
+        if (
+            this._lastCacheSyncAt > 0 &&
+            nowMs >= this._lastCacheSyncAt &&
+            nowMs - this._lastCacheSyncAt < CACHE_SYNC_INTERVAL_MS
+        ) {
+            return false;
+        }
         for (let i = 0; i < this._usages.length; i++) {
             let usage = this._usages[i];
             if (usage.stale) {
