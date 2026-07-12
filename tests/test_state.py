@@ -659,6 +659,38 @@ def test_merge_current_with_last_success_fills_missing_window():
     assert merged.stale is True
 
 
+def test_browser_merge_does_not_age_fresh_resetless_window_with_old_counterpart():
+    timezone = ZoneInfo("Europe/Berlin")
+    current_capture = datetime(2026, 7, 12, 10, 0, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=current_capture,
+        status=AccountStatus.PARTIAL,
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=80),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=current_capture - timedelta(hours=1),
+        status=AccountStatus.OK,
+        backend_used="browser",
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+    evaluated = expire_reset_windows(
+        merged,
+        reference_at=current_capture + timedelta(hours=4, minutes=30),
+    )
+
+    assert merged.weekly is None
+    assert merged.values_captured_at is None
+    assert evaluated.five_hour is not None
+    assert evaluated.five_hour.remaining == 80
+
+
 @pytest.mark.parametrize(
     "window",
     [
@@ -1241,7 +1273,7 @@ def test_merge_current_with_newer_success_prefers_success_snapshot():
     assert merged == last_success
 
 
-def test_merge_current_with_newer_partial_snapshot_keeps_current_windows():
+def test_merge_current_with_newer_partial_snapshot_drops_older_resetless_counterpart():
     timezone = ZoneInfo("Europe/Berlin")
     current = AccountUsage(
         account_id="privat",
@@ -1263,10 +1295,10 @@ def test_merge_current_with_newer_partial_snapshot_keeps_current_windows():
     merged = merge_current_with_last_success(current, last_success)
 
     assert merged.captured_at == last_success.captured_at
-    assert merged.five_hour == current.five_hour
+    assert merged.five_hour is None
     assert merged.weekly == last_success.weekly
-    assert merged.values_captured_at == current.captured_at
-    assert merged.stale is True
+    assert merged.values_captured_at is None
+    assert merged.stale is False
 
 
 @pytest.mark.parametrize("backend", ("direct", "app-server"))

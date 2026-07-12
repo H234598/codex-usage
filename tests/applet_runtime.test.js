@@ -1524,6 +1524,33 @@ test("partial fresh payload preserves each missing window from stale cache", () 
   assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
 });
 
+
+test("browser fresh resetless usage does not restore an older counterpart", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    backend_used: "browser",
+    five_hour: { name: "5h", remaining: 80 },
+    weekly: { name: "weekly", remaining: 60 }
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    backend_used: "browser",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: { name: "5h", remaining: 70 },
+    weekly: null,
+    stale: false
+  }]);
+
+  assert.equal(merged[0].five_hour.remaining, 70);
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].stale, false);
+  assert.equal(merged[0].values_captured_at, undefined);
+});
+
+
 test("partial fresh window does not inherit a cached value from another duration", () => {
   const applet = makeApplet();
   applet._usages = [{

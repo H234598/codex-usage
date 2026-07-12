@@ -534,9 +534,23 @@ def _merge_newer_partial_usage(
 
 
 def _allow_missing_window_restore(usage: AccountUsage) -> bool:
+    if usage.backend_used == "browser" and _has_resetless_usage_window(usage):
+        # AccountUsage has one capture timestamp for both windows. Restoring an
+        # older counterpart here would make the fresh resetless value expire at
+        # the older capture time as well.
+        return False
     return not (
         usage.status == AccountStatus.PARTIAL
         and usage.backend_used in AUTHENTICATED_BACKENDS
+    )
+
+
+def _has_resetless_usage_window(usage: AccountUsage) -> bool:
+    return any(
+        window is not None
+        and window.has_usage_value
+        and window.reset_at is None
+        for window in (usage.five_hour, usage.weekly)
     )
 
 

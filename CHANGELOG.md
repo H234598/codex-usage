@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.322 - 2026-07-12
+
+### Fixed
+
+- Browser-Merges ergänzen kein älteres Gegenfenster mehr, wenn ein frisches
+  resetloses Nutzungsfenster vorhanden ist. Dadurch wird dessen Ablauf nicht
+  mit einem älteren gemeinsamen Capture-Zeitpunkt vorgezogen.
+
 ## 0.6.321 - 2026-07-12
 
 ### Fixed

@@ -2420,10 +2420,12 @@ CodexUsageApplet.prototype = {
                 !this._authoritativeEmptyLimits(item)
             ) {
                 let authenticatedPartial = this._authenticatedPartial(item);
+                let resetlessBrowserUsage = this._hasResetlessBrowserUsage(item);
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
                 if (
                     !authenticatedPartial &&
+                    !resetlessBrowserUsage &&
                     !this._windowHasUsageValue(item.five_hour) &&
                     old.five_hour
                 ) {
@@ -2455,6 +2457,7 @@ CodexUsageApplet.prototype = {
                 }
                 if (
                     !authenticatedPartial &&
+                    !resetlessBrowserUsage &&
                     !this._windowHasUsageValue(item.weekly) &&
                     old.weekly
                 ) {
@@ -2630,6 +2633,19 @@ CodexUsageApplet.prototype = {
 
     _windowHasUsageValue: function(window) {
         return this._remainingPercent(window) !== null;
+    },
+
+    _hasResetlessBrowserUsage: function(usage) {
+        if (this._safeBackend(usage && usage.backend_used, true) !== "browser") {
+            return false;
+        }
+        let windows = [usage && usage.five_hour, usage && usage.weekly];
+        for (let i = 0; i < windows.length; i++) {
+            if (windows[i] && this._windowHasUsageValue(windows[i]) && !windows[i].reset_at) {
+                return true;
+            }
+        }
+        return false;
     },
 
     _windowResetExpired: function(window, referenceAt) {
