@@ -225,6 +225,9 @@ def load_current_usage(account_id: str, current_dir: Path | None = None) -> Acco
 def remove_account_state(account_id: str) -> None:
     _validate_snapshot_account_id(account_id)
     with account_state_lock(account_id):
+        # Invalidate first so an interrupted cleanup cannot leave the old
+        # generation valid for an in-flight writer.
+        _increment_state_generation(account_id, default_state_dir())
         targets = (
             (default_snapshot_dir(), f"{account_id}.json", "snapshot path"),
             (default_current_dir(), f"{account_id}.json", "current path"),
@@ -246,7 +249,6 @@ def remove_account_state(account_id: str) -> None:
                     raise ValueError(f"{label} must be a regular file: {path}")
                 if path.exists() or path.is_symlink():
                     path.unlink()
-        _increment_state_generation(account_id, default_state_dir())
 
 
 def _state_generation_path(account_id: str, directory: Path) -> Path:

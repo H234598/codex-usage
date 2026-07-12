@@ -262,6 +262,31 @@ def test_remove_account_state_deletes_current_snapshot_and_debug(tmp_path, monke
     assert not (debug_dir / "privat-last-ingest.json").exists()
 
 
+def test_remove_account_state_keeps_files_when_generation_invalidation_fails(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+    )
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+
+    def fail_generation(*_args, **_kwargs):
+        raise OSError("generation write failed")
+
+    monkeypatch.setattr("codex_usage.state._increment_state_generation", fail_generation)
+
+    with pytest.raises(OSError, match="generation write failed"):
+        remove_account_state("privat")
+
+    assert (tmp_path / "data" / "codex-usage" / "current" / "privat.json").exists()
+    assert (tmp_path / "data" / "codex-usage" / "snapshots" / "privat.json").exists()
+
+
 def test_stale_state_generation_cannot_recreate_removed_account_state(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     captured_at = datetime(2026, 7, 12, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
