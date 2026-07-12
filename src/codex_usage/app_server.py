@@ -24,6 +24,7 @@ from .direct import (
     auth_plan_type_from_payload,
     read_auth_json_file,
 )
+from .extractor import LOCAL_TZ
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
@@ -63,7 +64,7 @@ def fetch_account_usage_app_server(
     timeout_seconds: int = APP_SERVER_TIMEOUT_SECONDS,
     codex_command: str | None = None,
 ) -> AccountUsage:
-    captured_at = datetime.now().astimezone()
+    captured_at = datetime.now(tz=LOCAL_TZ)
     try:
         (
             auth_path,
@@ -621,7 +622,7 @@ def _window(name: str, payload: dict[str, Any]) -> LimitWindow:
     reset_at = None
     if reset_value is not None:
         try:
-            reset_at = datetime.fromtimestamp(reset_value, tz=UTC).astimezone()
+            reset_at = datetime.fromtimestamp(reset_value, tz=UTC).astimezone(LOCAL_TZ)
         except (OSError, OverflowError, ValueError) as exc:
             raise AppServerProtocolError("app server resetsAt is invalid") from exc
     return LimitWindow(

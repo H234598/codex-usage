@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.341 - 2026-07-13
+
+### Fixed
+
+- App-Server-Resetzeitpunkte werden mit der DST-faehigen lokalen Zeitzone
+  formatiert. Winter-Resets erhalten dadurch nicht mehr versehentlich den
+  aktuellen Sommeroffset.
+
 ## 0.6.340 - 2026-07-13
 
 ### Fixed

@@ -5,6 +5,7 @@ import json
 import signal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -15,6 +16,7 @@ from codex_usage.app_server import (
     _missing_usage_limits_error,
     _should_refresh,
     _stop_process,
+    _window,
     _windows_from_response,
     fetch_account_usage_app_server,
 )
@@ -453,6 +455,19 @@ def test_window_mapping_prefers_codex_limit_bucket():
 
     assert five is not None and five.used == 1
     assert weekly is not None and weekly.used == 2
+
+
+def test_window_reset_timestamp_uses_dst_aware_local_zone(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr("codex_usage.app_server.LOCAL_TZ", berlin)
+    expected = datetime(2026, 10, 26, 0, 15, tzinfo=berlin)
+
+    window = _window(
+        "five_hour",
+        {"usedPercent": 1, "resetsAt": int(expected.timestamp())},
+    )
+
+    assert window.reset_at == expected
 
 
 def test_window_mapping_merges_partial_codex_bucket_with_top_level_snapshot():
