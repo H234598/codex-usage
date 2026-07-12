@@ -142,7 +142,7 @@ def _extract_json_window(
 ) -> LimitWindow | None:
     matches: list[tuple[str, str, dict[str, Any], str]] = []
     reset_only: LimitWindow | None = None
-    usage_windows: list[tuple[int, int, bool, int, LimitWindow]] = []
+    usage_windows: list[tuple[int, int, int, bool, LimitWindow]] = []
     for candidate_index, candidate in enumerate(candidates):
         candidate_priority = _wham_candidate_priority(candidate.url)
         blocks_additional = (
@@ -166,8 +166,8 @@ def _extract_json_window(
                         (
                             candidate_priority,
                             _wham_window_path_priority(path, target),
-                            wham_window.reset_at is None,
                             -candidate_index,
+                            wham_window.reset_at is None,
                             wham_window,
                         )
                     )
@@ -183,6 +183,8 @@ def _extract_json_window(
                 matches.append((candidate.url, path, obj, haystack))
 
     if usage_windows:
+        # A newer usage value is authoritative; an older reset timestamp must
+        # not make the parser display stale consumption data.
         usage_windows.sort(key=lambda item: item[:4])
         return usage_windows[0][4]
 

@@ -1059,6 +1059,45 @@ def test_extract_windows_prefers_latest_equal_priority_wham_response():
     assert weekly.used == 60
 
 
+def test_extract_windows_prefers_newer_usage_over_older_reset_metadata():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18000,
+                        "reset_at": "1780894250",
+                    }
+                }
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 20,
+                        "limit_window_seconds": 18000,
+                    }
+                }
+            },
+        ),
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=candidates,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 20
+    assert five.remaining == 80
+    assert five.reset_at is None
+
+
 def test_extract_windows_prefers_main_rate_limit_over_additional_limits():
     candidates = [
         JsonCandidate(

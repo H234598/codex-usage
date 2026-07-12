@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.236 - 2026-07-12
+
+### Fixed
+
+- Der gemeinsame WHAM-Parser bevorzugt jetzt den neuesten Nutzungswert vor
+  einer älteren Antwort, die nur durch eine vorhandene Resetzeit vollständiger
+  wirkt.
+- Ein fehlender aktueller Reset wird nicht mehr durch einen möglicherweise
+  veralteten Reset samt altem Verbrauchswert kaschiert.
+- Regression für `3 %` alt mit Resetzeit gegenüber `20 %` neu ohne Resetzeit
+  ergänzt.
+
 ## 0.6.235 - 2026-07-12
 
 ### Fixed
