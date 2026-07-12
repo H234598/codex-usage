@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.179 - 2026-07-12
+
+### Fixed
+
+- Der Scheduler berechnet Restprozente bei Fenstern mit absoluten
+  `used`-/`limit`-Werten jetzt vor einem eventuell widersprüchlichen
+  `percent`-Feld.
+- Regression für die gemischte Darstellung von Verbrauchs- und Restwerten
+  ergänzt.
+
 ## 0.6.178 - 2026-07-12
 
 ### Fixed

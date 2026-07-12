@@ -11,6 +11,7 @@ from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.scheduler import (
     _is_more_conservative_direct_usage,
+    _remaining_percent,
     fetch_all,
     watch,
     watchdog,
@@ -611,6 +612,18 @@ def test_direct_reset_guard_rejects_earlier_reset_with_more_remaining():
     )
 
     assert _is_more_conservative_direct_usage(current, previous) is False
+
+
+def test_scheduler_remaining_percent_prefers_absolute_usage_values():
+    window = LimitWindow(
+        name="5h",
+        used=8,
+        limit=40,
+        remaining=32,
+        percent=20,
+    )
+
+    assert _remaining_percent(window) == 80
 
 
 def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):

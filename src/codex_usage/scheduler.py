@@ -296,14 +296,14 @@ def _is_more_conservative_direct_usage(
 
 
 def _remaining_percent(window) -> float | None:
-    if window.percent is not None:
-        return float(window.percent)
+    if window.used is not None and window.limit is not None and window.limit > 0:
+        return (float(window.limit) - float(window.used)) * 100 / float(window.limit)
     if window.remaining is not None:
         if window.limit is not None and window.limit > 0:
             return float(window.remaining) * 100 / float(window.limit)
         return float(window.remaining)
-    if window.used is not None and window.limit is not None and window.limit > 0:
-        return (float(window.limit) - float(window.used)) * 100 / float(window.limit)
+    if window.percent is not None:
+        return float(window.percent)
     return None
 
 
