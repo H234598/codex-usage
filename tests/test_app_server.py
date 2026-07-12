@@ -12,6 +12,7 @@ from codex_usage.app_server import (
     AppServerProtocolError,
     AppServerUnavailableError,
     _LineReader,
+    _missing_usage_limits_error,
     _should_refresh,
     _stop_process,
     _windows_from_response,
@@ -754,6 +755,38 @@ def test_window_mapping_falls_back_when_codex_bucket_is_empty():
 
     assert five is not None and five.used == 3
     assert weekly is not None and weekly.used == 4
+
+
+def test_app_server_missing_window_error_identifies_available_weekly_limit():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 47, "windowDurationMins": 10080},
+                "secondary": None,
+            }
+        }
+    )
+
+    assert _missing_usage_limits_error(
+        {"rateLimits": {"primary": {"usedPercent": 47, "windowDurationMins": 10080}}},
+        "pro",
+        five,
+        weekly,
+    ) == "5h limit unavailable in app server response (plan plus; available window weekly)"
+
+
+def test_app_server_missing_window_error_reports_unsupported_duration():
+    payload = {
+        "rateLimits": {
+            "primary": {"usedPercent": 5, "windowDurationMins": 43200},
+        }
+    }
+    five, weekly = _windows_from_response(payload)
+
+    assert _missing_usage_limits_error(payload, "free", five, weekly) == (
+        "requested 5h/weekly limits unavailable in app server response "
+        "(plan free; backend window 43200m)"
+    )
 
 
 def test_refresh_window_is_fifteen_minutes():

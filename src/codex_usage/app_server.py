@@ -122,7 +122,12 @@ def fetch_account_usage_app_server(
             error=(
                 None
                 if status == AccountStatus.OK
-                else "usage limits not found in app server response"
+                else _missing_usage_limits_error(
+                    payload,
+                    auth_plan_type,
+                    five_hour,
+                    weekly,
+                )
             ),
             auth_last_refresh=auth_metadata.get("auth_last_refresh"),
             auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
@@ -545,6 +550,61 @@ def _windows_from_response(
     five = _window("five_hour", five_item[1]) if five_item else None
     weekly = _window("weekly", weekly_item[1]) if weekly_item else None
     return five, weekly
+
+
+def _missing_usage_limits_error(
+    payload: dict[str, Any],
+    backend_plan_type: str | None,
+    five_hour: LimitWindow | None,
+    weekly: LimitWindow | None,
+) -> str:
+    plan = _normalized_plan_type(backend_plan_type) if backend_plan_type else "unknown"
+    available: set[str] = set()
+    if five_hour is not None and five_hour.has_usage_value:
+        available.add("5h")
+    if weekly is not None and weekly.has_usage_value:
+        available.add("weekly")
+    if len(available) == 1:
+        available_window = next(iter(available))
+        missing_window = "weekly" if available_window == "5h" else "5h"
+        return (
+            f"{missing_window} limit unavailable in app server response "
+            f"(plan {plan}; available window {available_window})"
+        )
+
+    unsupported = _unsupported_window_durations(payload)
+    if unsupported:
+        durations = ", ".join(f"{minutes}m" for minutes in sorted(unsupported))
+        return (
+            "requested 5h/weekly limits unavailable in app server response "
+            f"(plan {plan}; backend window {durations})"
+        )
+    return "usage limits not found in app server response"
+
+
+def _unsupported_window_durations(payload: dict[str, Any]) -> set[int]:
+    snapshots: list[dict[str, Any]] = []
+    top_level = payload.get("rateLimits")
+    if isinstance(top_level, dict):
+        snapshots.append(top_level)
+    by_id = payload.get("rateLimitsByLimitId")
+    codex_snapshot = by_id.get("codex") if isinstance(by_id, dict) else None
+    if isinstance(codex_snapshot, dict):
+        snapshots.append(codex_snapshot)
+
+    unsupported: set[int] = set()
+    for snapshot in snapshots:
+        for key in ("primary", "secondary"):
+            window = snapshot.get(key)
+            if not isinstance(window, dict) or not _valid_used_percent(window):
+                continue
+            duration = _strict_int(window.get("windowDurationMins"))
+            if duration is not None and duration > 0 and duration not in {
+                FIVE_HOUR_WINDOW_MINUTES,
+                WEEKLY_WINDOW_MINUTES,
+            }:
+                unsupported.add(duration)
+    return unsupported
 
 
 def _window(name: str, payload: dict[str, Any]) -> LimitWindow:
