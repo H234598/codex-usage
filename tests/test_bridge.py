@@ -728,7 +728,7 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "codexUsageApiResponseKey" in content
     assert "requestSequence" in content
     assert "window.addEventListener(\"message\"" in content
-    assert "codexUsageCapturedApiResponses.length ? [] : await fetchCodexUsageApis()" in content
+    assert "codexUsageHasMainUsageResponse() ? [] : await fetchCodexUsageApis()" in content
     assert "document.body.innerText" in content
     assert "sanitizedCodexUsageRoot" in content
     assert "script, style, link, meta, noscript, template" in content
@@ -828,6 +828,137 @@ const sandbox = {
 };
 vm.runInNewContext(source, sandbox);
 setTimeout(() => process.exit(process.exitCode || 0), 40);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "content.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_content_probes_usage_when_only_other_wham_response_was_captured(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+const fetched = [];
+let messageHandler = null;
+let observerCallback = null;
+const pageWindow = {
+  addEventListener(type, callback) {
+    if (type === "message") {
+      messageHandler = callback;
+    }
+  }
+};
+const document = {
+  title: "Codex",
+  readyState: "loading",
+  body: { innerText: "" },
+  documentElement: {
+    cloneNode() {
+      return {
+        textContent: document.body.innerText,
+        outerHTML: "<html><body>Codex</body></html>",
+        querySelectorAll() { return { forEach() {} }; }
+      };
+    }
+  },
+  querySelectorAll() { return []; }
+};
+class MutationObserver {
+  constructor(callback) { observerCallback = callback; }
+  observe() {}
+  disconnect() {}
+}
+const sandbox = {
+  window: pageWindow,
+  document,
+  MutationObserver,
+  chrome: {
+    runtime: {
+      id: "test-extension",
+      lastError: null,
+      sendMessage(message, callback) {
+        messages.push(message);
+        callback({ ok: true });
+      }
+    }
+  },
+  location: {
+    href: "https://chatgpt.com/codex/cloud/settings/analytics",
+    origin: "https://chatgpt.com"
+  },
+  fetch: async (url) => {
+    fetched.push(url);
+    return {
+      headers: { get() { return "application/json"; } },
+      text: async () => JSON.stringify({
+        rate_limit: {
+          primary_window: { used_percent: 3, limit_window_seconds: 18000 },
+          secondary_window: { used_percent: 45, limit_window_seconds: 604800 }
+        }
+      })
+    };
+  },
+  Date,
+  JSON,
+  URL,
+  String,
+  Number,
+  Object,
+  Array,
+  Promise,
+  console,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+if (!messageHandler || !observerCallback) {
+  throw new Error("content script did not initialize");
+}
+messageHandler({
+  source: pageWindow,
+  data: {
+    type: "codexUsageApiResponses",
+    responses: [{
+      source: "page-fetch",
+      url: "https://chatgpt.com/backend-api/wham/settings/user",
+      requestSequence: 1,
+      status: 200,
+      contentType: "application/json",
+      bodyText: "{}"
+    }]
+  }
+});
+document.body.innerText = "Codex analytics page text with enough content";
+observerCallback();
+setTimeout(() => {
+  const payload = messages[0] && messages[0].payload;
+  if (fetched.length !== 4 || !payload || !payload.apiResponses.some(
+    (item) => item.url.endsWith("/backend-api/wham/usage")
+  )) {
+    throw new Error(JSON.stringify({ fetched, messages }));
+  }
+  process.exit(0);
+}, 50);
 """
 
     result = subprocess.run(

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.172 - 2026-07-12
+
+### Fixed
+
+- Der Browser-Bridge-Probe wird nicht mehr unterdrückt, wenn nur eine andere
+  `/backend-api/wham/*`-Antwort wie `settings/user` erfasst wurde.
+- Der eigentliche `/backend-api/wham/usage`-Endpoint wird dadurch auch bei
+  unvollständigen Page-Hook-Daten zuverlässig nachgeladen.
+- Regression im Content-Script-Laufzeittest ergänzt.
+
 ## 0.6.171 - 2026-07-12
 
 ### Fixed

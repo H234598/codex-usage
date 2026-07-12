@@ -803,6 +803,18 @@ function codexUsageApiResponseKey(item) {{
   return [item.source || "", url].join("\\n");
 }}
 
+function codexUsageHasMainUsageResponse() {{
+  return codexUsageCapturedApiResponses.some((item) => {{
+    try {{
+      const parsed = new URL(String((item && item.url) || ""), location.origin);
+      const path = parsed.pathname.replace(/\\/+$/, "") || "/";
+      return parsed.origin === location.origin && path === "/backend-api/wham/usage";
+    }} catch (_error) {{
+      return false;
+    }}
+  }});
+}}
+
 function codexUsageApiResponseSequence(item) {{
   const value = item && item.requestSequence;
   return Number.isInteger(value) && value >= 0 ? value : null;
@@ -1008,7 +1020,7 @@ async function sendCodexUsage() {{
     return;
   }}
   const payload = collectCodexUsage();
-  const probeResponses = codexUsageCapturedApiResponses.length ? [] : await fetchCodexUsageApis();
+  const probeResponses = codexUsageHasMainUsageResponse() ? [] : await fetchCodexUsageApis();
   payload.apiResponses = dedupeCodexUsageApiResponses([
     ...codexUsageCapturedApiResponses,
     ...probeResponses
