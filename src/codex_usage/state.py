@@ -347,10 +347,18 @@ def expire_reset_windows(
     expired_names: list[str] = []
     five_hour = usage.five_hour
     weekly = usage.weekly
-    if _window_reset_expired(five_hour, reference_at):
+    if _cached_window_expired(
+        five_hour,
+        captured_at=usage.captured_at,
+        reference_at=reference_at,
+    ):
         expired_names.append("5h")
         five_hour = None
-    if _window_reset_expired(weekly, reference_at):
+    if _cached_window_expired(
+        weekly,
+        captured_at=usage.captured_at,
+        reference_at=reference_at,
+    ):
         expired_names.append("weekly")
         weekly = None
     try:

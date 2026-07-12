@@ -201,6 +201,56 @@ def test_expire_reset_windows_drops_only_expired_cached_values():
     assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
+def test_expire_reset_windows_expires_resetless_windows_by_duration():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    reference_at = captured_at + timedelta(hours=6)
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=38,
+            raw='{"limit_window_seconds": 18000}',
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=72,
+            raw='{"limit_window_seconds": 604800}',
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.five_hour is None
+    assert expired.weekly is usage.weekly
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
+def test_expire_reset_windows_rejects_resetless_unclassified_windows():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="", remaining=38),
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=captured_at + timedelta(minutes=1),
+    )
+
+    assert expired.five_hour is None
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
 def test_expire_reset_windows_clears_expired_blocked_state():
     reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
