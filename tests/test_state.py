@@ -492,6 +492,35 @@ def test_load_usage_snapshot_ignores_malformed_window_shape(tmp_path, malformed_
     assert loaded.weekly.remaining == 55
 
 
+def test_load_usage_snapshot_rejects_boolean_window_numbers(tmp_path):
+    payload = {
+        "account": "boolean-values",
+        "label": "Boolean values",
+        "captured_at": "2026-06-08T04:20:00+02:00",
+        "status": "partial",
+        "five_hour": {
+            "name": "5h",
+            "used": False,
+            "limit": True,
+            "remaining": True,
+            "percent": False,
+        },
+    }
+    (tmp_path / "boolean-values.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("boolean-values", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.used is None
+    assert loaded.five_hour.limit is None
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.percent is None
+
+
 def test_load_usage_snapshot_ignores_symlink(tmp_path):
     target = tmp_path / "target.json"
     target.write_text(

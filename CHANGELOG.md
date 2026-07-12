@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.325 - 2026-07-12
+
+### Fixed
+
+- Booleanwerte in numerischen Snapshot-Feldern werden nicht mehr als `0` oder
+  `1` in Nutzungswerte umgewandelt.
+
 ## 0.6.324 - 2026-07-12
 
 ### Fixed

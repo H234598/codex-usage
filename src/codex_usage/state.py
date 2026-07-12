@@ -786,7 +786,7 @@ def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:
 
 
 def _optional_float(value: Any) -> float | None:
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     try:
         coerced = float(value)
