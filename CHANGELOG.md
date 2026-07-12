@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.330 - 2026-07-12
+
+### Fixed
+
+- Resetzeiten außerhalb der plausiblen Fensterdauer verhindern jetzt die
+  Wiederverwendung alter Applet-Cachewerte.
+
 ## 0.6.329 - 2026-07-12
 
 ### Fixed

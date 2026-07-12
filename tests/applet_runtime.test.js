@@ -1658,6 +1658,28 @@ test("invalid cached reset timestamps do not preserve old usage", () => {
   assert.equal(merged[0].stale, false);
 });
 
+test("reset timestamps beyond the window duration do not preserve old usage", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { name: "5h", remaining: 80, reset_at: "2026-07-10T20:00:00.000Z" },
+    weekly: null,
+  }];
+
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: null,
+    weekly: null,
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].five_hour, null);
+  assert.equal(merged[0].stale, false);
+});
+
 test("fresh merge expires resetless cached values from their values capture", () => {
   const applet = makeApplet();
   applet._usages = [{

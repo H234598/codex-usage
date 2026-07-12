@@ -2742,7 +2742,27 @@ CodexUsageApplet.prototype = {
             return false;
         }
         if (window.reset_at) {
-            return this._windowResetExpired(window, referenceAt);
+            let resetMs = this._dateMillis(window.reset_at);
+            let referenceMs = this._dateMillis(referenceAt);
+            let capturedMs = this._dateMillis(capturedAt);
+            let duration = this._windowDurationSeconds(window);
+            if (duration === null) {
+                duration = {
+                    five_hour: 18000,
+                    weekly: 604800
+                }[this._windowKind(window)] || null;
+            }
+            if (resetMs === null || referenceMs === null) {
+                return true;
+            }
+            if (
+                duration !== null &&
+                capturedMs !== null &&
+                resetMs > capturedMs + duration * 1000 + MAX_CAPTURE_FUTURE_MS
+            ) {
+                return true;
+            }
+            return resetMs <= referenceMs;
         }
         let duration = this._windowDurationSeconds(window);
         if (duration === null) {
