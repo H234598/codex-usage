@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.280 - 2026-07-12
+
+### Fixed
+
+- Das Applet verwirft beim Abrufwegwechsel sofort Werte aus dem vorherigen
+  Backend und zeigt bis zum neuen Poll einen gekennzeichneten Leerstand.
+
 ## 0.6.279 - 2026-07-12
 
 ### Security

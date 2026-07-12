@@ -1215,6 +1215,12 @@ CodexUsageApplet.prototype = {
                 continue;
             }
             known[account] = true;
+            let expectedBackend = this._backendConfiguredForAccount(account);
+            if (!this._backendMatchesConfigured(usage, expectedBackend)) {
+                filtered.push(this._newBackendUsageRow(account, expectedBackend));
+                changed = true;
+                continue;
+            }
             filtered.push(usage);
         }
         let accounts = Object.keys(this._backendAccounts);
@@ -1223,32 +1229,57 @@ CodexUsageApplet.prototype = {
             if (known[account]) {
                 continue;
             }
-            let backend = this._backendAccounts[account].backend === 1
-                ? "app-server"
-                : "direct";
-            filtered.push({
-                account: account,
-                label: this._backendAccounts[account].label || account,
-                captured_at: "",
-                five_hour: null,
-                weekly: null,
-                status: "partial",
-                error: _("Noch keine gespeicherten Nutzungswerte"),
-                blocked_until: "",
-                blocked_reason: "",
-                auth_access_expires_at: "",
-                backend_configured: backend,
-                backend_used: "",
-                fallback_reason: "",
-                values_captured_at: "",
-                stale: true
-            });
+            filtered.push(this._newBackendUsageRow(
+                account,
+                this._backendConfiguredForAccount(account)
+            ));
             changed = true;
         }
         if (changed) {
             this._usages = filtered;
         }
         return changed;
+    },
+
+    _backendConfiguredForAccount: function(account) {
+        return this._backendAccounts[account] && this._backendAccounts[account].backend === 1
+            ? "app-server"
+            : "direct";
+    },
+
+    _newBackendUsageRow: function(account, backend) {
+        return {
+            account: account,
+            label: this._backendAccounts[account].label || account,
+            captured_at: "",
+            five_hour: null,
+            weekly: null,
+            status: "partial",
+            error: _("Noch keine gespeicherten Nutzungswerte"),
+            blocked_until: "",
+            blocked_reason: "",
+            auth_access_expires_at: "",
+            backend_configured: backend,
+            backend_used: "",
+            fallback_reason: "",
+            values_captured_at: "",
+            stale: true
+        };
+    },
+
+    _backendMatchesConfigured: function(usage, configuredBackend) {
+        let configured = this._safeBackend(usage && usage.backend_configured);
+        if (configured && configured !== configuredBackend) {
+            return false;
+        }
+        let used = this._safeBackend(usage && usage.backend_used, true);
+        if (["direct", "app-server"].indexOf(used) === -1) {
+            return true;
+        }
+        if (used === configuredBackend) {
+            return true;
+        }
+        return configuredBackend === "app-server" && this._hasBackendFallbackProof(usage);
     },
 
     _syncAccountSettings: function(accounts) {
