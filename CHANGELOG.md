@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.234 - 2026-07-12
+
+### Fixed
+
+- Die Direct-Stabilisierung erkennt einen echten Reset im letzten WHAM-Sample
+  jetzt an sinkendem Verbrauch und einem `reset_after_seconds`-Sprung auf die
+  bekannte Fensterdauer.
+- Ein alter Mehrheitsstand kann dadurch einen frischen Resetwert nicht mehr
+  als inkonsistent verdrängen; feste Reset-Rückgänge ohne Countdown bleiben
+  fail-closed.
+- Regression für den Sampleübergang `5% -> 0%` ergänzt.
+
 ## 0.6.233 - 2026-07-12
 
 ### Fixed

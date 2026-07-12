@@ -569,6 +569,46 @@ def test_fetch_stable_wham_usage_rejects_usage_regression_with_fixed_reset(
         _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_stable_wham_usage_accepts_latest_relative_reset_transition(
+    monkeypatch,
+):
+    def response(used: int, reset_after: int, reset_at: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_after_seconds": reset_after,
+                    "reset_at": reset_at,
+                },
+                "secondary_window": {
+                    "used_percent": 10,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 604800,
+                    "reset_at": 1784415934,
+                },
+            },
+        }
+
+    responses = iter(
+        (
+            response(5, 120, 1783860000),
+            response(5, 118, 1783860000),
+            response(0, 18000, 1783860180),
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 0
+
+
 def test_fetch_stable_wham_usage_accepts_fixed_reset_after_quorum(
     monkeypatch,
 ):

@@ -24,6 +24,7 @@ DIRECT_RESPONSE_SAMPLE_COUNT = 3
 DIRECT_STABILITY_ATTEMPTS = 3
 DIRECT_STABILITY_RETRY_DELAY_SECONDS = 0.05
 DIRECT_RESET_BUCKET_SECONDS = 5
+DIRECT_RESET_TRANSITION_MARGIN_SECONDS = 30
 DIRECT_PROGRESSIVE_STEP_PERCENT = 1
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_AUTH_JSON_BYTES = 1_000_000
@@ -675,8 +676,16 @@ def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     )
     latest_index = len(payloads) - 1
     latest_is_in_best_group = any(index == latest_index for index, _ in best_group)
+    latest_is_relative_reset = _latest_response_is_relative_reset(
+        payloads,
+        best_group,
+    )
     if _has_reset_regression(payloads) and not latest_is_in_best_group:
+        if latest_is_relative_reset:
+            return payloads[-1]
         raise DirectFetchError("direct response limits were inconsistent across samples")
+    if latest_is_relative_reset:
+        return payloads[-1]
     if len(best_group) * 2 <= len(payloads):
         if _usage_response_progresses(payloads):
             return payloads[-1]
@@ -771,6 +780,61 @@ def _latest_response_progresses_beyond_group(
             return False
         progressed = progressed or latest_window[1] > stable_window[1]
     return progressed
+
+
+def _latest_response_is_relative_reset(
+    payloads: list[dict[str, Any]],
+    best_group: list[tuple[int, dict[str, Any]]],
+) -> bool:
+    if len(payloads) < 2 or not best_group:
+        return False
+    latest_index = len(payloads) - 1
+    if any(index == latest_index for index, _ in best_group):
+        return False
+    previous_index, previous = max(best_group, key=lambda item: item[0])
+    if previous_index >= latest_index:
+        return False
+    if backend_identity_from_payload(previous) != backend_identity_from_payload(payloads[-1]):
+        return False
+
+    reset_seen = False
+    for window_key in ("primary_window", "secondary_window"):
+        previous_window = _rate_limit_window(previous, window_key)
+        current_window = _rate_limit_window(payloads[-1], window_key)
+        if previous_window is None or current_window is None:
+            continue
+        previous_used = _signature_number(previous_window.get("used_percent"))
+        current_used = _signature_number(current_window.get("used_percent"))
+        if (
+            previous_used is None
+            or current_used is None
+            or current_used >= previous_used
+        ):
+            continue
+        previous_duration = _signature_number(previous_window.get("limit_window_seconds"))
+        current_duration = _signature_number(current_window.get("limit_window_seconds"))
+        previous_after = _signature_number(previous_window.get("reset_after_seconds"))
+        current_after = _signature_number(current_window.get("reset_after_seconds"))
+        if (
+            previous_duration is None
+            or current_duration is None
+            or previous_duration != current_duration
+            or previous_after is None
+            or current_after is None
+            or current_after <= previous_after
+            or current_after < current_duration - DIRECT_RESET_TRANSITION_MARGIN_SECONDS
+        ):
+            return False
+        reset_seen = True
+    return reset_seen
+
+
+def _rate_limit_window(payload: dict[str, Any], key: str) -> dict[str, Any] | None:
+    rate_limit = payload.get("rate_limit")
+    if not isinstance(rate_limit, dict):
+        return None
+    window = rate_limit.get(key)
+    return window if isinstance(window, dict) else None
 
 
 def _progressive_window_identity_is_stable(windows: list[tuple]) -> bool:
