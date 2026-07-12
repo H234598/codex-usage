@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.246 - 2026-07-12
+
+### Fixed
+
+- Der Scheduler übernimmt einen alten Fensterwert nicht mehr, wenn das
+  aktuelle bekannte Fenster eine andere Art (`5h` oder `weekly`) hat.
+- Dadurch kann ein Resetwechsel nicht mehr einen 5h-Wert als Wochenwert oder
+  umgekehrt anzeigen.
+
 ## 0.6.245 - 2026-07-12
 
 ### Fixed

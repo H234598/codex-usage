@@ -38,6 +38,7 @@ from .state import (
 
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 DIRECT_RESET_DISCONTINUITY_SECONDS = 30
+WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
 RAW_NUMBER_PATTERN = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
 LEGACY_DIRECT_RESET_FALLBACK_REASON = "previous direct limits retained after reset transition"
 AUTHENTICATED_RESET_FALLBACK_REASON = (
@@ -373,13 +374,37 @@ def _should_retain_previous_window(
 
 
 def _window_duration_matches(current: Any, previous: Any) -> bool:
+    current_kind = _window_kind(current)
+    previous_kind = _window_kind(previous)
+    if bool(current_kind) != bool(previous_kind):
+        return False
+    if current_kind and previous_kind and current_kind != previous_kind:
+        return False
     current_duration = _window_duration_seconds(current)
     previous_duration = _window_duration_seconds(previous)
+    expected_duration = WINDOW_DURATIONS.get(current_kind or previous_kind or "")
+    if expected_duration is not None and any(
+        duration is not None and duration != expected_duration
+        for duration in (current_duration, previous_duration)
+    ):
+        return False
     return (
         current_duration is None
         or previous_duration is None
         or current_duration == previous_duration
     )
+
+
+def _window_kind(window: Any) -> str | None:
+    name = getattr(window, "name", None)
+    if not isinstance(name, str):
+        return None
+    normalized = re.sub(r"[-\s]+", "_", name.strip().casefold())
+    if normalized in {"5h", "5_hour", "five_hour"}:
+        return "five_hour"
+    if normalized in {"w", "week", "weekly"}:
+        return "weekly"
+    return None
 
 
 def _window_duration_seconds(window: Any) -> int | None:

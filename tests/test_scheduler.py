@@ -1046,6 +1046,46 @@ def test_authenticated_stabilization_rejects_a_different_window_duration():
     assert result.stale is False
 
 
+def test_authenticated_stabilization_rejects_a_different_known_window_kind():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=95,
+            percent=95,
+            reset_at=datetime(2026, 7, 13, 0, 0, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="weekly",
+            remaining=99,
+            percent=99,
+            reset_at=datetime(2026, 7, 17, 0, 0, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.name == "weekly"
+    assert result.five_hour.remaining == 99
+    assert result.stale is False
+
+
 def test_scheduler_remaining_percent_prefers_absolute_usage_values():
     window = LimitWindow(
         name="5h",
