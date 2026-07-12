@@ -724,6 +724,63 @@ def test_latest_rejects_cache_when_auth_identity_changes_during_read(tmp_path, m
     assert invalidated[0].weekly is None
 
 
+@pytest.mark.parametrize(
+    ("snapshot_age", "expected_backend", "expected_remaining"),
+    [
+        (timedelta(seconds=30), "direct", 80),
+        (timedelta(minutes=10), "browser", 10),
+    ],
+)
+def test_latest_does_not_let_legacy_browser_current_hide_auth_snapshot(
+    tmp_path,
+    snapshot_age,
+    expected_backend,
+    expected_remaining,
+):
+    now = datetime.now().astimezone()
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    authenticated = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=now - snapshot_age,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=80),
+        weekly=LimitWindow(name="weekly", remaining=60),
+    )
+    browser = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=10),
+        weekly=LimitWindow(name="weekly", remaining=20),
+    )
+    save_usage_snapshot(authenticated, snapshot_dir)
+    save_current_usage(browser, snapshot_dir.parent / "current")
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].backend_used == expected_backend
+    assert result[0].five_hour is not None
+    assert result[0].five_hour.remaining == expected_remaining
+
+
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     before = datetime.now().astimezone()

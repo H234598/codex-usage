@@ -977,6 +977,37 @@ def _invalidate_cached_usage(account: Account, usage: AccountUsage) -> AccountUs
     )
 
 
+def _authenticated_snapshot_supersedes_browser_current(
+    current: AccountUsage,
+    snapshot: AccountUsage,
+    interval_seconds: int,
+) -> bool:
+    """Prefer a fresh complete authenticated snapshot over legacy browser state."""
+    if current.backend_used != "browser":
+        return False
+    if snapshot.backend_used not in {"direct", "app-server"}:
+        return False
+    if snapshot.status != AccountStatus.OK or snapshot.stale:
+        return False
+    if not backend_identity_matches(current, snapshot):
+        return False
+    if not (
+        snapshot.five_hour is not None
+        and snapshot.five_hour.has_usage_value
+        and snapshot.weekly is not None
+        and snapshot.weekly.has_usage_value
+    ):
+        return False
+    try:
+        age_seconds = (
+            datetime.now().astimezone() - snapshot.captured_at
+        ).total_seconds()
+    except (TypeError, AttributeError):
+        return False
+    freshness_window = max(int(interval_seconds), 60) + AUTHENTICATED_BRIDGE_GRACE_SECONDS
+    return 0 <= age_seconds <= freshness_window
+
+
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
     usages: list[AccountUsage] = []
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
@@ -1017,7 +1048,17 @@ def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> l
                     last_success = _invalidate_cached_usage(account, last_success)
                 if current is not None:
                     current = _invalidate_cached_usage(account, current)
-        if current is not None:
+        if (
+            current is not None
+            and last_success is not None
+            and _authenticated_snapshot_supersedes_browser_current(
+                current,
+                last_success,
+                config.interval_seconds,
+            )
+        ):
+            usage = last_success
+        elif current is not None:
             usage = merge_current_with_last_success(current, last_success)
         elif last_success is not None:
             usage = last_success
