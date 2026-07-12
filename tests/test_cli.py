@@ -122,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.292\ncodex-usage 0.6.292\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.293\ncodex-usage 0.6.293\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -609,6 +609,40 @@ def test_direct_rejects_multiple_accounts_without_per_account_auth_json(tmp_path
     capsys.readouterr()
 
     assert main(["--config", str(config_path), "once", "--direct"]) == 1
+
+    assert "requires per-account --auth-json" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ("once", "watch", "watchdog"))
+def test_backend_direct_rejects_multiple_accounts_without_per_account_auth_json(
+    tmp_path, monkeypatch, capsys, command
+):
+    config_path = tmp_path / "config.toml"
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    assert main(["--config", str(config_path), "account", "add", "work"]) == 0
+    capsys.readouterr()
+
+    if command == "once":
+        monkeypatch.setattr(
+            "codex_usage.cli.fetch_all",
+            lambda *args, **kwargs: pytest.fail("direct fetch started before validation"),
+        )
+    elif command == "watch":
+        monkeypatch.setattr(
+            "codex_usage.cli.watch",
+            lambda *args, **kwargs: pytest.fail("watch started before validation"),
+        )
+    else:
+        monkeypatch.setattr(
+            "codex_usage.cli.watchdog",
+            lambda *args, **kwargs: pytest.fail("watchdog started before validation"),
+        )
+
+    assert (
+        main(["--config", str(config_path), command, "--backend", "direct"])
+        == 1
+    )
 
     assert "requires per-account --auth-json" in capsys.readouterr().err
 

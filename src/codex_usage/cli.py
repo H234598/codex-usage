@@ -491,8 +491,8 @@ def _cmd_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
     _validate_fetch_mode_flags(args)
-    direct = bool(args.direct or args.auth_json)
     backend_override = _backend_override(args)
+    direct = bool(args.direct or args.auth_json or backend_override == "direct")
     if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     usages = fetch_all(
@@ -514,8 +514,8 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     _validate_fetch_mode_flags(args)
     if args.interval is not None and args.interval < 60:
         raise ValueError("--interval must be at least 60 seconds")
-    direct = bool(args.direct or args.auth_json)
     backend_override = _backend_override(args)
+    direct = bool(args.direct or args.auth_json or backend_override == "direct")
     if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     watch(
@@ -535,8 +535,8 @@ def _cmd_watchdog(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
     _validate_fetch_mode_flags(args)
-    direct = bool(args.direct or args.auth_json)
     backend_override = _backend_override(args)
+    direct = bool(args.direct or args.auth_json or backend_override == "direct")
     if direct:
         _validate_direct_auth_mapping(accounts, args.auth_json)
     usages = watchdog(
