@@ -8,7 +8,7 @@ import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -41,6 +41,7 @@ from .state import (
 )
 
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
+MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
 DIRECT_RESET_DISCONTINUITY_SECONDS = 30
 WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
 RAW_NUMBER_PATTERN = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -601,6 +602,7 @@ def watchdog(
         snapshot = load_usage_snapshot(account.id)
         if (
             snapshot is not None
+            and not _capture_is_too_far_in_future(snapshot, now)
             and _blocked_until_active(snapshot, now=now)
             and _blocked_snapshot_matches_account(
                 account,
@@ -713,6 +715,18 @@ def _blocked_until_active(usage: AccountUsage, *, now: datetime) -> bool:
         and usage.blocked_until is not None
         and usage.blocked_until > now
     )
+
+
+def _capture_is_too_far_in_future(
+    usage: AccountUsage | None,
+    reference_at: datetime,
+) -> bool:
+    if usage is None:
+        return False
+    try:
+        return usage.captured_at > reference_at + timedelta(seconds=MAX_CAPTURE_FUTURE_SECONDS)
+    except (TypeError, ValueError, OverflowError):
+        return True
 
 
 def _blocked_snapshot_matches_account(

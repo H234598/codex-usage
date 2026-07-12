@@ -1312,6 +1312,59 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
     assert saved == ["ok"]
 
 
+def test_watchdog_refetches_far_future_blocked_snapshot(monkeypatch):
+    account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
+    now = datetime.now().astimezone()
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now + timedelta(hours=1),
+        status=AccountStatus.BLOCKED,
+        blocked_until=now + timedelta(hours=2),
+        backend_used="browser",
+    )
+    fresh = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=99),
+        weekly=LimitWindow(name="weekly", remaining=98),
+        backend_used="browser",
+    )
+    fetched_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        fetched_accounts.extend(account.id for account in fetch_accounts)
+        return [fresh]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+    )
+
+    assert fetched_accounts == ["blocked"]
+    assert result == [fresh]
+
+
 def test_watchdog_refetches_when_newer_current_supersedes_blocked_snapshot(monkeypatch):
     account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
     timezone = ZoneInfo("Europe/Berlin")
