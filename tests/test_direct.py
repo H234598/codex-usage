@@ -293,6 +293,38 @@ def test_select_stable_wham_usage_does_not_choose_empty_majority():
         _select_stable_wham_usage([complete, empty, empty])
 
 
+def test_select_stable_wham_usage_does_not_choose_reset_only_majority():
+    complete = {
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 3,
+                "limit_window_seconds": 18000,
+                "reset_at": 1780894250,
+            },
+            "secondary_window": {
+                "used_percent": 45,
+                "limit_window_seconds": 604800,
+                "reset_at": 1781060750,
+            },
+        }
+    }
+    reset_only = {
+        "rate_limit": {
+            "primary_window": {
+                "limit_window_seconds": 18000,
+                "reset_at": 1780894250,
+            },
+            "secondary_window": {
+                "limit_window_seconds": 604800,
+                "reset_at": 1781060750,
+            },
+        }
+    }
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _select_stable_wham_usage([complete, reset_only, reset_only])
+
+
 def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):
     responses = iter(
         (

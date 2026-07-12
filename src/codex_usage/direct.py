@@ -776,7 +776,12 @@ def _signature_reset(value: Any) -> int | None:
 
 def _usage_response_completeness(payload: dict[str, Any]) -> int:
     _identity, windows = _usage_response_signature(payload)
-    return sum(value is not None for value in windows)
+    return sum(
+        value is not None
+        and value[1] is not None
+        and 0 <= value[1] <= 100
+        for value in windows
+    )
 
 
 def _usage_response_progresses(

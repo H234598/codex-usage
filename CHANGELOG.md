@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.264 - 2026-07-12
+
+### Fixed
+
+- Direct-Sample-Quoren zählen Reset-only- und ungültige Fenster nicht mehr als
+  vollständige Nutzungswerte.
+  Reine Reset-Metadaten können dadurch keine echten Verbrauchswerte verdrängen.
+
 ## 0.6.263 - 2026-07-12
 
 ### Fixed
