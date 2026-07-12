@@ -5,11 +5,17 @@ import json
 import shutil
 import subprocess
 from datetime import datetime, timedelta
+from http.server import ThreadingHTTPServer
+from threading import Thread
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from codex_usage.bridge import (
+    _make_handler,
+    bridge_token_for_account,
     ingest_and_save,
     render_bridge_snippet,
     save_bridge_debug_payload,
@@ -1210,6 +1216,7 @@ def test_save_bridge_debug_payload_rejects_symlink_debug_file(tmp_path):
 
 
 def test_render_bridge_snippet_contains_account_endpoint_and_interval():
+    token = bridge_token_for_account("BW_Privat")
     snippet = render_bridge_snippet(
         "BW_Privat",
         endpoint="http://127.0.0.1:8765/ingest",
@@ -1220,9 +1227,12 @@ def test_render_bridge_snippet_contains_account_endpoint_and_interval():
     assert '"http://127.0.0.1:8765/ingest"' in snippet
     assert "setInterval" in snippet
     assert "300000" in snippet
+    assert '"Authorization": "Bearer " + token' in snippet
+    assert token in snippet
 
 
 def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
+    token = bridge_token_for_account("BW_Privat")
     output = write_bridge_extension(
         "BW_Privat",
         tmp_path / "extension",
@@ -1250,6 +1260,8 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert manifest["content_scripts"][1]["world"] == "MAIN"
     assert manifest["content_scripts"][1]["js"] == ["page-hook.js"]
     assert "fetch(ENDPOINT" in background
+    assert f'const TOKEN = "{token}";' in background
+    assert '"Authorization": "Bearer " + TOKEN' in background
     assert "chrome.runtime.sendMessage" in content
     assert "/backend-api/wham/usage" in content
     assert '"/wham/usage"' not in content
@@ -1294,6 +1306,108 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "requestSequence" in page_hook
     assert "/backend-api/wham/" in page_hook
     assert 'source: "page-fetch"' in page_hook
+
+
+def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "user-test",
+                                "chatgpt_account_id": "account-test",
+                            }
+                        }
+                    ),
+                    "account_id": "account-test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+    config = AppConfig(accounts=(account,))
+    token = bridge_token_for_account(account.id)
+    handler = _make_handler(
+        config,
+        tmp_path / "snapshots",
+        {account.id: token},
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = f"http://127.0.0.1:{server.server_address[1]}/ingest"
+    payload = {
+        "account": account.id,
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "user-test",
+                        "account_id": "account-test",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+    body = json.dumps(payload).encode("utf-8")
+
+    def post(headers=None):
+        request = Request(endpoint, data=body, method="POST", headers=headers or {})
+        return urlopen(request, timeout=5)
+
+    try:
+        with pytest.raises(HTTPError) as missing:
+            post()
+        assert missing.value.code == 401
+        with pytest.raises(HTTPError) as wrong:
+            post({"Authorization": "Bearer wrong-token"})
+        assert wrong.value.code == 401
+        with post({"Authorization": f"Bearer {token}"}) as response:
+            assert response.status == 200
+            assert json.loads(response.read())["status"] == "ok"
+        options = Request(
+            endpoint,
+            method="OPTIONS",
+            headers={
+                "Origin": "https://chatgpt.com",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+        with urlopen(options, timeout=5) as response:
+            assert response.status == 204
+            assert "Authorization" in response.headers["Access-Control-Allow-Headers"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    token_path = tmp_path / "data" / "codex-usage" / "bridge-tokens" / "privat.token"
+    assert token_path.read_text(encoding="utf-8").strip() == token
+    assert token_path.stat().st_mode & 0o077 == 0
 
 
 def test_generated_content_refreshes_page_usage_before_ingest(tmp_path):

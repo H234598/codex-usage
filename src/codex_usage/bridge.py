@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hmac
 import json
 import re
+import secrets
 import sys
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -26,6 +28,8 @@ from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
 from .private_io import (
     assert_no_symlink_ancestors,
+    private_path_lock,
+    read_private_text,
 )
 from .private_io import (
     write_private_text as write_private_output_text,
@@ -42,6 +46,7 @@ from .state import (
 
 MAX_INGEST_BYTES = 10_000_000
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
+BRIDGE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{32,128}")
 TEXT_PAYLOAD_FIELDS = (
     "bodyText",
     "body_text",
@@ -418,13 +423,58 @@ def _sanitize_debug_flags(value: Any) -> dict[str, bool] | None:
     return flags or None
 
 
-def render_bridge_snippet(account_ref: str, *, endpoint: str, interval_seconds: int) -> str:
+def bridge_token_for_account(account_ref: str) -> str:
+    if not isinstance(account_ref, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,64}", account_ref
+    ):
+        raise ValueError("account id must be valid for bridge token storage")
+    token_dir = default_state_dir() / "bridge-tokens"
+    _prepare_private_directory(token_dir, label="bridge token directory")
+    path = token_dir / f"{account_ref}.token"
+    with private_path_lock(path, label="bridge token lock"):
+        if path.exists():
+            text, _ = read_private_text(
+                path,
+                regular_label="bridge token path",
+                read_label="bridge token",
+                max_bytes=256,
+                too_large_label="bridge token",
+                invalid_utf8_label="bridge token",
+            )
+            return _validate_bridge_token(text.strip())
+        token = secrets.token_urlsafe(32)
+        write_private_output_text(
+            path,
+            token + "\n",
+            label="bridge token path",
+            mode=0o600,
+        )
+        return token
+
+
+def _validate_bridge_token(token: str) -> str:
+    if not isinstance(token, str) or not BRIDGE_TOKEN_RE.fullmatch(token):
+        raise ValueError("invalid bridge token")
+    return token
+
+
+def render_bridge_snippet(
+    account_ref: str,
+    *,
+    endpoint: str,
+    interval_seconds: int,
+    token: str | None = None,
+) -> str:
     account_json = json.dumps(account_ref)
     endpoint_json = json.dumps(endpoint)
+    token_json = json.dumps(
+        _validate_bridge_token(token) if token else bridge_token_for_account(account_ref)
+    )
     interval_ms = max(interval_seconds, 60) * 1000
     return f"""(() => {{
   const account = {account_json};
   const endpoint = {endpoint_json};
+  const token = {token_json};
   const intervalMs = {interval_ms};
   async function sendCodexUsage() {{
     const payload = {{
@@ -436,7 +486,10 @@ def render_bridge_snippet(account_ref: str, *, endpoint: str, interval_seconds: 
     }};
     const response = await fetch(endpoint, {{
       method: "POST",
-      headers: {{ "Content-Type": "application/json" }},
+      headers: {{
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token
+      }},
       body: JSON.stringify(payload)
     }});
     console.log("codex-usage bridge", response.status, await response.text());
@@ -452,7 +505,9 @@ def write_bridge_extension(
     *,
     endpoint: str,
     interval_seconds: int,
+    token: str | None = None,
 ) -> Path:
+    token = _validate_bridge_token(token) if token else bridge_token_for_account(account_ref)
     _prepare_private_directory(output_dir, label="extension output directory")
     manifest = {
         "manifest_version": 3,
@@ -482,7 +537,7 @@ def write_bridge_extension(
     }
     files = {
         "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False),
-        "background.js": _render_extension_background(endpoint),
+        "background.js": _render_extension_background(endpoint, token),
         "content.js": _render_extension_content(account_ref, interval_seconds),
         "page-hook.js": _render_extension_page_hook(),
     }
@@ -516,7 +571,11 @@ def run_bridge_server(
     port: int,
     snapshot_dir: Path | None = None,
 ) -> None:
-    handler = _make_handler(config, snapshot_dir)
+    tokens = {
+        account.id: bridge_token_for_account(account.id)
+        for account in config.accounts
+    }
+    handler = _make_handler(config, snapshot_dir, tokens)
     server = ThreadingHTTPServer((host, port), handler)
     print(f"Bridge-Server: http://{host}:{port}/ingest")
     print("Stop: Ctrl+C")
@@ -657,7 +716,11 @@ def _mark_latest_stale(usage: AccountUsage, interval_seconds: int) -> AccountUsa
     return usage
 
 
-def _make_handler(config: AppConfig, snapshot_dir: Path | None):
+def _make_handler(
+    config: AppConfig,
+    snapshot_dir: Path | None,
+    tokens: dict[str, str],
+):
     class BridgeHandler(BaseHTTPRequestHandler):
         server_version = "codex-usage-bridge/0.1"
 
@@ -692,6 +755,9 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
                 return
 
             account_ref = str(payload.get("account") or "")
+            if not self._is_authorized(account_ref):
+                self._send_json(401, {"error": "authorization required"})
+                return
             try:
                 usage, path = ingest_and_save(
                     config,
@@ -752,7 +818,7 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
             self.send_response(status)
             self.send_header("Access-Control-Allow-Origin", self._allowed_origin())
             self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
             self.send_header("Content-Type", content_type)
             if length:
                 self.send_header("Content-Length", str(length))
@@ -771,6 +837,15 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
                 or origin == "https://chatgpt.com"
                 or origin.startswith("chrome-extension://")
             )
+
+        def _is_authorized(self, account_ref: str) -> bool:
+            expected = tokens.get(account_ref)
+            authorization = self.headers.get("Authorization", "")
+            prefix = "Bearer "
+            if not expected or not authorization.startswith(prefix):
+                return False
+            supplied = authorization[len(prefix):].strip()
+            return hmac.compare_digest(supplied, expected)
 
     return BridgeHandler
 
@@ -800,9 +875,11 @@ def _redact_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
-def _render_extension_background(endpoint: str) -> str:
+def _render_extension_background(endpoint: str, token: str) -> str:
     endpoint_json = json.dumps(endpoint)
+    token_json = json.dumps(_validate_bridge_token(token))
     return f"""const ENDPOINT = {endpoint_json};
+const TOKEN = {token_json};
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {{
   if (!message || message.type !== "codexUsageIngest") {{
@@ -810,7 +887,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {{
   }}
   fetch(ENDPOINT, {{
     method: "POST",
-    headers: {{ "Content-Type": "application/json" }},
+    headers: {{
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + TOKEN
+    }},
     body: JSON.stringify(message.payload)
   }})
     .then(async (response) => {{

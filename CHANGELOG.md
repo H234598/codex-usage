@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.203 - 2026-07-12
+
+### Security
+
+- Der HTTP-Bridge-Server verlangt jetzt ein zufällig erzeugtes, pro Account
+  gespeichertes Bearer-Token. Unautorisierte lokale Programme und fremde
+  Browser-Extensions können dadurch keine plausiblen Nutzungswerte mehr
+  einspeisen.
+- `bridge-snippet` und `bridge-extension` verwenden automatisch dasselbe
+  private Token; CORS-Preflight erlaubt den neuen `Authorization`-Header.
+- Token-Dateien werden atomar und mit Modus `0600` unter
+  `~/.local/share/codex-usage/bridge-tokens/` verwaltet.
+
 ## 0.6.202 - 2026-07-12
 
 ### Fixed
