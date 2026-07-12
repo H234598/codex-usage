@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.329 - 2026-07-12
+
+### Fixed
+
+- Ungültige Reset-Zeitstempel verhindern jetzt die Wiederverwendung alter
+  Cachewerte im Cinnamon-Applet.
+
 ## 0.6.328 - 2026-07-12
 
 ### Fixed

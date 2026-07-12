@@ -2667,7 +2667,7 @@ CodexUsageApplet.prototype = {
         }
         let resetMs = this._dateMillis(window.reset_at);
         let referenceMs = this._dateMillis(referenceAt);
-        return resetMs !== null && referenceMs !== null && resetMs <= referenceMs;
+        return resetMs === null || referenceMs === null || resetMs <= referenceMs;
     },
 
     _windowKind: function(window) {
