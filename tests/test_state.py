@@ -246,6 +246,37 @@ def test_authoritative_empty_direct_limits_do_not_restore_old_values():
     assert merged == current
 
 
+@pytest.mark.parametrize("backend", ("direct", "app-server"))
+def test_partial_authenticated_limits_do_not_restore_missing_window(backend):
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        weekly=LimitWindow(name="weekly", remaining=55),
+        status=AccountStatus.PARTIAL,
+        backend_used=backend,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=70),
+        backend_used=backend,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour is None
+    assert merged.weekly == current.weekly
+    assert merged.stale is False
+
+
 def test_merge_rejects_identified_current_data_from_unknown_cached_account():
     captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
     current = AccountUsage(

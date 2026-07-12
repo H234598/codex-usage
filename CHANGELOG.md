@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.180 - 2026-07-12
+
+### Fixed
+
+- Authentifizierte partielle Abrufe restaurieren fehlende 5h-/Wochenfenster
+  nicht mehr aus einem alten Snapshot. So kann ein Wechsel des
+  Limitmodells keinen veralteten Wert als aktuell anzeigen.
+- Browser- und Bridge-Partials behalten ihren bisherigen Cache-Fallback.
+- Regressionen für Direct und App Server ergänzt.
+
 ## 0.6.179 - 2026-07-12
 
 ### Fixed

@@ -22,6 +22,7 @@ MAX_SNAPSHOT_BYTES = 1_000_000
 SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 MAX_SNAPSHOT_TEXT = 500
 MAX_SNAPSHOT_URLS = 20
+AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 
 
 def default_snapshot_dir() -> Path:
@@ -169,15 +170,21 @@ def merge_current_with_last_success(
             return last_success
     except TypeError:
         pass
+    preserve_missing_window_values = not (
+        current.status == AccountStatus.PARTIAL
+        and current.backend_used in AUTHENTICATED_BACKENDS
+    )
     five_hour = _merge_window_with_last_success(
         current.five_hour,
         last_success.five_hour,
         reference_at=current.captured_at,
+        preserve_missing_value=preserve_missing_window_values,
     )
     weekly = _merge_window_with_last_success(
         current.weekly,
         last_success.weekly,
         reference_at=current.captured_at,
+        preserve_missing_value=preserve_missing_window_values,
     )
     if five_hour is current.five_hour and weekly is current.weekly:
         return current
@@ -204,10 +211,17 @@ def _merge_window_with_last_success(
     last_success: LimitWindow | None,
     *,
     reference_at: datetime,
+    preserve_missing_value: bool = True,
 ) -> LimitWindow | None:
     if current is None:
-        return None if _window_reset_expired(last_success, reference_at) else last_success
+        return (
+            last_success
+            if preserve_missing_value and not _window_reset_expired(last_success, reference_at)
+            else None
+        )
     if last_success is None:
+        return current
+    if not preserve_missing_value and not current.has_usage_value:
         return current
     if current.has_usage_value:
         if current.reset_at is None and last_success.reset_at is not None:
