@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.265 - 2026-07-12
+
+### Fixed
+
+- Ein bereits einmal verwendeter App-Server-Fallback blockiert bestätigte
+  Werte des nächsten App-Server-Polls nicht mehr dauerhaft.
+  Die Direct-Wiederholungsabsicherung bleibt unverändert bestehen.
+
 ## 0.6.264 - 2026-07-12
 
 ### Fixed

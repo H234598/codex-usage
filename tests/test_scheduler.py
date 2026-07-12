@@ -737,6 +737,47 @@ def test_authenticated_reset_fallback_is_applied_per_window():
     assert result.stale is True
 
 
+def test_authenticated_app_server_fallback_is_not_reused_after_confirmation():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=90,
+            reset_at=datetime(2026, 7, 12, 4, 40, 41, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=80,
+            reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
+        ),
+        backend_used="app-server",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+        fallback_reason="previous authenticated limits retained after reset transition",
+        stale=True,
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=replace(
+            previous.five_hour,
+            remaining=100,
+            reset_at=datetime(2026, 7, 12, 9, 42, 0, tzinfo=timezone),
+        ),
+        fallback_reason=None,
+        stale=False,
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+    assert result.five_hour is not None and result.five_hour.remaining == 100
+    assert result.stale is False
+
+
 def test_fetch_all_reuses_direct_reset_fallback_on_next_poll(monkeypatch):
     account = Account(
         id="direct",

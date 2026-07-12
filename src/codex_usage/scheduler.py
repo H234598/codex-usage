@@ -275,6 +275,15 @@ def _stabilize_authenticated_usage(
         return usage
     if age_seconds < 0 or age_seconds > max_age_seconds:
         return usage
+    if (
+        usage.backend_used == "app-server"
+        and previous.backend_used == "app-server"
+        and previous.fallback_reason == AUTHENTICATED_RESET_FALLBACK_REASON
+    ):
+        # An app-server value that repeats after one guarded transition is
+        # evidence for the new window, not another reason to preserve the
+        # already-stale fallback indefinitely.
+        return usage
     retain_five_hour = _should_retain_previous_window(
         usage.five_hour,
         previous.five_hour,
