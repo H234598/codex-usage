@@ -39,6 +39,33 @@ def test_extract_windows_from_german_dom_text():
     assert weekly.remaining == 690
 
 
+def test_extract_windows_does_not_treat_limit_only_as_usage():
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/other",
+        payload={
+            "five_hour": {
+                "limit": 100,
+                "reset_at": "2026-07-12T14:00:00+02:00",
+            },
+            "weekly": {
+                "limit": 100,
+                "reset_at": "2026-07-18T08:00:00+02:00",
+            },
+        },
+    )
+
+    five, weekly = extract_windows(
+        body_text="",
+        json_candidates=[candidate],
+        now=datetime(2026, 7, 12, 11, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None and five.limit == 100
+    assert weekly is not None and weekly.limit == 100
+    assert five.has_usage_value is False
+    assert weekly.has_usage_value is False
+
+
 def test_parse_datetime_rejects_unrepresentable_timezone_conversion():
     captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
 

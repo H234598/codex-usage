@@ -380,6 +380,36 @@ def test_usage_from_ingest_payload_marks_reset_only_windows_partial():
     assert usage.status == AccountStatus.PARTIAL
 
 
+def test_usage_from_ingest_payload_marks_limit_only_windows_partial():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "capturedAt": "2026-07-12T11:00:00+02:00",
+            "jsonResponses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/other",
+                    "status": 200,
+                    "bodyText": json.dumps(
+                        {
+                            "five_hour": {
+                                "limit": 100,
+                                "reset_at": "2026-07-12T14:00:00+02:00",
+                            },
+                            "weekly": {
+                                "limit": 100,
+                                "reset_at": "2026-07-18T08:00:00+02:00",
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert usage.status == AccountStatus.PARTIAL
+
+
 def test_usage_from_ingest_payload_uses_full_dom_payload_fields():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(

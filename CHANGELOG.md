@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.230 - 2026-07-12
+
+### Fixed
+
+- Fenster mit ausschließlich `limit` und Resetzeit gelten nicht mehr als
+  vorhandene Nutzungswerte.
+- Direct-, Bridge-, Browser- und App-Server-Status können dadurch keine
+  scheinbar vollständigen Accounts ohne Verbrauchs-/Restwert melden.
+- Regressionen für limit-only JSON-Fenster und Bridge-Payloads ergänzt.
+
 ## 0.6.229 - 2026-07-12
 
 ### Fixed

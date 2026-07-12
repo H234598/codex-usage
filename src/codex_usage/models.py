@@ -43,7 +43,7 @@ class LimitWindow:
     def has_usage_value(self) -> bool:
         return any(
             value is not None
-            for value in (self.used, self.limit, self.remaining, self.percent)
+            for value in (self.used, self.remaining, self.percent)
         )
 
 
