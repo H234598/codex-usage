@@ -404,6 +404,15 @@ def canonical_backend_identity(
         != _normalized_plan_type(backend_plan_type)
     ):
         raise ValueError("backend response belongs to a different account")
+    if (
+        auth_plan_type
+        and auth_user_id
+        and auth_account_id
+        and backend_account_id == auth_user_id
+        and backend_account_id != auth_account_id
+        and not backend_plan_type
+    ):
+        raise ValueError("backend response belongs to a different account")
     if not _response_identity_matches_auth(
         backend_user_id=backend_user_id,
         backend_account_id=backend_account_id,

@@ -544,9 +544,11 @@ def test_fetch_account_usage_direct_accepts_same_account_with_different_user_id(
     assert usage.backend_account_id == "server-account"
 
 
+@pytest.mark.parametrize("plan_type", ["enterprise", None])
 def test_fetch_account_usage_direct_rejects_shared_user_response_with_different_plan(
     tmp_path,
     monkeypatch,
+    plan_type,
 ):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
@@ -588,7 +590,7 @@ def test_fetch_account_usage_direct_rejects_shared_user_response_with_different_
                     },
                     "user_id": "shared-user",
                     "account_id": "shared-user",
-                    "plan_type": "enterprise",
+                    "plan_type": plan_type,
                 }
             ).encode("utf-8")
 

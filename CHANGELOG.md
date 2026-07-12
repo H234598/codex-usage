@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.174 - 2026-07-12
+
+### Fixed
+
+- Ein Limitfenster mit gemeinsamer `user_id`, aber ohne prüfbaren `plan_type`,
+  wird bei vorhandener Account-ID nicht mehr als aktueller Account akzeptiert.
+- Damit bleibt die mehrdeutige Browser-/Backend-Antwort fail-closed, statt
+  Werte eines anderen Accounts anzuzeigen.
+- Regression für fehlenden Tariftyp ergänzt.
+
 ## 0.6.173 - 2026-07-12
 
 ### Fixed
