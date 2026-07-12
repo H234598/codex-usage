@@ -1200,10 +1200,11 @@ CodexUsageApplet.prototype = {
                 );
                 let configured = this._safeBackend(usage.backend_configured);
                 let used = this._safeBackend(usage.backend_used, true);
+                let authenticated = used === "direct" || used === "app-server";
                 if (
                     hasState &&
                     !configured &&
-                    !used &&
+                    !authenticated &&
                     previousBackend &&
                     previousBackend !== expectedBackend
                 ) {

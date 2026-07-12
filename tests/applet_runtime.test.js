@@ -1109,6 +1109,43 @@ test("backend synchronization clears unknown values after a backend change", () 
   assert.equal(applet._usages[0].stale, true);
 });
 
+test("backend synchronization clears browser values without configured provenance", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    label: "Alpha",
+    backend_configured: "",
+    backend_used: "browser",
+    status: "partial",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 }
+  }];
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 }
+  };
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._syncAccountSettings = () => {};
+  applet._syncStyleRows = () => {};
+  applet._addIdle = () => {};
+  applet._refreshFormattedSurfaces = () => {};
+  applet._refreshFresh = () => {};
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "app-server" }]
+  }, null);
+
+  applet._loadAccountBackends();
+
+  assert.equal(applet._usages.length, 1);
+  assert.equal(applet._usages[0].backend_configured, "app-server");
+  assert.equal(applet._usages[0].backend_used, "");
+  assert.equal(applet._usages[0].five_hour, null);
+  assert.equal(applet._usages[0].weekly, null);
+  assert.equal(applet._usages[0].stale, true);
+});
+
 test("backend synchronization cancels reactivation for removed accounts only", () => {
   const applet = makeApplet();
   let removedForced = 0;
