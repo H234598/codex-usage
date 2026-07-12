@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.344 - 2026-07-13
+
+### Fixed
+
+- Bridge-Captures werden jetzt mit einer DST-faehigen lokalen Zeitzone
+  interpretiert, auch bei naiven oder historischen ISO-Zeitstempeln.
+
 ## 0.6.343 - 2026-07-13
 
 ### Fixed

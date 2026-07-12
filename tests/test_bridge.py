@@ -15,6 +15,7 @@ import pytest
 
 from codex_usage.bridge import (
     _make_handler,
+    _parse_captured_at,
     bridge_token_for_account,
     bridge_token_matches,
     ingest_and_save,
@@ -41,6 +42,15 @@ def _jwt_with_claims(claims: dict) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=").decode()
     return f"{header}.{payload}.signature"
+
+
+def test_parse_captured_at_uses_dst_aware_local_zone(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr("codex_usage.bridge.LOCAL_TZ", berlin)
+    expected = datetime(2026, 1, 15, 0, 15, tzinfo=berlin)
+
+    assert _parse_captured_at("2026-01-15T00:15:00") == expected
+    assert _parse_captured_at("2026-01-14T23:15:00Z") == expected
 
 
 def test_latest_default_cache_uses_shared_account_lock(monkeypatch):

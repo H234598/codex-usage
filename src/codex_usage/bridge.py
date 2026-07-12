@@ -25,7 +25,7 @@ from .direct import (
     auth_plan_type_for_account,
     canonical_backend_identity,
 )
-from .extractor import JsonCandidate, extract_windows, load_json_candidate
+from .extractor import LOCAL_TZ, JsonCandidate, extract_windows, load_json_candidate
 from .identity import (
     backend_identity_from_candidates,
     backend_identity_from_payload,
@@ -1079,7 +1079,7 @@ def _authenticated_snapshot_supersedes_browser_current(
         return False
     try:
         age_seconds = (
-            datetime.now().astimezone() - snapshot.captured_at
+            datetime.now(tz=LOCAL_TZ) - snapshot.captured_at
         ).total_seconds()
     except (TypeError, AttributeError):
         return False
@@ -1100,7 +1100,7 @@ def _load_latest_usages_unlocked(
 ) -> list[AccountUsage]:
     usages: list[AccountUsage] = []
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
-    reference_at = datetime.now().astimezone()
+    reference_at = datetime.now(tz=LOCAL_TZ)
     for account in config.accounts:
         last_success = load_usage_snapshot(account.id, snapshot_dir)
         current = load_current_usage(account.id, current_dir)
@@ -1181,7 +1181,7 @@ def _capture_is_too_far_in_future(
 def _mark_latest_stale(usage: AccountUsage, interval_seconds: int) -> AccountUsage:
     grace_seconds = max(60, interval_seconds + 60)
     try:
-        age_seconds = (datetime.now().astimezone() - usage.captured_at).total_seconds()
+        age_seconds = (datetime.now(tz=LOCAL_TZ) - usage.captured_at).total_seconds()
     except (TypeError, ValueError, OverflowError):
         age_seconds = grace_seconds + 1
     if usage.stale or age_seconds > grace_seconds:
@@ -1352,11 +1352,14 @@ def _log_bridge_error(message: str, exc: Exception) -> None:
 
 
 def _parse_captured_at(value: Any) -> datetime:
-    received_at = datetime.now().astimezone()
+    received_at = datetime.now(tz=LOCAL_TZ)
     if value:
         try:
             parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            parsed = parsed.astimezone()
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                parsed = parsed.replace(tzinfo=LOCAL_TZ)
+            else:
+                parsed = parsed.astimezone(LOCAL_TZ)
         except (OSError, OverflowError, ValueError):
             pass
         else:
