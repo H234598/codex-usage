@@ -774,6 +774,88 @@ def test_fetch_stable_wham_usage_accepts_latest_relative_reset_transition(
     assert payload["rate_limit"]["primary_window"]["used_percent"] == 0
 
 
+def test_fetch_stable_wham_usage_rejects_reset_with_missing_counterpart(
+    monkeypatch,
+):
+    def response(primary_used: int, primary_after: int, *, include_secondary: bool) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": primary_used,
+                    "limit_window_seconds": 18000,
+                    "reset_after_seconds": primary_after,
+                    "reset_at": 1783860000 if primary_after < 18000 else 1783878000,
+                },
+                "secondary_window": (
+                    {
+                        "used_percent": 10,
+                        "limit_window_seconds": 604800,
+                        "reset_after_seconds": 604800,
+                        "reset_at": 1784415934,
+                    }
+                    if include_secondary
+                    else None
+                ),
+            },
+        }
+
+    responses = iter(
+        (
+            response(5, 120, include_secondary=True),
+            response(5, 118, include_secondary=True),
+            response(0, 18000, include_secondary=False),
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
+def test_fetch_stable_wham_usage_rejects_reset_with_large_counterpart_jump(
+    monkeypatch,
+):
+    def response(primary_used: int, primary_after: int, secondary_used: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": primary_used,
+                    "limit_window_seconds": 18000,
+                    "reset_after_seconds": primary_after,
+                    "reset_at": 1783860000 if primary_after < 18000 else 1783878000,
+                },
+                "secondary_window": {
+                    "used_percent": secondary_used,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 604800,
+                    "reset_at": 1784415934,
+                },
+            },
+        }
+
+    responses = iter(
+        (
+            response(5, 120, 10),
+            response(5, 118, 10),
+            response(0, 18000, 80),
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 def test_fetch_stable_wham_usage_accepts_reset_when_usage_percent_is_unchanged(
     monkeypatch,
 ):

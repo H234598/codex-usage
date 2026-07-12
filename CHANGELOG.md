@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.323 - 2026-07-12
+
+### Fixed
+
+- Ein relativer Reset akzeptiert keinen unvollständigen oder widersprüchlichen
+  neuesten Snapshot mehr. Fehlende Gegenfenster, instabile Fensteridentitäten
+  und große Sprünge im nicht zurückgesetzten Fenster lösen stattdessen eine
+  erneute Abfrage aus.
+
 ## 0.6.322 - 2026-07-12
 
 ### Fixed

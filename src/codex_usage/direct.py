@@ -908,18 +908,36 @@ def _latest_response_is_relative_reset(
         previous_window = _rate_limit_window(previous, window_key)
         current_window = _rate_limit_window(payloads[-1], window_key)
         if previous_window is None or current_window is None:
-            continue
+            if previous_window is None and current_window is None:
+                continue
+            # A reset transition must not turn a complete sample into a
+            # partial one. Otherwise one fresh window can make us accept a
+            # response that silently drops the other account limit.
+            return False
         previous_used = _signature_number(previous_window.get("used_percent"))
         current_used = _signature_number(current_window.get("used_percent"))
-        if (
-            previous_used is None
-            or current_used is None
-            or current_used > previous_used
-        ):
-            continue
-        usage_decreased = current_used < previous_used
+        if previous_used is None or current_used is None:
+            if previous_used is None and current_used is None:
+                continue
+            return False
         previous_duration = _signature_number(previous_window.get("limit_window_seconds"))
         current_duration = _signature_number(current_window.get("limit_window_seconds"))
+        previous_identity = _signature_reset_identity(previous_window)
+        current_identity = _signature_reset_identity(current_window)
+        if current_used > previous_used:
+            # The reset candidate is sampled immediately after the majority.
+            # Permit only a small monotone change in the non-reset window and
+            # require its window identity to remain unchanged.
+            if (
+                previous_duration is None
+                or current_duration is None
+                or previous_duration != current_duration
+                or previous_identity != current_identity
+                or current_used - previous_used > DIRECT_PROGRESSIVE_STEP_PERCENT
+            ):
+                return False
+            continue
+        usage_decreased = current_used < previous_used
         previous_after = _signature_number(previous_window.get("reset_after_seconds"))
         current_after = _signature_number(current_window.get("reset_after_seconds"))
         if not usage_decreased:
