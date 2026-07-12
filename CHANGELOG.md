@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.278 - 2026-07-12
+
+### Security
+
+- Ein aktueller authentifizierter Current-Stand kann nicht mehr von einem
+  zeitnahen Browser-Bridge-Payload überschrieben werden.
+
 ## 0.6.277 - 2026-07-12
 
 ### Security

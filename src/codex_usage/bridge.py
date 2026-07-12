@@ -57,6 +57,7 @@ from .state import (
 
 MAX_INGEST_BYTES = 10_000_000
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
+AUTHENTICATED_BRIDGE_GRACE_SECONDS = 60
 BRIDGE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{32,128}")
 TEXT_PAYLOAD_FIELDS = (
     "bodyText",
@@ -809,10 +810,39 @@ def ingest_and_save(
                 raise ValueError("bridge payload is older than known state")
         except TypeError:
             pass
+    if known is not None and _browser_payload_is_covered_by_authenticated_state(
+        config,
+        usage,
+        known,
+    ):
+        raise ValueError("browser payload cannot replace current authenticated state")
     path = save_usage_snapshot(usage, snapshot_dir)
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     save_current_usage(usage, current_dir)
     return usage, path
+
+
+def _browser_payload_is_covered_by_authenticated_state(
+    config: AppConfig,
+    browser_usage: AccountUsage,
+    known_usage: AccountUsage,
+) -> bool:
+    if browser_usage.backend_used != "browser":
+        return False
+    if known_usage.backend_used not in {"direct", "app-server"}:
+        return False
+    if known_usage.status not in {
+        AccountStatus.OK,
+        AccountStatus.PARTIAL,
+        AccountStatus.BLOCKED,
+    }:
+        return False
+    try:
+        age = (browser_usage.captured_at - known_usage.captured_at).total_seconds()
+    except (AttributeError, TypeError):
+        return False
+    freshness_window = max(int(config.interval_seconds), 60) + AUTHENTICATED_BRIDGE_GRACE_SECONDS
+    return 0 <= age <= freshness_window
 
 
 def _newest_known_usage(
