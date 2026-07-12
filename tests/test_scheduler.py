@@ -120,6 +120,38 @@ def test_ambiguous_direct_accounts_allows_shared_users_with_distinct_plans(
     assert _ambiguous_direct_accounts(accounts) == frozenset()
 
 
+def test_ambiguous_direct_accounts_normalizes_plan_aliases(monkeypatch):
+    accounts = [
+        Account(
+            id="pro",
+            label="Pro",
+            profile_dir="/tmp/pro",
+            auth_json_path="/tmp/pro-auth.json",
+        ),
+        Account(
+            id="plus",
+            label="Plus",
+            profile_dir="/tmp/plus",
+            auth_json_path="/tmp/plus-auth.json",
+        ),
+    ]
+    identities = {
+        "pro": ("shared-user", "pro-account"),
+        "plus": ("shared-user", "plus-account"),
+    }
+    plans = {"pro": "pro", "plus": "plus"}
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda account: identities[account.id],
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_plan_type_for_account",
+        lambda account: plans[account.id],
+    )
+
+    assert _ambiguous_direct_accounts(accounts) == frozenset({"pro", "plus"})
+
+
 def test_fetch_all_passes_ambiguous_identity_guard_to_direct_reader(monkeypatch):
     accounts = (
         Account(

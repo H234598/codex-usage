@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.258 - 2026-07-12
+
+### Security
+
+- Die Direct-Mehrdeutigkeitsprüfung normalisiert jetzt Plan-Aliase wie
+  `pro` und `plus` konsistent mit der Backend-Identitätsprüfung.
+- Konten mit gemeinsamem User und unterschiedlichen Account-IDs werden
+  dadurch auch bei diesen Aliasen nicht ungeschützt zusammengeführt.
+
 ## 0.6.257 - 2026-07-12
 
 ### Fixed

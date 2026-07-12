@@ -19,6 +19,7 @@ from .browser import fetch_account_usage
 from .config import AppConfig
 from .direct import (
     DirectAuthError,
+    _normalized_plan_type,
     auth_identity_changed,
     auth_identity_for_account,
     auth_identity_from_file,
@@ -165,7 +166,7 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
             plans_are_ambiguous = (
                 plan_type is None
                 or other_plan_type is None
-                or plan_type.casefold() == other_plan_type.casefold()
+                or _normalized_plan_type(plan_type) == _normalized_plan_type(other_plan_type)
             )
             if plans_are_ambiguous:
                 ambiguous.update((local_id, other_local_id))
