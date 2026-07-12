@@ -175,6 +175,26 @@ def test_extract_windows_prefers_absolute_usage_over_conflicting_used_percent():
     assert five.percent == 42
 
 
+def test_extract_windows_prefers_absolute_usage_over_conflicting_progress_width():
+    body = """
+    5-hour limit
+    42 / 100 used
+    <div style="width: 97%;"></div>
+    Reset 08.06.2026 04:26
+    """
+
+    five, _weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 42
+    assert five.limit == 100
+    assert five.remaining == 58
+    assert five.percent == 42
+
+
 def test_extract_windows_from_progress_bar_width_html():
     body = """
     <section>

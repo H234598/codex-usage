@@ -478,7 +478,7 @@ def _extract_text_window(
         used_percent = _extract_used_percent(chunk)
         reset_at = _extract_reset_at(chunk, captured_at)
 
-        if used is not None and limit is not None and used_percent is not None:
+        if used is not None and limit is not None:
             remaining = max(limit - used, 0)
             percent = used / limit * 100 if limit > 0 else None
         elif remaining is None and used_percent is not None:

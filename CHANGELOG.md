@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.181 - 2026-07-12
+
+### Fixed
+
+- Der DOM-Extractor priorisiert absolute `used`-/`limit`-Werte jetzt auch
+  gegenüber einer widersprüchlichen Fortschrittsbalkenbreite.
+- Regression für `42 / 100 genutzt` zusammen mit `width: 97%` ergänzt.
+
 ## 0.6.180 - 2026-07-12
 
 ### Fixed
