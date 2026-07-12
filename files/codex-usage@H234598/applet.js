@@ -2371,7 +2371,7 @@ CodexUsageApplet.prototype = {
             if (old && this._backendIdentityIsIncomplete(item, old)) {
                 merged.push(this._markUsageStale(old));
             } else if (old && !this._backendProvenanceMatches(item, old)) {
-                merged.push(this._captureIsOlder(item.captured_at, old.captured_at) ? old : item);
+                merged.push(this._markUsageStale(old));
             } else if (old && this._backendIdentityMatches(item, old) &&
                 this._captureIsOlder(item.captured_at, old.captured_at)) {
                 merged.push(old);

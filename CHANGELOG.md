@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.331 - 2026-07-12
+
+### Fixed
+
+- Neuere Cachewerte mit abweichender Abrufweg-Provenienz ersetzen keine
+  bestehenden In-Memory-Werte mehr und werden stattdessen als veraltet markiert.
+
 ## 0.6.330 - 2026-07-12
 
 ### Fixed
