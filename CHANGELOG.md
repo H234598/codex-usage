@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.237 - 2026-07-12
+
+### Fixed
+
+- Auch Generic-JSON-Kandidaten gleicher Priorität werden jetzt nach ihrer
+  Reihenfolge als Frischemerkmal bewertet.
+- Eine ältere Generic-Antwort mit Resetzeit kann dadurch keinen neueren
+  Nutzungswert ohne Resetzeit mehr verdrängen.
+- Regression für Generic-JSON `3 %` alt mit Resetzeit gegenüber `20 %` neu
+  ohne Resetzeit ergänzt.
+
 ## 0.6.236 - 2026-07-12
 
 ### Fixed

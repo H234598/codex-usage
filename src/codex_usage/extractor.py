@@ -140,7 +140,7 @@ def _extract_json_window(
     target: str,
     captured_at: datetime,
 ) -> LimitWindow | None:
-    matches: list[tuple[str, str, dict[str, Any], str]] = []
+    matches: list[tuple[str, str, dict[str, Any], str, int]] = []
     reset_only: LimitWindow | None = None
     usage_windows: list[tuple[int, int, int, bool, LimitWindow]] = []
     for candidate_index, candidate in enumerate(candidates):
@@ -180,7 +180,7 @@ def _extract_json_window(
             if target == "weekly" and not _looks_like_weekly(haystack):
                 continue
             if any(word in haystack for word in ("limit", "usage", "nutzung", "reset")):
-                matches.append((candidate.url, path, obj, haystack))
+                matches.append((candidate.url, path, obj, haystack, candidate_index))
 
     if usage_windows:
         # A newer usage value is authoritative; an older reset timestamp must
@@ -188,8 +188,8 @@ def _extract_json_window(
         usage_windows.sort(key=lambda item: item[:4])
         return usage_windows[0][4]
 
-    ranked_windows: list[tuple[int, int, int, int, LimitWindow]] = []
-    for url, _path, obj, haystack in matches:
+    ranked_windows: list[tuple[int, int, int, int, int, LimitWindow]] = []
+    for url, _path, obj, haystack, candidate_index in matches:
         window = _window_from_mapping(
             obj,
             name="5h" if target == "five_hour" else "weekly",
@@ -203,6 +203,7 @@ def _extract_json_window(
                     (
                         _target_rank(_path, haystack, target),
                         0,
+                        -candidate_index,
                         0 if window.reset_at is not None else 1,
                         len(_flatten_mapping(obj)),
                         window,
@@ -211,8 +212,8 @@ def _extract_json_window(
             elif reset_only is None:
                 reset_only = window
     if ranked_windows:
-        ranked_windows.sort(key=lambda item: item[:4])
-        return ranked_windows[0][4]
+        ranked_windows.sort(key=lambda item: item[:5])
+        return ranked_windows[0][5]
     return reset_only
 
 
