@@ -178,6 +178,19 @@ test("remaining percentage prefers absolute used and limit values", () => {
   assert.equal(applet._remainingPercent({ remaining: 690, limit: 1000 }), 69);
 });
 
+test("average panel source requires both limit windows", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+
+  assert.equal(applet._panelValueForSource(usage, 3), 70);
+  assert.equal(applet._panelWindowForSource(usage, 3), usage.weekly);
+
+  usage.five_hour = null;
+
+  assert.equal(applet._panelValueForSource(usage, 3), null);
+  assert.equal(applet._panelWindowForSource(usage, 3), null);
+});
+
 test("browser values do not merge with unknown provenance", () => {
   const applet = makeApplet();
   const browser = { backend_used: "browser", backend_configured: "direct" };

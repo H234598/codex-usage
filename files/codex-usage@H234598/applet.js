@@ -3253,11 +3253,10 @@ CodexUsageApplet.prototype = {
         if (source === 2) {
             return week;
         }
-        let values = [five, week].filter(function(value) { return value !== null; });
-        if (!values.length) {
+        if (five === null || week === null) {
             return null;
         }
-        return values.reduce(function(total, value) { return total + value; }, 0) / values.length;
+        return (five + week) / 2;
     },
 
     _panelWindowForSource: function(usage, source) {
@@ -3267,16 +3266,12 @@ CodexUsageApplet.prototype = {
         if (source === 2) {
             return usage.weekly;
         }
-        let candidates = [usage.five_hour, usage.weekly].filter(Lang.bind(this, function(window) {
-            return this._remainingPercent(window) !== null;
-        }));
-        if (!candidates.length) {
+        let five = this._remainingPercent(usage.five_hour);
+        let week = this._remainingPercent(usage.weekly);
+        if (five === null || week === null) {
             return null;
         }
-        candidates.sort(Lang.bind(this, function(left, right) {
-            return this._remainingPercent(left) - this._remainingPercent(right);
-        }));
-        return candidates[0];
+        return five <= week ? usage.five_hour : usage.weekly;
     },
 
     _panelThreshold: function(item, source) {
