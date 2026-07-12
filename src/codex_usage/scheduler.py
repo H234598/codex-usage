@@ -395,8 +395,6 @@ def _should_retain_previous_window(
     previous_remaining = _remaining_percent(previous)
     if current_remaining is not None and previous_remaining is not None:
         return current_remaining > previous_remaining
-    if current.reset_at is not None and previous.reset_at is not None:
-        return current.reset_at > previous.reset_at
     return False
 
 

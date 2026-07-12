@@ -1173,6 +1173,41 @@ def test_authenticated_stabilization_accepts_reset_with_dynamic_absolute_timesta
     assert result.stale is False
 
 
+def test_authenticated_stabilization_does_not_restore_reset_only_current_window():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=90,
+            reset_at=datetime(2026, 7, 12, 5, 0, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(name="weekly", remaining=80),
+        status=AccountStatus.OK,
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        status=AccountStatus.PARTIAL,
+        five_hour=LimitWindow(
+            name="5h",
+            reset_at=datetime(2026, 7, 12, 10, 0, tzinfo=timezone),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.remaining is None
+    assert result.stale is False
+
+
 def test_authenticated_stabilization_rejects_a_different_window_duration():
     timezone = ZoneInfo("Europe/Berlin")
     previous = AccountUsage(

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.324 - 2026-07-12
+
+### Fixed
+
+- Ein Partial-Snapshot mit ausschließlich einer neuen Reset-Zeit übernimmt
+  keinen älteren Prozentwert mehr. Cache-Stabilisierung greift nur, wenn der
+  aktuelle Snapshot auch einen belastbaren Nutzungswert enthält.
+
 ## 0.6.323 - 2026-07-12
 
 ### Fixed
