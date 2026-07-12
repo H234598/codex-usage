@@ -299,6 +299,29 @@ def test_extract_windows_from_progress_bar_width_html():
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
 
 
+def test_extract_windows_prefers_html_progress_over_hidden_text_clone():
+    html = """
+    <section>
+      <h2>5-hour limit</h2>
+      <div class="transition-[width] rounded-full" style="width: 97%;"></div>
+    </section>
+    <section hidden>
+      <h2>5-hour limit</h2>
+      <span>20% remaining Reset 12.07.2026 18:00</span>
+    </section>
+    """
+
+    five, _weekly = extract_windows(
+        body_text="",
+        text_sources=(("htmlText", html),),
+        now=datetime(2026, 7, 12, 17, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.source == "htmlText"
+
+
 def test_extract_windows_ignores_layout_width_before_progress_bar():
     body = """
     <section style="width: 42%;">

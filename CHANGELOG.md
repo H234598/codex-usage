@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.284 - 2026-07-12
+
+### Fixed
+
+- Die HTML-Fallbackauswertung bevorzugt eine sichtbare Progressbar auch dann,
+  wenn ein später versteckter Textklon im selben HTML-Fragment andere Werte
+  enthält.
+
 ## 0.6.283 - 2026-07-12
 
 ### Fixed

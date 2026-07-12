@@ -646,6 +646,12 @@ def _extract_text_window(
         if used is not None and limit is not None:
             remaining = max(limit - used, 0)
             percent = 100 - (used / limit * 100) if limit > 0 else None
+        elif source == "htmlText" and progress_percent is not None:
+            # The rendered bar is the visual source of truth for HTML. A
+            # hidden text clone later in the same HTML fragment must not
+            # replace it; absolute used/limit values remain authoritative.
+            remaining = progress_percent
+            percent = progress_percent
         elif remaining is None and progress_percent is not None:
             # A rendered progress bar is more specific than generic text such
             # as a hidden or stale `100% used` label in the same DOM chunk.
@@ -685,6 +691,15 @@ def _extract_text_window(
             continue
         reset_only.append((start, window))
     if usage_windows:
+        if source == "htmlText":
+            progress_windows = [
+                item
+                for item in usage_windows
+                if _extract_progress_width_percent(item[1].raw or "") is not None
+            ]
+            if progress_windows:
+                progress_windows.sort(key=lambda item: (-item[0], item[1].reset_at is None))
+                return progress_windows[0][1]
         # A later DOM occurrence carries the freshest rendered usage value;
         # an older reset timestamp must not make stale consumption win.
         usage_windows.sort(
