@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.254 - 2026-07-12
+
+### Security
+
+- Bridge-Aufnahmen kombinieren identitätsbehaftete JSON-Antworten nicht mehr
+  mit ungebundenen DOM-Werten aus einer möglicherweise fremden Browserseite.
+- Solche Aufnahmen bleiben partiell, statt Zahlen eines anderen Accounts als
+  gültige Nutzungswerte auszugeben.
+
 ## 0.6.253 - 2026-07-12
 
 ### Fixed

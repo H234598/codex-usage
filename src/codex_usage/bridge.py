@@ -112,8 +112,16 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         account,
         _json_candidates_from_payload(payload),
     )
+    # Once a structured response identifies the backend, the page DOM is not
+    # independently bound to that account. Do not combine a possibly stale
+    # browser page with identity-bearing JSON; an authenticated partial result
+    # is safer than displaying values from another account.
+    structured_identity_present = any(
+        backend_identity_from_payload(candidate.payload) != (None, None)
+        for candidate in json_candidates
+    )
     five_hour, weekly = extract_windows(
-        body_text=body_text,
+        body_text="" if structured_identity_present else body_text,
         json_candidates=json_candidates,
         now=captured_at,
     )
