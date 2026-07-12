@@ -398,20 +398,41 @@ def _windows_from_response(
     if not candidates:
         return None, None
 
+    duration_candidates: dict[int, list[tuple[str, dict[str, Any]]]] = {}
+    for item in candidates:
+        duration = _strict_int(item[1].get("windowDurationMins"))
+        if duration is not None:
+            duration_candidates.setdefault(duration, []).append(item)
     with_duration = {
-        _strict_int(item[1].get("windowDurationMins")): item
-        for item in candidates
-        if _strict_int(item[1].get("windowDurationMins")) is not None
+        duration: items[0]
+        for duration, items in duration_candidates.items()
+        if len(items) == 1
     }
     if with_duration:
         five_item = with_duration.get(FIVE_HOUR_WINDOW_MINUTES)
         weekly_item = with_duration.get(WEEKLY_WINDOW_MINUTES)
-        if five_item is None and _strict_int(candidates[0][1].get("windowDurationMins")) is None:
+        primary_duration = _strict_int(candidates[0][1].get("windowDurationMins"))
+        secondary = candidates[1] if len(candidates) > 1 else None
+        secondary_duration = (
+            _strict_int(secondary[1].get("windowDurationMins"))
+            if secondary is not None
+            else None
+        )
+        if (
+            five_item is None
+            and primary_duration is None
+            and weekly_item is not None
+        ):
             five_item = candidates[0] if candidates[0][0] == "primary" else None
-        if weekly_item is None and len(candidates) > 1:
-            secondary = candidates[1]
-            if _strict_int(secondary[1].get("windowDurationMins")) is None:
-                weekly_item = secondary if secondary[0] == "secondary" else None
+        if (
+            weekly_item is None
+            and secondary_duration is None
+            and five_item is not None
+        ):
+            weekly_item = secondary if secondary and secondary[0] == "secondary" else None
+    elif duration_candidates:
+        five_item = None
+        weekly_item = None
     else:
         by_key = dict(candidates)
         five_item = ("primary", by_key["primary"]) if "primary" in by_key else None

@@ -397,6 +397,45 @@ def test_window_mapping_does_not_label_unsupported_duration_as_weekly():
     assert weekly is None
 
 
+def test_window_mapping_does_not_infer_weekly_after_unsupported_primary_duration():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 5,
+                    "windowDurationMins": 43_200,
+                },
+                "secondary": {
+                    "usedPercent": 18,
+                },
+            }
+        }
+    )
+
+    assert five is None
+    assert weekly is None
+
+
+def test_window_mapping_rejects_duplicate_known_durations():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 7,
+                    "windowDurationMins": 300,
+                },
+                "secondary": {
+                    "usedPercent": 18,
+                    "windowDurationMins": 300,
+                },
+            }
+        }
+    )
+
+    assert five is None
+    assert weekly is None
+
+
 def test_window_mapping_falls_back_when_codex_bucket_is_empty():
     five, weekly = _windows_from_response(
         {

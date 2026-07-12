@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.166 - 2026-07-12
+
+### Fixed
+
+- Der App-Server ordnet unbekannte Fensterdauern nicht mehr positional als
+  5h oder Woche ein, wenn bereits eine nicht unterstützte Dauer erkannt wurde.
+- Doppelte bekannte Fensterdauern werden fail-closed verworfen, statt durch ein
+  Dict-Overwrite einen falschen Limitbucket zu erzeugen.
+- Regressionen für unsupported und doppelte `windowDurationMins` ergänzt.
+
 ## 0.6.165 - 2026-07-12
 
 ### Fixed
