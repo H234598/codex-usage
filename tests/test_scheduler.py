@@ -6,6 +6,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from codex_usage.app_server import AppServerUnavailableError
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
@@ -846,6 +848,23 @@ def test_scheduler_remaining_percent_prefers_absolute_usage_values():
     )
 
     assert _remaining_percent(window) == 80
+
+
+@pytest.mark.parametrize(
+    ("window", "expected"),
+    [
+        (LimitWindow(name="5h", used=120, limit=100), 0),
+        (LimitWindow(name="5h", used=-20, limit=100), 100),
+        (LimitWindow(name="5h", remaining=120), 100),
+        (LimitWindow(name="5h", remaining=-20), 0),
+        (LimitWindow(name="5h", percent=120), 100),
+        (LimitWindow(name="5h", percent=-20), 0),
+        (LimitWindow(name="5h", percent=float("nan")), None),
+        (LimitWindow(name="5h", percent=float("inf")), None),
+    ],
+)
+def test_scheduler_remaining_percent_clamps_malformed_values(window, expected):
+    assert _remaining_percent(window) == expected
 
 
 def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):

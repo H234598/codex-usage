@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import signal
 import sys
@@ -388,14 +389,24 @@ def _is_more_conservative_direct_usage(
 
 def _remaining_percent(window) -> float | None:
     if window.used is not None and window.limit is not None and window.limit > 0:
-        return (float(window.limit) - float(window.used)) * 100 / float(window.limit)
+        remaining = (float(window.limit) - float(window.used)) * 100 / float(window.limit)
+        return _clamp_percent(remaining)
     if window.remaining is not None:
         if window.limit is not None and window.limit > 0:
-            return float(window.remaining) * 100 / float(window.limit)
-        return float(window.remaining)
+            remaining = float(window.remaining) * 100 / float(window.limit)
+            return _clamp_percent(remaining)
+        remaining = float(window.remaining)
+        return _clamp_percent(remaining)
     if window.percent is not None:
-        return float(window.percent)
+        percent = float(window.percent)
+        return _clamp_percent(percent)
     return None
+
+
+def _clamp_percent(value: float) -> float | None:
+    if not math.isfinite(value):
+        return None
+    return max(0.0, min(100.0, value))
 
 
 def watch(

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.227 - 2026-07-12
+
+### Fixed
+
+- Scheduler, Stabilisierung und Watchdog begrenzen Restprozente jetzt wie
+  Renderer und Cinnamon-Applet auf `0..100`.
+- Nichtfinite Werte wie `NaN` oder `Infinity` werden in diesem Pfad verworfen,
+  statt Vergleichs- und Blockierungsentscheidungen zu verfalschen.
+- Regressionen fuer ueberlaufende, negative und nichtfinite Limitwerte ergänzt.
+
 ## 0.6.226 - 2026-07-12
 
 ### Security
