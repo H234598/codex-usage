@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.267 - 2026-07-12
+
+### Security
+
+- `latest` zeigt gecachte Limitwerte nach einem Wechsel der `auth.json` nicht
+  mehr unter der neuen Account-Identität an.
+
 ## 0.6.266 - 2026-07-12
 
 ### Security

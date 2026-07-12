@@ -18,6 +18,7 @@ from codex_usage.bridge import (
     bridge_token_for_account,
     bridge_token_matches,
     ingest_and_save,
+    load_latest_usages,
     render_bridge_snippet,
     revoke_bridge_token,
     save_bridge_debug_payload,
@@ -346,6 +347,55 @@ def test_bridge_revalidates_auth_identity_before_saving(tmp_path, monkeypatch):
         )
 
     assert load_usage_snapshot("privat", snapshot_dir) is None
+
+
+def test_latest_rejects_cached_values_after_auth_identity_changes(tmp_path):
+    auth_path = tmp_path / "auth.json"
+
+    def write_auth(user_id: str, account_id: str) -> None:
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "id_token": _jwt_with_claims(
+                            {
+                                "https://api.openai.com/auth": {
+                                    "chatgpt_user_id": user_id,
+                                }
+                            }
+                        ),
+                        "account_id": account_id,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        auth_path.chmod(0o600)
+
+    write_auth("old-user", "old-account")
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    cached = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=12),
+        weekly=LimitWindow(name="weekly", remaining=34),
+        backend_user_id="old-user",
+        backend_account_id="old-account",
+    )
+    save_usage_snapshot(cached, snapshot_dir)
+    save_current_usage(cached, snapshot_dir.parent / "current")
+
+    write_auth("new-user", "new-account")
+
+    assert load_latest_usages(config, snapshot_dir) == []
 
 
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():

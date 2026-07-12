@@ -856,6 +856,19 @@ def _usage_matches_current_auth(account: Account, usage: AccountUsage) -> bool:
         auth_user_id, auth_account_id = auth_identity_for_account(account)
     except DirectAuthError:
         return False
+    return _usage_matches_auth_identity(
+        usage,
+        auth_user_id=auth_user_id,
+        auth_account_id=auth_account_id,
+    )
+
+
+def _usage_matches_auth_identity(
+    usage: AccountUsage,
+    *,
+    auth_user_id: str | None,
+    auth_account_id: str | None,
+) -> bool:
     if not (auth_user_id or auth_account_id):
         return False
     try:
@@ -874,18 +887,53 @@ def _usage_matches_current_auth(account: Account, usage: AccountUsage) -> bool:
     )
 
 
+def _cached_usage_matches_current_auth(
+    usage: AccountUsage,
+    auth_identity: tuple[str | None, str | None] | None,
+) -> bool:
+    """Do not display authenticated values after the account identity changed."""
+    if auth_identity is None:
+        return True
+    if not (usage.backend_user_id or usage.backend_account_id):
+        # Identity-free status records are still useful; identity-free limits
+        # are not safe to attribute after an auth.json change.
+        return usage.five_hour is None and usage.weekly is None
+    auth_user_id, auth_account_id = auth_identity
+    return _usage_matches_auth_identity(
+        usage,
+        auth_user_id=auth_user_id,
+        auth_account_id=auth_account_id,
+    )
+
+
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
     usages: list[AccountUsage] = []
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     for account in config.accounts:
         last_success = load_usage_snapshot(account.id, snapshot_dir)
         current = load_current_usage(account.id, current_dir)
+        auth_identity: tuple[str | None, str | None] | None = None
+        if account.auth_json_path is not None:
+            try:
+                auth_identity = auth_identity_for_account(account)
+            except DirectAuthError:
+                auth_identity = (None, None)
         if last_success is not None and not backend_provenance_matches_configured(
             last_success, account.backend
         ):
             last_success = None
+        if last_success is not None and not _cached_usage_matches_current_auth(
+            last_success,
+            auth_identity,
+        ):
+            last_success = None
         if current is not None and not backend_provenance_matches_configured(
             current, account.backend
+        ):
+            current = None
+        if current is not None and not _cached_usage_matches_current_auth(
+            current,
+            auth_identity,
         ):
             current = None
         if current is not None:
