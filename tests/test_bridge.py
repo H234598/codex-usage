@@ -271,7 +271,12 @@ def test_usage_from_ingest_payload_canonicalizes_personal_account_identity(tmp_p
                 "tokens": {
                     "access_token": "access-token",
                     "id_token": _jwt_with_claims(
-                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "user-test",
+                                "chatgpt_plan_type": "free",
+                            }
+                        }
                     ),
                     "account_id": "account-uuid",
                 }
@@ -300,6 +305,7 @@ def test_usage_from_ingest_payload_canonicalizes_personal_account_identity(tmp_p
                         {
                             "user_id": "user-test",
                             "account_id": "user-test",
+                            "plan_type": "free",
                             "rate_limit": {
                                 "primary_window": {
                                     "used_percent": 3,
@@ -319,6 +325,65 @@ def test_usage_from_ingest_payload_canonicalizes_personal_account_identity(tmp_p
 
     assert usage.backend_user_id == "user-test"
     assert usage.backend_account_id == "account-uuid"
+
+
+def test_usage_from_ingest_payload_rejects_shared_user_response_with_different_plan(
+    tmp_path,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "access-token",
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "shared-user",
+                                "chatgpt_plan_type": "free",
+                            }
+                        }
+                    ),
+                    "account_id": "free-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+
+    with pytest.raises(ValueError, match="different account"):
+        usage_from_ingest_payload(
+            account,
+            {
+                "apiResponses": [
+                    {
+                        "url": "https://chatgpt.com/backend-api/wham/usage",
+                        "status": 200,
+                        "contentType": "application/json",
+                        "bodyText": json.dumps(
+                            {
+                                "user_id": "shared-user",
+                                "account_id": "shared-user",
+                                "plan_type": "enterprise",
+                                "rate_limit": {
+                                    "primary_window": {
+                                        "used_percent": 5,
+                                        "limit_window_seconds": 2_592_000,
+                                    }
+                                },
+                            }
+                        ),
+                    }
+                ]
+            },
+        )
 
 
 def test_usage_from_ingest_payload_rejects_mismatched_auth_account(tmp_path):

@@ -66,7 +66,12 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
                 "tokens": {
                     "access_token": "secret-access-token",
                     "id_token": _jwt_with_claims(
-                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "user-test",
+                                "chatgpt_plan_type": "plus",
+                            }
+                        }
                     ),
                     "account_id": "server-account",
                 }
@@ -101,6 +106,7 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
                     },
                     "user_id": "user-test",
                     "account_id": "user-test",
+                    "plan_type": "pro",
                 }
             ).encode("utf-8")
 
@@ -536,6 +542,71 @@ def test_fetch_account_usage_direct_accepts_same_account_with_different_user_id(
     assert usage.status == AccountStatus.OK
     assert usage.backend_user_id == "auth-user"
     assert usage.backend_account_id == "server-account"
+
+
+def test_fetch_account_usage_direct_rejects_shared_user_response_with_different_plan(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "shared-user",
+                                "chatgpt_plan_type": "free",
+                            }
+                        }
+                    ),
+                    "account_id": "free-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 5,
+                            "limit_window_seconds": 2_592_000,
+                        }
+                    },
+                    "user_id": "shared-user",
+                    "account_id": "shared-user",
+                    "plan_type": "enterprise",
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "codex_usage.direct.urlopen",
+        lambda request, *, timeout: FakeResponse(),
+    )
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.ERROR
+    assert usage.error == "backend response belongs to a different account"
 
 
 @pytest.mark.parametrize("account_id", ["account\nforged", " ", 42])

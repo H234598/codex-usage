@@ -20,11 +20,15 @@ from .direct import (
     auth_identity_changed,
     auth_identity_for_account,
     auth_metadata_from_payload,
+    auth_plan_type_for_account,
     canonical_backend_identity,
     read_auth_json_file,
 )
 from .extractor import JsonCandidate, extract_windows
-from .identity import backend_identity_from_candidates
+from .identity import (
+    backend_identity_from_candidates,
+    backend_plan_type_from_candidates,
+)
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 from .private_io import (
@@ -98,6 +102,7 @@ def fetch_account_usage(
 
     try:
         auth_user_id_before, auth_account_id_before = auth_identity_for_account(account)
+        auth_plan_type_before = auth_plan_type_for_account(account)
         profile_dir = _prepare_profile(account)
         with _profile_lock(profile_dir):
             with sync_playwright() as playwright:
@@ -130,11 +135,16 @@ def fetch_account_usage(
 
         source_urls.update(_redact_url(candidate.url) for candidate in candidates)
         auth_user_id, auth_account_id = auth_identity_for_account(account)
+        auth_plan_type = auth_plan_type_for_account(account)
         if auth_identity_changed(
             before_user_id=auth_user_id_before,
             before_account_id=auth_account_id_before,
             after_user_id=auth_user_id,
             after_account_id=auth_account_id,
+        ) or (
+            auth_plan_type_before
+            and auth_plan_type
+            and auth_plan_type_before.casefold() != auth_plan_type.casefold()
         ):
             return AccountUsage(
                 account_id=account.id,
@@ -145,12 +155,15 @@ def fetch_account_usage(
             )
         five_hour, weekly = extract_windows(body_text=body_text, json_candidates=candidates)
         backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
+        backend_plan_type = backend_plan_type_from_candidates(candidates)
         try:
             backend_user_id, backend_account_id = canonical_backend_identity(
                 backend_user_id,
                 backend_account_id,
                 auth_user_id=auth_user_id,
                 auth_account_id=auth_account_id,
+                auth_plan_type=auth_plan_type,
+                backend_plan_type=backend_plan_type,
                 require_backend_identity=True,
             )
         except DirectAuthError as exc:

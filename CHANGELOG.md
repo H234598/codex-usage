@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.173 - 2026-07-12
+
+### Fixed
+
+- Gemeinsame `user_id`-Werte mehrerer Accounts können keine fremden
+  Tarif-Limitfenster mehr legitimieren.
+- Direct-, Browser- und Bridge-Abrufe prüfen zusätzlich den Tariftyp aus
+  `auth.json` und der WHAM-Antwort; `plus`/`pro` werden als bekannter Alias
+  behandelt.
+- Regressionen für den BW-Privat/BW-Work-Fall ergänzt.
+
 ## 0.6.172 - 2026-07-12
 
 ### Fixed

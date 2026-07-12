@@ -11,9 +11,17 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .config import AppConfig, default_state_dir, resolve_account
-from .direct import DirectAuthError, auth_identity_for_account, canonical_backend_identity
+from .direct import (
+    DirectAuthError,
+    auth_identity_for_account,
+    auth_plan_type_for_account,
+    canonical_backend_identity,
+)
 from .extractor import JsonCandidate, extract_windows, load_json_candidate
-from .identity import backend_identity_from_candidates
+from .identity import (
+    backend_identity_from_candidates,
+    backend_plan_type_from_candidates,
+)
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
 from .private_io import (
@@ -91,12 +99,16 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         now=captured_at,
     )
     backend_user_id, backend_account_id = backend_identity_from_candidates(json_candidates)
+    backend_plan_type = backend_plan_type_from_candidates(json_candidates)
     auth_user_id, auth_account_id = auth_identity_for_account(account)
+    auth_plan_type = auth_plan_type_for_account(account)
     backend_user_id, backend_account_id = canonical_backend_identity(
         backend_user_id,
         backend_account_id,
         auth_user_id=auth_user_id,
         auth_account_id=auth_account_id,
+        auth_plan_type=auth_plan_type,
+        backend_plan_type=backend_plan_type,
         require_backend_identity=True,
     )
     status = (

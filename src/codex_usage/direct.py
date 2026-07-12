@@ -14,7 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from .extractor import JsonCandidate, extract_windows
-from .identity import backend_identity_from_payload
+from .identity import backend_identity_from_payload, backend_plan_type_from_payload
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
@@ -26,6 +26,7 @@ MAX_RESPONSE_BYTES = 2_000_000
 MAX_AUTH_JSON_BYTES = 1_000_000
 MAX_ACCESS_TOKEN_CHARS = 16_384
 MAX_AUTH_ID_CHARS = 256
+PLAN_TYPE_ALIASES = {"pro": "plus"}
 
 
 def default_auth_json_path() -> Path:
@@ -43,8 +44,15 @@ def fetch_account_usage_direct(
     auth_metadata: dict[str, datetime | None] = {}
     auth_user_id: str | None = None
     auth_account_id: str | None = None
+    auth_plan_type: str | None = None
     try:
-        token, auth_metadata, auth_user_id, auth_account_id = _load_auth_token_and_metadata(path)
+        (
+            token,
+            auth_metadata,
+            auth_user_id,
+            auth_account_id,
+            auth_plan_type,
+        ) = _load_auth_token_and_metadata(path)
         if _is_access_token_expired(auth_metadata.get("auth_access_expires_at"), now=captured_at):
             return AccountUsage(
                 account_id=account.id,
@@ -63,7 +71,13 @@ def fetch_account_usage_direct(
             account_id=auth_account_id,
             timeout_seconds=timeout_seconds,
         )
-        _, refreshed_metadata, refreshed_user_id, refreshed_account_id = (
+        (
+            _,
+            refreshed_metadata,
+            refreshed_user_id,
+            refreshed_account_id,
+            refreshed_plan_type,
+        ) = (
             _load_auth_token_and_metadata(path)
         )
         if auth_identity_changed(
@@ -71,21 +85,26 @@ def fetch_account_usage_direct(
             before_account_id=auth_account_id,
             after_user_id=refreshed_user_id,
             after_account_id=refreshed_account_id,
-        ):
+        ) or _auth_plan_type_changed(auth_plan_type, refreshed_plan_type):
             # Do not let a pre-request identity authorize stale values after a token switch.
             auth_user_id = None
             auth_account_id = None
+            auth_plan_type = None
             raise DirectAuthError("auth.json identity changed during usage request")
         auth_metadata = refreshed_metadata
         auth_user_id = refreshed_user_id
         auth_account_id = refreshed_account_id
+        auth_plan_type = refreshed_plan_type
         backend_user_id, backend_account_id = backend_identity_from_payload(payload)
+        backend_plan_type = backend_plan_type_from_payload(payload)
         try:
             backend_user_id, backend_account_id = canonical_backend_identity(
                 backend_user_id,
                 backend_account_id,
                 auth_user_id=auth_user_id,
                 auth_account_id=auth_account_id,
+                auth_plan_type=auth_plan_type,
+                backend_plan_type=backend_plan_type,
                 require_backend_identity=True,
             )
         except ValueError as exc:
@@ -175,7 +194,7 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
 
 def _load_auth_token_and_metadata(
     path: Path,
-) -> tuple[str, dict[str, datetime | None], str | None, str | None]:
+) -> tuple[str, dict[str, datetime | None], str | None, str | None, str | None]:
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -185,7 +204,8 @@ def _load_auth_token_and_metadata(
         raise DirectAuthError(f"invalid auth.json structure: {path}")
     token, metadata = _extract_auth_details(payload, path=path)
     auth_user_id, auth_account_id = auth_identity_from_payload(payload, path=path)
-    return token, metadata, auth_user_id, auth_account_id
+    auth_plan_type = auth_plan_type_from_payload(payload, path=path)
+    return token, metadata, auth_user_id, auth_account_id, auth_plan_type
 
 
 def auth_identity_from_payload(
@@ -248,6 +268,48 @@ def auth_identity_for_account(account: Account) -> tuple[str | None, str | None]
     return auth_identity_from_file(Path(account.auth_json_path))
 
 
+def auth_plan_type_from_payload(
+    payload: dict[str, Any],
+    *,
+    path: Path,
+) -> str | None:
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, dict):
+        return None
+    plan_types: list[str] = []
+    for token_name in ("id_token", "access_token"):
+        claims = _jwt_claims(tokens.get(token_name))
+        if not isinstance(claims, dict):
+            continue
+        auth_claims = claims.get("https://api.openai.com/auth")
+        if not isinstance(auth_claims, dict):
+            continue
+        plan_type = _safe_auth_plan_type(auth_claims.get("chatgpt_plan_type"))
+        if plan_type is not None:
+            plan_types.append(plan_type)
+    if len(set(plan_types)) > 1:
+        raise DirectAuthError(f"auth.json token plan types disagree: {path}")
+    return plan_types[0] if plan_types else None
+
+
+def auth_plan_type_from_file(path: Path) -> str | None:
+    path = path.expanduser()
+    raw, _ = read_auth_json_file(path)
+    try:
+        payload = loads_strict(raw)
+    except ValueError as exc:
+        raise DirectAuthError(f"invalid auth.json: {path}") from exc
+    if not isinstance(payload, dict):
+        raise DirectAuthError(f"invalid auth.json structure: {path}")
+    return auth_plan_type_from_payload(payload, path=path)
+
+
+def auth_plan_type_for_account(account: Account) -> str | None:
+    if not account.auth_json_path:
+        return None
+    return auth_plan_type_from_file(Path(account.auth_json_path))
+
+
 def _auth_account_id_from_payload(
     payload: dict[str, Any],
     *,
@@ -282,6 +344,26 @@ def _safe_auth_identity(value: Any) -> str | None:
     return value
 
 
+def _safe_auth_plan_type(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > 64 or any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value
+    ):
+        return None
+    return value
+
+
+def _auth_plan_type_changed(before: str | None, after: str | None) -> bool:
+    return bool(before and after and _normalized_plan_type(before) != _normalized_plan_type(after))
+
+
+def _normalized_plan_type(value: str) -> str:
+    normalized = value.strip().casefold()
+    return PLAN_TYPE_ALIASES.get(normalized, normalized)
+
+
 def _response_identity_matches_auth(
     *,
     backend_user_id: str | None,
@@ -305,6 +387,8 @@ def canonical_backend_identity(
     *,
     auth_user_id: str | None,
     auth_account_id: str | None,
+    auth_plan_type: str | None = None,
+    backend_plan_type: str | None = None,
     require_backend_identity: bool = False,
 ) -> tuple[str | None, str | None]:
     if (
@@ -313,6 +397,13 @@ def canonical_backend_identity(
         and not (backend_user_id or backend_account_id)
     ):
         raise ValueError("backend response has no account identity")
+    if (
+        auth_plan_type
+        and backend_plan_type
+        and _normalized_plan_type(auth_plan_type)
+        != _normalized_plan_type(backend_plan_type)
+    ):
+        raise ValueError("backend response belongs to a different account")
     if not _response_identity_matches_auth(
         backend_user_id=backend_user_id,
         backend_account_id=backend_account_id,

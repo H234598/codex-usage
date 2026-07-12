@@ -188,6 +188,7 @@ def test_fetch_canonicalizes_browser_identity_from_configured_auth(tmp_path, mon
         "codex_usage.browser.auth_identity_for_account",
         lambda _account: ("user-test", "account-uuid"),
     )
+    monkeypatch.setattr("codex_usage.browser.auth_plan_type_for_account", lambda _account: None)
 
     usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
 
@@ -265,6 +266,7 @@ def test_fetch_rejects_browser_auth_identity_changed_during_request(tmp_path, mo
         "codex_usage.browser.auth_identity_for_account",
         lambda _account: next(identities),
     )
+    monkeypatch.setattr("codex_usage.browser.auth_plan_type_for_account", lambda _account: None)
 
     usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
 
@@ -338,6 +340,7 @@ def test_fetch_rejects_browser_values_without_backend_identity(tmp_path, monkeyp
         "codex_usage.browser.auth_identity_for_account",
         lambda _account: ("user-test", "account-uuid"),
     )
+    monkeypatch.setattr("codex_usage.browser.auth_plan_type_for_account", lambda _account: None)
 
     usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
 
