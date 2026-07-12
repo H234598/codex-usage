@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.216 - 2026-07-12
+
+### Fixed
+
+- Die DOM-/generische Label-Erkennung akzeptiert `5h` und `5-hour` nur noch
+  an alphanumerisch getrennten Grenzen. Limittexte wie `15h`, `25h` oder
+  `15-hour` können dadurch nicht mehr fälschlich als 5h-Fenster gelesen werden.
+- Regressionen für DOM- und JSON-Labels mit längeren Stundenangaben ergänzt.
+
 ## 0.6.215 - 2026-07-12
 
 ### Security

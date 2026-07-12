@@ -542,19 +542,26 @@ def _extract_text_window(
 def _label_offsets(text: str, labels: tuple[str, ...]) -> list[int]:
     offsets: set[int] = set()
     for label in labels:
-        start = 0
-        while True:
-            index = text.find(label, start)
-            if index < 0:
-                break
-            offsets.add(index)
-            start = index + max(len(label), 1)
+        offsets.update(
+            match.start()
+            for match in re.finditer(_label_pattern(label), text)
+        )
     return sorted(offsets)
 
 
 def _next_label_offset(text: str, start: int, labels: tuple[str, ...]) -> int | None:
-    offsets = [index for label in labels if (index := text.find(label, start)) >= 0]
+    offsets = [
+        match.start()
+        for label in labels
+        for match in re.compile(_label_pattern(label)).finditer(text, start)
+    ]
     return min(offsets) if offsets else None
+
+
+def _label_pattern(label: str) -> str:
+    # Underscores remain valid inside JSON field names; letters and digits do
+    # not, so a 5h marker cannot match the tail of 15h or 25h.
+    return rf"(?<![^\W_]){re.escape(label)}(?![^\W_])"
 
 
 def _extract_used_limit(text: str) -> tuple[float | None, float | None]:
@@ -883,17 +890,19 @@ def _normalize_ws(value: str) -> str:
 
 def _looks_like_five_hour(value: str) -> bool:
     return (
-        any(label in value for label in FIVE_HOUR_LABELS)
-        or any(word in value for word in ("five_hour", "five-hour", "5_hour", "5-hour", "5h"))
+        any(_contains_label(value, label) for label in FIVE_HOUR_LABELS)
+        or any(
+            _contains_label(value, word)
+            for word in ("five_hour", "five-hour", "5_hour", "5-hour", "5h")
+        )
         or bool(re.search(r"\b5\s*h\b", value))
         or bool(re.search(r"\b5\b.{0,20}(hour|hours|stunden)", value))
     )
 
 
 def _looks_like_weekly(value: str) -> bool:
-    return any(label in value for label in WEEKLY_LABELS) or any(
-        word
-        in value
+    return any(_contains_label(value, label) for label in WEEKLY_LABELS) or any(
+        _contains_label(value, word)
         for word in (
             "weekly",
             "week_limit",
@@ -905,3 +914,7 @@ def _looks_like_weekly(value: str) -> bool:
             "wöchentlich",
         )
     )
+
+
+def _contains_label(value: str, label: str) -> bool:
+    return re.search(_label_pattern(label), value) is not None

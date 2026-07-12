@@ -102,6 +102,28 @@ def test_extract_windows_from_short_english_dom_labels():
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "14.06.2026 04:26"
 
 
+def test_extract_windows_does_not_match_longer_hour_labels_as_five_hour():
+    for label in ("15h", "25h", "15-hour"):
+        five, _weekly = extract_windows(
+            body_text=f"{label} usage limit 80% remaining Reset 13.07.2026 04:00",
+            now=datetime(2026, 7, 12, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        )
+
+        assert five is None
+
+        five, _weekly = extract_windows(
+            body_text="",
+            json_candidates=[
+                JsonCandidate(
+                    url="https://chatgpt.com/backend-api/generic",
+                    payload={f"{label}_usage_limit": {"used_percent": 20}},
+                )
+            ],
+        )
+
+        assert five is None
+
+
 def test_extract_windows_from_remaining_percent_dom_text():
     body = """
     5 Stunden Nutzungsgrenze
