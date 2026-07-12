@@ -28,6 +28,12 @@ MAX_SNAPSHOT_URLS = 20
 MAX_STATE_GENERATION_BYTES = 4096
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
+KNOWN_FALLBACK_REASONS = frozenset(
+    (
+        "previous direct limits retained after reset transition",
+        "previous authenticated limits retained after reset transition",
+    )
+)
 
 
 def backend_provenance_matches_configured(
@@ -41,11 +47,7 @@ def backend_provenance_matches_configured(
         return True
     if usage.backend_used == configured_backend:
         return True
-    return (
-        configured_backend == "app-server"
-        and usage.backend_used == "direct"
-        and bool(usage.fallback_reason)
-    )
+    return configured_backend == "app-server" and _has_backend_fallback_proof(usage)
 
 
 def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
@@ -62,7 +64,19 @@ def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
         return True
     if left_backend == right_backend:
         return True
-    return bool(left.fallback_reason or right.fallback_reason)
+    return _has_backend_fallback_proof(left) or _has_backend_fallback_proof(right)
+
+
+def _has_backend_fallback_proof(usage: AccountUsage) -> bool:
+    if usage.backend_used not in AUTHENTICATED_BACKENDS:
+        return False
+    if usage.fallback_reason in KNOWN_FALLBACK_REASONS:
+        return True
+    return bool(
+        usage.backend_used == "direct"
+        and usage.backend_configured == "app-server"
+        and usage.fallback_reason
+    )
 
 
 def default_snapshot_dir() -> Path:

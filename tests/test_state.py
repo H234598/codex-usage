@@ -43,6 +43,45 @@ def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
     assert backend_provenance_matches(direct, override) is False
 
 
+def test_backend_provenance_rejects_unproven_cross_backend_fallback():
+    direct = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_used="direct",
+        fallback_reason="arbitrary stale marker",
+    )
+    app_server = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_used="app-server",
+    )
+
+    assert backend_provenance_matches_configured(direct, "app-server") is False
+    assert backend_provenance_matches(direct, app_server) is False
+
+
+def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
+    direct = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="app-server",
+        backend_used="direct",
+        fallback_reason="installed Codex does not support rate-limit RPC",
+    )
+    app_server = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_used="app-server",
+    )
+
+    assert backend_provenance_matches_configured(direct, "app-server") is True
+    assert backend_provenance_matches(direct, app_server) is True
+
+
 def test_expire_reset_windows_drops_only_expired_cached_values():
     reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(

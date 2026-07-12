@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.266 - 2026-07-12
+
+### Security
+
+- Backendübergreifende State-Merges akzeptieren nicht mehr jeden beliebigen
+  `fallback_reason` als Identitätsnachweis.
+  Erlaubt bleiben bekannte Reset-Fallbackmarker und explizite Direct-Fallbacks
+  eines als App-Server konfigurierten Accounts.
+
 ## 0.6.265 - 2026-07-12
 
 ### Fixed
