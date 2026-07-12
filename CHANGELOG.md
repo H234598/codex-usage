@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.221 - 2026-07-12
+
+### Security
+
+- Der Direct-Mehrkontenabruf verwirft jetzt nicht account-spezifische
+  Backend-Identitäten, wenn mehrere konfigurierte Accounts dieselbe `user_id`
+  und dieselbe oder unbekannte Plansemantik teilen.
+- Accounts mit gemeinsamem User, aber nachweislich unterschiedlichen
+  Plan-Typen bleiben kompatibel; die bestehende Planprüfung trennt sie.
+- Regressionen für die Canonical-Identität, Scheduler-Durchreichung und die
+  Unterscheidung gleicher beziehungsweise verschiedener Pläne ergänzt.
+
 ## 0.6.220 - 2026-07-12
 
 ### Fixed

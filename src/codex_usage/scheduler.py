@@ -21,6 +21,7 @@ from .direct import (
     auth_identity_changed,
     auth_identity_for_account,
     auth_identity_from_file,
+    auth_plan_type_for_account,
     fetch_account_usage_direct,
 )
 from .health import record_health_event
@@ -56,6 +57,7 @@ def fetch_all(
     save_snapshots: bool = False,
 ) -> list[AccountUsage]:
     account_list = list(accounts)
+    ambiguous_direct_accounts = _ambiguous_direct_accounts(account_list)
     serial_fetch_required = _serial_fetch_required(
         account_list,
         headed=headed,
@@ -72,6 +74,7 @@ def fetch_all(
             backend_override=backend_override,
             auth_json_path=auth_json_path if (direct or auth_json_path is not None) else None,
             global_lock_held=serial_fetch_required,
+            reject_ambiguous_backend_identity=account.id in ambiguous_direct_accounts,
         )
         if usage.status != AccountStatus.OK or usage.backend_used not in AUTHENTICATED_BACKENDS:
             return usage
@@ -126,6 +129,34 @@ def _serial_fetch_required(
     return len(accounts) > 1
 
 
+def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
+    identities: list[tuple[str, str, str | None]] = []
+    for account in accounts:
+        if not account.auth_json_path:
+            continue
+        try:
+            user_id, account_id = auth_identity_for_account(account)
+            plan_type = auth_plan_type_for_account(account)
+        except DirectAuthError:
+            continue
+        if not user_id or not account_id:
+            continue
+        identities.append((account.id, user_id, plan_type))
+    ambiguous: set[str] = set()
+    for index, (account_id, user_id, plan_type) in enumerate(identities):
+        for other_id, other_user_id, other_plan_type in identities[index + 1 :]:
+            if user_id != other_user_id or account_id == other_id:
+                continue
+            plans_are_ambiguous = (
+                plan_type is None
+                or other_plan_type is None
+                or plan_type.casefold() == other_plan_type.casefold()
+            )
+            if plans_are_ambiguous:
+                ambiguous.update((account_id, other_id))
+    return frozenset(ambiguous)
+
+
 def _fetch_one(
     config: AppConfig,
     account: Account,
@@ -135,6 +166,7 @@ def _fetch_one(
     backend_override: str | None,
     auth_json_path: Path | None,
     global_lock_held: bool = False,
+    reject_ambiguous_backend_identity: bool = False,
 ) -> AccountUsage:
     try:
         backend = "direct" if direct else (backend_override or account.backend)
@@ -150,14 +182,20 @@ def _fetch_one(
                     try:
                         return fetch_account_usage_app_server(account)
                     except AppServerUnavailableError as exc:
-                        usage = fetch_account_usage_direct(account, auth_json_path=auth_json_path)
+                        direct_kwargs = {"auth_json_path": auth_json_path}
+                        if reject_ambiguous_backend_identity:
+                            direct_kwargs["reject_ambiguous_backend_identity"] = True
+                        usage = fetch_account_usage_direct(account, **direct_kwargs)
                         return replace(
                             usage,
                             backend_configured=account.backend,
                             backend_used="direct",
                             fallback_reason=" ".join(str(exc).split())[:500],
                         )
-                usage = fetch_account_usage_direct(account, auth_json_path=auth_json_path)
+                direct_kwargs = {"auth_json_path": auth_json_path}
+                if reject_ambiguous_backend_identity:
+                    direct_kwargs["reject_ambiguous_backend_identity"] = True
+                usage = fetch_account_usage_direct(account, **direct_kwargs)
                 return replace(
                     usage,
                     backend_configured=account.backend,

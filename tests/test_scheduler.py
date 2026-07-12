@@ -10,6 +10,7 @@ from codex_usage.app_server import AppServerUnavailableError
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.scheduler import (
+    _ambiguous_direct_accounts,
     _is_more_conservative_direct_usage,
     _remaining_percent,
     _stabilize_authenticated_usage,
@@ -17,6 +18,118 @@ from codex_usage.scheduler import (
     watch,
     watchdog,
 )
+
+
+def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(
+    monkeypatch,
+):
+    accounts = [
+        Account(
+            id="privat",
+            label="Privat",
+            profile_dir="/tmp/privat",
+            auth_json_path="/tmp/privat-auth.json",
+        ),
+        Account(
+            id="work",
+            label="Work",
+            profile_dir="/tmp/work",
+            auth_json_path="/tmp/work-auth.json",
+        ),
+    ]
+    identities = {
+        "privat": ("shared-user", "free-account"),
+        "work": ("shared-user", "enterprise-account"),
+    }
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda account: identities[account.id],
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_plan_type_for_account",
+        lambda _account: "enterprise",
+    )
+
+    assert _ambiguous_direct_accounts(accounts) == frozenset({"privat", "work"})
+
+
+def test_ambiguous_direct_accounts_allows_shared_users_with_distinct_plans(
+    monkeypatch,
+):
+    accounts = [
+        Account(
+            id="privat",
+            label="Privat",
+            profile_dir="/tmp/privat",
+            auth_json_path="/tmp/privat-auth.json",
+        ),
+        Account(
+            id="work",
+            label="Work",
+            profile_dir="/tmp/work",
+            auth_json_path="/tmp/work-auth.json",
+        ),
+    ]
+    identities = {
+        "privat": ("shared-user", "free-account"),
+        "work": ("shared-user", "enterprise-account"),
+    }
+    plans = {"privat": "free", "work": "enterprise"}
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda account: identities[account.id],
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_plan_type_for_account",
+        lambda account: plans[account.id],
+    )
+
+    assert _ambiguous_direct_accounts(accounts) == frozenset()
+
+
+def test_fetch_all_passes_ambiguous_identity_guard_to_direct_reader(monkeypatch):
+    accounts = (
+        Account(
+            id="privat",
+            label="Privat",
+            profile_dir="/tmp/privat",
+            auth_json_path="/tmp/privat-auth.json",
+        ),
+        Account(
+            id="work",
+            label="Work",
+            profile_dir="/tmp/work",
+            auth_json_path="/tmp/work-auth.json",
+        ),
+    )
+    flags: dict[str, bool] = {}
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda account: ("shared-user", f"{account.id}-account"),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_plan_type_for_account",
+        lambda _account: "enterprise",
+    )
+
+    def fake_fetch_direct(
+        account,
+        *,
+        auth_json_path=None,
+        reject_ambiguous_backend_identity=False,
+    ):
+        flags[account.id] = reject_ambiguous_backend_identity
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+
+    fetch_all(AppConfig(accounts=accounts), accounts)
+
+    assert flags == {"privat": True, "work": True}
 
 
 def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):

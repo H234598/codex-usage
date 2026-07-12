@@ -86,6 +86,20 @@ def test_canonical_backend_identity_rejects_foreign_account_without_auth_account
         )
 
 
+def test_canonical_backend_identity_rejects_ambiguous_shared_user_account():
+    with pytest.raises(ValueError, match="ambiguous account identity"):
+        canonical_backend_identity(
+            "shared-user",
+            "shared-user",
+            auth_user_id="shared-user",
+            auth_account_id="enterprise-account",
+            auth_plan_type="enterprise",
+            backend_plan_type="enterprise",
+            require_backend_identity=True,
+            reject_ambiguous_backend_identity=True,
+        )
+
+
 def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(

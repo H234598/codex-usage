@@ -40,6 +40,7 @@ def fetch_account_usage_direct(
     account: Account,
     *,
     auth_json_path: Path | None = None,
+    reject_ambiguous_backend_identity: bool = False,
     timeout_seconds: int = 20,
 ) -> AccountUsage:
     captured_at = datetime.now().astimezone()
@@ -151,6 +152,7 @@ def fetch_account_usage_direct(
                 auth_plan_type=auth_plan_type,
                 backend_plan_type=backend_plan_type,
                 require_backend_identity=True,
+                reject_ambiguous_backend_identity=reject_ambiguous_backend_identity,
             )
         except ValueError as exc:
             raise DirectFetchError(str(exc)) from exc
@@ -453,6 +455,7 @@ def canonical_backend_identity(
     auth_plan_type: str | None = None,
     backend_plan_type: str | None = None,
     require_backend_identity: bool = False,
+    reject_ambiguous_backend_identity: bool = False,
 ) -> tuple[str | None, str | None]:
     if (
         require_backend_identity
@@ -476,6 +479,13 @@ def canonical_backend_identity(
         and not backend_plan_type
     ):
         raise ValueError("backend response belongs to a different account")
+    if (
+        reject_ambiguous_backend_identity
+        and auth_user_id
+        and auth_account_id
+        and backend_account_id != auth_account_id
+    ):
+        raise ValueError("backend response has ambiguous account identity")
     if not _response_identity_matches_auth(
         backend_user_id=backend_user_id,
         backend_account_id=backend_account_id,
