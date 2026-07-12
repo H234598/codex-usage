@@ -67,6 +67,8 @@ def fetch_account_usage_app_server(
             auth_user_id_before,
             auth_account_id_before,
         ) = _auth_context(account)
+        if not (auth_user_id_before or auth_account_id_before):
+            raise DirectAuthError("auth.json has no account identity")
         refresh = _should_refresh(auth_metadata.get("auth_access_expires_at"), now=captured_at)
         payload = _read_rate_limits(
             auth_path.parent,

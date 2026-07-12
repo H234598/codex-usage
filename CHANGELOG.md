@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.223 - 2026-07-12
+
+### Security
+
+- Der App-Server verweigert jetzt `auth.json` ohne User- oder Account-ID,
+  bevor ein Rate-Limit-RPC gestartet wird.
+- Dadurch können identitätslose App-Server-Antworten keine Werte einem
+  konfigurierten Account zugeordnet werden.
+- Regression für ein gültiges Token ohne Accountidentität ergänzt.
+
 ## 0.6.222 - 2026-07-12
 
 ### Security
