@@ -276,6 +276,25 @@ def test_app_server_requires_configured_auth_json(tmp_path):
     assert usage.error == "account has no auth_json_path"
 
 
+def test_app_server_rejects_nonstandard_auth_json_filename(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "work-auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "app-server requires auth_json_path filename auth.json"
+
+
 def test_app_server_rejects_auth_without_account_identity(tmp_path):
     auth_home = tmp_path / "codex-home"
     auth_home.mkdir()

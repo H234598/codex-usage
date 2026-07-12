@@ -160,6 +160,8 @@ def _auth_context(
     if not account.auth_json_path:
         raise DirectAuthError("account has no auth_json_path")
     path = Path(account.auth_json_path).expanduser()
+    if path.name != "auth.json":
+        raise DirectAuthError("app-server requires auth_json_path filename auth.json")
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
