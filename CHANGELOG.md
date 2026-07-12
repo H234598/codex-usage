@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.256 - 2026-07-12
+
+### Fixed
+
+- Direct-Samples erkennen einen Reset jetzt auch dann, wenn der
+  `used_percent` unverändert bleibt und nur der relative Countdown auf ein
+  frisches Fenster springt.
+- Dadurch kann ein alter Resetzeitpunkt nach einem `0% -> 0%`-Fensterwechsel
+  nicht mehr als aktueller Wert ausgewählt werden.
+
 ## 0.6.255 - 2026-07-12
 
 ### Fixed

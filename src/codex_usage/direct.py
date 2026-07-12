@@ -751,6 +751,7 @@ def _usage_window_signature(value: Any) -> tuple | None:
         _signature_number(value.get("limit_window_seconds")),
         _signature_number(value.get("used_percent")),
         _signature_reset_identity(value),
+        _signature_relative_reset_phase(value),
     )
 
 
@@ -848,13 +849,27 @@ def _latest_response_is_relative_reset(
         if (
             previous_used is None
             or current_used is None
-            or current_used >= previous_used
+            or current_used > previous_used
         ):
             continue
+        usage_decreased = current_used < previous_used
         previous_duration = _signature_number(previous_window.get("limit_window_seconds"))
         current_duration = _signature_number(current_window.get("limit_window_seconds"))
         previous_after = _signature_number(previous_window.get("reset_after_seconds"))
         current_after = _signature_number(current_window.get("reset_after_seconds"))
+        if not usage_decreased:
+            if (
+                previous_duration is None
+                or current_duration is None
+                or previous_duration != current_duration
+                or previous_after is None
+                or current_after is None
+                or current_after <= previous_after
+                or current_after < current_duration - DIRECT_RESET_TRANSITION_MARGIN_SECONDS
+            ):
+                continue
+            reset_seen = True
+            continue
         if (
             previous_duration is None
             or current_duration is None
@@ -911,6 +926,16 @@ def _has_reset_regression(payloads: list[dict[str, Any]]) -> bool:
                 # usage value is still a reset signal and must not lose to an
                 # older majority when it is the last sample.
                 return True
+            if (
+                len(previous) > 3
+                and len(current) > 3
+                and previous[3] != current[3]
+                and current[3] == "fresh"
+            ):
+                # A reset can preserve used_percent (for example 0 -> 0).
+                # The countdown jumping back to a fresh full window is then
+                # the only observable transition.
+                return True
     return False
 
 
@@ -924,6 +949,18 @@ def _signature_reset_identity(value: dict[str, Any]) -> tuple[str, int] | None:
         return ("after", int(duration // DIRECT_RESET_BUCKET_SECONDS))
     reset_at = _signature_reset(value.get("reset_at"))
     return None if reset_at is None else ("at", reset_at)
+
+
+def _signature_relative_reset_phase(value: dict[str, Any]) -> str | None:
+    duration = _signature_number(value.get("limit_window_seconds"))
+    reset_after = _signature_number(value.get("reset_after_seconds"))
+    if duration is None or reset_after is None or duration <= 0 or reset_after < 0:
+        return None
+    if reset_after <= DIRECT_RESET_TRANSITION_MARGIN_SECONDS:
+        return "near-reset"
+    if reset_after >= duration - DIRECT_RESET_TRANSITION_MARGIN_SECONDS:
+        return "fresh"
+    return None
 
 
 def _response_content_type(response: Any) -> str:
