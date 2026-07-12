@@ -33,6 +33,7 @@ from .state import (
     backend_identity_matches,
     backend_provenance_matches,
     backend_provenance_matches_configured,
+    load_current_usage,
     load_state_generation,
     load_usage_snapshot,
     save_current_usage,
@@ -607,6 +608,13 @@ def watchdog(
                 auth_json_path=auth_json_path,
                 configured_backend=effective_backend or account.backend,
             )
+            and not _current_supersedes_blocked_snapshot(
+                account,
+                snapshot,
+                load_current_usage(account.id),
+                auth_json_path=auth_json_path,
+                configured_backend=effective_backend or account.backend,
+            )
         ):
             blocked_snapshots[account.id] = replace(
                 snapshot,
@@ -674,6 +682,29 @@ def watchdog(
     else:
         print(render_table(usages), flush=True)
     return usages
+
+
+def _current_supersedes_blocked_snapshot(
+    account: Account,
+    blocked_snapshot: AccountUsage,
+    current: AccountUsage | None,
+    *,
+    auth_json_path: Path | None,
+    configured_backend: str,
+) -> bool:
+    if current is None or current.status == AccountStatus.BLOCKED:
+        return False
+    if not _blocked_snapshot_matches_account(
+        account,
+        current,
+        auth_json_path=auth_json_path,
+        configured_backend=configured_backend,
+    ):
+        return False
+    try:
+        return current.captured_at > blocked_snapshot.captured_at
+    except TypeError:
+        return False
 
 
 def _blocked_until_active(usage: AccountUsage, *, now: datetime) -> bool:

@@ -1312,6 +1312,67 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
     assert saved == ["ok"]
 
 
+def test_watchdog_refetches_when_newer_current_supersedes_blocked_snapshot(monkeypatch):
+    account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
+    timezone = ZoneInfo("Europe/Berlin")
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=timezone),
+        status=AccountStatus.BLOCKED,
+        blocked_until=datetime(2099, 6, 8, 6, 50, tzinfo=timezone),
+        blocked_reason="usage limit reached: weekly",
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    current = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 21, tzinfo=timezone),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=99),
+        weekly=LimitWindow(name="weekly", remaining=98),
+    )
+    refreshed = replace(current, captured_at=datetime(2026, 6, 8, 4, 22, tzinfo=timezone))
+    fetched_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        fetched_accounts.extend(account.id for account in fetch_accounts)
+        return [refreshed]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_current_usage",
+        lambda account_id, current_dir=None: current,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+    )
+
+    assert fetched_accounts == ["blocked"]
+    assert result == [refreshed]
+
+
 @pytest.mark.parametrize(
     ("account_backend", "direct", "backend_override", "snapshot_backend"),
     [

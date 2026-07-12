@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.281 - 2026-07-12
+
+### Fixed
+
+- Der Watchdog ignoriert einen alten Block-Snapshot, sobald ein neuerer
+  nicht blockierter Current-Stand vorhanden ist.
+
 ## 0.6.280 - 2026-07-12
 
 ### Fixed
