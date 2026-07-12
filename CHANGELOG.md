@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.170 - 2026-07-12
+
+### Fixed
+
+- Direkte Abruffehler behalten die zuvor sicher aus `auth.json` gelesene
+  Backend-Identität.
+- Bei einem transienten Netzwerkfehler kann der letzte gültige Wert dadurch
+  als veraltet weiter angezeigt werden, statt auf `-` zu springen.
+- Nach einem während des Abrufs erkannten Tokenwechsel wird weiterhin keine
+  alte Identität übernommen.
+
 ## 0.6.169 - 2026-07-12
 
 ### Fixed

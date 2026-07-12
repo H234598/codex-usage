@@ -416,6 +416,8 @@ def test_fetch_account_usage_direct_rejects_auth_identity_changed_during_request
 
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error == "auth.json identity changed during usage request"
+    assert usage.backend_user_id is None
+    assert usage.backend_account_id is None
 
 
 def test_fetch_account_usage_direct_rejects_response_from_different_account(
@@ -703,7 +705,17 @@ def test_fetch_account_usage_direct_rejects_oversized_auth_json(tmp_path, monkey
 def test_fetch_account_usage_direct_rejects_non_json_content_type(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
-        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
+                    "account_id": "server-account",
+                }
+            }
+        ),
         encoding="utf-8",
     )
     auth_path.chmod(0o600)
@@ -736,6 +748,47 @@ def test_fetch_account_usage_direct_rejects_non_json_content_type(tmp_path, monk
 
     assert usage.status == AccountStatus.ERROR
     assert usage.error == "direct response is not JSON content"
+    assert usage.backend_user_id == "user-test"
+    assert usage.backend_account_id == "server-account"
+
+
+def test_fetch_account_usage_direct_keeps_auth_identity_on_transient_io_error(
+    tmp_path, monkeypatch
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
+                    "account_id": "server-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    def fake_urlopen(request, *, timeout):
+        raise OSError("temporary network failure")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", fake_urlopen)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.ERROR
+    assert usage.error == "direct fetch failed: I/O error"
+    assert usage.backend_user_id == "user-test"
+    assert usage.backend_account_id == "server-account"
 
 
 def test_fetch_account_usage_direct_marks_expired_auth_before_network(tmp_path, monkeypatch):

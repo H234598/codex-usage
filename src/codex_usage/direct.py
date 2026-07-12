@@ -41,6 +41,8 @@ def fetch_account_usage_direct(
     captured_at = datetime.now().astimezone()
     path = _resolve_auth_json_path(account, auth_json_path)
     auth_metadata: dict[str, datetime | None] = {}
+    auth_user_id: str | None = None
+    auth_account_id: str | None = None
     try:
         token, auth_metadata, auth_user_id, auth_account_id = _load_auth_token_and_metadata(path)
         if _is_access_token_expired(auth_metadata.get("auth_access_expires_at"), now=captured_at):
@@ -53,6 +55,8 @@ def fetch_account_usage_direct(
                 auth_last_refresh=auth_metadata.get("auth_last_refresh"),
                 auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
                 auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
+                backend_user_id=auth_user_id,
+                backend_account_id=auth_account_id,
             )
         payload = _fetch_stable_wham_usage(
             token,
@@ -68,6 +72,9 @@ def fetch_account_usage_direct(
             after_user_id=refreshed_user_id,
             after_account_id=refreshed_account_id,
         ):
+            # Do not let a pre-request identity authorize stale values after a token switch.
+            auth_user_id = None
+            auth_account_id = None
             raise DirectAuthError("auth.json identity changed during usage request")
         auth_metadata = refreshed_metadata
         auth_user_id = refreshed_user_id
@@ -120,6 +127,8 @@ def fetch_account_usage_direct(
             auth_last_refresh=auth_metadata.get("auth_last_refresh"),
             auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
+            backend_user_id=auth_user_id,
+            backend_account_id=auth_account_id,
         )
     except DirectFetchError as exc:
         return AccountUsage(
@@ -131,6 +140,8 @@ def fetch_account_usage_direct(
             auth_last_refresh=auth_metadata.get("auth_last_refresh"),
             auth_access_expires_at=auth_metadata.get("auth_access_expires_at"),
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
+            backend_user_id=auth_user_id,
+            backend_account_id=auth_account_id,
         )
 
 
