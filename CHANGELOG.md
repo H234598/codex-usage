@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.272 - 2026-07-12
+
+### Fixed
+
+- Die Direct-Stabilisierung bewertet nicht unterstützte Limitdauern nicht
+  länger als vollständige 5h-/Wochenwerte. Gemischte Backend-Antworten können
+  dadurch kein falsches Limitmodell als Mehrheitswert auswählen.
+
 ## 0.6.271 - 2026-07-12
 
 ### Fixed

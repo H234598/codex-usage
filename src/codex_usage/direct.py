@@ -778,6 +778,7 @@ def _usage_response_completeness(payload: dict[str, Any]) -> int:
     _identity, windows = _usage_response_signature(payload)
     return sum(
         value is not None
+        and value[0] in SUPPORTED_WINDOW_SECONDS
         and value[1] is not None
         and 0 <= value[1] <= 100
         for value in windows
