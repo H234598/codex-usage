@@ -1185,6 +1185,14 @@ def test_window_exhaustion_prefers_remaining_over_usage_percent():
     ) is False
 
 
+def test_window_exhaustion_prefers_absolute_usage_over_conflicting_remaining():
+    from codex_usage.scheduler import _window_is_exhausted
+
+    assert _window_is_exhausted(
+        LimitWindow(name="5h", used=100, limit=100, remaining=100, percent=100)
+    ) is True
+
+
 def test_watchdog_blocks_until_latest_reset_when_multiple_windows_are_exhausted(monkeypatch):
     accounts = (Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked"),)
     exhausted_usage = AccountUsage(

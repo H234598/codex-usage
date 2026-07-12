@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.218 - 2026-07-12
+
+### Fixed
+
+- Der Watchdog wertet absolute `used/limit`-Fenster bei der Erschöpfungsprüfung
+  jetzt vor einem widersprüchlichen `remaining`- oder `percent`-Feld aus.
+- Ein veralteter Restwert kann dadurch keinen erschöpften Account mehr als
+  verfügbar durchlassen; nicht erschöpfte absolute Nutzung bleibt vorrangig.
+- Regression für `used=100, limit=100, remaining=100` ergänzt.
+
 ## 0.6.217 - 2026-07-12
 
 ### Fixed

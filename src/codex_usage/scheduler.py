@@ -608,10 +608,12 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
 def _window_is_exhausted(window: Any) -> bool:
     if window is None:
         return False
+    if window.used is not None and window.limit is not None:
+        # Absolute usage is authoritative when a stale remaining field
+        # conflicts with it.
+        return window.used >= window.limit
     if window.remaining is not None:
         return window.remaining <= 0
-    if window.used is not None and window.limit is not None and window.used >= window.limit:
-        return True
     if window.percent is not None and window.percent <= 0:
         return True
     return False
