@@ -644,6 +644,67 @@ def test_fetch_all_stabilizes_app_server_against_direct_snapshot(monkeypatch):
     assert result[0].stale is True
 
 
+def test_fetch_all_does_not_stabilize_direct_against_unproven_app_server_snapshot(
+    monkeypatch,
+):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        auth_json_path="/tmp/account-auth.json",
+    )
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=91,
+            reset_at=datetime(2026, 7, 12, 4, 40, 41, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=89,
+            reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
+        ),
+        backend_used="app-server",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=99,
+            reset_at=datetime(2026, 7, 12, 4, 41, 59, tzinfo=timezone),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=99,
+            reset_at=datetime(2026, 7, 18, 8, 30, 25, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_direct",
+        lambda selected, *, auth_json_path=None: current,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", lambda account_id: previous)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,))
+
+    assert result[0].five_hour is not None
+    assert result[0].five_hour.remaining == 99
+    assert result[0].weekly is not None
+    assert result[0].weekly.remaining == 99
+    assert result[0].stale is False
+
+
 def test_fetch_all_does_not_persist_explicit_backend_override(monkeypatch):
     account = Account(
         id="account",

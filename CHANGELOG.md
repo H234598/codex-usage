@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.274 - 2026-07-12
+
+### Security
+
+- Ein aktueller Direct-Abruf übernimmt keine Reset-Stabilisierung mehr aus
+  einem unbewiesenen älteren App-Server-Snapshot. Der bewusste App-Server-
+  gegen-Direct-Fallback bleibt erhalten.
+
 ## 0.6.273 - 2026-07-12
 
 ### Security

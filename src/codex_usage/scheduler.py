@@ -31,6 +31,7 @@ from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
 from .state import (
     backend_identity_matches,
+    backend_provenance_matches,
     backend_provenance_matches_configured,
     load_state_generation,
     load_usage_snapshot,
@@ -262,6 +263,12 @@ def _stabilize_authenticated_usage(
         or previous.status != AccountStatus.OK
         or previous.backend_used not in AUTHENTICATED_BACKENDS
         or not backend_identity_matches(usage, previous)
+    ):
+        return usage
+    if (
+        usage.backend_used == "direct"
+        and previous.backend_used == "app-server"
+        and not backend_provenance_matches(usage, previous)
     ):
         return usage
     if (
