@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import signal
 import sys
 import time
@@ -33,6 +34,7 @@ from .state import (
 
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 DIRECT_RESET_DISCONTINUITY_SECONDS = 30
+RAW_NUMBER_PATTERN = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
 LEGACY_DIRECT_RESET_FALLBACK_REASON = "previous direct limits retained after reset transition"
 AUTHENTICATED_RESET_FALLBACK_REASON = (
     "previous authenticated limits retained after reset transition"
@@ -262,10 +264,39 @@ def _has_unexpired_window_reset_discontinuity(
         return False
     if previous.reset_at <= reference_at or current.reset_at <= reference_at:
         return False
+    if _uses_relative_reset_time(current) or _uses_relative_reset_time(previous):
+        return False
     return (
         abs((current.reset_at - previous.reset_at).total_seconds())
         > DIRECT_RESET_DISCONTINUITY_SECONDS
     )
+
+
+def _uses_relative_reset_time(window: Any) -> bool:
+    """The direct endpoint estimates untouched-window resets from the poll time."""
+    raw = getattr(window, "raw", None)
+    if not isinstance(raw, str):
+        return False
+    limit_window = _raw_number(raw, "limit_window_seconds")
+    reset_after = _raw_number(raw, "reset_after_seconds")
+    return (
+        limit_window is not None
+        and reset_after is not None
+        and abs(reset_after - limit_window) <= DIRECT_RESET_DISCONTINUITY_SECONDS
+    )
+
+
+def _raw_number(raw: str, field: str) -> float | None:
+    match = re.search(
+        rf'"{re.escape(field)}"\s*:\s*({RAW_NUMBER_PATTERN})',
+        raw,
+    )
+    if match is None:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
 
 
 def _should_retain_previous_window(

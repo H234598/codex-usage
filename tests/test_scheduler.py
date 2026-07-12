@@ -3,7 +3,7 @@ from __future__ import annotations
 import signal
 from contextlib import nullcontext
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from codex_usage.app_server import AppServerUnavailableError
@@ -659,6 +659,55 @@ def test_direct_reset_guard_rejects_earlier_reset_with_more_remaining():
     )
 
     assert _is_more_conservative_direct_usage(current, previous) is False
+
+
+def test_authenticated_stabilization_ignores_relative_reset_time_drift():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous_captured = datetime(2026, 7, 12, 4, 10, tzinfo=timezone)
+    current_captured = datetime(2026, 7, 12, 4, 13, tzinfo=timezone)
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=previous_captured,
+        five_hour=LimitWindow(
+            name="5h",
+            used=2,
+            limit=100,
+            remaining=98,
+            percent=98,
+            reset_at=previous_captured + timedelta(hours=5),
+            raw=(
+                '$.rate_limit.primary_window {"used_percent": 2, '
+                '"limit_window_seconds": 18000, "reset_after_seconds": 18000}'
+            ),
+        ),
+        weekly=LimitWindow(name="weekly", remaining=49),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=current_captured,
+        five_hour=replace(
+            previous.five_hour,
+            used=1,
+            remaining=99,
+            percent=99,
+            reset_at=current_captured + timedelta(hours=5),
+            raw=(
+                '$.rate_limit.primary_window {"used_percent": 1, '
+                '"limit_window_seconds": 18000, "reset_after_seconds": 18000}'
+            ),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=360)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.remaining == 99
+    assert result.stale is False
 
 
 def test_scheduler_remaining_percent_prefers_absolute_usage_values():

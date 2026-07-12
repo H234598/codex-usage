@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.186 - 2026-07-12
+
+### Fixed
+
+- Die Direct-Stabilisierung erkennt `reset_after_seconds` nahe der Fensterlänge
+  jetzt als relativen Resetzeitpunkt. Dessen Verschiebung zwischen zwei Polls
+  darf keinen falschen Bucket-Wechsel und damit keinen veralteten Prozentwert
+  auslösen.
+- Regression für frische 5h-Werte mit dynamischem `reset_at` ergänzt.
+
 ## 0.6.185 - 2026-07-12
 
 ### Fixed
