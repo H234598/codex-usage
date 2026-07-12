@@ -418,6 +418,7 @@ def _windows_from_response(
         snapshot = {}
     else:
         raise AppServerProtocolError("app server response has no rateLimits object")
+    top_level_snapshot = dict(snapshot)
     if has_codex_buckets:
         for key in ("primary", "secondary"):
             value = codex_snapshot.get(key)
@@ -430,7 +431,7 @@ def _windows_from_response(
                 ):
                     continue
                 if duration is None:
-                    top_level = snapshot.get(key)
+                    top_level = top_level_snapshot.get(key)
                     top_level_duration = (
                         _strict_int(top_level.get("windowDurationMins"))
                         if isinstance(top_level, dict)
@@ -440,6 +441,14 @@ def _windows_from_response(
                         FIVE_HOUR_WINDOW_MINUTES,
                         WEEKLY_WINDOW_MINUTES,
                     }:
+                        continue
+                    if (
+                        isinstance(top_level, dict)
+                        and top_level.get("windowDurationMins") is not None
+                    ):
+                        # An explicit unsupported or malformed top-level
+                        # duration makes a duration-less nested bucket
+                        # unclassifiable; do not infer a false 5h/weekly value.
                         continue
                 snapshot[key] = value
     if not isinstance(snapshot, dict):

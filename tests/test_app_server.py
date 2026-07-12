@@ -402,6 +402,26 @@ def test_window_mapping_keeps_complete_top_level_bucket_over_partial_codex_bucke
     assert weekly is not None and weekly.used == 2
 
 
+def test_window_mapping_does_not_infer_partial_codex_over_unsupported_top_level():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 90, "windowDurationMins": 43_200},
+                "secondary": {"usedPercent": 40, "windowDurationMins": 10_080},
+            },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {"usedPercent": 1},
+                    "secondary": {"usedPercent": 2, "windowDurationMins": 10_080},
+                }
+            },
+        }
+    )
+
+    assert five is None
+    assert weekly is not None and weekly.used == 2
+
+
 def test_window_mapping_does_not_let_unsupported_codex_bucket_hide_top_level_window():
     five, weekly = _windows_from_response(
         {

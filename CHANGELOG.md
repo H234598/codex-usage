@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.260 - 2026-07-12
+
+### Fixed
+
+- Ein explizit nicht unterstütztes Top-Level-Fenster blockiert jetzt die
+  5h-/Wochen-Inferenz aus einem verschachtelten `codex`-Bucket ohne Dauer.
+  Dadurch werden unklassifizierbare App-Server-Teilantworten nicht als echte
+  Nutzungswerte angezeigt.
+
 ## 0.6.259 - 2026-07-12
 
 ### Fixed
