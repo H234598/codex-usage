@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.345 - 2026-07-13
+
+### Fixed
+
+- Scheduler-Watchdog-Zeitpunkte verwenden jetzt ebenfalls die DST-faehige
+  lokale Zeitzone fuer Block-, Snapshot- und Fehlerentscheidungen.
+
 ## 0.6.344 - 2026-07-13
 
 ### Fixed

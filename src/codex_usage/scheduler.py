@@ -26,6 +26,7 @@ from .direct import (
     auth_plan_type_for_account,
     fetch_account_usage_direct,
 )
+from .extractor import LOCAL_TZ
 from .health import record_health_event
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
@@ -252,7 +253,7 @@ def _fetch_one(
         return AccountUsage(
             account_id=account.id,
             label=account.label,
-            captured_at=datetime.now().astimezone(),
+            captured_at=datetime.now(tz=LOCAL_TZ),
             status=AccountStatus.ERROR,
             error=f"fetch failed: {type(exc).__name__}",
             backend_configured=account.backend,
@@ -600,7 +601,7 @@ def watchdog(
     backend_override: str | None = None,
     auth_json_path: Path | None = None,
 ) -> list[AccountUsage]:
-    now = datetime.now().astimezone()
+    now = datetime.now(tz=LOCAL_TZ)
     account_list = list(accounts)
     effective_backend = "direct" if direct else None
     if effective_backend is None:
@@ -643,7 +644,7 @@ def watchdog(
         auth_json_path=auth_json_path,
         save_snapshots=False,
     )
-    evaluation_now = datetime.now().astimezone()
+    evaluation_now = datetime.now(tz=LOCAL_TZ)
     expired_blocked_accounts = [
         account
         for account in account_list
@@ -664,7 +665,7 @@ def watchdog(
         )
         for account in expired_blocked_accounts:
             blocked_snapshots.pop(account.id, None)
-        evaluation_now = datetime.now().astimezone()
+        evaluation_now = datetime.now(tz=LOCAL_TZ)
     fetched_by_id = {usage.account_id: usage for usage in fetched}
 
     usages: list[AccountUsage] = []

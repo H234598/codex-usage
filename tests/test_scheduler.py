@@ -1465,6 +1465,39 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
     assert saved == ["ok"]
 
 
+def test_watchdog_uses_dst_aware_local_timezone(monkeypatch):
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+    local_tz = ZoneInfo("Europe/Berlin")
+    now = datetime(2026, 7, 13, 1, 0, tzinfo=local_tz)
+    timezone_calls = []
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=now,
+        status=AccountStatus.OK,
+    )
+
+    class Clock:
+        @classmethod
+        def now(cls, tz=None):
+            timezone_calls.append(tz)
+            return now.astimezone(tz) if tz is not None else now
+
+    monkeypatch.setattr("codex_usage.scheduler.LOCAL_TZ", local_tz)
+    monkeypatch.setattr("codex_usage.scheduler.datetime", Clock)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: None,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", lambda *args, **kwargs: [usage])
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    assert watchdog(AppConfig(accounts=(account,)), (account,), output="json") == [usage]
+    assert timezone_calls
+    assert timezone_calls == [local_tz, local_tz]
+
+
 def test_watchdog_refetches_far_future_blocked_snapshot(monkeypatch):
     account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
     now = datetime.now().astimezone()
@@ -1990,8 +2023,9 @@ def test_watchdog_does_not_block_when_reset_expires_during_fetch(monkeypatch):
 
     class Clock:
         @classmethod
-        def now(cls):
-            return next(clock_values)
+        def now(cls, tz=None):
+            value = next(clock_values)
+            return value.astimezone(tz) if tz is not None else value
 
     monkeypatch.setattr("codex_usage.scheduler.datetime", Clock)
     monkeypatch.setattr(
@@ -2052,8 +2086,9 @@ def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetc
 
     class Clock:
         @classmethod
-        def now(cls):
-            return next(clock_values)
+        def now(cls, tz=None):
+            value = next(clock_values)
+            return value.astimezone(tz) if tz is not None else value
 
     def fake_load_usage_snapshot(account_id, snapshot_dir=None):
         return blocked_snapshot if account_id == "blocked" else None
