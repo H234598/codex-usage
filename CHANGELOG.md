@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.199 - 2026-07-12
+
+### Fixed
+
+- Ein Browser-Account ohne `auth.json` darf keinen unbekannten ersten
+  Backend-Payload als Identitätsanker speichern. Die Bridge verlangt dafür
+  jetzt einen bereits initialisierten, passenden Account-Zustand.
+- Bei der Identitätsprüfung wird der zeitlich neueste Zustand aus Snapshot und
+  Current verwendet; ein alter Snapshot kann dadurch keinen aktuellen
+  Identitätswechsel mehr verdecken oder blockieren.
+- Regressionen decken Erstkontakt, passenden initialisierten Browser-Account
+  und einen neueren Current-Zustand gegenüber einem alten Snapshot ab.
+
 ## 0.6.198 - 2026-07-12
 
 ### Fixed

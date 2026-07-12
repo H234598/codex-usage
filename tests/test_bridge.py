@@ -18,7 +18,7 @@ from codex_usage.bridge import (
 )
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
-from codex_usage.state import load_usage_snapshot, save_usage_snapshot
+from codex_usage.state import load_usage_snapshot, save_current_usage, save_usage_snapshot
 
 
 def _jwt_with_claims(claims: dict) -> str:
@@ -94,6 +94,170 @@ def test_ingest_rejects_unidentified_browser_payload_before_saving(tmp_path):
         )
 
     assert load_usage_snapshot("privat", snapshot_dir) is None
+
+
+def test_ingest_rejects_first_browser_identity_before_saving(tmp_path):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "wrong-browser-user",
+                        "account_id": "wrong-browser-account",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="identity is not initialized"):
+        ingest_and_save(
+            config,
+            "privat",
+            payload,
+            snapshot_dir,
+            require_backend_identity=True,
+        )
+
+    assert load_usage_snapshot("privat", snapshot_dir) is None
+
+
+def test_ingest_accepts_matching_initialized_browser_identity(tmp_path):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+            backend_user_id="browser-user",
+            backend_account_id="browser-account",
+        ),
+        snapshot_dir,
+    )
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "browser-user",
+                        "account_id": "browser-account",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 4,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 46,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    usage, _path = ingest_and_save(
+        config,
+        "privat",
+        payload,
+        snapshot_dir,
+        require_backend_identity=True,
+    )
+
+    assert usage.five_hour is not None and usage.five_hour.used == 4
+    assert usage.weekly is not None and usage.weekly.used == 46
+
+
+def test_ingest_uses_newer_current_identity_than_old_snapshot(tmp_path):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+            backend_user_id="old-user",
+            backend_account_id="old-account",
+        ),
+        snapshot_dir,
+    )
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+            five_hour=LimitWindow(name="5h", remaining=96),
+            weekly=LimitWindow(name="weekly", remaining=54),
+            backend_user_id="new-user",
+            backend_account_id="new-account",
+        ),
+        snapshot_dir.parent / "current",
+    )
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "new-user",
+                        "account_id": "new-account",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 5,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 47,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    usage, _path = ingest_and_save(
+        config,
+        "privat",
+        payload,
+        snapshot_dir,
+        require_backend_identity=True,
+    )
+
+    assert usage.backend_account_id == "new-account"
 
 
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():

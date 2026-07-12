@@ -540,10 +540,12 @@ def ingest_and_save(
         usage.backend_user_id or usage.backend_account_id
     ):
         raise ValueError("bridge payload has no backend account identity")
-    known = load_usage_snapshot(account.id, snapshot_dir)
-    if known is None:
-        current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
-        known = load_current_usage(account.id, current_dir)
+    snapshot = load_usage_snapshot(account.id, snapshot_dir)
+    current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
+    current = load_current_usage(account.id, current_dir)
+    known = _newest_known_usage(snapshot, current)
+    if require_backend_identity and account.auth_json_path is None and known is None:
+        raise ValueError("browser account identity is not initialized")
     if (
         known is not None
         and not backend_identity_matches(usage, known)
@@ -554,6 +556,20 @@ def ingest_and_save(
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     save_current_usage(usage, current_dir)
     return usage, path
+
+
+def _newest_known_usage(
+    snapshot: AccountUsage | None,
+    current: AccountUsage | None,
+) -> AccountUsage | None:
+    if snapshot is None:
+        return current
+    if current is None:
+        return snapshot
+    try:
+        return current if current.captured_at >= snapshot.captured_at else snapshot
+    except TypeError:
+        return current
 
 
 def _usage_matches_current_auth(account: Account, usage: AccountUsage) -> bool:
