@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.183 - 2026-07-12
+
+### Fixed
+
+- Das Cinnamon-Applet restauriert bei authentifizierten partiellen
+  Fresh-Payloads fehlende Fenster nicht mehr aus seinem lokalen Cache.
+- Browser- und Bridge-Partials behalten den bisherigen Fallback.
+- Regressionen für Direct und App Server ergänzt.
+
 ## 0.6.182 - 2026-07-12
 
 ### Fixed

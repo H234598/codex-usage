@@ -1157,6 +1157,37 @@ test("partial fresh payload preserves each missing window from stale cache", () 
   assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
 });
 
+test("partial authenticated payload does not restore a missing window", () => {
+  for (const backend of ["direct", "app-server"]) {
+    const applet = makeApplet();
+    applet._usages = [{
+      account: "alpha",
+      captured_at: "2026-07-10T10:00:00.000Z",
+      backend_user_id: "user-alpha",
+      backend_account_id: "account-alpha",
+      backend_used: backend,
+      five_hour: { remaining: 80 },
+      weekly: { remaining: 60 },
+      status: "ok",
+      stale: false,
+    }];
+    const merged = applet._mergeFreshPayload([{
+      account: "alpha",
+      status: "partial",
+      captured_at: "2026-07-10T10:05:00.000Z",
+      backend_user_id: "user-alpha",
+      backend_account_id: "account-alpha",
+      backend_used: backend,
+      five_hour: { remaining: 70 },
+      weekly: null,
+      stale: false,
+    }]);
+    assert.equal(merged[0].five_hour.remaining, 70);
+    assert.equal(merged[0].weekly, null);
+    assert.equal(merged[0].stale, false);
+  }
+});
+
 test("expired cached windows are not reused after a fresh capture", () => {
   const applet = makeApplet();
   applet._usages = [{

@@ -2244,9 +2244,14 @@ CodexUsageApplet.prototype = {
                 this._backendIdentityMatches(item, old) &&
                 !this._authoritativeEmptyLimits(item)
             ) {
+                let authenticatedPartial = this._authenticatedPartial(item);
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
-                if (!this._windowHasUsageValue(item.five_hour) && old.five_hour) {
+                if (
+                    !authenticatedPartial &&
+                    !this._windowHasUsageValue(item.five_hour) &&
+                    old.five_hour
+                ) {
                     let mergedFive = this._mergeCachedWindow(
                         item.five_hour,
                         old.five_hour,
@@ -2269,7 +2274,11 @@ CodexUsageApplet.prototype = {
                     usedCachedWindow = usedCachedWindow || mergedFive !== item.five_hour;
                     item.five_hour = mergedFive;
                 }
-                if (!this._windowHasUsageValue(item.weekly) && old.weekly) {
+                if (
+                    !authenticatedPartial &&
+                    !this._windowHasUsageValue(item.weekly) &&
+                    old.weekly
+                ) {
                     let mergedWeekly = this._mergeCachedWindow(
                         item.weekly,
                         old.weekly,
@@ -2351,6 +2360,14 @@ CodexUsageApplet.prototype = {
             item.status === "partial" &&
             !item.five_hour &&
             !item.weekly &&
+            ["direct", "app-server"].indexOf(item.backend_used) !== -1
+        );
+    },
+
+    _authenticatedPartial: function(item) {
+        return Boolean(
+            item &&
+            item.status === "partial" &&
             ["direct", "app-server"].indexOf(item.backend_used) !== -1
         );
     },
