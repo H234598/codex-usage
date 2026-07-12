@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.270 - 2026-07-12
+
+### Security
+
+- Der Watchdog verwendet alte Block-Snapshots ohne Account-ID nicht mehr für
+  ein anderes Konto mit derselben User-ID.
+
 ## 0.6.269 - 2026-07-12
 
 ### Security

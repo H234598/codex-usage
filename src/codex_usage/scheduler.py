@@ -695,7 +695,9 @@ def _blocked_snapshot_matches_account(
             return True
     except DirectAuthError:
         return False
-    if snapshot.backend_account_id and auth_account_id:
+    if snapshot.backend_account_id:
+        if not auth_account_id:
+            return False
         if auth_identity_changed(
             before_user_id=snapshot.backend_user_id,
             before_account_id=snapshot.backend_account_id,
@@ -703,9 +705,12 @@ def _blocked_snapshot_matches_account(
             after_account_id=auth_account_id,
         ):
             return False
-    identities = {value for value in (auth_user_id, auth_account_id) if value}
-    snapshot_identity = snapshot.backend_account_id or snapshot.backend_user_id
-    return bool(snapshot_identity and snapshot_identity in identities)
+        return snapshot.backend_account_id in {auth_account_id, auth_user_id}
+    if snapshot.backend_user_id:
+        # A user ID alone cannot distinguish two accounts sharing that user.
+        # Reuse is safe only when the current auth has no account ID either.
+        return auth_account_id is None and snapshot.backend_user_id == auth_user_id
+    return False
 
 
 def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage:
