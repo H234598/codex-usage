@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.328 - 2026-07-12
+
+### Fixed
+
+- Das Applet akzeptiert keine deutlich in der Zukunft liegenden Capture-Zeitpunkte
+  mehr als frische Werte und verdrängt damit keine gültigen aktuellen Snapshots.
+
 ## 0.6.327 - 2026-07-12
 
 ### Fixed

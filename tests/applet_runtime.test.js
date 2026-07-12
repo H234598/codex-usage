@@ -251,6 +251,36 @@ test("a missed five-minute poll marks cached values stale after one grace minute
   assert.equal(applet._cacheIsStale(), true);
 });
 
+test("far-future captures are stale and cannot replace current usage", () => {
+  const applet = makeApplet();
+  const currentCapture = new Date(Date.now() - 60 * 1000).toISOString();
+  const farFutureCapture = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: currentCapture,
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+    status: "ok",
+    stale: false,
+  }];
+
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    captured_at: farFutureCapture,
+    five_hour: { remaining: 10 },
+    weekly: { remaining: 20 },
+    status: "ok",
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].captured_at, currentCapture);
+  assert.equal(merged[0].five_hour.remaining, 80);
+  assert.equal(merged[0].weekly.remaining, 60);
+  applet._usages = [{ account: "alpha", captured_at: farFutureCapture, stale: false }];
+  assert.equal(applet._cacheIsStale(), true);
+  assert.equal(applet._newestCapture(), "");
+});
+
 test("a fresh account cannot hide another account's stale cache", () => {
   const applet = makeApplet();
   applet.refreshInterval = 300;

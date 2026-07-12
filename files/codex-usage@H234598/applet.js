@@ -24,6 +24,7 @@ const INTERNAL_FAILURE_WINDOW_MS = 300000;
 const INTERNAL_FAILURE_LIMIT = 3;
 const CACHE_SYNC_INTERVAL_MS = 60000;
 const REFRESH_FAILURE_LIMIT = 3;
+const MAX_CAPTURE_FUTURE_MS = 5 * 60 * 1000;
 const PANEL_CLASSES = [
     "codex-usage-panel-warning",
     "codex-usage-panel-critical",
@@ -1047,7 +1048,11 @@ CodexUsageApplet.prototype = {
                 return true;
             }
             let captured = this._dateMillis(usage.captured_at);
-            if (captured === null || nowMs - captured > staleAfterMs) {
+            if (
+                captured === null ||
+                this._captureIsTooFarInFuture(usage.captured_at, nowMs) ||
+                nowMs - captured > staleAfterMs
+            ) {
                 return true;
             }
         }
@@ -1072,7 +1077,11 @@ CodexUsageApplet.prototype = {
                 return true;
             }
             let captured = this._dateMillis(usage.captured_at);
-            if (captured === null || nowMs - captured > CACHE_SYNC_INTERVAL_MS) {
+            if (
+                captured === null ||
+                this._captureIsTooFarInFuture(usage.captured_at, nowMs) ||
+                nowMs - captured > CACHE_SYNC_INTERVAL_MS
+            ) {
                 return true;
             }
         }
@@ -2332,7 +2341,9 @@ CodexUsageApplet.prototype = {
         for (let i = 0; i < this._usages.length; i++) {
             let capturedMs = this._dateMillis(this._usages[i].captured_at);
             this._usages[i].stale = this._usages[i].stale ||
-                capturedMs === null || nowMs - capturedMs > staleAfterMs;
+                capturedMs === null ||
+                this._captureIsTooFarInFuture(this._usages[i].captured_at, nowMs) ||
+                nowMs - capturedMs > staleAfterMs;
         }
         this._buildUsageMenu();
         this._updatePanel();
@@ -3948,7 +3959,11 @@ CodexUsageApplet.prototype = {
         for (let i = 0; i < this._usages.length; i++) {
             let value = this._usages[i].captured_at;
             let millis = this._dateMillis(value);
-            if (millis !== null && (newestMs === null || millis > newestMs)) {
+            if (
+                millis !== null &&
+                !this._captureIsTooFarInFuture(value, Date.now()) &&
+                (newestMs === null || millis > newestMs)
+            ) {
                 newestMs = millis;
                 newest = value;
             }
@@ -3964,9 +3979,21 @@ CodexUsageApplet.prototype = {
         return Number.isFinite(parsed) ? parsed : null;
     },
 
+    _captureIsTooFarInFuture: function(value, referenceMs) {
+        let millis = this._dateMillis(value);
+        return millis !== null && millis > referenceMs + MAX_CAPTURE_FUTURE_MS;
+    },
+
     _captureIsOlder: function(candidate, existing) {
         let candidateMs = this._dateMillis(candidate);
         let existingMs = this._dateMillis(existing);
+        let nowMs = Date.now();
+        if (this._captureIsTooFarInFuture(candidate, nowMs)) {
+            return existingMs !== null;
+        }
+        if (this._captureIsTooFarInFuture(existing, nowMs)) {
+            return false;
+        }
         return existingMs !== null && (candidateMs === null || candidateMs < existingMs);
     },
 
