@@ -2250,11 +2250,14 @@ CodexUsageApplet.prototype = {
             throw new Error("invalid limit window");
         }
         return {
+            name: this._safeText(value.name, 40),
             used: this._safeNumber(value.used),
             limit: this._safeNumber(value.limit),
             remaining: this._safeNumber(value.remaining),
             percent: this._safeNumber(value.percent),
-            reset_at: this._safeText(value.reset_at, 80)
+            reset_at: this._safeText(value.reset_at, 80),
+            raw: this._safeText(value.raw, 500),
+            source: this._safeText(value.source, 120)
         };
     },
 
@@ -2610,8 +2613,60 @@ CodexUsageApplet.prototype = {
         return resetMs !== null && referenceMs !== null && resetMs <= referenceMs;
     },
 
+    _windowKind: function(window) {
+        let name = this._safeText(window && window.name, 40).toLowerCase();
+        name = name.replace(/[-\s]+/g, "_");
+        if (["5h", "5_hour", "five_hour"].indexOf(name) !== -1) {
+            return "five_hour";
+        }
+        if (["w", "week", "weekly"].indexOf(name) !== -1) {
+            return "weekly";
+        }
+        return "";
+    },
+
+    _windowDurationSeconds: function(window) {
+        let raw = this._safeText(window && window.raw, 500);
+        let match = /"limit_window_seconds"\s*:\s*([0-9]+(?:\.[0-9]+)?)/.exec(raw);
+        if (!match) {
+            return null;
+        }
+        let value = Number(match[1]);
+        if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
+            return null;
+        }
+        return value;
+    },
+
+    _windowDurationMatches: function(current, cached) {
+        let currentKind = this._windowKind(current);
+        let cachedKind = this._windowKind(cached);
+        if (Boolean(currentKind) !== Boolean(cachedKind)) {
+            return false;
+        }
+        if (currentKind && cachedKind && currentKind !== cachedKind) {
+            return false;
+        }
+        let currentDuration = this._windowDurationSeconds(current);
+        let cachedDuration = this._windowDurationSeconds(cached);
+        let expected = {
+            five_hour: 18000,
+            weekly: 604800
+        }[currentKind || cachedKind] || null;
+        if (expected !== null &&
+            ((currentDuration !== null && currentDuration !== expected) ||
+             (cachedDuration !== null && cachedDuration !== expected))) {
+            return false;
+        }
+        return currentDuration === null || cachedDuration === null ||
+            currentDuration === cachedDuration;
+    },
+
     _mergeCachedWindow: function(fresh, cached, referenceAt) {
         if (fresh && fresh.reset_at && this._windowResetExpired(fresh, referenceAt)) {
+            return fresh;
+        }
+        if (fresh && !this._windowDurationMatches(fresh, cached)) {
             return fresh;
         }
         if (this._windowResetExpired(cached, referenceAt)) {
@@ -2630,6 +2685,9 @@ CodexUsageApplet.prototype = {
     },
 
     _mergeMissingReset: function(fresh, cached, referenceAt) {
+        if (!this._windowDurationMatches(fresh, cached)) {
+            return fresh;
+        }
         if (this._windowResetExpired(cached, referenceAt)) {
             return fresh;
         }

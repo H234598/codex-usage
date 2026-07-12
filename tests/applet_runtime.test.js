@@ -1450,6 +1450,55 @@ test("partial fresh payload preserves each missing window from stale cache", () 
   assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
 });
 
+test("partial fresh window does not inherit a cached value from another duration", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: {
+      name: "5h",
+      used: 5,
+      limit: 100,
+      remaining: 95,
+      raw: '{"limit_window_seconds":2592000}'
+    }
+  }];
+
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: {
+      name: "5h",
+      remaining: null,
+      reset_at: "2026-07-10T15:00:00.000Z",
+      raw: '{"limit_window_seconds":18000}'
+    },
+    weekly: null,
+    stale: false
+  }]);
+
+  assert.equal(merged[0].five_hour.remaining, null);
+  assert.equal(merged[0].five_hour.reset_at, "2026-07-10T15:00:00.000Z");
+  assert.equal(merged[0].stale, false);
+});
+
+test("payload validation keeps window provenance metadata for safe merges", () => {
+  const applet = makeApplet();
+  const validated = applet._validatePayload([{
+    account: "alpha",
+    five_hour: {
+      name: "5h",
+      raw: '{"limit_window_seconds":18000}',
+      source: "json:usage"
+    }
+  }]);
+
+  assert.equal(validated[0].five_hour.name, "5h");
+  assert.equal(validated[0].five_hour.raw, '{"limit_window_seconds":18000}');
+  assert.equal(validated[0].five_hour.source, "json:usage");
+});
+
 test("partial authenticated payload does not restore a missing window", () => {
   for (const backend of ["direct", "app-server"]) {
     const applet = makeApplet();
