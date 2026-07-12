@@ -306,6 +306,27 @@ def test_expire_reset_windows_ignores_future_values_capture():
     assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
+def test_expire_reset_windows_localizes_naive_reset_timestamp():
+    captured_at = datetime(2026, 7, 12, 10, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=38,
+            reset_at=datetime(2026, 7, 12, 9, 0),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=captured_at)
+
+    assert expired.five_hour is None
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
 def test_expire_reset_windows_clears_expired_blocked_state():
     reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(

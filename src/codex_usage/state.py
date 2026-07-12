@@ -688,9 +688,9 @@ def _window_reset_expired(window: LimitWindow | None, reference_at: datetime) ->
     if window is None or window.reset_at is None:
         return False
     try:
-        return window.reset_at <= reference_at
-    except TypeError:
-        return False
+        return _localize_datetime(window.reset_at) <= _localize_datetime(reference_at)
+    except (OverflowError, TypeError, ValueError):
+        return True
 
 
 def _cached_window_expired(
@@ -709,21 +709,35 @@ def _cached_window_expired(
     if duration is None or not isinstance(captured_at, datetime):
         return True
     try:
-        return captured_at + timedelta(seconds=duration) <= reference_at
+        return (
+            _localize_datetime(captured_at) + timedelta(seconds=duration)
+            <= _localize_datetime(reference_at)
+        )
     except (OverflowError, TypeError, ValueError):
         return True
 
 
+def _localize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.astimezone()
+    return value
+
+
 def _values_capture_for_expiry(usage: AccountUsage) -> datetime:
-    candidate = usage.values_captured_at
+    candidate = (
+        _localize_datetime(usage.values_captured_at)
+        if isinstance(usage.values_captured_at, datetime)
+        else None
+    )
+    captured_at = _localize_datetime(usage.captured_at)
     if candidate is None:
-        return usage.captured_at
+        return captured_at
     try:
-        if candidate <= usage.captured_at:
+        if candidate <= captured_at:
             return candidate
-    except TypeError:
-        return usage.captured_at
-    return usage.captured_at
+    except (OverflowError, TypeError, ValueError):
+        return captured_at
+    return captured_at
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
