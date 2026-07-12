@@ -2371,7 +2371,37 @@ CodexUsageApplet.prototype = {
             if (old && this._backendIdentityIsIncomplete(item, old)) {
                 merged.push(this._markUsageStale(old));
             } else if (old && !this._backendProvenanceMatches(item, old)) {
-                merged.push(this._hasCachedWindows(old) ? this._markUsageStale(old) : item);
+                let candidateBackend = this._safeBackend(item.backend_used, true);
+                let candidateMatchesConfigured = Boolean(
+                    this._backendRowsReady &&
+                    ["direct", "app-server"].indexOf(candidateBackend) !== -1 &&
+                    this._backendMatchesConfigured(
+                        item,
+                        this._backendConfiguredForAccount(item.account)
+                    )
+                );
+                let oldBackend = this._safeBackend(old.backend_used, true);
+                let oldMatchesConfigured = Boolean(
+                    this._backendRowsReady &&
+                    this._backendMatchesConfigured(
+                        old,
+                        this._backendConfiguredForAccount(old.account)
+                    )
+                );
+                let identityMatches = this._backendIdentityMatches(item, old);
+                let oldIdentityPresent = this._backendIdentityPresent(old);
+                let oldCanBeReplaced = !oldMatchesConfigured ||
+                    ["browser", ""].indexOf(oldBackend) !== -1;
+                if (
+                    candidateMatchesConfigured && oldCanBeReplaced
+                ) {
+                    merged.push(
+                        (identityMatches || !oldIdentityPresent) ? item :
+                            (this._hasCachedWindows(old) ? this._markUsageStale(old) : item)
+                    );
+                } else {
+                    merged.push(this._hasCachedWindows(old) ? this._markUsageStale(old) : item);
+                }
             } else if (old && this._backendIdentityMatches(item, old) &&
                 this._captureIsOlder(item.captured_at, old.captured_at)) {
                 merged.push(old);

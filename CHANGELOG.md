@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.335 - 2026-07-13
+
+### Fixed
+
+- Ein identitaetsgleicher Direct-/App-Server-Cache kann nun einen alten
+  Browser-Snapshot abloesen, wenn er zum konfigurierten Backend passt.
+
 ## 0.6.334 - 2026-07-13
 
 ### Fixed
