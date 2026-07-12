@@ -773,6 +773,7 @@ const CODEX_USAGE_INTERVAL_MS = {interval_ms};
 const CODEX_USAGE_MIN_TEXT = 40;
 const CODEX_USAGE_MAX_FIELD_CHARS = 2000000;
 const CODEX_USAGE_READY_TIMEOUT_MS = 60000;
+const CODEX_USAGE_PAGE_REFRESH_TIMEOUT_MS = 2500;
 const CODEX_USAGE_API_PATHS = [
   "/backend-api/wham/usage",
   "/backend-api/wham/usage/daily-token-usage-breakdown",
@@ -786,7 +787,9 @@ let codexUsageIntervalId = null;
 let codexUsageReadyObserver = null;
 let codexUsageReadyTimer = null;
 let codexUsageApiSendTimer = null;
+let codexUsageRefreshRequestSequence = 0;
 const codexUsageCapturedApiResponses = [];
+const codexUsageRefreshWaiters = new Map();
 
 function limitCodexUsageText(value) {{
   const text = String(value || "");
@@ -823,26 +826,7 @@ function codexUsageApiResponseKey(item) {{
 }}
 
 function codexUsageHasMainUsageResponse() {{
-  return codexUsageCapturedApiResponses.some((item) => {{
-    try {{
-      const parsed = new URL(String((item && item.url) || ""), location.origin);
-      const path = parsed.pathname.replace(/\\/+$/, "") || "/";
-      if (parsed.origin !== location.origin || path !== "/backend-api/wham/usage") {{
-        return false;
-      }}
-      if (item.truncated === true) {{
-        return false;
-      }}
-      const status = Number(item.status);
-      if (Number.isFinite(status) && (status < 200 || status >= 300)) {{
-        return false;
-      }}
-      const bodyText = String(item.bodyText || item.body || item.text || "");
-      return /[\"'](?:rate_limit|rateLimits|rateLimitsByLimitId)[\"']\\s*:/.test(bodyText);
-    }} catch (_error) {{
-      return false;
-    }}
-  }});
+  return codexUsageCapturedApiResponses.some(codexUsageIsMainUsageResponse);
 }}
 
 function codexUsageApiResponseSequence(item) {{
@@ -857,6 +841,27 @@ function codexUsageApiResponseIsNewer(candidate, current) {{
     currentSequence !== null
     && (candidateSequence === null || candidateSequence < currentSequence)
   );
+}}
+
+function codexUsageIsMainUsageResponse(item) {{
+  try {{
+    const parsed = new URL(String((item && item.url) || ""), location.origin);
+    const path = parsed.pathname.replace(/\\/+$/, "") || "/";
+    if (parsed.origin !== location.origin || path !== "/backend-api/wham/usage") {{
+      return false;
+    }}
+    if (item.truncated === true) {{
+      return false;
+    }}
+    const status = Number(item.status);
+    if (Number.isFinite(status) && (status < 200 || status >= 300)) {{
+      return false;
+    }}
+    const bodyText = String(item.bodyText || item.body || item.text || "");
+    return /[\"'](?:rate_limit|rateLimits|rateLimitsByLimitId)[\"']\\s*:/.test(bodyText);
+  }} catch (_error) {{
+    return false;
+  }}
 }}
 
 function stopCodexUsageBridge(reason) {{
@@ -880,6 +885,11 @@ function stopCodexUsageBridge(reason) {{
     clearTimeout(codexUsageApiSendTimer);
     codexUsageApiSendTimer = null;
   }}
+  for (const waiter of codexUsageRefreshWaiters.values()) {{
+    clearTimeout(waiter.timeout);
+    waiter.resolve(false);
+  }}
+  codexUsageRefreshWaiters.clear();
   console.warn("codex-usage bridge stopped", reason);
 }}
 
@@ -931,6 +941,64 @@ function scheduleCodexUsageSend(delayMs = 500) {{
   }}, delayMs);
 }}
 
+function forgetCodexUsageMainUsageResponses() {{
+  for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {{
+    try {{
+      const parsed = new URL(
+        String(
+          (codexUsageCapturedApiResponses[index]
+            && codexUsageCapturedApiResponses[index].url) || ""
+        ),
+        location.origin
+      );
+      const path = parsed.pathname.replace(/\\/+$/, "") || "/";
+      if (parsed.origin === location.origin && path === "/backend-api/wham/usage") {{
+        codexUsageCapturedApiResponses.splice(index, 1);
+      }}
+    }} catch (_error) {{
+      // Leave malformed diagnostic entries untouched.
+    }}
+  }}
+}}
+
+function resolveCodexUsagePageRefresh(requestId, succeeded) {{
+  const key = String(requestId || "");
+  const waiter = codexUsageRefreshWaiters.get(key);
+  if (!waiter) {{
+    return;
+  }}
+  clearTimeout(waiter.timeout);
+  codexUsageRefreshWaiters.delete(key);
+  waiter.resolve(Boolean(succeeded));
+}}
+
+function requestCodexUsagePageRefresh() {{
+  forgetCodexUsageMainUsageResponses();
+  if (codexUsageStopped || typeof window.postMessage !== "function") {{
+    return Promise.resolve(false);
+  }}
+  const requestId = String(++codexUsageRefreshRequestSequence);
+  return new Promise((resolve) => {{
+    const timeout = setTimeout(() => {{
+      codexUsageRefreshWaiters.delete(requestId);
+      forgetCodexUsageMainUsageResponses();
+      resolve(false);
+    }}, CODEX_USAGE_PAGE_REFRESH_TIMEOUT_MS);
+    codexUsageRefreshWaiters.set(requestId, {{ resolve, timeout }});
+    try {{
+      window.postMessage({{
+        type: "codexUsageRefresh",
+        requestId
+      }}, location.origin);
+    }} catch (_error) {{
+      clearTimeout(timeout);
+      codexUsageRefreshWaiters.delete(requestId);
+      forgetCodexUsageMainUsageResponses();
+      resolve(false);
+    }}
+  }});
+}}
+
 window.addEventListener("message", (event) => {{
   if (event.source !== window || !event.data || event.data.type !== "codexUsageApiResponses") {{
     return;
@@ -939,7 +1007,16 @@ window.addEventListener("message", (event) => {{
   for (const response of responses) {{
     rememberCodexUsageApiResponse(response);
   }}
-  if (responses.length) {{
+  if (event.data.requestId !== undefined && event.data.requestId !== null) {{
+    resolveCodexUsagePageRefresh(
+      event.data.requestId,
+      responses.some(codexUsageIsMainUsageResponse)
+    );
+  }}
+  if (
+    responses.length
+    && (event.data.requestId === undefined || event.data.requestId === null)
+  ) {{
     scheduleCodexUsageSend();
   }}
 }});
@@ -1050,7 +1127,8 @@ async function sendCodexUsage() {{
     return;
   }}
   const payload = collectCodexUsage();
-  const probeResponses = codexUsageHasMainUsageResponse() ? [] : await fetchCodexUsageApis();
+  const pageRefreshSucceeded = await requestCodexUsagePageRefresh();
+  const probeResponses = pageRefreshSucceeded ? [] : await fetchCodexUsageApis();
   payload.apiResponses = dedupeCodexUsageApiResponses([
     ...codexUsageCapturedApiResponses,
     ...probeResponses
@@ -1187,6 +1265,7 @@ def _render_extension_page_hook() -> str:
   const codexUsageCapturedApiResponses = [];
   let codexUsageFetchSequence = 0;
   let codexUsageFlushTicks = 0;
+  let codexUsageOriginalFetch = null;
 
   function limitCodexUsageText(value) {
     const text = String(value || "");
@@ -1254,7 +1333,7 @@ def _render_extension_page_hook() -> str:
     );
   }
 
-  function rememberCodexUsageApiResponse(item) {
+  function rememberCodexUsageApiResponse(item, requestId = null) {
     const key = codexUsageApiResponseKey(item);
     for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {
       if (codexUsageApiResponseKey(codexUsageCapturedApiResponses[index]) === key) {
@@ -1269,20 +1348,29 @@ def _render_extension_page_hook() -> str:
     while (codexUsageCapturedApiResponses.length > CODEX_USAGE_CAPTURED_API_LIMIT) {
       codexUsageCapturedApiResponses.shift();
     }
-    flushCodexUsageApiResponses();
+    flushCodexUsageApiResponses(requestId);
   }
 
-  function flushCodexUsageApiResponses() {
+  function flushCodexUsageApiResponses(requestId = null) {
     if (!codexUsageCapturedApiResponses.length) {
       return;
     }
-    window.postMessage({
+    const message = {
       type: "codexUsageApiResponses",
       responses: codexUsageCapturedApiResponses.slice()
-    }, location.origin);
+    };
+    if (requestId !== null && requestId !== undefined) {
+      message.requestId = String(requestId);
+    }
+    window.postMessage(message, location.origin);
   }
 
-  async function captureCodexUsageFetchResponse(url, response, requestSequence) {
+  async function captureCodexUsageFetchResponse(
+    url,
+    response,
+    requestSequence,
+    requestId = null
+  ) {
     if (!shouldCaptureCodexUsageUrl(url)) {
       return;
     }
@@ -1301,20 +1389,23 @@ def _render_extension_page_hook() -> str:
         bodyText: isJson ? limitCodexUsageText(bodyText) : "",
         bodyExcerpt: isJson ? "" : limitCodexUsageText(bodyText).slice(0, 500),
         truncated: isJson ? isCodexUsageTruncated(bodyText) : false
-      });
+      }, requestId);
     } catch (error) {
       rememberCodexUsageApiResponse({
         source: "page-fetch",
         url: new URL(url, location.origin).href,
         requestSequence,
         error: String(error)
-      });
+      }, requestId);
     }
   }
 
-  if (!window.__codexUsageFetchHookInstalled && typeof window.fetch === "function") {
+  codexUsageOriginalFetch = typeof window.fetch === "function"
+    ? window.fetch.bind(window)
+    : null;
+  if (!window.__codexUsageFetchHookInstalled && codexUsageOriginalFetch) {
     window.__codexUsageFetchHookInstalled = true;
-    const originalFetch = window.fetch.bind(window);
+    const originalFetch = codexUsageOriginalFetch;
     window.fetch = async (...args) => {
       const url = requestUrl(args[0]);
       const requestSequence = ++codexUsageFetchSequence;
@@ -1323,6 +1414,52 @@ def _render_extension_page_hook() -> str:
       return response;
     };
   }
+
+  async function refreshCodexUsageUsage(requestId) {
+    const url = new URL("/backend-api/wham/usage", location.origin).href;
+    const requestSequence = ++codexUsageFetchSequence;
+    if (typeof codexUsageOriginalFetch !== "function") {
+      window.postMessage({
+        type: "codexUsageApiResponses",
+        requestId: String(requestId),
+        responses: [{
+          source: "page-refresh",
+          url,
+          error: "page fetch unavailable"
+        }]
+      }, location.origin);
+      return;
+    }
+    try {
+      const response = await codexUsageOriginalFetch(url, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: { "Accept": "application/json" }
+      });
+      await captureCodexUsageFetchResponse(url, response, requestSequence, requestId);
+    } catch (error) {
+      rememberCodexUsageApiResponse({
+        source: "page-fetch",
+        url,
+        requestSequence,
+        error: String(error)
+      }, requestId);
+    }
+  }
+
+  window.addEventListener("message", (event) => {
+    if (
+      event.source !== window
+      || !event.data
+      || event.data.type !== "codexUsageRefresh"
+      || event.data.requestId === undefined
+      || event.data.requestId === null
+    ) {
+      return;
+    }
+    refreshCodexUsageUsage(event.data.requestId);
+  });
 
   const flushTimer = setInterval(() => {
     codexUsageFlushTicks += 1;

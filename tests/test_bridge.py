@@ -925,7 +925,11 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "codexUsageApiResponseKey" in content
     assert "requestSequence" in content
     assert "window.addEventListener(\"message\"" in content
-    assert "codexUsageHasMainUsageResponse() ? [] : await fetchCodexUsageApis()" in content
+    assert "const pageRefreshSucceeded = await requestCodexUsagePageRefresh()" in content
+    assert (
+        "const probeResponses = pageRefreshSucceeded ? [] : await fetchCodexUsageApis()"
+        in content
+    )
     assert "document.body.innerText" in content
     assert "sanitizedCodexUsageRoot" in content
     assert "script, style, link, meta, noscript, template" in content
@@ -950,6 +954,143 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "requestSequence" in page_hook
     assert "/backend-api/wham/" in page_hook
     assert 'source: "page-fetch"' in page_hook
+
+
+def test_generated_content_refreshes_page_usage_before_ingest(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+const refreshRequests = [];
+const probeFetches = [];
+let messageHandler = null;
+const pageWindow = {
+  addEventListener(type, callback) {
+    if (type === "message") {
+      messageHandler = callback;
+    }
+  },
+  postMessage(message) {
+    if (!message || message.type !== "codexUsageRefresh") {
+      return;
+    }
+    refreshRequests.push(message);
+    setTimeout(() => {
+      messageHandler({
+        source: pageWindow,
+        data: {
+          type: "codexUsageApiResponses",
+          requestId: message.requestId,
+          responses: [{
+            source: "page-fetch",
+            requestSequence: 1,
+            url: "https://chatgpt.com/backend-api/wham/usage",
+            status: 200,
+            contentType: "application/json",
+            bodyText: JSON.stringify({
+              rate_limit: {
+                primary_window: { used_percent: 20, limit_window_seconds: 18000 },
+                secondary_window: { used_percent: 60, limit_window_seconds: 604800 }
+              }
+            })
+          }]
+        }
+      });
+    }, 0);
+  }
+};
+const text = "Codex analytics page text with enough content";
+const document = {
+  title: "Codex",
+  readyState: "complete",
+  body: { innerText: text },
+  documentElement: {
+    cloneNode() {
+      return {
+        textContent: text,
+        outerHTML: "<html><body>Codex</body></html>",
+        querySelectorAll() { return { forEach() {} }; }
+      };
+    }
+  },
+  querySelectorAll() { return []; }
+};
+const runtime = {
+  id: "test-extension",
+  lastError: null,
+  sendMessage(message, callback) {
+    messages.push(message);
+    callback({ ok: true });
+  }
+};
+const sandbox = {
+  window: pageWindow,
+  document,
+  chrome: { runtime },
+  location: {
+    href: "https://chatgpt.com/codex/cloud/settings/analytics",
+    origin: "https://chatgpt.com"
+  },
+  fetch: async (url) => {
+    probeFetches.push(url);
+    return {
+      headers: { get() { return "application/json"; } },
+      text: async () => JSON.stringify({ detail: "probe should not run" })
+    };
+  },
+  Date,
+  JSON,
+  Map,
+  Array,
+  Number,
+  String,
+  Object,
+  Promise,
+  URL,
+  console,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => {
+  const ingest = messages.find((message) => message.type === "codexUsageIngest");
+  const usage = ingest && ingest.payload.apiResponses.find(
+    (item) => item.url.endsWith("/backend-api/wham/usage")
+  );
+  const body = usage && JSON.parse(usage.bodyText);
+  if (
+    refreshRequests.length !== 1
+    || probeFetches.length !== 0
+    || !usage
+    || body.rate_limit.primary_window.used_percent !== 20
+  ) {
+    throw new Error(JSON.stringify({ messages, refreshRequests, probeFetches }));
+  }
+  process.exit(0);
+}, 700);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "content.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_generated_extension_handles_invalidated_runtime_callback(tmp_path):
@@ -1200,6 +1341,7 @@ const source = fs.readFileSync(process.argv[1], "utf8");
 const messages = [];
 let fetchCount = 0;
 const window = {
+  addEventListener() {},
   fetch: async () => ({
     clone() {
       const bodyText = JSON.stringify({ value: fetchCount++ === 0 ? "old" : "new" });
@@ -1288,6 +1430,7 @@ function makeResponse(value) {
   };
 }
 const window = {
+  addEventListener() {},
   fetch: async () => {
     const call = fetchCount++;
     if (call === 0) {
@@ -1335,6 +1478,95 @@ run().catch((error) => {
   process.exitCode = 1;
 });
 setTimeout(() => process.exit(process.exitCode || 0), 100);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "page-hook.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_page_hook_answers_refresh_request_with_fresh_usage(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+let messageHandler = null;
+const window = {
+  addEventListener(type, callback) {
+    if (type === "message") {
+      messageHandler = callback;
+    }
+  },
+  fetch: async () => ({
+    clone() {
+      return {
+        status: 200,
+        ok: true,
+        headers: { get() { return "application/json"; } },
+        text: async () => JSON.stringify({
+          rate_limit: {
+            primary_window: { used_percent: 22, limit_window_seconds: 18000 },
+            secondary_window: { used_percent: 62, limit_window_seconds: 604800 }
+          }
+        })
+      };
+    }
+  }),
+  postMessage(message) {
+    messages.push(message);
+  }
+};
+const sandbox = {
+  window,
+  location: { origin: "https://chatgpt.com" },
+  Number,
+  String,
+  Object,
+  Array,
+  Promise,
+  JSON,
+  URL,
+  console,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+if (!messageHandler) {
+  throw new Error("page hook did not install its message handler");
+}
+messageHandler({
+  source: window,
+  data: { type: "codexUsageRefresh", requestId: "refresh-1" }
+});
+setTimeout(() => {
+  const message = messages.find((item) => item.requestId === "refresh-1");
+  const usage = message && message.responses.find(
+    (item) => item.url.endsWith("/backend-api/wham/usage")
+  );
+  const body = usage && JSON.parse(usage.bodyText);
+  if (!message || !usage || body.rate_limit.primary_window.used_percent !== 22) {
+    throw new Error(JSON.stringify({ messages }));
+  }
+  process.exit(0);
+}, 50);
 """
 
     result = subprocess.run(

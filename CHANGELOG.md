@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.196 - 2026-07-12
+
+### Fixed
+
+- Die Browser-Bridge fragt den authentifizierten `/backend-api/wham/usage`-
+  Endpoint vor jedem 5-Minuten-Zyklus im Page-Hook erneut ab, statt einen
+  erfolgreichen Response vom Seitenaufbau weiterzuverwenden.
+- Der Content-Script wartet auf den frischen Page-Hook-Response und verwirft
+  bei Timeout alte Hauptendpoint-Werte, bevor der Fallback-Probeweg startet.
+- Node-Regressionen decken sowohl den Content-Refresh als auch die tatsächliche
+  Page-Hook-Antwort mit Browser-Cookies ab.
+
 ## 0.6.195 - 2026-07-12
 
 ### Fixed
