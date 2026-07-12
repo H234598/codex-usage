@@ -152,6 +152,39 @@ def test_ambiguous_direct_accounts_normalizes_plan_aliases(monkeypatch):
     assert _ambiguous_direct_accounts(accounts) == frozenset({"pro", "plus"})
 
 
+def test_ambiguous_direct_accounts_rejects_missing_account_id_for_shared_user(
+    monkeypatch,
+):
+    accounts = [
+        Account(
+            id="privat",
+            label="Privat",
+            profile_dir="/tmp/privat",
+            auth_json_path="/tmp/privat-auth.json",
+        ),
+        Account(
+            id="work",
+            label="Work",
+            profile_dir="/tmp/work",
+            auth_json_path="/tmp/work-auth.json",
+        ),
+    ]
+    identities = {
+        "privat": ("shared-user", None),
+        "work": ("shared-user", "work-account"),
+    }
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda account: identities[account.id],
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_plan_type_for_account",
+        lambda account: {"privat": "free", "work": "enterprise"}[account.id],
+    )
+
+    assert _ambiguous_direct_accounts(accounts) == frozenset({"privat", "work"})
+
+
 def test_fetch_all_passes_ambiguous_identity_guard_to_direct_reader(monkeypatch):
     accounts = (
         Account(

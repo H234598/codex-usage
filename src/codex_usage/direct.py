@@ -547,6 +547,8 @@ def canonical_backend_identity(
         and not (backend_user_id or backend_account_id)
     ):
         raise ValueError("backend response has no account identity")
+    if reject_ambiguous_backend_identity and auth_user_id and not auth_account_id:
+        raise ValueError("backend response has ambiguous account identity")
     if (
         auth_plan_type
         and backend_plan_type

@@ -147,7 +147,7 @@ def _serial_fetch_required(
 
 
 def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
-    identities: list[tuple[str, str, str, str | None]] = []
+    identities: list[tuple[str, str, str | None, str | None]] = []
     for account in accounts:
         if not account.auth_json_path:
             continue
@@ -156,7 +156,7 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
             plan_type = auth_plan_type_for_account(account)
         except DirectAuthError:
             continue
-        if not user_id or not account_id:
+        if not user_id:
             continue
         identities.append((account.id, user_id, account_id, plan_type))
     ambiguous: set[str] = set()
@@ -164,7 +164,12 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
         for other_local_id, other_user_id, other_account_id, other_plan_type in identities[
             index + 1 :
         ]:
-            if user_id != other_user_id or account_id == other_account_id:
+            if user_id != other_user_id:
+                continue
+            if account_id and other_account_id and account_id == other_account_id:
+                continue
+            if not account_id or not other_account_id:
+                ambiguous.update((local_id, other_local_id))
                 continue
             plans_are_ambiguous = (
                 plan_type is None
