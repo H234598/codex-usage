@@ -16,6 +16,7 @@ from . import __version__
 from .direct import (
     DirectAuthError,
     _auth_plan_type_changed,
+    _normalized_plan_type,
     auth_identity_changed,
     auth_identity_from_payload,
     auth_metadata_from_payload,
@@ -78,6 +79,7 @@ def fetch_account_usage_app_server(
             refresh=refresh,
             timeout_seconds=timeout_seconds,
             codex_command=codex_command,
+            expected_plan_type=auth_plan_type_before,
         )
         (
             _,
@@ -185,6 +187,7 @@ def _read_rate_limits(
     refresh: bool,
     timeout_seconds: int,
     codex_command: str | None,
+    expected_plan_type: str | None,
 ) -> dict[str, Any]:
     _validate_codex_home(codex_home)
     command = _resolve_codex(codex_command)
@@ -229,6 +232,16 @@ def _read_rate_limits(
             account = account_result.get("account")
             if not isinstance(account, dict) or account.get("type") != "chatgpt":
                 raise AppServerAuthError("Codex app server requires ChatGPT login")
+            server_plan_type = account.get("planType")
+            if expected_plan_type and server_plan_type is not None:
+                if (
+                    not isinstance(server_plan_type, str)
+                    or _normalized_plan_type(server_plan_type)
+                    != _normalized_plan_type(expected_plan_type)
+                ):
+                    raise AppServerAuthError(
+                        "Codex app server plan type differs from auth.json"
+                    )
 
         try:
             read_account(2, refresh_token=refresh)

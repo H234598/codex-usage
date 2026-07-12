@@ -59,8 +59,10 @@ def _fake_codex(
     requests_path: Path,
     *,
     reject_initial_account_read: bool = False,
+    account_plan_type: str | None = None,
 ) -> str:
     reject_initial = str(reject_initial_account_read)
+    plan_field = f", 'planType': {account_plan_type!r}" if account_plan_type else ""
     source = f"""#!/usr/bin/env python3
 import json
 import sys
@@ -84,7 +86,7 @@ for line in sys.stdin:
             response = {{
                 "id": message["id"],
                 "result": {{
-                    "account": {{"type": "chatgpt"}},
+                    "account": {{"type": "chatgpt"{plan_field}}},
                     "requiresOpenaiAuth": True,
                 }},
             }}
@@ -293,6 +295,30 @@ def test_app_server_rejects_nonstandard_auth_json_filename(tmp_path):
 
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error == "app-server requires auth_json_path filename auth.json"
+
+
+def test_app_server_rejects_server_plan_mismatch(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1), plan_type="free")
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_plan_type="enterprise",
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "Codex app server plan type differs from auth.json"
 
 
 def test_app_server_rejects_auth_without_account_identity(tmp_path):
