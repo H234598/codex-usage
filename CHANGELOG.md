@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.334 - 2026-07-13
+
+### Fixed
+
+- `service status` normalisiert numerische systemd-`ExecMainCode`-Werte, damit
+  ein erfolgreicher Dienst als `exited` statt irrefuehrend als Code `1` erscheint.
+
 ## 0.6.333 - 2026-07-12
 
 ### Fixed

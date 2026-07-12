@@ -15,6 +15,14 @@ SERVICE_NAME = "codex-usage.service"
 TIMER_NAME = "codex-usage.timer"
 MANAGED_MARKER = "X-Codex-Usage-Managed=true"
 MAX_UNIT_BYTES = 100_000
+EXEC_MAIN_CODE_NAMES = {
+    "1": "exited",
+    "2": "killed",
+    "3": "dumped",
+    "4": "trapped",
+    "5": "stopped",
+    "6": "continued",
+}
 
 
 class ServiceError(Exception):
@@ -95,7 +103,7 @@ def service_status() -> dict[str, Any]:
         "service_active": service_active,
         "service_result": details.get("Result", "unknown"),
         "service_exit_status": details.get("ExecMainStatus", "unknown"),
-        "service_exit_code": details.get("ExecMainCode", "unknown"),
+        "service_exit_code": _normalize_exec_main_code(details.get("ExecMainCode")),
         "service_last_start": details.get("ExecMainStartTimestamp", ""),
         "service_last_exit": details.get("ExecMainExitTimestamp", ""),
         "service": SERVICE_NAME,
@@ -312,6 +320,11 @@ def _systemctl_show(unit: str, properties: tuple[str, ...]) -> dict[str, str]:
         if separator and key in properties:
             result[key] = value[:500]
     return result
+
+
+def _normalize_exec_main_code(value: str | None) -> str:
+    code = str(value or "unknown").strip()
+    return EXEC_MAIN_CODE_NAMES.get(code, code or "unknown")
 
 
 def _is_managed_unit(path: Path) -> bool:

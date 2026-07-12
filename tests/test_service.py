@@ -51,7 +51,7 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
             stdout = (
                 "Result=success\n"
                 "ExecMainStatus=0\n"
-                "ExecMainCode=exited\n"
+                "ExecMainCode=1\n"
                 "ExecMainStartTimestamp=now\n"
                 "ExecMainExitTimestamp=later\n"
             )
@@ -90,6 +90,7 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     assert result["active"] is True
     assert result["service_result"] == "success"
     assert result["service_exit_status"] == "0"
+    assert result["service_exit_code"] == "exited"
     assert managed_service_config_path() == (
         tmp_path / "config" / "codex-usage" / "config.toml"
     ).absolute()
