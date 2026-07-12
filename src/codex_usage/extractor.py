@@ -121,14 +121,7 @@ def _extract_text_windows(
     candidates = [item for item in candidates if item[1] is not None]
     usage_candidates = [item for item in candidates if item[1].has_usage_value]
     if usage_candidates:
-        _source_index, selected = min(
-            usage_candidates,
-            key=lambda item: (
-                -_text_window_strength(item[1]),
-                _text_source_priority(item[1].source),
-                item[0],
-            ),
-        )
+        selected = _select_text_usage_candidate(usage_candidates)
         reset_candidates = [
             item[1]
             for item in candidates
@@ -157,6 +150,45 @@ def _extract_text_windows(
             ),
         )
     return None
+
+
+def _select_text_usage_candidate(
+    candidates: list[tuple[int, LimitWindow]],
+) -> LimitWindow:
+    primary = [
+        item
+        for item in candidates
+        if _text_source_priority(item[1].source) == 0
+    ]
+    if primary:
+        selected = min(primary, key=lambda item: item[0])[1]
+        if _text_window_strength(selected) == 2:
+            progress = [
+                item
+                for item in candidates
+                if item[1].source == "htmlText"
+                and _extract_progress_width_percent(item[1].raw or "") is not None
+            ]
+            if progress:
+                return min(progress, key=lambda item: item[0])[1]
+        return selected
+
+    html_progress = [
+        item
+        for item in candidates
+        if item[1].source == "htmlText"
+        and _extract_progress_width_percent(item[1].raw or "") is not None
+    ]
+    if html_progress:
+        return min(html_progress, key=lambda item: item[0])[1]
+    return min(
+        candidates,
+        key=lambda item: (
+            -_text_window_strength(item[1]),
+            _text_source_priority(item[1].source),
+            item[0],
+        ),
+    )[1]
 
 
 def _text_source_priority(source: str) -> int:

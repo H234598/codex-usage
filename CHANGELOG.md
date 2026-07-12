@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.283 - 2026-07-12
+
+### Fixed
+
+- Ein unbeschrifteter sichtbarer Prozentwert kann nicht mehr von einem
+  späteren versteckten DOM-Klon mit höherer Parser-Qualität überstimmt werden.
+  Nur eine erkannte HTML-Progressbar darf generischen sichtbaren Gebrauchstext
+  ersetzen.
+
 ## 0.6.282 - 2026-07-12
 
 ### Fixed
