@@ -66,11 +66,53 @@ def fetch_account_usage_direct(
                 backend_user_id=auth_user_id,
                 backend_account_id=auth_account_id,
             )
-        payload = _fetch_stable_wham_usage(
-            token,
-            account_id=auth_account_id,
-            timeout_seconds=timeout_seconds,
-        )
+        try:
+            payload = _fetch_stable_wham_usage(
+                token,
+                account_id=auth_account_id,
+                timeout_seconds=timeout_seconds,
+            )
+        except DirectAuthError as exc:
+            if not _is_retryable_direct_auth_error(exc):
+                raise
+            try:
+                (
+                    refreshed_token,
+                    refreshed_metadata,
+                    refreshed_user_id,
+                    refreshed_account_id,
+                    refreshed_plan_type,
+                ) = _load_auth_token_and_metadata(path)
+            except DirectAuthError:
+                raise exc from None
+            if auth_identity_changed(
+                before_user_id=auth_user_id,
+                before_account_id=auth_account_id,
+                after_user_id=refreshed_user_id,
+                after_account_id=refreshed_account_id,
+            ) or _auth_plan_type_changed(auth_plan_type, refreshed_plan_type):
+                auth_user_id = None
+                auth_account_id = None
+                auth_plan_type = None
+                raise DirectAuthError("auth.json identity changed during usage request") from None
+            if (
+                refreshed_token == token
+                or _is_access_token_expired(
+                    refreshed_metadata.get("auth_access_expires_at"),
+                    now=datetime.now().astimezone(),
+                )
+            ):
+                raise exc from None
+            token = refreshed_token
+            auth_metadata = refreshed_metadata
+            auth_user_id = refreshed_user_id
+            auth_account_id = refreshed_account_id
+            auth_plan_type = refreshed_plan_type
+            payload = _fetch_stable_wham_usage(
+                token,
+                account_id=auth_account_id,
+                timeout_seconds=timeout_seconds,
+            )
         (
             _,
             refreshed_metadata,
@@ -170,6 +212,13 @@ class DirectAuthError(Exception):
 
 class DirectFetchError(Exception):
     pass
+
+
+def _is_retryable_direct_auth_error(error: DirectAuthError) -> bool:
+    return str(error) in {
+        "direct auth failed: HTTP 401",
+        "direct auth failed: HTTP 403",
+    }
 
 
 def auth_identity_changed(

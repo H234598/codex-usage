@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.191 - 2026-07-12
+
+### Fixed
+
+- Bei einem `401`/`403` liest der Direct-Abruf `auth.json` jetzt einmal neu,
+  wenn Codex während des Requests einen anderen Token gespeichert hat.
+- Der Retry ist auf denselben Account, denselben Plan, einen nicht abgelaufenen
+  Token und genau einen Versuch begrenzt; unveränderte, fremde oder abgelaufene
+  Tokens werden nicht erneut verwendet.
+- Regressionen decken erfolgreiche Tokenrotation, unveränderte Credentials und
+  abgelaufene rotierte Credentials ab.
+
 ## 0.6.190 - 2026-07-12
 
 ### Fixed

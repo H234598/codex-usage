@@ -503,6 +503,152 @@ def test_fetch_account_usage_direct_rejects_auth_identity_changed_during_request
     assert usage.backend_account_id is None
 
 
+def test_fetch_account_usage_direct_retries_after_rotated_auth_token(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    old_token = "old-access-token"
+    new_token = "new-access-token"
+
+    def write_auth(token: str) -> None:
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": token,
+                        "id_token": _jwt_with_claims(
+                            {"https://api.openai.com/auth": {"chatgpt_user_id": "user-a"}}
+                        ),
+                        "account_id": "account-a",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        auth_path.chmod(0o600)
+
+    write_auth(old_token)
+    calls: list[str] = []
+
+    def fake_fetch(token: str, **_kwargs):
+        calls.append(token)
+        if token == old_token:
+            write_auth(new_token)
+            raise DirectAuthError("direct auth failed: HTTP 401")
+        return {
+            "rate_limit": {
+                "primary_window": {"used_percent": 3, "limit_window_seconds": 18000},
+                "secondary_window": {"used_percent": 45, "limit_window_seconds": 604800},
+            },
+            "user_id": "user-a",
+            "account_id": "account-a",
+        }
+
+    monkeypatch.setattr("codex_usage.direct._fetch_stable_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert calls == [old_token, new_token]
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is not None and usage.weekly.remaining == 55
+
+
+def test_fetch_account_usage_direct_does_not_retry_unchanged_auth_after_401(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "same-token", "account_id": "account-a"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    calls = []
+
+    def fake_fetch(token: str, **_kwargs):
+        calls.append(token)
+        raise DirectAuthError("direct auth failed: HTTP 401")
+
+    monkeypatch.setattr("codex_usage.direct._fetch_stable_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert calls == ["same-token"]
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "direct auth failed: HTTP 401"
+
+
+def test_fetch_account_usage_direct_does_not_retry_expired_rotated_auth(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    expired_token = _jwt_with_exp(int(datetime.now(tz=UTC).timestamp()) - 60)
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "old-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-a"}}
+                    ),
+                    "account_id": "account-a",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    calls = []
+
+    def fake_fetch(token: str, **_kwargs):
+        calls.append(token)
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": expired_token,
+                        "id_token": _jwt_with_claims(
+                            {"https://api.openai.com/auth": {"chatgpt_user_id": "user-a"}}
+                        ),
+                        "account_id": "account-a",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        auth_path.chmod(0o600)
+        raise DirectAuthError("direct auth failed: HTTP 403")
+
+    monkeypatch.setattr("codex_usage.direct._fetch_stable_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert calls == ["old-token"]
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "direct auth failed: HTTP 403"
+
+
 def test_fetch_account_usage_direct_rejects_response_from_different_account(
     tmp_path,
     monkeypatch,
