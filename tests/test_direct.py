@@ -324,6 +324,38 @@ def test_fetch_stable_wham_usage_tolerates_decreasing_relative_reset_after(
     assert payload["rate_limit"]["secondary_window"]["used_percent"] == 51
 
 
+def test_fetch_stable_wham_usage_accepts_progressive_relative_reset_without_absolute_reset(
+    monkeypatch,
+):
+    responses = iter(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_after_seconds": reset_after,
+                },
+                "secondary_window": {
+                    "used_percent": 51,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 469832 - index,
+                },
+            }
+        }
+        for index, (used, reset_after) in enumerate(
+            ((3, 13665), (4, 13664), (5, 13663))
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 5
+
+
 def test_fetch_stable_wham_usage_keeps_latest_monotonic_progress(monkeypatch):
     def response(used: int) -> dict:
         return {

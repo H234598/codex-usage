@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.213 - 2026-07-12
+
+### Fixed
+
+- Die Direct-Stabilisierung erkennt relative `reset_after_seconds`-Count-downs
+  ohne absolutes `reset_at` jetzt über die feste Fensterdauer. Fortschreitende
+  Nutzungswerte werden dadurch nicht mehr fälschlich als inkonsistent verworfen.
+- Verbrauchsrücksprünge bleiben weiterhin durch den Reset-Regression-Guard
+  geschützt.
+- Regression für progressive 5h-/Wochenantworten ohne `reset_at` ergänzt.
+
 ## 0.6.212 - 2026-07-12
 
 ### Fixed

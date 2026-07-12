@@ -797,14 +797,10 @@ def _has_reset_regression(payloads: list[dict[str, Any]]) -> bool:
 def _signature_reset_identity(value: dict[str, Any]) -> tuple[str, int] | None:
     duration = _signature_number(value.get("limit_window_seconds"))
     reset_after = _signature_number(value.get("reset_after_seconds"))
-    if (
-        duration is not None
-        and reset_after is not None
-        and abs(reset_after - duration) <= DIRECT_RESET_BUCKET_SECONDS
-    ):
-        # An untouched window reports a live countdown near its full duration.
-        # Its reset_after value changes on every poll, so the window identity
-        # must be based on the duration rather than that moving countdown.
+    if duration is not None and reset_after is not None and reset_after >= 0:
+        # Relative countdowns move on every poll, both before and after usage.
+        # The fixed window duration identifies the window; usage regressions
+        # remain guarded separately by _has_reset_regression.
         return ("after", int(duration // DIRECT_RESET_BUCKET_SECONDS))
     reset_at = _signature_reset(value.get("reset_at"))
     return None if reset_at is None else ("at", reset_at)
