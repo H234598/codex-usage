@@ -474,22 +474,17 @@ def _windows_from_response(
     if with_duration:
         five_item = with_duration.get(FIVE_HOUR_WINDOW_MINUTES)
         weekly_item = with_duration.get(WEEKLY_WINDOW_MINUTES)
-        primary_duration = _strict_int(candidates[0][1].get("windowDurationMins"))
         secondary = candidates[1] if len(candidates) > 1 else None
-        secondary_duration = (
-            _strict_int(secondary[1].get("windowDurationMins"))
-            if secondary is not None
-            else None
-        )
         if (
             five_item is None
-            and primary_duration is None
+            and _window_duration_is_missing(candidates[0][1])
             and weekly_item is not None
         ):
             five_item = candidates[0] if candidates[0][0] == "primary" else None
         if (
             weekly_item is None
-            and secondary_duration is None
+            and secondary is not None
+            and _window_duration_is_missing(secondary[1])
             and five_item is not None
         ):
             weekly_item = secondary if secondary and secondary[0] == "secondary" else None
@@ -536,6 +531,10 @@ def _strict_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _window_duration_is_missing(payload: dict[str, Any]) -> bool:
+    return "windowDurationMins" not in payload or payload.get("windowDurationMins") is None
 
 
 def _should_refresh(expiry: datetime | None, *, now: datetime) -> bool:

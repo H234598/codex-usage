@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.261 - 2026-07-12
+
+### Fixed
+
+- Die App-Server-Inferenz klassifiziert explizit ungültige
+  `windowDurationMins`-Felder nicht mehr als fehlende Dauern.
+  Unklassifizierbare Teilantworten bleiben dadurch leer statt einen falschen
+  5h- oder Wochenwert zu erzeugen.
+
 ## 0.6.260 - 2026-07-12
 
 ### Fixed

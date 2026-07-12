@@ -422,6 +422,28 @@ def test_window_mapping_does_not_infer_partial_codex_over_unsupported_top_level(
     assert weekly is not None and weekly.used == 2
 
 
+@pytest.mark.parametrize(
+    ("primary", "secondary"),
+    (
+        (
+            {"usedPercent": 7, "windowDurationMins": 300},
+            {"usedPercent": 18, "windowDurationMins": "invalid"},
+        ),
+        (
+            {"usedPercent": 7, "windowDurationMins": "invalid"},
+            {"usedPercent": 18, "windowDurationMins": 10_080},
+        ),
+    ),
+)
+def test_window_mapping_does_not_infer_explicit_invalid_duration(primary, secondary):
+    five, weekly = _windows_from_response(
+        {"rateLimits": {"primary": primary, "secondary": secondary}}
+    )
+
+    assert five is None if primary["windowDurationMins"] == "invalid" else five is not None
+    assert weekly is None if secondary["windowDurationMins"] == "invalid" else weekly is not None
+
+
 def test_window_mapping_does_not_let_unsupported_codex_bucket_hide_top_level_window():
     five, weekly = _windows_from_response(
         {
