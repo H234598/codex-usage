@@ -237,11 +237,7 @@ def auth_identity_changed(
     if before_account_id or after_account_id:
         if before_account_id != after_account_id:
             return True
-        return bool(
-            before_user_id
-            and after_user_id
-            and before_user_id != after_user_id
-        )
+        return before_user_id != after_user_id
     return before_user_id != after_user_id
 
 

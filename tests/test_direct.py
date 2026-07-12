@@ -73,6 +73,18 @@ def test_auth_identity_rejects_changed_user_with_same_account():
         after_user_id="same-user",
         after_account_id="shared-account",
     ) is False
+    assert auth_identity_changed(
+        before_user_id=None,
+        before_account_id="shared-account",
+        after_user_id="new-user",
+        after_account_id="shared-account",
+    ) is True
+    assert auth_identity_changed(
+        before_user_id="old-user",
+        before_account_id="shared-account",
+        after_user_id=None,
+        after_account_id="shared-account",
+    ) is True
 
 
 def test_canonical_backend_identity_rejects_foreign_account_without_auth_account_id():

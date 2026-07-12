@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.222 - 2026-07-12
+
+### Security
+
+- `auth_identity_changed` behandelt jetzt auch das Auftauchen oder
+  Verschwinden einer User-ID bei gleichbleibender Account-ID als
+  Identitätswechsel.
+- Direct-, App-Server- und Browser-Abrufe können dadurch keinen Tokenwechsel
+  mit unvollständiger Identität als denselben Account weiterverwenden.
+- Regressionen für beide Richtungen des fehlenden User-ID-Feldes ergänzt.
+
 ## 0.6.221 - 2026-07-12
 
 ### Security
