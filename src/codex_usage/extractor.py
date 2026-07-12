@@ -416,11 +416,10 @@ def _window_from_mapping(
     if used is not None and limit is not None:
         remaining = max(limit - used, 0)
         if limit > 0:
-            percent = (
-                remaining_percent
-                if has_explicit_remaining_percent
-                else used / limit * 100
-            )
+            # `percent` is the remaining percentage across WHAM, app-server,
+            # rendering, and applet consumers. Absolute usage is authoritative
+            # over conflicting percentage fields, so derive it from used/limit.
+            percent = 100 - (used / limit * 100)
         else:
             percent = None
     else:
@@ -492,7 +491,7 @@ def _extract_text_window(
 
         if used is not None and limit is not None:
             remaining = max(limit - used, 0)
-            percent = used / limit * 100 if limit > 0 else None
+            percent = 100 - (used / limit * 100) if limit > 0 else None
         elif remaining is None and used_percent is not None:
             remaining = max(100 - used_percent, 0)
         if percent is None and progress_percent is not None:

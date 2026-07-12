@@ -122,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.216\ncodex-usage 0.6.216\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.217\ncodex-usage 0.6.217\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -985,13 +985,15 @@ def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):
         sys.stdin = old_stdin
 
     output = capsys.readouterr().out
-    assert "42 / 100" in output
+    assert "58% verbleibend" in output
     assert "310 / 1000" in output
+    assert "69% verbleibend" in output
 
     assert main(["--config", str(config_path), "latest"]) == 0
     latest = capsys.readouterr().out
-    assert "42 / 100" in latest
+    assert "58% verbleibend" in latest
     assert "310 / 1000" in latest
+    assert "69% verbleibend" in latest
 
 
 def test_latest_marks_old_current_values_stale(tmp_path, monkeypatch):

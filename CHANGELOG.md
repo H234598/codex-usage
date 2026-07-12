@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.217 - 2026-07-12
+
+### Fixed
+
+- `LimitWindow.percent` ist bei generischen und DOM-Fenstern mit absolutem
+  `used/limit` jetzt konsistent der Restprozentsatz, wie bei WHAM und App-
+  Server. Absolute Nutzung bleibt gegenüber widersprüchlichen Prozentfeldern
+  vorrangig.
+- Dadurch können JSON-State, Scheduler-Fallbacks und direkte Parserausgaben
+  nicht mehr Nutzung (`42`) und Restwert (`58`) für dasselbe Fenster mischen.
+- Regressionen für absolute Nutzung, DOM-Werte und widersprüchliches
+  `remaining_percent` ergänzt.
+
 ## 0.6.216 - 2026-07-12
 
 ### Fixed

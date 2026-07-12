@@ -194,7 +194,7 @@ def test_extract_windows_prefers_absolute_usage_over_conflicting_used_percent():
     assert five.used == 42
     assert five.limit == 100
     assert five.remaining == 58
-    assert five.percent == 42
+    assert five.percent == 58
 
 
 def test_extract_windows_prefers_absolute_usage_over_conflicting_progress_width():
@@ -214,7 +214,7 @@ def test_extract_windows_prefers_absolute_usage_over_conflicting_progress_width(
     assert five.used == 42
     assert five.limit == 100
     assert five.remaining == 58
-    assert five.percent == 42
+    assert five.percent == 58
 
 
 def test_extract_windows_from_progress_bar_width_html():
@@ -575,11 +575,11 @@ def test_extract_windows_prefers_specific_generic_fields_over_aggregates():
     assert five is not None
     assert five.used == 8
     assert five.remaining == 32
-    assert five.percent == 20
+    assert five.percent == 80
     assert weekly is not None
     assert weekly.used == 80
     assert weekly.remaining == 320
-    assert weekly.percent == 20
+    assert weekly.percent == 80
 
 
 def test_extract_windows_does_not_mix_aggregate_reset_between_windows():
@@ -637,7 +637,29 @@ def test_extract_windows_prefers_absolute_usage_over_conflicting_json_used_perce
     assert five.used == 8
     assert five.limit == 40
     assert five.remaining == 32
-    assert five.percent == 20
+    assert five.percent == 80
+
+
+def test_extract_windows_derives_remaining_percent_over_conflicting_remaining_field():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/generic",
+            payload={
+                "five_hour_usage_limit": {
+                    "used": 42,
+                    "limit": 100,
+                    "remaining_percent": 99,
+                }
+            },
+        )
+    ]
+
+    five, _weekly = extract_windows(body_text="", json_candidates=candidates)
+
+    assert five is not None
+    assert five.used == 42
+    assert five.remaining == 58
+    assert five.percent == 58
 
 
 def test_extract_windows_scales_used_percent_against_absolute_limit():
