@@ -178,6 +178,45 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     assert usage.backend_account_id == "account-test"
 
 
+def test_usage_from_ingest_payload_ignores_truncated_json_api_responses():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": "Codex analytics",
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "truncated": True,
+                    "bodyText": json.dumps(
+                        {
+                            "user_id": "user-test",
+                            "account_id": "account-test",
+                            "rate_limit": {
+                                "primary_window": {
+                                    "used_percent": 3,
+                                    "limit_window_seconds": 18000,
+                                },
+                                "secondary_window": {
+                                    "used_percent": 45,
+                                    "limit_window_seconds": 604800,
+                                },
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.five_hour is None
+    assert usage.weekly is None
+
+
 def test_usage_from_ingest_payload_prefers_latest_response_for_endpoint():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
 

@@ -263,6 +263,8 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
 
     candidates: list[JsonCandidate] = []
     for item in responses_by_key.values():
+        if item.get("truncated") is True:
+            continue
         status = item.get("status")
         if isinstance(status, int) and status >= 400:
             continue

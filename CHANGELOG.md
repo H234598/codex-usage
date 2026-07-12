@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.175 - 2026-07-12
+
+### Fixed
+
+- Als `truncated` markierte Bridge-JSON-Antworten werden nicht mehr als
+  vollständige Parserquelle verwendet, auch wenn der übertragene Präfix
+  zufällig noch valides JSON bildet.
+- Regression für abgeschnittene WHAM-Antworten ergänzt.
+
 ## 0.6.174 - 2026-07-12
 
 ### Fixed
