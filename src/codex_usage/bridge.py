@@ -788,6 +788,8 @@ let codexUsageReadyObserver = null;
 let codexUsageReadyTimer = null;
 let codexUsageApiSendTimer = null;
 let codexUsageRefreshRequestSequence = 0;
+let codexUsageSendInFlight = null;
+let codexUsageSendPending = false;
 const codexUsageCapturedApiResponses = [];
 const codexUsageRefreshWaiters = new Map();
 
@@ -890,6 +892,7 @@ function stopCodexUsageBridge(reason) {{
     waiter.resolve(false);
   }}
   codexUsageRefreshWaiters.clear();
+  codexUsageSendPending = false;
   console.warn("codex-usage bridge stopped", reason);
 }}
 
@@ -1122,7 +1125,7 @@ function collectCodexUsage() {{
   }};
 }}
 
-async function sendCodexUsage() {{
+async function sendCodexUsageOnce() {{
   if (codexUsageStopped) {{
     return;
   }}
@@ -1180,6 +1183,31 @@ async function sendCodexUsage() {{
     }}
     console.warn("codex-usage bridge", error);
   }}
+}}
+
+function sendCodexUsage() {{
+  if (codexUsageStopped) {{
+    return Promise.resolve();
+  }}
+  if (codexUsageSendInFlight) {{
+    codexUsageSendPending = true;
+    return codexUsageSendInFlight;
+  }}
+  const operation = sendCodexUsageOnce().catch((error) => {{
+    console.warn("codex-usage bridge send failed", error);
+  }});
+  codexUsageSendInFlight = operation;
+  operation.then(() => {{
+    if (codexUsageSendInFlight !== operation) {{
+      return;
+    }}
+    codexUsageSendInFlight = null;
+    if (codexUsageSendPending && !codexUsageStopped) {{
+      codexUsageSendPending = false;
+      scheduleCodexUsageSend(0);
+    }}
+  }});
+  return operation;
 }}
 
 function sendWhenReady(startedAt = Date.now()) {{
@@ -1338,6 +1366,9 @@ def _render_extension_page_hook() -> str:
     for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {
       if (codexUsageApiResponseKey(codexUsageCapturedApiResponses[index]) === key) {
         if (!codexUsageApiResponseIsNewer(item, codexUsageCapturedApiResponses[index])) {
+          if (requestId !== null && requestId !== undefined) {
+            flushCodexUsageApiResponses(requestId);
+          }
           return;
         }
         codexUsageCapturedApiResponses.splice(index, 1);

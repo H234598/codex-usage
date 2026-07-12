@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.197 - 2026-07-12
+
+### Fixed
+
+- Die Browser-Bridge serialisiert überlappende Content-Script-Sends jetzt.
+  Ein langsamer Refresh kann dadurch keinen zweiten Zyklus starten, dessen
+  Timeout einen inzwischen frischeren Page-Hook-Response löscht.
+- Eine ausstehende Folgeabfrage wird nach Abschluss des laufenden Zyklus genau
+  einmal nachgeholt; ältere Page-Hook-Responses lösen markierte Wartebereiche
+  weiterhin kontrolliert auf.
+- Ein Node-Regressionstest deckt zwei gleichzeitig angestoßene Refresh-Zyklen
+  und die Begrenzung auf genau einen aktiven Seitenabruf ab.
+
 ## 0.6.196 - 2026-07-12
 
 ### Fixed
