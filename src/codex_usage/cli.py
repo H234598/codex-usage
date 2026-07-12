@@ -663,7 +663,12 @@ def _cmd_bridge_server(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     _validate_port(args.port)
     _validate_bridge_host(args.host, allow_remote=args.allow_remote)
-    run_bridge_server(config, host=args.host, port=args.port)
+    run_bridge_server(
+        config,
+        host=args.host,
+        port=args.port,
+        config_path=args.config or default_config_path(),
+    )
     return 0
 
 

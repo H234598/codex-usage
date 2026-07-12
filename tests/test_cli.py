@@ -122,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.207\ncodex-usage 0.6.207\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.208\ncodex-usage 0.6.208\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -517,7 +517,7 @@ def test_bridge_server_rejects_remote_host_without_explicit_opt_in(
     config_path = tmp_path / "config.toml"
     called = {}
 
-    def fake_run_bridge_server(config, *, host, port):
+    def fake_run_bridge_server(config, *, host, port, config_path):
         called["host"] = host
         called["port"] = port
 
@@ -547,7 +547,7 @@ def test_bridge_server_allows_remote_host_with_explicit_opt_in(
     config_path = tmp_path / "config.toml"
     called = {}
 
-    def fake_run_bridge_server(config, *, host, port):
+    def fake_run_bridge_server(config, *, host, port, config_path):
         called["host"] = host
         called["port"] = port
 
@@ -577,7 +577,7 @@ def test_bridge_server_allows_loopback_host_without_opt_in(
     config_path = tmp_path / "config.toml"
     called = {}
 
-    def fake_run_bridge_server(config, *, host, port):
+    def fake_run_bridge_server(config, *, host, port, config_path):
         called["host"] = host
         called["port"] = port
 

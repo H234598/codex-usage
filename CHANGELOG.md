@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.208 - 2026-07-12
+
+### Fixed
+
+- Der laufende Bridge-Server lädt die Config vor jedem Ingest-Request neu.
+  Neu hinzugefügte Accounts werden dadurch ohne Serverneustart erkannt,
+  sofern ihre Extension den zugehörigen Bridge-Token angelegt hat.
+- Gelöschte oder unbekannte Accounts bleiben auch nach einem Config-Reload
+  abgewiesen; ein ungültiger Config-Stand führt fail-closed zu `503`.
+- Regression für das Hinzufügen eines Accounts nach Serverstart ergänzt.
+
 ## 0.6.207 - 2026-07-12
 
 ### Fixed

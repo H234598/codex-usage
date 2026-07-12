@@ -24,7 +24,7 @@ from codex_usage.bridge import (
     usage_from_ingest_payload,
     write_bridge_extension,
 )
-from codex_usage.config import AppConfig
+from codex_usage.config import AppConfig, add_or_update_account, save_config
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.state import load_usage_snapshot, save_current_usage, save_usage_snapshot
 
@@ -1420,6 +1420,108 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
     token_path = tmp_path / "data" / "codex-usage" / "bridge-tokens" / "privat.token"
     assert token_path.read_text(encoding="utf-8").strip() == replacement
     assert token_path.stat().st_mode & 0o077 == 0
+
+
+def test_http_bridge_accepts_account_added_after_server_start(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    def write_auth(path, user_id, account_id):
+        path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "id_token": _jwt_with_claims(
+                            {
+                                "https://api.openai.com/auth": {
+                                    "chatgpt_user_id": user_id,
+                                    "chatgpt_account_id": account_id,
+                                }
+                            }
+                        ),
+                        "account_id": account_id,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+
+    first_auth = tmp_path / "first-auth.json"
+    second_auth = tmp_path / "second-auth.json"
+    write_auth(first_auth, "first-user", "first-account")
+    write_auth(second_auth, "second-user", "second-account")
+    first = Account(
+        id="first",
+        label="First",
+        profile_dir=str(tmp_path / "first-profile"),
+        auth_json_path=str(first_auth),
+    )
+    config_path = tmp_path / "config.toml"
+    config = AppConfig(accounts=(first,))
+    save_config(config, config_path)
+    first_token = bridge_token_for_account(first.id)
+    handler = _make_handler(
+        config,
+        tmp_path / "snapshots",
+        {first.id: first_token},
+        config_path=config_path,
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = f"http://127.0.0.1:{server.server_address[1]}/ingest"
+
+    try:
+        add_or_update_account(
+            "second",
+            label="Second",
+            profile_dir=str(tmp_path / "second-profile"),
+            auth_json_path=str(second_auth),
+            path=config_path,
+        )
+        second_token = bridge_token_for_account("second")
+        payload = {
+            "account": "second",
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": json.dumps(
+                        {
+                            "user_id": "second-user",
+                            "account_id": "second-account",
+                            "rate_limit": {
+                                "primary_window": {
+                                    "used_percent": 3,
+                                    "limit_window_seconds": 18000,
+                                },
+                                "secondary_window": {
+                                    "used_percent": 45,
+                                    "limit_window_seconds": 604800,
+                                },
+                            },
+                        }
+                    ),
+                }
+            ],
+        }
+        body = json.dumps(payload).encode("utf-8")
+        request = Request(
+            endpoint,
+            data=body,
+            method="POST",
+            headers={"Authorization": f"Bearer {second_token}"},
+        )
+        with urlopen(request, timeout=5) as response:
+            assert response.status == 200
+            assert json.loads(response.read())["account"] == "second"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert load_usage_snapshot("second", tmp_path / "snapshots") is not None
 
 
 @pytest.mark.parametrize("mutation", ["permissions", "hardlink"])

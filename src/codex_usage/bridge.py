@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from .config import AppConfig, default_state_dir, resolve_account
+from .config import (
+    AppConfig,
+    default_state_dir,
+    load_config,
+    resolve_account,
+)
 from .direct import (
     DirectAuthError,
     auth_identity_for_account,
@@ -617,12 +622,18 @@ def run_bridge_server(
     host: str,
     port: int,
     snapshot_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> None:
     tokens = {
         account.id: bridge_token_for_account(account.id)
         for account in config.accounts
     }
-    handler = _make_handler(config, snapshot_dir, tokens)
+    handler = _make_handler(
+        config,
+        snapshot_dir,
+        tokens,
+        config_path=config_path.expanduser() if config_path else None,
+    )
     server = ThreadingHTTPServer((host, port), handler)
     print(f"Bridge-Server: http://{host}:{port}/ingest")
     print("Stop: Ctrl+C")
@@ -767,6 +778,8 @@ def _make_handler(
     config: AppConfig,
     snapshot_dir: Path | None,
     tokens: dict[str, str],
+    *,
+    config_path: Path | None = None,
 ):
     class BridgeHandler(BaseHTTPRequestHandler):
         server_version = "codex-usage-bridge/0.1"
@@ -801,13 +814,17 @@ def _make_handler(
                 self._send_json(400, {"error": "invalid JSON payload"})
                 return
 
+            request_config = self._config_for_request()
+            if request_config is None:
+                self._send_json(503, {"error": "configuration unavailable"})
+                return
             account_ref = str(payload.get("account") or "")
-            if not self._is_authorized(account_ref):
+            if not self._is_authorized(account_ref, request_config):
                 self._send_json(401, {"error": "authorization required"})
                 return
             try:
                 usage, path = ingest_and_save(
-                    config,
+                    request_config,
                     account_ref,
                     payload,
                     snapshot_dir,
@@ -825,7 +842,7 @@ def _make_handler(
                 self._send_json(500, {"error": "ingest failed"})
                 return
 
-            latest = load_latest_usages(config, snapshot_dir)
+            latest = load_latest_usages(request_config, snapshot_dir)
             print(render_table(latest), flush=True)
             debug_path = None
             if usage.error:
@@ -885,11 +902,24 @@ def _make_handler(
                 or origin.startswith("chrome-extension://")
             )
 
-        def _is_authorized(self, account_ref: str) -> bool:
-            expected = tokens.get(account_ref)
+        def _config_for_request(self) -> AppConfig | None:
+            if config_path is None:
+                return config
+            try:
+                return load_config(config_path)
+            except (OSError, UnicodeError, ValueError):
+                return None
+
+        def _is_authorized(self, account_ref: str, request_config: AppConfig) -> bool:
+            try:
+                resolve_account(request_config, account_ref)
+            except KeyError:
+                return False
             authorization = self.headers.get("Authorization", "")
             prefix = "Bearer "
-            if not expected or not authorization.startswith(prefix):
+            if config_path is None and not tokens.get(account_ref):
+                return False
+            if not authorization.startswith(prefix):
                 return False
             supplied = authorization[len(prefix):].strip()
             return bridge_token_matches(account_ref, supplied)
