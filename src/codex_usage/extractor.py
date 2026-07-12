@@ -419,24 +419,30 @@ def _window_from_mapping(
             percent = None
     else:
         if remaining is None:
-            remaining = (
-                remaining_percent if remaining_percent is not None else remaining_ratio
-            )
-        if has_explicit_remaining_percent:
-            percent = remaining
-        if used_percent is not None and used is None:
-            if remaining is None:
-                remaining = max(100 - used_percent, 0)
-            percent = remaining
-        if (
-            percent is None
-            and remaining is not None
-            and limit is not None
-            and limit > 0
-        ):
+            if has_explicit_remaining_percent:
+                remaining_value = (
+                    remaining_percent
+                    if remaining_percent is not None
+                    else remaining_ratio
+                )
+                remaining = (
+                    remaining_value * limit / 100
+                    if remaining_value is not None and limit is not None and limit > 0
+                    else remaining_value
+                )
+            elif used_percent is not None:
+                available_percent = max(100 - used_percent, 0)
+                remaining = (
+                    available_percent * limit / 100
+                    if limit is not None and limit > 0
+                    else available_percent
+                )
+        if remaining is not None and limit is not None and limit > 0:
             percent = remaining / limit * 100
-        if percent is None and used is not None and limit:
-            percent = used / limit * 100
+        elif has_explicit_remaining_percent and remaining is not None:
+            percent = remaining
+        elif used_percent is not None and used is None and remaining is not None:
+            percent = remaining
     if percent is not None and not 0 <= percent <= 100:
         percent = None
 

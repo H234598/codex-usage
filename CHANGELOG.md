@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.184 - 2026-07-12
+
+### Fixed
+
+- Generische Prozentfelder werden bei einem absoluten `limit` jetzt auf die
+  tatsächliche Limitgröße skaliert. `used_percent=3` mit `limit=1000` ergibt
+  dadurch `970` verbleibend statt fälschlich `97` Einheiten.
+- Die Regression deckt zusätzlich normalisierte Nutzungs-Ratios und die
+  konsistente Restprozentberechnung ab.
+
 ## 0.6.183 - 2026-07-12
 
 ### Fixed
