@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.251 - 2026-07-12
+
+### Fixed
+
+- Eine bestätigte monotone Direct-Antwort mit größerem Nutzungssprung wird
+  nicht mehr zugunsten eines älteren 1%-Mehrheitswerts verworfen.
+- Unbestätigte große Sprünge ohne Quorum bleiben weiterhin blockiert.
+
 ## 0.6.250 - 2026-07-12
 
 ### Fixed

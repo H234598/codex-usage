@@ -456,6 +456,65 @@ def test_fetch_stable_wham_usage_keeps_latest_monotonic_progress(monkeypatch):
     assert payload["rate_limit"]["primary_window"]["used_percent"] == 23
 
 
+def test_fetch_stable_wham_usage_accepts_quorum_latest_large_progress(monkeypatch):
+    def response(used: int) -> dict:
+        return {
+            "user_id": "same-user",
+            "account_id": "same-account",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1783829134,
+                },
+                "secondary_window": {
+                    "used_percent": 13,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784354562,
+                },
+            },
+        }
+
+    responses = iter((response(10), response(10), response(30)))
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id="same-account", timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 30
+
+
+def test_fetch_stable_wham_usage_rejects_large_progress_without_quorum(monkeypatch):
+    def response(used: int) -> dict:
+        return {
+            "user_id": "same-user",
+            "account_id": "same-account",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1783829134,
+                },
+                "secondary_window": {
+                    "used_percent": 13,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784354562,
+                },
+            },
+        }
+
+    responses = iter((response(10), response(30), response(40)))
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _fetch_stable_wham_usage("token", account_id="same-account", timeout_seconds=1)
+
+
 def test_fetch_stable_wham_usage_rejects_missing_quorum(monkeypatch):
     responses = iter(
         {

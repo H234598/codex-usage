@@ -772,7 +772,11 @@ def _usage_response_completeness(payload: dict[str, Any]) -> int:
     return sum(value is not None for value in windows)
 
 
-def _usage_response_progresses(payloads: list[dict[str, Any]]) -> bool:
+def _usage_response_progresses(
+    payloads: list[dict[str, Any]],
+    *,
+    max_step_percent: float | None = DIRECT_PROGRESSIVE_STEP_PERCENT,
+) -> bool:
     signatures = [_usage_response_signature(payload) for payload in payloads]
     identities = {signature[0] for signature in signatures}
     if len(identities) != 1:
@@ -788,11 +792,11 @@ def _usage_response_progresses(payloads: list[dict[str, Any]]) -> bool:
             return False
         observed_window = True
         used_values = [window[1] for window in windows]
-        if any(
-            abs(current - previous) > DIRECT_PROGRESSIVE_STEP_PERCENT
-            for previous, current in pairwise(used_values)
-        ):
-            return False
+        for previous, current in pairwise(used_values):
+            if current < previous:
+                return False
+            if max_step_percent is not None and current - previous > max_step_percent:
+                return False
     return observed_window
 
 
@@ -800,7 +804,7 @@ def _latest_response_progresses_beyond_group(
     payloads: list[dict[str, Any]],
     best_group: list[tuple[int, dict[str, Any]]],
 ) -> bool:
-    if not _usage_response_progresses(payloads):
+    if not _usage_response_progresses(payloads, max_step_percent=None):
         return False
     latest = _usage_response_signature(payloads[-1])[1]
     stable = _usage_response_signature(best_group[0][1])[1]
