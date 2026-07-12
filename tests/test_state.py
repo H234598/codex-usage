@@ -563,6 +563,52 @@ def test_merge_does_not_reuse_reset_from_a_different_window_duration():
     assert merged.stale is False
 
 
+def test_merge_does_not_restore_known_other_duration_into_browser_window():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured = datetime(2026, 7, 12, 4, 20, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(
+            name="5h",
+            reset_at=captured + timedelta(hours=5),
+            source="dom-text",
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured - timedelta(minutes=5),
+        status=AccountStatus.OK,
+        backend_used="direct",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(
+            name="5h",
+            used=5,
+            limit=100,
+            remaining=95,
+            percent=95,
+            reset_at=captured + timedelta(days=30),
+            raw='{"limit_window_seconds": 2592000}',
+            source="json",
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+    assert merged.five_hour == current.five_hour
+    assert merged.five_hour is not None
+    assert merged.five_hour.used is None
+    assert merged.five_hour.reset_at == captured + timedelta(hours=5)
+
+
 def test_merge_current_usage_does_not_restore_expired_reset_time():
     timezone = ZoneInfo("Europe/Berlin")
     captured = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.241 - 2026-07-12
+
+### Fixed
+
+- Der State-Merge führt ein bekanntes `5h`- oder Wochenfenster nicht mehr mit
+  einem anderen bekannten Limitmodell zusammen, wenn die aktuelle Quelle keine
+  Rohdauer liefert.
+- Ein Browser-/Login-Fallback kann dadurch keinen alten 30-Tage-Wert mit einem
+  neuen 5h-Resetzeitpunkt anzeigen.
+- Regression für Browser-`5h` ohne Rohdauer gegenüber altem Direct-
+  `2592000`-Sekunden-Fenster ergänzt.
+
 ## 0.6.240 - 2026-07-12
 
 ### Fixed
