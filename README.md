@@ -136,6 +136,12 @@ Install the local Cinnamon applet and add `Codex Usage` to the panel:
 make install-local
 ```
 
+`make install-local` reloads a currently running Codex Usage applet through
+Cinnamon Looking Glass. A direct script installation can request the same
+behavior with `python3 scripts/install_cinnamon_applet.py --reload-running`.
+If Cinnamon is not running, the files are still installed and the reload is
+reported as unavailable.
+
 The applet loads saved snapshots immediately and runs a fresh mixed-mode poll
 every five minutes. Its settings control whether the panel shows one value per
 account slot. Each account has two independent slots; a slot can be off, show

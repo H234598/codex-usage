@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.239 - 2026-07-12
+
+### Fixed
+
+- `make install-local` lädt eine bereits laufende Cinnamon-Applet-Instanz nach
+  der atomaren Installation automatisch neu.
+- Der optionale Installer-Schalter `--reload-running` verhindert, dass trotz
+  aktualisierter Dateien weiterhin ein alter Applet-Code Werte darstellt.
+- Wenn Cinnamon oder Looking Glass nicht laufen, bleibt die Installation
+  erfolgreich und meldet den Reload als nicht verfügbar.
+
 ## 0.6.238 - 2026-07-12
 
 ### Fixed

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -21,6 +22,11 @@ def main(argv: list[str] | None = None) -> int:
         default=Path.home() / ".local" / "share" / "cinnamon" / "applets",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--reload-running",
+        action="store_true",
+        help="reload the running Cinnamon applet after installation",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -37,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         _install_atomically(source, target_root, target)
         print("status=installed")
+        if args.reload_running:
+            print(f"reload={_reload_running_applet()}")
         return 0
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -113,6 +121,35 @@ def _install_atomically(source: Path, target_root: Path, target: Path) -> None:
             os.replace(backup, target)
         if staging_root.is_dir() and not staging_root.is_symlink():
             shutil.rmtree(staging_root)
+
+
+def _reload_running_applet() -> str:
+    gdbus = shutil.which("gdbus")
+    if not gdbus:
+        return "unavailable"
+    try:
+        result = subprocess.run(
+            [
+                gdbus,
+                "call",
+                "--session",
+                "--dest",
+                "org.Cinnamon.LookingGlass",
+                "--object-path",
+                "/org/Cinnamon/LookingGlass",
+                "--method",
+                "org.Cinnamon.LookingGlass.ReloadExtension",
+                APPLET_UUID,
+                "APPLET",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return "unavailable"
+    return "ok" if result.returncode == 0 else "not-running"
 
 
 if __name__ == "__main__":

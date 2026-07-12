@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -9,6 +10,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_UUID = "codex-usage@H234598"
 APPLET_DIR = ROOT / "files" / APPLET_UUID
+_INSTALLER_SPEC = importlib.util.spec_from_file_location(
+    "codex_usage_installer",
+    ROOT / "scripts" / "install_cinnamon_applet.py",
+)
+assert _INSTALLER_SPEC is not None and _INSTALLER_SPEC.loader is not None
+installer = importlib.util.module_from_spec(_INSTALLER_SPEC)
+_INSTALLER_SPEC.loader.exec_module(installer)
 
 
 def test_applet_metadata_and_settings_are_consistent() -> None:
@@ -303,6 +311,54 @@ def test_installer_and_uninstaller_round_trip(tmp_path: Path) -> None:
     )
     assert uninstall.returncode == 0, uninstall.stderr
     assert not installed.exists()
+
+
+def test_reload_running_applet_uses_bounded_gdbus_call(monkeypatch) -> None:
+    calls = []
+
+    class Result:
+        returncode = 0
+
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/gdbus")
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or Result(),
+    )
+
+    assert installer._reload_running_applet() == "ok"
+    assert calls == [
+        (
+            (
+                [
+                    "/usr/bin/gdbus",
+                    "call",
+                    "--session",
+                    "--dest",
+                    "org.Cinnamon.LookingGlass",
+                    "--object-path",
+                    "/org/Cinnamon/LookingGlass",
+                    "--method",
+                    "org.Cinnamon.LookingGlass.ReloadExtension",
+                    APPLET_UUID,
+                    "APPLET",
+                ],
+            ),
+            {
+                "check": False,
+                "capture_output": True,
+                "text": True,
+                "timeout": 5,
+            },
+        )
+    ]
+
+
+def test_installer_help_exposes_running_reload() -> None:
+    result = _run_script("install_cinnamon_applet.py", "--help")
+
+    assert result.returncode == 0
+    assert "--reload-running" in result.stdout
 
 
 def test_installer_refuses_symlink_target(tmp_path: Path) -> None:

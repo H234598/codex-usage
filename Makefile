@@ -17,7 +17,7 @@ test:
 	$(PYTHON) -m pytest
 
 install-local: applet-check
-	$(PYTHON) scripts/install_cinnamon_applet.py
+	$(PYTHON) scripts/install_cinnamon_applet.py --reload-running
 
 uninstall-local:
 	$(PYTHON) scripts/uninstall_cinnamon_applet.py
