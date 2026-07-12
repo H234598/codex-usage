@@ -519,12 +519,39 @@ def ingest_and_save(
     if known is None:
         current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
         known = load_current_usage(account.id, current_dir)
-    if known is not None and not backend_identity_matches(usage, known):
+    if (
+        known is not None
+        and not backend_identity_matches(usage, known)
+        and not _usage_matches_current_auth(account, usage)
+    ):
         raise ValueError("bridge payload belongs to a different backend account")
     path = save_usage_snapshot(usage, snapshot_dir)
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     save_current_usage(usage, current_dir)
     return usage, path
+
+
+def _usage_matches_current_auth(account: Account, usage: AccountUsage) -> bool:
+    try:
+        auth_user_id, auth_account_id = auth_identity_for_account(account)
+    except DirectAuthError:
+        return False
+    if not (auth_user_id or auth_account_id):
+        return False
+    try:
+        canonical_user_id, canonical_account_id = canonical_backend_identity(
+            usage.backend_user_id,
+            usage.backend_account_id,
+            auth_user_id=auth_user_id,
+            auth_account_id=auth_account_id,
+            require_backend_identity=True,
+        )
+    except ValueError:
+        return False
+    return (
+        canonical_user_id == usage.backend_user_id
+        and canonical_account_id == usage.backend_account_id
+    )
 
 
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:

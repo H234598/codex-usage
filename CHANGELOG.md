@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.171 - 2026-07-12
+
+### Fixed
+
+- Ein neuer Browser-Response darf nach einer Reaktivierung einen alten
+  Snapshot mit fremder Backend-ID ersetzen, wenn die aktuelle `auth.json`
+  genau diese neue Identität bestätigt.
+- Unbestätigte Accountwechsel bleiben weiterhin fail-closed und werden vom
+  Bridge-Ingest zurückgewiesen.
+- Regression für den authentifizierten Snapshotwechsel ergänzt.
+
 ## 0.6.170 - 2026-07-12
 
 ### Fixed

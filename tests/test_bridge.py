@@ -18,7 +18,7 @@ from codex_usage.bridge import (
 )
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
-from codex_usage.state import save_usage_snapshot
+from codex_usage.state import load_usage_snapshot, save_usage_snapshot
 
 
 def _jwt_with_claims(claims: dict) -> str:
@@ -451,6 +451,84 @@ def test_ingest_rejects_payload_from_different_backend_account(tmp_path):
             },
             snapshot_dir,
         )
+
+
+def test_ingest_accepts_new_authenticated_account_after_snapshot_switch(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "user-test"}}
+                    ),
+                    "account_id": "account-new",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+            backend_user_id="user-old",
+            backend_account_id="account-old",
+        ),
+        snapshot_dir,
+    )
+
+    usage, _path = ingest_and_save(
+        config,
+        "privat",
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": json.dumps(
+                        {
+                            "user_id": "user-test",
+                            "account_id": "account-new",
+                            "rate_limit": {
+                                "primary_window": {
+                                    "used_percent": 3,
+                                    "limit_window_seconds": 18000,
+                                },
+                                "secondary_window": {
+                                    "used_percent": 45,
+                                    "limit_window_seconds": 604800,
+                                },
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+        snapshot_dir,
+    )
+
+    assert usage.backend_user_id == "user-test"
+    assert usage.backend_account_id == "account-new"
+    saved = load_usage_snapshot("privat", snapshot_dir)
+    assert saved is not None
+    assert saved.backend_account_id == "account-new"
+    assert saved.five_hour is not None and saved.five_hour.used == 3
 
 
 def test_usage_from_ingest_payload_ignores_failed_html_api_responses():
