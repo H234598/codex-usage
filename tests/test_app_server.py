@@ -289,6 +289,25 @@ def test_window_mapping_prefers_codex_limit_bucket():
     assert weekly is not None and weekly.used == 2
 
 
+def test_window_mapping_merges_partial_codex_bucket_with_top_level_snapshot():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 9, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 4, "windowDurationMins": 10080},
+            },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {"usedPercent": 1, "windowDurationMins": 300},
+                }
+            },
+        }
+    )
+
+    assert five is not None and five.used == 1
+    assert weekly is not None and weekly.used == 4
+
+
 def test_window_mapping_keeps_weekly_only_bucket_as_weekly():
     five, weekly = _windows_from_response(
         {

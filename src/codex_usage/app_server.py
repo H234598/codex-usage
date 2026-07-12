@@ -384,10 +384,20 @@ def _windows_from_response(
     snapshot = payload.get("rateLimits")
     by_id = payload.get("rateLimitsByLimitId")
     codex_snapshot = by_id.get("codex") if isinstance(by_id, dict) else None
-    if isinstance(codex_snapshot, dict) and any(
+    has_codex_buckets = isinstance(codex_snapshot, dict) and any(
         isinstance(codex_snapshot.get(key), dict) for key in ("primary", "secondary")
-    ):
-        snapshot = codex_snapshot
+    )
+    if isinstance(snapshot, dict):
+        snapshot = dict(snapshot)
+    elif has_codex_buckets:
+        snapshot = {}
+    else:
+        raise AppServerProtocolError("app server response has no rateLimits object")
+    if has_codex_buckets:
+        for key in ("primary", "secondary"):
+            value = codex_snapshot.get(key)
+            if isinstance(value, dict):
+                snapshot[key] = value
     if not isinstance(snapshot, dict):
         raise AppServerProtocolError("app server response has no rateLimits object")
     candidates: list[tuple[str, dict[str, Any]]] = []

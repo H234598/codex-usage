@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.169 - 2026-07-12
+
+### Fixed
+
+- Partielle `rateLimitsByLimitId.codex`-Antworten werden mit dem Top-Level-
+  Snapshot ergänzt, statt das jeweils nicht gelieferte Fenster zu verlieren.
+- Sparse App-Server-Updates können dadurch keine bereits gültigen 5h- oder
+  Wochenwerte mehr aus der Übersicht entfernen.
+- Regression für einen nur teilweise gelieferten Codex-Bucket ergänzt.
+
 ## 0.6.168 - 2026-07-12
 
 ### Fixed
