@@ -218,14 +218,24 @@ def _stabilize_authenticated_usage(
         return usage
     if age_seconds < 0 or age_seconds > max_age_seconds:
         return usage
-    if not _has_unexpired_direct_reset_discontinuity(usage, previous):
-        return usage
-    if _is_more_conservative_direct_usage(usage, previous):
+    retain_five_hour = _should_retain_previous_window(
+        usage.five_hour,
+        previous.five_hour,
+        reference_at=usage.captured_at,
+    )
+    retain_weekly = _should_retain_previous_window(
+        usage.weekly,
+        previous.weekly,
+        reference_at=usage.captured_at,
+    )
+    if not retain_five_hour and not retain_weekly:
         return usage
     return replace(
-        previous,
+        usage,
         label=usage.label,
         captured_at=usage.captured_at,
+        five_hour=previous.five_hour if retain_five_hour else usage.five_hour,
+        weekly=previous.weekly if retain_weekly else usage.weekly,
         auth_last_refresh=usage.auth_last_refresh,
         auth_access_expires_at=usage.auth_access_expires_at,
         auth_id_expires_at=usage.auth_id_expires_at,
@@ -237,30 +247,45 @@ def _stabilize_authenticated_usage(
     )
 
 
-def _has_unexpired_direct_reset_discontinuity(
-    current: AccountUsage,
-    previous: AccountUsage,
+def _has_unexpired_window_reset_discontinuity(
+    current: Any,
+    previous: Any,
+    *,
+    reference_at: datetime,
 ) -> bool:
-    for current_window, previous_window in (
-        (current.five_hour, previous.five_hour),
-        (current.weekly, previous.weekly),
+    if (
+        current is None
+        or previous is None
+        or current.reset_at is None
+        or previous.reset_at is None
     ):
-        if (
-            current_window is None
-            or previous_window is None
-            or current_window.reset_at is None
-            or previous_window.reset_at is None
-        ):
-            continue
-        if previous_window.reset_at <= current.captured_at:
-            continue
-        if current_window.reset_at <= current.captured_at:
-            continue
-        if (
-            abs((current_window.reset_at - previous_window.reset_at).total_seconds())
-            > DIRECT_RESET_DISCONTINUITY_SECONDS
-        ):
-            return True
+        return False
+    if previous.reset_at <= reference_at or current.reset_at <= reference_at:
+        return False
+    return (
+        abs((current.reset_at - previous.reset_at).total_seconds())
+        > DIRECT_RESET_DISCONTINUITY_SECONDS
+    )
+
+
+def _should_retain_previous_window(
+    current: Any,
+    previous: Any,
+    *,
+    reference_at: datetime,
+) -> bool:
+    if not _has_unexpired_window_reset_discontinuity(
+        current,
+        previous,
+        reference_at=reference_at,
+    ):
+        return False
+    current_remaining = _remaining_percent(current)
+    previous_remaining = _remaining_percent(previous)
+    if current_remaining is not None and previous_remaining is not None:
+        return current_remaining > previous_remaining
+    if current.reset_at is not None and previous.reset_at is not None:
+        return current.reset_at > previous.reset_at
     return False
 
 
@@ -268,7 +293,7 @@ def _is_more_conservative_direct_usage(
     current: AccountUsage,
     previous: AccountUsage,
 ) -> bool:
-    compared = False
+    decisions: list[bool] = []
     for current_window, previous_window in (
         (current.five_hour, previous.five_hour),
         (current.weekly, previous.weekly),
@@ -281,18 +306,14 @@ def _is_more_conservative_direct_usage(
             current_remaining is not None
             and previous_remaining is not None
         ):
-            compared = True
-            if current_remaining > previous_remaining:
-                return False
+            decisions.append(current_remaining <= previous_remaining)
             continue
         if (
             current_window.reset_at is not None
             and previous_window.reset_at is not None
         ):
-            compared = True
-            if current_window.reset_at > previous_window.reset_at:
-                return False
-    return compared
+            decisions.append(current_window.reset_at <= previous_window.reset_at)
+    return bool(decisions) and all(decisions)
 
 
 def _remaining_percent(window) -> float | None:

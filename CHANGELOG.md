@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.182 - 2026-07-12
+
+### Fixed
+
+- Der authentifizierte Reset-Fallback wird jetzt pro Limitfenster angewendet.
+  Ein verdächtiger 5h-Reset-Sprung kann dadurch kein gleichzeitig gültiges
+  Wochenfenster mehr durch einen alten Snapshot ersetzen.
+- Regression für gemischte aktuelle und zurückgehaltene Fenster ergänzt.
+
 ## 0.6.181 - 2026-07-12
 
 ### Fixed
