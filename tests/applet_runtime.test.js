@@ -1379,6 +1379,38 @@ test("fresh data from another backend account cannot reuse cached windows", () =
   assert.equal(merged[0].stale, false);
 });
 
+test("identity-less fresh and cached payloads cannot replace identified values", () => {
+  for (const mergeName of ["_mergeFreshPayload", "_mergeCachedPayload"]) {
+    const applet = makeApplet();
+    applet._usages = [{
+      account: "alpha",
+      captured_at: "2026-07-10T10:00:00.000Z",
+      backend_user_id: "user-alpha",
+      backend_account_id: "account-alpha",
+      five_hour: { remaining: 80 },
+      weekly: { remaining: 60 },
+      status: "ok",
+      stale: false,
+    }];
+    const merged = applet[mergeName]([{
+      account: "alpha",
+      captured_at: "2026-07-10T10:05:00.000Z",
+      five_hour: { remaining: 10 },
+      weekly: { remaining: 20 },
+      status: "ok",
+      stale: false,
+    }]);
+
+    assert.equal(merged[0].backend_account_id, "account-alpha");
+    assert.equal(merged[0].five_hour.remaining, 80);
+    assert.equal(merged[0].weekly.remaining, 60);
+    assert.equal(merged[0].captured_at, "2026-07-10T10:00:00.000Z");
+    assert.equal(merged[0].status, "partial");
+    assert.equal(merged[0].stale, true);
+    assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
+  }
+});
+
 test("identity changes win over an older capture timestamp", () => {
   const applet = makeApplet();
   applet._usages = [{

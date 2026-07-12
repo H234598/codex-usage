@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.225 - 2026-07-12
+
+### Security
+
+- Das Cinnamon-Applet übernimmt identitätslose Fresh-/Cache-Payloads nicht
+  mehr, wenn bereits ein identifizierter Accountstand vorhanden ist.
+- Der letzte bekannte Wert bleibt stattdessen als `stale`/`partial` sichtbar;
+  ein nicht zuordenbarer Datensatz kann dadurch keine fremden Limits anzeigen.
+- Regression für beide Applet-Mergepfade ergänzt.
+
 ## 0.6.224 - 2026-07-12
 
 ### Security

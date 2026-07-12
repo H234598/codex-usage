@@ -2271,7 +2271,10 @@ CodexUsageApplet.prototype = {
                 continue;
             }
             let old = previous[item.account];
-            if (old && this._backendIdentityMatches(item, old) &&
+            if (old && this._backendIdentityPresent(old) &&
+                !this._backendIdentityPresent(item)) {
+                merged.push(this._markUsageStale(old));
+            } else if (old && this._backendIdentityMatches(item, old) &&
                 this._captureIsOlder(item.captured_at, old.captured_at)) {
                 merged.push(old);
             } else {
@@ -2285,18 +2288,7 @@ CodexUsageApplet.prototype = {
                 (this._backendRowsReady && !this._backendAccounts[old.account])) {
                 continue;
             }
-            let stale = {};
-            for (let key in old) {
-                if (Object.prototype.hasOwnProperty.call(old, key)) {
-                    stale[key] = old[key];
-                }
-            }
-            stale.stale = true;
-            stale.values_captured_at = stale.values_captured_at || stale.captured_at;
-            if (stale.status === "ok") {
-                stale.status = "partial";
-            }
-            merged.push(stale);
+            merged.push(this._markUsageStale(old));
         }
         return merged;
     },
@@ -2315,6 +2307,11 @@ CodexUsageApplet.prototype = {
             }
             freshAccounts[item.account] = true;
             let old = previous[item.account];
+            if (old && this._backendIdentityPresent(old) &&
+                !this._backendIdentityPresent(item)) {
+                merged.push(this._markUsageStale(old));
+                continue;
+            }
             if (old && !this._backendIdentityMatches(item, old)) {
                 merged.push(item);
                 continue;
@@ -2407,20 +2404,31 @@ CodexUsageApplet.prototype = {
             ) {
                 continue;
             }
-            let stale = {};
-            for (let key in old) {
-                if (Object.prototype.hasOwnProperty.call(old, key)) {
-                    stale[key] = old[key];
-                }
-            }
-            stale.stale = true;
-            stale.values_captured_at = stale.values_captured_at || stale.captured_at;
-            if (stale.status === "ok") {
-                stale.status = "partial";
-            }
-            merged.push(stale);
+            merged.push(this._markUsageStale(old));
         }
         return merged;
+    },
+
+    _markUsageStale: function(usage) {
+        let stale = {};
+        for (let key in usage) {
+            if (Object.prototype.hasOwnProperty.call(usage, key)) {
+                stale[key] = usage[key];
+            }
+        }
+        stale.stale = true;
+        stale.values_captured_at = stale.values_captured_at || stale.captured_at;
+        if (stale.status === "ok") {
+            stale.status = "partial";
+        }
+        return stale;
+    },
+
+    _backendIdentityPresent: function(value) {
+        return Boolean(
+            this._safeText(value && value.backend_user_id, 256) ||
+            this._safeText(value && value.backend_account_id, 256)
+        );
     },
 
     _backendIdentityMatches: function(left, right) {

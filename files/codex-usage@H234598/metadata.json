@@ -2,11 +2,11 @@
   "uuid": "codex-usage@H234598",
   "name": "Codex Usage",
   "description": "Zeigt die 5-Stunden- und Wochenlimits aller konfigurierten Codex-Accounts an.",
-  "version": "0.6.224",
-  "comments": "Version: 0.6.224",
+  "version": "0.6.225",
+  "comments": "Version: 0.6.225",
   "icon": "view-statistics",
   "author": "H234598",
   "max-instances": 1,
   "multiversion": false,
-  "last-edited": 1783844222
+  "last-edited": 1783844674
 }
