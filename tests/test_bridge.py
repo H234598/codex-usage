@@ -260,6 +260,80 @@ def test_ingest_uses_newer_current_identity_than_old_snapshot(tmp_path):
     assert usage.backend_account_id == "new-account"
 
 
+def test_bridge_revalidates_auth_identity_before_saving(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "access-token",
+                    "id_token": _jwt_with_claims(
+                        {"https://api.openai.com/auth": {"chatgpt_user_id": "new-user"}}
+                    ),
+                    "account_id": "new-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    identities = iter(
+        (
+            ("old-user", "old-account"),
+            ("new-user", "new-account"),
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.bridge.auth_identity_for_account",
+        lambda _account: next(identities),
+    )
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "old-user",
+                        "account_id": "old-account",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="different backend account"):
+        ingest_and_save(
+            config,
+            "privat",
+            payload,
+            snapshot_dir,
+            require_backend_identity=True,
+        )
+
+    assert load_usage_snapshot("privat", snapshot_dir) is None
+
+
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     before = datetime.now().astimezone()

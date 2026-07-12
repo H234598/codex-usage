@@ -544,8 +544,12 @@ def ingest_and_save(
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     current = load_current_usage(account.id, current_dir)
     known = _newest_known_usage(snapshot, current)
-    if require_backend_identity and account.auth_json_path is None and known is None:
-        raise ValueError("browser account identity is not initialized")
+    if require_backend_identity:
+        if account.auth_json_path is not None:
+            if not _usage_matches_current_auth(account, usage):
+                raise ValueError("bridge payload belongs to a different backend account")
+        elif known is None:
+            raise ValueError("browser account identity is not initialized")
     if (
         known is not None
         and not backend_identity_matches(usage, known)

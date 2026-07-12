@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.200 - 2026-07-12
+
+### Fixed
+
+- Die HTTP-Bridge validiert bei Accounts mit `auth.json` die Backend-Identität
+  unmittelbar vor dem Speichern erneut. Ein Tokenwechsel während des Parsens
+  kann dadurch keinen alten Payload mehr persistieren.
+- Eine Regression deckt den Wechsel zwischen Parse- und Save-Phase ab und
+  stellt sicher, dass dabei kein Snapshot geschrieben wird.
+
 ## 0.6.199 - 2026-07-12
 
 ### Fixed
