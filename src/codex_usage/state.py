@@ -171,6 +171,8 @@ def _save_usage(
                     return path
             except TypeError:
                 pass
+            if _equal_capture_prefers_existing(existing, usage):
+                return path
             if (
                 preserve_existing_values
                 and not _authoritative_empty_limits(usage)
@@ -185,6 +187,34 @@ def _save_usage(
             raise ValueError(f"snapshot file too large; max {MAX_SNAPSHOT_BYTES} bytes")
         write_private_text(path, text, label="snapshot path")
     return path
+
+
+def _equal_capture_prefers_existing(
+    existing: AccountUsage,
+    incoming: AccountUsage,
+) -> bool:
+    try:
+        if existing.captured_at != incoming.captured_at:
+            return False
+    except TypeError:
+        return False
+    existing_priority = _backend_capture_priority(existing)
+    incoming_priority = _backend_capture_priority(incoming)
+    if existing_priority != incoming_priority:
+        return existing_priority > incoming_priority
+    if existing.backend_used == incoming.backend_used:
+        return False
+    return not backend_provenance_matches(existing, incoming)
+
+
+def _backend_capture_priority(usage: AccountUsage) -> int:
+    if usage.backend_used == "browser":
+        return 0
+    if usage.backend_used in AUTHENTICATED_BACKENDS:
+        if usage.backend_configured == usage.backend_used:
+            return 2
+        return 1
+    return -1
 
 
 def load_usage_snapshot(account_id: str, snapshot_dir: Path | None = None) -> AccountUsage | None:

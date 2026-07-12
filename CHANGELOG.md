@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.279 - 2026-07-12
+
+### Security
+
+- Bei identischem Capture-Zeitstempel gewinnt der konfigurierte authentifizierte
+  Backend-Stand gegen Browser- und unklare Fallback-Werte.
+
 ## 0.6.278 - 2026-07-12
 
 ### Security

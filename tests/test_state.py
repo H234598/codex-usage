@@ -1008,6 +1008,43 @@ def test_save_current_usage_does_not_overwrite_newer_capture(tmp_path):
     assert loaded.captured_at == newer.captured_at
 
 
+def test_equal_capture_prefers_configured_authenticated_backend_over_browser(tmp_path):
+    current_dir = tmp_path / "current"
+    captured = datetime(2026, 6, 8, 5, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    direct = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=80),
+        weekly=LimitWindow(name="weekly", remaining=60),
+    )
+    browser = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=10),
+    )
+
+    save_current_usage(direct, current_dir)
+    save_current_usage(browser, current_dir)
+
+    loaded = load_current_usage("privat", current_dir)
+    assert loaded is not None
+    assert loaded.backend_used == "direct"
+    assert loaded.five_hour is not None and loaded.five_hour.remaining == 80
+    assert loaded.weekly is not None and loaded.weekly.remaining == 60
+
+
 def test_save_current_usage_normalizes_naive_capture_before_order_check(tmp_path):
     current_dir = tmp_path / "current"
     newer = AccountUsage(
