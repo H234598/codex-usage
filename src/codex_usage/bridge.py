@@ -42,6 +42,7 @@ from .private_io import (
 from .render import render_table
 from .state import (
     backend_identity_matches,
+    expire_reset_windows,
     load_current_usage,
     load_usage_snapshot,
     merge_current_with_last_success,
@@ -759,6 +760,10 @@ def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> l
             usage = last_success
         else:
             continue
+        usage = expire_reset_windows(
+            usage,
+            reference_at=datetime.now().astimezone(),
+        )
         usages.append(_mark_latest_stale(usage, config.interval_seconds))
     return usages
 

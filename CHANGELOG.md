@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.219 - 2026-07-12
+
+### Fixed
+
+- Cachewerte werden nach dem Ablauf ihres Resetfensters nicht mehr als aktuell
+  ausgegeben. Bis zum nächsten erfolgreichen Poll markiert `latest` das
+  betroffene Fenster als veraltet und fordert einen Refresh an.
+- Dadurch bleiben Werte nach einem Reset nicht bis zu fünf Minuten falsch im
+  CLI, in der Bridge und im Cinnamon-Applet sichtbar.
+- Regressionen für ein abgelaufenes einzelnes Fenster und die Beibehaltung des
+  noch gültigen Wochenfensters ergänzt.
+
 ## 0.6.218 - 2026-07-12
 
 ### Fixed

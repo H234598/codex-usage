@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow
 from codex_usage.state import (
+    expire_reset_windows,
     load_current_usage,
     load_usage_snapshot,
     merge_current_with_last_success,
@@ -16,6 +17,34 @@ from codex_usage.state import (
     save_current_usage,
     save_usage_snapshot,
 )
+
+
+def test_expire_reset_windows_drops_only_expired_cached_values():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=reference_at,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=38,
+            reset_at=reference_at - timedelta(seconds=1),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=72,
+            reset_at=reference_at + timedelta(hours=1),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.five_hour is None
+    assert expired.weekly is usage.weekly
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
 def test_load_usage_snapshot_ignores_invalid_json(tmp_path):

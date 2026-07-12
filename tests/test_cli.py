@@ -122,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.218\ncodex-usage 0.6.218\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.219\ncodex-usage 0.6.219\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -966,9 +966,12 @@ def test_values_shows_compact_live_values_for_all_accounts(tmp_path, monkeypatch
 def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    body = """
-    5 Stunden Nutzungsgrenze 42 / 100 Zurücksetzungen 08.06.2026 04:26
-    Wöchentliches Nutzungslimit 310 / 1000 Zurücksetzungen 14.06.2026 04:26
+    reset = (datetime.now().astimezone() + timedelta(days=1)).strftime(
+        "%d.%m.%Y %H:%M"
+    )
+    body = f"""
+    5 Stunden Nutzungsgrenze 42 / 100 Zurücksetzungen {reset}
+    Wöchentliches Nutzungslimit 310 / 1000 Zurücksetzungen {reset}
     """
 
     assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
@@ -1017,6 +1020,45 @@ def test_latest_marks_old_current_values_stale(tmp_path, monkeypatch):
     usages = load_latest_usages(config)
 
     assert len(usages) == 1
+    assert usages[0].stale is True
+
+
+def test_latest_does_not_show_cached_window_after_reset(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    config = AppConfig(accounts=(account,), interval_seconds=300)
+    captured = datetime.now().astimezone()
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=captured,
+            status=AccountStatus.OK,
+            backend_used="direct",
+            five_hour=LimitWindow(
+                name="5h",
+                remaining=38,
+                reset_at=captured - timedelta(seconds=1),
+            ),
+            weekly=LimitWindow(
+                name="weekly",
+                remaining=72,
+                reset_at=captured + timedelta(hours=1),
+            ),
+        )
+    )
+
+    usages = load_latest_usages(config)
+
+    assert len(usages) == 1
+    assert usages[0].five_hour is None
+    assert usages[0].weekly is not None
+    assert usages[0].weekly.remaining == 72
+    assert usages[0].status == AccountStatus.PARTIAL
     assert usages[0].stale is True
 
 

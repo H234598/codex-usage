@@ -146,6 +146,40 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
         return None
 
 
+def expire_reset_windows(
+    usage: AccountUsage,
+    *,
+    reference_at: datetime,
+) -> AccountUsage:
+    expired_names: list[str] = []
+    five_hour = usage.five_hour
+    weekly = usage.weekly
+    if _window_reset_expired(five_hour, reference_at):
+        expired_names.append("5h")
+        five_hour = None
+    if _window_reset_expired(weekly, reference_at):
+        expired_names.append("weekly")
+        weekly = None
+    if not expired_names:
+        return usage
+
+    error = usage.error
+    if error is None:
+        names = ", ".join(expired_names)
+        error = f"cached limit window expired: {names}; refresh required"
+    status = usage.status
+    if status == AccountStatus.OK:
+        status = AccountStatus.PARTIAL
+    return replace(
+        usage,
+        five_hour=five_hour,
+        weekly=weekly,
+        status=status,
+        error=error,
+        stale=True,
+    )
+
+
 def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
     return AccountUsage(
         account_id=_snapshot_text(payload["account"], limit=64),
