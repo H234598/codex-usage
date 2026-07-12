@@ -408,6 +408,8 @@ def merge_current_with_last_success(
         return current
     if not backend_identity_matches(current, last_success):
         return current
+    if not backend_provenance_matches(current, last_success):
+        return current
     try:
         if last_success.captured_at > current.captured_at:
             if _has_complete_usage_windows(last_success):

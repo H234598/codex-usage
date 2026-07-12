@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.273 - 2026-07-12
+
+### Security
+
+- Der State-Merge prüft jetzt ebenfalls die Backend-Provenienz. Ein direkt
+  geladener Status kann dadurch keine unbewiesenen App-Server-Cachewerte
+  übernehmen.
+
 ## 0.6.272 - 2026-07-12
 
 ### Fixed

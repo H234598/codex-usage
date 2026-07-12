@@ -82,6 +82,36 @@ def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
     assert backend_provenance_matches(direct, app_server) is True
 
 
+def test_merge_rejects_unproven_cross_backend_cache_values():
+    captured = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+        five_hour=LimitWindow(name="5h", remaining=80),
+    )
+    last_success = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured - timedelta(minutes=5),
+        status=AccountStatus.OK,
+        backend_used="app-server",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+        five_hour=LimitWindow(name="5h", remaining=70),
+        weekly=LimitWindow(name="weekly", remaining=60),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+    assert merged.weekly is None
+
+
 def test_expire_reset_windows_drops_only_expired_cached_values():
     reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
