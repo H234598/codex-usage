@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.185 - 2026-07-12
+
+### Fixed
+
+- Der Direct-Sampler verwirft jetzt einen Mehrheitswert, wenn der letzte
+  Sample einen Resetzeit-Bucket rückwärts auf einen älteren Stand verschiebt.
+  Dadurch kann ein zweimal gelieferter, inkonsistenter Backend-Bucket keinen
+  falschen aktuellen Wert legitimieren.
+- Ein einzelner früher Ausreißer wird weiterhin von zwei späteren stabilen
+  Samples überstimmt.
+- Regression für den beobachteten Nufker-Rücksprung ergänzt.
+
 ## 0.6.184 - 2026-07-12
 
 ### Fixed

@@ -325,6 +325,34 @@ def test_fetch_stable_wham_usage_rejects_missing_quorum(monkeypatch):
         _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_stable_wham_usage_rejects_reset_identity_regression(monkeypatch):
+    def response(used: int, reset_at: int) -> dict:
+        return {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": reset_at,
+                }
+            }
+        }
+
+    responses = iter(
+        (
+            response(6, 1783824119),
+            response(6, 1783824119),
+            response(48, 1783824041),
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 def test_fetch_stable_wham_usage_accepts_progressive_same_window(monkeypatch):
     responses = iter(
         {

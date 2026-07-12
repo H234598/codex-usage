@@ -584,6 +584,10 @@ def _fetch_stable_wham_usage(
             -group[0][0],
         ),
     )
+    latest_index = len(payloads) - 1
+    latest_is_in_best_group = any(index == latest_index for index, _ in best_group)
+    if _has_reset_identity_regression(payloads) and not latest_is_in_best_group:
+        raise DirectFetchError("direct response limits were inconsistent across samples")
     if len(best_group) * 2 <= len(payloads):
         if _usage_response_progresses(payloads):
             return payloads[-1]
@@ -678,6 +682,25 @@ def _progressive_window_identity_is_stable(windows: list[tuple]) -> bool:
     durations = {window[0] for window in windows}
     identities = {window[2] for window in windows}
     return len(durations) == 1 and len(identities) == 1 and None not in identities
+
+
+def _has_reset_identity_regression(payloads: list[dict[str, Any]]) -> bool:
+    signatures = [_usage_response_signature(payload) for payload in payloads]
+    for window_index in range(2):
+        windows = [signature[window_index] for signature in signatures]
+        for previous, current in pairwise(windows):
+            if previous is None or current is None:
+                continue
+            previous_identity = previous[2]
+            current_identity = current[2]
+            if (
+                previous_identity is not None
+                and current_identity is not None
+                and previous_identity[0] == current_identity[0]
+                and current_identity[1] < previous_identity[1]
+            ):
+                return True
+    return False
 
 
 def _signature_reset_identity(value: dict[str, Any]) -> tuple[str, int] | None:
