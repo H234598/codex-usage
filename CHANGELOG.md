@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.228 - 2026-07-12
+
+### Fixed
+
+- Der Snapshot-Merge uebernimmt eine fehlende Resetzeit nicht mehr aus einem
+  vorherigen Limitfenster mit anderer `limit_window_seconds`-Identitaet.
+- Dadurch koennen Tarif- oder Fensterwechsel keine alte 30-Tage-Resetzeit in
+  ein aktuelles 5h-Fenster uebertragen.
+- Regression fuer den Wechsel von 30-Tage- zu 5h-Fenster ergaenzt.
+
 ## 0.6.227 - 2026-07-12
 
 ### Fixed

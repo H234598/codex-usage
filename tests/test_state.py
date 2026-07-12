@@ -518,6 +518,51 @@ def test_merge_current_with_last_success_preserves_usage_under_reset_only_window
     assert merged.stale is True
 
 
+def test_merge_does_not_reuse_reset_from_a_different_window_duration():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured = datetime(2026, 7, 12, 4, 20, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_used="direct",
+        five_hour=LimitWindow(
+            name="5h",
+            used=20,
+            limit=100,
+            remaining=80,
+            raw=(
+                '$.rate_limit.primary_window {"used_percent": 20, '
+                '"limit_window_seconds": 18000}'
+            ),
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured - timedelta(minutes=5),
+        five_hour=LimitWindow(
+            name="5h",
+            used=5,
+            limit=100,
+            remaining=95,
+            reset_at=captured + timedelta(days=30),
+            raw=(
+                '$.rate_limit.primary_window {"used_percent": 5, '
+                '"limit_window_seconds": 2592000}'
+            ),
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour == current.five_hour
+    assert merged.five_hour is not None
+    assert merged.five_hour.reset_at is None
+    assert merged.stale is False
+
+
 def test_merge_current_usage_does_not_restore_expired_reset_time():
     timezone = ZoneInfo("Europe/Berlin")
     captured = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)

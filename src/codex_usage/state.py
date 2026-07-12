@@ -303,6 +303,8 @@ def _merge_window_with_last_success(
         )
     if last_success is None:
         return current
+    if not _window_duration_matches(current, last_success):
+        return current
     if not preserve_missing_value and not current.has_usage_value:
         return current
     if current.has_usage_value:
@@ -316,6 +318,38 @@ def _merge_window_with_last_success(
     if current.reset_at is None:
         return last_success
     return replace(last_success, reset_at=current.reset_at)
+
+
+def _window_duration_matches(
+    current: LimitWindow,
+    last_success: LimitWindow,
+) -> bool:
+    current_duration = _window_duration_seconds(current)
+    previous_duration = _window_duration_seconds(last_success)
+    return (
+        current_duration is None
+        or previous_duration is None
+        or current_duration == previous_duration
+    )
+
+
+def _window_duration_seconds(window: LimitWindow | None) -> int | None:
+    raw = getattr(window, "raw", None)
+    if not isinstance(raw, str):
+        return None
+    match = re.search(
+        r'"limit_window_seconds"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        raw,
+    )
+    if match is None:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value <= 0 or not value.is_integer():
+        return None
+    return int(value)
 
 
 def _window_reset_expired(window: LimitWindow | None, reference_at: datetime) -> bool:
