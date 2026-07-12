@@ -142,7 +142,7 @@ def _extract_json_window(
     captured_at: datetime,
 ) -> LimitWindow | None:
     matches: list[tuple[str, str, dict[str, Any], str, int]] = []
-    reset_only: LimitWindow | None = None
+    reset_only: list[tuple[int, int, int, bool, LimitWindow]] = []
     usage_windows: list[tuple[int, int, int, bool, LimitWindow]] = []
     for candidate_index, candidate in enumerate(candidates):
         candidate_priority = _wham_candidate_priority(candidate.url)
@@ -172,8 +172,16 @@ def _extract_json_window(
                             wham_window,
                         )
                     )
-                if reset_only is None:
-                    reset_only = wham_window
+                else:
+                    reset_only.append(
+                        (
+                            candidate_priority,
+                            _wham_window_path_priority(path, target),
+                            -candidate_index,
+                            wham_window.reset_at is None,
+                            wham_window,
+                        )
+                    )
                 continue
             haystack = f"{path} {obj_preview}".lower()
             if target == "five_hour" and not _looks_like_five_hour(haystack):
@@ -210,12 +218,23 @@ def _extract_json_window(
                         window,
                     )
                 )
-            elif reset_only is None:
-                reset_only = window
+            else:
+                reset_only.append(
+                    (
+                        _wham_candidate_priority(url),
+                        _target_rank(_path, haystack, target),
+                        -candidate_index,
+                        window.reset_at is None,
+                        window,
+                    )
+                )
     if ranked_windows:
         ranked_windows.sort(key=lambda item: item[:5])
         return ranked_windows[0][5]
-    return reset_only
+    if reset_only:
+        reset_only.sort(key=lambda item: item[:4])
+        return reset_only[0][4]
+    return None
 
 
 def _wham_candidate_priority(url: str) -> int:
@@ -480,7 +499,7 @@ def _extract_text_window(
 ) -> LimitWindow | None:
     text = _normalize_ws(body_text)
     lower = text.lower()
-    reset_only: LimitWindow | None = None
+    reset_only: list[tuple[int, LimitWindow]] = []
     usage_windows: list[tuple[int, LimitWindow]] = []
     for start in _label_offsets(lower, labels):
         end = _next_label_offset(lower, start + 1, stop_labels)
@@ -533,8 +552,7 @@ def _extract_text_window(
         if window.has_usage_value:
             usage_windows.append((start, window))
             continue
-        if reset_only is None:
-            reset_only = window
+        reset_only.append((start, window))
     if usage_windows:
         # A later DOM occurrence carries the freshest rendered usage value;
         # an older reset timestamp must not make stale consumption win.
@@ -542,7 +560,10 @@ def _extract_text_window(
             key=lambda item: (-item[0], item[1].reset_at is None)
         )
         return usage_windows[0][1]
-    return reset_only
+    if reset_only:
+        reset_only.sort(key=lambda item: (-item[0], item[1].reset_at is None))
+        return reset_only[0][1]
+    return None
 
 
 def _label_offsets(text: str, labels: tuple[str, ...]) -> list[int]:

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.253 - 2026-07-12
+
+### Fixed
+
+- Reset-only-JSON- und DOM-Metadaten verwenden jetzt den neuesten passenden
+  Fund statt einer veralteten zuerst gefundenen Resetzeit.
+- Mehrfach gerenderte Browser-/Bridge-Blöcke können dadurch keine alten
+  Resetzeiten mehr in die Accountanzeige übernehmen.
+
 ## 0.6.252 - 2026-07-12
 
 ### Fixed

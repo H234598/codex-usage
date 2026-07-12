@@ -610,6 +610,52 @@ def test_extract_windows_prefers_later_json_usage_over_reset_only_match():
     assert five.source.endswith("fresh")
 
 
+def test_extract_windows_prefers_latest_dom_reset_only_metadata():
+    body = """
+    5-hour limit
+    Reset 12.07.2026 15:00
+    5-hour limit
+    Reset 12.07.2026 16:00
+    """
+
+    five, _weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 7, 12, 14, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "12.07.2026 16:00"
+
+
+def test_extract_windows_prefers_latest_json_reset_only_metadata():
+    def candidate(reset_at: str) -> JsonCandidate:
+        return JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "limit_window_seconds": 18_000,
+                        "reset_at": reset_at,
+                    }
+                }
+            },
+        )
+
+    five, _weekly = extract_windows(
+        body_text="",
+        json_candidates=[
+            candidate("2026-07-12T15:00:00+02:00"),
+            candidate("2026-07-12T16:00:00+02:00"),
+        ],
+        now=datetime(2026, 7, 12, 14, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%d.%m.%Y %H:%M") == "12.07.2026 16:00"
+
+
 def test_extract_windows_prefers_complete_json_usage_over_earlier_partial_usage():
     candidates = [
         JsonCandidate(
