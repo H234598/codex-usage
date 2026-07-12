@@ -906,6 +906,84 @@ def test_watchdog_does_not_block_when_reset_expires_during_fetch(monkeypatch):
     assert result[0].blocked_until is None
 
 
+def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetch(
+    monkeypatch,
+):
+    accounts = (
+        Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked"),
+        Account(id="free", label="Free", profile_dir="/tmp/free"),
+    )
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 19, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.BLOCKED,
+        blocked_until=datetime(2026, 6, 8, 4, 20, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+    refreshed_blocked = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(name="5h", remaining=99),
+        weekly=LimitWindow(name="weekly", remaining=98),
+    )
+    free_usage = AccountUsage(
+        account_id="free",
+        label="Free",
+        captured_at=datetime(2026, 6, 8, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+    clock_values = iter(
+        (
+            datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+            datetime(2026, 6, 8, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+            datetime(2026, 6, 8, 4, 21, 5, tzinfo=ZoneInfo("Europe/Berlin")),
+        )
+    )
+    seen_fetch_accounts: list[list[str]] = []
+
+    class Clock:
+        @classmethod
+        def now(cls):
+            return next(clock_values)
+
+    def fake_load_usage_snapshot(account_id, snapshot_dir=None):
+        return blocked_snapshot if account_id == "blocked" else None
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        selected = [account.id for account in fetch_accounts]
+        seen_fetch_accounts.append(selected)
+        if selected == ["free"]:
+            return [free_usage]
+        assert selected == ["blocked"]
+        return [refreshed_blocked]
+
+    monkeypatch.setattr("codex_usage.scheduler.datetime", Clock)
+    monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", fake_load_usage_snapshot)
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=accounts),
+        accounts,
+        output="json",
+    )
+
+    assert seen_fetch_accounts == [["free"], ["blocked"]]
+    assert [usage.account_id for usage in result] == ["blocked", "free"]
+    assert result[0] == refreshed_blocked
+    assert result[0].status == AccountStatus.OK
+
+
 def test_window_exhaustion_percent_fallback_uses_remaining_semantics():
     from codex_usage.scheduler import _window_is_exhausted
 

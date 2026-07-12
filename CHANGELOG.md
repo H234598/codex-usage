@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.165 - 2026-07-12
+
+### Fixed
+
+- Der Watchdog refetched Accounts, deren gespeicherte Blockierung während des
+  Abrufs anderer Accounts abgelaufen ist.
+- Abgelaufene `BLOCKED`-Snapshots bleiben dadurch nicht noch einen Zyklus als
+  aktive Sperre sichtbar.
+- Regression für den Ablauf eines blockierten Accounts während eines
+  Mehrkonto-Fetchs ergänzt.
+
 ## 0.6.164 - 2026-07-12
 
 ### Fixed

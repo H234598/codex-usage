@@ -430,6 +430,27 @@ def watchdog(
         save_snapshots=False,
     )
     evaluation_now = datetime.now().astimezone()
+    expired_blocked_accounts = [
+        account
+        for account in account_list
+        if account.id in blocked_snapshots
+        and not _blocked_until_active(blocked_snapshots[account.id], now=evaluation_now)
+    ]
+    if expired_blocked_accounts:
+        fetched.extend(
+            fetch_all(
+                config,
+                expired_blocked_accounts,
+                headed=headed,
+                direct=direct,
+                backend_override=backend_override,
+                auth_json_path=auth_json_path,
+                save_snapshots=False,
+            )
+        )
+        for account in expired_blocked_accounts:
+            blocked_snapshots.pop(account.id, None)
+        evaluation_now = datetime.now().astimezone()
     fetched_by_id = {usage.account_id: usage for usage in fetched}
 
     usages: list[AccountUsage] = []
