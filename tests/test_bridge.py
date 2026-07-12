@@ -407,6 +407,45 @@ def test_latest_rejects_cached_values_after_auth_identity_changes(tmp_path):
     assert invalidated[0].weekly is None
 
 
+def test_latest_rejects_cache_when_auth_identity_changes_during_read(tmp_path, monkeypatch):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    cached = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=12),
+        weekly=LimitWindow(name="weekly", remaining=34),
+        backend_user_id="old-user",
+        backend_account_id="old-account",
+    )
+    save_usage_snapshot(cached, snapshot_dir)
+    save_current_usage(cached, snapshot_dir.parent / "current")
+    identities = iter(
+        (
+            ("old-user", "old-account"),
+            ("new-user", "new-account"),
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.bridge.auth_identity_for_account",
+        lambda _account: next(identities),
+    )
+
+    invalidated = load_latest_usages(config, snapshot_dir)
+
+    assert len(invalidated) == 1
+    assert invalidated[0].cache_invalidated is True
+    assert invalidated[0].five_hour is None
+    assert invalidated[0].weekly is None
+
+
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     before = datetime.now().astimezone()

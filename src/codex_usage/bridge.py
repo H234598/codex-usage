@@ -955,6 +955,16 @@ def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> l
             auth_identity,
         ):
             current = _invalidate_cached_usage(account, current)
+        if auth_identity is not None:
+            try:
+                auth_identity_after = auth_identity_for_account(account)
+            except DirectAuthError:
+                auth_identity_after = (None, None)
+            if auth_identity_after != auth_identity:
+                if last_success is not None:
+                    last_success = _invalidate_cached_usage(account, last_success)
+                if current is not None:
+                    current = _invalidate_cached_usage(account, current)
         if current is not None:
             usage = merge_current_with_last_success(current, last_success)
         elif last_success is not None:

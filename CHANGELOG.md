@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.269 - 2026-07-12
+
+### Security
+
+- `latest` verwirft Cachewerte auch dann, wenn sich die `auth.json`-Identität
+  während des Ladevorgangs ändert.
+
 ## 0.6.268 - 2026-07-12
 
 ### Fixed
