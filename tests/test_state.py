@@ -23,6 +23,26 @@ def test_load_usage_snapshot_ignores_invalid_json(tmp_path):
     assert load_usage_snapshot("privat", tmp_path) is None
 
 
+@pytest.mark.parametrize("malformed_window", ([], "not-an-object", 42))
+def test_load_usage_snapshot_ignores_malformed_window_shape(tmp_path, malformed_window):
+    payload = {
+        "account": "partial",
+        "label": "Partial",
+        "captured_at": "2026-06-08T04:20:00+02:00",
+        "status": "partial",
+        "five_hour": malformed_window,
+        "weekly": {"name": "weekly", "remaining": 55},
+    }
+    (tmp_path / "partial.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_usage_snapshot("partial", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is None
+    assert loaded.weekly is not None
+    assert loaded.weekly.remaining == 55
+
+
 def test_load_usage_snapshot_ignores_symlink(tmp_path):
     target = tmp_path / "target.json"
     target.write_text(

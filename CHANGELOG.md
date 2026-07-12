@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.187 - 2026-07-12
+
+### Fixed
+
+- Beschädigte Snapshot-Fensterfelder werden beim Laden jetzt als fehlendes
+  Fenster behandelt, statt den gesamten Abrufzyklus mit `AttributeError`
+  abzubrechen.
+- Regressionen für Listen-, String- und Zahlenwerte an dieser JSON-Grenze ergänzt.
+
 ## 0.6.186 - 2026-07-12
 
 ### Fixed

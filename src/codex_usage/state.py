@@ -261,7 +261,7 @@ def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
 
 
 def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:
-    if payload is None:
+    if not isinstance(payload, dict):
         return None
     reset_at = payload.get("reset_at")
     return LimitWindow(
