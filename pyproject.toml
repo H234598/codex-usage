@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-usage"
-version = "0.6.311"
+version = "0.6.312"
 description = "Poll ChatGPT Codex analytics usage limits for multiple accounts."
 readme = "README.md"
 requires-python = ">=3.11"

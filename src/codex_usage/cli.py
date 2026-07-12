@@ -587,9 +587,15 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
     config = load_config(args.config)
+    account = resolve_account(config, args.account)
     raw = _read_ingest_raw(args)
     payload = _payload_from_raw_ingest(raw)
-    usage, path = ingest_and_save(config, args.account, payload)
+    usage, path = ingest_and_save(
+        config,
+        account.id,
+        payload,
+        require_backend_identity=account.auth_json_path is not None,
+    )
     print(render_table([usage]))
     print(f"Gespeichert: {path}")
     return 0 if _is_successful_usage(usage) else 2

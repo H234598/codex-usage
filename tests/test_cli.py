@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import sys
 from datetime import datetime, timedelta
 from io import StringIO
 from zoneinfo import ZoneInfo
@@ -122,7 +124,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.311\ncodex-usage 0.6.311\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.312\ncodex-usage 0.6.312\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -1084,6 +1086,95 @@ def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):
     assert "58% verbleibend" in latest
     assert "310 / 1000" in latest
     assert "69% verbleibend" in latest
+
+
+def test_ingest_binds_shared_user_browser_payload_to_selected_account(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    shared_user = "shared-user"
+
+    def write_auth(path, account_id):
+        header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=")
+        claims = json.dumps(
+            {"https://api.openai.com/auth": {"chatgpt_user_id": shared_user}}
+        ).encode("utf-8")
+        encoded_claims = base64.urlsafe_b64encode(claims).rstrip(b"=")
+        token = f"{header.decode()}.{encoded_claims.decode()}.signature"
+        path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": token,
+                        "id_token": token,
+                        "account_id": account_id,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+
+    privat_auth = tmp_path / "privat-auth.json"
+    work_auth = tmp_path / "work-auth.json"
+    write_auth(privat_auth, "privat-account")
+    write_auth(work_auth, "work-account")
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "privat",
+            "--auth-json",
+            str(privat_auth),
+        ]
+    ) == 0
+    capsys.readouterr()
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "work",
+            "--auth-json",
+            str(work_auth),
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    payload = {
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": shared_user,
+                        "account_id": shared_user,
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ]
+    }
+    monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(payload)))
+
+    assert main(["--config", str(config_path), "ingest", "privat", "--stdin"]) == 1
+    assert "ambiguous backend account identity" in capsys.readouterr().err
+    assert load_latest_usages(load_config(config_path))[0:] == []
 
 
 def test_latest_marks_old_current_values_stale(tmp_path, monkeypatch):
