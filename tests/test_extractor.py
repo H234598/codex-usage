@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from codex_usage.extractor import (
     JsonCandidate,
     _parse_datetime,
@@ -344,6 +346,36 @@ def test_extract_windows_prefers_visible_html_progress_over_hidden_progress_clon
 
     assert five is not None
     assert five.remaining == 97
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%H:%M") == "19:00"
+
+
+@pytest.mark.parametrize(
+    "hidden_attribute",
+    ("hidden", 'aria-hidden="true"', 'style="display: none"'),
+)
+def test_extract_windows_ignores_hidden_progress_beside_visible_text(hidden_attribute):
+    html = f"""
+    <section>
+      <h2>5-hour limit</h2>
+      <span>80% remaining Reset 12.07.2026 19:00</span>
+    </section>
+    <section {hidden_attribute}>
+      <h2>5-hour limit</h2>
+      <div class="transition-[width] rounded-full bg-[#22c55e]"
+        style="width: 20%;"></div>
+    </section>
+    """
+
+    five, _weekly = extract_windows(
+        body_text="",
+        text_sources=(("htmlText", html),),
+        now=datetime(2026, 7, 12, 17, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 80
+    assert five.percent == 80
     assert five.reset_at is not None
     assert five.reset_at.strftime("%H:%M") == "19:00"
 

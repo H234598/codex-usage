@@ -777,15 +777,17 @@ def _extract_used_percent(text: str) -> float | None:
 
 
 def _extract_progress_width_percent(text: str) -> float | None:
-    parser = _ProgressWidthParser()
+    parser = _ProgressWidthParser(text)
     try:
         parser.feed(text)
         parser.close()
     except (AssertionError, RuntimeError, ValueError):
         pass
+    if parser.visible_candidates:
+        parser.visible_candidates.sort(key=lambda item: (item[0], -item[1]))
+        return parser.visible_candidates[0][2]
     if parser.candidates:
-        parser.candidates.sort(key=lambda item: (item[0], -item[1]))
-        return parser.candidates[0][2]
+        return None
 
     # Keep plain-text and malformed-fragment compatibility for captures that
     # contain a style fragment but no parseable start tag.
@@ -802,7 +804,7 @@ def _extract_progress_width_percent(text: str) -> float | None:
 
 
 def _extract_hidden_html_ranges(text: str) -> tuple[tuple[int, int], ...]:
-    parser = _ProgressWidthParser()
+    parser = _ProgressWidthParser(text)
     try:
         parser.feed(text)
         parser.close()
@@ -813,11 +815,22 @@ def _extract_hidden_html_ranges(text: str) -> tuple[tuple[int, int], ...]:
 
 
 class _ProgressWidthParser(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, source_text: str = "") -> None:
         super().__init__(convert_charrefs=True)
         self.candidates: list[tuple[int, int, float]] = []
+        self.visible_candidates: list[tuple[int, int, float]] = []
         self.hidden_ranges: list[tuple[int, int]] = []
         self._hidden_stack: list[tuple[str, bool, int]] = []
+        self._line_starts = [0]
+        self._line_starts.extend(
+            index + 1 for index, char in enumerate(source_text) if char == "\n"
+        )
+
+    def _absolute_position(self) -> int:
+        line, column = self.getpos()
+        if 1 <= line <= len(self._line_starts):
+            return self._line_starts[line - 1] + column
+        return column
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {name.casefold(): value or "" for name, value in attrs}
@@ -828,13 +841,13 @@ class _ProgressWidthParser(HTMLParser):
             "area", "base", "br", "col", "embed", "hr", "img", "input",
             "link", "meta", "param", "source", "track", "wbr",
         }:
-            self._hidden_stack.append((tag.casefold(), own_hidden, self.getpos()[1]))
+            self._hidden_stack.append((tag.casefold(), own_hidden, self._absolute_position()))
 
     def handle_endtag(self, tag: str) -> None:
         normalized = tag.casefold()
         for index in range(len(self._hidden_stack) - 1, -1, -1):
             if self._hidden_stack[index][0] == normalized:
-                end = self.getpos()[1]
+                end = self._absolute_position()
                 for _tag, own_hidden, start in self._hidden_stack[index:]:
                     if own_hidden:
                         self.hidden_ranges.append((start, end))
@@ -879,7 +892,8 @@ class _ProgressWidthParser(HTMLParser):
             return
         classes = values.get("class", "").casefold()
         rank = 0
-        if hidden or _is_hidden_progress_element(values, classes):
+        is_hidden = hidden or _is_hidden_progress_element(values, classes)
+        if is_hidden:
             # React can retain a hidden previous render in the serialized DOM.
             # A hidden bar must never replace the visible account value.
             rank += 100
@@ -891,7 +905,10 @@ class _ProgressWidthParser(HTMLParser):
             rank -= 1
         if values.get("role", "").casefold() == "progressbar":
             rank -= 2
-        self.candidates.append((rank, len(self.candidates), percent))
+        candidate = (rank, len(self.candidates), percent)
+        self.candidates.append(candidate)
+        if not is_hidden:
+            self.visible_candidates.append(candidate)
 
 
 def _is_hidden_progress_element(
