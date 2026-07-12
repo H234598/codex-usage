@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.287 - 2026-07-12
+
+### Fixed
+
+- Der Browser-Parser ignoriert versteckte HTML-Progressbar-Klone inklusive
+  ihrer Reset-Zeiten. Sichtbare aktuelle Bars werden dadurch nicht mehr von
+  alten React-DOM-Ständen überschrieben.
+
 ## 0.6.286 - 2026-07-12
 
 ### Security

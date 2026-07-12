@@ -632,7 +632,15 @@ def _extract_text_window(
     lower = text.lower()
     reset_only: list[tuple[int, LimitWindow]] = []
     usage_windows: list[tuple[int, LimitWindow]] = []
-    for start in _label_offsets(lower, labels):
+    label_offsets = _label_offsets(lower, labels)
+    if source == "htmlText":
+        hidden_ranges = _extract_hidden_html_ranges(text)
+        label_offsets = [
+            start
+            for start in label_offsets
+            if not any(begin <= start < end for begin, end in hidden_ranges)
+        ]
+    for start in label_offsets:
         end = _next_label_offset(lower, start + 1, stop_labels)
         chunk_end = min(start + 1500, end) if end is not None else start + 1500
         chunk = text[start:chunk_end]
@@ -793,22 +801,71 @@ def _extract_progress_width_percent(text: str) -> float | None:
     return None
 
 
+def _extract_hidden_html_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    parser = _ProgressWidthParser()
+    try:
+        parser.feed(text)
+        parser.close()
+        parser.finish(len(text))
+    except (AssertionError, RuntimeError, ValueError):
+        pass
+    return tuple(parser.hidden_ranges)
+
+
 class _ProgressWidthParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.candidates: list[tuple[int, int, float]] = []
+        self.hidden_ranges: list[tuple[int, int]] = []
+        self._hidden_stack: list[tuple[str, bool, int]] = []
 
-    def handle_starttag(self, _tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self._record_width(attrs)
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {name.casefold(): value or "" for name, value in attrs}
+        own_hidden = _is_hidden_progress_element(values, values.get("class", "").casefold())
+        inherited_hidden = any(item_hidden for _, item_hidden, _ in self._hidden_stack)
+        self._record_width(attrs, hidden=inherited_hidden or own_hidden)
+        if tag.casefold() not in {
+            "area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr",
+        }:
+            self._hidden_stack.append((tag.casefold(), own_hidden, self.getpos()[1]))
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized = tag.casefold()
+        for index in range(len(self._hidden_stack) - 1, -1, -1):
+            if self._hidden_stack[index][0] == normalized:
+                end = self.getpos()[1]
+                for _tag, own_hidden, start in self._hidden_stack[index:]:
+                    if own_hidden:
+                        self.hidden_ranges.append((start, end))
+                del self._hidden_stack[index:]
+                return
+
+    def finish(self, end: int) -> None:
+        for _tag, own_hidden, start in self._hidden_stack:
+            if own_hidden:
+                self.hidden_ranges.append((start, end))
+        self._hidden_stack.clear()
 
     def handle_startendtag(
         self,
         _tag: str,
         attrs: list[tuple[str, str | None]],
     ) -> None:
-        self._record_width(attrs)
+        values = {name.casefold(): value or "" for name, value in attrs}
+        hidden = any(item_hidden for _, item_hidden, _ in self._hidden_stack)
+        hidden = hidden or _is_hidden_progress_element(
+            values,
+            values.get("class", "").casefold(),
+        )
+        self._record_width(attrs, hidden=hidden)
 
-    def _record_width(self, attrs: list[tuple[str, str | None]]) -> None:
+    def _record_width(
+        self,
+        attrs: list[tuple[str, str | None]],
+        *,
+        hidden: bool = False,
+    ) -> None:
         values = {name.casefold(): value or "" for name, value in attrs}
         match = re.search(
             r"(?:^|;)\s*width\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
@@ -822,6 +879,10 @@ class _ProgressWidthParser(HTMLParser):
             return
         classes = values.get("class", "").casefold()
         rank = 0
+        if hidden or _is_hidden_progress_element(values, classes):
+            # React can retain a hidden previous render in the serialized DOM.
+            # A hidden bar must never replace the visible account value.
+            rank += 100
         if "transition-[width]" in classes:
             rank -= 4
         if "rounded-full" in classes:
@@ -831,6 +892,24 @@ class _ProgressWidthParser(HTMLParser):
         if values.get("role", "").casefold() == "progressbar":
             rank -= 2
         self.candidates.append((rank, len(self.candidates), percent))
+
+
+def _is_hidden_progress_element(
+    attrs: dict[str, str],
+    classes: str,
+) -> bool:
+    if "hidden" in attrs:
+        return True
+    if attrs.get("aria-hidden", "").casefold() == "true":
+        return True
+    if re.search(
+        r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)",
+        attrs.get("style", ""),
+        flags=re.IGNORECASE,
+    ):
+        return True
+    class_names = set(classes.split())
+    return bool(class_names.intersection({"hidden", "invisible", "sr-only"}))
 
 
 def _extract_remaining(text: str) -> float | None:

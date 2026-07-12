@@ -322,6 +322,53 @@ def test_extract_windows_prefers_html_progress_over_hidden_text_clone():
     assert five.source == "htmlText"
 
 
+def test_extract_windows_prefers_visible_html_progress_over_hidden_progress_clone():
+    html = """
+    <section>
+      <h2>5-hour limit</h2>
+      <div class="transition-[width] rounded-full bg-[#22c55e]" style="width: 97%;"></div>
+      <span>Reset 12.07.2026 19:00</span>
+    </section>
+    <section hidden>
+      <h2>5-hour limit</h2>
+      <div class="transition-[width] rounded-full bg-[#22c55e]" style="width: 20%;"></div>
+      <span>Reset 12.07.2026 18:00</span>
+    </section>
+    """
+
+    five, _weekly = extract_windows(
+        body_text="",
+        text_sources=(("htmlText", html),),
+        now=datetime(2026, 7, 12, 17, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%H:%M") == "19:00"
+
+
+def test_extract_windows_prefers_visible_html_progress_over_aria_hidden_clone():
+    html = """
+    <section>
+      <h2>5-hour limit</h2>
+      <div class="transition-[width] rounded-full" style="width: 97%;"></div>
+    </section>
+    <section aria-hidden="true">
+      <h2>5-hour limit</h2>
+      <div class="transition-[width] rounded-full" style="width: 20%;"></div>
+    </section>
+    """
+
+    five, _weekly = extract_windows(
+        body_text="",
+        text_sources=(("htmlText", html),),
+    )
+
+    assert five is not None
+    assert five.remaining == 97
+
+
 def test_extract_windows_ignores_layout_width_before_progress_bar():
     body = """
     <section style="width: 42%;">
