@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.235 - 2026-07-12
+
+### Fixed
+
+- Bridge-Antworten derselben WHAM-URL werden jetzt auch über verschiedene
+  Capture-Quellen hinweg nach `requestSequence` geordnet.
+- Widersprüchliche erfolgreiche Antworten können dadurch nicht mehr abhängig
+  von der Reihenfolge im Browser-Payload falsche Nutzungswerte liefern.
+- Quellen ohne Sequenz bleiben als deterministischer Fallback erhalten; eine
+  aktuelle Fehlerantwort einer einzelnen Quelle verdrängt weiterhin nicht die
+  erfolgreiche Probe einer anderen Quelle.
+- Regression für die quellenübergreifende Antwortauswahl ergänzt.
+
 ## 0.6.234 - 2026-07-12
 
 ### Fixed

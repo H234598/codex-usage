@@ -277,8 +277,8 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
         responses_by_key[key] = item
         response_sequences[key] = sequence
 
-    candidates: list[JsonCandidate] = []
-    for item in responses_by_key.values():
+    ordered_candidates: list[tuple[bool, int, int, int, JsonCandidate]] = []
+    for candidate_index, item in enumerate(responses_by_key.values()):
         if item.get("truncated") is True:
             continue
         status = item.get("status")
@@ -293,8 +293,33 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
             continue
         candidate = load_json_candidate(url, body)
         if candidate is not None:
-            candidates.append(candidate)
-    return candidates
+            sequence = response_sequences.get(
+                (str(item.get("source") or ""), url)
+            )
+            ordered_candidates.append(
+                (
+                    sequence is not None,
+                    sequence if sequence is not None else -1,
+                    _bridge_response_source_priority(item.get("source")),
+                    candidate_index,
+                    candidate,
+                )
+            )
+
+    # The extension retains one response per capture source. Sort the surviving
+    # candidates by freshness so extractor and identity tie-breakers cannot
+    # depend on the order in which sources arrived in the ingest payload.
+    ordered_candidates.sort(key=lambda item: item[:4])
+    return [item[4] for item in ordered_candidates]
+
+
+def _bridge_response_source_priority(value: Any) -> int:
+    source = str(value or "")
+    return {
+        "content-probe": 10,
+        "page-refresh": 20,
+        "page-fetch": 30,
+    }.get(source, 0)
 
 
 def _safe_excerpt(value: str, limit: int = 240) -> str:

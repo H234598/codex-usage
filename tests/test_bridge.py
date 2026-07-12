@@ -650,6 +650,53 @@ def test_usage_from_ingest_payload_prefers_latest_response_for_endpoint():
     assert usage.weekly.used == 60
 
 
+def test_usage_from_ingest_payload_prefers_latest_response_across_sources():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+
+    def response(source: str, five_hour: int, weekly: int, sequence: int) -> dict[str, object]:
+        return {
+            "source": source,
+            "url": "https://chatgpt.com/backend-api/wham/usage",
+            "status": 200,
+            "contentType": "application/json",
+            "requestSequence": sequence,
+            "bodyText": json.dumps(
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": five_hour,
+                            "limit_window_seconds": 18000,
+                        },
+                        "secondary_window": {
+                            "used_percent": weekly,
+                            "limit_window_seconds": 604800,
+                        },
+                    }
+                }
+            ),
+        }
+
+    responses = [
+        response("page-fetch", 20, 60, 11),
+        response("page-hook", 3, 45, 10),
+    ]
+    for api_responses in (responses, list(reversed(responses))):
+        usage = usage_from_ingest_payload(
+            account,
+            {
+                "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+                "bodyText": "Codex analytics",
+                "apiResponses": api_responses,
+            },
+        )
+
+        assert usage.status == AccountStatus.OK
+        assert usage.five_hour is not None
+        assert usage.five_hour.used == 20
+        assert usage.weekly is not None
+        assert usage.weekly.used == 60
+
+
 def test_usage_from_ingest_payload_drops_old_success_after_latest_failed_response():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(
