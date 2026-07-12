@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.347 - 2026-07-13
+
+### Fixed
+
+- Tabellenstand und Auth-Ablaufpruefung verwenden jetzt dieselbe DST-faehige
+  lokale Zeitzone wie die gespeicherten Nutzungswerte.
+
 ## 0.6.346 - 2026-07-13
 
 ### Fixed

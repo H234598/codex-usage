@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
+from .extractor import LOCAL_TZ
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
 ACCOUNT_CELL_MAX = 40
@@ -106,7 +107,7 @@ def render_account_values(
 
 def render_table(usages: Iterable[AccountUsage]) -> str:
     rows = list(usages)
-    now = datetime.now().astimezone().strftime("%d.%m.%Y %H:%M")
+    now = datetime.now(tz=LOCAL_TZ).strftime("%d.%m.%Y %H:%M")
     headers = [
         "Account",
         "5h Wert",
@@ -270,7 +271,7 @@ def _auth_value(usage: AccountUsage | None) -> str:
             return "-"
         return f"refresh {usage.auth_last_refresh.strftime('%d.%m.%Y %H:%M')}"
     stamp = expiry.strftime("%d.%m.%Y %H:%M")
-    if expiry <= datetime.now().astimezone():
+    if expiry <= datetime.now(tz=LOCAL_TZ):
         return f"abgelaufen {stamp}"
     return f"bis {stamp}"
 

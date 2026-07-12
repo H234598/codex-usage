@@ -4,7 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
-from codex_usage.render import render_account_values, render_json, render_table
+from codex_usage.render import _auth_value, render_account_values, render_json, render_table
 
 
 def test_render_table_contains_values():
@@ -40,6 +40,32 @@ def test_render_table_contains_values():
     assert "69% verbleibend" in rendered
     assert "Auth" in rendered
     assert "bis 19.07.2026 23:17" in rendered
+
+
+def test_render_uses_dst_aware_local_timezone(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    now = datetime(2026, 1, 15, 0, 15, tzinfo=berlin)
+    calls = []
+
+    class Clock:
+        @classmethod
+        def now(cls, tz=None):
+            calls.append(tz)
+            return now.astimezone(tz) if tz is not None else now
+
+    monkeypatch.setattr("codex_usage.render.LOCAL_TZ", berlin)
+    monkeypatch.setattr("codex_usage.render.datetime", Clock)
+
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=now,
+        auth_access_expires_at=datetime(2026, 1, 15, 1, 15, tzinfo=berlin),
+    )
+
+    assert "Stand: 15.01.2026 00:15" in render_table([usage])
+    assert _auth_value(usage) == "bis 15.01.2026 01:15"
+    assert calls == [berlin, berlin, berlin]
 
 
 def test_render_table_labels_remaining_percent_windows():
