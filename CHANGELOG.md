@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.167 - 2026-07-12
+
+### Fixed
+
+- Ein frischer Nutzungswert ohne Resetzeit übernimmt keine bereits abgelaufene
+  Resetzeit aus dem letzten erfolgreichen Snapshot.
+- Dadurch werden neue Werte nicht mehr mit veralteten Resetdaten kombiniert.
+- Regression für den abgelaufenen Reset-Fallback ergänzt.
+
 ## 0.6.166 - 2026-07-12
 
 ### Fixed

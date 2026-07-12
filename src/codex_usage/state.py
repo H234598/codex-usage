@@ -211,6 +211,8 @@ def _merge_window_with_last_success(
         return current
     if current.has_usage_value:
         if current.reset_at is None and last_success.reset_at is not None:
+            if _window_reset_expired(last_success, reference_at):
+                return current
             return replace(current, reset_at=last_success.reset_at)
         return current
     if _window_reset_expired(last_success, reference_at):
