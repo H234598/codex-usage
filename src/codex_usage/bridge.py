@@ -827,7 +827,18 @@ function codexUsageHasMainUsageResponse() {{
     try {{
       const parsed = new URL(String((item && item.url) || ""), location.origin);
       const path = parsed.pathname.replace(/\\/+$/, "") || "/";
-      return parsed.origin === location.origin && path === "/backend-api/wham/usage";
+      if (parsed.origin !== location.origin || path !== "/backend-api/wham/usage") {{
+        return false;
+      }}
+      if (item.truncated === true) {{
+        return false;
+      }}
+      const status = Number(item.status);
+      if (Number.isFinite(status) && (status < 200 || status >= 300)) {{
+        return false;
+      }}
+      const bodyText = String(item.bodyText || item.body || item.text || "");
+      return /[\"'](?:rate_limit|rateLimits|rateLimitsByLimitId)[\"']\\s*:/.test(bodyText);
     }} catch (_error) {{
       return false;
     }}

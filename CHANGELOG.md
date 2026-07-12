@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.189 - 2026-07-12
+
+### Fixed
+
+- Die Browser-Bridge wertet einen gecachten Hauptendpoint jetzt nur dann als
+  vorhanden, wenn die Antwort erfolgreich, nicht abgeschnitten und tatsächlich
+  mit Rate-Limit-Daten gefüllt ist.
+- Nach `401`/`403` oder einer nutzlosen JSON-Antwort wird der authentifizierte
+  Ersatzabruf nicht mehr fälschlich übersprungen.
+
 ## 0.6.188 - 2026-07-12
 
 ### Fixed

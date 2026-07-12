@@ -1038,7 +1038,7 @@ setTimeout(() => process.exit(process.exitCode || 0), 40);
     assert result.returncode == 0, result.stderr
 
 
-def test_generated_content_probes_usage_when_only_other_wham_response_was_captured(tmp_path):
+def test_generated_content_reprobes_after_failed_main_usage_response(tmp_path):
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
@@ -1147,15 +1147,29 @@ messageHandler({
 });
 document.body.innerText = "Codex analytics page text with enough content";
 observerCallback();
+messageHandler({
+  source: pageWindow,
+  data: {
+    type: "codexUsageApiResponses",
+    responses: [{
+      source: "page-fetch",
+      url: "https://chatgpt.com/backend-api/wham/usage",
+      requestSequence: 2,
+      status: 401,
+      contentType: "application/json",
+      bodyText: JSON.stringify({ detail: "Unauthorized" })
+    }]
+  }
+});
 setTimeout(() => {
-  const payload = messages[0] && messages[0].payload;
-  if (fetched.length !== 4 || !payload || !payload.apiResponses.some(
+  const payload = messages[1] && messages[1].payload;
+  if (fetched.length !== 8 || messages.length < 2 || !payload || !payload.apiResponses.some(
     (item) => item.url.endsWith("/backend-api/wham/usage")
   )) {
     throw new Error(JSON.stringify({ fetched, messages }));
   }
   process.exit(0);
-}, 50);
+}, 700);
 """
 
     result = subprocess.run(
