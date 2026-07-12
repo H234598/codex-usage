@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.282 - 2026-07-12
+
+### Fixed
+
+- Die Bridge wertet sichtbaren Seitentext getrennt von DOM-Klonen aus. Alte
+  versteckte Werte können dadurch keine aktuellen 5h-/Wochenwerte mehr
+  überschreiben; HTML-Progressbars bleiben als spezialisierte Fallbackquelle
+  nutzbar.
+
 ## 0.6.281 - 2026-07-12
 
 ### Fixed

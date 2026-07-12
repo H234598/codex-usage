@@ -62,22 +62,32 @@ def extract_windows(
     *,
     body_text: str,
     json_candidates: Iterable[JsonCandidate] = (),
+    text_sources: Iterable[tuple[str, str]] | None = None,
     now: datetime | None = None,
 ) -> tuple[LimitWindow | None, LimitWindow | None]:
     captured_at = now or datetime.now(tz=LOCAL_TZ)
     candidates = list(json_candidates)
+    sources = (
+        (("dom-text", body_text),)
+        if text_sources is None
+        else tuple(
+            (source, text)
+            for source, text in text_sources
+            if isinstance(source, str) and isinstance(text, str) and text.strip()
+        )
+    )
 
     five_json = _extract_json_window(candidates, "five_hour", captured_at)
     weekly_json = _extract_json_window(candidates, "weekly", captured_at)
-    five_text = _extract_text_window(
-        body_text,
+    five_text = _extract_text_windows(
+        sources,
         name="5h",
         labels=FIVE_HOUR_LABELS,
         stop_labels=WEEKLY_LABELS,
         captured_at=captured_at,
     )
-    weekly_text = _extract_text_window(
-        body_text,
+    weekly_text = _extract_text_windows(
+        sources,
         name="weekly",
         labels=WEEKLY_LABELS,
         stop_labels=FIVE_HOUR_LABELS,
@@ -87,6 +97,94 @@ def extract_windows(
     five = _merge_window_sources(five_json, five_text)
     weekly = _merge_window_sources(weekly_json, weekly_text)
     return five, weekly
+
+
+def _extract_text_windows(
+    sources: tuple[tuple[str, str], ...],
+    *,
+    name: str,
+    labels: tuple[str, ...],
+    stop_labels: tuple[str, ...],
+    captured_at: datetime,
+) -> LimitWindow | None:
+    candidates = [
+        (source_index, _extract_text_window(
+            text,
+            name=name,
+            labels=labels,
+            stop_labels=stop_labels,
+            captured_at=captured_at,
+            source=source,
+        ))
+        for source_index, (source, text) in enumerate(sources)
+    ]
+    candidates = [item for item in candidates if item[1] is not None]
+    usage_candidates = [item for item in candidates if item[1].has_usage_value]
+    if usage_candidates:
+        _source_index, selected = min(
+            usage_candidates,
+            key=lambda item: (
+                -_text_window_strength(item[1]),
+                _text_source_priority(item[1].source),
+                item[0],
+            ),
+        )
+        reset_candidates = [
+            item[1]
+            for item in candidates
+            if not item[1].has_usage_value and item[1].reset_at is not None
+        ]
+        if selected.reset_at is None and reset_candidates:
+            reset_source = min(
+                reset_candidates,
+                key=lambda item: (
+                    _text_source_priority(item.source),
+                    item.reset_at is None,
+                ),
+            )
+            selected = replace(
+                selected,
+                reset_at=reset_source.reset_at,
+                source=_merge_window_source_names(selected, reset_source),
+            )
+        return selected
+    if candidates:
+        return min(
+            (item[1] for item in candidates),
+            key=lambda item: (
+                item.reset_at is None,
+                _text_source_priority(item.source),
+            ),
+        )
+    return None
+
+
+def _text_source_priority(source: str) -> int:
+    return {
+        "bodyText": 0,
+        "body_text": 0,
+        "text": 0,
+        "innerText": 0,
+        "dom-text": 0,
+        "htmlText": 1,
+        "accessibilityText": 2,
+        "svgText": 3,
+        "domText": 4,
+        "textContent": 4,
+    }.get(source, 5)
+
+
+def _text_window_strength(window: LimitWindow) -> int:
+    raw = window.raw or ""
+    if window.used is not None and window.limit is not None:
+        return 5
+    if _extract_remaining(raw) is not None:
+        return 5
+    if _extract_progress_width_percent(raw) is not None:
+        return 4
+    if _extract_used_percent(raw) is not None:
+        return 2
+    return 3
 
 
 def _merge_window_sources(
@@ -496,6 +594,7 @@ def _extract_text_window(
     labels: tuple[str, ...],
     stop_labels: tuple[str, ...],
     captured_at: datetime,
+    source: str = "dom-text",
 ) -> LimitWindow | None:
     text = _normalize_ws(body_text)
     lower = text.lower()
@@ -547,7 +646,7 @@ def _extract_text_window(
             percent=percent,
             reset_at=reset_at,
             raw=chunk[:500],
-            source="dom-text",
+            source=source,
         )
         if window.has_usage_value:
             usage_windows.append((start, window))

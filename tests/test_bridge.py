@@ -730,6 +730,28 @@ def test_usage_from_ingest_payload_uses_full_dom_payload_fields():
     assert usage.weekly.limit == 1000
 
 
+def test_usage_from_ingest_payload_prefers_visible_values_over_stale_dom_fields():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": (
+                "5-hour limit 97% remaining Reset 12.07.2026 19:00 "
+                "Weekly limit 55% remaining Reset 18.07.2026 08:00"
+            ),
+            "domText": (
+                "5-hour limit 20% remaining Reset 12.07.2026 18:00 "
+                "Weekly limit 10% remaining Reset 18.07.2026 07:00"
+            ),
+        },
+    )
+
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is not None and usage.weekly.remaining == 55
+    assert usage.five_hour.source == "bodyText"
+
+
 def test_usage_from_ingest_payload_extracts_api_responses():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(

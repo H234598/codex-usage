@@ -353,6 +353,48 @@ def test_extract_windows_prefers_progress_bar_over_generic_used_text():
     assert weekly is not None and weekly.remaining == 55
 
 
+def test_extract_windows_prefers_visible_text_over_later_stale_dom_clone():
+    visible = """
+    5-hour limit 97% remaining Reset 12.07.2026 19:00
+    Weekly limit 55% remaining Reset 18.07.2026 08:00
+    """
+    stale_clone = """
+    5-hour limit 20% remaining Reset 12.07.2026 18:00
+    Weekly limit 10% remaining Reset 18.07.2026 07:00
+    """
+
+    five, weekly = extract_windows(
+        body_text="",
+        text_sources=(("bodyText", visible), ("domText", stale_clone)),
+        now=datetime(2026, 7, 12, 17, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None and five.remaining == 97
+    assert five.reset_at is not None
+    assert five.reset_at.strftime("%H:%M") == "19:00"
+    assert weekly is not None and weekly.remaining == 55
+    assert weekly.source == "bodyText"
+
+
+def test_extract_windows_uses_html_progress_over_visible_generic_used_text():
+    visible = "5-hour limit 100% used Weekly limit 100% used"
+    html = """
+    <h2>5-hour limit</h2>
+    <div class="transition-[width] rounded-full bg-[#22c55e]" style="width: 97%;"></div>
+    <h2>Weekly limit</h2>
+    <div class="transition-[width] rounded-full bg-[#22c55e]" style="width: 55%;"></div>
+    """
+
+    five, weekly = extract_windows(
+        body_text="",
+        text_sources=(("bodyText", visible), ("htmlText", html)),
+    )
+
+    assert five is not None and five.remaining == 97
+    assert weekly is not None and weekly.remaining == 55
+    assert five.source == "htmlText"
+
+
 def test_extract_windows_skips_label_occurrence_without_values():
     body = """
     5-hour limit

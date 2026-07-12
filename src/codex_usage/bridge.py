@@ -109,6 +109,7 @@ DEBUG_API_RESPONSE_FIELDS = (
 def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> AccountUsage:
     captured_at = _parse_captured_at(payload.get("capturedAt") or payload.get("captured_at"))
     body_text = _combined_payload_text(payload)
+    text_sources = _payload_text_sources(payload)
     json_candidates = _select_identity_consistent_candidates(
         account,
         _json_candidates_from_payload(payload),
@@ -122,8 +123,9 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         for candidate in json_candidates
     )
     five_hour, weekly = extract_windows(
-        body_text="" if structured_identity_present else body_text,
+        body_text="",
         json_candidates=json_candidates,
+        text_sources=() if structured_identity_present else text_sources,
         now=captured_at,
     )
     backend_user_id, backend_account_id = backend_identity_from_candidates(json_candidates)
@@ -329,7 +331,11 @@ def save_bridge_debug_payload(
 
 
 def _combined_payload_text(payload: dict[str, Any]) -> str:
-    parts: list[str] = []
+    return "\n\n".join(text for _source, text in _payload_text_sources(payload))
+
+
+def _payload_text_sources(payload: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    sources: list[tuple[str, str]] = []
     seen: set[str] = set()
     for field in TEXT_PAYLOAD_FIELDS:
         value = payload.get(field)
@@ -339,8 +345,8 @@ def _combined_payload_text(payload: dict[str, Any]) -> str:
         if not text or text in seen:
             continue
         seen.add(text)
-        parts.append(text)
-    return "\n\n".join(parts)
+        sources.append((field, text))
+    return tuple(sources)
 
 
 def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate]:
