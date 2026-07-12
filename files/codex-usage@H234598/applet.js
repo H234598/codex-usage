@@ -2271,8 +2271,7 @@ CodexUsageApplet.prototype = {
                 continue;
             }
             let old = previous[item.account];
-            if (old && this._backendIdentityPresent(old) &&
-                !this._backendIdentityPresent(item)) {
+            if (old && this._backendIdentityIsIncomplete(item, old)) {
                 merged.push(this._markUsageStale(old));
             } else if (old && this._backendIdentityMatches(item, old) &&
                 this._captureIsOlder(item.captured_at, old.captured_at)) {
@@ -2307,8 +2306,7 @@ CodexUsageApplet.prototype = {
             }
             freshAccounts[item.account] = true;
             let old = previous[item.account];
-            if (old && this._backendIdentityPresent(old) &&
-                !this._backendIdentityPresent(item)) {
+            if (old && this._backendIdentityIsIncomplete(item, old)) {
                 merged.push(this._markUsageStale(old));
                 continue;
             }
@@ -2428,6 +2426,26 @@ CodexUsageApplet.prototype = {
         return Boolean(
             this._safeText(value && value.backend_user_id, 256) ||
             this._safeText(value && value.backend_account_id, 256)
+        );
+    },
+
+    _backendIdentityIsIncomplete: function(candidate, known) {
+        let candidateUser = this._safeText(candidate && candidate.backend_user_id, 256);
+        let candidateAccount = this._safeText(candidate && candidate.backend_account_id, 256);
+        let knownUser = this._safeText(known && known.backend_user_id, 256);
+        let knownAccount = this._safeText(known && known.backend_account_id, 256);
+        if (!this._backendIdentityPresent(known)) {
+            return false;
+        }
+        if (candidateUser && knownUser && candidateUser !== knownUser) {
+            return false;
+        }
+        if (candidateAccount && knownAccount && candidateAccount !== knownAccount) {
+            return false;
+        }
+        return Boolean(
+            (knownUser && !candidateUser) ||
+            (knownAccount && !candidateAccount)
         );
     },
 

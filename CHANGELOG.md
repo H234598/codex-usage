@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.226 - 2026-07-12
+
+### Security
+
+- Das Cinnamon-Applet behandelt widerspruchsfreie, aber unvollständige
+  Backend-Identitäten nicht mehr als Accountwechsel.
+- Der vollständige bekannte Accountstand bleibt dadurch erhalten, bis eine
+  vollständige neue Identität vorliegt; echte abweichende Identitäten werden
+  weiterhin als Wechsel verarbeitet.
+- Regression für fehlende Account-ID bei passender User-ID ergänzt.
+
 ## 0.6.225 - 2026-07-12
 
 ### Security
