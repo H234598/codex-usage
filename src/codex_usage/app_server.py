@@ -541,10 +541,16 @@ def _windows_from_response(
         weekly_item = None
     else:
         by_key = dict(candidates)
-        five_item = ("primary", by_key["primary"]) if "primary" in by_key else None
+        primary = by_key.get("primary")
+        secondary = by_key.get("secondary")
+        five_item = (
+            ("primary", primary)
+            if primary is not None and _window_duration_is_missing(primary)
+            else None
+        )
         weekly_item = (
-            ("secondary", by_key["secondary"])
-            if "secondary" in by_key
+            ("secondary", secondary)
+            if secondary is not None and _window_duration_is_missing(secondary)
             else None
         )
     five = _window("five_hour", five_item[1]) if five_item else None

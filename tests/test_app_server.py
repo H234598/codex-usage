@@ -536,6 +536,20 @@ def test_window_mapping_does_not_infer_explicit_invalid_duration(primary, second
     assert weekly is None if secondary["windowDurationMins"] == "invalid" else weekly is not None
 
 
+def test_window_mapping_rejects_two_explicit_invalid_durations():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 7, "windowDurationMins": "invalid"},
+                "secondary": {"usedPercent": 18, "windowDurationMins": "invalid"},
+            }
+        }
+    )
+
+    assert five is None
+    assert weekly is None
+
+
 def test_window_mapping_keeps_complete_top_level_over_incomplete_codex_bucket():
     five, weekly = _windows_from_response(
         {
