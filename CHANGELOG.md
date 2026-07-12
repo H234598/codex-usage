@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.349 - 2026-07-13
+
+### Fixed
+
+- Reaktivierung akzeptiert keine erneuerte `auth.json` mit abweichender
+  User-Identitaet mehr, auch wenn die Account-ID gleich geblieben ist.
+
 ## 0.6.348 - 2026-07-13
 
 ### Fixed

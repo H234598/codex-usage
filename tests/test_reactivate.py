@@ -16,6 +16,7 @@ from codex_usage.reactivate import (
     OAUTH_PROFILE_MARKER,
     ReactivationError,
     _validate_refreshed_auth,
+    _validate_refreshed_identity,
     reactivate_account,
 )
 
@@ -25,6 +26,16 @@ def _jwt_with_exp(expiry: int) -> str:
     payload = base64.urlsafe_b64encode(json.dumps({"exp": expiry}).encode()).rstrip(
         b"="
     ).decode()
+    return f"{header}.{payload}.signature"
+
+
+def _jwt_with_user_id(user_id: str) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(
+        json.dumps(
+            {"https://api.openai.com/auth": {"chatgpt_user_id": user_id}}
+        ).encode()
+    ).rstrip(b"=").decode()
     return f"{header}.{payload}.signature"
 
 
@@ -141,6 +152,28 @@ def test_reactivate_rejects_different_account_and_restores_auth_json(tmp_path, m
 
     assert auth_path.read_text(encoding="utf-8") == old_raw
     assert auth_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_reactivate_rejects_same_account_id_with_different_user_id(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "account_id": "account-old",
+                    "access_token": _jwt_with_user_id("user-new"),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    with pytest.raises(ReactivationError, match="different account"):
+        _validate_refreshed_identity(
+            auth_path,
+            ("user-old", "account-old"),
+        )
 
 
 def test_reactivate_login_failure_restores_auth_json(tmp_path, monkeypatch):
