@@ -30,6 +30,7 @@ from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
 from .state import (
     backend_identity_matches,
+    backend_provenance_matches_configured,
     load_usage_snapshot,
     save_current_usage,
     save_usage_snapshot,
@@ -98,7 +99,14 @@ def fetch_all(
     else:
         usages = [fetch(account) for account in account_list]
     if save_snapshots:
+        accounts_by_id = {account.id: account for account in account_list}
         for index, usage in enumerate(usages):
+            account = accounts_by_id.get(usage.account_id)
+            if (
+                account is None
+                or not backend_provenance_matches_configured(usage, account.backend)
+            ):
+                continue
             try:
                 save_current_usage(usage)
                 if _should_persist_snapshot(usage):

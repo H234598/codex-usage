@@ -42,6 +42,7 @@ from .private_io import (
 from .render import render_table
 from .state import (
     backend_identity_matches,
+    backend_provenance_matches_configured,
     expire_reset_windows,
     load_current_usage,
     load_usage_snapshot,
@@ -779,6 +780,14 @@ def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> l
     for account in config.accounts:
         last_success = load_usage_snapshot(account.id, snapshot_dir)
         current = load_current_usage(account.id, current_dir)
+        if last_success is not None and not backend_provenance_matches_configured(
+            last_success, account.backend
+        ):
+            last_success = None
+        if current is not None and not backend_provenance_matches_configured(
+            current, account.backend
+        ):
+            current = None
         if current is not None:
             usage = merge_current_with_last_success(current, last_success)
         elif last_success is not None:

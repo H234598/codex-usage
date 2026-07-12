@@ -26,6 +26,41 @@ AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
 
 
+def backend_provenance_matches_configured(
+    usage: AccountUsage,
+    configured_backend: str,
+) -> bool:
+    """Reject authenticated cache data produced by an explicit other backend."""
+    if usage.backend_configured and usage.backend_configured != configured_backend:
+        return False
+    if usage.backend_used not in AUTHENTICATED_BACKENDS:
+        return True
+    if usage.backend_used == configured_backend:
+        return True
+    return (
+        configured_backend == "app-server"
+        and usage.backend_used == "direct"
+        and bool(usage.fallback_reason)
+    )
+
+
+def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
+    """Avoid merging values across authenticated backends without fallback proof."""
+    if (
+        left.backend_configured
+        and right.backend_configured
+        and left.backend_configured != right.backend_configured
+    ):
+        return False
+    left_backend = left.backend_used
+    right_backend = right.backend_used
+    if left_backend not in AUTHENTICATED_BACKENDS or right_backend not in AUTHENTICATED_BACKENDS:
+        return True
+    if left_backend == right_backend:
+        return True
+    return bool(left.fallback_reason or right.fallback_reason)
+
+
 def default_snapshot_dir() -> Path:
     return default_state_dir() / "snapshots"
 
@@ -77,6 +112,7 @@ def _save_usage(
                 preserve_existing_values
                 and not _authoritative_empty_limits(usage)
                 and backend_identity_matches(usage, existing)
+                and backend_provenance_matches(usage, existing)
             ):
                 usage = merge_current_with_last_success(usage, existing)
         text = json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False)

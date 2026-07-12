@@ -612,6 +612,53 @@ def test_fetch_all_stabilizes_app_server_against_direct_snapshot(monkeypatch):
     assert result[0].stale is True
 
 
+def test_fetch_all_does_not_persist_explicit_backend_override(monkeypatch):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        backend="direct",
+        auth_json_path="/tmp/account-auth.json",
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="app-server",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+        five_hour=LimitWindow(name="five_hour", remaining=11),
+        weekly=LimitWindow(name="weekly", remaining=22),
+    )
+    saved_current = []
+    saved_snapshots = []
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_app_server",
+        lambda selected: usage,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_current_usage",
+        lambda selected: saved_current.append(selected.account_id),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_usage_snapshot",
+        lambda selected: saved_snapshots.append(selected.account_id),
+    )
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        backend_override="app-server",
+        save_snapshots=True,
+    )
+
+    assert result[0].backend_used == "app-server"
+    assert saved_current == []
+    assert saved_snapshots == []
+
+
 def test_authenticated_reset_fallback_is_applied_per_window():
     timezone = ZoneInfo("Europe/Berlin")
     previous = AccountUsage(

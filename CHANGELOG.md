@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.242 - 2026-07-12
+
+### Fixed
+
+- Explizite Backend-Overrides koennen den persistenten Cache eines Accounts
+  nicht mehr mit Werten eines anderen authentifizierten Abrufwegs vergiften.
+- `latest` verwirft solche fremden Cache-Eintraege fail-closed und faellt auf
+  einen passenden Snapshot zurueck.
+- Ein dokumentierter Direct-Fallback des App-Servers bleibt weiterhin gueltig.
+
 ## 0.6.241 - 2026-07-12
 
 ### Fixed

@@ -122,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.241\ncodex-usage 0.6.241\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.242\ncodex-usage 0.6.242\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -1060,6 +1060,49 @@ def test_latest_does_not_show_cached_window_after_reset(tmp_path, monkeypatch):
     assert usages[0].weekly.remaining == 72
     assert usages[0].status == AccountStatus.PARTIAL
     assert usages[0].stale is True
+
+
+def test_latest_rejects_cached_authenticated_backend_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+    )
+    config = AppConfig(accounts=(account,), interval_seconds=300)
+    captured = datetime.now().astimezone()
+    direct = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured - timedelta(minutes=1),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user",
+        backend_account_id="account",
+        five_hour=LimitWindow(name="5h", remaining=77),
+    )
+    override = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="app-server",
+        backend_user_id="user",
+        backend_account_id="account",
+        five_hour=LimitWindow(name="5h", remaining=11),
+    )
+    save_usage_snapshot(direct)
+    save_current_usage(override)
+
+    usages = load_latest_usages(config)
+
+    assert len(usages) == 1
+    assert usages[0].backend_used == "direct"
+    assert usages[0].five_hour is not None
+    assert usages[0].five_hour.remaining == 77
 
 
 def test_ingest_file_rejects_oversized_payload_before_saving(tmp_path, monkeypatch, capsys):

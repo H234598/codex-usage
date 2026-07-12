@@ -9,6 +9,8 @@ import pytest
 
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow
 from codex_usage.state import (
+    backend_provenance_matches,
+    backend_provenance_matches_configured,
     expire_reset_windows,
     load_current_usage,
     load_usage_snapshot,
@@ -17,6 +19,26 @@ from codex_usage.state import (
     save_current_usage,
     save_usage_snapshot,
 )
+
+
+def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
+    direct = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    override = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="app-server",
+    )
+
+    assert backend_provenance_matches_configured(override, "direct") is False
+    assert backend_provenance_matches(direct, override) is False
 
 
 def test_expire_reset_windows_drops_only_expired_cached_values():
