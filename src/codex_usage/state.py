@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -456,6 +456,8 @@ def merge_current_with_last_success(
         current.five_hour,
         last_success.five_hour,
         reference_at=current.captured_at,
+        current_captured_at=current.captured_at,
+        last_success_captured_at=last_success.captured_at,
         expected_kind="five_hour",
         preserve_missing_value=preserve_missing_window_values,
     )
@@ -463,6 +465,8 @@ def merge_current_with_last_success(
         current.weekly,
         last_success.weekly,
         reference_at=current.captured_at,
+        current_captured_at=current.captured_at,
+        last_success_captured_at=last_success.captured_at,
         expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
@@ -495,6 +499,8 @@ def _merge_newer_partial_usage(
         newer.five_hour,
         older.five_hour,
         reference_at=newer.captured_at,
+        current_captured_at=newer.captured_at,
+        last_success_captured_at=older.captured_at,
         expected_kind="five_hour",
         preserve_missing_value=preserve_missing_window_values,
     )
@@ -502,6 +508,8 @@ def _merge_newer_partial_usage(
         newer.weekly,
         older.weekly,
         reference_at=newer.captured_at,
+        current_captured_at=newer.captured_at,
+        last_success_captured_at=older.captured_at,
         expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
@@ -537,6 +545,8 @@ def _merge_window_with_last_success(
     last_success: LimitWindow | None,
     *,
     reference_at: datetime,
+    current_captured_at: datetime | None = None,
+    last_success_captured_at: datetime | None = None,
     expected_kind: str | None = None,
     preserve_missing_value: bool = True,
 ) -> LimitWindow | None:
@@ -547,7 +557,12 @@ def _merge_window_with_last_success(
     if current is None:
         return (
             last_success
-            if preserve_missing_value and not _window_reset_expired(last_success, reference_at)
+            if preserve_missing_value
+            and not _cached_window_expired(
+                last_success,
+                captured_at=last_success_captured_at,
+                reference_at=reference_at,
+            )
             else None
         )
     if last_success is None:
@@ -556,16 +571,28 @@ def _merge_window_with_last_success(
         return current
     if not preserve_missing_value and not current.has_usage_value:
         return current
-    if not current.has_usage_value and _window_reset_expired(current, reference_at):
+    if not current.has_usage_value and _cached_window_expired(
+        current,
+        captured_at=current_captured_at,
+        reference_at=reference_at,
+    ):
         # A newer reset-only observation can prove that the old window ended.
         return current
     if current.has_usage_value:
         if current.reset_at is None and last_success.reset_at is not None:
-            if _window_reset_expired(last_success, reference_at):
+            if _cached_window_expired(
+                last_success,
+                captured_at=last_success_captured_at,
+                reference_at=reference_at,
+            ):
                 return current
             return replace(current, reset_at=last_success.reset_at)
         return current
-    if _window_reset_expired(last_success, reference_at):
+    if _cached_window_expired(
+        last_success,
+        captured_at=last_success_captured_at,
+        reference_at=reference_at,
+    ):
         return current
     if current.reset_at is None:
         return last_success
@@ -655,6 +682,27 @@ def _window_reset_expired(window: LimitWindow | None, reference_at: datetime) ->
         return window.reset_at <= reference_at
     except TypeError:
         return False
+
+
+def _cached_window_expired(
+    window: LimitWindow | None,
+    *,
+    captured_at: datetime | None,
+    reference_at: datetime,
+) -> bool:
+    if window is None:
+        return False
+    if window.reset_at is not None:
+        return _window_reset_expired(window, reference_at)
+    duration = _window_duration_seconds(window)
+    if duration is None:
+        duration = WINDOW_DURATIONS.get(_window_kind(window) or "")
+    if duration is None or not isinstance(captured_at, datetime):
+        return True
+    try:
+        return captured_at + timedelta(seconds=duration) <= reference_at
+    except (OverflowError, TypeError, ValueError):
+        return True
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:

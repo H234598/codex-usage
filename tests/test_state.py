@@ -576,6 +576,33 @@ def test_merge_drops_cached_windows_after_their_reset():
     assert merged.stale is True
 
 
+def test_merge_drops_window_without_reset_after_window_duration():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_used="browser",
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 10, 0, tzinfo=timezone),
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour is None
+    assert merged.weekly is not None
+    assert merged.weekly.remaining == 55
+    assert merged.stale is True
+
+
 def test_authoritative_empty_direct_limits_do_not_restore_old_values():
     captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
     current = AccountUsage(
