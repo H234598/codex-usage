@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.336 - 2026-07-13
+
+### Fixed
+
+- Teilidentitaeten werden beim Wechsel von Browser- zu authentifizierten
+  Cachewerten kompatibel zusammengefuehrt, wenn eine gemeinsame Backend-ID
+  bestaetigt ist.
+
 ## 0.6.335 - 2026-07-13
 
 ### Fixed

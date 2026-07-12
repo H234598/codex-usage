@@ -2388,7 +2388,8 @@ CodexUsageApplet.prototype = {
                         this._backendConfiguredForAccount(old.account)
                     )
                 );
-                let identityMatches = this._backendIdentityMatches(item, old);
+                let identityMatches = this._backendIdentityMatches(item, old) ||
+                    this._backendIdentityCompatible(item, old);
                 let oldIdentityPresent = this._backendIdentityPresent(old);
                 let oldCanBeReplaced = !oldMatchesConfigured ||
                     ["browser", ""].indexOf(oldBackend) !== -1;
@@ -2612,6 +2613,23 @@ CodexUsageApplet.prototype = {
             }
         }
         return true;
+    },
+
+    _backendIdentityCompatible: function(left, right) {
+        let fields = ["backend_user_id", "backend_account_id"];
+        let shared = false;
+        for (let i = 0; i < fields.length; i++) {
+            let leftValue = this._safeText(left && left[fields[i]], 256);
+            let rightValue = this._safeText(right && right[fields[i]], 256);
+            if (!leftValue || !rightValue) {
+                continue;
+            }
+            shared = true;
+            if (leftValue !== rightValue) {
+                return false;
+            }
+        }
+        return shared;
     },
 
     _backendProvenanceMatches: function(left, right) {

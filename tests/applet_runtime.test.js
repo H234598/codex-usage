@@ -1974,6 +1974,43 @@ test("configured authenticated cache replaces a stale browser snapshot", () => {
   assert.equal(merged[0].stale, false);
 });
 
+test("configured cache accepts a more complete matching identity", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  };
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    backend_configured: "direct",
+    backend_used: "browser",
+    backend_account_id: "account-alpha",
+    five_hour: { remaining: 70 },
+    weekly: { remaining: 50 },
+    status: "ok",
+    stale: false,
+  }];
+
+  const merged = applet._mergeCachedPayload([{
+    account: "alpha",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    backend_configured: "direct",
+    backend_used: "direct",
+    backend_user_id: "user-alpha",
+    backend_account_id: "account-alpha",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+    status: "ok",
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].backend_used, "direct");
+  assert.equal(merged[0].backend_user_id, "user-alpha");
+  assert.equal(merged[0].five_hour.remaining, 80);
+  assert.equal(merged[0].weekly.remaining, 60);
+});
+
 test("configured cache cannot replace a browser snapshot from another identity", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
