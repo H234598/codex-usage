@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.248 - 2026-07-12
+
+### Fixed
+
+- Der Watchdog verwendet aktive Block-Snapshots nicht mehr, wenn Account-
+  Backend, `--backend`-Override oder `--direct` vom Snapshot abweichen.
+- Ein alter Direct-Block kann dadurch keinen App-Server- oder neuen Direct-
+  Abruf mehr unterdrücken.
+
 ## 0.6.247 - 2026-07-12
 
 ### Fixed

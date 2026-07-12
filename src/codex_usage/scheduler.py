@@ -571,6 +571,9 @@ def watchdog(
 ) -> list[AccountUsage]:
     now = datetime.now().astimezone()
     account_list = list(accounts)
+    effective_backend = "direct" if direct else None
+    if effective_backend is None:
+        effective_backend = backend_override
     blocked_snapshots: dict[str, AccountUsage] = {}
     fetch_accounts: list[Account] = []
     for account in account_list:
@@ -582,6 +585,7 @@ def watchdog(
                 account,
                 snapshot,
                 auth_json_path=auth_json_path,
+                configured_backend=effective_backend or account.backend,
             )
         ):
             blocked_snapshots[account.id] = snapshot
@@ -662,7 +666,10 @@ def _blocked_snapshot_matches_account(
     snapshot: AccountUsage,
     *,
     auth_json_path: Path | None,
+    configured_backend: str,
 ) -> bool:
+    if not backend_provenance_matches_configured(snapshot, configured_backend):
+        return False
     try:
         if auth_json_path is not None:
             auth_user_id, auth_account_id = auth_identity_from_file(auth_json_path)
