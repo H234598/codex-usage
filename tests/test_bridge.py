@@ -720,6 +720,85 @@ def test_usage_from_ingest_payload_canonicalizes_personal_account_identity(tmp_p
     assert usage.backend_account_id == "account-uuid"
 
 
+def test_ingest_rejects_ambiguous_shared_user_browser_identity(tmp_path):
+    def write_auth(path, account_id):
+        path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "id_token": _jwt_with_claims(
+                            {
+                                "https://api.openai.com/auth": {
+                                    "chatgpt_user_id": "shared-user",
+                                    "chatgpt_plan_type": "free",
+                                }
+                            }
+                        ),
+                        "account_id": account_id,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+
+    privat_auth = tmp_path / "privat-auth.json"
+    work_auth = tmp_path / "work-auth.json"
+    write_auth(privat_auth, "free-account")
+    write_auth(work_auth, "work-account")
+    privat = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "privat-profile"),
+        auth_json_path=str(privat_auth),
+    )
+    work = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "work-profile"),
+        auth_json_path=str(work_auth),
+    )
+    config = AppConfig(accounts=(privat, work))
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "shared-user",
+                        "account_id": "shared-user",
+                        "plan_type": "free",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="ambiguous backend account identity"):
+        ingest_and_save(
+            config,
+            "privat",
+            payload,
+            tmp_path / "snapshots",
+            require_backend_identity=True,
+        )
+
+    assert load_usage_snapshot("privat", tmp_path / "snapshots") is None
+
+
 def test_usage_from_ingest_payload_rejects_shared_user_response_with_different_plan(
     tmp_path,
 ):

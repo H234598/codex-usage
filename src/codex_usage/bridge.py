@@ -545,6 +545,7 @@ def ingest_and_save(
     current = load_current_usage(account.id, current_dir)
     known = _newest_known_usage(snapshot, current)
     if require_backend_identity:
+        _reject_ambiguous_browser_identity(config, account, payload)
         if account.auth_json_path is not None:
             if not _usage_matches_current_auth(account, usage):
                 raise ValueError("bridge payload belongs to a different backend account")
@@ -574,6 +575,36 @@ def _newest_known_usage(
         return current if current.captured_at >= snapshot.captured_at else snapshot
     except TypeError:
         return current
+
+
+def _reject_ambiguous_browser_identity(
+    config: AppConfig,
+    account: Account,
+    payload: dict[str, Any],
+) -> None:
+    if account.auth_json_path is None:
+        return
+    raw_user_id, raw_account_id = backend_identity_from_candidates(
+        _json_candidates_from_payload(payload)
+    )
+    if not raw_user_id or (raw_account_id is not None and raw_account_id != raw_user_id):
+        return
+    try:
+        auth_user_id, _auth_account_id = auth_identity_for_account(account)
+    except DirectAuthError:
+        return
+    if not auth_user_id or raw_user_id != auth_user_id:
+        return
+    account_ids: set[str] = set()
+    for candidate in config.accounts:
+        try:
+            candidate_user_id, candidate_account_id = auth_identity_for_account(candidate)
+        except DirectAuthError:
+            continue
+        if candidate_user_id == auth_user_id and candidate_account_id:
+            account_ids.add(candidate_account_id)
+    if len(account_ids) > 1:
+        raise ValueError("browser payload has ambiguous backend account identity")
 
 
 def _usage_matches_current_auth(account: Account, usage: AccountUsage) -> bool:

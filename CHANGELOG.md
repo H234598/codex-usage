@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.201 - 2026-07-12
+
+### Fixed
+
+- Die HTTP-Bridge verwirft bei mehreren Accounts mit derselben
+  `chatgpt_user_id` einen Browser-Payload, der nur `account_id == user_id`
+  oder gar keine kontospezifische Workspace-ID liefert. Dadurch können
+  persönliche/generische Backend-Antworten keine Werte mehr zwischen
+  unterschiedlichen Workspace-Accounts vermischen.
+- Eindeutige Accounts und der direkte `auth.json`-Abruf bleiben unverändert;
+  ein Regressionstest deckt den gemeinsamen Benutzer mit zwei Account-IDs ab.
+
 ## 0.6.200 - 2026-07-12
 
 ### Fixed
