@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from .extractor import JsonCandidate, extract_windows
+from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
 from .identity import backend_identity_from_payload, backend_plan_type_from_payload
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
@@ -45,7 +45,7 @@ def fetch_account_usage_direct(
     reject_ambiguous_backend_identity: bool = False,
     timeout_seconds: int = 20,
 ) -> AccountUsage:
-    captured_at = datetime.now().astimezone()
+    captured_at = datetime.now(tz=LOCAL_TZ)
     path = _resolve_auth_json_path(account, auth_json_path)
     auth_metadata: dict[str, datetime | None] = {}
     auth_user_id: str | None = None
@@ -105,7 +105,7 @@ def fetch_account_usage_direct(
                 refreshed_token == token
                 or _is_access_token_expired(
                     refreshed_metadata.get("auth_access_expires_at"),
-                    now=datetime.now().astimezone(),
+                    now=datetime.now(tz=LOCAL_TZ),
                 )
             ):
                 raise exc from None
@@ -1081,7 +1081,7 @@ def _jwt_expiry(token: Any) -> datetime | None:
     if not isinstance(exp, (int, float)):
         return None
     try:
-        return datetime.fromtimestamp(float(exp), tz=UTC).astimezone()
+        return datetime.fromtimestamp(float(exp), tz=UTC).astimezone(LOCAL_TZ)
     except (OverflowError, OSError, ValueError):
         return None
 
@@ -1110,7 +1110,7 @@ def _expired_auth_error(account_id: str, expiry: datetime | None) -> str:
         return f"auth.json access_token expired; run `codex-usage reactivate {account_id}`"
     return (
         "auth.json access_token expired at "
-        f"{expiry.astimezone().strftime('%d.%m.%Y %H:%M')}; "
+        f"{expiry.astimezone(LOCAL_TZ).strftime('%d.%m.%Y %H:%M')}; "
         f"run `codex-usage reactivate {account_id}`"
     )
 

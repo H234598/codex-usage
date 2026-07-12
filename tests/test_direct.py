@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -41,6 +42,16 @@ def test_jwt_expiry_ignores_non_object_payloads():
         token = f"e30.{payload.decode('ascii')}.signature"
 
         assert _jwt_expiry(token) is None
+
+
+def test_jwt_expiry_uses_dst_aware_local_zone(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    expected = datetime(2026, 10, 26, 0, 15, tzinfo=berlin)
+    monkeypatch.setattr("codex_usage.direct.LOCAL_TZ", berlin)
+
+    expiry = _jwt_expiry(_jwt_with_exp(int(expected.timestamp())))
+
+    assert expiry == expected
 
 
 def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):

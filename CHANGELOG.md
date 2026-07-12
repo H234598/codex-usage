@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.342 - 2026-07-13
+
+### Fixed
+
+- Direct-JWT-Ablaufzeiten und Direct-Snapshots verwenden jetzt dieselbe
+  DST-faehige lokale Zeitzone wie der App-Server.
+
 ## 0.6.341 - 2026-07-13
 
 ### Fixed
