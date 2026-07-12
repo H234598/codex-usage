@@ -1253,6 +1253,39 @@ def test_authenticated_stabilization_rejects_a_different_known_window_kind():
     assert result.stale is False
 
 
+def test_authenticated_stabilization_rejects_unclassified_window_transition():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="",
+            remaining=95,
+            reset_at=datetime(2026, 7, 12, 5, 0, tzinfo=timezone),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=replace(
+            previous.five_hour,
+            remaining=99,
+            reset_at=datetime(2026, 7, 12, 5, 2, tzinfo=timezone),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.remaining == 99
+    assert result.stale is False
+
+
 def test_scheduler_remaining_percent_prefers_absolute_usage_values():
     window = LimitWindow(
         name="5h",

@@ -403,12 +403,17 @@ def _should_retain_previous_window(
 def _window_duration_matches(current: Any, previous: Any) -> bool:
     current_kind = _window_kind(current)
     previous_kind = _window_kind(previous)
+    current_duration = _window_duration_seconds(current)
+    previous_duration = _window_duration_seconds(previous)
+    if (
+        (current_kind is None and current_duration is None)
+        or (previous_kind is None and previous_duration is None)
+    ):
+        return False
     if bool(current_kind) != bool(previous_kind):
         return False
     if current_kind and previous_kind and current_kind != previous_kind:
         return False
-    current_duration = _window_duration_seconds(current)
-    previous_duration = _window_duration_seconds(previous)
     expected_duration = WINDOW_DURATIONS.get(current_kind or previous_kind or "")
     if expected_duration is not None and any(
         duration is not None and duration != expected_duration
