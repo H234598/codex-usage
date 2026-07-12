@@ -2804,7 +2804,7 @@ CodexUsageApplet.prototype = {
                     weekly: 604800
                 }[this._windowKind(window)] || null;
             }
-            if (resetMs === null || referenceMs === null) {
+            if (resetMs === null || referenceMs === null || capturedMs === null) {
                 return true;
             }
             if (

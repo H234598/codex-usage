@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.346 - 2026-07-13
+
+### Fixed
+
+- Das Applet verwendet gecachte Prozentwerte mit unbekanntem Aufnahmezeitpunkt
+  nicht mehr nur wegen einer gueltigen zukuenftigen Resetzeit.
+
 ## 0.6.345 - 2026-07-13
 
 ### Fixed
