@@ -122,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.308\ncodex-usage 0.6.308\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.309\ncodex-usage 0.6.309\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -687,6 +687,59 @@ def test_direct_rejects_global_auth_json_for_multiple_accounts(tmp_path, capsys)
     )
 
     assert "can only override direct auth for one selected account" in capsys.readouterr().err
+
+
+def test_direct_rejects_auth_json_override_from_another_account(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    account_auth = tmp_path / "selected-auth.json"
+    override_auth = tmp_path / "override-auth.json"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--auth-json",
+                str(account_auth),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    monkeypatch.setattr(
+        "codex_usage.cli.auth_identity_for_account",
+        lambda _account: ("selected-user", "selected-account"),
+    )
+    monkeypatch.setattr(
+        "codex_usage.cli.auth_identity_from_file",
+        lambda _path: ("other-user", "other-account"),
+    )
+    monkeypatch.setattr(
+        "codex_usage.cli.fetch_all",
+        lambda *args, **kwargs: pytest.fail("foreign override reached fetch"),
+    )
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "once",
+                "--account",
+                "privat",
+                "--direct",
+                "--auth-json",
+                str(override_auth),
+            ]
+        )
+        == 1
+    )
+
+    assert "identity does not match the selected account" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

@@ -28,6 +28,12 @@ from .config import (
     remove_account,
     resolve_account,
 )
+from .direct import (
+    DirectAuthError,
+    auth_identity_changed,
+    auth_identity_for_account,
+    auth_identity_from_file,
+)
 from .health import clear_health, load_health, record_health_event
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
@@ -758,6 +764,8 @@ def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None
     if auth_json_path is not None and len(account_list) > 1:
         raise ValueError("--auth-json can only override direct auth for one selected account")
     if len(account_list) <= 1:
+        if account_list and auth_json_path is not None:
+            _validate_single_account_auth_override(account_list[0], auth_json_path)
         return
     missing = [account.id for account in account_list if not account.auth_json_path]
     if missing:
@@ -766,6 +774,27 @@ def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None
             "direct mode with multiple accounts requires per-account --auth-json; "
             f"missing: {joined}"
         )
+
+
+def _validate_single_account_auth_override(account, auth_json_path: Path) -> None:
+    if not account.auth_json_path:
+        return
+    try:
+        expected_user_id, expected_account_id = auth_identity_for_account(account)
+        override_user_id, override_account_id = auth_identity_from_file(auth_json_path)
+    except DirectAuthError:
+        # Keep detailed auth-file errors in the fetch result instead of hiding
+        # them behind a preflight validation failure.
+        return
+    if not (expected_user_id or expected_account_id):
+        return
+    if auth_identity_changed(
+        before_user_id=expected_user_id,
+        before_account_id=expected_account_id,
+        after_user_id=override_user_id,
+        after_account_id=override_account_id,
+    ):
+        raise ValueError("--auth-json identity does not match the selected account")
 
 
 def _validate_fetch_mode_flags(args: argparse.Namespace) -> None:
