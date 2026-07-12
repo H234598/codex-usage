@@ -235,7 +235,12 @@ def _combined_payload_text(payload: dict[str, Any]) -> str:
 def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate]:
     responses_by_key: dict[str, dict[str, Any]] = {}
     response_sequences: dict[str, int | None] = {}
-    for item in payload.get("apiResponses") or payload.get("api_responses") or ():
+    response_items: list[Any] = []
+    for field in ("apiResponses", "api_responses"):
+        value = payload.get(field)
+        if isinstance(value, list):
+            response_items.extend(value)
+    for item in response_items:
         if not isinstance(item, dict):
             continue
         url = _redact_url(str(item.get("url") or ""))

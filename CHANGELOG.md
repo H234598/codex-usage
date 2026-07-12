@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.176 - 2026-07-12
+
+### Fixed
+
+- Die Bridge führt `apiResponses` und `api_responses` jetzt gemeinsam aus,
+  statt das zweite Feld bei einem nichtleeren ersten Feld zu ignorieren.
+- Dadurch kann eine gültige Usage-Antwort nicht mehr durch eine unabhängige
+  `settings/user`-Antwort im anderen Feld verdeckt werden.
+- Regression für beide Feldnamen ergänzt.
+
 ## 0.6.175 - 2026-07-12
 
 ### Fixed

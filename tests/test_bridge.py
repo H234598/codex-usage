@@ -178,6 +178,52 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     assert usage.backend_account_id == "account-test"
 
 
+def test_usage_from_ingest_payload_merges_both_api_response_field_names():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": "Codex analytics",
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/settings/user",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": json.dumps({"user_id": "user-test"}),
+                }
+            ],
+            "api_responses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": json.dumps(
+                        {
+                            "user_id": "user-test",
+                            "account_id": "account-test",
+                            "rate_limit": {
+                                "primary_window": {
+                                    "used_percent": 3,
+                                    "limit_window_seconds": 18000,
+                                },
+                                "secondary_window": {
+                                    "used_percent": 45,
+                                    "limit_window_seconds": 604800,
+                                },
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is not None and usage.weekly.remaining == 55
+
+
 def test_usage_from_ingest_payload_ignores_truncated_json_api_responses():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(
