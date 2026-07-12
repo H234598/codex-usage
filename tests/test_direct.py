@@ -1398,6 +1398,57 @@ def test_fetch_account_usage_direct_explains_unsupported_plan_window(tmp_path, m
     )
 
 
+def test_fetch_account_usage_direct_explains_single_available_window(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    class FakeResponse:
+        def __init__(self):
+            self.headers = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "plan_type": "pro",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 47,
+                            "limit_window_seconds": 604800,
+                        },
+                        "secondary_window": None,
+                    },
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", lambda request, *, timeout: FakeResponse())
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.five_hour is None
+    assert usage.weekly is not None and usage.weekly.remaining == 53
+    assert usage.error == (
+        "5h limit unavailable in direct response "
+        "(plan plus; available window weekly)"
+    )
+
+
 def test_fetch_account_usage_direct_rejects_broad_auth_json_permissions(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(

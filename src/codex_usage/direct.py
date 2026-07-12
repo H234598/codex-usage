@@ -231,6 +231,7 @@ def _missing_usage_limits_error(
 ) -> str:
     rate_limit = payload.get("rate_limit")
     unsupported: list[int] = []
+    available: set[int] = set()
     if isinstance(rate_limit, dict):
         for key in ("primary_window", "secondary_window"):
             window = rate_limit.get(key)
@@ -243,13 +244,29 @@ def _missing_usage_limits_error(
             if (
                 seconds > 0
                 and seconds.is_integer()
-                and int(seconds) not in SUPPORTED_WINDOW_SECONDS
             ):
-                unsupported.append(int(seconds))
+                duration = int(seconds)
+                if duration not in SUPPORTED_WINDOW_SECONDS:
+                    unsupported.append(duration)
+                else:
+                    used_percent = window.get("used_percent")
+                    if (
+                        isinstance(used_percent, (int, float))
+                        and not isinstance(used_percent, bool)
+                        and 0 <= used_percent <= 100
+                    ):
+                        available.add(duration)
+    plan = _normalized_plan_type(backend_plan_type) if backend_plan_type else "unknown"
+    if not unsupported and len(available) == 1:
+        available_window = "5h" if 18_000 in available else "weekly"
+        missing_window = "weekly" if 18_000 in available else "5h"
+        return (
+            f"{missing_window} limit unavailable in direct response "
+            f"(plan {plan}; available window {available_window})"
+        )
     if not unsupported:
         return "usage limits not found in direct response"
     durations = ", ".join(f"{seconds}s" for seconds in sorted(set(unsupported)))
-    plan = _normalized_plan_type(backend_plan_type) if backend_plan_type else "unknown"
     return (
         "requested 5h/weekly limits unavailable in direct response "
         f"(plan {plan}; backend window {durations})"
