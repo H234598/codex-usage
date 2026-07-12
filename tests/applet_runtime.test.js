@@ -1507,8 +1507,8 @@ test("partial fresh payload preserves each missing window from stale cache", () 
   applet._usages = [{
     account: "alpha",
     captured_at: "2026-07-10T10:00:00.000Z",
-    five_hour: { remaining: 80 },
-    weekly: { remaining: 60 },
+    five_hour: { name: "5h", remaining: 80 },
+    weekly: { name: "weekly", remaining: 60 },
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
@@ -1554,6 +1554,49 @@ test("partial fresh window does not inherit a cached value from another duration
 
   assert.equal(merged[0].five_hour.remaining, null);
   assert.equal(merged[0].five_hour.reset_at, "2026-07-10T15:00:00.000Z");
+  assert.equal(merged[0].stale, false);
+});
+
+test("partial fresh payload expires resetless cached windows by duration", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { name: "5h", remaining: 80 },
+    weekly: { name: "weekly", remaining: 60 }
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T16:00:00.000Z",
+    five_hour: null,
+    weekly: null,
+    stale: false
+  }]);
+
+  assert.equal(merged[0].five_hour, null);
+  assert.equal(merged[0].weekly.remaining, 60);
+  assert.equal(merged[0].stale, true);
+});
+
+test("partial fresh payload rejects an unclassified cached window", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { name: "", remaining: 80 },
+    weekly: null
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: null,
+    weekly: null,
+    stale: false
+  }]);
+
+  assert.equal(merged[0].five_hour, null);
   assert.equal(merged[0].stale, false);
 });
 
@@ -1801,14 +1844,14 @@ test("partial fresh payload preserves usage under reset-only windows", () => {
   applet._usages = [{
     account: "alpha",
     captured_at: "2026-07-10T10:00:00.000Z",
-    five_hour: { remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
-    weekly: { remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
+    five_hour: { name: "5h", remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
+    weekly: { name: "weekly", remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
     status: "partial",
     captured_at: "2026-07-10T10:05:00.000Z",
-    five_hour: { reset_at: "2026-07-10T16:00:00.000Z" },
+    five_hour: { name: "5h", reset_at: "2026-07-10T16:00:00.000Z" },
     weekly: null,
     stale: false,
   }]);
@@ -1874,15 +1917,15 @@ test("fresh successful payload preserves cached reset under missing reset times"
   applet._usages = [{
     account: "alpha",
     captured_at: "2026-07-10T10:00:00.000Z",
-    five_hour: { remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
-    weekly: { remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
+    five_hour: { name: "5h", remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
+    weekly: { name: "weekly", remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
     status: "ok",
     captured_at: "2026-07-10T10:05:00.000Z",
-    five_hour: { remaining: 70 },
-    weekly: { remaining: 50, reset_at: "2026-07-11T16:00:00.000Z" },
+    five_hour: { name: "5h", remaining: 70 },
+    weekly: { name: "weekly", remaining: 50, reset_at: "2026-07-11T16:00:00.000Z" },
     stale: false,
   }]);
   assert.equal(merged[0].five_hour.remaining, 70);

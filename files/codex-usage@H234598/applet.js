@@ -2430,7 +2430,9 @@ CodexUsageApplet.prototype = {
                     let mergedFive = this._mergeCachedWindow(
                         item.five_hour,
                         old.five_hour,
-                        item.captured_at
+                        item.captured_at,
+                        old.captured_at,
+                        "five_hour"
                     );
                     usedCachedWindow = usedCachedWindow || mergedFive !== item.five_hour;
                     item.five_hour = mergedFive;
@@ -2444,7 +2446,9 @@ CodexUsageApplet.prototype = {
                     let mergedFive = this._mergeMissingReset(
                         item.five_hour,
                         old.five_hour,
-                        item.captured_at
+                        item.captured_at,
+                        old.captured_at,
+                        "five_hour"
                     );
                     usedCachedWindow = usedCachedWindow || mergedFive !== item.five_hour;
                     item.five_hour = mergedFive;
@@ -2457,7 +2461,9 @@ CodexUsageApplet.prototype = {
                     let mergedWeekly = this._mergeCachedWindow(
                         item.weekly,
                         old.weekly,
-                        item.captured_at
+                        item.captured_at,
+                        old.captured_at,
+                        "weekly"
                     );
                     usedCachedWindow = usedCachedWindow || mergedWeekly !== item.weekly;
                     item.weekly = mergedWeekly;
@@ -2471,7 +2477,9 @@ CodexUsageApplet.prototype = {
                     let mergedWeekly = this._mergeMissingReset(
                         item.weekly,
                         old.weekly,
-                        item.captured_at
+                        item.captured_at,
+                        old.captured_at,
+                        "weekly"
                     );
                     usedCachedWindow = usedCachedWindow || mergedWeekly !== item.weekly;
                     item.weekly = mergedWeekly;
@@ -2658,21 +2666,39 @@ CodexUsageApplet.prototype = {
         return value;
     },
 
-    _windowDurationMatches: function(current, cached) {
+    _windowDurationMatches: function(current, cached, expectedKind) {
         let currentKind = this._windowKind(current);
         let cachedKind = this._windowKind(cached);
-        if (Boolean(currentKind) !== Boolean(cachedKind)) {
-            return false;
-        }
-        if (currentKind && cachedKind && currentKind !== cachedKind) {
-            return false;
-        }
         let currentDuration = this._windowDurationSeconds(current);
         let cachedDuration = this._windowDurationSeconds(cached);
+        if (expectedKind) {
+            if (current && !currentKind && currentDuration === null) {
+                return false;
+            }
+            if (cached && !cachedKind && cachedDuration === null) {
+                return false;
+            }
+            if (currentKind && currentKind !== expectedKind) {
+                return false;
+            }
+            if (cachedKind && cachedKind !== expectedKind) {
+                return false;
+            }
+        }
+        if (current && cached && Boolean(currentKind) !== Boolean(cachedKind)) {
+            return false;
+        }
+        if (current && cached && currentKind && cachedKind && currentKind !== cachedKind) {
+            return false;
+        }
+        if (!expectedKind && current && cached && !currentKind && !cachedKind &&
+            currentDuration === null && cachedDuration === null) {
+            return false;
+        }
         let expected = {
             five_hour: 18000,
             weekly: 604800
-        }[currentKind || cachedKind] || null;
+        }[expectedKind || currentKind || cachedKind] || null;
         if (expected !== null &&
             ((currentDuration !== null && currentDuration !== expected) ||
              (cachedDuration !== null && cachedDuration !== expected))) {
@@ -2682,14 +2708,36 @@ CodexUsageApplet.prototype = {
             currentDuration === cachedDuration;
     },
 
-    _mergeCachedWindow: function(fresh, cached, referenceAt) {
+    _windowCacheExpired: function(window, capturedAt, referenceAt) {
+        if (!window) {
+            return false;
+        }
+        if (window.reset_at) {
+            return this._windowResetExpired(window, referenceAt);
+        }
+        let duration = this._windowDurationSeconds(window);
+        if (duration === null) {
+            duration = {
+                five_hour: 18000,
+                weekly: 604800
+            }[this._windowKind(window)] || null;
+        }
+        let capturedMs = this._dateMillis(capturedAt);
+        let referenceMs = this._dateMillis(referenceAt);
+        if (duration === null || capturedMs === null || referenceMs === null) {
+            return true;
+        }
+        return capturedMs + duration * 1000 <= referenceMs;
+    },
+
+    _mergeCachedWindow: function(fresh, cached, referenceAt, cachedCapturedAt, expectedKind) {
         if (fresh && fresh.reset_at && this._windowResetExpired(fresh, referenceAt)) {
             return fresh;
         }
-        if (fresh && !this._windowDurationMatches(fresh, cached)) {
+        if (!this._windowDurationMatches(fresh, cached, expectedKind)) {
             return fresh;
         }
-        if (this._windowResetExpired(cached, referenceAt)) {
+        if (this._windowCacheExpired(cached, cachedCapturedAt, referenceAt)) {
             return fresh;
         }
         if (!fresh || !fresh.reset_at) {
@@ -2704,11 +2752,11 @@ CodexUsageApplet.prototype = {
         return merged;
     },
 
-    _mergeMissingReset: function(fresh, cached, referenceAt) {
-        if (!this._windowDurationMatches(fresh, cached)) {
+    _mergeMissingReset: function(fresh, cached, referenceAt, cachedCapturedAt, expectedKind) {
+        if (!this._windowDurationMatches(fresh, cached, expectedKind)) {
             return fresh;
         }
-        if (this._windowResetExpired(cached, referenceAt)) {
+        if (this._windowCacheExpired(cached, cachedCapturedAt, referenceAt)) {
             return fresh;
         }
         if (!fresh || fresh.reset_at || !cached || !cached.reset_at) {
