@@ -2,19 +2,43 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlsplit
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .json_utils import loads_strict
 from .models import LimitWindow
 
-LOCAL_TZ = datetime.now().astimezone().tzinfo or ZoneInfo("UTC")
+
+def _system_local_timezone():
+    configured = os.environ.get("TZ", "").strip()
+    if configured.startswith(":"):
+        configured = configured[1:]
+    candidates = [configured] if configured else []
+    try:
+        localtime = os.path.realpath("/etc/localtime")
+    except OSError:
+        localtime = ""
+    marker = "/zoneinfo/"
+    if marker in localtime:
+        candidates.append(localtime.split(marker, 1)[1])
+    for candidate in candidates:
+        if not candidate or candidate.startswith("/") or ".." in candidate.split("/"):
+            continue
+        try:
+            return ZoneInfo(candidate)
+        except (KeyError, ValueError, ZoneInfoNotFoundError):
+            continue
+    return datetime.now().astimezone().tzinfo or ZoneInfo("UTC")
+
+
+LOCAL_TZ = _system_local_timezone()
 MAX_JSON_WALK_DEPTH = 24
 MAX_JSON_WALK_ITEMS = 1000
 MAX_JSON_FLATTEN_FIELDS = 2000
@@ -1069,7 +1093,7 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
         if timestamp > 10_000_000_000:
             timestamp /= 1000
         try:
-            return datetime.fromtimestamp(timestamp, tz=captured_at.tzinfo)
+            return datetime.fromtimestamp(timestamp, tz=_display_timezone(captured_at))
         except (OSError, OverflowError, ValueError):
             return None
     raw = str(value).strip()
@@ -1078,16 +1102,17 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
             parsed = datetime.strptime(raw, fmt)
         except ValueError:
             continue
-        return parsed.replace(tzinfo=captured_at.tzinfo)
+        return parsed.replace(tzinfo=_display_timezone(captured_at))
     try:
         iso = raw.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(iso)
     except ValueError:
         return None
     try:
+        display_timezone = _display_timezone(captured_at)
         if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=captured_at.tzinfo)
-        return parsed.astimezone(captured_at.tzinfo)
+            return parsed.replace(tzinfo=display_timezone)
+        return parsed.astimezone(display_timezone)
     except (OSError, OverflowError, ValueError):
         return None
 
@@ -1096,7 +1121,10 @@ def _relative_reset_at(seconds: float | None, captured_at: datetime) -> datetime
     if seconds is None or seconds < 0 or not math.isfinite(seconds):
         return None
     try:
-        return captured_at + timedelta(seconds=seconds)
+        if captured_at.tzinfo is None:
+            return captured_at + timedelta(seconds=seconds)
+        target = captured_at.astimezone(UTC) + timedelta(seconds=seconds)
+        return target.astimezone(_display_timezone(captured_at))
     except (OverflowError, TypeError, ValueError):
         return None
 
@@ -1108,13 +1136,29 @@ def _parse_time_today_or_next(raw: str, captured_at: datetime) -> datetime | Non
         return None
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         return None
-    parsed = captured_at.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if parsed < captured_at:
+    local_capture = (
+        captured_at
+        if captured_at.tzinfo is None
+        else captured_at.astimezone(_display_timezone(captured_at))
+    )
+    parsed = local_capture.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if parsed < local_capture:
         try:
             parsed += timedelta(days=1)
         except (OverflowError, ValueError):
             return None
     return parsed
+
+
+def _display_timezone(captured_at: datetime):
+    timezone = captured_at.tzinfo
+    if timezone is None:
+        return None
+    if isinstance(timezone, ZoneInfo):
+        return timezone
+    if captured_at.utcoffset() == timedelta(0):
+        return timezone
+    return LOCAL_TZ
 
 
 def _coerce_number(value: Any) -> float | None:

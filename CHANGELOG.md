@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.339 - 2026-07-13
+
+### Fixed
+
+- Reset-Zeitpunkte werden bei lokalen festen CEST/CET-Offsets jetzt in einer
+  DST-faehigen Zeitzone berechnet. Absolute Epoch-Zeitstempel, relative
+  Resetdauern und Zeit-only-Angaben bleiben dadurch auch beim Sommer- oder
+  Winterzeitwechsel korrekt.
+
 ## 0.6.338 - 2026-07-13
 
 ### Fixed

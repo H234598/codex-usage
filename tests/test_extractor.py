@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,6 +9,7 @@ from codex_usage.extractor import (
     JsonCandidate,
     _parse_datetime,
     _parse_time_today_or_next,
+    _relative_reset_at,
     extract_windows,
 )
 
@@ -94,6 +95,35 @@ def test_parse_datetime_rejects_unrepresentable_timezone_conversion():
     captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
 
     assert _parse_datetime("9999-12-31T23:59:59+00:00", captured_at) is None
+
+
+def test_parse_datetime_uses_dst_aware_local_zone_for_fixed_capture_offset(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr("codex_usage.extractor.LOCAL_TZ", berlin)
+    captured_at = datetime(2026, 3, 28, 12, tzinfo=timezone(timedelta(hours=1)))
+    expected = datetime(2026, 3, 30, 1, tzinfo=berlin)
+
+    assert _parse_datetime(expected.timestamp(), captured_at) == expected
+
+
+def test_relative_reset_at_adds_elapsed_seconds_across_dst(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr("codex_usage.extractor.LOCAL_TZ", berlin)
+    captured_at = datetime(2026, 3, 28, 12, tzinfo=timezone(timedelta(hours=1)))
+
+    assert _relative_reset_at(36 * 60 * 60, captured_at) == datetime(
+        2026, 3, 30, 1, tzinfo=berlin
+    )
+
+
+def test_parse_time_today_or_next_uses_next_day_dst_offset(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr("codex_usage.extractor.LOCAL_TZ", berlin)
+    captured_at = datetime(2026, 10, 25, 23, 30, tzinfo=timezone(timedelta(hours=2)))
+
+    assert _parse_time_today_or_next("00:15", captured_at) == datetime(
+        2026, 10, 26, 0, 15, tzinfo=berlin
+    )
 
 
 def test_parse_time_today_or_next_rejects_unrepresentable_next_day():
