@@ -508,6 +508,39 @@ def test_merge_current_with_last_success_fills_missing_window():
     assert merged.stale is True
 
 
+@pytest.mark.parametrize(
+    "window",
+    [
+        LimitWindow(name="weekly", remaining=55),
+        LimitWindow(
+            name="5h",
+            remaining=55,
+            raw='{"limit_window_seconds":2592000}',
+        ),
+    ],
+)
+def test_merge_does_not_restore_wrong_window_kind_into_missing_five_hour(window):
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        five_hour=window,
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour is None
+    assert merged.weekly is None
+    assert merged.stale is False
+
+
 def test_merge_drops_cached_windows_after_their_reset():
     timezone = ZoneInfo("Europe/Berlin")
     captured = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)

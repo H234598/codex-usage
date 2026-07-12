@@ -456,12 +456,14 @@ def merge_current_with_last_success(
         current.five_hour,
         last_success.five_hour,
         reference_at=current.captured_at,
+        expected_kind="five_hour",
         preserve_missing_value=preserve_missing_window_values,
     )
     weekly = _merge_window_with_last_success(
         current.weekly,
         last_success.weekly,
         reference_at=current.captured_at,
+        expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
     if five_hour is current.five_hour and weekly is current.weekly:
@@ -493,12 +495,14 @@ def _merge_newer_partial_usage(
         newer.five_hour,
         older.five_hour,
         reference_at=newer.captured_at,
+        expected_kind="five_hour",
         preserve_missing_value=preserve_missing_window_values,
     )
     weekly = _merge_window_with_last_success(
         newer.weekly,
         older.weekly,
         reference_at=newer.captured_at,
+        expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
     if five_hour is newer.five_hour and weekly is newer.weekly:
@@ -533,8 +537,13 @@ def _merge_window_with_last_success(
     last_success: LimitWindow | None,
     *,
     reference_at: datetime,
+    expected_kind: str | None = None,
     preserve_missing_value: bool = True,
 ) -> LimitWindow | None:
+    if not _window_matches_expected_kind(current, expected_kind):
+        return current
+    if not _window_matches_expected_kind(last_success, expected_kind):
+        return current
     if current is None:
         return (
             last_success
@@ -561,6 +570,24 @@ def _merge_window_with_last_success(
     if current.reset_at is None:
         return last_success
     return replace(last_success, reset_at=current.reset_at)
+
+
+def _window_matches_expected_kind(
+    window: LimitWindow | None,
+    expected_kind: str | None,
+) -> bool:
+    if window is None or expected_kind is None:
+        return True
+    kind = _window_kind(window)
+    if kind is not None and kind != expected_kind:
+        return False
+    duration = _window_duration_seconds(window)
+    expected_duration = WINDOW_DURATIONS.get(expected_kind)
+    return (
+        expected_duration is None
+        or duration is None
+        or duration == expected_duration
+    )
 
 
 def _window_duration_matches(
