@@ -2423,6 +2423,8 @@ CodexUsageApplet.prototype = {
                 let resetlessBrowserUsage = this._hasResetlessBrowserUsage(item);
                 let hadFreshWindow = Boolean(item.five_hour || item.weekly);
                 let usedCachedWindow = false;
+                let itemValuesCapturedAt = this._valuesCaptureForExpiry(item);
+                let oldValuesCapturedAt = this._valuesCaptureForExpiry(old);
                 if (
                     !authenticatedPartial &&
                     !resetlessBrowserUsage &&
@@ -2432,8 +2434,8 @@ CodexUsageApplet.prototype = {
                     let mergedFive = this._mergeCachedWindow(
                         item.five_hour,
                         old.five_hour,
-                        item.captured_at,
-                        old.captured_at,
+                        itemValuesCapturedAt,
+                        oldValuesCapturedAt,
                         "five_hour"
                     );
                     usedCachedWindow = usedCachedWindow || mergedFive !== item.five_hour;
@@ -2449,7 +2451,7 @@ CodexUsageApplet.prototype = {
                         item.five_hour,
                         old.five_hour,
                         item.captured_at,
-                        old.captured_at,
+                        oldValuesCapturedAt,
                         "five_hour"
                     );
                     usedCachedWindow = usedCachedWindow || mergedFive !== item.five_hour;
@@ -2464,8 +2466,8 @@ CodexUsageApplet.prototype = {
                     let mergedWeekly = this._mergeCachedWindow(
                         item.weekly,
                         old.weekly,
-                        item.captured_at,
-                        old.captured_at,
+                        itemValuesCapturedAt,
+                        oldValuesCapturedAt,
                         "weekly"
                     );
                     usedCachedWindow = usedCachedWindow || mergedWeekly !== item.weekly;
@@ -2481,7 +2483,7 @@ CodexUsageApplet.prototype = {
                         item.weekly,
                         old.weekly,
                         item.captured_at,
-                        old.captured_at,
+                        oldValuesCapturedAt,
                         "weekly"
                     );
                     usedCachedWindow = usedCachedWindow || mergedWeekly !== item.weekly;
@@ -2744,6 +2746,19 @@ CodexUsageApplet.prototype = {
             return true;
         }
         return capturedMs + duration * 1000 <= referenceMs;
+    },
+
+    _valuesCaptureForExpiry: function(usage) {
+        let capturedAt = this._safeText(usage && usage.captured_at, 80);
+        let valuesCapturedAt = this._safeText(usage && usage.values_captured_at, 80);
+        let capturedMs = this._dateMillis(capturedAt);
+        let valuesCapturedMs = this._dateMillis(valuesCapturedAt);
+        if (valuesCapturedMs !== null &&
+            capturedMs !== null &&
+            valuesCapturedMs <= capturedMs) {
+            return valuesCapturedAt;
+        }
+        return capturedAt;
     },
 
     _mergeCachedWindow: function(fresh, cached, referenceAt, cachedCapturedAt, expectedKind) {

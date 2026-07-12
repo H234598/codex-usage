@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.327 - 2026-07-12
+
+### Fixed
+
+- Das Cinnamon-Applet bewertet resetlose Cachefenster jetzt anhand ihres
+  tatsächlichen `values_captured_at`-Zeitpunkts und zeigt dadurch keine bereits
+  abgelaufenen Gegenwerte aus Mischsnapshots mehr an.
+
 ## 0.6.326 - 2026-07-12
 
 ### Fixed

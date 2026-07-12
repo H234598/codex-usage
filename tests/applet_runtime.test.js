@@ -1606,6 +1606,31 @@ test("partial fresh payload expires resetless cached windows by duration", () =>
   assert.equal(merged[0].stale, true);
 });
 
+test("fresh merge expires resetless cached values from their values capture", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    backend_used: "browser",
+    captured_at: "2026-07-10T15:00:00.000Z",
+    values_captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { name: "5h", remaining: 80 },
+    weekly: null
+  }];
+
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    backend_used: "browser",
+    captured_at: "2026-07-10T16:00:00.000Z",
+    five_hour: null,
+    weekly: null,
+    stale: false
+  }]);
+
+  assert.equal(merged[0].five_hour, null);
+  assert.equal(merged[0].stale, false);
+});
+
 test("partial fresh payload rejects an unclassified cached window", () => {
   const applet = makeApplet();
   applet._usages = [{
