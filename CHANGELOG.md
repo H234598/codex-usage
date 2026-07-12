@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.177 - 2026-07-12
+
+### Fixed
+
+- Bridge-Antworten werden nach Quelle und URL dedupliziert. Eine fehlgeschlagene
+  Page-Hook-Antwort kann dadurch keine gültige Content-Probe derselben URL
+  mehr verdrängen.
+- Regression für `page-fetch` 401 gegenüber `content-probe` 200 ergänzt.
+
 ## 0.6.176 - 2026-07-12
 
 ### Fixed

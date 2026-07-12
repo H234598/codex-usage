@@ -224,6 +224,53 @@ def test_usage_from_ingest_payload_merges_both_api_response_field_names():
     assert usage.weekly is not None and usage.weekly.remaining == 55
 
 
+def test_usage_from_ingest_payload_keeps_probe_after_failed_page_hook_response():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": "Codex analytics",
+            "apiResponses": [
+                {
+                    "source": "page-fetch",
+                    "requestSequence": 7,
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 401,
+                    "contentType": "application/json",
+                    "bodyText": json.dumps({"detail": "Unauthorized"}),
+                },
+                {
+                    "source": "content-probe",
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": json.dumps(
+                        {
+                            "user_id": "user-test",
+                            "account_id": "account-test",
+                            "rate_limit": {
+                                "primary_window": {
+                                    "used_percent": 3,
+                                    "limit_window_seconds": 18000,
+                                },
+                                "secondary_window": {
+                                    "used_percent": 45,
+                                    "limit_window_seconds": 604800,
+                                },
+                            },
+                        }
+                    ),
+                },
+            ],
+        },
+    )
+
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is not None and usage.weekly.remaining == 55
+
+
 def test_usage_from_ingest_payload_ignores_truncated_json_api_responses():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(
