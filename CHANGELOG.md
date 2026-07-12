@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.193 - 2026-07-12
+
+### Fixed
+
+- Der Watchdog verwendet einen `blocked`-Snapshot bei gleicher Account-ID
+  jetzt nur noch, wenn auch die bekannten User-IDs übereinstimmen.
+- Ein Wechsel von `user-old/shared-account` zu `user-new/shared-account`
+  erzwingt dadurch einen neuen Abruf statt den alten Account-Zustand zu
+  konservieren.
+- Eine Regression deckt den Shared-Account-Userwechsel ab; unterschiedliche
+  Account-IDs bleiben weiterhin geschützt.
+
 ## 0.6.192 - 2026-07-12
 
 ### Fixed

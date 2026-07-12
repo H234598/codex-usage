@@ -18,6 +18,7 @@ from .browser import fetch_account_usage
 from .config import AppConfig
 from .direct import (
     DirectAuthError,
+    auth_identity_changed,
     auth_identity_for_account,
     auth_identity_from_file,
     fetch_account_usage_direct,
@@ -556,6 +557,14 @@ def _blocked_snapshot_matches_account(
             return True
     except DirectAuthError:
         return False
+    if snapshot.backend_account_id and auth_account_id:
+        if auth_identity_changed(
+            before_user_id=snapshot.backend_user_id,
+            before_account_id=snapshot.backend_account_id,
+            after_user_id=auth_user_id,
+            after_account_id=auth_account_id,
+        ):
+            return False
     identities = {value for value in (auth_user_id, auth_account_id) if value}
     snapshot_identity = snapshot.backend_account_id or snapshot.backend_user_id
     return bool(snapshot_identity and snapshot_identity in identities)
