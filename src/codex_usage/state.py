@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -727,9 +727,11 @@ def _cached_window_expired(
     if duration is None or not isinstance(captured_at, datetime):
         return True
     try:
+        captured_utc = _localize_datetime(captured_at).astimezone(UTC)
+        reference_utc = _localize_datetime(reference_at).astimezone(UTC)
         return (
-            _localize_datetime(captured_at) + timedelta(seconds=duration)
-            <= _localize_datetime(reference_at)
+            captured_utc + timedelta(seconds=duration)
+            <= reference_utc
         )
     except (OverflowError, TypeError, ValueError):
         return True

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.340 - 2026-07-13
+
+### Fixed
+
+- Resetlose Snapshot-Fenster werden fuer die Ablaufpruefung jetzt als
+  verstrichene Sekunden in UTC berechnet. Ein 5h- oder Wochenfenster wird
+  dadurch beim Sommer-/Winterzeitwechsel nicht eine Stunde zu frueh oder zu
+  spaet verworfen.
+
 ## 0.6.339 - 2026-07-13
 
 ### Fixed

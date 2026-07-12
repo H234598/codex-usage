@@ -230,6 +230,25 @@ def test_expire_reset_windows_expires_resetless_windows_by_duration():
     assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
+def test_expire_reset_windows_counts_resetless_duration_as_elapsed_time_across_dst():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured_at = datetime(2026, 3, 29, 0, 0, tzinfo=timezone)
+    reference_at = datetime(2026, 3, 29, 5, 30, tzinfo=timezone)
+    usage = AccountUsage(
+        account_id="dst",
+        label="DST",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=90),
+    )
+
+    evaluated = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert evaluated.five_hour is usage.five_hour
+    assert evaluated.status == AccountStatus.OK
+    assert evaluated.stale is False
+
+
 def test_expire_reset_windows_rejects_resetless_unclassified_windows():
     captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
