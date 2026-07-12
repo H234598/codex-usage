@@ -153,7 +153,11 @@ def fetch_account_usage(
                 status=AccountStatus.LOGIN_REQUIRED,
                 error="auth.json identity changed during browser request",
             )
-        five_hour, weekly = extract_windows(body_text=body_text, json_candidates=candidates)
+        five_hour, weekly = extract_windows(
+            body_text=body_text,
+            json_candidates=candidates,
+            now=captured_at,
+        )
         backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
         backend_plan_type = backend_plan_type_from_candidates(candidates)
         try:

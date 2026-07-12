@@ -173,13 +173,16 @@ def test_fetch_canonicalizes_browser_identity_from_configured_auth(tmp_path, mon
         "codex_usage.browser._launch_persistent_context",
         lambda *_args, **_kwargs: FakeContext(),
     )
-    monkeypatch.setattr(
-        "codex_usage.browser.extract_windows",
-        lambda **_kwargs: (
+    extract_kwargs = {}
+
+    def fake_extract_windows(**kwargs):
+        extract_kwargs.update(kwargs)
+        return (
             LimitWindow(name="5h", remaining=97),
             LimitWindow(name="weekly", remaining=55),
-        ),
-    )
+        )
+
+    monkeypatch.setattr("codex_usage.browser.extract_windows", fake_extract_windows)
     monkeypatch.setattr(
         "codex_usage.browser.backend_identity_from_candidates",
         lambda _candidates: ("user-test", "user-test"),
@@ -195,6 +198,7 @@ def test_fetch_canonicalizes_browser_identity_from_configured_auth(tmp_path, mon
     assert usage.status == "ok"
     assert usage.backend_user_id == "user-test"
     assert usage.backend_account_id == "account-uuid"
+    assert extract_kwargs["now"] == usage.captured_at
 
 
 def test_fetch_rejects_browser_auth_identity_changed_during_request(tmp_path, monkeypatch):

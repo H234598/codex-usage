@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.229 - 2026-07-12
+
+### Fixed
+
+- Der Browserabruf reicht den festen Erfassungszeitpunkt jetzt an den
+  gemeinsamen Parser weiter.
+- Relative Resetzeiten werden dadurch nicht mehr mit einem spaeteren
+  Parserzeitpunkt berechnet.
+- Regression fuer die Zeitstempelweitergabe im Browserpfad ergaenzt.
+
 ## 0.6.228 - 2026-07-12
 
 ### Fixed
