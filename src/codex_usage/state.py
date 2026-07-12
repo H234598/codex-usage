@@ -363,6 +363,8 @@ def _window_duration_matches(
 ) -> bool:
     current_kind = _window_kind(current)
     previous_kind = _window_kind(last_success)
+    if bool(current_kind) != bool(previous_kind):
+        return False
     if current_kind and previous_kind and current_kind != previous_kind:
         return False
     current_duration = _window_duration_seconds(current)

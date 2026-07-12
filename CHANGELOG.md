@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.245 - 2026-07-12
+
+### Fixed
+
+- State-Merges akzeptieren ein bekanntes Fenster nicht mehr gegen ein
+  aktuelles Fenster ohne erkennbare Fensterart.
+- Dadurch kann ein alter 5h-Wert nicht mehr in ein unklassifiziertes oder
+  möglicherweise wöchentliches Fenster geraten.
+
 ## 0.6.244 - 2026-07-12
 
 ### Fixed

@@ -585,6 +585,38 @@ def test_merge_does_not_reuse_reset_from_a_different_window_duration():
     assert merged.stale is False
 
 
+def test_merge_rejects_known_window_kind_against_unknown_current_kind():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured = datetime(2026, 7, 12, 4, 20, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        five_hour=LimitWindow(
+            name="",
+            reset_at=captured + timedelta(days=7),
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured - timedelta(minutes=5),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=95,
+            reset_at=captured + timedelta(hours=5),
+            raw='{"limit_window_seconds": 18000}',
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+    assert merged.five_hour is not None
+    assert merged.five_hour.remaining is None
+
+
 def test_merge_does_not_restore_known_other_duration_into_browser_window():
     timezone = ZoneInfo("Europe/Berlin")
     captured = datetime(2026, 7, 12, 4, 20, tzinfo=timezone)
