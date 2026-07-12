@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.259 - 2026-07-12
+
+### Fixed
+
+- Ein partieller App-Server-Codex-Bucket ohne Dauerangabe überschreibt keinen
+  vollständigen unterstützten Top-Level-Bucket mehr.
+- Dadurch bleiben belegte 5h-/Wochenfenster erhalten, statt durch eine
+  unvollständig klassifizierbare Teilantwort falsch zu werden.
+
 ## 0.6.258 - 2026-07-12
 
 ### Security

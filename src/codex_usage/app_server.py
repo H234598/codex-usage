@@ -429,6 +429,18 @@ def _windows_from_response(
                     not in {FIVE_HOUR_WINDOW_MINUTES, WEEKLY_WINDOW_MINUTES}
                 ):
                     continue
+                if duration is None:
+                    top_level = snapshot.get(key)
+                    top_level_duration = (
+                        _strict_int(top_level.get("windowDurationMins"))
+                        if isinstance(top_level, dict)
+                        else None
+                    )
+                    if top_level_duration in {
+                        FIVE_HOUR_WINDOW_MINUTES,
+                        WEEKLY_WINDOW_MINUTES,
+                    }:
+                        continue
                 snapshot[key] = value
     if not isinstance(snapshot, dict):
         raise AppServerProtocolError("app server response has no rateLimits object")
