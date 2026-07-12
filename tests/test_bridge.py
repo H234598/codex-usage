@@ -73,6 +73,29 @@ def test_usage_from_ingest_payload_reports_empty_text_context():
     assert "textLength=0" in usage.error
 
 
+def test_ingest_rejects_unidentified_browser_payload_before_saving(tmp_path):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+
+    with pytest.raises(ValueError, match="no backend account identity"):
+        ingest_and_save(
+            config,
+            "privat",
+            {
+                "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+                "bodyText": (
+                    "5-hour usage limit 97% remaining "
+                    "Weekly usage limit 55% remaining"
+                ),
+            },
+            snapshot_dir,
+            require_backend_identity=True,
+        )
+
+    assert load_usage_snapshot("privat", snapshot_dir) is None
+
+
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     before = datetime.now().astimezone()

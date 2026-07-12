@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.198 - 2026-07-12
+
+### Fixed
+
+- Der Bridge-Server speichert Browser-Payloads ohne erkannte Backend-Identität
+  nicht mehr. Reine DOM-Werte können dadurch nicht als vermeintlich gültige
+  Account-Werte persistiert werden, wenn ein Browser versehentlich mit den
+  Cookies eines anderen Accounts geöffnet ist.
+- Eine Regression stellt sicher, dass ein solcher Payload vor dem ersten
+  Snapshot verworfen wird.
+
 ## 0.6.197 - 2026-07-12
 
 ### Fixed

@@ -531,9 +531,15 @@ def ingest_and_save(
     account_ref: str,
     payload: dict[str, Any],
     snapshot_dir: Path | None = None,
+    *,
+    require_backend_identity: bool = False,
 ) -> tuple[AccountUsage, Path]:
     account = resolve_account(config, account_ref)
     usage = usage_from_ingest_payload(account, payload)
+    if require_backend_identity and not (
+        usage.backend_user_id or usage.backend_account_id
+    ):
+        raise ValueError("bridge payload has no backend account identity")
     known = load_usage_snapshot(account.id, snapshot_dir)
     if known is None:
         current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
@@ -636,7 +642,13 @@ def _make_handler(config: AppConfig, snapshot_dir: Path | None):
 
             account_ref = str(payload.get("account") or "")
             try:
-                usage, path = ingest_and_save(config, account_ref, payload, snapshot_dir)
+                usage, path = ingest_and_save(
+                    config,
+                    account_ref,
+                    payload,
+                    snapshot_dir,
+                    require_backend_identity=True,
+                )
             except KeyError:
                 self._send_json(400, {"error": "unknown or ambiguous account"})
                 return
