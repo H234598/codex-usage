@@ -879,6 +879,55 @@ def test_authenticated_stabilization_ignores_a_running_relative_countdown():
     assert result.stale is False
 
 
+def test_authenticated_stabilization_accepts_reset_with_dynamic_absolute_timestamp():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous_captured = datetime(2026, 7, 12, 4, 10, tzinfo=timezone)
+    current_captured = datetime(2026, 7, 12, 4, 13, tzinfo=timezone)
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=previous_captured,
+        five_hour=LimitWindow(
+            name="5h",
+            used=5,
+            limit=100,
+            remaining=95,
+            percent=95,
+            reset_at=previous_captured + timedelta(hours=5),
+            raw=(
+                '{"used_percent": 5, "limit_window_seconds": 18000, '
+                '"reset_after_seconds": 18000, "reset_at": 1783860000}'
+            ),
+        ),
+        weekly=LimitWindow(name="weekly", remaining=49),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=current_captured,
+        five_hour=replace(
+            previous.five_hour,
+            used=0,
+            remaining=100,
+            percent=100,
+            reset_at=current_captured + timedelta(hours=5),
+            raw=(
+                '{"used_percent": 0, "limit_window_seconds": 18000, '
+                '"reset_after_seconds": 18000, "reset_at": 1783860180}'
+            ),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=360)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.remaining == 100
+    assert result.stale is False
+
+
 def test_authenticated_stabilization_rejects_a_different_window_duration():
     timezone = ZoneInfo("Europe/Berlin")
     previous = AccountUsage(

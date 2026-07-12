@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.233 - 2026-07-12
+
+### Fixed
+
+- WHAM-Reset-Countdowns werden auch bei zusätzlich gelieferten dynamischen
+  `reset_at`-Zeitstempeln als relative Zeitquelle erkannt.
+- Ein echter Reset mit höherem frischem Restwert kann dadurch nicht mehr durch
+  den alten Snapshotwert als `stale` ersetzt werden.
+- Regression für den Reset von `95%` auf `100%` bei beiden Resetfeldern ergänzt.
+
 ## 0.6.232 - 2026-07-12
 
 ### Fixed

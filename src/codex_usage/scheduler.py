@@ -319,11 +319,11 @@ def _uses_relative_reset_time(window: Any) -> bool:
         return False
     limit_window = _raw_number(raw, "limit_window_seconds")
     reset_after = _raw_number(raw, "reset_after_seconds")
-    if limit_window is None or reset_after is None:
-        return False
-    if re.search(r'"(?:reset_at|resetAt)"\s*:\s*(?!null\b)', raw):
-        return False
-    return 0 <= reset_after <= limit_window
+    return (
+        limit_window is not None
+        and reset_after is not None
+        and 0 <= reset_after <= limit_window
+    )
 
 
 def _raw_number(raw: str, field: str) -> float | None:
