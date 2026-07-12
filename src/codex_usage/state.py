@@ -366,9 +366,9 @@ def expire_reset_windows(
         blocked_until_expired = (
             usage.status == AccountStatus.BLOCKED
             and usage.blocked_until is not None
-            and usage.blocked_until <= reference_at
+            and _localize_datetime(usage.blocked_until) <= _localize_datetime(reference_at)
         )
-    except TypeError:
+    except (OverflowError, TypeError, ValueError):
         blocked_until_expired = False
     clear_expired_block = (
         usage.status == AccountStatus.BLOCKED

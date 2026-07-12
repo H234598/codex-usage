@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.321 - 2026-07-12
+
+### Fixed
+
+- Der Parser verwendet bei WHAM-Payloads nie mehr einen Zusatzbucket aus
+  `additional_rate_limits` als Hauptlimit, auch wenn die Quelle keine
+  bekannte Standard-URL trägt.
+- Blockierte Cachezustände mit naiven lokalen Zeitstempeln werden nach dem
+  Ablauf korrekt freigegeben.
+
 ## 0.6.287 - 2026-07-12
 
 ### Fixed

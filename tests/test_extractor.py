@@ -1458,6 +1458,37 @@ def test_extract_windows_prefers_main_rate_limit_over_additional_limits():
     assert weekly.remaining == 96
 
 
+def test_extract_windows_blocks_additional_limits_for_unrecognized_wham_url():
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/capture",
+        payload={
+            "additional_rate_limits": [
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 0,
+                            "limit_window_seconds": 604800,
+                        }
+                    }
+                }
+            ],
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 2,
+                    "limit_window_seconds": 604800,
+                },
+                "secondary_window": None,
+            },
+        },
+    )
+
+    _five, weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert weekly is not None
+    assert weekly.used == 2
+    assert weekly.remaining == 98
+
+
 def test_extract_windows_does_not_use_additional_limits_for_unsupported_main_windows():
     candidates = [
         JsonCandidate(

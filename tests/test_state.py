@@ -360,6 +360,31 @@ def test_expire_reset_windows_clears_expired_blocked_state():
     assert expired.stale is True
 
 
+def test_expire_reset_windows_clears_blocked_state_with_naive_blocked_until():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=reference_at - timedelta(minutes=1),
+        status=AccountStatus.BLOCKED,
+        error="usage limit reached: weekly",
+        blocked_until=(reference_at - timedelta(seconds=1)).replace(tzinfo=None),
+        blocked_reason="usage limit reached: weekly",
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=0,
+            reset_at=reference_at - timedelta(minutes=1),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.blocked_until is None
+    assert expired.blocked_reason is None
+    assert expired.weekly is None
+
+
 def test_load_usage_snapshot_ignores_invalid_json(tmp_path):
     (tmp_path / "privat.json").write_text("{not-json", encoding="utf-8")
 

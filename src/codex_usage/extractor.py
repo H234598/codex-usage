@@ -276,10 +276,7 @@ def _extract_json_window(
     usage_windows: list[tuple[int, int, int, bool, LimitWindow]] = []
     for candidate_index, candidate in enumerate(candidates):
         candidate_priority = _wham_candidate_priority(candidate.url)
-        blocks_additional = (
-            candidate_priority == 0
-            and _main_wham_target_blocks_additional(candidate.payload, target)
-        )
+        blocks_additional = _main_wham_target_blocks_additional(candidate.payload, target)
         for path, obj in _walk_dicts(candidate.payload):
             if blocks_additional and "additional_rate_limits" in path.lower():
                 continue
