@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.263 - 2026-07-12
+
+### Fixed
+
+- Wertlose Direct-Sample-Gruppen können keine vollständige Nutzungsgruppe
+  mehr überstimmen.
+  Bei widersprüchlichen Teilantworten wird fail-closed erneut versucht,
+  statt alle aktuellen Limits zu leeren.
+
 ## 0.6.262 - 2026-07-12
 
 ### Fixed

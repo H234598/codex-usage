@@ -702,11 +702,17 @@ def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     groups: dict[tuple, list[tuple[int, dict[str, Any]]]] = {}
     for index, payload in enumerate(payloads):
         groups.setdefault(_usage_response_signature(payload), []).append((index, payload))
+    value_groups = [
+        group
+        for group in groups.values()
+        if _usage_response_completeness(group[0][1]) > 0
+    ]
+    candidate_groups = value_groups or list(groups.values())
     best_group = max(
-        groups.values(),
+        candidate_groups,
         key=lambda group: (
-            len(group),
             _usage_response_completeness(group[0][1]),
+            len(group),
             -group[0][0],
         ),
     )

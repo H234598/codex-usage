@@ -12,6 +12,7 @@ from codex_usage.direct import (
     DirectFetchError,
     _fetch_stable_wham_usage,
     _jwt_expiry,
+    _select_stable_wham_usage,
     auth_identity_changed,
     auth_identity_from_payload,
     canonical_backend_identity,
@@ -263,6 +264,33 @@ def test_fetch_account_usage_direct_prefers_majority_response(tmp_path, monkeypa
     assert usage.five_hour.remaining == 97
     assert usage.weekly is not None
     assert usage.weekly.remaining == 55
+
+
+def test_select_stable_wham_usage_does_not_choose_empty_majority():
+    complete = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 3,
+                "limit_window_seconds": 18000,
+                "reset_at": 1780894250,
+            },
+            "secondary_window": {
+                "used_percent": 45,
+                "limit_window_seconds": 604800,
+                "reset_at": 1781060750,
+            },
+        },
+    }
+    empty = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": {},
+    }
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _select_stable_wham_usage([complete, empty, empty])
 
 
 def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):
