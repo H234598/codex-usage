@@ -162,6 +162,11 @@ def add_or_update_account(
         )
         _prepare_profile_dir(account.profile_dir)
         _validate_config(updated)
+        if existing is not None and existing != account:
+            # A changed source or label makes the old values unsafe to display.
+            from .state import remove_account_state
+
+            remove_account_state(account.id)
         _save_config_unlocked(updated, config_path)
     return updated, account
 

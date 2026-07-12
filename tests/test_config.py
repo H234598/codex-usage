@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 
 import pytest
 
+from codex_usage.bridge import load_latest_usages
 from codex_usage.config import (
     MAX_CONFIG_BYTES,
     AppConfig,
@@ -13,7 +15,8 @@ from codex_usage.config import (
     resolve_account,
     save_config,
 )
-from codex_usage.models import Account
+from codex_usage.models import Account, AccountUsage, LimitWindow
+from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
 
 
 def test_concurrent_account_updates_keep_each_valid_account(tmp_path):
@@ -97,6 +100,50 @@ def test_config_round_trip_auth_json_path(tmp_path):
 
     assert loaded.accounts[0].auth_json_path == str(auth_path)
     assert f'auth_json_path = "{auth_path}"' in config_path.read_text(encoding="utf-8")
+
+
+def test_reconfiguring_account_clears_old_usage_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    auth_a = tmp_path / "auth-a.json"
+    auth_b = tmp_path / "auth-b.json"
+    add_or_update_account("same", auth_json_path=str(auth_a), path=config_path)
+    usage = AccountUsage(
+        account_id="same",
+        label="Same",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+        weekly=LimitWindow(name="weekly", remaining=34),
+        backend_used="direct",
+        backend_user_id="user-a",
+        backend_account_id="account-a",
+    )
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+
+    add_or_update_account("same", auth_json_path=str(auth_b), path=config_path)
+
+    assert load_current_usage("same") is None
+    assert (tmp_path / "data" / "codex-usage" / "snapshots" / "same.json").exists() is False
+    assert load_latest_usages(load_config(config_path)) == []
+
+
+def test_unchanged_account_update_keeps_usage_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("same", path=config_path)
+    usage = AccountUsage(
+        account_id="same",
+        label="same",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+        weekly=LimitWindow(name="weekly", remaining=34),
+    )
+    save_current_usage(usage)
+
+    add_or_update_account("same", path=config_path)
+
+    assert load_current_usage("same") is not None
 
 
 def test_add_account_rejects_symlink_profile_dir_without_marking_target(tmp_path):

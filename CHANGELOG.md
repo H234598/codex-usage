@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.207 - 2026-07-12
+
+### Fixed
+
+- Beim Aktualisieren eines bestehenden Accounts mit geänderter Konfiguration
+  werden `current`, Snapshot und Bridge-Debug-Dump des alten Kontostands
+  entfernt. Dadurch können `auth_json_path`, Backend, Browser, Profil oder
+  Label nicht mehr vor dem nächsten Abruf alte Nutzungswerte anzeigen.
+- Ein unverändertes `account add` bewahrt den gültigen State weiterhin.
+- Regressionen decken Re-Konfiguration und unveränderte Updates ab.
+
 ## 0.6.206 - 2026-07-12
 
 ### Fixed
