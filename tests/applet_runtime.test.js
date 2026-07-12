@@ -1683,6 +1683,29 @@ test("partial fresh payload preserves usage under reset-only windows", () => {
   assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
 });
 
+test("expired reset-only fresh window does not restore old usage", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T15:00:00.000Z",
+    five_hour: { remaining: 80, reset_at: "2026-07-10T17:00:00.000Z" },
+    weekly: null,
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T16:00:00.000Z",
+    five_hour: { remaining: null, reset_at: "2026-07-10T15:30:00.000Z" },
+    weekly: null,
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].five_hour.remaining, null);
+  assert.equal(merged[0].five_hour.reset_at, "2026-07-10T15:30:00.000Z");
+  assert.equal(merged[0].stale, false);
+  assert.equal(merged[0].values_captured_at, undefined);
+});
+
 test("authoritative empty direct limits clear cached windows", () => {
   const applet = makeApplet();
   applet._usages = [{

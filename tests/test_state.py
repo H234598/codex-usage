@@ -883,6 +883,41 @@ def test_merge_current_usage_does_not_restore_expired_reset_time():
     assert merged.stale is False
 
 
+def test_merge_does_not_restore_values_under_expired_reset_only_window():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        five_hour=LimitWindow(
+            name="5h",
+            reset_at=datetime(2026, 6, 8, 15, 30, tzinfo=timezone),
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 15, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=97,
+            reset_at=datetime(2026, 6, 8, 17, 0, tzinfo=timezone),
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+    assert merged.five_hour is not None
+    assert merged.five_hour.remaining is None
+    assert merged.five_hour.reset_at == datetime(
+        2026, 6, 8, 15, 30, tzinfo=timezone
+    )
+    assert merged.stale is False
+
+
 def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_path):
     timezone = ZoneInfo("Europe/Berlin")
     snapshot_dir = tmp_path / "snapshots"

@@ -547,6 +547,9 @@ def _merge_window_with_last_success(
         return current
     if not preserve_missing_value and not current.has_usage_value:
         return current
+    if not current.has_usage_value and _window_reset_expired(current, reference_at):
+        # A newer reset-only observation can prove that the old window ended.
+        return current
     if current.has_usage_value:
         if current.reset_at is None and last_success.reset_at is not None:
             if _window_reset_expired(last_success, reference_at):

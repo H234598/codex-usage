@@ -2611,6 +2611,9 @@ CodexUsageApplet.prototype = {
     },
 
     _mergeCachedWindow: function(fresh, cached, referenceAt) {
+        if (fresh && fresh.reset_at && this._windowResetExpired(fresh, referenceAt)) {
+            return fresh;
+        }
         if (this._windowResetExpired(cached, referenceAt)) {
             return fresh;
         }
