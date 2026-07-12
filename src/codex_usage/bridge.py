@@ -159,6 +159,8 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         status=status,
         error=error,
         source_urls=tuple(sorted(source_urls)),
+        backend_configured=account.backend,
+        backend_used="browser",
         backend_user_id=backend_user_id,
         backend_account_id=backend_account_id,
     )

@@ -62,6 +62,26 @@ def test_backend_provenance_rejects_unproven_cross_backend_fallback():
     assert backend_provenance_matches(direct, app_server) is False
 
 
+def test_backend_provenance_rejects_browser_merge_with_authenticated_backend():
+    browser = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="browser",
+    )
+    direct = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+
+    assert backend_provenance_matches(browser, direct) is False
+    assert backend_provenance_matches(direct, browser) is False
+
+
 def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
     direct = AccountUsage(
         account_id="account",

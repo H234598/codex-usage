@@ -2279,6 +2279,8 @@ CodexUsageApplet.prototype = {
             let old = previous[item.account];
             if (old && this._backendIdentityIsIncomplete(item, old)) {
                 merged.push(this._markUsageStale(old));
+            } else if (old && !this._backendProvenanceMatches(item, old)) {
+                merged.push(this._captureIsOlder(item.captured_at, old.captured_at) ? old : item);
             } else if (old && this._backendIdentityMatches(item, old) &&
                 this._captureIsOlder(item.captured_at, old.captured_at)) {
                 merged.push(old);
@@ -2321,6 +2323,10 @@ CodexUsageApplet.prototype = {
                 continue;
             }
             if (old && !this._backendIdentityMatches(item, old)) {
+                merged.push(item);
+                continue;
+            }
+            if (old && !this._backendProvenanceMatches(item, old)) {
                 merged.push(item);
                 continue;
             }
@@ -2472,6 +2478,51 @@ CodexUsageApplet.prototype = {
             }
         }
         return true;
+    },
+
+    _backendProvenanceMatches: function(left, right) {
+        let leftConfigured = this._safeBackend(left && left.backend_configured);
+        let rightConfigured = this._safeBackend(right && right.backend_configured);
+        if (leftConfigured && rightConfigured && leftConfigured !== rightConfigured) {
+            return false;
+        }
+        let authenticated = ["direct", "app-server"];
+        let leftUsed = this._safeBackend(left && left.backend_used, true);
+        let rightUsed = this._safeBackend(right && right.backend_used, true);
+        let leftAuthenticated = authenticated.indexOf(leftUsed) !== -1;
+        let rightAuthenticated = authenticated.indexOf(rightUsed) !== -1;
+        if (!leftAuthenticated || !rightAuthenticated) {
+            if (
+                (leftUsed === "browser" || rightUsed === "browser") &&
+                (leftAuthenticated || rightAuthenticated)
+            ) {
+                return false;
+            }
+            return true;
+        }
+        if (leftUsed === rightUsed) {
+            return true;
+        }
+        return this._hasBackendFallbackProof(left) || this._hasBackendFallbackProof(right);
+    },
+
+    _hasBackendFallbackProof: function(usage) {
+        let backendUsed = this._safeBackend(usage && usage.backend_used, true);
+        if (["direct", "app-server"].indexOf(backendUsed) === -1) {
+            return false;
+        }
+        let reason = this._safeText(usage && usage.fallback_reason, MAX_TEXT_CHARS);
+        if (
+            reason === "previous direct limits retained after reset transition" ||
+            reason === "previous authenticated limits retained after reset transition"
+        ) {
+            return true;
+        }
+        return (
+            backendUsed === "direct" &&
+            this._safeBackend(usage && usage.backend_configured) === "app-server" &&
+            Boolean(reason)
+        );
     },
 
     _authoritativeEmptyLimits: function(item) {

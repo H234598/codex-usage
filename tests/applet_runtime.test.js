@@ -1413,6 +1413,59 @@ test("fresh data from another backend account cannot reuse cached windows", () =
   assert.equal(merged[0].stale, false);
 });
 
+test("fresh data from another backend cannot reuse cached windows", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    backend_configured: "direct",
+    backend_used: "browser",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    backend_configured: "direct",
+    backend_used: "direct",
+    five_hour: { remaining: 70 },
+    weekly: null,
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].backend_used, "direct");
+  assert.equal(merged[0].five_hour.remaining, 70);
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].stale, false);
+});
+
+test("cached data from another backend does not replace a newer in-memory value", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:10:00.000Z",
+    backend_configured: "direct",
+    backend_used: "direct",
+    five_hour: { remaining: 70 },
+    weekly: { remaining: 50 },
+  }];
+  const merged = applet._mergeCachedPayload([{
+    account: "alpha",
+    status: "ok",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    backend_configured: "direct",
+    backend_used: "browser",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].backend_used, "direct");
+  assert.equal(merged[0].five_hour.remaining, 70);
+  assert.equal(merged[0].weekly.remaining, 50);
+});
+
 test("identity-less fresh and cached payloads cannot replace identified values", () => {
   for (const mergeName of ["_mergeFreshPayload", "_mergeCachedPayload"]) {
     const applet = makeApplet();

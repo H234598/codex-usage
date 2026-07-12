@@ -210,6 +210,69 @@ def test_ingest_accepts_matching_initialized_browser_identity(tmp_path):
     assert usage.weekly is not None and usage.weekly.used == 46
 
 
+def test_ingest_marks_browser_provenance_and_does_not_restore_direct_window(
+    tmp_path,
+):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=captured,
+            status=AccountStatus.OK,
+            backend_configured="direct",
+            backend_used="direct",
+            backend_user_id="browser-user",
+            backend_account_id="browser-account",
+            five_hour=LimitWindow(name="5h", remaining=80),
+            weekly=LimitWindow(name="weekly", remaining=60),
+        ),
+        snapshot_dir,
+    )
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "capturedAt": "2026-06-08T04:25:00+02:00",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "browser-user",
+                        "account_id": "browser-account",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 20,
+                                "limit_window_seconds": 18000,
+                            }
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    usage, _path = ingest_and_save(
+        config,
+        "privat",
+        payload,
+        snapshot_dir,
+        require_backend_identity=True,
+    )
+
+    saved = load_current_usage("privat", snapshot_dir.parent / "current")
+    assert usage.backend_configured == "direct"
+    assert usage.backend_used == "browser"
+    assert saved is not None
+    assert saved.backend_used == "browser"
+    assert saved.five_hour is not None and saved.five_hour.remaining == 80
+    assert saved.weekly is None
+
+
 def test_ingest_uses_newer_current_identity_than_old_snapshot(tmp_path):
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     config = AppConfig(accounts=(account,))

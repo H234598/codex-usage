@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.277 - 2026-07-12
+
+### Security
+
+- Das Applet vermischt beim Cache-Merge keine Browser-, Direct- und App-Server-Werte mehr.
+
+## 0.6.276 - 2026-07-12
+
+### Security
+
+- Browser-Bridge-Werte tragen jetzt ihre Browser-Provenienz. Sie werden nicht
+  mehr still mit Direct- oder App-Server-Caches zusammengeführt.
+
 ## 0.6.275 - 2026-07-12
 
 ### Fixed
