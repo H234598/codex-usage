@@ -12,6 +12,7 @@ from typing import Any
 
 from .account_lock import account_lock
 from .config import default_state_dir
+from .extractor import LOCAL_TZ
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow
 from .private_io import (
@@ -739,7 +740,7 @@ def _cached_window_expired(
 
 def _localize_datetime(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
-        return value.astimezone()
+        return value.replace(tzinfo=LOCAL_TZ)
     return value
 
 
@@ -819,7 +820,7 @@ def _optional_datetime(value: Any) -> datetime | None:
 def _snapshot_datetime(value: Any) -> datetime:
     parsed = datetime.fromisoformat(str(value))
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return parsed.astimezone()
+        return parsed.replace(tzinfo=LOCAL_TZ)
     return parsed
 
 
@@ -827,7 +828,7 @@ def _saved_datetime(value: Any) -> datetime:
     if not isinstance(value, datetime):
         raise ValueError("captured_at must be a datetime")
     if value.tzinfo is None or value.utcoffset() is None:
-        return value.astimezone()
+        return value.replace(tzinfo=LOCAL_TZ)
     return value
 
 

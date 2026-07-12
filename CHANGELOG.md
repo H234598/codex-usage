@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.343 - 2026-07-13
+
+### Fixed
+
+- Naive Legacy-Zeitstempel im Cache werden jetzt mit der DST-faehigen lokalen
+  Zeitzone interpretiert und nicht mehr mit dem aktuellen festen Offset.
+
 ## 0.6.342 - 2026-07-13
 
 ### Fixed

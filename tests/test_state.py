@@ -10,6 +10,8 @@ import pytest
 
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow
 from codex_usage.state import (
+    _localize_datetime,
+    _snapshot_datetime,
     backend_provenance_matches,
     backend_provenance_matches_configured,
     expire_reset_windows,
@@ -21,6 +23,15 @@ from codex_usage.state import (
     save_current_usage,
     save_usage_snapshot,
 )
+
+
+def test_naive_state_times_use_dst_aware_local_zone(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr("codex_usage.state.LOCAL_TZ", berlin)
+    expected = datetime(2026, 10, 26, 0, 15, tzinfo=berlin)
+
+    assert _snapshot_datetime("2026-10-26T00:15:00") == expected
+    assert _localize_datetime(datetime(2026, 10, 26, 0, 15)) == expected
 
 
 def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
