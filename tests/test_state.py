@@ -839,6 +839,34 @@ def test_merge_current_with_newer_success_prefers_success_snapshot():
     assert merged == last_success
 
 
+def test_merge_current_with_newer_partial_snapshot_keeps_current_windows():
+    timezone = ZoneInfo("Europe/Berlin")
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 7, 11, 2, 0, tzinfo=timezone),
+        status=AccountStatus.PARTIAL,
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=42),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 7, 11, 3, 0, tzinfo=timezone),
+        status=AccountStatus.PARTIAL,
+        backend_used="browser",
+        weekly=LimitWindow(name="weekly", remaining=61),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.captured_at == last_success.captured_at
+    assert merged.five_hour == current.five_hour
+    assert merged.weekly == last_success.weekly
+    assert merged.values_captured_at == current.captured_at
+    assert merged.stale is True
+
+
 def test_save_current_usage_does_not_overwrite_newer_capture(tmp_path):
     current_dir = tmp_path / "current"
     newer = AccountUsage(

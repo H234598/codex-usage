@@ -395,7 +395,9 @@ def merge_current_with_last_success(
         return current
     try:
         if last_success.captured_at > current.captured_at:
-            return last_success
+            if _has_complete_usage_windows(last_success):
+                return last_success
+            return _merge_newer_partial_usage(current, last_success)
     except TypeError:
         pass
     preserve_missing_window_values = not (
@@ -421,6 +423,40 @@ def merge_current_with_last_success(
         five_hour=five_hour,
         weekly=weekly,
         values_captured_at=last_success.values_captured_at or last_success.captured_at,
+        stale=True,
+    )
+
+
+def _has_complete_usage_windows(usage: AccountUsage) -> bool:
+    return bool(
+        usage.five_hour is not None
+        and usage.weekly is not None
+        and usage.five_hour.has_usage_value
+        and usage.weekly.has_usage_value
+    )
+
+
+def _merge_newer_partial_usage(
+    older: AccountUsage,
+    newer: AccountUsage,
+) -> AccountUsage:
+    five_hour = _merge_window_with_last_success(
+        newer.five_hour,
+        older.five_hour,
+        reference_at=newer.captured_at,
+    )
+    weekly = _merge_window_with_last_success(
+        newer.weekly,
+        older.weekly,
+        reference_at=newer.captured_at,
+    )
+    if five_hour is newer.five_hour and weekly is newer.weekly:
+        return newer
+    return replace(
+        newer,
+        five_hour=five_hour,
+        weekly=weekly,
+        values_captured_at=older.values_captured_at or older.captured_at,
         stale=True,
     )
 

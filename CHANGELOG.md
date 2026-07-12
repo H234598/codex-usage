@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.255 - 2026-07-12
+
+### Fixed
+
+- Ein neuerer partieller Current-/Snapshot-Datensatz verwirft keine älteren,
+  noch gültigen Fenster mehr.
+- Nur vollständige `ok`-Werte ersetzen einen älteren Datensatz vollständig;
+  per Fenster bleibt die Übernahme als stale gekennzeichnet.
+
 ## 0.6.254 - 2026-07-12
 
 ### Security
