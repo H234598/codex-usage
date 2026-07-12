@@ -299,6 +299,33 @@ def test_extract_windows_from_progress_bar_width_html():
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
 
 
+def test_extract_windows_ignores_layout_width_before_progress_bar():
+    body = """
+    <section style="width: 42%;">
+      <h2>5 Stunden Nutzungsgrenze</h2>
+      <div class="layout" style="width: 100%;"></div>
+      <div class="absolute start-0 top-0 h-full transition-[width]
+        bg-[#22c55e] rounded-full" style="width: 97%;"></div>
+      <span>Zurücksetzungen 08.06.2026 06:50</span>
+    </section>
+    <section>
+      <h2>Wöchentliches Nutzungslimit</h2>
+      <div class="layout" style="width: 88%;"></div>
+      <div class="absolute start-0 top-0 h-full transition-[width]
+        bg-[#22c55e] rounded-full" style="width: 55%;"></div>
+      <span>Zurücksetzungen 10.06.2026 05:05</span>
+    </section>
+    """
+
+    five, weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None and five.remaining == 97
+    assert weekly is not None and weekly.remaining == 55
+
+
 def test_extract_windows_skips_label_occurrence_without_values():
     body = """
     5-hour limit

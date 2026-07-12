@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.243 - 2026-07-12
+
+### Fixed
+
+- Der DOM-Parser ignoriert Layout-Breiten vor dem eigentlichen
+  Nutzungsbalken und bevorzugt gerenderte Fortschrittsbalken anhand ihrer
+  Elementklassen.
+- Regression für vollständiges HTML mit konkurrierenden `width`-Attributen
+  ergänzt.
+
 ## 0.6.242 - 2026-07-12
 
 ### Fixed

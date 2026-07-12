@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
@@ -600,15 +601,68 @@ def _extract_used_percent(text: str) -> float | None:
 
 
 def _extract_progress_width_percent(text: str) -> float | None:
-    patterns = (
-        r"\bstyle=[\"'][^\"']*\bwidth\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
-        r"\bwidth\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
+    parser = _ProgressWidthParser()
+    try:
+        parser.feed(text)
+        parser.close()
+    except (AssertionError, RuntimeError, ValueError):
+        pass
+    if parser.candidates:
+        parser.candidates.sort(key=lambda item: (item[0], -item[1]))
+        return parser.candidates[0][2]
+
+    # Keep plain-text and malformed-fragment compatibility for captures that
+    # contain a style fragment but no parseable start tag.
+    matches = list(
+        re.finditer(
+            r"\bwidth\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
+            text,
+            flags=re.IGNORECASE,
+        )
     )
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
-        if match:
-            return _parse_percent(match.group("percent"))
+    if matches:
+        return _parse_percent(matches[-1].group("percent"))
     return None
+
+
+class _ProgressWidthParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.candidates: list[tuple[int, int, float]] = []
+
+    def handle_starttag(self, _tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._record_width(attrs)
+
+    def handle_startendtag(
+        self,
+        _tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        self._record_width(attrs)
+
+    def _record_width(self, attrs: list[tuple[str, str | None]]) -> None:
+        values = {name.casefold(): value or "" for name, value in attrs}
+        match = re.search(
+            r"(?:^|;)\s*width\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
+            values.get("style", ""),
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return
+        percent = _parse_percent(match.group("percent"))
+        if percent is None:
+            return
+        classes = values.get("class", "").casefold()
+        rank = 0
+        if "transition-[width]" in classes:
+            rank -= 4
+        if "rounded-full" in classes:
+            rank -= 2
+        if "bg-[#22c55e]" in classes or "progress" in classes:
+            rank -= 1
+        if values.get("role", "").casefold() == "progressbar":
+            rank -= 2
+        self.candidates.append((rank, len(self.candidates), percent))
 
 
 def _extract_remaining(text: str) -> float | None:
