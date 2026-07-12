@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.238 - 2026-07-12
+
+### Fixed
+
+- Der DOM-Textparser bevorzugt bei mehrfach gerenderten 5h-Labels jetzt die
+  spätere Nutzungszahl.
+- Eine ältere Resetzeit kann dadurch keinen veralteten Verbrauchswert mehr
+  vor einen frischeren Wert setzen.
+- Regression für DOM-Text `3 / 100` alt mit Resetzeit gegenüber `20 / 100`
+  neu ohne Reset ergänzt.
+
 ## 0.6.237 - 2026-07-12
 
 ### Fixed

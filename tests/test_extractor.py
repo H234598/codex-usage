@@ -39,6 +39,28 @@ def test_extract_windows_from_german_dom_text():
     assert weekly.remaining == 690
 
 
+def test_extract_windows_prefers_newer_text_usage_over_older_reset_metadata():
+    body = """
+    5-hour usage limit
+    3 / 100 used
+    Reset 08.06.2026 06:50
+
+    5-hour usage limit
+    20 / 100 used
+    """
+
+    five, _weekly = extract_windows(
+        body_text=body,
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used == 20
+    assert five.limit == 100
+    assert five.remaining == 80
+    assert five.reset_at is None
+
+
 def test_extract_windows_does_not_treat_limit_only_as_usage():
     candidate = JsonCandidate(
         url="https://chatgpt.com/backend-api/other",

@@ -534,8 +534,10 @@ def _extract_text_window(
         if reset_only is None:
             reset_only = window
     if usage_windows:
+        # A later DOM occurrence carries the freshest rendered usage value;
+        # an older reset timestamp must not make stale consumption win.
         usage_windows.sort(
-            key=lambda item: (item[1].reset_at is None, -item[0])
+            key=lambda item: (-item[0], item[1].reset_at is None)
         )
         return usage_windows[0][1]
     return reset_only
