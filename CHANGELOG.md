@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.204 - 2026-07-12
+
+### Security
+
+- Persistierte Bridge-Tokens werden beim Lesen zusätzlich auf eine private
+  Datei mit Modus `0600` und genau einem Hardlink geprüft. Manipulierte
+  Berechtigungen oder Hardlinks werden fail-closed abgewiesen.
+- Regressionen decken beide Dateimanipulationen ab.
+
+### Fixed
+
+- Authentifizierte `partial`-Abrufe werden ebenfalls als aktueller Snapshot
+  persistiert. Dadurch können ein fehlendes oder nicht unterstütztes Limitfenster
+  und ein zwischenzeitlicher Cache-/Dienst-Ausfall keine alten Prozentwerte
+  weiter anzeigen.
+- Browser-Partialdaten ohne authentifizierte Backend-Identität werden weiterhin
+  nicht als dauerhafter Snapshot gespeichert.
+
 ## 0.6.203 - 2026-07-12
 
 ### Security

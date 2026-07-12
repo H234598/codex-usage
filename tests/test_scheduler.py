@@ -255,9 +255,15 @@ def test_configured_app_server_without_auth_does_not_silently_use_browser(monkey
     assert result == [usage]
 
 
-def test_fetch_all_direct_saves_only_successful_snapshots(monkeypatch):
+def test_fetch_all_direct_saves_authenticated_partial_snapshots(monkeypatch):
     accounts = (
         Account(id="ok", label="OK", profile_dir="/tmp/ok", auth_json_path="/tmp/ok-auth.json"),
+        Account(
+            id="partial",
+            label="Partial",
+            profile_dir="/tmp/partial",
+            auth_json_path="/tmp/partial-auth.json",
+        ),
         Account(
             id="broken",
             label="Broken",
@@ -273,6 +279,13 @@ def test_fetch_all_direct_saves_only_successful_snapshots(monkeypatch):
         five_hour=LimitWindow(name="5h", remaining=97),
         weekly=LimitWindow(name="weekly", remaining=55),
     )
+    partial_usage = AccountUsage(
+        account_id="partial",
+        label="Partial",
+        captured_at=captured_at,
+        status=AccountStatus.PARTIAL,
+        error="usage limits not found",
+    )
     error_usage = AccountUsage(
         account_id="broken",
         label="Broken",
@@ -280,7 +293,7 @@ def test_fetch_all_direct_saves_only_successful_snapshots(monkeypatch):
         status=AccountStatus.LOGIN_REQUIRED,
         error="direct auth failed",
     )
-    by_account = {"ok": ok_usage, "broken": error_usage}
+    by_account = {"ok": ok_usage, "partial": partial_usage, "broken": error_usage}
     saved: list[str] = []
 
     def fake_fetch_direct(account, *, auth_json_path=None):
@@ -305,10 +318,10 @@ def test_fetch_all_direct_saves_only_successful_snapshots(monkeypatch):
         save_snapshots=True,
     )
 
-    assert [usage.account_id for usage in usages] == ["ok", "broken"]
-    assert [usage.backend_used for usage in usages] == ["direct", "direct"]
-    assert saved == ["ok"]
-    assert sorted(current) == ["broken", "ok"]
+    assert [usage.account_id for usage in usages] == ["ok", "partial", "broken"]
+    assert [usage.backend_used for usage in usages] == ["direct", "direct", "direct"]
+    assert saved == ["ok", "partial"]
+    assert sorted(current) == ["broken", "ok", "partial"]
 
 
 def test_fetch_all_retains_direct_values_across_future_reset_jump(monkeypatch):

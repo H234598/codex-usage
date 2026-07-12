@@ -97,7 +97,7 @@ def fetch_all(
         for index, usage in enumerate(usages):
             try:
                 save_current_usage(usage)
-                if usage.status == AccountStatus.OK:
+                if _should_persist_snapshot(usage):
                     save_usage_snapshot(usage)
             except Exception as exc:
                 usages[index] = replace(
@@ -515,7 +515,7 @@ def watchdog(
             usage = _apply_watchdog_block(usage, now=evaluation_now)
             try:
                 save_current_usage(usage)
-                if usage.status in {AccountStatus.OK, AccountStatus.BLOCKED}:
+                if _should_persist_snapshot(usage):
                     save_usage_snapshot(usage)
             except Exception as exc:
                 usage = replace(
@@ -615,3 +615,12 @@ def _window_is_exhausted(window: Any) -> bool:
     if window.percent is not None and window.percent <= 0:
         return True
     return False
+
+
+def _should_persist_snapshot(usage: AccountUsage) -> bool:
+    if usage.status in {AccountStatus.OK, AccountStatus.BLOCKED}:
+        return True
+    return (
+        usage.status == AccountStatus.PARTIAL
+        and usage.backend_used in AUTHENTICATED_BACKENDS
+    )

@@ -1410,6 +1410,23 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
     assert token_path.stat().st_mode & 0o077 == 0
 
 
+@pytest.mark.parametrize("mutation", ["permissions", "hardlink"])
+def test_bridge_token_rejects_non_private_token_file(tmp_path, monkeypatch, mutation):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    token_dir = tmp_path / "data" / "codex-usage" / "bridge-tokens"
+    token_dir.mkdir(parents=True)
+    token_path = token_dir / "privat.token"
+    token_path.write_text("A" * 43 + "\n", encoding="utf-8")
+    token_path.chmod(0o600)
+    if mutation == "permissions":
+        token_path.chmod(0o644)
+    else:
+        (token_dir / "other.token").hardlink_to(token_path)
+
+    with pytest.raises(ValueError, match="permissions"):
+        bridge_token_for_account("privat")
+
+
 def test_generated_content_refreshes_page_usage_before_ingest(tmp_path):
     node = shutil.which("node")
     if node is None:

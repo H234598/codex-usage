@@ -433,7 +433,7 @@ def bridge_token_for_account(account_ref: str) -> str:
     path = token_dir / f"{account_ref}.token"
     with private_path_lock(path, label="bridge token lock"):
         if path.exists():
-            text, _ = read_private_text(
+            text, file_stat = read_private_text(
                 path,
                 regular_label="bridge token path",
                 read_label="bridge token",
@@ -441,6 +441,8 @@ def bridge_token_for_account(account_ref: str) -> str:
                 too_large_label="bridge token",
                 invalid_utf8_label="bridge token",
             )
+            if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+                raise ValueError("bridge token path permissions are too broad")
             return _validate_bridge_token(text.strip())
         token = secrets.token_urlsafe(32)
         write_private_output_text(
