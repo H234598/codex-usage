@@ -512,6 +512,7 @@ def test_merge_current_with_last_success_fills_missing_window():
     "window",
     [
         LimitWindow(name="weekly", remaining=55),
+        LimitWindow(name="", remaining=55),
         LimitWindow(
             name="5h",
             remaining=55,
