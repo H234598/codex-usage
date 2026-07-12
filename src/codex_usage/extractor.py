@@ -301,6 +301,12 @@ def _window_from_wham_rate_limit_mapping(
             _pick_number(flat, ("remaining_ratio", "available_ratio", "left_ratio"))
         )
     reset_at = _parse_datetime(obj.get("reset_at"), captured_at)
+    if reset_at is None:
+        reset_after = _pick_number(
+            flat,
+            ("reset_after_seconds", "resetafterseconds", "reset_after", "resetafter"),
+        )
+        reset_at = _relative_reset_at(reset_after, captured_at)
     if used_percent is None and remaining_percent is None and reset_at is None:
         return None
 
@@ -736,6 +742,15 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
             return parsed.replace(tzinfo=captured_at.tzinfo)
         return parsed.astimezone(captured_at.tzinfo)
     except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _relative_reset_at(seconds: float | None, captured_at: datetime) -> datetime | None:
+    if seconds is None or seconds < 0 or not math.isfinite(seconds):
+        return None
+    try:
+        return captured_at + timedelta(seconds=seconds)
+    except (OverflowError, TypeError, ValueError):
         return None
 
 

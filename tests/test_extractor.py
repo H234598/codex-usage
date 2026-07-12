@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from codex_usage.extractor import (
@@ -927,6 +927,36 @@ def test_extract_windows_from_wham_usage_rate_limit_json():
     assert weekly.percent == 55
     assert weekly.reset_at is not None
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
+
+
+def test_extract_windows_from_wham_derives_missing_reset_from_relative_seconds():
+    now = datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin"))
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                        "reset_after_seconds": 13_665,
+                    },
+                    "secondary_window": {
+                        "used_percent": 45,
+                        "limit_window_seconds": 604_800,
+                        "reset_after_seconds": 180_164,
+                    },
+                }
+            },
+        )
+    ]
+
+    five, weekly = extract_windows(body_text="", json_candidates=candidates, now=now)
+
+    assert five is not None
+    assert five.reset_at == now + timedelta(seconds=13_665)
+    assert weekly is not None
+    assert weekly.reset_at == now + timedelta(seconds=180_164)
 
 
 def test_extract_windows_prefers_latest_equal_priority_wham_response():

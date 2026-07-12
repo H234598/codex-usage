@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.212 - 2026-07-12
+
+### Fixed
+
+- WHAM-JSON-Fenster leiten eine fehlende absolute Resetzeit jetzt aus
+  `reset_after_seconds` und dem Erfassungszeitpunkt ab. Damit bleiben Datum,
+  Uhrzeit und Restlaufzeit auch bei relativen Backend-Antworten verfügbar;
+  eine vorhandene absolute `reset_at`-Zeit bleibt vorrangig.
+- Regression für 5h- und Wochenfenster ohne `reset_at` ergänzt.
+
 ## 0.6.211 - 2026-07-12
 
 ### Fixed
