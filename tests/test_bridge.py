@@ -697,6 +697,180 @@ def test_usage_from_ingest_payload_prefers_latest_response_across_sources():
         assert usage.weekly.used == 60
 
 
+def test_usage_from_ingest_payload_rejects_mixed_backend_identities():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    payload = {
+        "apiResponses": [
+            {
+                "source": "page-fetch",
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "user-a",
+                        "account_id": "account-a",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            }
+                        },
+                    }
+                ),
+            },
+            {
+                "source": "content-probe",
+                "url": "https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "user-b",
+                        "account_id": "account-b",
+                        "rate_limit": {
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            }
+                        },
+                    }
+                ),
+            },
+        ]
+    }
+
+    with pytest.raises(ValueError, match="multiple backend accounts"):
+        usage_from_ingest_payload(account, payload)
+
+
+def test_usage_from_ingest_payload_rejects_disjoint_partial_identities():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    payload = {
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "user-a",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            }
+                        },
+                    }
+                ),
+            },
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "account_id": "account-b",
+                        "rate_limit": {
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            }
+                        },
+                    }
+                ),
+            },
+        ]
+    }
+
+    with pytest.raises(ValueError, match="multiple backend accounts"):
+        usage_from_ingest_payload(account, payload)
+
+
+def test_usage_from_ingest_payload_prefers_configured_identity_when_candidates_mix(
+    tmp_path,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "user-a",
+                                "chatgpt_account_id": "account-a",
+                            }
+                        }
+                    ),
+                    "account_id": "account-a",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+    payload = {
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "user-a",
+                        "account_id": "account-a",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            },
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "user-b",
+                        "account_id": "account-b",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 90,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 95,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            },
+        ]
+    }
+
+    usage = usage_from_ingest_payload(account, payload)
+
+    assert usage.status == AccountStatus.OK
+    assert usage.backend_account_id == "account-a"
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is not None and usage.weekly.remaining == 55
+
+
 def test_usage_from_ingest_payload_drops_old_success_after_latest_failed_response():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(

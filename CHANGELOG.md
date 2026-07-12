@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.247 - 2026-07-12
+
+### Fixed
+
+- Die Browser-Bridge kombiniert JSON-Fenster nicht mehr aus verschiedenen
+  Backend-Identitäten.
+- Bei mehreren erkannten Identitäten wird die zur Account-`auth.json` passende
+  Antwort gewählt; ohne eindeutige Zuordnung wird der Import abgelehnt.
+
 ## 0.6.246 - 2026-07-12
 
 ### Fixed
