@@ -347,7 +347,7 @@ def expire_reset_windows(
     expired_names: list[str] = []
     five_hour = usage.five_hour
     weekly = usage.weekly
-    values_captured_at = usage.values_captured_at or usage.captured_at
+    values_captured_at = _values_capture_for_expiry(usage)
     if _cached_window_expired(
         five_hour,
         captured_at=values_captured_at,
@@ -712,6 +712,18 @@ def _cached_window_expired(
         return captured_at + timedelta(seconds=duration) <= reference_at
     except (OverflowError, TypeError, ValueError):
         return True
+
+
+def _values_capture_for_expiry(usage: AccountUsage) -> datetime:
+    candidate = usage.values_captured_at
+    if candidate is None:
+        return usage.captured_at
+    try:
+        if candidate <= usage.captured_at:
+            return candidate
+    except TypeError:
+        return usage.captured_at
+    return usage.captured_at
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
