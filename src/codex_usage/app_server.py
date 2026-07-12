@@ -15,9 +15,11 @@ from typing import Any
 from . import __version__
 from .direct import (
     DirectAuthError,
+    _auth_plan_type_changed,
     auth_identity_changed,
     auth_identity_from_payload,
     auth_metadata_from_payload,
+    auth_plan_type_from_payload,
     read_auth_json_file,
 )
 from .json_utils import loads_strict
@@ -66,6 +68,7 @@ def fetch_account_usage_app_server(
             auth_metadata,
             auth_user_id_before,
             auth_account_id_before,
+            auth_plan_type_before,
         ) = _auth_context(account)
         if not (auth_user_id_before or auth_account_id_before):
             raise DirectAuthError("auth.json has no account identity")
@@ -76,7 +79,13 @@ def fetch_account_usage_app_server(
             timeout_seconds=timeout_seconds,
             codex_command=codex_command,
         )
-        _, auth_metadata, auth_user_id, auth_account_id = _auth_context(account)
+        (
+            _,
+            auth_metadata,
+            auth_user_id,
+            auth_account_id,
+            auth_plan_type,
+        ) = _auth_context(account)
         if auth_identity_changed(
             before_user_id=auth_user_id_before,
             before_account_id=auth_account_id_before,
@@ -84,6 +93,8 @@ def fetch_account_usage_app_server(
             after_account_id=auth_account_id,
         ):
             raise AppServerAuthError("auth.json identity changed during rate-limit request")
+        if _auth_plan_type_changed(auth_plan_type_before, auth_plan_type):
+            raise AppServerAuthError("auth.json plan type changed during rate-limit request")
         five_hour, weekly = _windows_from_response(payload)
         status = (
             AccountStatus.OK
@@ -139,7 +150,13 @@ def fetch_account_usage_app_server(
 
 def _auth_context(
     account: Account,
-) -> tuple[Path, dict[str, datetime | None], str | None, str | None]:
+) -> tuple[
+    Path,
+    dict[str, datetime | None],
+    str | None,
+    str | None,
+    str | None,
+]:
     if not account.auth_json_path:
         raise DirectAuthError("account has no auth_json_path")
     path = Path(account.auth_json_path).expanduser()
@@ -151,7 +168,13 @@ def _auth_context(
     if not isinstance(payload, dict):
         raise DirectAuthError("invalid auth.json structure")
     auth_user_id, auth_account_id = auth_identity_from_payload(payload, path=path)
-    return path, auth_metadata_from_payload(payload), auth_user_id, auth_account_id
+    return (
+        path,
+        auth_metadata_from_payload(payload),
+        auth_user_id,
+        auth_account_id,
+        auth_plan_type_from_payload(payload, path=path),
+    )
 
 
 def _read_rate_limits(

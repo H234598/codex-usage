@@ -20,21 +20,30 @@ from codex_usage.app_server import (
 from codex_usage.models import Account, AccountStatus
 
 
-def _jwt(expiry: datetime) -> str:
+def _jwt(expiry: datetime, *, plan_type: str | None = None) -> str:
+    payload = {"exp": int(expiry.timestamp())}
+    if plan_type is not None:
+        payload["https://api.openai.com/auth"] = {"chatgpt_plan_type": plan_type}
     payload = base64.urlsafe_b64encode(
-        json.dumps({"exp": int(expiry.timestamp())}).encode()
+        json.dumps(payload).encode()
     ).rstrip(b"=")
     return f"e30.{payload.decode()}.signature"
 
 
-def _auth(path: Path, expiry: datetime, account_id: str = "account-test") -> None:
+def _auth(
+    path: Path,
+    expiry: datetime,
+    account_id: str = "account-test",
+    *,
+    plan_type: str | None = None,
+) -> None:
     path.write_text(
         json.dumps(
             {
                 "auth_mode": "chatgpt",
                 "tokens": {
-                    "access_token": _jwt(expiry),
-                    "id_token": _jwt(expiry),
+                    "access_token": _jwt(expiry, plan_type=plan_type),
+                    "id_token": _jwt(expiry, plan_type=plan_type),
                     "refresh_token": "refresh-test",
                     "account_id": account_id,
                 },
@@ -218,6 +227,39 @@ def test_app_server_rejects_auth_identity_changed_during_rate_limit_read(
 
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error == "auth.json identity changed during rate-limit request"
+
+
+def test_app_server_rejects_auth_plan_change_during_rate_limit_read(
+    tmp_path, monkeypatch
+):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    expiry = datetime.now(UTC) + timedelta(hours=1)
+    _auth(auth_path, expiry, account_id="same-account", plan_type="free")
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    def mutate_auth(*_args, **_kwargs):
+        _auth(auth_path, expiry, account_id="same-account", plan_type="enterprise")
+        return {
+            "rateLimits": {
+                "primary": {"usedPercent": 17, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 42, "windowDurationMins": 10080},
+            }
+        }
+
+    monkeypatch.setattr("codex_usage.app_server._read_rate_limits", mutate_auth)
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "auth.json plan type changed during rate-limit request"
 
 
 def test_app_server_requires_configured_auth_json(tmp_path):

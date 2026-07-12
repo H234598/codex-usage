@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.224 - 2026-07-12
+
+### Security
+
+- Der App-Server prüft jetzt neben User- und Account-ID auch den Tariftyp
+  vor und nach dem Rate-Limit-RPC.
+- Ein Wechsel zwischen Tariftypen bei gleicher technischer Identität wird
+  dadurch als `login_required` abgewiesen, statt fremde Limitfenster anzuzeigen.
+- Regression für einen `free`-zu-`enterprise`-Wechsel ergänzt.
+
 ## 0.6.223 - 2026-07-12
 
 ### Security
