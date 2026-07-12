@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.206 - 2026-07-12
+
+### Fixed
+
+- `account delete` entfernt jetzt den accountbezogenen Snapshot, Current-Wert
+  und letzten Bridge-Debug-Dump. Das Browserprofil bleibt weiterhin erhalten,
+  sofern `--delete-profile` nicht gesetzt ist.
+- Beim erneuten Anlegen derselben Account-ID können dadurch keine alten Werte
+  vor dem ersten erfolgreichen Abruf wieder im Applet erscheinen.
+- Regressionen decken die State-Bereinigung und den vollständigen Delete-/Re-Add-
+  Ablauf ab.
+
 ## 0.6.205 - 2026-07-12
 
 ### Security

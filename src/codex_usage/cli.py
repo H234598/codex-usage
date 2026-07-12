@@ -44,6 +44,7 @@ from .service import (
     service_status,
     service_uninstall,
 )
+from .state import remove_account_state
 
 COMMAND_OVERVIEW = """\
 Komplette Command-Line-Usage:
@@ -443,9 +444,10 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
     if args.delete_profile:
         _validate_profile_delete_target(profile_path, force=args.force_delete_profile)
 
+    remove_account_state(account.id)
+    revoke_bridge_token(account.id)
     updated, _ = remove_account(account.id, path=args.config)
     _sync_managed_service(updated, args.config)
-    revoke_bridge_token(account.id)
     if args.delete_profile:
         profile_state = _delete_profile_dir(profile_path, force=args.force_delete_profile)
     print(f"Account geloescht: {account.id} ({account.label})")

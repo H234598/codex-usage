@@ -9,9 +9,9 @@ import pytest
 
 from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_latest_usages
 from codex_usage.cli import main
-from codex_usage.config import AppConfig
+from codex_usage.config import AppConfig, load_config
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
-from codex_usage.state import save_current_usage
+from codex_usage.state import save_current_usage, save_usage_snapshot
 
 
 def test_sync_managed_service_does_not_rebind_another_config(tmp_path, monkeypatch):
@@ -122,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.205\ncodex-usage 0.6.205\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.206\ncodex-usage 0.6.206\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -1176,17 +1176,33 @@ def test_account_delete_revokes_bridge_token_before_same_id_is_readded(
     assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
     capsys.readouterr()
     first = bridge_token_for_account("privat")
+    old_usage = AccountUsage(
+        account_id="privat",
+        label="Old",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=12),
+        weekly=LimitWindow(name="weekly", remaining=34),
+    )
+    save_current_usage(old_usage)
+    save_usage_snapshot(old_usage)
+    debug_dir = tmp_path / "data" / "codex-usage" / "debug"
+    debug_dir.mkdir(parents=True, mode=0o700)
+    (debug_dir / "privat-last-ingest.json").write_text("{}", encoding="utf-8")
 
     assert main(["--config", str(config_path), "account", "delete", "privat"]) == 0
     capsys.readouterr()
 
     token_path = tmp_path / "data" / "codex-usage" / "bridge-tokens" / "privat.token"
     assert not token_path.exists()
+    assert not (tmp_path / "data" / "codex-usage" / "current" / "privat.json").exists()
+    assert not (tmp_path / "data" / "codex-usage" / "snapshots" / "privat.json").exists()
+    assert not (debug_dir / "privat-last-ingest.json").exists()
 
     assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
     capsys.readouterr()
     second = bridge_token_for_account("privat")
     assert second != first
+    assert load_latest_usages(load_config(config_path)) == []
 
 
 def test_account_delete_can_delete_marked_profile(tmp_path, capsys):

@@ -12,6 +12,7 @@ from codex_usage.state import (
     load_current_usage,
     load_usage_snapshot,
     merge_current_with_last_success,
+    remove_account_state,
     save_current_usage,
     save_usage_snapshot,
 )
@@ -21,6 +22,28 @@ def test_load_usage_snapshot_ignores_invalid_json(tmp_path):
     (tmp_path / "privat.json").write_text("{not-json", encoding="utf-8")
 
     assert load_usage_snapshot("privat", tmp_path) is None
+
+
+def test_remove_account_state_deletes_current_snapshot_and_debug(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+        weekly=LimitWindow(name="weekly", remaining=34),
+    )
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+    debug_dir = tmp_path / "data" / "codex-usage" / "debug"
+    debug_dir.mkdir(parents=True, mode=0o700)
+    (debug_dir / "privat-last-ingest.json").write_text("{}", encoding="utf-8")
+
+    remove_account_state("privat")
+
+    assert not (tmp_path / "data" / "codex-usage" / "current" / "privat.json").exists()
+    assert not (tmp_path / "data" / "codex-usage" / "snapshots" / "privat.json").exists()
+    assert not (debug_dir / "privat-last-ingest.json").exists()
 
 
 @pytest.mark.parametrize("malformed_window", ([], "not-an-object", 42))

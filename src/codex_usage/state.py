@@ -93,6 +93,31 @@ def load_current_usage(account_id: str, current_dir: Path | None = None) -> Acco
     return _load_usage(account_id, current_dir or default_current_dir())
 
 
+def remove_account_state(account_id: str) -> None:
+    _validate_snapshot_account_id(account_id)
+    targets = (
+        (default_snapshot_dir(), f"{account_id}.json", "snapshot path"),
+        (default_current_dir(), f"{account_id}.json", "current path"),
+        (
+            default_state_dir() / "debug",
+            f"{account_id}-last-ingest.json",
+            "debug path",
+        ),
+    )
+    for directory, filename, label in targets:
+        assert_no_symlink_ancestors(directory, label=f"{label} directory")
+        if not directory.exists() and not directory.is_symlink():
+            continue
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError(f"{label} directory must be a real directory: {directory}")
+        path = directory / filename
+        with private_path_lock(path, label=f"{label} lock"):
+            if path.is_dir() and not path.is_symlink():
+                raise ValueError(f"{label} must be a regular file: {path}")
+            if path.exists() or path.is_symlink():
+                path.unlink()
+
+
 def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
     try:
         _validate_snapshot_account_id(account_id)
