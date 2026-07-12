@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.195 - 2026-07-12
+
+### Fixed
+
+- Das Cinnamon-Applet markiert gespeicherte (`stale`) Werte jetzt auch in der
+  Statusleiste als Warnung. Alte Werte aus einem partiellen Browser-/Bridge-
+  Abruf können dadurch nicht mehr optisch wie frische Werte wirken.
+- Ein Node-Regressionstest deckt den stale-Panelzustand ab; echte Abruffehler
+  bleiben weiterhin als Fehler markiert.
+
 ## 0.6.194 - 2026-07-12
 
 ### Fixed

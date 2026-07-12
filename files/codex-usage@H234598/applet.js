@@ -2900,6 +2900,9 @@ CodexUsageApplet.prototype = {
             if (["error", "login_required"].indexOf(usage.status) !== -1) {
                 hasError = true;
             }
+            if (usage.stale) {
+                hasWarning = true;
+            }
             for (let j = 0; j < item.slots.length; j++) {
                 let slot = item.slots[j];
                 if (slot.value !== null) {

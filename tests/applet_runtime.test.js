@@ -420,6 +420,22 @@ test("refresh circuit opens after three failures and leaves the last panel intac
   assert.equal(applet._lastGoodPanel.markup, "A 5h 80% / W 60%");
 });
 
+test("stale cached values mark the panel as a warning", () => {
+  const applet = makeApplet();
+  const classes = [];
+  applet._clearPanelClasses = () => { classes.length = 0; };
+  applet.actor = {
+    add_style_class_name: (name) => classes.push(name),
+    remove_style_class_name() {},
+  };
+  applet._usages[0].stale = true;
+
+  applet._updatePanel();
+
+  assert.ok(classes.includes("codex-usage-panel-warning"));
+  assert.equal(classes.includes("codex-usage-panel-error"), false);
+});
+
 test("oversized process output force-stops the child and reports a bounded error", () => {
   const applet = makeApplet();
   let forced = 0;
