@@ -160,22 +160,45 @@ def expire_reset_windows(
     if _window_reset_expired(weekly, reference_at):
         expired_names.append("weekly")
         weekly = None
-    if not expired_names:
+    try:
+        blocked_until_expired = (
+            usage.status == AccountStatus.BLOCKED
+            and usage.blocked_until is not None
+            and usage.blocked_until <= reference_at
+        )
+    except TypeError:
+        blocked_until_expired = False
+    clear_expired_block = (
+        usage.status == AccountStatus.BLOCKED
+        and not five_hour
+        and not weekly
+        and (usage.blocked_until is None or blocked_until_expired)
+    )
+    if not expired_names and not clear_expired_block:
         return usage
 
-    error = usage.error
-    if error is None:
+    if expired_names:
         names = ", ".join(expired_names)
         error = f"cached limit window expired: {names}; refresh required"
+    else:
+        error = "cached blocked state expired; refresh required"
     status = usage.status
+    blocked_until = usage.blocked_until
+    blocked_reason = usage.blocked_reason
     if status == AccountStatus.OK:
         status = AccountStatus.PARTIAL
+    elif clear_expired_block:
+        status = AccountStatus.PARTIAL
+        blocked_until = None
+        blocked_reason = None
     return replace(
         usage,
         five_hour=five_hour,
         weekly=weekly,
         status=status,
         error=error,
+        blocked_until=blocked_until,
+        blocked_reason=blocked_reason,
         stale=True,
     )
 

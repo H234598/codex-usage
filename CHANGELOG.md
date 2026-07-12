@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.220 - 2026-07-12
+
+### Fixed
+
+- Abgelaufene `BLOCKED`-Cachezustände werden in `latest` nicht mehr als aktive
+  Sperre angezeigt. Wenn alle zugehörigen Resetfenster und die Freigabezeit
+  abgelaufen sind, wird der Account als veraltet/`partial` markiert und beim
+  nächsten Poll erneut geprüft.
+- Die alte `blocked_until`-Zeit und der alte Sperrgrund werden dabei entfernt,
+  damit keine abgelaufene Sperre weiter in CLI oder Cinnamon erscheint.
+- Regression für einen vollständig abgelaufenen blockierten Snapshot ergänzt.
+
 ## 0.6.219 - 2026-07-12
 
 ### Fixed

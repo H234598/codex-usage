@@ -47,6 +47,39 @@ def test_expire_reset_windows_drops_only_expired_cached_values():
     assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
+def test_expire_reset_windows_clears_expired_blocked_state():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=reference_at - timedelta(minutes=1),
+        status=AccountStatus.BLOCKED,
+        error="usage limit reached: 5h, weekly",
+        blocked_until=reference_at - timedelta(seconds=1),
+        blocked_reason="usage limit reached: 5h, weekly",
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=0,
+            reset_at=reference_at - timedelta(minutes=2),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=0,
+            reset_at=reference_at - timedelta(minutes=1),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.blocked_until is None
+    assert expired.blocked_reason is None
+    assert expired.error == "cached limit window expired: 5h, weekly; refresh required"
+    assert expired.five_hour is None
+    assert expired.weekly is None
+    assert expired.stale is True
+
+
 def test_load_usage_snapshot_ignores_invalid_json(tmp_path):
     (tmp_path / "privat.json").write_text("{not-json", encoding="utf-8")
 
