@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.194 - 2026-07-12
+
+### Fixed
+
+- Direkte Wham-Abrufe gruppieren ein unbenutztes Fenster jetzt anhand seiner
+  festen Fensterdauer statt anhand des sekündlich sinkenden `reset_after`-Werts.
+- Vorübergehend widersprüchliche 3er-Stichproben werden bis zu zweimal erneut
+  gelesen, bevor der Abruf als Fehler markiert und ein alter Snapshot genutzt
+  wird.
+- Regressionstests decken dynamische Reset-Countdowns und eine kurzlebige
+  Reset-Regression mit anschließend stabilem aktuellem Wert ab.
+
 ## 0.6.193 - 2026-07-12
 
 ### Fixed

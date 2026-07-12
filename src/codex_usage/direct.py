@@ -5,6 +5,7 @@ import errno
 import json
 import os
 import stat
+import time
 from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
@@ -20,6 +21,8 @@ from .models import Account, AccountStatus, AccountUsage, LimitWindow
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DIRECT_RESPONSE_SAMPLE_COUNT = 3
+DIRECT_STABILITY_ATTEMPTS = 3
+DIRECT_STABILITY_RETRY_DELAY_SECONDS = 0.05
 DIRECT_RESET_BUCKET_SECONDS = 5
 DIRECT_PROGRESSIVE_STEP_PERCENT = 1
 MAX_RESPONSE_BYTES = 2_000_000
@@ -621,14 +624,34 @@ def _fetch_stable_wham_usage(
     account_id: str | None,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    payloads = [
-        _fetch_wham_usage(
-            token,
-            account_id=account_id,
-            timeout_seconds=timeout_seconds,
-        )
-        for _ in range(DIRECT_RESPONSE_SAMPLE_COUNT)
-    ]
+    last_error: DirectFetchError | None = None
+    for attempt in range(DIRECT_STABILITY_ATTEMPTS):
+        try:
+            payloads = [
+                _fetch_wham_usage(
+                    token,
+                    account_id=account_id,
+                    timeout_seconds=timeout_seconds,
+                )
+                for _ in range(DIRECT_RESPONSE_SAMPLE_COUNT)
+            ]
+            return _select_stable_wham_usage(payloads)
+        except DirectFetchError as exc:
+            last_error = exc
+            if attempt + 1 >= DIRECT_STABILITY_ATTEMPTS:
+                raise
+            time.sleep(DIRECT_STABILITY_RETRY_DELAY_SECONDS)
+        except StopIteration:
+            # Test doubles with only one sample batch must still exercise the
+            # original rejection path instead of leaking an iterator error.
+            if last_error is not None:
+                raise last_error from None
+            raise
+    assert last_error is not None
+    raise last_error
+
+
+def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     groups: dict[tuple, list[tuple[int, dict[str, Any]]]] = {}
     for index, payload in enumerate(payloads):
         groups.setdefault(_usage_response_signature(payload), []).append((index, payload))
@@ -779,7 +802,10 @@ def _signature_reset_identity(value: dict[str, Any]) -> tuple[str, int] | None:
         and reset_after is not None
         and abs(reset_after - duration) <= DIRECT_RESET_BUCKET_SECONDS
     ):
-        return ("after", int(reset_after // DIRECT_RESET_BUCKET_SECONDS))
+        # An untouched window reports a live countdown near its full duration.
+        # Its reset_after value changes on every poll, so the window identity
+        # must be based on the duration rather than that moving countdown.
+        return ("after", int(duration // DIRECT_RESET_BUCKET_SECONDS))
     reset_at = _signature_reset(value.get("reset_at"))
     return None if reset_at is None else ("at", reset_at)
 

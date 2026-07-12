@@ -291,6 +291,39 @@ def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):
     assert payload["rate_limit"]["secondary_window"]["used_percent"] == 51
 
 
+def test_fetch_stable_wham_usage_tolerates_decreasing_relative_reset_after(
+    monkeypatch,
+):
+    responses = iter(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 1,
+                    "limit_window_seconds": 18000,
+                    "reset_after_seconds": reset_after,
+                    "reset_at": 1783829134,
+                },
+                "secondary_window": {
+                    "used_percent": 51,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 469832,
+                    "reset_at": 1784280925,
+                },
+            }
+        }
+        for reset_after in (18000, 17999, 17998)
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 1
+    assert payload["rate_limit"]["secondary_window"]["used_percent"] == 51
+
+
 def test_fetch_stable_wham_usage_keeps_latest_monotonic_progress(monkeypatch):
     def response(used: int) -> dict:
         return {
@@ -367,6 +400,45 @@ def test_fetch_stable_wham_usage_rejects_reset_identity_regression(monkeypatch):
 
     with pytest.raises(DirectFetchError, match="inconsistent"):
         _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
+def test_fetch_stable_wham_usage_retries_transient_reset_regression(monkeypatch):
+    def response(used: int, reset_at: int) -> dict:
+        return {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": reset_at,
+                },
+                "secondary_window": {
+                    "used_percent": 51 if used > 1 else 1,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784280925 if used > 1 else 1784281140,
+                },
+            }
+        }
+
+    responses = iter(
+        (
+            response(51, 1784280925),
+            response(51, 1784280925),
+            response(1, 1784281140),
+            response(1, 1784281140),
+            response(1, 1784281140),
+            response(1, 1784281140),
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+    monkeypatch.setattr("codex_usage.direct.time.sleep", lambda _seconds: None)
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 1
+    assert payload["rate_limit"]["secondary_window"]["used_percent"] == 1
 
 
 def test_fetch_stable_wham_usage_rejects_usage_regression_with_fixed_reset(
