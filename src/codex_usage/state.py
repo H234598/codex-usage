@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -76,19 +78,34 @@ def load_state_generation(
     directory: Path | None = None,
 ) -> int:
     _validate_snapshot_account_id(account_id)
+    with account_state_lock(account_id):
+        return _load_state_generation_unlocked(account_id, directory)
+
+
+@contextmanager
+def account_state_lock(account_id: str) -> Iterator[None]:
+    _validate_snapshot_account_id(account_id)
+    with account_lock(account_id):
+        yield
+
+
+def _load_state_generation_unlocked(
+    account_id: str,
+    directory: Path | None = None,
+) -> int:
+    _validate_snapshot_account_id(account_id)
     generation_path = _state_generation_path(
         account_id,
         directory or default_snapshot_dir(),
     )
-    with account_lock(account_id):
-        return _read_state_generation(generation_path, account_id)
+    return _read_state_generation(generation_path, account_id)
 
 
 def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -> Path:
     _validate_snapshot_account_id(usage.account_id)
     directory = snapshot_dir or default_snapshot_dir()
     assert_no_symlink_ancestors(directory, label="snapshot directory")
-    with account_lock(usage.account_id):
+    with account_state_lock(usage.account_id):
         return _save_usage(usage, directory, preserve_existing_values=True)
 
 
@@ -96,7 +113,7 @@ def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> 
     _validate_snapshot_account_id(usage.account_id)
     directory = current_dir or default_current_dir()
     assert_no_symlink_ancestors(directory, label="snapshot directory")
-    with account_lock(usage.account_id):
+    with account_state_lock(usage.account_id):
         return _save_usage(usage, directory)
 
 
@@ -161,7 +178,7 @@ def load_current_usage(account_id: str, current_dir: Path | None = None) -> Acco
 
 def remove_account_state(account_id: str) -> None:
     _validate_snapshot_account_id(account_id)
-    with account_lock(account_id):
+    with account_state_lock(account_id):
         targets = (
             (default_snapshot_dir(), f"{account_id}.json", "snapshot path"),
             (default_current_dir(), f"{account_id}.json", "current path"),

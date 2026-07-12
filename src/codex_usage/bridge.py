@@ -42,6 +42,8 @@ from .private_io import (
 )
 from .render import render_table
 from .state import (
+    _load_state_generation_unlocked,
+    account_state_lock,
     backend_identity_matches,
     backend_provenance_matches_configured,
     expire_reset_windows,
@@ -238,67 +240,81 @@ def save_bridge_debug_payload(
     account_id: str,
     payload: dict[str, Any],
     snapshot_dir: Path | None = None,
+    *,
+    state_generation: int | None = None,
 ) -> Path:
-    directory = (snapshot_dir.parent if snapshot_dir else default_state_dir()) / "debug"
-    assert_no_symlink_ancestors(directory, label="debug directory")
-    if directory.is_symlink():
-        raise ValueError(f"debug directory must not be a symlink: {directory}")
-    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if directory.is_symlink() or not directory.is_dir():
-        raise ValueError(f"debug directory is not a real directory: {directory}")
-    try:
-        directory.chmod(0o700)
-    except OSError:
-        pass
-    path = directory / f"{_safe_filename(account_id)}-last-ingest.json"
-    if path.is_symlink() or (path.exists() and not path.is_file()):
-        raise ValueError(f"debug path must be a regular file: {path}")
-    debug_payload = {
-        field: payload[field] for field in DEBUG_PAYLOAD_FIELDS if field in payload
-    }
-    if "url" in debug_payload:
-        debug_payload["url"] = _redact_url(str(debug_payload.get("url") or ""))
-    for field in DEBUG_TEXT_FIELDS:
-        value = debug_payload.get(field)
-        if isinstance(value, str):
-            debug_payload[field] = _sanitize_debug_text(value)
-        elif field in debug_payload:
-            debug_payload.pop(field, None)
-    for field in DEBUG_STRING_FIELDS:
-        value = debug_payload.get(field)
-        if isinstance(value, str):
-            debug_payload[field] = _sanitize_debug_text(value)
-        elif field in debug_payload:
-            debug_payload.pop(field, None)
-    for field in DEBUG_NUMBER_FIELDS:
-        if field in debug_payload:
-            value = _sanitize_debug_number(debug_payload[field])
-            if value is None:
+    safe_account_id = _safe_filename(account_id)
+    if not safe_account_id:
+        raise ValueError("account id must produce a safe debug filename")
+    if state_generation is None:
+        state_generation = load_state_generation(safe_account_id, snapshot_dir)
+    with account_state_lock(safe_account_id):
+        current_generation = _load_state_generation_unlocked(
+            safe_account_id,
+            snapshot_dir,
+        )
+        directory = (snapshot_dir.parent if snapshot_dir else default_state_dir()) / "debug"
+        assert_no_symlink_ancestors(directory, label="debug directory")
+        if directory.is_symlink():
+            raise ValueError(f"debug directory must not be a symlink: {directory}")
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError(f"debug directory is not a real directory: {directory}")
+        try:
+            directory.chmod(0o700)
+        except OSError:
+            pass
+        path = directory / f"{safe_account_id}-last-ingest.json"
+        if state_generation != current_generation:
+            return path
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"debug path must be a regular file: {path}")
+        debug_payload = {
+            field: payload[field] for field in DEBUG_PAYLOAD_FIELDS if field in payload
+        }
+        if "url" in debug_payload:
+            debug_payload["url"] = _redact_url(str(debug_payload.get("url") or ""))
+        for field in DEBUG_TEXT_FIELDS:
+            value = debug_payload.get(field)
+            if isinstance(value, str):
+                debug_payload[field] = _sanitize_debug_text(value)
+            elif field in debug_payload:
                 debug_payload.pop(field, None)
-            else:
-                debug_payload[field] = value
-    field_lengths = _sanitize_debug_lengths(debug_payload.get("fieldLengths"))
-    if field_lengths:
-        debug_payload["fieldLengths"] = field_lengths
-    else:
-        debug_payload.pop("fieldLengths", None)
-    truncated_fields = _sanitize_debug_flags(debug_payload.get("truncatedFields"))
-    if truncated_fields:
-        debug_payload["truncatedFields"] = truncated_fields
-    else:
-        debug_payload.pop("truncatedFields", None)
-    for field in ("apiResponses", "api_responses"):
-        api_responses = debug_payload.get(field)
-        if isinstance(api_responses, list):
-            debug_payload[field] = _sanitize_api_responses(api_responses)
+        for field in DEBUG_STRING_FIELDS:
+            value = debug_payload.get(field)
+            if isinstance(value, str):
+                debug_payload[field] = _sanitize_debug_text(value)
+            elif field in debug_payload:
+                debug_payload.pop(field, None)
+        for field in DEBUG_NUMBER_FIELDS:
+            if field in debug_payload:
+                value = _sanitize_debug_number(debug_payload[field])
+                if value is None:
+                    debug_payload.pop(field, None)
+                else:
+                    debug_payload[field] = value
+        field_lengths = _sanitize_debug_lengths(debug_payload.get("fieldLengths"))
+        if field_lengths:
+            debug_payload["fieldLengths"] = field_lengths
         else:
-            debug_payload.pop(field, None)
-    write_private_output_text(
-        path,
-        json.dumps(debug_payload, ensure_ascii=False, indent=2, allow_nan=False),
-        label="debug path",
-    )
-    return path
+            debug_payload.pop("fieldLengths", None)
+        truncated_fields = _sanitize_debug_flags(debug_payload.get("truncatedFields"))
+        if truncated_fields:
+            debug_payload["truncatedFields"] = truncated_fields
+        else:
+            debug_payload.pop("truncatedFields", None)
+        for field in ("apiResponses", "api_responses"):
+            api_responses = debug_payload.get(field)
+            if isinstance(api_responses, list):
+                debug_payload[field] = _sanitize_api_responses(api_responses)
+            else:
+                debug_payload.pop(field, None)
+        write_private_output_text(
+            path,
+            json.dumps(debug_payload, ensure_ascii=False, indent=2, allow_nan=False),
+            label="debug path",
+        )
+        return path
 
 
 def _combined_payload_text(payload: dict[str, Any]) -> str:
@@ -963,7 +979,12 @@ def _make_handler(
             if usage.error:
                 print(f"Diagnose {usage.account_id}: {usage.error}", flush=True)
                 try:
-                    debug_path = save_bridge_debug_payload(usage.account_id, payload, snapshot_dir)
+                    debug_path = save_bridge_debug_payload(
+                        usage.account_id,
+                        payload,
+                        snapshot_dir,
+                        state_generation=usage.state_generation,
+                    )
                 except Exception as exc:
                     _log_bridge_error("Bridge debug dump failed", exc)
                 else:

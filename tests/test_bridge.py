@@ -26,7 +26,13 @@ from codex_usage.bridge import (
 )
 from codex_usage.config import AppConfig, add_or_update_account, save_config
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
-from codex_usage.state import load_usage_snapshot, save_current_usage, save_usage_snapshot
+from codex_usage.state import (
+    load_state_generation,
+    load_usage_snapshot,
+    remove_account_state,
+    save_current_usage,
+    save_usage_snapshot,
+)
 
 
 def _jwt_with_claims(claims: dict) -> str:
@@ -1433,6 +1439,29 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
     assert "user-secret" not in payload["apiResponses"][0]["bodyText"]
     assert "account-secret" not in payload["apiResponses"][0]["bodyText"]
     assert path.stat().st_mode & 0o077 == 0
+
+
+def test_stale_bridge_debug_payload_cannot_recreate_removed_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    payload = {"bodyText": "stale debug"}
+    generation = load_state_generation("race")
+    save_bridge_debug_payload("race", payload, state_generation=generation)
+
+    remove_account_state("race")
+
+    stale_path = save_bridge_debug_payload(
+        "race",
+        payload,
+        state_generation=generation,
+    )
+    assert not stale_path.exists()
+
+    fresh_path = save_bridge_debug_payload(
+        "race",
+        payload,
+        state_generation=load_state_generation("race"),
+    )
+    assert fresh_path.exists()
 
 
 def test_save_bridge_debug_payload_rejects_symlink_debug_directory(tmp_path):

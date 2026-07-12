@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.252 - 2026-07-12
+
+### Fixed
+
+- Bridge-Debug-Dumps werden bei Account-Resets jetzt ebenfalls durch
+  Account-Lock und State-Generation geschützt.
+- Ein verspäteter Fehler-Callback kann dadurch keinen alten, potenziell
+  sensiblen Debug-State nach einer Account-Löschung wiederherstellen.
+
 ## 0.6.251 - 2026-07-12
 
 ### Fixed
