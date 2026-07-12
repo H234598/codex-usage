@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.232 - 2026-07-12
+
+### Fixed
+
+- Relative Resetzeiten werden auch bei bereits laufenden Countdowns erkannt,
+  solange kein absolutes `reset_at` vorhanden ist.
+- Normale Countdown-Fortschreibung kann dadurch keinen alten Snapshotwert als
+  Reset-Transition reaktivieren.
+- Regression für ein laufendes relatives 5h-Fenster ergänzt.
+
 ## 0.6.231 - 2026-07-12
 
 ### Fixed

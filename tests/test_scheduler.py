@@ -838,6 +838,47 @@ def test_authenticated_stabilization_ignores_relative_reset_time_drift():
     assert result.stale is False
 
 
+def test_authenticated_stabilization_ignores_a_running_relative_countdown():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous_captured = datetime(2026, 7, 12, 4, 10, tzinfo=timezone)
+    current_captured = datetime(2026, 7, 12, 4, 13, tzinfo=timezone)
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=previous_captured,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=98,
+            reset_at=previous_captured + timedelta(seconds=17_000),
+            raw=(
+                '"limit_window_seconds": 18000, "reset_after_seconds": 17000'
+            ),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=current_captured,
+        five_hour=replace(
+            previous.five_hour,
+            remaining=99,
+            reset_at=current_captured + timedelta(seconds=17_000),
+            raw=(
+                '"limit_window_seconds": 18000, "reset_after_seconds": 17000'
+            ),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=360)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.remaining == 99
+    assert result.stale is False
+
+
 def test_authenticated_stabilization_rejects_a_different_window_duration():
     timezone = ZoneInfo("Europe/Berlin")
     previous = AccountUsage(
