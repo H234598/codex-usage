@@ -55,6 +55,37 @@ def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(
     assert _ambiguous_direct_accounts(accounts) == frozenset({"privat", "work"})
 
 
+def test_ambiguous_direct_accounts_allows_local_aliases_of_same_account(monkeypatch):
+    accounts = [
+        Account(
+            id="primary",
+            label="Primary",
+            profile_dir="/tmp/primary",
+            auth_json_path="/tmp/primary-auth.json",
+        ),
+        Account(
+            id="alias",
+            label="Alias",
+            profile_dir="/tmp/alias",
+            auth_json_path="/tmp/alias-auth.json",
+        ),
+    ]
+    identities = {
+        "primary": ("shared-user", "same-account"),
+        "alias": ("shared-user", "same-account"),
+    }
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda account: identities[account.id],
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_plan_type_for_account",
+        lambda _account: "enterprise",
+    )
+
+    assert _ambiguous_direct_accounts(accounts) == frozenset()
+
+
 def test_ambiguous_direct_accounts_allows_shared_users_with_distinct_plans(
     monkeypatch,
 ):

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.240 - 2026-07-12
+
+### Fixed
+
+- Die Mehrkonto-Ambiguitätsprüfung vergleicht jetzt die echte Backend-
+  `account_id` statt versehentlich die lokale Konfigurations-ID.
+- Zwei lokale Aliase desselben Backend-Accounts werden dadurch nicht mehr
+  fälschlich als verschiedene Accounts behandelt.
+- Regression für lokale Aliase mit identischer Backend-Identität ergänzt.
+
 ## 0.6.239 - 2026-07-12
 
 ### Fixed

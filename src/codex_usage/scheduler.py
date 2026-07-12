@@ -131,7 +131,7 @@ def _serial_fetch_required(
 
 
 def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
-    identities: list[tuple[str, str, str | None]] = []
+    identities: list[tuple[str, str, str, str | None]] = []
     for account in accounts:
         if not account.auth_json_path:
             continue
@@ -142,11 +142,13 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
             continue
         if not user_id or not account_id:
             continue
-        identities.append((account.id, user_id, plan_type))
+        identities.append((account.id, user_id, account_id, plan_type))
     ambiguous: set[str] = set()
-    for index, (account_id, user_id, plan_type) in enumerate(identities):
-        for other_id, other_user_id, other_plan_type in identities[index + 1 :]:
-            if user_id != other_user_id or account_id == other_id:
+    for index, (local_id, user_id, account_id, plan_type) in enumerate(identities):
+        for other_local_id, other_user_id, other_account_id, other_plan_type in identities[
+            index + 1 :
+        ]:
+            if user_id != other_user_id or account_id == other_account_id:
                 continue
             plans_are_ambiguous = (
                 plan_type is None
@@ -154,7 +156,7 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
                 or plan_type.casefold() == other_plan_type.casefold()
             )
             if plans_are_ambiguous:
-                ambiguous.update((account_id, other_id))
+                ambiguous.update((local_id, other_local_id))
     return frozenset(ambiguous)
 
 
