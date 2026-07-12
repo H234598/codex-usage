@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.275 - 2026-07-12
+
+### Fixed
+
+- Bridge-Ingest verwirft verspätete Payloads jetzt vor dem Speichern, wenn
+  bereits ein neuerer Current- oder Snapshot-Zustand bekannt ist.
+
 ## 0.6.274 - 2026-07-12
 
 ### Security

@@ -28,6 +28,7 @@ from codex_usage.bridge import (
 from codex_usage.config import AppConfig, add_or_update_account, save_config
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.state import (
+    load_current_usage,
     load_state_generation,
     load_usage_snapshot,
     remove_account_state,
@@ -273,6 +274,77 @@ def test_ingest_uses_newer_current_identity_than_old_snapshot(tmp_path):
     )
 
     assert usage.backend_account_id == "new-account"
+
+
+def test_ingest_rejects_payload_older_than_newer_current_state(tmp_path):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    timezone = ZoneInfo("Europe/Berlin")
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=timezone),
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+            backend_user_id="browser-user",
+            backend_account_id="browser-account",
+        ),
+        snapshot_dir,
+    )
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 40, tzinfo=timezone),
+            five_hour=LimitWindow(name="5h", remaining=80),
+            weekly=LimitWindow(name="weekly", remaining=40),
+            backend_user_id="browser-user",
+            backend_account_id="browser-account",
+        ),
+        snapshot_dir.parent / "current",
+    )
+
+    with pytest.raises(ValueError, match="older than known state"):
+        ingest_and_save(
+            config,
+            "privat",
+            {
+                "capturedAt": "2026-06-08T04:30:00+02:00",
+                "apiResponses": [
+                    {
+                        "url": "https://chatgpt.com/backend-api/wham/usage",
+                        "status": 200,
+                        "contentType": "application/json",
+                        "bodyText": json.dumps(
+                            {
+                                "user_id": "browser-user",
+                                "account_id": "browser-account",
+                                "rate_limit": {
+                                    "primary_window": {
+                                        "used_percent": 10,
+                                        "limit_window_seconds": 18000,
+                                    },
+                                    "secondary_window": {
+                                        "used_percent": 20,
+                                        "limit_window_seconds": 604800,
+                                    },
+                                },
+                            }
+                        ),
+                    }
+                ],
+            },
+            snapshot_dir,
+        )
+
+    stored_snapshot = load_usage_snapshot("privat", snapshot_dir)
+    stored_current = load_current_usage("privat", snapshot_dir.parent / "current")
+    assert stored_snapshot is not None
+    assert stored_current is not None
+    assert stored_snapshot.captured_at == datetime(2026, 6, 8, 4, 20, tzinfo=timezone)
+    assert stored_current.captured_at == datetime(2026, 6, 8, 4, 40, tzinfo=timezone)
 
 
 def test_bridge_revalidates_auth_identity_before_saving(tmp_path, monkeypatch):

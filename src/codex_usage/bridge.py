@@ -801,6 +801,12 @@ def ingest_and_save(
         and not _usage_matches_current_auth(account, usage)
     ):
         raise ValueError("bridge payload belongs to a different backend account")
+    if known is not None:
+        try:
+            if usage.captured_at < known.captured_at:
+                raise ValueError("bridge payload is older than known state")
+        except TypeError:
+            pass
     path = save_usage_snapshot(usage, snapshot_dir)
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     save_current_usage(usage, current_dir)
