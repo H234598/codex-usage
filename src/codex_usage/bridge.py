@@ -819,7 +819,8 @@ def ingest_and_save(
     if known is not None and _browser_payload_is_covered_by_authenticated_state(
         config,
         usage,
-        known,
+        snapshot,
+        current,
     ):
         raise ValueError("browser payload cannot replace current authenticated state")
     path = save_usage_snapshot(usage, snapshot_dir)
@@ -831,24 +832,31 @@ def ingest_and_save(
 def _browser_payload_is_covered_by_authenticated_state(
     config: AppConfig,
     browser_usage: AccountUsage,
-    known_usage: AccountUsage,
+    *known_usages: AccountUsage | None,
 ) -> bool:
     if browser_usage.backend_used != "browser":
         return False
-    if known_usage.backend_used not in {"direct", "app-server"}:
-        return False
-    if known_usage.status not in {
-        AccountStatus.OK,
-        AccountStatus.PARTIAL,
-        AccountStatus.BLOCKED,
-    }:
-        return False
-    try:
-        age = (browser_usage.captured_at - known_usage.captured_at).total_seconds()
-    except (AttributeError, TypeError):
-        return False
     freshness_window = max(int(config.interval_seconds), 60) + AUTHENTICATED_BRIDGE_GRACE_SECONDS
-    return 0 <= age <= freshness_window
+    for known_usage in known_usages:
+        if known_usage is None:
+            continue
+        if known_usage.backend_used not in {"direct", "app-server"}:
+            continue
+        if known_usage.status not in {
+            AccountStatus.OK,
+            AccountStatus.PARTIAL,
+            AccountStatus.BLOCKED,
+        }:
+            continue
+        if not backend_identity_matches(browser_usage, known_usage):
+            continue
+        try:
+            age = (browser_usage.captured_at - known_usage.captured_at).total_seconds()
+        except (AttributeError, TypeError):
+            continue
+        if 0 <= age <= freshness_window:
+            return True
+    return False
 
 
 def _newest_known_usage(

@@ -333,6 +333,89 @@ def test_ingest_rejects_browser_payload_over_recent_authenticated_current(tmp_pa
     assert saved.weekly is not None and saved.weekly.remaining == 60
 
 
+def test_ingest_rejects_browser_payload_when_current_error_has_recent_auth_snapshot(
+    tmp_path,
+):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=captured,
+            status=AccountStatus.OK,
+            backend_configured="direct",
+            backend_used="direct",
+            backend_user_id="browser-user",
+            backend_account_id="browser-account",
+            five_hour=LimitWindow(name="5h", remaining=80),
+            weekly=LimitWindow(name="weekly", remaining=60),
+        ),
+        snapshot_dir,
+    )
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+            status=AccountStatus.ERROR,
+            error="direct fetch failed",
+            backend_configured="direct",
+            backend_used="direct",
+            backend_user_id="browser-user",
+            backend_account_id="browser-account",
+        ),
+        snapshot_dir.parent / "current",
+    )
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "capturedAt": "2026-06-08T04:22:00+02:00",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "browser-user",
+                        "account_id": "browser-account",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 35,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 55,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="current authenticated state"):
+        ingest_and_save(
+            config,
+            "privat",
+            payload,
+            snapshot_dir,
+            require_backend_identity=True,
+        )
+
+    saved_snapshot = load_usage_snapshot("privat", snapshot_dir)
+    saved_current = load_current_usage("privat", snapshot_dir.parent / "current")
+    assert saved_snapshot is not None
+    assert saved_snapshot.backend_used == "direct"
+    assert saved_snapshot.five_hour is not None
+    assert saved_snapshot.five_hour.remaining == 80
+    assert saved_current is not None
+    assert saved_current.status == AccountStatus.ERROR
+
+
 def test_ingest_uses_newer_current_identity_than_old_snapshot(tmp_path):
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     config = AppConfig(accounts=(account,))
