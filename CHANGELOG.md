@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.168 - 2026-07-12
+
+### Fixed
+
+- `additional_rate_limits` werden nicht mehr als 5h-/Wochenwerte verwendet,
+  wenn das Hauptkonto-Fenster fehlt oder eine nicht unterstützte Dauer besitzt.
+- Modellbezogene Zusatzlimits können dadurch kein Hauptkonto-Limit mehr
+  vortäuschen.
+- Regression für ein 30-Tage-Hauptfenster mit GPT-5.3-Codex-Spark-Zusatzlimits
+  ergänzt.
+
 ## 0.6.167 - 2026-07-12
 
 ### Fixed

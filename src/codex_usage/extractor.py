@@ -145,7 +145,13 @@ def _extract_json_window(
     usage_windows: list[tuple[int, int, bool, int, LimitWindow]] = []
     for candidate_index, candidate in enumerate(candidates):
         candidate_priority = _wham_candidate_priority(candidate.url)
+        blocks_additional = (
+            candidate_priority == 0
+            and _main_wham_target_blocks_additional(candidate.payload, target)
+        )
         for path, obj in _walk_dicts(candidate.payload):
+            if blocks_additional and "additional_rate_limits" in path.lower():
+                continue
             obj_preview = _json_preview(obj)
             wham_window = _window_from_wham_rate_limit_mapping(
                 obj,
@@ -215,6 +221,21 @@ def _wham_candidate_priority(url: str) -> int:
     if path.startswith("/backend-api/wham/usage/"):
         return 1
     return 2
+
+
+def _main_wham_target_blocks_additional(payload: Any, target: str) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    rate_limit = payload.get("rate_limit")
+    if not isinstance(rate_limit, dict):
+        return False
+    expected_key = "primary_window" if target == "five_hour" else "secondary_window"
+    window = rate_limit.get(expected_key)
+    if not isinstance(window, dict):
+        return True
+    duration = _coerce_number(window.get("limit_window_seconds"))
+    expected_duration = 18_000 if target == "five_hour" else 604_800
+    return duration != expected_duration
 
 
 def _wham_window_path_priority(path: str, target: str) -> int:

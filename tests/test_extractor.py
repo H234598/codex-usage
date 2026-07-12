@@ -947,6 +947,43 @@ def test_extract_windows_prefers_main_rate_limit_over_additional_limits():
     assert weekly.remaining == 96
 
 
+def test_extract_windows_does_not_use_additional_limits_for_unsupported_main_windows():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "additional_rate_limits": [
+                    {
+                        "limit_name": "GPT-5.3-Codex-Spark",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 0,
+                                "limit_window_seconds": 18_000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 0,
+                                "limit_window_seconds": 604_800,
+                            },
+                        },
+                    }
+                ],
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 5,
+                        "limit_window_seconds": 2_592_000,
+                    },
+                    "secondary_window": None,
+                },
+            },
+        )
+    ]
+
+    five, weekly = extract_windows(body_text="", json_candidates=candidates)
+
+    assert five is None
+    assert weekly is None
+
+
 def test_extract_windows_from_wham_numeric_string_reset_timestamps():
     candidates = [
         JsonCandidate(
