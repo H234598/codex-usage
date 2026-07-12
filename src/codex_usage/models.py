@@ -69,6 +69,9 @@ class AccountUsage:
     fallback_reason: str | None = None
     values_captured_at: datetime | None = None
     stale: bool = False
+    # Internal fetch generation; it prevents an in-flight pre-reconfiguration
+    # result from recreating state after the account was reset.
+    state_generation: int | None = field(default=None, compare=False, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {

@@ -31,6 +31,7 @@ from .render import render_json, render_table
 from .state import (
     backend_identity_matches,
     backend_provenance_matches_configured,
+    load_state_generation,
     load_usage_snapshot,
     save_current_usage,
     save_usage_snapshot,
@@ -69,6 +70,7 @@ def fetch_all(
     )
 
     def fetch(account: Account) -> AccountUsage:
+        state_generation = load_state_generation(account.id)
         usage = _fetch_one(
             config,
             account,
@@ -79,6 +81,7 @@ def fetch_all(
             global_lock_held=serial_fetch_required,
             reject_ambiguous_backend_identity=account.id in ambiguous_direct_accounts,
         )
+        usage = replace(usage, state_generation=state_generation)
         if usage.status != AccountStatus.OK or usage.backend_used not in AUTHENTICATED_BACKENDS:
             return usage
         previous = load_usage_snapshot(account.id)
@@ -588,7 +591,10 @@ def watchdog(
                 configured_backend=effective_backend or account.backend,
             )
         ):
-            blocked_snapshots[account.id] = snapshot
+            blocked_snapshots[account.id] = replace(
+                snapshot,
+                state_generation=load_state_generation(account.id),
+            )
             continue
         fetch_accounts.append(account)
 

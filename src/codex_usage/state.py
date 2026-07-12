@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .account_lock import account_lock
 from .config import default_state_dir
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow
@@ -22,6 +23,7 @@ MAX_SNAPSHOT_BYTES = 1_000_000
 SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 MAX_SNAPSHOT_TEXT = 500
 MAX_SNAPSHOT_URLS = 20
+MAX_STATE_GENERATION_BYTES = 4096
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
 
@@ -69,16 +71,33 @@ def default_current_dir() -> Path:
     return default_state_dir() / "current"
 
 
-def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -> Path:
-    return _save_usage(
-        usage,
-        snapshot_dir or default_snapshot_dir(),
-        preserve_existing_values=True,
+def load_state_generation(
+    account_id: str,
+    directory: Path | None = None,
+) -> int:
+    _validate_snapshot_account_id(account_id)
+    generation_path = _state_generation_path(
+        account_id,
+        directory or default_snapshot_dir(),
     )
+    with account_lock(account_id):
+        return _read_state_generation(generation_path, account_id)
+
+
+def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -> Path:
+    _validate_snapshot_account_id(usage.account_id)
+    directory = snapshot_dir or default_snapshot_dir()
+    assert_no_symlink_ancestors(directory, label="snapshot directory")
+    with account_lock(usage.account_id):
+        return _save_usage(usage, directory, preserve_existing_values=True)
 
 
 def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> Path:
-    return _save_usage(usage, current_dir or default_current_dir())
+    _validate_snapshot_account_id(usage.account_id)
+    directory = current_dir or default_current_dir()
+    assert_no_symlink_ancestors(directory, label="snapshot directory")
+    with account_lock(usage.account_id):
+        return _save_usage(usage, directory)
 
 
 def _save_usage(
@@ -100,6 +119,14 @@ def _save_usage(
     except OSError:
         pass
     path = directory / f"{usage.account_id}.json"
+    current_generation = _read_state_generation(
+        _state_generation_path(usage.account_id, directory),
+        usage.account_id,
+    )
+    if usage.state_generation is not None and usage.state_generation != current_generation:
+        return path
+    if usage.state_generation is None:
+        usage = replace(usage, state_generation=current_generation)
     with private_path_lock(path, label="snapshot lock"):
         existing = _load_usage(usage.account_id, directory)
         if existing is not None:
@@ -115,7 +142,9 @@ def _save_usage(
                 and backend_provenance_matches(usage, existing)
             ):
                 usage = merge_current_with_last_success(usage, existing)
-        text = json.dumps(usage.as_dict(), ensure_ascii=False, indent=2, allow_nan=False)
+        payload = usage.as_dict()
+        payload["state_generation"] = usage.state_generation
+        text = json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False)
         if len(text.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
             raise ValueError(f"snapshot file too large; max {MAX_SNAPSHOT_BYTES} bytes")
         write_private_text(path, text, label="snapshot path")
@@ -132,27 +161,80 @@ def load_current_usage(account_id: str, current_dir: Path | None = None) -> Acco
 
 def remove_account_state(account_id: str) -> None:
     _validate_snapshot_account_id(account_id)
-    targets = (
-        (default_snapshot_dir(), f"{account_id}.json", "snapshot path"),
-        (default_current_dir(), f"{account_id}.json", "current path"),
-        (
-            default_state_dir() / "debug",
-            f"{account_id}-last-ingest.json",
-            "debug path",
-        ),
+    with account_lock(account_id):
+        targets = (
+            (default_snapshot_dir(), f"{account_id}.json", "snapshot path"),
+            (default_current_dir(), f"{account_id}.json", "current path"),
+            (
+                default_state_dir() / "debug",
+                f"{account_id}-last-ingest.json",
+                "debug path",
+            ),
+        )
+        for directory, filename, label in targets:
+            assert_no_symlink_ancestors(directory, label=f"{label} directory")
+            if not directory.exists() and not directory.is_symlink():
+                continue
+            if directory.is_symlink() or not directory.is_dir():
+                raise ValueError(f"{label} directory must be a real directory: {directory}")
+            path = directory / filename
+            with private_path_lock(path, label=f"{label} lock"):
+                if path.is_dir() and not path.is_symlink():
+                    raise ValueError(f"{label} must be a regular file: {path}")
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+        _increment_state_generation(account_id, default_state_dir())
+
+
+def _state_generation_path(account_id: str, directory: Path) -> Path:
+    return directory.parent / "generations" / f"{account_id}.json"
+
+
+def _read_state_generation(path: Path, account_id: str) -> int:
+    assert_no_symlink_ancestors(path, label="state generation")
+    if not path.exists():
+        if path.is_symlink():
+            raise ValueError(f"state generation must be a regular file: {path}")
+        return 0
+    text, _ = read_private_text(
+        path,
+        regular_label="state generation",
+        read_label="state generation",
+        max_bytes=MAX_STATE_GENERATION_BYTES,
+        too_large_label="state generation",
+        invalid_utf8_label="state generation",
     )
-    for directory, filename, label in targets:
-        assert_no_symlink_ancestors(directory, label=f"{label} directory")
-        if not directory.exists() and not directory.is_symlink():
-            continue
-        if directory.is_symlink() or not directory.is_dir():
-            raise ValueError(f"{label} directory must be a real directory: {directory}")
-        path = directory / filename
-        with private_path_lock(path, label=f"{label} lock"):
-            if path.is_dir() and not path.is_symlink():
-                raise ValueError(f"{label} must be a regular file: {path}")
-            if path.exists() or path.is_symlink():
-                path.unlink()
+    payload = loads_strict(text)
+    if not isinstance(payload, dict) or payload.get("account") != account_id:
+        raise ValueError(f"state generation account mismatch: {path}")
+    generation = payload.get("generation")
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+        raise ValueError(f"invalid state generation: {path}")
+    return generation
+
+
+def _increment_state_generation(account_id: str, state_dir: Path) -> int:
+    directory = state_dir / "generations"
+    assert_no_symlink_ancestors(directory, label="state generation directory")
+    if directory.is_symlink():
+        raise ValueError(f"state generation directory must not be a symlink: {directory}")
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError(f"state generation directory must be a real directory: {directory}")
+    try:
+        directory.chmod(0o700)
+    except OSError:
+        pass
+    path = directory / f"{account_id}.json"
+    generation = _read_state_generation(path, account_id) + 1
+    text = json.dumps(
+        {"account": account_id, "generation": generation},
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    )
+    write_private_text(path, text, label="state generation")
+    return generation
 
 
 def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
@@ -178,7 +260,16 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
         snapshot_account = payload.get("account")
         if not isinstance(snapshot_account, str) or snapshot_account != account_id:
             return None
-        return usage_from_dict(payload)
+        usage = usage_from_dict(payload)
+        generation = _read_state_generation(
+            _state_generation_path(account_id, directory),
+            account_id,
+        )
+        if usage.state_generation is None:
+            return usage if generation == 0 else None
+        if usage.state_generation != generation:
+            return None
+        return usage
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
@@ -271,6 +362,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         ),
         values_captured_at=_optional_datetime(payload.get("values_captured_at")),
         stale=payload.get("stale") is True,
+        state_generation=_optional_state_generation(payload.get("state_generation")),
     )
 
 
@@ -461,6 +553,12 @@ def _optional_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return coerced if math.isfinite(coerced) else None
+
+
+def _optional_state_generation(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def _optional_datetime(value: Any) -> datetime | None:

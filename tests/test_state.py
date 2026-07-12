@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -13,6 +14,7 @@ from codex_usage.state import (
     backend_provenance_matches_configured,
     expire_reset_windows,
     load_current_usage,
+    load_state_generation,
     load_usage_snapshot,
     merge_current_with_last_success,
     remove_account_state,
@@ -128,6 +130,40 @@ def test_remove_account_state_deletes_current_snapshot_and_debug(tmp_path, monke
     assert not (tmp_path / "data" / "codex-usage" / "current" / "privat.json").exists()
     assert not (tmp_path / "data" / "codex-usage" / "snapshots" / "privat.json").exists()
     assert not (debug_dir / "privat-last-ingest.json").exists()
+
+
+def test_stale_state_generation_cannot_recreate_removed_account_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    captured_at = datetime(2026, 7, 12, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    generation = load_state_generation("race")
+    usage = AccountUsage(
+        account_id="race",
+        label="Race",
+        captured_at=captured_at,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        state_generation=generation,
+    )
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+
+    remove_account_state("race")
+
+    assert load_state_generation("race") == generation + 1
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+    assert load_current_usage("race") is None
+    assert load_usage_snapshot("race") is None
+
+    fresh = replace(
+        usage,
+        captured_at=captured_at + timedelta(minutes=5),
+        state_generation=load_state_generation("race"),
+    )
+    save_current_usage(fresh)
+    save_usage_snapshot(fresh)
+    assert load_current_usage("race") == fresh
+    assert load_usage_snapshot("race") == fresh
 
 
 @pytest.mark.parametrize("malformed_window", ([], "not-an-object", 42))

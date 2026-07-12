@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.249 - 2026-07-12
+
+### Fixed
+
+- In-flight Abrufe schreiben nach einer Account-Neukonfiguration keinen alten
+  `current`- oder Snapshot-State mehr zurück.
+- State-Dateien tragen dafür eine interne Account-Generation; alte
+  Generationen werden nach dem Zurücksetzen verworfen, neue Abrufe bleiben
+  speicherbar.
+
 ## 0.6.248 - 2026-07-12
 
 ### Fixed

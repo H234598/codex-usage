@@ -46,6 +46,7 @@ from .state import (
     backend_provenance_matches_configured,
     expire_reset_windows,
     load_current_usage,
+    load_state_generation,
     load_usage_snapshot,
     merge_current_with_last_success,
     save_current_usage,
@@ -750,7 +751,11 @@ def ingest_and_save(
     require_backend_identity: bool = False,
 ) -> tuple[AccountUsage, Path]:
     account = resolve_account(config, account_ref)
-    usage = usage_from_ingest_payload(account, payload)
+    state_generation = load_state_generation(account.id, snapshot_dir)
+    usage = replace(
+        usage_from_ingest_payload(account, payload),
+        state_generation=state_generation,
+    )
     if require_backend_identity and not (
         usage.backend_user_id or usage.backend_account_id
     ):
