@@ -14,6 +14,7 @@ from codex_usage.direct import (
     _jwt_expiry,
     auth_identity_changed,
     auth_identity_from_payload,
+    canonical_backend_identity,
     fetch_account_usage_direct,
 )
 from codex_usage.models import Account, AccountStatus
@@ -72,6 +73,17 @@ def test_auth_identity_rejects_changed_user_with_same_account():
         after_user_id="same-user",
         after_account_id="shared-account",
     ) is False
+
+
+def test_canonical_backend_identity_rejects_foreign_account_without_auth_account_id():
+    with pytest.raises(ValueError, match="backend response belongs to a different account"):
+        canonical_backend_identity(
+            "shared-user",
+            "foreign-account",
+            auth_user_id="shared-user",
+            auth_account_id=None,
+            require_backend_identity=True,
+        )
 
 
 def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkeypatch):

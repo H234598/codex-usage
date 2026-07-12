@@ -430,11 +430,15 @@ def _response_identity_matches_auth(
     auth_user_id: str | None,
     auth_account_id: str | None,
 ) -> bool:
-    if auth_account_id and backend_account_id:
+    if backend_account_id and auth_account_id:
         accepted_account_ids = {auth_account_id}
         if auth_user_id:
             accepted_account_ids.add(auth_user_id)
         return backend_account_id in accepted_account_ids
+    if backend_account_id and auth_user_id:
+        # WHAM can echo the shared user ID as account_id. Without the
+        # configured account ID, an unrelated backend account is unverifiable.
+        return backend_account_id == auth_user_id
     if auth_user_id and backend_user_id and backend_user_id != auth_user_id:
         return False
     return True

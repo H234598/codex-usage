@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.214 - 2026-07-12
+
+### Security
+
+- Direct- und Bridge-Antworten akzeptieren bei fehlender Auth-`account_id` keine
+  beliebige Backend-`account_id` mehr. Die bekannte `user_id` darf weiterhin
+  als vom WHAM-Backend wiederholte Kontoidentität verwendet werden; fremde
+  Kontoidentitäten werden fail-closed verworfen.
+- Regression für gemeinsam genutzte `user_id`s ohne konfigurierte
+  Auth-`account_id` ergänzt.
+
 ## 0.6.213 - 2026-07-12
 
 ### Fixed
