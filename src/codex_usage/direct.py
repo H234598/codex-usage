@@ -683,10 +683,13 @@ def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
 def _usage_response_signature(payload: dict[str, Any]) -> tuple:
     rate_limit = payload.get("rate_limit")
     if not isinstance(rate_limit, dict):
-        return (None, None)
-    return tuple(
-        _usage_window_signature(rate_limit.get(key))
-        for key in ("primary_window", "secondary_window")
+        return (backend_identity_from_payload(payload), (None, None))
+    return (
+        backend_identity_from_payload(payload),
+        tuple(
+            _usage_window_signature(rate_limit.get(key))
+            for key in ("primary_window", "secondary_window")
+        ),
     )
 
 
@@ -714,15 +717,18 @@ def _signature_reset(value: Any) -> int | None:
 
 
 def _usage_response_completeness(payload: dict[str, Any]) -> int:
-    signature = _usage_response_signature(payload)
-    return sum(value is not None for value in signature)
+    _identity, windows = _usage_response_signature(payload)
+    return sum(value is not None for value in windows)
 
 
 def _usage_response_progresses(payloads: list[dict[str, Any]]) -> bool:
     signatures = [_usage_response_signature(payload) for payload in payloads]
+    identities = {signature[0] for signature in signatures}
+    if len(identities) != 1:
+        return False
     observed_window = False
     for window_index in range(2):
-        windows = [signature[window_index] for signature in signatures]
+        windows = [signature[1][window_index] for signature in signatures]
         if all(window is None for window in windows):
             continue
         if any(window is None or window[1] is None for window in windows):
@@ -745,8 +751,8 @@ def _latest_response_progresses_beyond_group(
 ) -> bool:
     if not _usage_response_progresses(payloads):
         return False
-    latest = _usage_response_signature(payloads[-1])
-    stable = _usage_response_signature(best_group[0][1])
+    latest = _usage_response_signature(payloads[-1])[1]
+    stable = _usage_response_signature(best_group[0][1])[1]
     progressed = False
     for latest_window, stable_window in zip(latest, stable, strict=True):
         if latest_window is None and stable_window is None:
@@ -770,7 +776,7 @@ def _progressive_window_identity_is_stable(windows: list[tuple]) -> bool:
 def _has_reset_regression(payloads: list[dict[str, Any]]) -> bool:
     signatures = [_usage_response_signature(payload) for payload in payloads]
     for window_index in range(2):
-        windows = [signature[window_index] for signature in signatures]
+        windows = [signature[1][window_index] for signature in signatures]
         for previous, current in pairwise(windows):
             if previous is None or current is None:
                 continue

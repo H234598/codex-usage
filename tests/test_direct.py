@@ -303,6 +303,40 @@ def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):
     assert payload["rate_limit"]["secondary_window"]["used_percent"] == 51
 
 
+def test_fetch_stable_wham_usage_keeps_backend_identities_in_separate_groups(
+    monkeypatch,
+):
+    def response(account_id: str) -> dict:
+        return {
+            "user_id": "shared-user",
+            "account_id": account_id,
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 55,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1783829134,
+                },
+                "secondary_window": {
+                    "used_percent": 10,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784415934,
+                },
+            },
+        }
+
+    responses = iter(
+        (response("foreign-account"), response("expected-account"), response("expected-account"))
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id="expected-account", timeout_seconds=1)
+
+    assert payload["account_id"] == "expected-account"
+
+
 def test_fetch_stable_wham_usage_tolerates_decreasing_relative_reset_after(
     monkeypatch,
 ):

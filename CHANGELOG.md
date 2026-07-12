@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.215 - 2026-07-12
+
+### Security
+
+- Die Direct-Stabilisierung gruppiert Sample-Antworten jetzt zusätzlich nach
+  Backend-`user_id` und `account_id`. Antworten mehrerer Konten können dadurch
+  kein gemeinsames Nutzungsquorum bilden.
+- Progressive Nutzungswerte werden nur noch bei stabiler Backend-Identität als
+  neueste Antwort akzeptiert; eine fremde Sample-Mehrheit kann keine Werte in
+  ein anderes Konto einbringen.
+- Regression für gemischte Sample-Identitäten ergänzt.
+
 ## 0.6.214 - 2026-07-12
 
 ### Security
