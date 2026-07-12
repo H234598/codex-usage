@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.178 - 2026-07-12
+
+### Fixed
+
+- Unsupported or invalid `rateLimitsByLimitId.codex` buckets no longer
+  overwrite valid top-level App-Server windows.
+- Regressionen decken sowohl das Verstecken eines gültigen Fensters als auch
+  ungültige Dauerwerte ohne Top-Level-Fallback ab.
+
 ## 0.6.177 - 2026-07-12
 
 ### Fixed

@@ -397,6 +397,13 @@ def _windows_from_response(
         for key in ("primary", "secondary"):
             value = codex_snapshot.get(key)
             if isinstance(value, dict):
+                duration = value.get("windowDurationMins")
+                if (
+                    duration is not None
+                    and _strict_int(duration)
+                    not in {FIVE_HOUR_WINDOW_MINUTES, WEEKLY_WINDOW_MINUTES}
+                ):
+                    continue
                 snapshot[key] = value
     if not isinstance(snapshot, dict):
         raise AppServerProtocolError("app server response has no rateLimits object")
