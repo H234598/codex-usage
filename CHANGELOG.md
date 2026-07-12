@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.337 - 2026-07-13
+
+### Fixed
+
+- Bestätigte Browser-Identitäten dürfen sichtbare Graphwerte als Fallback
+  verwenden, wenn ein JSON-Endpunkt nur die Identität, aber keine Limits liefert.
+
 ## 0.6.336 - 2026-07-13
 
 ### Fixed

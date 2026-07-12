@@ -115,20 +115,40 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         account,
         _json_candidates_from_payload(payload),
     )
-    # Once a structured response identifies the backend, the page DOM is not
-    # independently bound to that account. Do not combine a possibly stale
-    # browser page with identity-bearing JSON; an authenticated partial result
-    # is safer than displaying values from another account.
+    # A structured response with usage values is authoritative. If it only
+    # identifies the already authenticated account, the rendered graph can
+    # still be the only source for the limits; allow that fallback only after
+    # the backend account identity has been fully confirmed.
     structured_identity_present = any(
         backend_identity_from_payload(candidate.payload) != (None, None)
         for candidate in json_candidates
     )
-    five_hour, weekly = extract_windows(
+    json_windows = extract_windows(
         body_text="",
         json_candidates=json_candidates,
-        text_sources=() if structured_identity_present else text_sources,
+        text_sources=(),
         now=captured_at,
     )
+    json_has_usage = any(
+        window is not None and window.has_usage_value
+        for window in json_windows
+    )
+    allow_dom_fallback = (
+        not structured_identity_present
+        or (
+            not json_has_usage
+            and _structured_identity_matches_account(account, json_candidates)
+        )
+    )
+    if allow_dom_fallback:
+        five_hour, weekly = extract_windows(
+            body_text="",
+            json_candidates=json_candidates,
+            text_sources=text_sources,
+            now=captured_at,
+        )
+    else:
+        five_hour, weekly = json_windows
     backend_user_id, backend_account_id = backend_identity_from_candidates(json_candidates)
     backend_plan_type = backend_plan_type_from_candidates(json_candidates)
     auth_user_id, auth_account_id = auth_identity_for_account(account)
@@ -235,6 +255,24 @@ def _identities_compatible(
         if left_value != right_value:
             return False
     return shared_field
+
+
+def _structured_identity_matches_account(
+    account: Account,
+    candidates: list[JsonCandidate],
+) -> bool:
+    if not account.auth_json_path:
+        return False
+    try:
+        auth_user_id, auth_account_id = auth_identity_for_account(account)
+    except DirectAuthError:
+        return False
+    backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
+    if not auth_account_id or not backend_account_id:
+        return False
+    if backend_account_id != auth_account_id:
+        return False
+    return not auth_user_id or not backend_user_id or backend_user_id == auth_user_id
 
 
 def _ingest_error(body_text: str, payload: dict[str, Any]) -> str | None:
