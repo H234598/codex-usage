@@ -619,13 +619,13 @@ CodexUsageApplet.prototype = {
             if (this._safeMode) {
                 return;
             }
-            this._lastCacheSyncAt = Date.now();
             try {
                 if (payload) {
                     this._applyPayload(payload, false);
                 } else if (!this._usages.length && error) {
                     this._showCommandError(error);
                 }
+                this._lastCacheSyncAt = Date.now();
             } finally {
                 if (refreshAfter && this.autoRefresh && this._usesAppletPolling()) {
                     this._primaryFreshPending = true;

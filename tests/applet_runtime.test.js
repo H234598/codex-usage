@@ -267,6 +267,15 @@ test("cached load records a sync timestamp for an unchanged snapshot", () => {
   assert.equal(applet._cacheNeedsSync(), false);
 });
 
+test("failed cached payload handling does not arm the sync cooldown", () => {
+  const applet = makeApplet();
+  applet._applyPayload = () => { throw new Error("payload handler failed"); };
+  applet._spawnUsageCommand = (_subcommand, callback) => callback([], null);
+
+  assert.throws(() => applet._loadCached(false, false), /payload handler failed/);
+  assert.equal(applet._lastCacheSyncAt, 0);
+});
+
 test("cached payloads preserve omitted accounts and newer values", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

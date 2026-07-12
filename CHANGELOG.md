@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.210 - 2026-07-12
+
+### Fixed
+
+- Der Cinnamon-Cache aktiviert den Sync-Cooldown erst nach erfolgreicher
+  Verarbeitung einer `latest`-Payload. Ein Fehler in `_applyPayload` kann
+  dadurch keinen weiteren Reload für 60 Sekunden unterdrücken.
+- Regression für fehlgeschlagene Cache-Payload-Verarbeitung ergänzt.
+
 ## 0.6.209 - 2026-07-12
 
 ### Fixed
