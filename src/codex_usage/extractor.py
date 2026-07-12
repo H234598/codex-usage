@@ -162,15 +162,23 @@ def _select_text_usage_candidate(
     ]
     if primary:
         selected = min(primary, key=lambda item: item[0])[1]
+        html_progress = [
+            item
+            for item in candidates
+            if item[1].source == "htmlText"
+            and _extract_progress_width_percent(item[1].raw or "") is not None
+        ]
+        if html_progress:
+            selected_progress = min(html_progress, key=lambda item: item[0])[1]
+            if (
+                selected.used is None
+                and selected.limit is None
+                and _is_authoritative_html_progress(selected_progress)
+            ):
+                return selected_progress
         if _text_window_strength(selected) == 2:
-            progress = [
-                item
-                for item in candidates
-                if item[1].source == "htmlText"
-                and _extract_progress_width_percent(item[1].raw or "") is not None
-            ]
-            if progress:
-                return min(progress, key=lambda item: item[0])[1]
+            if html_progress:
+                return min(html_progress, key=lambda item: item[0])[1]
         return selected
 
     html_progress = [
@@ -189,6 +197,19 @@ def _select_text_usage_candidate(
             item[0],
         ),
     )[1]
+
+
+def _is_authoritative_html_progress(window: LimitWindow) -> bool:
+    raw = window.raw or ""
+    return bool(
+        re.search(r"transition-\[width\]", raw, flags=re.IGNORECASE)
+        or re.search(r"role\s*=\s*['\"]progressbar['\"]", raw, flags=re.IGNORECASE)
+        or re.search(
+            r"class\s*=\s*['\"][^'\"]*\bprogress(?:bar)?\b",
+            raw,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _text_source_priority(source: str) -> int:

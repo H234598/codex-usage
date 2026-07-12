@@ -512,6 +512,46 @@ def test_extract_windows_uses_html_progress_over_visible_generic_used_text():
     assert five.source == "htmlText"
 
 
+def test_extract_windows_uses_authoritative_html_progress_over_stale_body_percent():
+    body = (
+        "5-hour limit 20% remaining Reset 12.07.2026 18:00 "
+        "Weekly limit 10% remaining Reset 18.07.2026 07:00"
+    )
+    html = """
+    <h2>5-hour limit</h2>
+    <div class="transition-[width] rounded-full bg-[#22c55e]" style="width: 97%;"></div>
+    <h2>Weekly limit</h2>
+    <div class="transition-[width] rounded-full bg-[#22c55e]" style="width: 55%;"></div>
+    """
+
+    five, weekly = extract_windows(
+        body_text="",
+        text_sources=(("bodyText", body), ("htmlText", html)),
+    )
+
+    assert five is not None and five.remaining == 97
+    assert weekly is not None and weekly.remaining == 55
+    assert five.source == "htmlText"
+
+
+def test_extract_windows_keeps_absolute_body_usage_over_html_progress():
+    body = "5-hour limit 42 / 100 used Reset 12.07.2026 18:00"
+    html = """
+    <h2>5-hour limit</h2>
+    <div class="transition-[width] rounded-full bg-[#22c55e]" style="width: 97%;"></div>
+    """
+
+    five, _weekly = extract_windows(
+        body_text="",
+        text_sources=(("bodyText", body), ("htmlText", html)),
+    )
+
+    assert five is not None
+    assert five.used == 42
+    assert five.remaining == 58
+    assert five.source == "bodyText"
+
+
 def test_extract_windows_skips_label_occurrence_without_values():
     body = """
     5-hour limit

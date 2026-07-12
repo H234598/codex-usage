@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.338 - 2026-07-13
+
+### Fixed
+
+- Sichtbare, eindeutig markierte HTML-Fortschrittsbalken überstimmen stale
+  Prozenttexte aus `bodyText`, absolute Nutzungswerte bleiben vorrangig.
+
 ## 0.6.337 - 2026-07-13
 
 ### Fixed
