@@ -1615,6 +1615,79 @@ def test_ingest_rejects_ambiguous_shared_user_browser_identity(tmp_path):
     assert load_usage_snapshot("privat", tmp_path / "snapshots") is None
 
 
+def test_ingest_rejects_browser_identity_known_for_another_configured_account(tmp_path):
+    work_auth = tmp_path / "work-auth.json"
+    work_auth.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "shared-user",
+                                "chatgpt_plan_type": "enterprise",
+                            }
+                        }
+                    ),
+                    "account_id": "work-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    work_auth.chmod(0o600)
+    privat = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "privat-profile"),
+    )
+    work = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "work-profile"),
+        auth_json_path=str(work_auth),
+    )
+    config = AppConfig(accounts=(privat, work))
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "shared-user",
+                        "account_id": "work-account",
+                        "plan_type": "enterprise",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="different configured account"):
+        ingest_and_save(
+            config,
+            "privat",
+            payload,
+            tmp_path / "snapshots",
+            require_backend_identity=True,
+        )
+
+    assert load_usage_snapshot("privat", tmp_path / "snapshots") is None
+
+
 def test_usage_from_ingest_payload_rejects_shared_user_response_with_different_plan(
     tmp_path,
 ):

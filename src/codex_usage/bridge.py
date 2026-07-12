@@ -802,7 +802,12 @@ def ingest_and_save(
         if account.auth_json_path is not None:
             if not _usage_matches_current_auth(account, usage):
                 raise ValueError("bridge payload belongs to a different backend account")
-        elif known is None:
+        _reject_browser_identity_from_other_configured_account(
+            config,
+            account,
+            payload,
+        )
+        if account.auth_json_path is None and known is None:
             raise ValueError("browser account identity is not initialized")
     if (
         known is not None
@@ -900,6 +905,41 @@ def _reject_ambiguous_browser_identity(
         if candidate_user_id == auth_user_id and candidate_account_id:
             account_ids.add(candidate_account_id)
     if len(account_ids) > 1:
+        raise ValueError("browser payload has ambiguous backend account identity")
+
+
+def _reject_browser_identity_from_other_configured_account(
+    config: AppConfig,
+    account: Account,
+    payload: dict[str, Any],
+) -> None:
+    """Do not attribute a browser cookie identity to another configured row."""
+    identity = backend_identity_from_candidates(_json_candidates_from_payload(payload))
+    if identity == (None, None):
+        return
+
+    matching_accounts: list[str] = []
+    for candidate in config.accounts:
+        if candidate.auth_json_path is None:
+            continue
+        try:
+            auth_user_id, auth_account_id = auth_identity_for_account(candidate)
+            canonical_backend_identity(
+                identity[0],
+                identity[1],
+                auth_user_id=auth_user_id,
+                auth_account_id=auth_account_id,
+                require_backend_identity=True,
+            )
+        except (DirectAuthError, ValueError):
+            continue
+        matching_accounts.append(candidate.id)
+
+    if not matching_accounts:
+        return
+    if account.id not in matching_accounts:
+        raise ValueError("browser payload belongs to a different configured account")
+    if len(matching_accounts) > 1:
         raise ValueError("browser payload has ambiguous backend account identity")
 
 
