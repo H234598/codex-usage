@@ -1,13 +1,29 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
-from codex_usage.browser import _prepare_profile, _profile_lock, fetch_account_usage
+from codex_usage.browser import (
+    _format_datetime,
+    _prepare_profile,
+    _profile_lock,
+    fetch_account_usage,
+)
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, LimitWindow
+
+
+def test_browser_diagnostic_datetime_uses_dst_aware_local_timezone(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    value = datetime(2026, 1, 15, 0, 15, tzinfo=ZoneInfo("UTC"))
+
+    monkeypatch.setattr("codex_usage.browser.LOCAL_TZ", berlin)
+
+    assert _format_datetime(value) == "2026-01-15T01:15:00+01:00"
 
 
 def test_prepare_profile_rejects_symlink_root_without_marking_target(tmp_path):

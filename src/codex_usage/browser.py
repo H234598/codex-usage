@@ -24,7 +24,7 @@ from .direct import (
     canonical_backend_identity,
     read_auth_json_file,
 )
-from .extractor import JsonCandidate, extract_windows
+from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
 from .identity import (
     backend_identity_from_candidates,
     backend_plan_type_from_candidates,
@@ -96,7 +96,7 @@ def fetch_account_usage(
     headed: bool = False,
     timeout_ms: int = 45_000,
 ) -> AccountUsage:
-    captured_at = datetime.now().astimezone()
+    captured_at = datetime.now(tz=LOCAL_TZ)
     candidates: list[JsonCandidate] = []
     source_urls: set[str] = set()
 
@@ -228,7 +228,7 @@ def probe_account(
     headed: bool = True,
     save_dir: Path | None = None,
 ) -> dict[str, Any]:
-    captured_at = datetime.now().astimezone()
+    captured_at = datetime.now(tz=LOCAL_TZ)
     candidates: list[JsonCandidate] = []
     profile_dir = _prepare_profile(account)
     with _profile_lock(profile_dir):
@@ -288,7 +288,7 @@ def diagnose_account(
     auth_json_path: Path | None = None,
     timeout_ms: int = 60_000,
 ) -> dict[str, Any]:
-    captured_at = datetime.now().astimezone()
+    captured_at = datetime.now(tz=LOCAL_TZ)
     profile_dir = _prepare_profile(account)
     responses: list[dict[str, Any]] = []
     result: dict[str, Any] = {
@@ -462,7 +462,7 @@ def _diagnostic_text(value: Any, *, limit: int) -> str:
 def _format_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
-    return value.astimezone().isoformat()
+    return value.astimezone(LOCAL_TZ).isoformat()
 
 
 def _capture_diagnostic_response(response: Any, responses: list[dict[str, Any]]) -> None:

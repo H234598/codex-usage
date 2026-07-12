@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.348 - 2026-07-13
+
+### Fixed
+
+- Browser-Capture und Diagnose verwenden jetzt dieselbe DST-faehige lokale
+  Zeitzone wie Direct-, Scheduler- und Render-Ausgaben.
+
 ## 0.6.347 - 2026-07-13
 
 ### Fixed
