@@ -423,6 +423,8 @@ def _windows_from_response(
         for key in ("primary", "secondary"):
             value = codex_snapshot.get(key)
             if isinstance(value, dict):
+                if not _valid_used_percent(value):
+                    continue
                 duration = value.get("windowDurationMins")
                 if (
                     duration is not None
@@ -531,6 +533,11 @@ def _strict_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _valid_used_percent(payload: dict[str, Any]) -> bool:
+    used = _strict_int(payload.get("usedPercent"))
+    return used is not None and 0 <= used <= 100
 
 
 def _window_duration_is_missing(payload: dict[str, Any]) -> bool:

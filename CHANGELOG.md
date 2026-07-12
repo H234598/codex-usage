@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.262 - 2026-07-12
+
+### Fixed
+
+- Unvollständige verschachtelte App-Server-`codex`-Buckets überschreiben keine
+  vollständigen Top-Level-Werte mehr.
+  Fehlt `usedPercent`, bleibt die Teilantwort unklassifiziert statt einen
+  gesamten Accountabruf als Protokollfehler zu behandeln.
+
 ## 0.6.261 - 2026-07-12
 
 ### Fixed

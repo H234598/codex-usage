@@ -444,6 +444,29 @@ def test_window_mapping_does_not_infer_explicit_invalid_duration(primary, second
     assert weekly is None if secondary["windowDurationMins"] == "invalid" else weekly is not None
 
 
+def test_window_mapping_keeps_complete_top_level_over_incomplete_codex_bucket():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 9, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 4, "windowDurationMins": 10_080},
+            },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {"windowDurationMins": 300},
+                    "secondary": {
+                        "usedPercent": 2,
+                        "windowDurationMins": 10_080,
+                    },
+                }
+            },
+        }
+    )
+
+    assert five is not None and five.used == 9
+    assert weekly is not None and weekly.used == 2
+
+
 def test_window_mapping_does_not_let_unsupported_codex_bucket_hide_top_level_window():
     five, weekly = _windows_from_response(
         {
