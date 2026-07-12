@@ -432,18 +432,9 @@ def bridge_token_for_account(account_ref: str) -> str:
     _prepare_private_directory(token_dir, label="bridge token directory")
     path = token_dir / f"{account_ref}.token"
     with private_path_lock(path, label="bridge token lock"):
-        if path.exists():
-            text, file_stat = read_private_text(
-                path,
-                regular_label="bridge token path",
-                read_label="bridge token",
-                max_bytes=256,
-                too_large_label="bridge token",
-                invalid_utf8_label="bridge token",
-            )
-            if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
-                raise ValueError("bridge token path permissions are too broad")
-            return _validate_bridge_token(text.strip())
+        existing = _read_existing_bridge_token(path)
+        if existing is not None:
+            return existing
         token = secrets.token_urlsafe(32)
         write_private_output_text(
             path,
@@ -452,6 +443,60 @@ def bridge_token_for_account(account_ref: str) -> str:
             mode=0o600,
         )
         return token
+
+
+def revoke_bridge_token(account_ref: str) -> bool:
+    if not isinstance(account_ref, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,64}", account_ref
+    ):
+        raise ValueError("account id must be valid for bridge token storage")
+    token_dir = default_state_dir() / "bridge-tokens"
+    if not token_dir.exists() and not token_dir.is_symlink():
+        return False
+    _prepare_private_directory(token_dir, label="bridge token directory")
+    path = token_dir / f"{account_ref}.token"
+    with private_path_lock(path, label="bridge token lock"):
+        if not path.exists() and not path.is_symlink():
+            return False
+        if path.is_dir() and not path.is_symlink():
+            raise ValueError(f"bridge token path must be a regular file: {path}")
+        path.unlink()
+        return True
+
+
+def bridge_token_matches(account_ref: str, supplied: str) -> bool:
+    if not isinstance(account_ref, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,64}", account_ref
+    ):
+        return False
+    try:
+        _validate_bridge_token(supplied)
+        token_dir = default_state_dir() / "bridge-tokens"
+        if not token_dir.exists() and not token_dir.is_symlink():
+            return False
+        _prepare_private_directory(token_dir, label="bridge token directory")
+        path = token_dir / f"{account_ref}.token"
+        with private_path_lock(path, label="bridge token lock"):
+            current = _read_existing_bridge_token(path)
+        return current is not None and hmac.compare_digest(current, supplied)
+    except (OSError, ValueError):
+        return False
+
+
+def _read_existing_bridge_token(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    text, file_stat = read_private_text(
+        path,
+        regular_label="bridge token path",
+        read_label="bridge token",
+        max_bytes=256,
+        too_large_label="bridge token",
+        invalid_utf8_label="bridge token",
+    )
+    if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+        raise ValueError("bridge token path permissions are too broad")
+    return _validate_bridge_token(text.strip())
 
 
 def _validate_bridge_token(token: str) -> str:
@@ -847,7 +892,7 @@ def _make_handler(
             if not expected or not authorization.startswith(prefix):
                 return False
             supplied = authorization[len(prefix):].strip()
-            return hmac.compare_digest(supplied, expected)
+            return bridge_token_matches(account_ref, supplied)
 
     return BridgeHandler
 

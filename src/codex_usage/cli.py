@@ -13,6 +13,7 @@ from .bridge import (
     ingest_and_save,
     load_latest_usages,
     render_bridge_snippet,
+    revoke_bridge_token,
     run_bridge_server,
     write_bridge_extension,
 )
@@ -444,6 +445,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
 
     updated, _ = remove_account(account.id, path=args.config)
     _sync_managed_service(updated, args.config)
+    revoke_bridge_token(account.id)
     if args.delete_profile:
         profile_state = _delete_profile_dir(profile_path, force=args.force_delete_profile)
     print(f"Account geloescht: {account.id} ({account.label})")

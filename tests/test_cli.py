@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from codex_usage.bridge import MAX_INGEST_BYTES, load_latest_usages
+from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_latest_usages
 from codex_usage.cli import main
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
@@ -122,7 +122,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.204\ncodex-usage 0.6.204\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.205\ncodex-usage 0.6.205\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -1165,6 +1165,28 @@ def test_account_delete_removes_config_but_keeps_profile_by_default(tmp_path, ca
 
     assert main(["--config", str(config_path), "account", "overview"]) == 0
     assert "Accounts: 0" in capsys.readouterr().out
+
+
+def test_account_delete_revokes_bridge_token_before_same_id_is_readded(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    first = bridge_token_for_account("privat")
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 0
+    capsys.readouterr()
+
+    token_path = tmp_path / "data" / "codex-usage" / "bridge-tokens" / "privat.token"
+    assert not token_path.exists()
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    second = bridge_token_for_account("privat")
+    assert second != first
 
 
 def test_account_delete_can_delete_marked_profile(tmp_path, capsys):

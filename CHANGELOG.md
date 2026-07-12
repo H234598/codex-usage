@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.205 - 2026-07-12
+
+### Security
+
+- `account delete` widerruft den zugehörigen Bridge-Token. Beim erneuten
+  Anlegen derselben Account-ID wird dadurch ein neuer Token erzeugt; alte
+  Browser-Extensions können nicht wieder autorisiert werden.
+- Der laufende Bridge-Server liest den aktuellen Token-Dateistand pro Request.
+  Widerruf und Tokenrotation wirken deshalb sofort ohne Serverneustart.
+- Regressionen decken Löschung, erneutes Anlegen sowie `401` für alte und
+  `200` für neue Tokens im laufenden Server ab.
+
 ## 0.6.204 - 2026-07-12
 
 ### Security

@@ -16,8 +16,10 @@ import pytest
 from codex_usage.bridge import (
     _make_handler,
     bridge_token_for_account,
+    bridge_token_matches,
     ingest_and_save,
     render_bridge_snippet,
+    revoke_bridge_token,
     save_bridge_debug_payload,
     usage_from_ingest_payload,
     write_bridge_extension,
@@ -1389,6 +1391,16 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
         with post({"Authorization": f"Bearer {token}"}) as response:
             assert response.status == 200
             assert json.loads(response.read())["status"] == "ok"
+        assert bridge_token_matches(account.id, token) is True
+        assert revoke_bridge_token(account.id) is True
+        with pytest.raises(HTTPError) as revoked:
+            post({"Authorization": f"Bearer {token}"})
+        assert revoked.value.code == 401
+        replacement = bridge_token_for_account(account.id)
+        assert replacement != token
+        with post({"Authorization": f"Bearer {replacement}"}) as response:
+            assert response.status == 200
+            assert json.loads(response.read())["status"] == "ok"
         options = Request(
             endpoint,
             method="OPTIONS",
@@ -1406,7 +1418,7 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
         thread.join(timeout=5)
 
     token_path = tmp_path / "data" / "codex-usage" / "bridge-tokens" / "privat.token"
-    assert token_path.read_text(encoding="utf-8").strip() == token
+    assert token_path.read_text(encoding="utf-8").strip() == replacement
     assert token_path.stat().st_mode & 0o077 == 0
 
 
@@ -1425,6 +1437,22 @@ def test_bridge_token_rejects_non_private_token_file(tmp_path, monkeypatch, muta
 
     with pytest.raises(ValueError, match="permissions"):
         bridge_token_for_account("privat")
+
+
+def test_revoke_bridge_token_forces_new_token_after_account_readd(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    first = bridge_token_for_account("privat")
+    token_path = tmp_path / "data" / "codex-usage" / "bridge-tokens" / "privat.token"
+    assert token_path.is_file()
+
+    assert revoke_bridge_token("privat") is True
+    assert not token_path.exists()
+    assert revoke_bridge_token("privat") is False
+
+    second = bridge_token_for_account("privat")
+    assert second != first
+    assert token_path.read_text(encoding="utf-8").strip() == second
 
 
 def test_generated_content_refreshes_page_usage_before_ingest(tmp_path):
