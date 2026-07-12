@@ -43,6 +43,33 @@ def _jwt_with_claims(claims: dict) -> str:
     return f"{header}.{payload}.signature"
 
 
+def test_latest_default_cache_uses_shared_account_lock(monkeypatch):
+    events: list[tuple[str, str]] = []
+
+    class TrackingLock:
+        def __enter__(self):
+            events.append(("enter", self.account_id))
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            events.append(("exit", self.account_id))
+            return False
+
+        def __init__(self, account_id: str):
+            self.account_id = account_id
+
+    monkeypatch.setattr(
+        "codex_usage.bridge.account_lock",
+        lambda account_id: TrackingLock(account_id),
+    )
+
+    assert load_latest_usages(AppConfig(accounts=())) == []
+    assert events == [
+        ("enter", "__all_accounts__"),
+        ("exit", "__all_accounts__"),
+    ]
+
+
 def test_usage_from_ingest_payload_extracts_visible_values():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.333 - 2026-07-12
+
+### Fixed
+
+- Mehrkonto-Cache-Leser und -Schreiber verwenden einen gemeinsamen Lock, damit
+  `latest` keine gemischte Generation aus alten und neuen Accountwerten anzeigt.
+
+## 0.6.332 - 2026-07-12
+
+### Fixed
+
+- Leere Backend-Platzhalter dürfen beim Cache-Laden weiterhin mit einem
+  ersten Snapshot gefüllt werden; nur bestehende Fenster werden bei abweichender
+  Abrufweg-Provenienz geschützt.
+
 ## 0.6.331 - 2026-07-12
 
 ### Fixed

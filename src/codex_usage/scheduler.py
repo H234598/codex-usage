@@ -107,24 +107,25 @@ def fetch_all(
     else:
         usages = [fetch(account) for account in account_list]
     if save_snapshots:
-        accounts_by_id = {account.id: account for account in account_list}
-        for index, usage in enumerate(usages):
-            account = accounts_by_id.get(usage.account_id)
-            if (
-                account is None
-                or not backend_provenance_matches_configured(usage, account.backend)
-            ):
-                continue
-            try:
-                save_current_usage(usage)
-                if _should_persist_snapshot(usage):
-                    save_usage_snapshot(usage)
-            except Exception as exc:
-                usages[index] = replace(
-                    usage,
-                    status=AccountStatus.ERROR,
-                    error=f"snapshot save failed: {type(exc).__name__}",
-                )
+        with account_lock("__all_accounts__"):
+            accounts_by_id = {account.id: account for account in account_list}
+            for index, usage in enumerate(usages):
+                account = accounts_by_id.get(usage.account_id)
+                if (
+                    account is None
+                    or not backend_provenance_matches_configured(usage, account.backend)
+                ):
+                    continue
+                try:
+                    save_current_usage(usage)
+                    if _should_persist_snapshot(usage):
+                        save_usage_snapshot(usage)
+                except Exception as exc:
+                    usages[index] = replace(
+                        usage,
+                        status=AccountStatus.ERROR,
+                        error=f"snapshot save failed: {type(exc).__name__}",
+                    )
     for usage in usages:
         if usage.status == AccountStatus.ERROR:
             _record_health(
@@ -667,25 +668,26 @@ def watchdog(
     fetched_by_id = {usage.account_id: usage for usage in fetched}
 
     usages: list[AccountUsage] = []
-    for account in account_list:
-        usage = blocked_snapshots.get(account.id) or fetched_by_id.get(account.id)
-        if usage is None:
-            continue
-        if account.id not in blocked_snapshots:
-            usage = _apply_watchdog_block(usage, now=evaluation_now)
-            try:
-                save_current_usage(usage)
-                if _should_persist_snapshot(usage):
-                    save_usage_snapshot(usage)
-            except Exception as exc:
-                usage = replace(
-                    usage,
-                    status=AccountStatus.ERROR,
-                    error=f"snapshot save failed: {type(exc).__name__}",
-                    blocked_until=usage.blocked_until,
-                    blocked_reason=usage.blocked_reason,
-                )
-        usages.append(usage)
+    with account_lock("__all_accounts__"):
+        for account in account_list:
+            usage = blocked_snapshots.get(account.id) or fetched_by_id.get(account.id)
+            if usage is None:
+                continue
+            if account.id not in blocked_snapshots:
+                usage = _apply_watchdog_block(usage, now=evaluation_now)
+                try:
+                    save_current_usage(usage)
+                    if _should_persist_snapshot(usage):
+                        save_usage_snapshot(usage)
+                except Exception as exc:
+                    usage = replace(
+                        usage,
+                        status=AccountStatus.ERROR,
+                        error=f"snapshot save failed: {type(exc).__name__}",
+                        blocked_until=usage.blocked_until,
+                        blocked_reason=usage.blocked_reason,
+                    )
+            usages.append(usage)
 
     if output == "json":
         print(render_json(usages), flush=True)

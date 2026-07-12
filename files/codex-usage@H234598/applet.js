@@ -2371,7 +2371,7 @@ CodexUsageApplet.prototype = {
             if (old && this._backendIdentityIsIncomplete(item, old)) {
                 merged.push(this._markUsageStale(old));
             } else if (old && !this._backendProvenanceMatches(item, old)) {
-                merged.push(this._markUsageStale(old));
+                merged.push(this._hasCachedWindows(old) ? this._markUsageStale(old) : item);
             } else if (old && this._backendIdentityMatches(item, old) &&
                 this._captureIsOlder(item.captured_at, old.captured_at)) {
                 merged.push(old);
@@ -2642,6 +2642,10 @@ CodexUsageApplet.prototype = {
             item.status === "partial" &&
             ["direct", "app-server"].indexOf(item.backend_used) !== -1
         );
+    },
+
+    _hasCachedWindows: function(usage) {
+        return Boolean(usage && (usage.five_hour || usage.weekly));
     },
 
     _windowHasUsageValue: function(window) {

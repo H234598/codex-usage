@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from .account_lock import account_lock
 from .config import (
     AppConfig,
     default_state_dir,
@@ -1049,6 +1050,16 @@ def _authenticated_snapshot_supersedes_browser_current(
 
 
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
+    if snapshot_dir is None:
+        with account_lock("__all_accounts__"):
+            return _load_latest_usages_unlocked(config, snapshot_dir)
+    return _load_latest_usages_unlocked(config, snapshot_dir)
+
+
+def _load_latest_usages_unlocked(
+    config: AppConfig,
+    snapshot_dir: Path | None = None,
+) -> list[AccountUsage]:
     usages: list[AccountUsage] = []
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
     reference_at = datetime.now().astimezone()

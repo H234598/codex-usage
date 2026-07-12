@@ -535,6 +535,58 @@ def test_fetch_all_direct_saves_authenticated_partial_snapshots(monkeypatch):
     assert sorted(current) == ["broken", "ok", "partial"]
 
 
+def test_fetch_all_persists_accounts_inside_shared_lock(monkeypatch):
+    accounts = (
+        Account(id="one", label="One", profile_dir="/tmp/one"),
+        Account(id="two", label="Two", profile_dir="/tmp/two"),
+    )
+    shared_lock_active = False
+    save_states: list[tuple[str, bool]] = []
+
+    class TrackingLock:
+        def __init__(self, account_id: str):
+            self.account_id = account_id
+
+        def __enter__(self):
+            nonlocal shared_lock_active
+            if self.account_id == "__all_accounts__":
+                shared_lock_active = True
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            nonlocal shared_lock_active
+            if self.account_id == "__all_accounts__":
+                shared_lock_active = False
+            return False
+
+    def fake_fetch(account, config, *, headed):
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=80),
+            weekly=LimitWindow(name="weekly", remaining=60),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.account_lock", TrackingLock)
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage", fake_fetch)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_current_usage",
+        lambda usage: save_states.append((usage.account_id, shared_lock_active)),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = fetch_all(
+        AppConfig(accounts=accounts),
+        accounts,
+        headed=True,
+        save_snapshots=True,
+    )
+
+    assert [usage.account_id for usage in result] == ["one", "two"]
+    assert save_states == [("one", True), ("two", True)]
+
+
 def test_fetch_all_retains_direct_values_across_future_reset_jump(monkeypatch):
     account = Account(
         id="direct",
