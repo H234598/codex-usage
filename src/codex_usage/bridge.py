@@ -1011,9 +1011,14 @@ def _authenticated_snapshot_supersedes_browser_current(
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
     usages: list[AccountUsage] = []
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
+    reference_at = datetime.now().astimezone()
     for account in config.accounts:
         last_success = load_usage_snapshot(account.id, snapshot_dir)
         current = load_current_usage(account.id, current_dir)
+        if _capture_is_too_far_in_future(last_success, reference_at):
+            last_success = None
+        if _capture_is_too_far_in_future(current, reference_at):
+            current = None
         auth_identity: tuple[str | None, str | None] | None = None
         if account.auth_json_path is not None:
             try:
@@ -1066,10 +1071,22 @@ def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> l
             continue
         usage = expire_reset_windows(
             usage,
-            reference_at=datetime.now().astimezone(),
+            reference_at=reference_at,
         )
         usages.append(_mark_latest_stale(usage, config.interval_seconds))
     return usages
+
+
+def _capture_is_too_far_in_future(
+    usage: AccountUsage | None,
+    reference_at: datetime,
+) -> bool:
+    if usage is None:
+        return False
+    try:
+        return usage.captured_at > reference_at + timedelta(seconds=MAX_CAPTURE_FUTURE_SECONDS)
+    except (TypeError, ValueError, OverflowError):
+        return True
 
 
 def _mark_latest_stale(usage: AccountUsage, interval_seconds: int) -> AccountUsage:

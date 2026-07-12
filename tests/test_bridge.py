@@ -781,6 +781,50 @@ def test_latest_does_not_let_legacy_browser_current_hide_auth_snapshot(
     assert result[0].five_hour.remaining == expected_remaining
 
 
+def test_latest_discards_far_future_current_and_keeps_valid_snapshot(tmp_path):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="browser",
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    captured_at = datetime.now().astimezone()
+    valid = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=80),
+        weekly=LimitWindow(name="weekly", remaining=60),
+    )
+    future = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at + timedelta(hours=1),
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=1),
+        weekly=LimitWindow(name="weekly", remaining=2),
+    )
+
+    save_usage_snapshot(valid, snapshot_dir)
+    save_current_usage(future, snapshot_dir.parent / "current")
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].captured_at == valid.captured_at
+    assert result[0].five_hour is not None
+    assert result[0].five_hour.remaining == 80
+    assert result[0].weekly is not None
+    assert result[0].weekly.remaining == 60
+
+
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     before = datetime.now().astimezone()
