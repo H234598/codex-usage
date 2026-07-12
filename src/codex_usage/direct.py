@@ -31,6 +31,7 @@ MAX_AUTH_JSON_BYTES = 1_000_000
 MAX_ACCESS_TOKEN_CHARS = 16_384
 MAX_AUTH_ID_CHARS = 256
 PLAN_TYPE_ALIASES = {"pro": "plus"}
+SUPPORTED_WINDOW_SECONDS = frozenset((18_000, 604_800))
 
 
 def default_auth_json_path() -> Path:
@@ -168,7 +169,11 @@ def fetch_account_usage_direct(
             if _has_usage_values(five_hour, weekly)
             else AccountStatus.PARTIAL
         )
-        error = None if status == AccountStatus.OK else "usage limits not found in direct response"
+        error = (
+            None
+            if status == AccountStatus.OK
+            else _missing_usage_limits_error(payload, backend_plan_type)
+        )
         return AccountUsage(
             account_id=account.id,
             label=account.label,
@@ -218,6 +223,37 @@ class DirectAuthError(Exception):
 
 class DirectFetchError(Exception):
     pass
+
+
+def _missing_usage_limits_error(
+    payload: dict[str, Any],
+    backend_plan_type: str | None,
+) -> str:
+    rate_limit = payload.get("rate_limit")
+    unsupported: list[int] = []
+    if isinstance(rate_limit, dict):
+        for key in ("primary_window", "secondary_window"):
+            window = rate_limit.get(key)
+            if not isinstance(window, dict):
+                continue
+            raw_seconds = window.get("limit_window_seconds")
+            if isinstance(raw_seconds, bool) or not isinstance(raw_seconds, (int, float)):
+                continue
+            seconds = float(raw_seconds)
+            if (
+                seconds > 0
+                and seconds.is_integer()
+                and int(seconds) not in SUPPORTED_WINDOW_SECONDS
+            ):
+                unsupported.append(int(seconds))
+    if not unsupported:
+        return "usage limits not found in direct response"
+    durations = ", ".join(f"{seconds}s" for seconds in sorted(set(unsupported)))
+    plan = _normalized_plan_type(backend_plan_type) if backend_plan_type else "unknown"
+    return (
+        "requested 5h/weekly limits unavailable in direct response "
+        f"(plan {plan}; backend window {durations})"
+    )
 
 
 def _is_retryable_direct_auth_error(error: DirectAuthError) -> bool:

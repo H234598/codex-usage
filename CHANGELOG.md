@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.250 - 2026-07-12
+
+### Fixed
+
+- Direct-Abrufe melden jetzt ausdrücklich, wenn ein Account nur ein
+  nicht unterstütztes Fenster wie 30 Tage liefert und deshalb keine 5h-/
+  Wochenwerte vorhanden sind.
+
 ## 0.6.249 - 2026-07-12
 
 ### Fixed
