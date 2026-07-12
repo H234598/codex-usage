@@ -867,6 +867,37 @@ def test_merge_current_with_newer_partial_snapshot_keeps_current_windows():
     assert merged.stale is True
 
 
+@pytest.mark.parametrize("backend", ("direct", "app-server"))
+def test_merge_newer_authenticated_partial_does_not_restore_missing_windows(backend):
+    timezone = ZoneInfo("Europe/Berlin")
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 7, 11, 2, 0, tzinfo=timezone),
+        status=AccountStatus.OK,
+        backend_used=backend,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=42),
+        weekly=LimitWindow(name="weekly", remaining=61),
+    )
+    newer = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 7, 11, 3, 0, tzinfo=timezone),
+        status=AccountStatus.PARTIAL,
+        error="weekly limit unavailable",
+        backend_used=backend,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        weekly=LimitWindow(name="weekly", remaining=59),
+    )
+
+    merged = merge_current_with_last_success(current, newer)
+
+    assert merged == newer
+
+
 def test_save_current_usage_does_not_overwrite_newer_capture(tmp_path):
     current_dir = tmp_path / "current"
     newer = AccountUsage(

@@ -400,10 +400,7 @@ def merge_current_with_last_success(
             return _merge_newer_partial_usage(current, last_success)
     except TypeError:
         pass
-    preserve_missing_window_values = not (
-        current.status == AccountStatus.PARTIAL
-        and current.backend_used in AUTHENTICATED_BACKENDS
-    )
+    preserve_missing_window_values = _allow_missing_window_restore(current)
     five_hour = _merge_window_with_last_success(
         current.five_hour,
         last_success.five_hour,
@@ -440,15 +437,18 @@ def _merge_newer_partial_usage(
     older: AccountUsage,
     newer: AccountUsage,
 ) -> AccountUsage:
+    preserve_missing_window_values = _allow_missing_window_restore(newer)
     five_hour = _merge_window_with_last_success(
         newer.five_hour,
         older.five_hour,
         reference_at=newer.captured_at,
+        preserve_missing_value=preserve_missing_window_values,
     )
     weekly = _merge_window_with_last_success(
         newer.weekly,
         older.weekly,
         reference_at=newer.captured_at,
+        preserve_missing_value=preserve_missing_window_values,
     )
     if five_hour is newer.five_hour and weekly is newer.weekly:
         return newer
@@ -458,6 +458,13 @@ def _merge_newer_partial_usage(
         weekly=weekly,
         values_captured_at=older.values_captured_at or older.captured_at,
         stale=True,
+    )
+
+
+def _allow_missing_window_restore(usage: AccountUsage) -> bool:
+    return not (
+        usage.status == AccountStatus.PARTIAL
+        and usage.backend_used in AUTHENTICATED_BACKENDS
     )
 
 

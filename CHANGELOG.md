@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.257 - 2026-07-12
+
+### Fixed
+
+- Ein neuerer authentifizierter `partial`-Snapshot stellt fehlende 5h- oder
+  Wochenfenster nicht mehr aus einem älteren Snapshot wieder her.
+- Browser-Partials behalten weiterhin die bestehende vorsichtige Ergänzung
+  älterer Werte, wenn keine Backend-Identität die Daten autoritativ macht.
+
 ## 0.6.256 - 2026-07-12
 
 ### Fixed
