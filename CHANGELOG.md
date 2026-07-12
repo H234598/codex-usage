@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.202 - 2026-07-12
+
+### Fixed
+
+- Der Cinnamon-Cache-Merge verwirft verspätete ältere `latest`-Payloads und
+  schützt dadurch aktuellere Werte vor Rücksprung.
+- Während eines accountweisen systemd-Saves ausgelassene Accounts bleiben
+  sichtbar und werden als veraltet markiert; konfigurierte Accounts ohne
+  Snapshot erhalten einen sicheren Platzhalter statt aus dem Panel zu
+  verschwinden.
+- Der Applet-Regressionstest deckt beide Zwischenzustände ab.
+
 ## 0.6.201 - 2026-07-12
 
 ### Fixed

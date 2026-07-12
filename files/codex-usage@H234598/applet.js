@@ -2232,17 +2232,64 @@ CodexUsageApplet.prototype = {
     },
 
     _applyPayload: function(payload, fresh) {
-        let usages = fresh ? this._mergeFreshPayload(payload) : payload;
+        let usages = fresh ? this._mergeFreshPayload(payload) : this._mergeCachedPayload(payload);
+        this._usages = usages;
+        if (this._backendRowsReady) {
+            this._ensureBackendUsageRows();
+        }
         let nowMs = Date.now();
         let staleAfterMs = this._staleAfterMs();
-        for (let i = 0; i < usages.length; i++) {
-            let capturedMs = this._dateMillis(usages[i].captured_at);
-            usages[i].stale = usages[i].stale || capturedMs === null || nowMs - capturedMs > staleAfterMs;
+        for (let i = 0; i < this._usages.length; i++) {
+            let capturedMs = this._dateMillis(this._usages[i].captured_at);
+            this._usages[i].stale = this._usages[i].stale ||
+                capturedMs === null || nowMs - capturedMs > staleAfterMs;
         }
-        this._usages = usages;
         this._buildUsageMenu();
         this._updatePanel();
         this._notifyForPayload();
+    },
+
+    _mergeCachedPayload: function(cached) {
+        let previous = Object.create(null);
+        for (let i = 0; i < this._usages.length; i++) {
+            previous[this._usages[i].account] = this._usages[i];
+        }
+        let merged = [];
+        let seen = Object.create(null);
+        for (let i = 0; i < cached.length; i++) {
+            let item = cached[i];
+            if (this._backendRowsReady && !this._backendAccounts[item.account]) {
+                continue;
+            }
+            let old = previous[item.account];
+            if (old && this._backendIdentityMatches(item, old) &&
+                this._captureIsOlder(item.captured_at, old.captured_at)) {
+                merged.push(old);
+            } else {
+                merged.push(item);
+            }
+            seen[item.account] = true;
+        }
+        for (let i = 0; i < this._usages.length; i++) {
+            let old = this._usages[i];
+            if (seen[old.account] ||
+                (this._backendRowsReady && !this._backendAccounts[old.account])) {
+                continue;
+            }
+            let stale = {};
+            for (let key in old) {
+                if (Object.prototype.hasOwnProperty.call(old, key)) {
+                    stale[key] = old[key];
+                }
+            }
+            stale.stale = true;
+            stale.values_captured_at = stale.values_captured_at || stale.captured_at;
+            if (stale.status === "ok") {
+                stale.status = "partial";
+            }
+            merged.push(stale);
+        }
+        return merged;
     },
 
     _mergeFreshPayload: function(fresh) {

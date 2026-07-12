@@ -240,6 +240,56 @@ test("systemd display cadence reloads a locally stale cache without fresh pollin
   assert.equal(cachedLoads, 1);
 });
 
+test("cached payloads preserve omitted accounts and newer values", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+    beta: { account: "beta", label: "Beta", backend: 0 },
+    gamma: { account: "gamma", label: "Gamma", backend: 0 },
+  };
+  applet._usages = [
+    {
+      account: "alpha",
+      label: "Alpha",
+      captured_at: new Date(Date.now() - 10 * 1000).toISOString(),
+      status: "ok",
+      five_hour: { remaining: 80 },
+      weekly: { remaining: 60 },
+    },
+    {
+      account: "beta",
+      label: "Beta",
+      captured_at: new Date(Date.now() - 20 * 1000).toISOString(),
+      status: "ok",
+      five_hour: { remaining: 70 },
+      weekly: { remaining: 50 },
+    },
+  ];
+  applet._buildUsageMenu = () => {};
+  applet._updatePanel = () => {};
+  applet._notifyForPayload = () => {};
+
+  applet._applyPayload([
+    {
+      account: "alpha",
+      label: "Alpha",
+      captured_at: new Date(Date.now() - 30 * 1000).toISOString(),
+      status: "ok",
+      five_hour: { remaining: 20 },
+      weekly: { remaining: 10 },
+    },
+  ], false);
+
+  const byAccount = Object.fromEntries(applet._usages.map((usage) => [usage.account, usage]));
+  assert.equal(byAccount.alpha.five_hour.remaining, 80);
+  assert.equal(byAccount.beta.five_hour.remaining, 70);
+  assert.equal(byAccount.beta.status, "partial");
+  assert.equal(byAccount.beta.stale, true);
+  assert.equal(byAccount.gamma.status, "partial");
+  assert.equal(byAccount.gamma.stale, true);
+});
+
 test("epoch reset timestamps remain valid and report zero duration", () => {
   const applet = makeApplet();
   const epoch = "1970-01-01T00:00:00.000Z";
