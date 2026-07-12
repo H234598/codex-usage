@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.271 - 2026-07-12
+
+### Fixed
+
+- Der Browser-Page-Hook verwirft Hauptantworten aus einer alten Refresh-Runde
+  und ignoriert verspätete Antworten, damit ein neuer Abruf keine veralteten
+  Nutzungswerte wieder einspeist.
+
 ## 0.6.270 - 2026-07-12
 
 ### Security

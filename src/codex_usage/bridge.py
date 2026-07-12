@@ -1733,6 +1733,7 @@ def _render_extension_page_hook() -> str:
   const CODEX_USAGE_FLUSH_TICKS = 120;
   const codexUsageCapturedApiResponses = [];
   let codexUsageFetchSequence = 0;
+  let codexUsageMinimumMainRequestSequence = 0;
   let codexUsageFlushTicks = 0;
   let codexUsageOriginalFetch = null;
 
@@ -1776,6 +1777,17 @@ def _render_extension_page_hook() -> str:
     }
   }
 
+  function codexUsageIsMainUsageUrl(url) {
+    try {
+      const parsed = new URL(String(url || ""), location.origin);
+      const path = parsed.pathname.replace(/\\/+$/, "") || "/";
+      return parsed.origin === location.origin
+        && path === "/backend-api/wham/usage";
+    } catch (_error) {
+      return false;
+    }
+  }
+
   function codexUsageApiResponseKey(item) {
     let url = String((item && item.url) || "");
     try {
@@ -1803,6 +1815,14 @@ def _render_extension_page_hook() -> str:
   }
 
   function rememberCodexUsageApiResponse(item, requestId = null) {
+    const requestSequence = codexUsageApiResponseSequence(item);
+    if (
+      codexUsageIsMainUsageUrl(item.url)
+      && requestSequence !== null
+      && requestSequence < codexUsageMinimumMainRequestSequence
+    ) {
+      return;
+    }
     const key = codexUsageApiResponseKey(item);
     for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {
       if (codexUsageApiResponseKey(codexUsageCapturedApiResponses[index]) === key) {
@@ -1821,6 +1841,15 @@ def _render_extension_page_hook() -> str:
       codexUsageCapturedApiResponses.shift();
     }
     flushCodexUsageApiResponses(requestId);
+  }
+
+  function forgetCodexUsageMainUsageResponses() {
+    codexUsageMinimumMainRequestSequence = codexUsageFetchSequence + 1;
+    for (let index = codexUsageCapturedApiResponses.length - 1; index >= 0; index -= 1) {
+      if (codexUsageIsMainUsageUrl(codexUsageCapturedApiResponses[index].url)) {
+        codexUsageCapturedApiResponses.splice(index, 1);
+      }
+    }
   }
 
   function flushCodexUsageApiResponses(requestId = null) {
@@ -1889,6 +1918,7 @@ def _render_extension_page_hook() -> str:
 
   async function refreshCodexUsageUsage(requestId) {
     const url = new URL("/backend-api/wham/usage", location.origin).href;
+    forgetCodexUsageMainUsageResponses();
     const requestSequence = ++codexUsageFetchSequence;
     if (typeof codexUsageOriginalFetch !== "function") {
       window.postMessage({

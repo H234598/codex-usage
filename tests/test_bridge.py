@@ -2683,6 +2683,141 @@ setTimeout(() => process.exit(process.exitCode || 0), 100);
     assert result.returncode == 0, result.stderr
 
 
+def test_generated_page_hook_discards_late_response_from_previous_refresh_epoch(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+let messageHandler = null;
+let fetchCount = 0;
+let releaseLateOld;
+let releaseFresh;
+const lateOldGate = new Promise((resolve) => { releaseLateOld = resolve; });
+const freshGate = new Promise((resolve) => { releaseFresh = resolve; });
+function makeResponse(value) {
+  return {
+    status: 200,
+    ok: true,
+    clone() {
+      return {
+        status: 200,
+        ok: true,
+        headers: { get() { return "application/json"; } },
+        text: async () => JSON.stringify({ value })
+      };
+    }
+  };
+}
+const window = {
+  addEventListener(type, callback) {
+    if (type === "message") {
+      messageHandler = callback;
+    }
+  },
+  fetch: async () => {
+    const call = fetchCount++;
+    if (call === 1) {
+      await lateOldGate;
+      return makeResponse("late-old");
+    }
+    if (call === 2) {
+      await freshGate;
+      return makeResponse("fresh");
+    }
+    return makeResponse("baseline");
+  },
+  postMessage(message) {
+    messages.push(message);
+  }
+};
+const sandbox = {
+  window,
+  location: { origin: "https://chatgpt.com" },
+  Number,
+  String,
+  Object,
+  Array,
+  Promise,
+  JSON,
+  URL,
+  console,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+if (!messageHandler) {
+  throw new Error("page hook did not install its message handler");
+}
+async function waitForTasks(milliseconds = 20) {
+  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+async function run() {
+  messageHandler({
+    source: window,
+    data: { type: "codexUsageRefresh", requestId: "refresh-1" }
+  });
+  await waitForTasks();
+  const afterBaseline = messages.length;
+
+  const lateOld = window.fetch("https://chatgpt.com/backend-api/wham/usage");
+  await waitForTasks(0);
+  messageHandler({
+    source: window,
+    data: { type: "codexUsageRefresh", requestId: "refresh-2" }
+  });
+  await waitForTasks(0);
+  releaseLateOld();
+  await lateOld;
+  await waitForTasks();
+
+  const lateMessages = messages.slice(afterBaseline);
+  if (lateMessages.some((message) => (message.responses || []).some(
+    (item) => item.url.endsWith("/backend-api/wham/usage")
+      && JSON.parse(item.bodyText || "{}").value === "late-old"
+  ))) {
+    throw new Error(JSON.stringify({ messages, lateMessages }));
+  }
+
+  releaseFresh();
+  await waitForTasks();
+  const freshMessage = messages.find((message) => message.requestId === "refresh-2");
+  const freshUsage = freshMessage && freshMessage.responses.find(
+    (item) => item.url.endsWith("/backend-api/wham/usage")
+  );
+  if (!freshUsage || JSON.parse(freshUsage.bodyText).value !== "fresh") {
+    throw new Error(JSON.stringify({ messages, freshMessage, freshUsage }));
+  }
+}
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+setTimeout(() => process.exit(process.exitCode || 0), 200);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "page-hook.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_generated_page_hook_answers_refresh_request_with_fresh_usage(tmp_path):
     node = shutil.which("node")
     if node is None:
