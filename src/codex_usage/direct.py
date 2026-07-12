@@ -362,6 +362,40 @@ def auth_identity_for_account(account: Account) -> tuple[str | None, str | None]
     return auth_identity_from_file(Path(account.auth_json_path))
 
 
+def auth_email_from_payload(
+    payload: dict[str, Any],
+    *,
+    path: Path,
+) -> str | None:
+    tokens = payload.get("tokens")
+    if not isinstance(tokens, dict):
+        return None
+    emails: list[str] = []
+    for token_name in ("id_token", "access_token"):
+        claims = _jwt_claims(tokens.get(token_name))
+        if not isinstance(claims, dict) or "email" not in claims:
+            continue
+        email = _safe_auth_identity(claims.get("email"))
+        if email is None:
+            raise DirectAuthError(f"auth.json token email is invalid: {path}")
+        emails.append(email)
+    if len({email.casefold() for email in emails}) > 1:
+        raise DirectAuthError(f"auth.json token emails disagree: {path}")
+    return emails[0] if emails else None
+
+
+def auth_email_from_file(path: Path) -> str | None:
+    path = path.expanduser()
+    raw, _ = read_auth_json_file(path)
+    try:
+        payload = loads_strict(raw)
+    except ValueError as exc:
+        raise DirectAuthError(f"invalid auth.json: {path}") from exc
+    if not isinstance(payload, dict):
+        raise DirectAuthError(f"invalid auth.json structure: {path}")
+    return auth_email_from_payload(payload, path=path)
+
+
 def auth_plan_type_from_payload(
     payload: dict[str, Any],
     *,

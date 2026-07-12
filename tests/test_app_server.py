@@ -20,10 +20,17 @@ from codex_usage.app_server import (
 from codex_usage.models import Account, AccountStatus
 
 
-def _jwt(expiry: datetime, *, plan_type: str | None = None) -> str:
+def _jwt(
+    expiry: datetime,
+    *,
+    plan_type: str | None = None,
+    email: str | None = None,
+) -> str:
     payload = {"exp": int(expiry.timestamp())}
     if plan_type is not None:
         payload["https://api.openai.com/auth"] = {"chatgpt_plan_type": plan_type}
+    if email is not None:
+        payload["email"] = email
     payload = base64.urlsafe_b64encode(
         json.dumps(payload).encode()
     ).rstrip(b"=")
@@ -36,14 +43,15 @@ def _auth(
     account_id: str = "account-test",
     *,
     plan_type: str | None = None,
+    email: str | None = None,
 ) -> None:
     path.write_text(
         json.dumps(
             {
                 "auth_mode": "chatgpt",
                 "tokens": {
-                    "access_token": _jwt(expiry, plan_type=plan_type),
-                    "id_token": _jwt(expiry, plan_type=plan_type),
+                    "access_token": _jwt(expiry, plan_type=plan_type, email=email),
+                    "id_token": _jwt(expiry, plan_type=plan_type, email=email),
                     "refresh_token": "refresh-test",
                     "account_id": account_id,
                 },
@@ -60,9 +68,11 @@ def _fake_codex(
     *,
     reject_initial_account_read: bool = False,
     account_plan_type: str | None = None,
+    account_email: str | None = None,
 ) -> str:
     reject_initial = str(reject_initial_account_read)
     plan_field = f", 'planType': {account_plan_type!r}" if account_plan_type else ""
+    email_field = f", 'email': {account_email!r}" if account_email else ""
     source = f"""#!/usr/bin/env python3
 import json
 import sys
@@ -86,7 +96,7 @@ for line in sys.stdin:
             response = {{
                 "id": message["id"],
                 "result": {{
-                    "account": {{"type": "chatgpt"{plan_field}}},
+                    "account": {{"type": "chatgpt"{plan_field}{email_field}}},
                     "requiresOpenaiAuth": True,
                 }},
             }}
@@ -120,9 +130,17 @@ def test_app_server_fetch_uses_only_account_methods(tmp_path):
     auth_home = tmp_path / "codex-home"
     auth_home.mkdir()
     auth_path = auth_home / "auth.json"
-    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    _auth(
+        auth_path,
+        datetime.now(UTC) + timedelta(hours=1),
+        email="same@example.com",
+    )
     requests_path = tmp_path / "requests.json"
-    command = _fake_codex(tmp_path / "codex", requests_path)
+    command = _fake_codex(
+        tmp_path / "codex",
+        requests_path,
+        account_email="same@example.com",
+    )
     account = Account(
         id="work",
         label="Work",
@@ -319,6 +337,34 @@ def test_app_server_rejects_server_plan_mismatch(tmp_path):
 
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error == "Codex app server plan type differs from auth.json"
+
+
+def test_app_server_rejects_server_email_mismatch(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(
+        auth_path,
+        datetime.now(UTC) + timedelta(hours=1),
+        email="expected@example.com",
+    )
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_email="other@example.com",
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "Codex app server email differs from auth.json"
 
 
 def test_app_server_rejects_auth_without_account_identity(tmp_path):

@@ -19,6 +19,7 @@ from .direct import (
     _normalized_plan_type,
     auth_identity_changed,
     auth_identity_from_payload,
+    auth_email_from_payload,
     auth_metadata_from_payload,
     auth_plan_type_from_payload,
     read_auth_json_file,
@@ -70,6 +71,7 @@ def fetch_account_usage_app_server(
             auth_user_id_before,
             auth_account_id_before,
             auth_plan_type_before,
+            auth_email_before,
         ) = _auth_context(account)
         if not (auth_user_id_before or auth_account_id_before):
             raise DirectAuthError("auth.json has no account identity")
@@ -80,6 +82,7 @@ def fetch_account_usage_app_server(
             timeout_seconds=timeout_seconds,
             codex_command=codex_command,
             expected_plan_type=auth_plan_type_before,
+            expected_email=auth_email_before,
         )
         (
             _,
@@ -87,6 +90,7 @@ def fetch_account_usage_app_server(
             auth_user_id,
             auth_account_id,
             auth_plan_type,
+            auth_email,
         ) = _auth_context(account)
         if auth_identity_changed(
             before_user_id=auth_user_id_before,
@@ -97,6 +101,8 @@ def fetch_account_usage_app_server(
             raise AppServerAuthError("auth.json identity changed during rate-limit request")
         if _auth_plan_type_changed(auth_plan_type_before, auth_plan_type):
             raise AppServerAuthError("auth.json plan type changed during rate-limit request")
+        if _auth_email_changed(auth_email_before, auth_email):
+            raise AppServerAuthError("auth.json email changed during rate-limit request")
         five_hour, weekly = _windows_from_response(payload)
         status = (
             AccountStatus.OK
@@ -158,6 +164,7 @@ def _auth_context(
     str | None,
     str | None,
     str | None,
+    str | None,
 ]:
     if not account.auth_json_path:
         raise DirectAuthError("account has no auth_json_path")
@@ -178,6 +185,7 @@ def _auth_context(
         auth_user_id,
         auth_account_id,
         auth_plan_type_from_payload(payload, path=path),
+        auth_email_from_payload(payload, path=path),
     )
 
 
@@ -188,6 +196,7 @@ def _read_rate_limits(
     timeout_seconds: int,
     codex_command: str | None,
     expected_plan_type: str | None,
+    expected_email: str | None,
 ) -> dict[str, Any]:
     _validate_codex_home(codex_home)
     command = _resolve_codex(codex_command)
@@ -242,6 +251,15 @@ def _read_rate_limits(
                     raise AppServerAuthError(
                         "Codex app server plan type differs from auth.json"
                     )
+            server_email = account.get("email")
+            if expected_email and server_email is not None:
+                if (
+                    not isinstance(server_email, str)
+                    or server_email.strip().casefold() != expected_email.strip().casefold()
+                ):
+                    raise AppServerAuthError(
+                        "Codex app server email differs from auth.json"
+                    )
 
         try:
             read_account(2, refresh_token=refresh)
@@ -265,6 +283,14 @@ def _read_rate_limits(
             )
     finally:
         _stop_process(process)
+
+
+def _auth_email_changed(before: str | None, after: str | None) -> bool:
+    return bool(
+        before
+        and after
+        and before.strip().casefold() != after.strip().casefold()
+    )
 
 
 def _request_rate_limits(
