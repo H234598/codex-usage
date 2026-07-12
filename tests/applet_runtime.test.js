@@ -178,6 +178,51 @@ test("remaining percentage prefers absolute used and limit values", () => {
   assert.equal(applet._remainingPercent({ remaining: 690, limit: 1000 }), 69);
 });
 
+test("browser values do not merge with unknown provenance", () => {
+  const applet = makeApplet();
+  const browser = { backend_used: "browser", backend_configured: "direct" };
+  const unknown = { backend_used: "", backend_configured: "direct" };
+
+  assert.equal(applet._backendProvenanceMatches(browser, unknown), false);
+  assert.equal(applet._backendProvenanceMatches(unknown, browser), false);
+  assert.equal(
+    applet._backendProvenanceMatches(browser, {
+      backend_used: "browser",
+      backend_configured: "direct",
+    }),
+    true
+  );
+});
+
+test("fresh browser partial does not restore an unknown cached window", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    label: "Alpha",
+    captured_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    status: "ok",
+    backend_configured: "direct",
+    backend_used: "",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 10 },
+  }];
+
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    label: "Alpha",
+    captured_at: new Date().toISOString(),
+    status: "partial",
+    backend_configured: "direct",
+    backend_used: "browser",
+    five_hour: { remaining: 70 },
+    weekly: null,
+  }]);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].five_hour.remaining, 70);
+  assert.equal(merged[0].weekly, null);
+});
+
 test("a missed five-minute poll marks cached values stale after one grace minute", () => {
   const applet = makeApplet();
   applet.refreshInterval = 300;

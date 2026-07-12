@@ -2520,15 +2520,12 @@ CodexUsageApplet.prototype = {
         let authenticated = ["direct", "app-server"];
         let leftUsed = this._safeBackend(left && left.backend_used, true);
         let rightUsed = this._safeBackend(right && right.backend_used, true);
+        if (leftUsed === "browser" || rightUsed === "browser") {
+            return leftUsed === "browser" && rightUsed === "browser";
+        }
         let leftAuthenticated = authenticated.indexOf(leftUsed) !== -1;
         let rightAuthenticated = authenticated.indexOf(rightUsed) !== -1;
         if (!leftAuthenticated || !rightAuthenticated) {
-            if (
-                (leftUsed === "browser" || rightUsed === "browser") &&
-                (leftAuthenticated || rightAuthenticated)
-            ) {
-                return false;
-            }
             return true;
         }
         if (leftUsed === rightUsed) {

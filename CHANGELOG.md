@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.286 - 2026-07-12
+
+### Security
+
+- Das Cinnamon-Applet führt Browserwerte nicht mehr mit unmarkierten
+  Legacy-Caches zusammen. Fehlende Fenster werden dadurch nicht aus einer
+  unbekannten Quelle ergänzt.
+
 ## 0.6.285 - 2026-07-12
 
 ### Security
