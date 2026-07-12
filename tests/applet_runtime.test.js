@@ -211,6 +211,35 @@ test("a fresh account cannot hide another account's stale cache", () => {
   assert.equal(applet._cacheIsStale(), true);
 });
 
+test("systemd display cadence reloads a locally stale cache without fresh polling", () => {
+  let displayCallback;
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = (_seconds, callback) => {
+      displayCallback = callback;
+      return 4;
+    };
+  });
+  applet._systemdActive = true;
+  applet.pollOwner = "systemd";
+  applet._usages = [{
+    account: "alpha",
+    captured_at: new Date(Date.now() - 61 * 1000).toISOString(),
+  }];
+  let cachedLoads = 0;
+  applet._loadCached = (refreshAfter, refreshAuxiliaryState) => {
+    cachedLoads += 1;
+    assert.equal(refreshAfter, false);
+    assert.equal(refreshAuxiliaryState, false);
+  };
+  applet._updatePanel = () => {};
+  applet._runSafely = (_context, callback) => callback();
+
+  assert.equal(applet._scheduleDisplayTimer(), true);
+  assert.ok(displayCallback);
+  displayCallback();
+  assert.equal(cachedLoads, 1);
+});
+
 test("epoch reset timestamps remain valid and report zero duration", () => {
   const applet = makeApplet();
   const epoch = "1970-01-01T00:00:00.000Z";

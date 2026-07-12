@@ -22,6 +22,7 @@ const REACTIVATION_TIMEOUT_MS = 900000;
 const CIRCUIT_BREAKER_MS = 900000;
 const INTERNAL_FAILURE_WINDOW_MS = 300000;
 const INTERNAL_FAILURE_LIMIT = 3;
+const CACHE_SYNC_INTERVAL_MS = 60000;
 const REFRESH_FAILURE_LIMIT = 3;
 const PANEL_CLASSES = [
     "codex-usage-panel-warning",
@@ -578,6 +579,13 @@ CodexUsageApplet.prototype = {
                     if (this._safeMode) {
                         return;
                     }
+                    if (
+                        this._systemdActive &&
+                        !this._usesAppletPolling() &&
+                        this._cacheNeedsSync()
+                    ) {
+                        this._loadCached(false, false);
+                    }
                     this._updatePanel();
                     if (this.menu && this.menu.isOpen) {
                         this._buildUsageMenu();
@@ -597,7 +605,7 @@ CodexUsageApplet.prototype = {
         }
     },
 
-    _loadCached: function(refreshAfter) {
+    _loadCached: function(refreshAfter, refreshAuxiliaryState) {
         if (this._removed || this._safeMode) {
             return;
         }
@@ -620,7 +628,9 @@ CodexUsageApplet.prototype = {
                 if (refreshAfter && this.autoRefresh && this._usesAppletPolling()) {
                     this._primaryFreshPending = true;
                 }
-                this._refreshAuxiliaryState();
+                if (refreshAuxiliaryState !== false) {
+                    this._refreshAuxiliaryState();
+                }
             }
         }));
     },
@@ -1036,6 +1046,24 @@ CodexUsageApplet.prototype = {
             }
             let captured = this._dateMillis(usage.captured_at);
             if (captured === null || nowMs - captured > staleAfterMs) {
+                return true;
+            }
+        }
+        return false;
+    },
+
+    _cacheNeedsSync: function() {
+        if (!this._usages.length) {
+            return true;
+        }
+        let nowMs = Date.now();
+        for (let i = 0; i < this._usages.length; i++) {
+            let usage = this._usages[i];
+            if (usage.stale) {
+                return true;
+            }
+            let captured = this._dateMillis(usage.captured_at);
+            if (captured === null || nowMs - captured > CACHE_SYNC_INTERVAL_MS) {
                 return true;
             }
         }

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.188 - 2026-07-12
+
+### Fixed
+
+- Das Applet gleicht bei aktivem systemd-Polling den lokalen `latest`-Cache
+  jetzt im Anzeige-Takt ab. Dadurch kann ein unabhängig gestarteter systemd-
+  Timer den Panelwert nicht mehr mehrere Minuten hinter dem gespeicherten
+  Stand zurücklassen.
+- Dieser Abgleich liest nur lokale Snapshots und startet keinen neuen
+  Backend-Abruf.
+
 ## 0.6.187 - 2026-07-12
 
 ### Fixed
