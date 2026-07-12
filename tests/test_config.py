@@ -308,6 +308,20 @@ def test_save_config_rejects_shared_auth_json_path(tmp_path):
         save_config(config, tmp_path / "config.toml")
 
 
+@pytest.mark.parametrize("field", ("profile_dir", "auth_json_path"))
+def test_save_config_rejects_relative_account_paths(tmp_path, field):
+    values = {
+        "id": "one",
+        "label": "One",
+        "profile_dir": str(tmp_path / "profiles" / "one"),
+    }
+    values[field] = "relative-path"
+    account = Account(**values)
+
+    with pytest.raises(ValueError, match=f"{field} must be an absolute path"):
+        save_config(AppConfig(accounts=(account,)), tmp_path / "config.toml")
+
+
 def test_save_config_sets_private_file_mode(tmp_path):
     config_path = tmp_path / "config.toml"
     save_config(

@@ -160,6 +160,7 @@ def add_or_update_account(
             analytics_url=config.analytics_url,
             headless=config.headless,
         )
+        _validate_account(account)
         _prepare_profile_dir(account.profile_dir)
         _validate_config(updated)
         if existing is None or existing != account:
@@ -350,6 +351,8 @@ def _validate_account(account: object) -> None:
     _validate_account_id(account.id)
     _validate_text_field(account.label, "account label", MAX_CONFIG_LABEL_CHARS)
     _validate_text_field(account.profile_dir, "profile_dir", MAX_CONFIG_PATH_CHARS)
+    if not Path(account.profile_dir).expanduser().is_absolute():
+        raise ValueError("profile_dir must be an absolute path")
     _validate_browser(account.browser)
     _validate_backend(account.backend)
     if account.auth_json_path is not None:
@@ -358,6 +361,8 @@ def _validate_account(account: object) -> None:
             "auth_json_path",
             MAX_CONFIG_PATH_CHARS,
         )
+        if not Path(account.auth_json_path).expanduser().is_absolute():
+            raise ValueError("auth_json_path must be an absolute path")
 
 
 def _validate_text_field(value: object, name: str, max_chars: int) -> None:

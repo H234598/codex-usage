@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.350 - 2026-07-13
+
+### Fixed
+
+- Relative `profile_dir`- und `auth_json_path`-Werte werden abgewiesen, damit
+  CLI und systemd nie unterschiedliche Accounts aus demselben Config-Eintrag
+  aufloesen.
+
 ## 0.6.349 - 2026-07-13
 
 ### Fixed
