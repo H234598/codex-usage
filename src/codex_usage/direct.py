@@ -228,8 +228,15 @@ def auth_identity_changed(
     after_user_id: str | None,
     after_account_id: str | None,
 ) -> bool:
+    """Treat account IDs as primary while rejecting two known user IDs that differ."""
     if before_account_id or after_account_id:
-        return before_account_id != after_account_id
+        if before_account_id != after_account_id:
+            return True
+        return bool(
+            before_user_id
+            and after_user_id
+            and before_user_id != after_user_id
+        )
     return before_user_id != after_user_id
 
 

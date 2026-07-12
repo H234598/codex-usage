@@ -12,6 +12,7 @@ from codex_usage.direct import (
     DirectFetchError,
     _fetch_stable_wham_usage,
     _jwt_expiry,
+    auth_identity_changed,
     auth_identity_from_payload,
     fetch_account_usage_direct,
 )
@@ -56,6 +57,21 @@ def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
 
     with pytest.raises(DirectAuthError, match="token identities disagree"):
         auth_identity_from_payload(payload, path=path)
+
+
+def test_auth_identity_rejects_changed_user_with_same_account():
+    assert auth_identity_changed(
+        before_user_id="old-user",
+        before_account_id="shared-account",
+        after_user_id="new-user",
+        after_account_id="shared-account",
+    ) is True
+    assert auth_identity_changed(
+        before_user_id="same-user",
+        before_account_id="shared-account",
+        after_user_id="same-user",
+        after_account_id="shared-account",
+    ) is False
 
 
 def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkeypatch):

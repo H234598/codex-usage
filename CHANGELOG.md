@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.192 - 2026-07-12
+
+### Fixed
+
+- Auth-Refresh-Prüfungen behandeln jetzt auch zwei bekannte, unterschiedliche
+  User-IDs bei gleicher Account-ID als Identitätswechsel.
+- Die bisher erlaubte Backend-Antwort mit abweichender `user_id` bei gleicher
+  Account-ID bleibt unverändert gültig; die neue Sperre betrifft nur die
+  während eines Requests erneut gelesene `auth.json`-Identität.
+- Eine Regression sichert die Unterscheidung zwischen Userwechsel und stabiler
+  gemeinsamer Account-ID ab.
+
 ## 0.6.191 - 2026-07-12
 
 ### Fixed
