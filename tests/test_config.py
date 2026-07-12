@@ -385,3 +385,23 @@ def test_remove_account_accepts_unique_label_and_keeps_profile(tmp_path):
     assert load_config(config_path).accounts == ()
     assert profile_dir.is_dir()
     assert (profile_dir / ".codex-usage-profile").is_file()
+
+
+def test_readding_removed_account_clears_previous_usage_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("same", label="Old", path=config_path)
+    save_current_usage(
+        AccountUsage(
+            account_id="same",
+            label="Old",
+            captured_at=datetime.now(UTC),
+            five_hour=LimitWindow(name="5h", remaining=12),
+            weekly=LimitWindow(name="weekly", remaining=34),
+        )
+    )
+
+    remove_account("same", path=config_path)
+    add_or_update_account("same", label="New", path=config_path)
+
+    assert load_current_usage("same") is None

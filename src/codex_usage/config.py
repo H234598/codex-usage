@@ -162,8 +162,9 @@ def add_or_update_account(
         )
         _prepare_profile_dir(account.profile_dir)
         _validate_config(updated)
-        if existing is not None and existing != account:
-            # A changed source or label makes the old values unsafe to display.
+        if existing is None or existing != account:
+            # A re-added or changed account must not inherit values from another
+            # configuration generation under the same local account ID.
             from .state import remove_account_state
 
             remove_account_state(account.id)
