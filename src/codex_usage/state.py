@@ -461,12 +461,14 @@ def merge_current_with_last_success(
     except TypeError:
         pass
     preserve_missing_window_values = _allow_missing_window_restore(current)
+    current_values_captured_at = _values_capture_for_expiry(current)
+    last_success_values_captured_at = _values_capture_for_expiry(last_success)
     five_hour = _merge_window_with_last_success(
         current.five_hour,
         last_success.five_hour,
         reference_at=current.captured_at,
-        current_captured_at=current.captured_at,
-        last_success_captured_at=last_success.captured_at,
+        current_captured_at=current_values_captured_at,
+        last_success_captured_at=last_success_values_captured_at,
         expected_kind="five_hour",
         preserve_missing_value=preserve_missing_window_values,
     )
@@ -474,8 +476,8 @@ def merge_current_with_last_success(
         current.weekly,
         last_success.weekly,
         reference_at=current.captured_at,
-        current_captured_at=current.captured_at,
-        last_success_captured_at=last_success.captured_at,
+        current_captured_at=current_values_captured_at,
+        last_success_captured_at=last_success_values_captured_at,
         expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
@@ -504,12 +506,14 @@ def _merge_newer_partial_usage(
     newer: AccountUsage,
 ) -> AccountUsage:
     preserve_missing_window_values = _allow_missing_window_restore(newer)
+    older_values_captured_at = _values_capture_for_expiry(older)
+    newer_values_captured_at = _values_capture_for_expiry(newer)
     five_hour = _merge_window_with_last_success(
         newer.five_hour,
         older.five_hour,
         reference_at=newer.captured_at,
-        current_captured_at=newer.captured_at,
-        last_success_captured_at=older.captured_at,
+        current_captured_at=newer_values_captured_at,
+        last_success_captured_at=older_values_captured_at,
         expected_kind="five_hour",
         preserve_missing_value=preserve_missing_window_values,
     )
@@ -517,8 +521,8 @@ def _merge_newer_partial_usage(
         newer.weekly,
         older.weekly,
         reference_at=newer.captured_at,
-        current_captured_at=newer.captured_at,
-        last_success_captured_at=older.captured_at,
+        current_captured_at=newer_values_captured_at,
+        last_success_captured_at=older_values_captured_at,
         expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )

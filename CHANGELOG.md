@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.326 - 2026-07-12
+
+### Fixed
+
+- Cache-Merges verwenden für resetlose Fenster den tatsächlichen
+  `values_captured_at`-Zeitpunkt statt eines späteren Wrapper-Captures.
+
 ## 0.6.325 - 2026-07-12
 
 ### Fixed
