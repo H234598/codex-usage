@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.190 - 2026-07-12
+
+### Fixed
+
+- Der Direct-Sampler verwirft jetzt eine alte Mehrheitsantwort, wenn der
+  letzte Response innerhalb derselben Fensterdauer einen deutlich niedrigeren
+  Verbrauch nach einem Reset meldet, auch wenn `reset_at` unverändert bleibt.
+- Regressionen decken sowohl den sicheren Abbruch ohne Quorum als auch die
+  Annahme des neuen Werts nach einem Quorum ab.
+
 ## 0.6.189 - 2026-07-12
 
 ### Fixed

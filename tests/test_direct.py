@@ -353,6 +353,55 @@ def test_fetch_stable_wham_usage_rejects_reset_identity_regression(monkeypatch):
         _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_stable_wham_usage_rejects_usage_regression_with_fixed_reset(
+    monkeypatch,
+):
+    def response(used: int) -> dict:
+        return {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1783824041,
+                }
+            }
+        }
+
+    responses = iter((response(54), response(54), response(1)))
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
+def test_fetch_stable_wham_usage_accepts_fixed_reset_after_quorum(
+    monkeypatch,
+):
+    def response(used: int) -> dict:
+        return {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": 1783824041,
+                }
+            }
+        }
+
+    responses = iter((response(54), response(1), response(1)))
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 1
+
+
 def test_fetch_stable_wham_usage_accepts_progressive_same_window(monkeypatch):
     responses = iter(
         {
