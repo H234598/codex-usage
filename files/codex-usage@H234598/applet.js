@@ -1174,6 +1174,25 @@ CodexUsageApplet.prototype = {
                 rows.push(row);
                 accounts[account] = row;
             }
+            let backendRefreshNeeded = false;
+            for (let i = 0; i < this._usages.length; i++) {
+                let usage = this._usages[i];
+                let account = usage && accounts[usage.account];
+                if (!account || !usage) {
+                    continue;
+                }
+                let hasState = Boolean(
+                    usage.backend_configured ||
+                    usage.backend_used ||
+                    usage.five_hour ||
+                    usage.weekly
+                );
+                let expectedBackend = account.backend === 1 ? "app-server" : "direct";
+                if (hasState && !this._backendMatchesConfigured(usage, expectedBackend)) {
+                    backendRefreshNeeded = true;
+                    break;
+                }
+            }
             this._backendAccounts = accounts;
             this._backendRowsReady = true;
             this._cancelRemovedReactivations(accounts);
@@ -1196,6 +1215,13 @@ CodexUsageApplet.prototype = {
                     "_syncingBackendRows",
                     "backend sync guard cleanup"
                 );
+            }
+            if (backendRefreshNeeded && !this._removed && !this._safeMode) {
+                if (this._refreshing) {
+                    this._primaryFreshPending = true;
+                } else {
+                    this._refreshFresh(false);
+                }
             }
         }));
     },

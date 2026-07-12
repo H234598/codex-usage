@@ -975,6 +975,40 @@ test("account synchronization refreshes cached values immediately", () => {
   assert.equal(refreshed, 1);
 });
 
+test("backend synchronization refreshes after an external backend change", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    label: "Alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
+    status: "ok",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+  }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._syncAccountSettings = () => {};
+  applet._syncStyleRows = () => {};
+  applet._addIdle = () => {};
+  applet._refreshFormattedSurfaces = () => {};
+  let freshRefreshes = 0;
+  applet._refreshFresh = () => { freshRefreshes += 1; };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "app-server" }],
+  }, null);
+
+  applet._loadAccountBackends();
+
+  assert.equal(freshRefreshes, 1);
+  assert.equal(applet._usages.length, 1);
+  assert.equal(applet._usages[0].backend_configured, "app-server");
+  assert.equal(applet._usages[0].backend_used, "");
+  assert.equal(applet._usages[0].five_hour, null);
+  assert.equal(applet._usages[0].stale, true);
+});
+
 test("backend synchronization adds placeholders for accounts without cached values", () => {
   const applet = makeApplet();
   applet._usages = [];
