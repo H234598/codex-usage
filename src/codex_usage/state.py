@@ -60,12 +60,9 @@ def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
         return False
     left_backend = left.backend_used
     right_backend = right.backend_used
+    if "browser" in {left_backend, right_backend}:
+        return left_backend == right_backend == "browser"
     if left_backend not in AUTHENTICATED_BACKENDS or right_backend not in AUTHENTICATED_BACKENDS:
-        if (
-            "browser" in {left_backend, right_backend}
-            and (left_backend in AUTHENTICATED_BACKENDS or right_backend in AUTHENTICATED_BACKENDS)
-        ):
-            return False
         return True
     if left_backend == right_backend:
         return True

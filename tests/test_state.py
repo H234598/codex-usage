@@ -82,6 +82,47 @@ def test_backend_provenance_rejects_browser_merge_with_authenticated_backend():
     assert backend_provenance_matches(direct, browser) is False
 
 
+def test_backend_provenance_rejects_browser_merge_with_unknown_backend():
+    browser = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_used="browser",
+    )
+    unknown = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_used=None,
+    )
+
+    assert backend_provenance_matches(browser, unknown) is False
+    assert backend_provenance_matches(unknown, browser) is False
+
+
+def test_browser_partial_does_not_restore_unknown_legacy_window():
+    captured = datetime(2026, 7, 12, 10, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    browser = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=80),
+    )
+    unknown = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured - timedelta(minutes=1),
+        weekly=LimitWindow(name="weekly", remaining=10),
+    )
+
+    merged = merge_current_with_last_success(browser, unknown)
+
+    assert merged is browser
+    assert merged.weekly is None
+
+
 def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
     direct = AccountUsage(
         account_id="account",

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.285 - 2026-07-12
+
+### Security
+
+- Browser-Partialwerte werden nicht mehr mit unbekannten Legacy-Ständen
+  zusammengeführt. Dadurch können unmarkierte alte Werte kein fehlendes
+  Browser-Fenster auffüllen.
+
 ## 0.6.284 - 2026-07-12
 
 ### Fixed
