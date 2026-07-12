@@ -622,10 +622,10 @@ CodexUsageApplet.prototype = {
             try {
                 if (payload) {
                     this._applyPayload(payload, false);
+                    this._lastCacheSyncAt = Date.now();
                 } else if (!this._usages.length && error) {
                     this._showCommandError(error);
                 }
-                this._lastCacheSyncAt = Date.now();
             } finally {
                 if (refreshAfter && this.autoRefresh && this._usesAppletPolling()) {
                     this._primaryFreshPending = true;

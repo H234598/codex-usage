@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.211 - 2026-07-12
+
+### Fixed
+
+- Der Cinnamon-Cache aktiviert den Sync-Cooldown nur noch bei einer
+  erfolgreich empfangenen und verarbeiteten `latest`-Payload. Fehlgeschlagene
+  Cache-Kommandos lösen dadurch beim nächsten Zyklus erneut einen Abruf aus,
+  statt alte Werte unnötig länger zu halten.
+- Regression für fehlgeschlagene Cache-Kommandos ergänzt.
+
 ## 0.6.210 - 2026-07-12
 
 ### Fixed

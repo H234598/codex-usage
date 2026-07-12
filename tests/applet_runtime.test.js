@@ -276,6 +276,16 @@ test("failed cached payload handling does not arm the sync cooldown", () => {
   assert.equal(applet._lastCacheSyncAt, 0);
 });
 
+test("failed cached command does not arm the sync cooldown", () => {
+  const applet = makeApplet();
+  applet._showCommandError = () => {};
+  applet._spawnUsageCommand = (_subcommand, callback) => callback(null, "cache failed");
+
+  applet._loadCached(false, false);
+
+  assert.equal(applet._lastCacheSyncAt, 0);
+});
+
 test("cached payloads preserve omitted accounts and newer values", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
