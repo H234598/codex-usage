@@ -345,6 +345,8 @@ def _should_retain_previous_window(
     *,
     reference_at: datetime,
 ) -> bool:
+    if not _window_duration_matches(current, previous):
+        return False
     if not _has_unexpired_window_reset_discontinuity(
         current,
         previous,
@@ -358,6 +360,35 @@ def _should_retain_previous_window(
     if current.reset_at is not None and previous.reset_at is not None:
         return current.reset_at > previous.reset_at
     return False
+
+
+def _window_duration_matches(current: Any, previous: Any) -> bool:
+    current_duration = _window_duration_seconds(current)
+    previous_duration = _window_duration_seconds(previous)
+    return (
+        current_duration is None
+        or previous_duration is None
+        or current_duration == previous_duration
+    )
+
+
+def _window_duration_seconds(window: Any) -> int | None:
+    raw = getattr(window, "raw", None)
+    if not isinstance(raw, str):
+        return None
+    match = re.search(
+        r'"limit_window_seconds"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        raw,
+    )
+    if match is None:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value <= 0 or not value.is_integer():
+        return None
+    return int(value)
 
 
 def _is_more_conservative_direct_usage(

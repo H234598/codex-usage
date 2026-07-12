@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.231 - 2026-07-12
+
+### Fixed
+
+- Der Scheduler übernimmt bei einer Reset-Transition keinen alten Wert mehr,
+  wenn sich die bekannte `limit_window_seconds`-Identität des Fensters ändert.
+- Ein Wechsel von einem 30-Tage- zu einem 5h-Fenster kann dadurch keinen
+  höheren alten Restwert mehr als aktuelle Daten ausgeben.
+- Regression für die Fensterdauerprüfung im Scheduler ergänzt.
+
 ## 0.6.230 - 2026-07-12
 
 ### Fixed
