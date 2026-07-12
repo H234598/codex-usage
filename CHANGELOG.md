@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.244 - 2026-07-12
+
+### Fixed
+
+- Ein generischer `used`-Text im selben DOM-Fenster kann den gerenderten
+  Fortschrittsbalken nicht mehr mit einem falschen Restwert ueberschreiben.
+- Absolute `used/limit`-Angaben bleiben weiterhin vorrangig.
+- Regression fuer `100% used` vor den echten `97%`-/`55%`-Balken ergaenzt.
+
 ## 0.6.243 - 2026-07-12
 
 ### Fixed

@@ -496,12 +496,13 @@ def _extract_text_window(
         if used is not None and limit is not None:
             remaining = max(limit - used, 0)
             percent = 100 - (used / limit * 100) if limit > 0 else None
+        elif remaining is None and progress_percent is not None:
+            # A rendered progress bar is more specific than generic text such
+            # as a hidden or stale `100% used` label in the same DOM chunk.
+            remaining = progress_percent
+            percent = progress_percent
         elif remaining is None and used_percent is not None:
             remaining = max(100 - used_percent, 0)
-        if percent is None and progress_percent is not None:
-            percent = progress_percent
-        if remaining is None and progress_percent is not None:
-            remaining = progress_percent
 
         if (
             remaining is not None
