@@ -393,9 +393,18 @@ def test_latest_rejects_cached_values_after_auth_identity_changes(tmp_path):
     save_usage_snapshot(cached, snapshot_dir)
     save_current_usage(cached, snapshot_dir.parent / "current")
 
+    matching = load_latest_usages(config, snapshot_dir)
+    assert len(matching) == 1
+    assert matching[0].five_hour is not None
+    assert matching[0].five_hour.remaining == 12
+
     write_auth("new-user", "new-account")
 
-    assert load_latest_usages(config, snapshot_dir) == []
+    invalidated = load_latest_usages(config, snapshot_dir)
+    assert len(invalidated) == 1
+    assert invalidated[0].cache_invalidated is True
+    assert invalidated[0].five_hour is None
+    assert invalidated[0].weekly is None
 
 
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():

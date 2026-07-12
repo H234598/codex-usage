@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.268 - 2026-07-12
+
+### Fixed
+
+- Nach einem `auth.json`-Identitätswechsel verwirft das Applet alte gecachte
+  Limitwerte statt sie nur als veraltet weiterzuzeigen.
+- `make check` führt den vorhandenen Applet-Runtime-Testlauf jetzt ebenfalls
+  aus.
+
 ## 0.6.267 - 2026-07-12
 
 ### Security

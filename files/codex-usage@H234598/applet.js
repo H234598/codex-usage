@@ -2178,7 +2178,8 @@ CodexUsageApplet.prototype = {
                 backend_account_id: this._safeText(item.backend_account_id, 256),
                 fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
                 values_captured_at: this._safeText(item.values_captured_at, 80),
-                stale: item.stale === true
+                stale: item.stale === true,
+                cache_invalidated: item.cache_invalidated === true
             });
         }
         return result;
@@ -2270,6 +2271,11 @@ CodexUsageApplet.prototype = {
             if (this._backendRowsReady && !this._backendAccounts[item.account]) {
                 continue;
             }
+            if (item.cache_invalidated === true) {
+                merged.push(this._markUsageStale(item));
+                seen[item.account] = true;
+                continue;
+            }
             let old = previous[item.account];
             if (old && this._backendIdentityIsIncomplete(item, old)) {
                 merged.push(this._markUsageStale(old));
@@ -2305,6 +2311,10 @@ CodexUsageApplet.prototype = {
                 continue;
             }
             freshAccounts[item.account] = true;
+            if (item.cache_invalidated === true) {
+                merged.push(this._markUsageStale(item));
+                continue;
+            }
             let old = previous[item.account];
             if (old && this._backendIdentityIsIncomplete(item, old)) {
                 merged.push(this._markUsageStale(old));

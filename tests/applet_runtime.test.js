@@ -336,6 +336,40 @@ test("cached payloads preserve omitted accounts and newer values", () => {
   assert.equal(byAccount.gamma.stale, true);
 });
 
+test("cache invalidation clears old account values instead of preserving them", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  };
+  applet._usages = [{
+    account: "alpha",
+    label: "Alpha",
+    captured_at: new Date().toISOString(),
+    status: "ok",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+    backend_user_id: "old-user",
+    backend_account_id: "old-account",
+  }];
+
+  const merged = applet._mergeCachedPayload([{
+    account: "alpha",
+    label: "Alpha",
+    captured_at: new Date().toISOString(),
+    status: "partial",
+    five_hour: null,
+    weekly: null,
+    stale: true,
+    cache_invalidated: true,
+  }]);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].cache_invalidated, true);
+  assert.equal(merged[0].five_hour, null);
+  assert.equal(merged[0].weekly, null);
+});
+
 test("epoch reset timestamps remain valid and report zero duration", () => {
   const applet = makeApplet();
   const epoch = "1970-01-01T00:00:00.000Z";

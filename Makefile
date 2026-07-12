@@ -12,6 +12,9 @@ applet-check:
 	@if command -v gjs >/dev/null 2>&1; then \
 		gjs -c 'const GLib = imports.gi.GLib; const ByteArray = imports.byteArray; const path = ARGV[ARGV.length - 1]; const result = GLib.file_get_contents(path); if (!result[0]) throw new Error("read failed"); new Function(ByteArray.toString(result[1]));' -- $(APPLET_DIR)/applet.js; \
 	fi
+	@if command -v node >/dev/null 2>&1; then \
+		node --test tests/applet_runtime.test.js; \
+	fi
 
 test:
 	$(PYTHON) -m pytest

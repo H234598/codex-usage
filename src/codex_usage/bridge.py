@@ -906,6 +906,25 @@ def _cached_usage_matches_current_auth(
     )
 
 
+def _invalidate_cached_usage(account: Account, usage: AccountUsage) -> AccountUsage:
+    return replace(
+        usage,
+        label=account.label,
+        five_hour=None,
+        weekly=None,
+        status=AccountStatus.PARTIAL,
+        error="cached usage discarded after auth.json identity change",
+        backend_configured=account.backend,
+        backend_used=account.backend,
+        backend_user_id=None,
+        backend_account_id=None,
+        fallback_reason=None,
+        values_captured_at=None,
+        stale=True,
+        cache_invalidated=True,
+    )
+
+
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
     usages: list[AccountUsage] = []
     current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
@@ -926,7 +945,7 @@ def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> l
             last_success,
             auth_identity,
         ):
-            last_success = None
+            last_success = _invalidate_cached_usage(account, last_success)
         if current is not None and not backend_provenance_matches_configured(
             current, account.backend
         ):
@@ -935,7 +954,7 @@ def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> l
             current,
             auth_identity,
         ):
-            current = None
+            current = _invalidate_cached_usage(account, current)
         if current is not None:
             usage = merge_current_with_last_success(current, last_success)
         elif last_success is not None:

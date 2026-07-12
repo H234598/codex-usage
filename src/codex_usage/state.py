@@ -393,6 +393,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         ),
         values_captured_at=_optional_datetime(payload.get("values_captured_at")),
         stale=payload.get("stale") is True,
+        cache_invalidated=payload.get("cache_invalidated") is True,
         state_generation=_optional_state_generation(payload.get("state_generation")),
     )
 

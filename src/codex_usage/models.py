@@ -69,6 +69,7 @@ class AccountUsage:
     fallback_reason: str | None = None
     values_captured_at: datetime | None = None
     stale: bool = False
+    cache_invalidated: bool = False
     # Internal fetch generation; it prevents an in-flight pre-reconfiguration
     # result from recreating state after the account was reset.
     state_generation: int | None = field(default=None, compare=False, repr=False)
@@ -103,6 +104,7 @@ class AccountUsage:
             if self.values_captured_at
             else None,
             "stale": self.stale,
+            "cache_invalidated": self.cache_invalidated,
         }
 
 
