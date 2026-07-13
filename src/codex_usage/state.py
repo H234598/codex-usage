@@ -442,14 +442,38 @@ def _window_expiry_capture(
 
 
 def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
+    raw_five_hour = payload.get("five_hour")
+    raw_weekly = payload.get("weekly")
+    five_hour = _window_from_dict(raw_five_hour, expected_kind="five_hour")
+    weekly = _window_from_dict(raw_weekly, expected_kind="weekly")
+    invalid_window_fields = [
+        field
+        for field, raw_window, parsed_window in (
+            ("five_hour", raw_five_hour, five_hour),
+            ("weekly", raw_weekly, weekly),
+        )
+        if isinstance(raw_window, dict)
+        and parsed_window is None
+        and _window_from_dict(raw_window) is not None
+    ]
+    status = AccountStatus(str(payload.get("status", "ok")))
+    error = _optional_snapshot_text(payload.get("error"), limit=MAX_SNAPSHOT_TEXT)
+    if invalid_window_fields:
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
+        invalid_error = (
+            "invalid cached limit window slot: "
+            + ", ".join(invalid_window_fields)
+        )
+        error = f"{error}; {invalid_error}" if error else invalid_error
     return AccountUsage(
         account_id=_snapshot_text(payload["account"], limit=64),
         label=_snapshot_text(payload.get("label") or payload["account"], limit=120),
         captured_at=_snapshot_datetime(payload["captured_at"]),
-        five_hour=_window_from_dict(payload.get("five_hour")),
-        weekly=_window_from_dict(payload.get("weekly")),
-        status=AccountStatus(str(payload.get("status", "ok"))),
-        error=_optional_snapshot_text(payload.get("error"), limit=MAX_SNAPSHOT_TEXT),
+        five_hour=five_hour,
+        weekly=weekly,
+        status=status,
+        error=error,
         blocked_until=_optional_datetime(payload.get("blocked_until")),
         blocked_reason=_optional_snapshot_text(
             payload.get("blocked_reason"),
@@ -843,11 +867,15 @@ def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
     return left.backend_user_id == right.backend_user_id
 
 
-def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:
+def _window_from_dict(
+    payload: dict[str, Any] | None,
+    *,
+    expected_kind: str | None = None,
+) -> LimitWindow | None:
     if not isinstance(payload, dict):
         return None
     reset_at = payload.get("reset_at")
-    return LimitWindow(
+    window = LimitWindow(
         name=_snapshot_text(payload.get("name") or "", limit=40),
         used=_optional_float(payload.get("used")),
         limit=_optional_float(payload.get("limit")),
@@ -857,6 +885,9 @@ def _window_from_dict(payload: dict[str, Any] | None) -> LimitWindow | None:
         raw=_optional_snapshot_text(payload.get("raw"), limit=MAX_SNAPSHOT_TEXT),
         source=_snapshot_text(payload.get("source") or "unknown", limit=120),
     )
+    if expected_kind is not None and not _window_matches_expected_kind(window, expected_kind):
+        return None
+    return window
 
 
 def _optional_float(value: Any) -> float | None:

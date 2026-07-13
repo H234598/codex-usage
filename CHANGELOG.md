@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.385 - 2026-07-13
+
+### Fixed
+
+- Gespeicherte Fenster werden beim Laden gegen ihren 5h-/Wochen-Slot geprüft;
+  falsch zugeordnete Cachewerte werden nicht mehr als anderer Limitwert angezeigt.
+
 ## 0.6.384 - 2026-07-13
 
 ### Fixed
