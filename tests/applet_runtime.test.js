@@ -2248,6 +2248,45 @@ test("same backend account id remains authoritative when user id is omitted", ()
   assert.equal(merged[0].stale, false);
 });
 
+test("partial user identity cannot authorize a different backend account id", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  };
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    backend_configured: "direct",
+    backend_used: "browser",
+    backend_user_id: "shared-user",
+    backend_account_id: "",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+    status: "ok",
+    stale: false,
+  }];
+
+  const merged = applet._mergeCachedPayload([{
+    account: "alpha",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    backend_configured: "direct",
+    backend_used: "direct",
+    backend_user_id: "shared-user",
+    backend_account_id: "account-new",
+    five_hour: { remaining: 90 },
+    weekly: { remaining: 70 },
+    status: "ok",
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].backend_used, "browser");
+  assert.equal(merged[0].backend_account_id, "");
+  assert.equal(merged[0].five_hour.remaining, 80);
+  assert.equal(merged[0].weekly.remaining, 60);
+  assert.equal(merged[0].stale, true);
+});
+
 test("identity changes win over an older capture timestamp", () => {
   const applet = makeApplet();
   applet._usages = [{

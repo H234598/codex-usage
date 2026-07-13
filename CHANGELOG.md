@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.380 - 2026-07-13
+
+### Fixed
+
+- Eine nur über die Nutzer-ID bekannte Browser-Identität darf keine andere
+  Backend-Account-ID autorisieren.
+
 ## 0.6.379 - 2026-07-13
 
 ### Fixed

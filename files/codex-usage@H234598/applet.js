@@ -2622,20 +2622,19 @@ CodexUsageApplet.prototype = {
     },
 
     _backendIdentityCompatible: function(left, right) {
-        let fields = ["backend_user_id", "backend_account_id"];
-        let shared = false;
-        for (let i = 0; i < fields.length; i++) {
-            let leftValue = this._safeText(left && left[fields[i]], 256);
-            let rightValue = this._safeText(right && right[fields[i]], 256);
-            if (!leftValue || !rightValue) {
-                continue;
-            }
-            shared = true;
-            if (leftValue !== rightValue) {
-                return false;
-            }
+        let leftUser = this._safeText(left && left.backend_user_id, 256);
+        let rightUser = this._safeText(right && right.backend_user_id, 256);
+        let leftAccount = this._safeText(left && left.backend_account_id, 256);
+        let rightAccount = this._safeText(right && right.backend_account_id, 256);
+        if (leftAccount || rightAccount) {
+            return Boolean(
+                leftAccount &&
+                rightAccount &&
+                leftAccount === rightAccount &&
+                (!leftUser || !rightUser || leftUser === rightUser)
+            );
         }
-        return shared;
+        return Boolean(leftUser && rightUser && leftUser === rightUser);
     },
 
     _backendProvenanceMatches: function(left, right) {
