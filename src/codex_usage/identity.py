@@ -29,12 +29,30 @@ def select_identity_consistent_candidates(
 ) -> list[JsonCandidate]:
     """Keep structured responses from one backend account together."""
     candidate_list = list(candidates)
+    account_ids_by_user: dict[str, set[str]] = {}
+    user_ids_by_account: dict[str, set[str]] = {}
+    for candidate in candidate_list:
+        user_id, account_id = backend_identity_from_payload(candidate.payload)
+        if user_id and account_id:
+            account_ids_by_user.setdefault(user_id, set()).add(account_id)
+            user_ids_by_account.setdefault(account_id, set()).add(user_id)
+
+    def is_ambiguous_partial_identity(identity: tuple[str | None, str | None]) -> bool:
+        user_id, account_id = identity
+        if user_id and not account_id:
+            return len(account_ids_by_user.get(user_id, set())) > 1
+        if account_id and not user_id:
+            return len(user_ids_by_account.get(account_id, set())) > 1
+        return False
+
     groups: list[
         tuple[tuple[str | None, str | None], list[JsonCandidate]]
     ] = []
     for candidate in candidate_list:
         identity = backend_identity_from_payload(candidate.payload)
         if identity == (None, None):
+            continue
+        if is_ambiguous_partial_identity(identity):
             continue
         for index, (group_identity, grouped_candidates) in enumerate(groups):
             if not _identities_compatible(identity, group_identity):

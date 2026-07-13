@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.355 - 2026-07-13
+
+### Fixed
+
+- Unvollständige Backend-Identitäten werden bei mehreren Konten mit derselben
+  Benutzerkennung nicht mehr einem beliebigen Account zugeschlagen.
+
 ## 0.6.354 - 2026-07-13
 
 ### Fixed
