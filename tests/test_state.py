@@ -356,6 +356,33 @@ def test_expire_reset_windows_rejects_resetless_unclassified_windows():
     assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
+def test_expire_reset_windows_rejects_wrong_raw_duration_for_slot():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=38,
+            reset_at=captured_at + timedelta(days=30),
+            raw='{"limit_window_seconds":2592000}',
+        ),
+        weekly=LimitWindow(name="weekly", remaining=72),
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=captured_at + timedelta(minutes=1),
+    )
+
+    assert expired.five_hour is None
+    assert expired.weekly is usage.weekly
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
 def test_expire_reset_windows_ignores_overflowing_raw_duration():
     captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(

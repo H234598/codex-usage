@@ -373,6 +373,7 @@ def expire_reset_windows(
         five_hour,
         captured_at=_window_expiry_capture(usage, five_hour, values_captured_at),
         reference_at=reference_at,
+        expected_kind="five_hour",
     ):
         expired_names.append("5h")
         five_hour = None
@@ -380,6 +381,7 @@ def expire_reset_windows(
         weekly,
         captured_at=_window_expiry_capture(usage, weekly, values_captured_at),
         reference_at=reference_at,
+        expected_kind="weekly",
     ):
         expired_names.append("weekly")
         weekly = None
@@ -788,9 +790,12 @@ def _cached_window_expired(
     *,
     captured_at: datetime | None,
     reference_at: datetime,
+    expected_kind: str | None = None,
 ) -> bool:
     if window is None:
         return False
+    if expected_kind is not None and not _window_matches_expected_kind(window, expected_kind):
+        return True
     if _is_inferred_inactive_five_hour(window) and window.reset_at is None:
         # This is a plan-level inactive bucket, not a resetless active window.
         # Keep the explicit 100% observation until a fresh response replaces it.

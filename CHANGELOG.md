@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.386 - 2026-07-13
+
+### Fixed
+
+- Ablaufprüfungen akzeptieren keine Raw-Fensterdauer mehr, die nicht zum
+  erwarteten 5h-/Wochen-Slot passt.
+
 ## 0.6.385 - 2026-07-13
 
 ### Fixed
