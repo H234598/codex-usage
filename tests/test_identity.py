@@ -218,6 +218,42 @@ def test_select_identity_consistent_candidates_drops_partial_user_when_other_acc
     assert selected == [candidates[0]]
 
 
+def test_select_identity_consistent_candidates_rejects_partial_user_beside_foreign_account():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "account_id": "foreign-account",
+                "rate_limit": {
+                    "secondary_window": {
+                        "used_percent": 45,
+                        "limit_window_seconds": 604_800,
+                    }
+                },
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "user_id": "target-user",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 99,
+                        "limit_window_seconds": 18_000,
+                    }
+                },
+            },
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="different account"):
+        select_identity_consistent_candidates(
+            candidates,
+            auth_user_id="target-user",
+            auth_account_id="target-account",
+        )
+
+
 def test_select_identity_consistent_candidates_rejects_unknown_account():
     candidate = JsonCandidate(
         url="https://chatgpt.com/backend-api/wham/usage",

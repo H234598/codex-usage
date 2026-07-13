@@ -43,11 +43,17 @@ def select_identity_consistent_candidates(
     def is_ambiguous_partial_identity(identity: tuple[str | None, str | None]) -> bool:
         user_id, account_id = identity
         if user_id and not account_id:
+            user_account_ids = account_ids_by_user.get(user_id, set())
             return (
-                len(account_ids_by_user.get(user_id, set())) > 1
+                len(user_account_ids) > 1
                 or (
-                    auth_account_id is not None
-                    and len(known_account_ids) > 1
+                    bool(known_account_ids - user_account_ids)
+                    if user_account_ids
+                    else bool(known_account_ids)
+                    and (
+                        auth_account_id is None
+                        or any(account != auth_account_id for account in known_account_ids)
+                    )
                 )
             )
         if account_id and not user_id:
@@ -57,11 +63,13 @@ def select_identity_consistent_candidates(
     groups: list[
         tuple[tuple[str | None, str | None], list[JsonCandidate]]
     ] = []
+    skipped_ambiguous_partial = False
     for candidate in candidate_list:
         identity = backend_identity_from_payload(candidate.payload)
         if identity == (None, None):
             continue
         if is_ambiguous_partial_identity(identity):
+            skipped_ambiguous_partial = True
             continue
         for index, (group_identity, grouped_candidates) in enumerate(groups):
             if not _identities_compatible(identity, group_identity):
@@ -76,6 +84,8 @@ def select_identity_consistent_candidates(
             break
         else:
             groups.append((identity, [candidate]))
+    if skipped_ambiguous_partial and not (auth_user_id or auth_account_id):
+        raise ValueError("backend response contains multiple backend accounts")
     if not groups:
         return candidate_list
     if len(groups) == 1:

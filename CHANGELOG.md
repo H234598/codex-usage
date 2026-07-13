@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.358 - 2026-07-13
+
+### Fixed
+
+- Das Verwerfen mehrdeutiger Teilidentitäten verschleiert bei fehlendem
+  Auth-Kontext keine weiteren Backend-Konten mehr.
+
+## 0.6.357 - 2026-07-13
+
+### Fixed
+
+- Ein unvollständiger Ziel-Account wird neben einem fremden, nur per
+  `account_id` bekannten Backend-Datensatz nicht mehr akzeptiert.
+
 ## 0.6.356 - 2026-07-13
 
 ### Fixed
