@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.383 - 2026-07-13
+
+### Fixed
+
+- Unbekannte Backend-Herkunftsfelder werden beim Laden und Mergen von State
+  jetzt verworfen statt als gültige Cache-Daten weiterzulaufen.
+
 ## 0.6.382 - 2026-07-13
 
 ### Fixed

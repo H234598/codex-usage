@@ -28,6 +28,7 @@ MAX_SNAPSHOT_TEXT = 500
 MAX_SNAPSHOT_URLS = 20
 MAX_STATE_GENERATION_BYTES = 4096
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
+KNOWN_BACKENDS = AUTHENTICATED_BACKENDS | frozenset(("browser",))
 WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
 MAX_RESET_FUTURE_SKEW_SECONDS = 5 * 60
 KNOWN_FALLBACK_REASONS = frozenset(
@@ -44,6 +45,10 @@ def backend_provenance_matches_configured(
     configured_backend: str,
 ) -> bool:
     """Reject authenticated cache data produced by an explicit other backend."""
+    if configured_backend not in KNOWN_BACKENDS:
+        return False
+    if not _backend_provenance_fields_valid(usage):
+        return False
     if usage.backend_configured and usage.backend_configured != configured_backend:
         return False
     if usage.backend_used not in AUTHENTICATED_BACKENDS:
@@ -55,6 +60,8 @@ def backend_provenance_matches_configured(
 
 def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
     """Avoid merging values across authenticated backends without fallback proof."""
+    if not _backend_provenance_fields_valid(left) or not _backend_provenance_fields_valid(right):
+        return False
     if (
         left.backend_configured
         and right.backend_configured
@@ -70,6 +77,17 @@ def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
     if left_backend == right_backend:
         return True
     return _has_backend_fallback_proof(left) or _has_backend_fallback_proof(right)
+
+
+def _backend_provenance_fields_valid(usage: AccountUsage) -> bool:
+    return (
+        _backend_value_valid(usage.backend_configured, KNOWN_BACKENDS)
+        and _backend_value_valid(usage.backend_used, KNOWN_BACKENDS)
+    )
+
+
+def _backend_value_valid(value: str | None, allowed: frozenset[str]) -> bool:
+    return value in {None, ""} or value in allowed
 
 
 def _has_backend_fallback_proof(usage: AccountUsage) -> bool:

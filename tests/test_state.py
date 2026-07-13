@@ -54,6 +54,27 @@ def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
     assert backend_provenance_matches(direct, override) is False
 
 
+def test_backend_provenance_rejects_unknown_backend_fields():
+    unknown_used = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="mystery",
+    )
+    unknown_configured = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="mystery",
+        backend_used="direct",
+    )
+
+    assert backend_provenance_matches_configured(unknown_used, "direct") is False
+    assert backend_provenance_matches_configured(unknown_configured, "direct") is False
+    assert backend_provenance_matches(unknown_used, unknown_configured) is False
+
+
 def test_backend_provenance_rejects_unproven_cross_backend_fallback():
     direct = AccountUsage(
         account_id="account",
