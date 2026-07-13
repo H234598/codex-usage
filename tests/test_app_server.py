@@ -20,7 +20,7 @@ from codex_usage.app_server import (
     _windows_from_response,
     fetch_account_usage_app_server,
 )
-from codex_usage.models import Account, AccountStatus
+from codex_usage.models import Account, AccountStatus, LimitWindow
 
 
 def _jwt(
@@ -840,6 +840,58 @@ def test_app_server_missing_window_error_identifies_available_weekly_limit():
         five,
         weekly,
     ) == "5h limit unavailable in app server response (plan plus; available window weekly)"
+
+
+def test_app_server_paid_inactive_five_hour_window_is_explicitly_inferred(
+    tmp_path,
+    monkeypatch,
+):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(
+        auth_path,
+        datetime.now(UTC) + timedelta(hours=1),
+        plan_type="pro",
+    )
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_plan_type="pro",
+    )
+    monkeypatch.setattr(
+        "codex_usage.app_server._windows_from_response",
+        lambda payload: (
+            None,
+            LimitWindow(
+                name="weekly",
+                used=47,
+                limit=100,
+                remaining=53,
+                percent=53,
+            ),
+        ),
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.five_hour is not None
+    assert usage.five_hour.remaining == 100
+    assert usage.five_hour.reset_at is None
+    assert usage.five_hour.source == "inferred:inactive-five-hour:app-server"
+    assert usage.weekly is not None and usage.weekly.remaining == 53
+    assert usage.error == (
+        "5h limit inactive in app-server response "
+        "(plan plus; assumed 100% remaining; reset unknown)"
+    )
 
 
 def test_app_server_missing_window_error_reports_unsupported_duration():

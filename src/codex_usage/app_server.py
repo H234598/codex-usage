@@ -22,6 +22,8 @@ from .direct import (
     auth_identity_from_payload,
     auth_metadata_from_payload,
     auth_plan_type_from_payload,
+    infer_inactive_five_hour_window,
+    is_inferred_inactive_five_hour,
     read_auth_json_file,
 )
 from .extractor import LOCAL_TZ
@@ -105,12 +107,20 @@ def fetch_account_usage_app_server(
         if _auth_email_changed(auth_email_before, auth_email):
             raise AppServerAuthError("auth.json email changed during rate-limit request")
         five_hour, weekly = _windows_from_response(payload)
+        five_hour = infer_inactive_five_hour_window(
+            five_hour,
+            weekly,
+            plan_type=auth_plan_type,
+            source=APP_SERVER_BACKEND,
+        )
+        inferred_inactive_five_hour = is_inferred_inactive_five_hour(five_hour)
         status = (
             AccountStatus.OK
             if five_hour is not None
             and weekly is not None
             and five_hour.has_usage_value
             and weekly.has_usage_value
+            and not inferred_inactive_five_hour
             else AccountStatus.PARTIAL
         )
         return AccountUsage(
@@ -123,11 +133,18 @@ def fetch_account_usage_app_server(
             error=(
                 None
                 if status == AccountStatus.OK
-                else _missing_usage_limits_error(
-                    payload,
-                    auth_plan_type,
-                    five_hour,
-                    weekly,
+                else (
+                    "5h limit inactive in app-server response "
+                    f"(plan "
+                    f"{_normalized_plan_type(auth_plan_type) if auth_plan_type else 'unknown'}; "
+                    "assumed 100% remaining; reset unknown)"
+                    if inferred_inactive_five_hour
+                    else _missing_usage_limits_error(
+                        payload,
+                        auth_plan_type,
+                        five_hour,
+                        weekly,
+                    )
                 )
             ),
             auth_last_refresh=auth_metadata.get("auth_last_refresh"),

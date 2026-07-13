@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.361 - 2026-07-13
+
+### Fixed
+
+- Ein inaktives 5h-Fenster bezahlter Accounts wird als 100% verbleibend ohne
+  erfundene Resetzeit dargestellt; Free-/30-Tage-Fenster bleiben unverändert.
+
 ## 0.6.360 - 2026-07-13
 
 ### Fixed

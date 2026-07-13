@@ -32,6 +32,7 @@ MAX_ACCESS_TOKEN_CHARS = 16_384
 MAX_AUTH_ID_CHARS = 256
 PLAN_TYPE_ALIASES = {"pro": "plus"}
 SUPPORTED_WINDOW_SECONDS = frozenset((18_000, 604_800))
+INFERRED_INACTIVE_FIVE_HOUR_SOURCE = "inferred:inactive-five-hour"
 
 
 def default_auth_json_path() -> Path:
@@ -164,15 +165,26 @@ def fetch_account_usage_direct(
             json_candidates=(candidate,),
             now=captured_at,
         )
+        five_hour = infer_inactive_five_hour_window(
+            five_hour,
+            weekly,
+            plan_type=backend_plan_type or auth_plan_type,
+            source="direct",
+        )
+        inferred_inactive_five_hour = is_inferred_inactive_five_hour(five_hour)
         status = (
             AccountStatus.OK
-            if _has_usage_values(five_hour, weekly)
+            if _has_usage_values(five_hour, weekly) and not inferred_inactive_five_hour
             else AccountStatus.PARTIAL
         )
         error = (
             None
             if status == AccountStatus.OK
-            else _missing_usage_limits_error(payload, backend_plan_type)
+            else (
+                _inactive_five_hour_error("direct", backend_plan_type or auth_plan_type)
+                if inferred_inactive_five_hour
+                else _missing_usage_limits_error(payload, backend_plan_type)
+            )
         )
         return AccountUsage(
             account_id=account.id,
@@ -223,6 +235,49 @@ class DirectAuthError(Exception):
 
 class DirectFetchError(Exception):
     pass
+
+
+def infer_inactive_five_hour_window(
+    five_hour: LimitWindow | None,
+    weekly: LimitWindow | None,
+    *,
+    plan_type: str | None,
+    source: str,
+) -> LimitWindow | None:
+    """Represent a paid plan's inactive 5h bucket without inventing a reset."""
+    if (
+        five_hour is not None
+        or weekly is None
+        or not weekly.has_usage_value
+        or not plan_type
+        or _normalized_plan_type(plan_type) == "free"
+    ):
+        return five_hour
+    return LimitWindow(
+        name="5h",
+        used=0.0,
+        limit=100.0,
+        remaining=100.0,
+        percent=100.0,
+        reset_at=None,
+        raw=None,
+        source=f"{INFERRED_INACTIVE_FIVE_HOUR_SOURCE}:{source}",
+    )
+
+
+def is_inferred_inactive_five_hour(window: LimitWindow | None) -> bool:
+    return bool(
+        window is not None
+        and window.source.startswith(INFERRED_INACTIVE_FIVE_HOUR_SOURCE)
+    )
+
+
+def _inactive_five_hour_error(backend: str, plan_type: str | None) -> str:
+    plan = _normalized_plan_type(plan_type) if plan_type else "unknown"
+    return (
+        f"5h limit inactive in {backend} response "
+        f"(plan {plan}; assumed 100% remaining; reset unknown)"
+    )
 
 
 def _missing_usage_limits_error(
