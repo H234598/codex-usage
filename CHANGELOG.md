@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.366 - 2026-07-13
+
+### Fixed
+
+- Direct-, App-Server-, Browser- und Bridge-Abrufe behandeln ein identifiziertes,
+  inaktives bezahltes 5h-Fenster gleich und kennzeichnen die 100%-Annahme als
+  partial.
+
 ## 0.6.365 - 2026-07-13
 
 ### Fixed

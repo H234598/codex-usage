@@ -272,12 +272,16 @@ def is_inferred_inactive_five_hour(window: LimitWindow | None) -> bool:
     )
 
 
-def _inactive_five_hour_error(backend: str, plan_type: str | None) -> str:
+def inactive_five_hour_error(backend: str, plan_type: str | None) -> str:
     plan = _normalized_plan_type(plan_type) if plan_type else "unknown"
     return (
         f"5h limit inactive in {backend} response "
         f"(plan {plan}; assumed 100% remaining; reset unknown)"
     )
+
+
+def _inactive_five_hour_error(backend: str, plan_type: str | None) -> str:
+    return inactive_five_hour_error(backend, plan_type)
 
 
 def _missing_usage_limits_error(

@@ -1019,6 +1019,66 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     assert usage.backend_account_id == "account-test"
 
 
+def test_usage_from_ingest_payload_infers_inactive_paid_five_hour_window():
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path="/tmp/auth.json",
+    )
+    payload = {
+        "capturedAt": "2026-07-13T03:40:00+02:00",
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "apiResponses": [
+            {
+                "source": "page-fetch",
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "user-test",
+                        "account_id": "account-test",
+                        "plan_type": "pro",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 10,
+                                "limit_window_seconds": 604800,
+                                "reset_at": "2026-07-19T20:59:30+02:00",
+                            },
+                            "secondary_window": None,
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            "codex_usage.bridge.auth_identity_for_account",
+            lambda _account: ("user-test", "account-test"),
+        )
+        monkeypatch.setattr(
+            "codex_usage.bridge.auth_plan_type_for_account",
+            lambda _account: "pro",
+        )
+        usage = usage_from_ingest_payload(account, payload)
+    finally:
+        monkeypatch.undo()
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.five_hour is not None
+    assert usage.five_hour.remaining == 100
+    assert usage.five_hour.source == "inferred:inactive-five-hour:browser"
+    assert usage.weekly is not None and usage.weekly.remaining == 90
+    assert usage.error == (
+        "5h limit inactive in browser response "
+        "(plan plus; assumed 100% remaining; reset unknown)"
+    )
+
+
 def test_usage_from_ingest_payload_merges_both_api_response_field_names():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(
