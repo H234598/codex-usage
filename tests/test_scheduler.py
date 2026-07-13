@@ -14,8 +14,10 @@ from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.scheduler import (
     _ambiguous_direct_accounts,
     _is_more_conservative_direct_usage,
+    _raw_number,
     _remaining_percent,
     _stabilize_authenticated_usage,
+    _window_duration_seconds,
     fetch_all,
     watch,
     watchdog,
@@ -1383,6 +1385,20 @@ def test_scheduler_remaining_percent_prefers_absolute_usage_values():
     )
 
     assert _remaining_percent(window) == 80
+
+
+def test_scheduler_numeric_overflow_is_treated_as_missing():
+    huge = 10**309
+    window = LimitWindow(
+        name="5h",
+        used=huge,
+        limit=100,
+        raw=f'{{"limit_window_seconds": {huge}}}',
+    )
+
+    assert _remaining_percent(window) is None
+    assert _raw_number(window.raw, "limit_window_seconds") is None
+    assert _window_duration_seconds(window) is None
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.376 - 2026-07-13
+
+### Fixed
+
+- Scheduler-Prozent- und Raw-Dauerberechnungen behandeln überlaufende Zahlen
+  jetzt als fehlend, statt einen Pollzyklus abbrechen zu lassen.
+
 ## 0.6.375 - 2026-07-13
 
 ### Fixed

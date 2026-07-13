@@ -374,9 +374,10 @@ def _raw_number(raw: str, field: str) -> float | None:
     if match is None:
         return None
     try:
-        return float(match.group(1))
-    except ValueError:
+        number = float(match.group(1))
+    except (OverflowError, ValueError):
         return None
+    return number if math.isfinite(number) else None
 
 
 def _should_retain_previous_window(
@@ -451,7 +452,7 @@ def _window_duration_seconds(window: Any) -> int | None:
         return None
     try:
         value = float(match.group(1))
-    except ValueError:
+    except (OverflowError, ValueError):
         return None
     if not math.isfinite(value) or value <= 0 or not value.is_integer():
         return None
@@ -486,19 +487,31 @@ def _is_more_conservative_direct_usage(
 
 
 def _remaining_percent(window) -> float | None:
-    if window.used is not None and window.limit is not None and window.limit > 0:
-        remaining = (float(window.limit) - float(window.used)) * 100 / float(window.limit)
+    used = _finite_number(window.used)
+    limit = _finite_number(window.limit)
+    if used is not None and limit is not None and limit > 0:
+        remaining = (limit - used) * 100 / limit
         return _clamp_percent(remaining)
-    if window.remaining is not None:
-        if window.limit is not None and window.limit > 0:
-            remaining = float(window.remaining) * 100 / float(window.limit)
+    remaining_value = _finite_number(window.remaining)
+    if remaining_value is not None:
+        if limit is not None and limit > 0:
+            remaining = remaining_value * 100 / limit
             return _clamp_percent(remaining)
-        remaining = float(window.remaining)
-        return _clamp_percent(remaining)
-    if window.percent is not None:
-        percent = float(window.percent)
+        return _clamp_percent(remaining_value)
+    percent = _finite_number(window.percent)
+    if percent is not None:
         return _clamp_percent(percent)
     return None
+
+
+def _finite_number(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _clamp_percent(value: float) -> float | None:
