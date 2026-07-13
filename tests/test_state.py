@@ -605,6 +605,34 @@ def test_load_usage_snapshot_rejects_boolean_window_numbers(tmp_path):
     assert loaded.five_hour.percent is None
 
 
+def test_load_usage_snapshot_ignores_integer_overflow_in_window_number(tmp_path):
+    payload = {
+        "account": "overflow-values",
+        "label": "Overflow values",
+        "captured_at": "2026-06-08T04:20:00+02:00",
+        "status": "partial",
+        "five_hour": {
+            "name": "5h",
+            "used": 10**309,
+        },
+        "weekly": {
+            "name": "weekly",
+            "remaining": 55,
+        },
+    }
+    (tmp_path / "overflow-values.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("overflow-values", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.used is None
+    assert loaded.weekly is not None and loaded.weekly.remaining == 55
+
+
 def test_load_usage_snapshot_ignores_symlink(tmp_path):
     target = tmp_path / "target.json"
     target.write_text(

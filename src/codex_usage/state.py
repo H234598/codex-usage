@@ -831,7 +831,7 @@ def _optional_float(value: Any) -> float | None:
         return None
     try:
         coerced = float(value)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return None
     return coerced if math.isfinite(coerced) else None
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.372 - 2026-07-13
+
+### Fixed
+
+- Verfälschte oder extrem grosse Zahlen in Snapshots werden beim Laden jetzt
+  sicher als fehlende Feldwerte behandelt, statt den State-Loader abstürzen zu
+  lassen.
+
 ## 0.6.371 - 2026-07-13
 
 ### Fixed
