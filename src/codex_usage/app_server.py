@@ -623,8 +623,10 @@ def _window(name: str, payload: dict[str, Any]) -> LimitWindow:
     if reset_value is not None:
         try:
             reset_at = datetime.fromtimestamp(reset_value, tz=UTC).astimezone(LOCAL_TZ)
-        except (OSError, OverflowError, ValueError) as exc:
-            raise AppServerProtocolError("app server resetsAt is invalid") from exc
+        except (OSError, OverflowError, ValueError):
+            # Keep a valid usage value; state expiry can still use the known
+            # window duration when the server's reset timestamp is unusable.
+            reset_at = None
     return LimitWindow(
         name=name,
         used=float(used),

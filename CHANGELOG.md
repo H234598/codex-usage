@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.360 - 2026-07-13
+
+### Fixed
+
+- Gültige App-Server-Nutzwerte bleiben erhalten, wenn `resetsAt` nicht
+  darstellbar ist; nur die Resetzeit wird als unbekannt markiert.
+
 ## 0.6.359 - 2026-07-13
 
 ### Fixed

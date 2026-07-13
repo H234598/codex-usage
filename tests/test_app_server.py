@@ -788,6 +788,27 @@ def test_window_mapping_keeps_valid_window_when_other_used_percent_is_invalid():
     assert weekly is None
 
 
+def test_window_mapping_keeps_usage_when_reset_timestamp_is_unusable():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 7,
+                    "windowDurationMins": 300,
+                    "resetsAt": 10**100,
+                },
+                "secondary": {
+                    "usedPercent": 18,
+                    "windowDurationMins": 10080,
+                },
+            }
+        }
+    )
+
+    assert five is not None and five.used == 7 and five.reset_at is None
+    assert weekly is not None and weekly.used == 18
+
+
 def test_window_mapping_falls_back_when_codex_bucket_is_empty():
     five, weekly = _windows_from_response(
         {
