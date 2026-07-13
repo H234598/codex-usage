@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.375 - 2026-07-13
+
+### Fixed
+
+- Überlaufende Fensterdauern in gespeicherten Raw-Daten werden beim Ablauf-Check
+  sicher verworfen, statt den State-Loader mit `OverflowError` abzubrechen.
+
 ## 0.6.374 - 2026-07-13
 
 ### Fixed

@@ -335,6 +335,31 @@ def test_expire_reset_windows_rejects_resetless_unclassified_windows():
     assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
+def test_expire_reset_windows_ignores_overflowing_raw_duration():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="overflow-raw",
+        label="Overflow Raw",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(
+            name="",
+            remaining=38,
+            raw=f'{{"limit_window_seconds": {10**309}}}',
+        ),
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=captured_at + timedelta(minutes=1),
+    )
+
+    assert expired.five_hour is None
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
 def test_expire_reset_windows_uses_values_capture_for_mixed_cache():
     captured_at = datetime(2026, 7, 12, 10, 0, tzinfo=ZoneInfo("Europe/Berlin"))
     values_captured_at = captured_at - timedelta(hours=2)

@@ -308,7 +308,7 @@ def _increment_state_generation(account_id: str, state_dir: Path) -> int:
 def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
     try:
         _validate_snapshot_account_id(account_id)
-    except ValueError:
+    except (OverflowError, ValueError):
         return None
     path = directory / f"{account_id}.json"
     if not path.exists():
