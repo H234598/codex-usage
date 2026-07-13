@@ -842,7 +842,7 @@ def test_app_server_missing_window_error_identifies_available_weekly_limit():
     ) == "5h limit unavailable in app server response (plan plus; available window weekly)"
 
 
-def test_app_server_paid_inactive_five_hour_window_is_explicitly_inferred(
+def test_app_server_reports_missing_five_hour_window(
     tmp_path,
     monkeypatch,
 ):
@@ -883,14 +883,11 @@ def test_app_server_paid_inactive_five_hour_window_is_explicitly_inferred(
     usage = fetch_account_usage_app_server(account, codex_command=command)
 
     assert usage.status == AccountStatus.PARTIAL
-    assert usage.five_hour is not None
-    assert usage.five_hour.remaining == 100
-    assert usage.five_hour.reset_at is None
-    assert usage.five_hour.source == "inferred:inactive-five-hour:app-server"
+    assert usage.five_hour is None
     assert usage.weekly is not None and usage.weekly.remaining == 53
     assert usage.error == (
-        "5h limit inactive in app-server response "
-        "(plan plus; assumed 100% remaining; reset unknown)"
+        "5h limit unavailable in app server response "
+        "(plan plus; available window weekly)"
     )
 
 

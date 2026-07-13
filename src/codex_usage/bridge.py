@@ -24,9 +24,6 @@ from .direct import (
     auth_identity_for_account,
     auth_plan_type_for_account,
     canonical_backend_identity,
-    inactive_five_hour_error,
-    infer_inactive_five_hour_window,
-    is_inferred_inactive_five_hour,
 )
 from .extractor import LOCAL_TZ, JsonCandidate, extract_windows, load_json_candidate
 from .identity import (
@@ -167,26 +164,16 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         backend_plan_type=backend_plan_type,
         require_backend_identity=True,
     )
-    five_hour = infer_inactive_five_hour_window(
-        five_hour,
-        weekly,
-        plan_type=backend_plan_type or auth_plan_type,
-        source="browser",
-    )
-    inferred_inactive_five_hour = is_inferred_inactive_five_hour(five_hour)
     status = (
         AccountStatus.OK
         if five_hour is not None
         and weekly is not None
         and five_hour.has_usage_value
         and weekly.has_usage_value
-        and not inferred_inactive_five_hour
         else AccountStatus.PARTIAL
     )
     error = (
-        inactive_five_hour_error("browser", backend_plan_type or auth_plan_type)
-        if inferred_inactive_five_hour
-        else (_ingest_error(body_text, payload) if status != AccountStatus.OK else None)
+        _ingest_error(body_text, payload) if status != AccountStatus.OK else None
     )
     source_urls = {_redact_url(str(payload.get("url") or ""))}
     source_urls.update(_redact_url(candidate.url) for candidate in json_candidates)

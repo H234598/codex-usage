@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.382 - 2026-07-13
+
+### Fixed
+
+- Fehlende 5h-Fenster werden nicht mehr als echte `100%` Restwert angezeigt.
+  Unbekannte Backend-Werte bleiben `-` und der Account bleibt `partial`.
+
+## 0.6.381 - 2026-07-13
+
+### Fixed
+
+- Ungültige Backend-Herkunftsfelder werden im Applet-Payload jetzt verworfen,
+  statt unbemerkt als unbekannte Herkunft weiterzulaufen.
+
 ## 0.6.380 - 2026-07-13
 
 ### Fixed

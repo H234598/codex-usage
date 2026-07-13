@@ -1019,7 +1019,7 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     assert usage.backend_account_id == "account-test"
 
 
-def test_usage_from_ingest_payload_infers_inactive_paid_five_hour_window():
+def test_usage_from_ingest_payload_reports_missing_paid_five_hour_window():
     account = Account(
         id="privat",
         label="Privat",
@@ -1069,14 +1069,9 @@ def test_usage_from_ingest_payload_infers_inactive_paid_five_hour_window():
         monkeypatch.undo()
 
     assert usage.status == AccountStatus.PARTIAL
-    assert usage.five_hour is not None
-    assert usage.five_hour.remaining == 100
-    assert usage.five_hour.source == "inferred:inactive-five-hour:browser"
+    assert usage.five_hour is None
     assert usage.weekly is not None and usage.weekly.remaining == 90
-    assert usage.error == (
-        "5h limit inactive in browser response "
-        "(plan plus; assumed 100% remaining; reset unknown)"
-    )
+    assert usage.error.startswith("missing page text")
 
 
 def test_usage_from_ingest_payload_merges_both_api_response_field_names():

@@ -2258,8 +2258,8 @@ CodexUsageApplet.prototype = {
                 blocked_until: this._safeText(item.blocked_until, 80),
                 blocked_reason: this._safeText(item.blocked_reason, MAX_TEXT_CHARS),
                 auth_access_expires_at: this._safeText(item.auth_access_expires_at, 80),
-                backend_configured: this._safeBackend(item.backend_configured),
-                backend_used: this._safeBackend(item.backend_used, true),
+                backend_configured: this._validatedBackend(item.backend_configured),
+                backend_used: this._validatedBackend(item.backend_used, true),
                 backend_user_id: this._safeText(item.backend_user_id, 256),
                 backend_account_id: this._safeText(item.backend_account_id, 256),
                 fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
@@ -2314,6 +2314,18 @@ CodexUsageApplet.prototype = {
             ? ["direct", "app-server", "browser"]
             : ["direct", "app-server"];
         return allowed.indexOf(backend) !== -1 ? backend : "";
+    },
+
+    _validatedBackend: function(value, allowBrowser) {
+        if (value === null || value === undefined ||
+            (typeof value === "string" && !value.trim())) {
+            return "";
+        }
+        let backend = this._safeBackend(value, allowBrowser);
+        if (!backend) {
+            throw new Error("invalid backend provenance");
+        }
+        return backend;
     },
 
     _safeText: function(value, limit) {

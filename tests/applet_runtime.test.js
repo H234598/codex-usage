@@ -1636,11 +1636,13 @@ test("partial fresh payload expires resetless cached windows by duration", () =>
   assert.equal(merged[0].stale, true);
 });
 
-test("partial fresh payload keeps an inferred inactive five hour value", () => {
+test("partial authenticated payload drops an old inferred five hour value", () => {
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
     captured_at: "2026-07-10T10:00:00.000Z",
+    backend_configured: "direct",
+    backend_used: "direct",
     five_hour: {
       name: "5h",
       used: 0,
@@ -1655,14 +1657,16 @@ test("partial fresh payload keeps an inferred inactive five hour value", () => {
     account: "alpha",
     status: "partial",
     captured_at: "2026-07-10T16:00:00.000Z",
+    backend_configured: "direct",
+    backend_used: "direct",
     five_hour: null,
     weekly: null,
     stale: false
   }]);
 
-  assert.equal(merged[0].five_hour.remaining, 100);
-  assert.equal(merged[0].five_hour.source, "inferred:inactive-five-hour:direct");
-  assert.equal(merged[0].stale, true);
+  assert.equal(merged[0].five_hour, null);
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].stale, false);
 });
 
 test("legacy inferred inactive five hour reset is still allowed to expire", () => {
@@ -2510,6 +2514,24 @@ test("payload validation rejects duplicate account identities", () => {
   assert.throws(
     () => applet._validatePayload([{ account: "constructor" }, { account: "constructor" }]),
     /duplicate account id/
+  );
+});
+
+test("payload validation rejects unknown backend provenance", () => {
+  const applet = makeApplet();
+  assert.throws(
+    () => applet._validatePayload([{
+      account: "alpha",
+      backend_configured: "browser",
+    }]),
+    /invalid backend provenance/
+  );
+  assert.throws(
+    () => applet._validatePayload([{
+      account: "alpha",
+      backend_used: "mystery",
+    }]),
+    /invalid backend provenance/
   );
 });
 

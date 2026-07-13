@@ -1575,7 +1575,7 @@ def test_fetch_account_usage_direct_ignores_overflowing_window_duration(
     assert usage.error == "usage limits not found in direct response"
 
 
-def test_fetch_account_usage_direct_explains_single_available_window(tmp_path, monkeypatch):
+def test_fetch_account_usage_direct_reports_single_available_window(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
         json.dumps({"tokens": {"access_token": "secret-access-token"}}),
@@ -1618,14 +1618,11 @@ def test_fetch_account_usage_direct_explains_single_available_window(tmp_path, m
     usage = fetch_account_usage_direct(account)
 
     assert usage.status == AccountStatus.PARTIAL
-    assert usage.five_hour is not None
-    assert usage.five_hour.remaining == 100
-    assert usage.five_hour.reset_at is None
-    assert usage.five_hour.source == "inferred:inactive-five-hour:direct"
+    assert usage.five_hour is None
     assert usage.weekly is not None and usage.weekly.remaining == 53
     assert usage.error == (
-        "5h limit inactive in direct response "
-        "(plan plus; assumed 100% remaining; reset unknown)"
+        "5h limit unavailable in direct response "
+        "(plan plus; available window weekly)"
     )
 
 

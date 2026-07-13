@@ -298,7 +298,7 @@ def test_fetch_does_not_merge_dom_values_with_authenticated_json_usage(tmp_path,
     assert usage.weekly is None
 
 
-def test_fetch_infers_inactive_paid_five_hour_window_from_json(tmp_path, monkeypatch):
+def test_fetch_reports_missing_paid_five_hour_window_from_json(tmp_path, monkeypatch):
     account = Account(
         id="privat",
         label="Privat",
@@ -378,14 +378,9 @@ def test_fetch_infers_inactive_paid_five_hour_window_from_json(tmp_path, monkeyp
     usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
 
     assert usage.status == "partial"
-    assert usage.five_hour is not None
-    assert usage.five_hour.remaining == 100
-    assert usage.five_hour.source == "inferred:inactive-five-hour:browser"
+    assert usage.five_hour is None
     assert usage.weekly is not None and usage.weekly.remaining == 90
-    assert usage.error == (
-        "5h limit inactive in browser response "
-        "(plan plus; assumed 100% remaining; reset unknown)"
-    )
+    assert usage.error is None
 
 
 def test_fetch_rejects_browser_auth_identity_changed_during_request(tmp_path, monkeypatch):

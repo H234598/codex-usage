@@ -23,9 +23,6 @@ from .direct import (
     auth_metadata_from_payload,
     auth_plan_type_for_account,
     canonical_backend_identity,
-    inactive_five_hour_error,
-    infer_inactive_five_hour_window,
-    is_inferred_inactive_five_hour,
     read_auth_json_file,
 )
 from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
@@ -232,26 +229,12 @@ def fetch_account_usage(
                 status=AccountStatus.ERROR,
                 error=str(exc),
             )
-        five_hour = infer_inactive_five_hour_window(
-            five_hour,
-            weekly,
-            plan_type=backend_plan_type or auth_plan_type,
-            source="browser",
-        )
-        inferred_inactive_five_hour = is_inferred_inactive_five_hour(five_hour)
         status = _status_for_result(
             body_text=body_text,
             current_url=current_url,
             five_hour=five_hour,
             weekly=weekly,
         )
-        error = (
-            inactive_five_hour_error("browser", backend_plan_type or auth_plan_type)
-            if inferred_inactive_five_hour
-            else None
-        )
-        if inferred_inactive_five_hour:
-            status = AccountStatus.PARTIAL
         return AccountUsage(
             account_id=account.id,
             label=account.label,
@@ -259,7 +242,7 @@ def fetch_account_usage(
             five_hour=five_hour,
             weekly=weekly,
             status=status,
-            error=error,
+            error=None,
             source_urls=tuple(sorted(source_urls)),
             backend_user_id=backend_user_id,
             backend_account_id=backend_account_id,
