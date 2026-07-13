@@ -210,14 +210,19 @@ def _usage_value(window: LimitWindow | None) -> str:
 
 
 def _is_remaining_percent_window(window: LimitWindow) -> bool:
-    return (
+    if not (
         _is_finite_number(window.remaining)
         and _is_finite_number(window.percent)
         and abs(float(window.remaining) - float(window.percent)) < 0.01
-        and (
-            window.limit is None
-            or (_is_finite_number(window.limit) and abs(float(window.limit) - 100) < 0.01)
-        )
+    ):
+        return False
+    if _is_finite_number(window.used) and _is_finite_number(window.limit):
+        if float(window.limit) <= 0:
+            return False
+        derived = (float(window.limit) - float(window.used)) * 100 / float(window.limit)
+        return abs(float(window.remaining) - derived) < 0.01
+    return window.limit is None or (
+        _is_finite_number(window.limit) and abs(float(window.limit) - 100) < 0.01
     )
 
 

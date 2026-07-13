@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.369 - 2026-07-13
+
+### Fixed
+
+- Die CLI-Ausgabe bevorzugt bei widersprüchlichen Fensterfeldern wieder
+  absolute `used`-/`limit`-Werte; ein falscher `remaining`-Restwert kann die
+  Anzeige nicht mehr überstimmen.
+
 ## 0.6.368 - 2026-07-13
 
 ### Fixed
