@@ -354,6 +354,102 @@ def test_reload_running_applet_uses_bounded_gdbus_call(monkeypatch) -> None:
     ]
 
 
+def test_reload_running_applet_verifies_the_loaded_version(monkeypatch) -> None:
+    calls = []
+    expected_version = "0.6.377"
+
+    class Result:
+        def __init__(self, stdout=""):
+            self.returncode = 0
+            self.stdout = stdout
+
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/gdbus")
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if "ReloadExtension" in args:
+            return Result()
+        encoded = json.dumps([expected_version])
+        return Result(f"(true, {json.dumps(encoded)!r})")
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+
+    assert installer._reload_running_applet(expected_version=expected_version) == "ok"
+    assert len(calls) == 2
+    assert calls[1][0][-2] == "org.Cinnamon.Eval"
+
+
+def test_reload_running_applet_reports_a_stale_loaded_version(monkeypatch) -> None:
+    class Result:
+        returncode = 0
+        stdout = ""
+
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/gdbus")
+
+    def fake_run(args, **kwargs):
+        if "ReloadExtension" in args:
+            return Result()
+        encoded = json.dumps(["0.6.376"])
+        return type(
+            "EvalResult",
+            (),
+            {"returncode": 0, "stdout": f"(true, {json.dumps(encoded)!r})"},
+        )()
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+
+    assert installer._reload_running_applet(expected_version="0.6.377") == "version-mismatch"
+
+
+def test_reload_running_applet_accepts_current_version_after_reload_error(monkeypatch) -> None:
+    class Result:
+        returncode = 1
+        stdout = ""
+
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/gdbus")
+
+    def fake_run(args, **kwargs):
+        if "ReloadExtension" in args:
+            return Result()
+        encoded = json.dumps(["0.6.377"])
+        return type(
+            "EvalResult",
+            (),
+            {"returncode": 0, "stdout": f"(true, {json.dumps(encoded)!r})"},
+        )()
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+
+    assert installer._reload_running_applet(expected_version="0.6.377") == "ok"
+
+
+def test_reload_running_applet_waits_for_cinnamon_to_recreate_instance(monkeypatch) -> None:
+    calls = []
+    expected_version = "0.6.377"
+
+    class Result:
+        returncode = 0
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/gdbus")
+    monkeypatch.setattr(installer.time, "sleep", lambda delay: None)
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if "ReloadExtension" in args:
+            return Result("")
+        versions = [] if len(calls) == 2 else [expected_version]
+        encoded = json.dumps(versions)
+        return Result(f"(true, {json.dumps(encoded)!r})")
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+
+    assert installer._reload_running_applet(expected_version=expected_version) == "ok"
+    assert len(calls) == 3
+
+
 def test_installer_help_exposes_running_reload() -> None:
     result = _run_script("install_cinnamon_applet.py", "--help")
 

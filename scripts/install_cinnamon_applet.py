@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 APPLET_UUID = "codex-usage@H234598"
 REQUIRED_FILES = ("applet.js", "metadata.json", "settings-schema.json", "stylesheet.css")
+VERSION_CHECK_ATTEMPTS = 10
+VERSION_CHECK_DELAY_SECONDS = 0.2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         target_root = args.target_root.expanduser()
         target = target_root / APPLET_UUID
         _validate_source(source)
+        expected_version = _read_applet_version(source)
         _validate_target_root(target_root, create=not args.dry_run)
         _validate_existing_target(target)
         print(f"source={source}")
@@ -44,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         _install_atomically(source, target_root, target)
         print("status=installed")
         if args.reload_running:
-            print(f"reload={_reload_running_applet()}")
+            print(f"reload={_reload_running_applet(expected_version=expected_version)}")
         return 0
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -62,6 +68,17 @@ def _validate_source(source: Path) -> None:
     for path in source.rglob("*"):
         if path.is_symlink():
             raise ValueError("applet source must not contain symlinks")
+
+
+def _read_applet_version(source: Path) -> str:
+    try:
+        payload = json.loads((source / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("applet metadata is not valid JSON") from exc
+    version = payload.get("version") if isinstance(payload, dict) else None
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("applet metadata has no version")
+    return version.strip()
 
 
 def _validate_target_root(target_root: Path, *, create: bool) -> None:
@@ -123,7 +140,7 @@ def _install_atomically(source: Path, target_root: Path, target: Path) -> None:
             shutil.rmtree(staging_root)
 
 
-def _reload_running_applet() -> str:
+def _reload_running_applet(*, expected_version: str | None = None) -> str:
     gdbus = shutil.which("gdbus")
     if not gdbus:
         return "unavailable"
@@ -149,7 +166,66 @@ def _reload_running_applet() -> str:
         )
     except (OSError, subprocess.TimeoutExpired):
         return "unavailable"
-    return "ok" if result.returncode == 0 else "not-running"
+    if result.returncode != 0:
+        return (
+            _verify_running_applet_version(gdbus, expected_version)
+            if expected_version is not None
+            else "not-running"
+        )
+    if expected_version is None:
+        return "ok"
+    return _verify_running_applet_version(gdbus, expected_version)
+
+
+def _verify_running_applet_version(gdbus: str, expected_version: str) -> str:
+    script = (
+        "JSON.stringify(imports.ui.appletManager.getRunningInstancesForUuid("
+        + json.dumps(APPLET_UUID)
+        + ").map(function(applet){return applet.metadata&&applet.metadata.version;}))"
+    )
+    for attempt in range(VERSION_CHECK_ATTEMPTS):
+        try:
+            result = subprocess.run(
+                [
+                    gdbus,
+                    "call",
+                    "--session",
+                    "--dest",
+                    "org.Cinnamon",
+                    "--object-path",
+                    "/org/Cinnamon",
+                    "--method",
+                    "org.Cinnamon.Eval",
+                    script,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return "unavailable"
+        if result.returncode != 0:
+            return "unavailable"
+        output = result.stdout.strip()
+        if not output.startswith("(true, ") or not output.endswith(")"):
+            return "unavailable"
+        try:
+            encoded_json = ast.literal_eval(output[len("(true, ") : -1])
+            versions = json.loads(encoded_json)
+            if isinstance(versions, str):
+                versions = json.loads(versions)
+        except (SyntaxError, ValueError, TypeError):
+            return "unavailable"
+        if not isinstance(versions, list):
+            return "unavailable"
+        if expected_version in versions:
+            return "ok"
+        if versions:
+            return "version-mismatch"
+        if attempt + 1 < VERSION_CHECK_ATTEMPTS:
+            time.sleep(VERSION_CHECK_DELAY_SECONDS)
+    return "not-running"
 
 
 if __name__ == "__main__":

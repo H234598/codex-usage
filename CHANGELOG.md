@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.377 - 2026-07-13
+
+### Fixed
+
+- Die lokale Applet-Installation verifiziert nach dem Reload die tatsächlich
+  laufende Cinnamon-Version und meldet veraltete Instanzen als Fehlerzustand.
+
 ## 0.6.376 - 2026-07-13
 
 ### Fixed
