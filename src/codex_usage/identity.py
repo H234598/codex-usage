@@ -139,12 +139,16 @@ def _response_identity_matches_auth(
     auth_account_id: str | None,
 ) -> bool:
     if backend_account_id and auth_account_id:
-        accepted_account_ids = {auth_account_id}
-        if auth_user_id:
-            accepted_account_ids.add(auth_user_id)
-        return backend_account_id in accepted_account_ids
+        if backend_account_id == auth_account_id:
+            return True
+        if backend_account_id == auth_user_id:
+            return not backend_user_id or backend_user_id == auth_user_id
+        return False
     if backend_account_id and auth_user_id:
-        return backend_account_id == auth_user_id
+        return (
+            backend_account_id == auth_user_id
+            and (not backend_user_id or backend_user_id == auth_user_id)
+        )
     if auth_user_id and backend_user_id and backend_user_id != auth_user_id:
         return False
     return True

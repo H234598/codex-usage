@@ -124,6 +124,19 @@ def test_canonical_backend_identity_rejects_ambiguous_shared_user_account():
         )
 
 
+def test_canonical_backend_identity_rejects_foreign_user_on_shared_user_alias():
+    with pytest.raises(ValueError, match="backend response belongs to a different account"):
+        canonical_backend_identity(
+            "foreign-user",
+            "shared-user",
+            auth_user_id="shared-user",
+            auth_account_id="real-account",
+            auth_plan_type="plus",
+            backend_plan_type="plus",
+            require_backend_identity=True,
+        )
+
+
 def test_canonical_backend_identity_rejects_shared_user_without_auth_account_id():
     with pytest.raises(ValueError, match="ambiguous account identity"):
         canonical_backend_identity(

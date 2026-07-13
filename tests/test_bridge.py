@@ -2371,7 +2371,7 @@ setTimeout(() => {
   }
   process.exit(0);
 }, 100);
-''';
+'''
 
     result = subprocess.run(
         [node, "-e", harness, str(snippet_path)],

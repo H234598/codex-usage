@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from datetime import datetime
+from typing import ClassVar
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -307,7 +308,7 @@ def test_fetch_infers_inactive_paid_five_hour_window_from_json(tmp_path, monkeyp
 
     class FakeResponse:
         url = "https://chatgpt.com/backend-api/wham/usage"
-        headers = {"content-type": "application/json"}
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
 
         def finished(self):
             return None

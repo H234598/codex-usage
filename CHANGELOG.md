@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.367 - 2026-07-13
+
+### Security
+
+- Backend-Antworten mit dem gemeinsamen User-ID-Alias als account_id werden
+  bei abweichender user_id nicht mehr dem authentifizierten Account
+  zugeschlagen.
+
 ## 0.6.366 - 2026-07-13
 
 ### Fixed
