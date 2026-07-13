@@ -2594,6 +2594,9 @@ CodexUsageApplet.prototype = {
         if (candidateAccount && knownAccount && candidateAccount !== knownAccount) {
             return false;
         }
+        if (candidateAccount && knownAccount && candidateAccount === knownAccount) {
+            return false;
+        }
         return Boolean(
             (knownUser && !candidateUser) ||
             (knownAccount && !candidateAccount)
@@ -2601,18 +2604,21 @@ CodexUsageApplet.prototype = {
     },
 
     _backendIdentityMatches: function(left, right) {
-        let fields = ["backend_user_id", "backend_account_id"];
-        for (let i = 0; i < fields.length; i++) {
-            let leftValue = this._safeText(left && left[fields[i]], 256);
-            let rightValue = this._safeText(right && right[fields[i]], 256);
-            if (Boolean(leftValue) !== Boolean(rightValue)) {
-                return false;
-            }
-            if (leftValue && leftValue !== rightValue) {
-                return false;
-            }
+        let leftUser = this._safeText(left && left.backend_user_id, 256);
+        let rightUser = this._safeText(right && right.backend_user_id, 256);
+        let leftAccount = this._safeText(left && left.backend_account_id, 256);
+        let rightAccount = this._safeText(right && right.backend_account_id, 256);
+        if (Boolean(leftAccount) !== Boolean(rightAccount)) {
+            return false;
         }
-        return true;
+        if (leftAccount) {
+            if (leftAccount !== rightAccount) {
+                return false;
+            }
+            return !leftUser || !rightUser || leftUser === rightUser;
+        }
+        return Boolean(leftUser) === Boolean(rightUser) &&
+            (!leftUser || leftUser === rightUser);
     },
 
     _backendIdentityCompatible: function(left, right) {

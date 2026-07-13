@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.379 - 2026-07-13
+
+### Fixed
+
+- Das Applet akzeptiert aktuelle Nutzungswerte mit gleicher Backend-Account-ID
+  auch dann, wenn die Antwort keine Nutzer-ID enthält.
+
 ## 0.6.378 - 2026-07-13
 
 ### Fixed
