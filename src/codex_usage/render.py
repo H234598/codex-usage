@@ -282,7 +282,10 @@ def _auth_value(usage: AccountUsage | None) -> str:
 
 
 def _fmt_number(value: float) -> str:
-    number = float(value)
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return "-"
     if not math.isfinite(number):
         return "-"
     return str(int(number)) if number.is_integer() else f"{number:.2f}".rstrip("0").rstrip(".")
@@ -293,7 +296,7 @@ def _is_finite_number(value: float | None) -> bool:
         return False
     try:
         return math.isfinite(float(value))
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return False
 
 

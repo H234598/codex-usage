@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.373 - 2026-07-13
+
+### Fixed
+
+- Extrem grosse Zahlen im Renderer werden sicher verworfen, ohne andere
+  Fensterwerte zu verbergen oder die Übersicht abstürzen zu lassen.
+
 ## 0.6.372 - 2026-07-13
 
 ### Fixed

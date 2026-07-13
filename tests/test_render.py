@@ -4,7 +4,15 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
-from codex_usage.render import _auth_value, render_account_values, render_json, render_table
+from codex_usage.render import (
+    _auth_value,
+    _fmt_number,
+    _is_finite_number,
+    _remaining_percent,
+    render_account_values,
+    render_json,
+    render_table,
+)
 
 
 def test_render_table_contains_values():
@@ -117,6 +125,23 @@ def test_render_table_prefers_absolute_usage_over_conflicting_remaining_fields()
 
     assert "0 / 100" in rendered
     assert "0 / 100  100% verbleibend" in rendered
+
+
+def test_render_ignores_integer_overflow_without_hiding_other_window():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(name="5h", used=10**309, limit=100),
+        weekly=LimitWindow(name="weekly", used=10, limit=100),
+    )
+
+    rendered = render_table([usage])
+
+    assert _fmt_number(10**309) == "-"
+    assert _is_finite_number(10**309) is False
+    assert _remaining_percent(usage.five_hour) is None
+    assert "90% verbleibend" in rendered
 
 
 def test_render_table_converts_absolute_remaining_to_percent():
