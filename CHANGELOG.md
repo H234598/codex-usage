@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.359 - 2026-07-13
+
+### Fixed
+
+- Ein ungültiges `usedPercent`-Feld verwirft im App-Server nicht mehr das
+  jeweils andere gültige Limitfenster.
+
 ## 0.6.358 - 2026-07-13
 
 ### Fixed

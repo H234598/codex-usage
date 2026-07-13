@@ -771,6 +771,23 @@ def test_window_mapping_rejects_duplicate_known_durations():
     assert weekly is None
 
 
+def test_window_mapping_keeps_valid_window_when_other_used_percent_is_invalid():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 7, "windowDurationMins": 300},
+                "secondary": {
+                    "usedPercent": "invalid",
+                    "windowDurationMins": 10080,
+                },
+            }
+        }
+    )
+
+    assert five is not None and five.used == 7
+    assert weekly is None
+
+
 def test_window_mapping_falls_back_when_codex_bucket_is_empty():
     five, weekly = _windows_from_response(
         {

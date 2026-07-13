@@ -505,7 +505,7 @@ def _windows_from_response(
     candidates: list[tuple[str, dict[str, Any]]] = []
     for key in ("primary", "secondary"):
         value = snapshot.get(key)
-        if isinstance(value, dict):
+        if isinstance(value, dict) and _valid_used_percent(value):
             candidates.append((key, value))
     if not candidates:
         return None, None
