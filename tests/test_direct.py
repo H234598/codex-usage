@@ -1529,6 +1529,52 @@ def test_fetch_account_usage_direct_explains_unsupported_plan_window(tmp_path, m
     )
 
 
+def test_fetch_account_usage_direct_ignores_overflowing_window_duration(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 5,
+                            "limit_window_seconds": 10**309,
+                        }
+                    }
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", lambda request, *, timeout: FakeResponse())
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.five_hour is None
+    assert usage.weekly is None
+    assert usage.error == "usage limits not found in direct response"
+
+
 def test_fetch_account_usage_direct_explains_single_available_window(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.374 - 2026-07-13
+
+### Fixed
+
+- Überlaufende `limit_window_seconds`-Werte in Direct-Antworten werden jetzt
+  sicher verworfen, statt die Fehlerdiagnose mit `OverflowError` abzubrechen.
+
 ## 0.6.373 - 2026-07-13
 
 ### Fixed

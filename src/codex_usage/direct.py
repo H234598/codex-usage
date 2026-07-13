@@ -300,7 +300,10 @@ def _missing_usage_limits_error(
             raw_seconds = window.get("limit_window_seconds")
             if isinstance(raw_seconds, bool) or not isinstance(raw_seconds, (int, float)):
                 continue
-            seconds = float(raw_seconds)
+            try:
+                seconds = float(raw_seconds)
+            except (OverflowError, TypeError, ValueError):
+                continue
             if (
                 seconds > 0
                 and seconds.is_integer()
