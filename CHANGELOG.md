@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.378 - 2026-07-13
+
+### Fixed
+
+- Die Cinnamon-Reload-Prüfung wartet auch bei einer noch sichtbaren alten
+  Applet-Version auf den abgeschlossenen Austausch.
+
 ## 0.6.377 - 2026-07-13
 
 ### Fixed

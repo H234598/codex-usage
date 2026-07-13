@@ -183,6 +183,7 @@ def _verify_running_applet_version(gdbus: str, expected_version: str) -> str:
         + json.dumps(APPLET_UUID)
         + ").map(function(applet){return applet.metadata&&applet.metadata.version;}))"
     )
+    observed_versions: list[str] | None = None
     for attempt in range(VERSION_CHECK_ATTEMPTS):
         try:
             result = subprocess.run(
@@ -221,11 +222,11 @@ def _verify_running_applet_version(gdbus: str, expected_version: str) -> str:
             return "unavailable"
         if expected_version in versions:
             return "ok"
-        if versions:
-            return "version-mismatch"
+        if versions and all(isinstance(version, str) for version in versions):
+            observed_versions = versions
         if attempt + 1 < VERSION_CHECK_ATTEMPTS:
             time.sleep(VERSION_CHECK_DELAY_SECONDS)
-    return "not-running"
+    return "version-mismatch" if observed_versions else "not-running"
 
 
 if __name__ == "__main__":
