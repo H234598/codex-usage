@@ -217,6 +217,86 @@ def test_fetch_canonicalizes_browser_identity_from_configured_auth(tmp_path, mon
     assert extract_kwargs["now"] == usage.captured_at
 
 
+def test_fetch_does_not_merge_dom_values_with_authenticated_json_usage(tmp_path, monkeypatch):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+
+    class FakeResponse:
+        def __init__(self):
+            self.url = "https://chatgpt.com/backend-api/wham/usage"
+            self.headers = {"content-type": "application/json"}
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return (
+                '{"user_id":"user-test","account_id":"account-uuid",'
+                '"rate_limit":{"primary_window":{"used_percent":3,'
+                '"limit_window_seconds":18000}}}'
+            )
+
+    class FakeLocator:
+        def inner_text(self, *, timeout):
+            return "5-hour limit 97% remaining Weekly limit 55% remaining"
+
+    class FakePage:
+        url = "https://chatgpt.com/codex/cloud/settings/analytics"
+
+        def on(self, event, callback):
+            if event == "response":
+                callback(FakeResponse())
+
+        def goto(self, *_args, **_kwargs):
+            return None
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def locator(self, *_args):
+            return FakeLocator()
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "codex_usage.browser._prepare_profile",
+        lambda _account: tmp_path / "profile",
+    )
+    monkeypatch.setattr("codex_usage.browser._profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr("codex_usage.browser.sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        "codex_usage.browser._launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser.auth_identity_for_account",
+        lambda _account: ("user-test", "account-uuid"),
+    )
+    monkeypatch.setattr("codex_usage.browser.auth_plan_type_for_account", lambda _account: None)
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status == "partial"
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is None
+
+
 def test_fetch_rejects_browser_auth_identity_changed_during_request(tmp_path, monkeypatch):
     account = Account(
         id="privat",

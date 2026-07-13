@@ -27,6 +27,7 @@ from .direct import (
 from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
 from .identity import (
     backend_identity_from_candidates,
+    backend_identity_from_payload,
     backend_plan_type_from_candidates,
     select_identity_consistent_candidates,
 )
@@ -168,11 +169,39 @@ def fetch_account_usage(
                 status=AccountStatus.LOGIN_REQUIRED,
                 error="auth.json identity changed during browser request",
             )
-        five_hour, weekly = extract_windows(
-            body_text=body_text,
+        structured_identity_present = any(
+            backend_identity_from_payload(candidate.payload) != (None, None)
+            for candidate in candidates
+        )
+        json_windows = extract_windows(
+            body_text="",
             json_candidates=candidates,
+            text_sources=(),
             now=captured_at,
         )
+        json_has_usage = any(
+            window is not None and window.has_usage_value
+            for window in json_windows
+        )
+        allow_dom_fallback = (
+            not structured_identity_present
+            or (
+                not json_has_usage
+                and _structured_identity_matches_account(
+                    candidates,
+                    auth_user_id=auth_user_id,
+                    auth_account_id=auth_account_id,
+                )
+            )
+        )
+        if allow_dom_fallback:
+            five_hour, weekly = extract_windows(
+                body_text=body_text,
+                json_candidates=candidates,
+                now=captured_at,
+            )
+        else:
+            five_hour, weekly = json_windows
         backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
         backend_plan_type = backend_plan_type_from_candidates(candidates)
         try:
@@ -234,6 +263,20 @@ def fetch_account_usage(
             status=AccountStatus.LOGIN_REQUIRED,
             error=str(exc),
         )
+
+
+def _structured_identity_matches_account(
+    candidates: list[JsonCandidate],
+    *,
+    auth_user_id: str | None,
+    auth_account_id: str | None,
+) -> bool:
+    if not auth_account_id:
+        return False
+    backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
+    if backend_account_id != auth_account_id:
+        return False
+    return not auth_user_id or not backend_user_id or backend_user_id == auth_user_id
 
 
 def probe_account(

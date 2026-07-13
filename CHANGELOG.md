@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.353 - 2026-07-13
+
+### Fixed
+
+- Browser-DOM-Werte werden nicht mehr mit bereits identifizierter JSON-Nutzung
+  vermischt, wenn ein Profil falsche oder veraltete Cookies verwendet.
+
 ## 0.6.352 - 2026-07-13
 
 ### Fixed
