@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.388 - 2026-07-13
+
+### Fixed
+
+- Bei bestätigter Backend-Identität ergänzt der Bridge-Parser ein fehlendes
+  Limitfenster wieder aus dem vertrauenswürdigen Seitentext.
+
 ## 0.6.387 - 2026-07-13
 
 ### Fixed

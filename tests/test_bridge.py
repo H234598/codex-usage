@@ -1256,6 +1256,72 @@ def test_usage_from_ingest_payload_uses_dom_for_confirmed_identity_without_limit
     assert usage.weekly is not None and usage.weekly.remaining == 55
 
 
+def test_usage_from_ingest_payload_fills_missing_window_from_dom_for_confirmed_identity(
+    tmp_path,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "user-test",
+                                "chatgpt_account_id": "account-test",
+                            }
+                        }
+                    ),
+                    "account_id": "account-test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "bodyText": (
+                "5-hour limit 97% remaining Reset 12.07.2026 16:00 "
+                "Weekly limit 55% remaining Reset 18.07.2026 08:00"
+            ),
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": json.dumps(
+                        {
+                            "user_id": "user-test",
+                            "account_id": "account-test",
+                            "rate_limit": {
+                                "primary_window": {
+                                    "used_percent": 45,
+                                    "limit_window_seconds": 604800,
+                                },
+                                "secondary_window": None,
+                            },
+                        }
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is not None and usage.weekly.remaining == 55
+    assert usage.weekly.used == 45
+
+
 def test_usage_from_ingest_payload_keeps_probe_after_failed_page_hook_response():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(

@@ -132,15 +132,13 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         text_sources=(),
         now=captured_at,
     )
-    json_has_usage = any(
-        window is not None and window.has_usage_value
-        for window in json_windows
-    )
     allow_dom_fallback = (
         not structured_identity_present
-        or (
-            not json_has_usage
-            and _structured_identity_matches_account(account, json_candidates)
+        or _structured_identity_matches_account(
+            account,
+            json_candidates,
+            auth_user_id=auth_user_id,
+            auth_account_id=auth_account_id,
         )
     )
     if allow_dom_fallback:
@@ -197,12 +195,11 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
 def _structured_identity_matches_account(
     account: Account,
     candidates: list[JsonCandidate],
+    *,
+    auth_user_id: str | None,
+    auth_account_id: str | None,
 ) -> bool:
     if not account.auth_json_path:
-        return False
-    try:
-        auth_user_id, auth_account_id = auth_identity_for_account(account)
-    except DirectAuthError:
         return False
     backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
     if not auth_account_id or not backend_account_id:
