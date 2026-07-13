@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.365 - 2026-07-13
+
+### Fixed
+
+- Der manuelle `bridge-snippet` überträgt jetzt ebenfalls DOM-, Accessibility-,
+  SVG- und bereinigte HTML-Werte, damit versteckte Fortschrittsbalken nicht
+  verloren gehen.
+- Bridge-Fetchfehler im Snippet werden abgefangen; periodische Sends laufen
+  serialisiert und erzeugen keine unbehandelten Promise-Fehler.
+
 ## 0.6.364 - 2026-07-13
 
 ### Fixed

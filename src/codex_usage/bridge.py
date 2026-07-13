@@ -634,26 +634,127 @@ def render_bridge_snippet(
   const endpoint = {endpoint_json};
   const token = {token_json};
   const intervalMs = {interval_ms};
-  async function sendCodexUsage() {{
-    const payload = {{
+  const maxFieldChars = 2000000;
+  let sendInFlight = null;
+  let sendPending = false;
+
+  function limitText(value) {{
+    const text = String(value || "");
+    return text.length > maxFieldChars ? text.slice(0, maxFieldChars) : text;
+  }}
+
+  function collectAttributeText() {{
+    const attrs = ["aria-label", "aria-valuetext", "aria-valuenow", "title", "alt"];
+    if (!document.querySelectorAll) {{
+      return "";
+    }}
+    const selector = attrs.map((name) => `[${{name}}]`).join(",");
+    return Array.from(document.querySelectorAll(selector))
+      .flatMap((element) => attrs.map((name) => element.getAttribute(name)))
+      .filter((value) => value && String(value).trim())
+      .join("\\n");
+  }}
+
+  function collectSvgText() {{
+    if (!document.querySelectorAll) {{
+      return "";
+    }}
+    return Array.from(document.querySelectorAll("svg text, svg title, svg desc"))
+      .map((element) => element.textContent || "")
+      .filter((value) => value.trim())
+      .join("\\n");
+  }}
+
+  function sanitizedRoot() {{
+    if (!document.documentElement) {{
+      return null;
+    }}
+    const clone = document.documentElement.cloneNode(true);
+    if (clone.querySelectorAll) {{
+      clone
+        .querySelectorAll("script, style, link, meta, noscript, template")
+        .forEach((element) => element.remove());
+    }}
+    return clone;
+  }}
+
+  function collectPayload() {{
+    const bodyText = document.body ? (document.body.innerText || "") : "";
+    const root = sanitizedRoot();
+    const domText = root ? (root.textContent || "") : "";
+    const accessibilityText = collectAttributeText();
+    const svgText = collectSvgText();
+    const htmlText = root ? (root.outerHTML || "") : "";
+    const searchText = [bodyText, domText, accessibilityText, svgText, htmlText]
+      .filter((value) => value && String(value).trim())
+      .join("\\n\\n");
+    return {{
       account,
       url: location.href,
       title: document.title,
       capturedAt: new Date().toISOString(),
-      bodyText: document.body ? document.body.innerText : ""
-    }};
-    const response = await fetch(endpoint, {{
-      method: "POST",
-      headers: {{
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + token
+      readyState: document.readyState,
+      textLength: searchText.length,
+      htmlLength: htmlText.length,
+      visibleTextLength: bodyText.length,
+      fieldLengths: {{
+        bodyText: bodyText.length,
+        domText: domText.length,
+        accessibilityText: accessibilityText.length,
+        svgText: svgText.length,
+        htmlText: htmlText.length
       }},
-      body: JSON.stringify(payload)
-    }});
-    console.log("codex-usage bridge", response.status, await response.text());
+      truncatedFields: {{
+        bodyText: bodyText.length > maxFieldChars,
+        domText: domText.length > maxFieldChars,
+        accessibilityText: accessibilityText.length > maxFieldChars,
+        svgText: svgText.length > maxFieldChars,
+        htmlText: htmlText.length > maxFieldChars
+      }},
+      bodyText: limitText(bodyText),
+      domText: limitText(domText),
+      accessibilityText: limitText(accessibilityText),
+      svgText: limitText(svgText),
+      htmlText: limitText(htmlText)
+    }};
   }}
-  sendCodexUsage();
-  setInterval(sendCodexUsage, intervalMs);
+
+  async function sendCodexUsage() {{
+    if (sendInFlight) {{
+      sendPending = true;
+      return sendInFlight;
+    }}
+    const operation = (async () => {{
+      try {{
+        const response = await fetch(endpoint, {{
+          method: "POST",
+          headers: {{
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token
+          }},
+          body: JSON.stringify(collectPayload())
+        }});
+        console.log("codex-usage bridge", response.status, await response.text());
+      }} catch (error) {{
+        console.warn("codex-usage bridge failed", String(error));
+      }}
+    }})();
+    sendInFlight = operation;
+    try {{
+      await operation;
+    }} finally {{
+      if (sendInFlight === operation) {{
+        sendInFlight = null;
+      }}
+      if (sendPending) {{
+        sendPending = false;
+        void sendCodexUsage();
+      }}
+    }}
+    return operation;
+  }}
+  void sendCodexUsage();
+  setInterval(() => {{ void sendCodexUsage(); }}, intervalMs);
 }})();"""
 
 

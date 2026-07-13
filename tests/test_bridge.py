@@ -2228,6 +2228,100 @@ def test_render_bridge_snippet_contains_account_endpoint_and_interval():
     assert "300000" in snippet
     assert '"Authorization": "Bearer " + token' in snippet
     assert token in snippet
+    assert "htmlText" in snippet
+    assert "accessibilityText" in snippet
+    assert "sendInFlight" in snippet
+    assert "codex-usage bridge failed" in snippet
+
+
+def test_render_bridge_snippet_sends_dom_fields_and_handles_fetch_failure(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    snippet = render_bridge_snippet(
+        "BW_Privat",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    snippet_path = tmp_path / "snippet.js"
+    snippet_path.write_text(snippet, encoding="utf-8")
+    harness = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const requests = [];
+let warnings = 0;
+const document = {
+  title: "Codex",
+  readyState: "complete",
+  body: { innerText: "5 Stunden Nutzungsgrenze 97% verbleibend" },
+  documentElement: {
+    cloneNode() {
+      return {
+        textContent: "5 Stunden Nutzungsgrenze 97% verbleibend",
+        outerHTML: '<html><body><div style="width: 97%"></div></body></html>',
+        querySelectorAll() { return { forEach() {} }; }
+      };
+    }
+  },
+  querySelectorAll(selector) {
+    if (selector.includes("[aria-label]")) {
+      return [{
+        getAttribute(name) {
+          return name === "aria-label" ? "97% verbleibend" : null;
+        }
+      }];
+    }
+    return [];
+  }
+};
+const sandbox = {
+  document,
+  location: { href: "https://chatgpt.com/codex/cloud/settings/analytics" },
+  fetch: async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    throw new Error("CSP blocked");
+  },
+  console: {
+    log() {},
+    warn(message) {
+      if (String(message).includes("codex-usage bridge failed")) {
+        warnings += 1;
+      }
+    }
+  },
+  Date,
+  JSON,
+  String,
+  Array,
+  Promise,
+  setInterval() { return 1; },
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => {
+  if (
+    requests.length !== 1
+    || !requests[0].htmlText.includes("width: 97%")
+    || !requests[0].accessibilityText
+    || warnings !== 1
+  ) {
+    throw new Error(JSON.stringify({ requests, warnings }));
+  }
+  process.exit(0);
+}, 100);
+''';
+
+    result = subprocess.run(
+        [node, "-e", harness, str(snippet_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
