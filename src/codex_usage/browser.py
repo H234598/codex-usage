@@ -17,6 +17,7 @@ from playwright.sync_api import sync_playwright
 from .config import AppConfig
 from .direct import (
     DirectAuthError,
+    _auth_plan_type_changed,
     auth_identity_changed,
     auth_identity_for_account,
     auth_metadata_from_payload,
@@ -161,9 +162,7 @@ def fetch_account_usage(
             after_user_id=auth_user_id,
             after_account_id=auth_account_id,
         ) or (
-            auth_plan_type_before
-            and auth_plan_type
-            and auth_plan_type_before.casefold() != auth_plan_type.casefold()
+            _auth_plan_type_changed(auth_plan_type_before, auth_plan_type)
         ):
             return AccountUsage(
                 account_id=account.id,

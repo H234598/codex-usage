@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.368 - 2026-07-13
+
+### Fixed
+
+- Der Browserpfad behandelt die Plan-Aliase pro und plus wie Direct und
+  App-Server und fordert bei einem Aliaswechsel keine erneute Anmeldung.
+
 ## 0.6.367 - 2026-07-13
 
 ### Security
