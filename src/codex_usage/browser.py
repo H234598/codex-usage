@@ -28,6 +28,7 @@ from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
 from .identity import (
     backend_identity_from_candidates,
     backend_plan_type_from_candidates,
+    select_identity_consistent_candidates,
 )
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
@@ -136,6 +137,20 @@ def fetch_account_usage(
         source_urls.update(_redact_url(candidate.url) for candidate in candidates)
         auth_user_id, auth_account_id = auth_identity_for_account(account)
         auth_plan_type = auth_plan_type_for_account(account)
+        try:
+            candidates = select_identity_consistent_candidates(
+                candidates,
+                auth_user_id=auth_user_id,
+                auth_account_id=auth_account_id,
+            )
+        except ValueError as exc:
+            return AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                status=AccountStatus.ERROR,
+                error=str(exc),
+            )
         if auth_identity_changed(
             before_user_id=auth_user_id_before,
             before_account_id=auth_account_id_before,

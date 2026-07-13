@@ -30,6 +30,7 @@ from .identity import (
     backend_identity_from_candidates,
     backend_identity_from_payload,
     backend_plan_type_from_candidates,
+    select_identity_consistent_candidates,
 )
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage
@@ -111,9 +112,11 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
     captured_at = _parse_captured_at(payload.get("capturedAt") or payload.get("captured_at"))
     body_text = _combined_payload_text(payload)
     text_sources = _payload_text_sources(payload)
-    json_candidates = _select_identity_consistent_candidates(
-        account,
+    auth_user_id, auth_account_id = auth_identity_for_account(account)
+    json_candidates = select_identity_consistent_candidates(
         _json_candidates_from_payload(payload),
+        auth_user_id=auth_user_id,
+        auth_account_id=auth_account_id,
     )
     # A structured response with usage values is authoritative. If it only
     # identifies the already authenticated account, the rendered graph can
@@ -151,7 +154,6 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         five_hour, weekly = json_windows
     backend_user_id, backend_account_id = backend_identity_from_candidates(json_candidates)
     backend_plan_type = backend_plan_type_from_candidates(json_candidates)
-    auth_user_id, auth_account_id = auth_identity_for_account(account)
     auth_plan_type = auth_plan_type_for_account(account)
     backend_user_id, backend_account_id = canonical_backend_identity(
         backend_user_id,
@@ -188,73 +190,6 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         backend_user_id=backend_user_id,
         backend_account_id=backend_account_id,
     )
-
-
-def _select_identity_consistent_candidates(
-    account: Account,
-    candidates: list[JsonCandidate],
-) -> list[JsonCandidate]:
-    groups: list[
-        tuple[tuple[str | None, str | None], list[JsonCandidate]]
-    ] = []
-    for candidate in candidates:
-        identity = backend_identity_from_payload(candidate.payload)
-        if identity == (None, None):
-            continue
-        for index, (group_identity, grouped_candidates) in enumerate(groups):
-            if not _identities_compatible(identity, group_identity):
-                continue
-            groups[index] = (
-                (
-                    identity[0] or group_identity[0],
-                    identity[1] or group_identity[1],
-                ),
-                [*grouped_candidates, candidate],
-            )
-            break
-        else:
-            groups.append((identity, [candidate]))
-    if not groups:
-        return candidates
-    if len(groups) == 1:
-        return groups[0][1]
-
-    auth_user_id, auth_account_id = auth_identity_for_account(account)
-    if not (auth_user_id or auth_account_id):
-        raise ValueError("bridge payload contains multiple backend accounts")
-
-    matching_groups = []
-    for identity, grouped_candidates in groups:
-        try:
-            canonical_backend_identity(
-                identity[0],
-                identity[1],
-                auth_user_id=auth_user_id,
-                auth_account_id=auth_account_id,
-                require_backend_identity=True,
-            )
-        except ValueError:
-            continue
-        matching_groups.append(grouped_candidates)
-    if len(matching_groups) == 0:
-        raise ValueError("backend response belongs to a different account")
-    if len(matching_groups) > 1:
-        raise ValueError("bridge payload does not identify one configured backend account")
-    return matching_groups[0]
-
-
-def _identities_compatible(
-    left: tuple[str | None, str | None],
-    right: tuple[str | None, str | None],
-) -> bool:
-    shared_field = False
-    for left_value, right_value in zip(left, right, strict=True):
-        if left_value is None or right_value is None:
-            continue
-        shared_field = True
-        if left_value != right_value:
-            return False
-    return shared_field
 
 
 def _structured_identity_matches_account(

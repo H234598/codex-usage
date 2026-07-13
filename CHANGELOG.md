@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.352 - 2026-07-13
+
+### Fixed
+
+- Browser- und Bridge-Antworten mischen keine 5h- und Wochenfenster mehr aus
+  unterschiedlichen Backend-Accounts.
+
 ## 0.6.351 - 2026-07-13
 
 ### Fixed
