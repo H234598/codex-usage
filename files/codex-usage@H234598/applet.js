@@ -2798,7 +2798,7 @@ CodexUsageApplet.prototype = {
         if (!window) {
             return false;
         }
-        if (this._isInferredInactiveFiveHour(window)) {
+        if (this._isInferredInactiveFiveHour(window) && !window.reset_at) {
             return false;
         }
         if (window.reset_at) {

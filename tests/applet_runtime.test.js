@@ -1665,6 +1665,23 @@ test("partial fresh payload keeps an inferred inactive five hour value", () => {
   assert.equal(merged[0].stale, true);
 });
 
+test("legacy inferred inactive five hour reset is still allowed to expire", () => {
+  const applet = makeApplet();
+  assert.equal(
+    applet._windowCacheExpired(
+      {
+        name: "5h",
+        remaining: 100,
+        reset_at: "2026-07-10T11:00:00.000Z",
+        source: "inferred:inactive-five-hour:direct"
+      },
+      "2026-07-10T10:00:00.000Z",
+      "2026-07-10T12:00:00.000Z"
+    ),
+    true
+  );
+});
+
 test("fresh inferred inactive five hour value does not inherit an old reset", () => {
   const applet = makeApplet();
   applet._usages = [{

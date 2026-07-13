@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.364 - 2026-07-13
+
+### Fixed
+
+- Alte inferierte 5h-Snapshots mit noch vorhandener Resetzeit werden nicht
+  dauerhaft vom Cache-Schutz festgehalten.
+
 ## 0.6.363 - 2026-07-13
 
 ### Fixed

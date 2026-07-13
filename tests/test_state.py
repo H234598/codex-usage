@@ -268,6 +268,33 @@ def test_expire_reset_windows_keeps_inferred_inactive_five_hour_value():
     assert evaluated.stale is False
 
 
+def test_expire_reset_windows_drops_inferred_value_with_legacy_reset():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    reference_at = captured_at + timedelta(hours=2)
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at,
+        status=AccountStatus.PARTIAL,
+        five_hour=LimitWindow(
+            name="5h",
+            used=0,
+            limit=100,
+            remaining=100,
+            percent=100,
+            reset_at=captured_at + timedelta(hours=1),
+            source="inferred:inactive-five-hour:direct",
+        ),
+    )
+
+    evaluated = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert evaluated.five_hour is None
+    assert evaluated.status == AccountStatus.PARTIAL
+    assert evaluated.stale is True
+    assert evaluated.error == "cached limit window expired: 5h; refresh required"
+
+
 def test_expire_reset_windows_counts_resetless_duration_as_elapsed_time_across_dst():
     timezone = ZoneInfo("Europe/Berlin")
     captured_at = datetime(2026, 3, 29, 0, 0, tzinfo=timezone)

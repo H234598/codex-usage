@@ -734,7 +734,7 @@ def _cached_window_expired(
 ) -> bool:
     if window is None:
         return False
-    if _is_inferred_inactive_five_hour(window):
+    if _is_inferred_inactive_five_hour(window) and window.reset_at is None:
         # This is a plan-level inactive bucket, not a resetless active window.
         # Keep the explicit 100% observation until a fresh response replaces it.
         return False
