@@ -31,8 +31,11 @@ def select_identity_consistent_candidates(
     candidate_list = list(candidates)
     account_ids_by_user: dict[str, set[str]] = {}
     user_ids_by_account: dict[str, set[str]] = {}
+    known_account_ids: set[str] = set()
     for candidate in candidate_list:
         user_id, account_id = backend_identity_from_payload(candidate.payload)
+        if account_id:
+            known_account_ids.add(account_id)
         if user_id and account_id:
             account_ids_by_user.setdefault(user_id, set()).add(account_id)
             user_ids_by_account.setdefault(account_id, set()).add(user_id)
@@ -40,7 +43,13 @@ def select_identity_consistent_candidates(
     def is_ambiguous_partial_identity(identity: tuple[str | None, str | None]) -> bool:
         user_id, account_id = identity
         if user_id and not account_id:
-            return len(account_ids_by_user.get(user_id, set())) > 1
+            return (
+                len(account_ids_by_user.get(user_id, set())) > 1
+                or (
+                    auth_account_id is not None
+                    and len(known_account_ids) > 1
+                )
+            )
         if account_id and not user_id:
             return len(user_ids_by_account.get(account_id, set())) > 1
         return False

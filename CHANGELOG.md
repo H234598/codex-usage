@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.356 - 2026-07-13
+
+### Fixed
+
+- Unvollständige Benutzer-Identitäten werden auch dann verworfen, wenn ein
+  weiteres Konto nur durch seine `account_id` bekannt ist.
+
 ## 0.6.355 - 2026-07-13
 
 ### Fixed

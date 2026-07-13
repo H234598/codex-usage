@@ -168,6 +168,56 @@ def test_select_identity_consistent_candidates_drops_ambiguous_partial_identity(
     assert selected == [candidates[0]]
 
 
+def test_select_identity_consistent_candidates_drops_partial_user_when_other_account_lacks_user():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "user_id": "shared-user",
+                "account_id": "account-a",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                    }
+                },
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "account_id": "account-b",
+                "rate_limit": {
+                    "secondary_window": {
+                        "used_percent": 45,
+                        "limit_window_seconds": 604_800,
+                    }
+                },
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "user_id": "shared-user",
+                "rate_limit": {
+                    "secondary_window": {
+                        "used_percent": 99,
+                        "limit_window_seconds": 604_800,
+                    }
+                },
+            },
+        ),
+    ]
+
+    selected = select_identity_consistent_candidates(
+        candidates,
+        auth_user_id="shared-user",
+        auth_account_id="account-a",
+    )
+
+    assert selected == [candidates[0]]
+
+
 def test_select_identity_consistent_candidates_rejects_unknown_account():
     candidate = JsonCandidate(
         url="https://chatgpt.com/backend-api/wham/usage",
