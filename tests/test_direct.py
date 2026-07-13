@@ -14,6 +14,7 @@ from codex_usage.direct import (
     _fetch_stable_wham_usage,
     _jwt_expiry,
     _select_stable_wham_usage,
+    _signature_number,
     auth_identity_changed,
     auth_identity_from_payload,
     canonical_backend_identity,
@@ -34,6 +35,18 @@ def _jwt_with_claims(claims: dict) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=").decode()
     return f"{header}.{payload}.signature"
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        pytest.param(10**10000, id="huge-int"),
+        pytest.param(float("inf"), id="infinity"),
+        pytest.param(float("nan"), id="nan"),
+    ),
+)
+def test_signature_number_rejects_non_finite_values_without_raising(value):
+    assert _signature_number(value) is None
 
 
 def test_jwt_expiry_ignores_non_object_payloads():

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import errno
 import json
+import math
 import os
 import stat
 import time
@@ -880,7 +881,11 @@ def _usage_window_signature(value: Any) -> tuple | None:
 def _signature_number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _signature_reset(value: Any) -> int | None:

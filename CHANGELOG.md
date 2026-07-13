@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.371 - 2026-07-13
+
+### Fixed
+
+- Die WHAM-Stabilisierung behandelt nicht-endliche und zu grosse numerische
+  Felder jetzt als ungueltig, ohne beim Signaturvergleich abzustuerzen.
+
 ## 0.6.370 - 2026-07-13
 
 ### Fixed
