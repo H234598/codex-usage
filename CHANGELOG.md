@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.362 - 2026-07-13
+
+### Fixed
+
+- Eine alte 5h-Resetzeit wird nicht mehr in ein neu inferiertes inaktives
+  Fenster zurückgemischt.
+
 ## 0.6.361 - 2026-07-13
 
 ### Fixed

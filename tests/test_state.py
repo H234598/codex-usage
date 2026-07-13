@@ -1334,6 +1334,53 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
     assert loaded.values_captured_at == previous_capture
 
 
+def test_merge_does_not_restore_old_reset_into_inferred_inactive_five_hour():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured_at = datetime(2026, 7, 13, 3, 0, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at,
+        five_hour=LimitWindow(
+            name="5h",
+            used=0,
+            limit=100,
+            remaining=100,
+            percent=100,
+            reset_at=None,
+            source="inferred:inactive-five-hour:direct",
+        ),
+        weekly=LimitWindow(name="weekly", remaining=90),
+        status=AccountStatus.PARTIAL,
+        backend_used="direct",
+        backend_account_id="account-a",
+    )
+    previous = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at - timedelta(minutes=5),
+        five_hour=LimitWindow(
+            name="5h",
+            used=20,
+            limit=100,
+            remaining=80,
+            percent=80,
+            reset_at=captured_at + timedelta(hours=2),
+            raw='{"limit_window_seconds":18000}',
+            source="direct",
+        ),
+        weekly=LimitWindow(name="weekly", remaining=90),
+        status=AccountStatus.OK,
+        backend_used="direct",
+        backend_account_id="account-a",
+    )
+
+    merged = merge_current_with_last_success(current, previous)
+
+    assert merged.five_hour is current.five_hour
+    assert merged.five_hour.reset_at is None
+
+
 def test_save_usage_snapshot_preserves_reset_when_usage_arrives_without_reset(tmp_path):
     timezone = ZoneInfo("Europe/Berlin")
     snapshot_dir = tmp_path / "snapshots"

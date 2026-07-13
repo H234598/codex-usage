@@ -36,6 +36,7 @@ KNOWN_FALLBACK_REASONS = frozenset(
         "previous authenticated limits retained after reset transition",
     )
 )
+INFERRED_INACTIVE_FIVE_HOUR_SOURCE = "inferred:inactive-five-hour"
 
 
 def backend_provenance_matches_configured(
@@ -598,6 +599,10 @@ def _merge_window_with_last_success(
         return current
     if not _window_duration_matches(current, last_success):
         return current
+    if _is_inferred_inactive_five_hour(current):
+        # An omitted paid-plan 5h bucket means 100% with no known reset. Never
+        # revive the reset metadata of the previous active bucket.
+        return current
     if not preserve_missing_value and not current.has_usage_value:
         return current
     if not current.has_usage_value and _cached_window_expired(
@@ -683,6 +688,14 @@ def _window_kind(window: LimitWindow | None) -> str | None:
     if normalized in {"w", "week", "weekly"}:
         return "weekly"
     return None
+
+
+def _is_inferred_inactive_five_hour(window: LimitWindow | None) -> bool:
+    return bool(
+        window is not None
+        and isinstance(window.source, str)
+        and window.source.startswith(INFERRED_INACTIVE_FIVE_HOUR_SOURCE)
+    )
 
 
 def _window_duration_seconds(window: LimitWindow | None) -> int | None:
