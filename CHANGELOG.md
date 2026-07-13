@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.351 - 2026-07-13
+
+### Fixed
+
+- Reaktivierungspruefungen verwenden jetzt dieselbe DST-faehige lokale
+  Zeitzone wie die Auth-Metadaten.
+
 ## 0.6.350 - 2026-07-13
 
 ### Fixed

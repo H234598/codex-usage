@@ -16,6 +16,7 @@ from .direct import (
     auth_identity_from_payload,
     read_auth_json_file,
 )
+from .extractor import LOCAL_TZ
 from .json_utils import loads_strict
 from .models import Account
 from .private_io import write_private_text
@@ -310,6 +311,6 @@ def _validate_refreshed_auth(path: Path) -> dict[str, datetime | None]:
     except DirectAuthError as exc:
         raise ReactivationError("login completed without a valid auth.json") from exc
     expiry = metadata.get("auth_access_expires_at")
-    if expiry is not None and expiry <= datetime.now().astimezone():
+    if expiry is not None and expiry <= datetime.now(tz=LOCAL_TZ):
         raise ReactivationError("login completed with an expired access token")
     return metadata
