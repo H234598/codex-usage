@@ -29,6 +29,7 @@ MAX_SNAPSHOT_URLS = 20
 MAX_STATE_GENERATION_BYTES = 4096
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
+MAX_RESET_FUTURE_SKEW_SECONDS = 5 * 60
 KNOWN_FALLBACK_REASONS = frozenset(
     (
         "previous direct limits retained after reset transition",
@@ -721,7 +722,23 @@ def _cached_window_expired(
     if window is None:
         return False
     if window.reset_at is not None:
-        return _window_reset_expired(window, reference_at)
+        if _window_reset_expired(window, reference_at):
+            return True
+        duration = _window_duration_seconds(window)
+        if duration is None:
+            duration = WINDOW_DURATIONS.get(_window_kind(window) or "")
+        if duration is None:
+            return False
+        if not isinstance(captured_at, datetime) or not isinstance(window.reset_at, datetime):
+            return True
+        try:
+            captured_utc = _localize_datetime(captured_at).astimezone(UTC)
+            reset_utc = _localize_datetime(window.reset_at).astimezone(UTC)
+            return reset_utc > captured_utc + timedelta(
+                seconds=duration + MAX_RESET_FUTURE_SKEW_SECONDS
+            )
+        except (OverflowError, TypeError, ValueError):
+            return True
     duration = _window_duration_seconds(window)
     if duration is None:
         duration = WINDOW_DURATIONS.get(_window_kind(window) or "")

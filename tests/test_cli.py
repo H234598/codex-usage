@@ -124,7 +124,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-    assert capsys.readouterr().out == "codex-usage 0.6.353\ncodex-usage 0.6.353\n"
+    assert capsys.readouterr().out == "codex-usage 0.6.354\ncodex-usage 0.6.354\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -1055,7 +1055,7 @@ def test_values_shows_compact_live_values_for_all_accounts(tmp_path, monkeypatch
 def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    reset = (datetime.now().astimezone() + timedelta(days=1)).strftime(
+    reset = (datetime.now().astimezone() + timedelta(hours=4)).strftime(
         "%d.%m.%Y %H:%M"
     )
     body = f"""

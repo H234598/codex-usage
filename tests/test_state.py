@@ -1037,7 +1037,7 @@ def test_merge_current_with_last_success_preserves_usage_under_reset_only_window
         status=AccountStatus.PARTIAL,
         five_hour=LimitWindow(
             name="5h",
-            reset_at=datetime(2026, 6, 8, 16, 0, tzinfo=timezone),
+            reset_at=datetime(2026, 6, 8, 8, 0, tzinfo=timezone),
         ),
     )
     last_success = AccountUsage(
@@ -1047,7 +1047,7 @@ def test_merge_current_with_last_success_preserves_usage_under_reset_only_window
         five_hour=LimitWindow(
             name="5h",
             remaining=97,
-            reset_at=datetime(2026, 6, 8, 15, 0, tzinfo=timezone),
+            reset_at=datetime(2026, 6, 8, 7, 0, tzinfo=timezone),
         ),
     )
 
@@ -1055,7 +1055,7 @@ def test_merge_current_with_last_success_preserves_usage_under_reset_only_window
 
     assert merged.five_hour is not None
     assert merged.five_hour.remaining == 97
-    assert merged.five_hour.reset_at == datetime(2026, 6, 8, 16, 0, tzinfo=timezone)
+    assert merged.five_hour.reset_at == datetime(2026, 6, 8, 8, 0, tzinfo=timezone)
     assert merged.values_captured_at == captured
     assert merged.stale is True
 
@@ -1212,6 +1212,41 @@ def test_merge_current_usage_does_not_restore_expired_reset_time():
     assert merged.stale is False
 
 
+@pytest.mark.parametrize(
+    ("field", "name", "reset_delta"),
+    (
+        ("five_hour", "5h", timedelta(hours=10)),
+        ("weekly", "weekly", timedelta(days=10)),
+    ),
+)
+def test_merge_does_not_restore_reset_beyond_window_duration(field, name, reset_delta):
+    timezone = ZoneInfo("Europe/Berlin")
+    captured = datetime(2026, 6, 8, 10, 0, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured + timedelta(minutes=5),
+        status=AccountStatus.PARTIAL,
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        **{
+            field: LimitWindow(
+                name=name,
+                remaining=80,
+                reset_at=captured + reset_delta,
+            )
+        },
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert getattr(merged, field) is None
+    assert merged.stale is False
+
+
 def test_merge_does_not_restore_values_under_expired_reset_only_window():
     timezone = ZoneInfo("Europe/Berlin")
     captured = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)
@@ -1259,7 +1294,7 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
             five_hour=LimitWindow(
                 name="5h",
                 remaining=97,
-                reset_at=datetime(2026, 6, 8, 16, 0, tzinfo=timezone),
+                reset_at=datetime(2026, 6, 8, 8, 0, tzinfo=timezone),
             ),
             weekly=LimitWindow(
                 name="weekly",
@@ -1278,7 +1313,7 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
             status=AccountStatus.PARTIAL,
             five_hour=LimitWindow(
                 name="5h",
-                reset_at=datetime(2026, 6, 8, 16, 5, tzinfo=timezone),
+                reset_at=datetime(2026, 6, 8, 8, 5, tzinfo=timezone),
             ),
             error="usage limits not found",
         ),
@@ -1292,7 +1327,7 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
     assert loaded.stale is True
     assert loaded.five_hour is not None
     assert loaded.five_hour.remaining == 97
-    assert loaded.five_hour.reset_at == datetime(2026, 6, 8, 16, 5, tzinfo=timezone)
+    assert loaded.five_hour.reset_at == datetime(2026, 6, 8, 8, 5, tzinfo=timezone)
     assert loaded.weekly is not None
     assert loaded.weekly.remaining == 55
     assert loaded.captured_at == datetime(2026, 6, 8, 4, 25, tzinfo=timezone)
@@ -1302,7 +1337,7 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
 def test_save_usage_snapshot_preserves_reset_when_usage_arrives_without_reset(tmp_path):
     timezone = ZoneInfo("Europe/Berlin")
     snapshot_dir = tmp_path / "snapshots"
-    previous_reset = datetime(2026, 6, 8, 16, 0, tzinfo=timezone)
+    previous_reset = datetime(2026, 6, 8, 8, 0, tzinfo=timezone)
     save_usage_snapshot(
         AccountUsage(
             account_id="privat",

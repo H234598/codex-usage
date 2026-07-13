@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.354 - 2026-07-13
+
+### Fixed
+
+- Cache-Merges restaurieren keine 5h- oder Wochenwerte mehr, deren
+  Resetzeit ausserhalb der eigenen Fensterdauer liegt.
+
 ## 0.6.353 - 2026-07-13
 
 ### Fixed
