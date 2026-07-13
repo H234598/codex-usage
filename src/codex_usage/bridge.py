@@ -1196,6 +1196,7 @@ def _load_latest_usages_unlocked(
             usage = last_success
         else:
             continue
+        usage = replace(usage, label=account.label)
         usage = expire_reset_windows(
             usage,
             reference_at=reference_at,

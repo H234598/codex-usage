@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.387 - 2026-07-13
+
+### Fixed
+
+- Cachebasierte Übersichten verwenden nach einer Account-Umbenennung wieder
+  das aktuelle Konfigurationslabel.
+
 ## 0.6.386 - 2026-07-13
 
 ### Fixed

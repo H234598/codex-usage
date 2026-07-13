@@ -858,6 +858,34 @@ def test_latest_discards_far_future_current_and_keeps_valid_snapshot(tmp_path):
     assert result[0].captured_at == valid.captured_at
     assert result[0].five_hour is not None
     assert result[0].five_hour.remaining == 80
+
+
+def test_latest_uses_current_account_label_for_cached_usage(tmp_path):
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Old Label",
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=80),
+            weekly=LimitWindow(name="weekly", remaining=60),
+        ),
+        snapshot_dir,
+    )
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="privat",
+                label="New Label",
+                profile_dir=str(tmp_path / "profile"),
+            ),
+        )
+    )
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].label == "New Label"
     assert result[0].weekly is not None
     assert result[0].weekly.remaining == 60
 
