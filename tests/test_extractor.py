@@ -7,11 +7,16 @@ import pytest
 
 from codex_usage.extractor import (
     JsonCandidate,
+    _coerce_number,
     _parse_datetime,
     _parse_time_today_or_next,
     _relative_reset_at,
     extract_windows,
 )
+
+
+def test_numeric_coercion_rejects_integer_overflow_without_raising():
+    assert _coerce_number(10**10000) is None
 
 
 def test_extract_windows_from_german_dom_text():

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.370 - 2026-07-13
+
+### Fixed
+
+- Extrem grosse numerische JSON-Felder werden im Extractor verworfen, statt
+  bei der Gleitkomma-Konvertierung einen ungefangenen Overflow auszulösen.
+
 ## 0.6.369 - 2026-07-13
 
 ### Fixed

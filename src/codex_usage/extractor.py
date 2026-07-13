@@ -1199,7 +1199,10 @@ def _parse_percent(raw: str | None) -> float | None:
 
 
 def _finite_float(value: float) -> float | None:
-    coerced = float(value)
+    try:
+        coerced = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
     return coerced if math.isfinite(coerced) else None
 
 
