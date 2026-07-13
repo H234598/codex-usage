@@ -371,14 +371,14 @@ def expire_reset_windows(
     values_captured_at = _values_capture_for_expiry(usage)
     if _cached_window_expired(
         five_hour,
-        captured_at=values_captured_at,
+        captured_at=_window_expiry_capture(usage, five_hour, values_captured_at),
         reference_at=reference_at,
     ):
         expired_names.append("5h")
         five_hour = None
     if _cached_window_expired(
         weekly,
-        captured_at=values_captured_at,
+        captured_at=_window_expiry_capture(usage, weekly, values_captured_at),
         reference_at=reference_at,
     ):
         expired_names.append("weekly")
@@ -397,6 +397,7 @@ def expire_reset_windows(
         and not weekly
         and (usage.blocked_until is None or blocked_until_expired)
     )
+
     if not expired_names and not clear_expired_block:
         return usage
 
@@ -424,6 +425,20 @@ def expire_reset_windows(
         blocked_reason=blocked_reason,
         stale=True,
     )
+
+
+def _window_expiry_capture(
+    usage: AccountUsage,
+    window: LimitWindow | None,
+    values_captured_at: datetime,
+) -> datetime:
+    if window is not None and window.reset_at is not None:
+        # An explicit reset belongs to the current observation. The shared
+        # values timestamp may point to an older counterpart restored during
+        # a partial browser merge and would reject this fresh reset as too far
+        # in the future.
+        return _localize_datetime(usage.captured_at)
+    return values_captured_at
 
 
 def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:

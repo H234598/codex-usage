@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.384 - 2026-07-13
+
+### Fixed
+
+- Frische Browser-Fenster mit expliziter Resetzeit werden nach einem Partial-
+  Cache-Merge nicht mehr wegen des älteren Gegenfensters vorzeitig verworfen.
+
 ## 0.6.383 - 2026-07-13
 
 ### Fixed

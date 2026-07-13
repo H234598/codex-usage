@@ -878,6 +878,46 @@ def test_browser_merge_does_not_age_fresh_resetless_window_with_old_counterpart(
     assert evaluated.five_hour.remaining == 80
 
 
+def test_browser_merge_does_not_expire_fresh_resetful_window_with_old_counterpart():
+    timezone = ZoneInfo("Europe/Berlin")
+    current_capture = datetime(2026, 7, 12, 10, 0, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=current_capture,
+        status=AccountStatus.PARTIAL,
+        backend_used="browser",
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=80,
+            reset_at=current_capture + timedelta(hours=5),
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=current_capture - timedelta(hours=1),
+        status=AccountStatus.OK,
+        backend_used="browser",
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=55,
+            reset_at=current_capture + timedelta(days=6, hours=23),
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+    evaluated = expire_reset_windows(
+        merged,
+        reference_at=current_capture + timedelta(minutes=1),
+    )
+
+    assert evaluated.five_hour is not None
+    assert evaluated.five_hour.remaining == 80
+    assert evaluated.weekly is not None
+    assert evaluated.weekly.remaining == 55
+
+
 @pytest.mark.parametrize(
     "window",
     [
