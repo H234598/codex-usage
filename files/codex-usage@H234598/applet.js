@@ -2734,6 +2734,11 @@ CodexUsageApplet.prototype = {
         return "";
     },
 
+    _isInferredInactiveFiveHour: function(window) {
+        let source = this._safeText(window && window.source, 120);
+        return source.indexOf("inferred:inactive-five-hour") === 0;
+    },
+
     _windowDurationSeconds: function(window) {
         let raw = this._safeText(window && window.raw, 500);
         let match = /"limit_window_seconds"\s*:\s*([0-9]+(?:\.[0-9]+)?)/.exec(raw);
@@ -2793,6 +2798,9 @@ CodexUsageApplet.prototype = {
         if (!window) {
             return false;
         }
+        if (this._isInferredInactiveFiveHour(window)) {
+            return false;
+        }
         if (window.reset_at) {
             let resetMs = this._dateMillis(window.reset_at);
             let referenceMs = this._dateMillis(referenceAt);
@@ -2845,6 +2853,9 @@ CodexUsageApplet.prototype = {
     },
 
     _mergeCachedWindow: function(fresh, cached, referenceAt, cachedCapturedAt, expectedKind) {
+        if (this._isInferredInactiveFiveHour(fresh)) {
+            return fresh;
+        }
         if (fresh && fresh.reset_at && this._windowResetExpired(fresh, referenceAt)) {
             return fresh;
         }
@@ -2867,6 +2878,9 @@ CodexUsageApplet.prototype = {
     },
 
     _mergeMissingReset: function(fresh, cached, referenceAt, cachedCapturedAt, expectedKind) {
+        if (this._isInferredInactiveFiveHour(fresh)) {
+            return fresh;
+        }
         if (!this._windowDurationMatches(fresh, cached, expectedKind)) {
             return fresh;
         }

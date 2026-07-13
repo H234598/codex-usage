@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.363 - 2026-07-13
+
+### Fixed
+
+- Inferierte inaktive 5h-Werte bleiben als 100% verbleibend erhalten, bis ein
+  frischer Wert sie ersetzt; weder Python-State noch Cinnamon-Applet lassen
+  sie nach der normalen 5h-Cachefrist verschwinden.
+
 ## 0.6.362 - 2026-07-13
 
 ### Fixed

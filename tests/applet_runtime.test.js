@@ -1636,6 +1636,69 @@ test("partial fresh payload expires resetless cached windows by duration", () =>
   assert.equal(merged[0].stale, true);
 });
 
+test("partial fresh payload keeps an inferred inactive five hour value", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: {
+      name: "5h",
+      used: 0,
+      limit: 100,
+      remaining: 100,
+      percent: 100,
+      source: "inferred:inactive-five-hour:direct"
+    },
+    weekly: { name: "weekly", remaining: 60 }
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T16:00:00.000Z",
+    five_hour: null,
+    weekly: null,
+    stale: false
+  }]);
+
+  assert.equal(merged[0].five_hour.remaining, 100);
+  assert.equal(merged[0].five_hour.source, "inferred:inactive-five-hour:direct");
+  assert.equal(merged[0].stale, true);
+});
+
+test("fresh inferred inactive five hour value does not inherit an old reset", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: {
+      name: "5h",
+      remaining: 80,
+      reset_at: "2026-07-10T12:00:00.000Z"
+    },
+    weekly: null
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: {
+      name: "5h",
+      used: 0,
+      limit: 100,
+      remaining: 100,
+      percent: 100,
+      source: "inferred:inactive-five-hour:direct"
+    },
+    weekly: null,
+    stale: false
+  }]);
+
+  assert.equal(merged[0].five_hour.reset_at, undefined);
+  assert.equal(merged[0].five_hour.remaining, 100);
+  assert.equal(merged[0].five_hour.source, "inferred:inactive-five-hour:direct");
+  assert.equal(merged[0].stale, false);
+});
+
 test("invalid cached reset timestamps do not preserve old usage", () => {
   const applet = makeApplet();
   applet._usages = [{
