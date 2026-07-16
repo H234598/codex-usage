@@ -515,9 +515,23 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
             ]
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
-        return 0
+        return (
+            0
+            if args.config_only
+            or _all_usage_results_valid(
+                usages.values(), (account.id for account in config.accounts)
+            )
+            else 2
+        )
     print(render_account_overview(config, args.config or default_config_path(), usages))
-    return 0
+    return (
+        0
+        if args.config_only
+        or _all_usage_results_valid(
+            usages.values(), (account.id for account in config.accounts)
+        )
+        else 2
+    )
 
 
 def _cmd_account_backend(args: argparse.Namespace) -> int:
@@ -610,7 +624,7 @@ def _cmd_once(args: argparse.Namespace) -> int:
         save_snapshots=True,
     )
     print(render_json(usages) if args.format == "json" else render_table(usages))
-    return 0 if all(_is_successful_usage(usage) for usage in usages) else 2
+    return 0 if _all_usage_results_valid(usages, (account.id for account in accounts)) else 2
 
 
 def _cmd_watch(args: argparse.Namespace) -> int:
@@ -653,7 +667,15 @@ def _cmd_watchdog(args: argparse.Namespace) -> int:
         backend_override=backend_override,
         auth_json_path=args.auth_json,
     )
-    return 0 if all(usage.status != AccountStatus.ERROR for usage in usages) else 2
+    return (
+        0
+        if _all_usage_results_valid(
+            usages,
+            (account.id for account in accounts),
+            predicate=_is_safe_watchdog_usage,
+        )
+        else 2
+    )
 
 
 def _cmd_policy_evaluate(args: argparse.Namespace) -> int:
@@ -848,7 +870,14 @@ def _cmd_values(args: argparse.Namespace) -> int:
     accounts = _select_accounts(config, args.account_ids)
     usages = _load_overview_usages(config, accounts)
     print(render_account_values(accounts, usages))
-    return 0 if all(_is_successful_usage(usage) for usage in usages.values()) else 2
+    return (
+        0
+        if _all_usage_results_valid(
+            usages.values(),
+            (account.id for account in accounts),
+        )
+        else 2
+    )
 
 
 def _cmd_health(args: argparse.Namespace) -> int:
@@ -1130,7 +1159,53 @@ def _overview_window_json(window) -> dict | None:
 
 
 def _is_successful_usage(usage: AccountUsage) -> bool:
-    return usage.status == AccountStatus.OK and usage.error is None
+    if not isinstance(usage, AccountUsage):
+        return False
+    if (
+        usage.status is not AccountStatus.OK
+        or usage.error is not None
+        or usage.stale is not False
+        or usage.cache_invalidated is not False
+    ):
+        return False
+    try:
+        return any(
+            window is not None and window.has_usage_value
+            for window in (usage.five_hour, usage.weekly)
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _is_safe_watchdog_usage(usage: AccountUsage) -> bool:
+    if not isinstance(usage, AccountUsage):
+        return False
+    if usage.cache_invalidated is not False or usage.stale is not False:
+        return False
+    if usage.status is AccountStatus.BLOCKED:
+        return any(
+            value not in (None, "")
+            for value in (usage.blocked_until, usage.blocked_reason, usage.error)
+        )
+    return _is_successful_usage(usage)
+
+
+def _all_usage_results_valid(
+    usages,
+    expected_account_ids,
+    *,
+    predicate=_is_successful_usage,
+) -> bool:
+    results = list(usages)
+    expected = tuple(expected_account_ids)
+    if len(results) != len(expected):
+        return False
+    try:
+        if {usage.account_id for usage in results} != set(expected):
+            return False
+    except AttributeError:
+        return False
+    return all(predicate(usage) for usage in results)
 
 
 def _validate_profile_delete_target(path: Path, *, force: bool) -> None:

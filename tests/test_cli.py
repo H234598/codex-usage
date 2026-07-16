@@ -425,7 +425,14 @@ def test_once_direct_passes_auth_json_and_saves_snapshots(tmp_path, monkeypatch,
         called["backend_override"] = backend_override
         called["auth_json_path"] = auth_json_path
         called["save_snapshots"] = save_snapshots
-        return []
+        return [
+            AccountUsage(
+                account_id="privat",
+                label="privat",
+                captured_at=datetime.now().astimezone(),
+                five_hour=LimitWindow(name="5h", remaining=97),
+            )
+        ]
 
     monkeypatch.setattr("codex_usage.cli.fetch_all", fake_fetch_all)
 
@@ -453,6 +460,31 @@ def test_once_direct_passes_auth_json_and_saves_snapshots(tmp_path, monkeypatch,
         "auth_json_path": auth_path,
         "save_snapshots": True,
     }
+
+
+def test_once_fails_closed_for_empty_fetch_result(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr("codex_usage.cli.fetch_all", lambda *args, **kwargs: [])
+
+    assert main(["--config", str(config_path), "once"]) == 2
+
+
+def test_once_fails_closed_for_stale_ok_usage(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    usage = AccountUsage(
+        account_id="privat",
+        label="privat",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=97),
+        stale=True,
+    )
+    monkeypatch.setattr("codex_usage.cli.fetch_all", lambda *args, **kwargs: [usage])
+
+    assert main(["--config", str(config_path), "once"]) == 2
 
 
 def test_watch_direct_passes_auth_json(tmp_path, monkeypatch, capsys):
@@ -620,7 +652,7 @@ def test_watchdog_routes_through_watchdog_scheduler(tmp_path, monkeypatch, capsy
     )
     capsys.readouterr()
 
-    assert main(["--config", str(config_path), "watchdog", "--format", "json"]) == 0
+    assert main(["--config", str(config_path), "watchdog", "--format", "json"]) == 2
 
     assert called == {
         "accounts": ["privat"],
@@ -917,7 +949,7 @@ def test_account_overview_shows_config_and_accounts(tmp_path, monkeypatch, capsy
     )
     capsys.readouterr()
 
-    assert main(["--config", str(config_path), "account", "overview"]) == 0
+    assert main(["--config", str(config_path), "account", "overview"]) == 2
 
     output = capsys.readouterr().out
     assert "Account-Uebersicht" in output
@@ -1695,8 +1727,8 @@ def test_account_backend_updates_config_and_json_overview(tmp_path, capsys):
                 "--format",
                 "json",
             ]
-    )
-    == 0
+        )
+        == 2
     )
     overview = json.loads(capsys.readouterr().out)
     account = overview["accounts"][0]
