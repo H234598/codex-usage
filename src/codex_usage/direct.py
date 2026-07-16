@@ -476,11 +476,16 @@ def auth_plan_type_from_payload(
         if not isinstance(claims, dict):
             continue
         auth_claims = claims.get("https://api.openai.com/auth")
-        if not isinstance(auth_claims, dict):
+        if "https://api.openai.com/auth" not in claims:
             continue
-        plan_type = _safe_auth_plan_type(auth_claims.get("chatgpt_plan_type"))
-        if plan_type is not None:
-            plan_types.append(plan_type)
+        if not isinstance(auth_claims, dict):
+            raise DirectAuthError(f"auth.json token auth claims are invalid: {path}")
+        if "chatgpt_plan_type" not in auth_claims:
+            continue
+        plan_type = _safe_auth_plan_type(auth_claims["chatgpt_plan_type"])
+        if plan_type is None:
+            raise DirectAuthError(f"auth.json token plan type is invalid: {path}")
+        plan_types.append(plan_type)
     if len(set(plan_types)) > 1:
         raise DirectAuthError(f"auth.json token plan types disagree: {path}")
     return plan_types[0] if plan_types else None
@@ -564,7 +569,9 @@ def _safe_auth_plan_type(value: Any) -> str | None:
 
 
 def _auth_plan_type_changed(before: str | None, after: str | None) -> bool:
-    return bool(before and after and _normalized_plan_type(before) != _normalized_plan_type(after))
+    if before is None or after is None:
+        return before != after
+    return _normalized_plan_type(before) != _normalized_plan_type(after)
 
 
 def _normalized_plan_type(value: str) -> str:

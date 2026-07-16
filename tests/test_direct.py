@@ -21,6 +21,7 @@ from codex_usage.direct import (
     _signature_number,
     auth_identity_changed,
     auth_identity_from_payload,
+    auth_plan_type_from_payload,
     canonical_backend_identity,
     fetch_account_usage_direct,
 )
@@ -209,6 +210,25 @@ def test_auth_identity_ignores_expired_id_token_when_access_token_is_current(tmp
         "current-user",
         "current-account",
     )
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"https://api.openai.com/auth": {"chatgpt_plan_type": []}},
+        {"https://api.openai.com/auth": {"chatgpt_plan_type": "free"}},
+    ],
+)
+def test_auth_plan_type_rejects_invalid_claims(tmp_path, claims):
+    path = tmp_path / "auth.json"
+    token = _jwt_with_claims(claims)
+    payload = {"tokens": {"access_token": token}}
+
+    if claims["https://api.openai.com/auth"].get("chatgpt_plan_type") == "free":
+        assert auth_plan_type_from_payload(payload, path=path) == "free"
+    else:
+        with pytest.raises(DirectAuthError, match="plan type is invalid"):
+            auth_plan_type_from_payload(payload, path=path)
 
 
 def test_auth_identity_rejects_changed_user_with_same_account():

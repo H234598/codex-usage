@@ -322,11 +322,9 @@ def _read_rate_limits(
 
 
 def _auth_email_changed(before: str | None, after: str | None) -> bool:
-    return bool(
-        before
-        and after
-        and before.strip().casefold() != after.strip().casefold()
-    )
+    if before is None or after is None:
+        return before != after
+    return before.strip().casefold() != after.strip().casefold()
 
 
 def _request_rate_limits(

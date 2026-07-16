@@ -15,6 +15,7 @@ from codex_usage.app_server import (
     AppServerFetchError,
     AppServerProtocolError,
     AppServerUnavailableError,
+    _auth_email_changed,
     _LineReader,
     _missing_usage_limits_error,
     _response_for,
@@ -314,6 +315,39 @@ def test_app_server_rejects_auth_plan_change_during_rate_limit_read(
 
     def mutate_auth(*_args, **_kwargs):
         _auth(auth_path, expiry, account_id="same-account", plan_type="enterprise")
+        return {
+            "rateLimits": {
+                "primary": {"usedPercent": 17, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 42, "windowDurationMins": 10080},
+            }
+        }
+
+    monkeypatch.setattr("codex_usage.app_server._read_rate_limits", mutate_auth)
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "auth.json plan type changed during rate-limit request"
+
+
+def test_app_server_rejects_missing_auth_plan_after_rate_limit_read(
+    tmp_path, monkeypatch
+):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    expiry = datetime.now(UTC) + timedelta(hours=1)
+    _auth(auth_path, expiry, account_id="same-account", plan_type="free")
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    def mutate_auth(*_args, **_kwargs):
+        _auth(auth_path, expiry, account_id="same-account")
         return {
             "rateLimits": {
                 "primary": {"usedPercent": 17, "windowDurationMins": 300},
@@ -1071,6 +1105,19 @@ def test_refresh_window_is_fifteen_minutes():
     now = datetime.now(UTC)
     assert _should_refresh(now + timedelta(minutes=14), now=now) is True
     assert _should_refresh(now + timedelta(minutes=16), now=now) is False
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "changed"),
+    [
+        ("user@example.test", None, True),
+        (None, "user@example.test", True),
+        ("user@example.test", "user@example.test", False),
+        ("user@example.test", "other@example.test", True),
+    ],
+)
+def test_auth_email_change_rejects_missing_or_different_email(before, after, changed):
+    assert _auth_email_changed(before, after) is changed
 
 
 def test_stop_process_terminates_isolated_process_group(monkeypatch):
