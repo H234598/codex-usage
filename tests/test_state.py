@@ -256,6 +256,22 @@ def test_usage_state_rejects_malformed_window_duration(duration):
     assert loaded.error == "invalid cached limit window slot: five_hour"
 
 
+@pytest.mark.parametrize("name", ["weekly\u0000", " weekly"])
+def test_usage_state_rejects_normalized_window_identity(name):
+    with pytest.raises(ValueError, match="snapshot window name is invalid"):
+        usage_from_dict(
+            {
+                "account": "invalid-window-name",
+                "label": "Invalid window name",
+                "captured_at": "2026-07-16T04:00:00+02:00",
+                "status": "partial",
+                "stale": False,
+                "cache_invalidated": False,
+                "five_hour": {"name": name, "remaining": 90},
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("backend_configured", "backend_used"),
     ((None, None), ("direct", "app-server"), ("app-server", "direct")),

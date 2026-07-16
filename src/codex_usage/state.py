@@ -1225,7 +1225,7 @@ def _window_from_dict(
         else _snapshot_datetime(raw_reset_at)
     )
     window = LimitWindow(
-        name=_snapshot_text_or_default(payload.get("name"), "", limit=40),
+        name=_snapshot_window_name(payload.get("name")),
         used=_optional_float(payload.get("used")),
         limit=_optional_float(payload.get("limit")),
         remaining=_optional_float(payload.get("remaining")),
@@ -1369,6 +1369,17 @@ def _snapshot_window_duration(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value if 0 < value <= MAX_WINDOW_SECONDS else None
+
+
+def _snapshot_window_name(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str) or len(value) > 40 or any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in value
+    ):
+        raise ValueError("snapshot window name is invalid")
+    return value
 
 
 def _window_had_invalid_cached_value(
