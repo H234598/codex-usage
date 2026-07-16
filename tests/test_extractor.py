@@ -13,6 +13,7 @@ from codex_usage.extractor import (
     _parse_time_today_or_next,
     _relative_reset_at,
     extract_windows,
+    load_json_candidate,
 )
 
 
@@ -23,6 +24,19 @@ def test_numeric_coercion_rejects_integer_overflow_without_raising():
 @pytest.mark.parametrize("value", [{"percent": 97}, [97]])
 def test_numeric_coercion_rejects_non_scalar_values(value):
     assert _coerce_number(value) is None
+
+
+def test_json_loader_rejects_non_string_inputs():
+    assert load_json_candidate(7, "{}") is None
+    assert load_json_candidate(
+        "https://chatgpt.com/backend-api/wham/usage", []
+    ) is None
+
+
+def test_extract_windows_skips_candidate_with_invalid_url():
+    candidate = JsonCandidate(url=7, payload={"rate_limit": {}})
+
+    assert extract_windows(body_text="", json_candidates=[candidate]) == (None, None)
 
 
 def test_extract_windows_from_german_dom_text():
