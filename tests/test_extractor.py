@@ -866,6 +866,34 @@ def test_extract_windows_merges_dom_usage_into_reset_only_json_window():
     assert five.source == "dom-text+json:https://chatgpt.com/backend-api/reset-only"
 
 
+def test_extract_windows_does_not_replace_invalid_json_usage_with_dom_value():
+    candidates = [
+        JsonCandidate(
+            url="https://example.test/usage",
+            payload={
+                "five_hour_usage_limit": {
+                    "used": -1,
+                    "limit": 100,
+                    "percent": 97,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            },
+        )
+    ]
+
+    five, _weekly = extract_windows(
+        body_text="5-hour limit 55% remaining Reset 08.06.2026 07:00",
+        json_candidates=candidates,
+    )
+
+    assert five is not None
+    assert five.limit == 100
+    assert five.remaining is None
+    assert five.percent is None
+    assert five.has_usage_value is False
+    assert five.source.startswith("json:")
+
+
 def test_extract_windows_prefers_later_json_usage_over_reset_only_match():
     candidates = [
         JsonCandidate(

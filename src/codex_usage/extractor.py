@@ -289,6 +289,11 @@ def _merge_window_sources(
     if secondary is None:
         return primary
 
+    if _json_window_has_usage_metadata(primary):
+        # A structured response that mentioned usage but yielded no valid
+        # value must not be replaced by a weaker DOM fallback.
+        return primary
+
     if primary.has_usage_value:
         if primary.reset_at is None and secondary.reset_at is not None:
             return replace(
@@ -308,6 +313,17 @@ def _merge_window_sources(
         return secondary
 
     return primary if primary.reset_at is not None else secondary
+
+
+def _json_window_has_usage_metadata(window: LimitWindow) -> bool:
+    if not window.source.casefold().startswith("json:"):
+        return False
+    return re.search(
+        r"\"(?:used|usage|consumed|remaining|left|available|percent|percentage|ratio)"
+        r"\"\s*:",
+        window.raw or "",
+        flags=re.IGNORECASE,
+    ) is not None
 
 
 def _merge_window_source_names(first: LimitWindow, second: LimitWindow) -> str:
