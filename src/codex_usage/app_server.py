@@ -377,10 +377,19 @@ def _request_model_ids(
     for item in data:
         if not isinstance(item, dict):
             raise AppServerProtocolError("app server model entry is invalid")
-        model = item.get("model") or item.get("id")
-        if not isinstance(model, str) or not model.strip() or len(model) > 120:
+        model = item["model"] if "model" in item else item.get("id")
+        if (
+            not isinstance(model, str)
+            or not model
+            or len(model) > 120
+            or model.strip() != model
+            or any(
+                char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+                for char in model
+            )
+        ):
             raise AppServerProtocolError("app server model id is invalid")
-        model_ids.append(model.strip())
+        model_ids.append(model)
     return tuple(dict.fromkeys(model_ids))
 
 

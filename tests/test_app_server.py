@@ -77,6 +77,7 @@ def _fake_codex(
     reject_initial_account_read: bool = False,
     account_plan_type: str | None = None,
     account_email: str | None = None,
+    model_id: str = "gpt-5.3-codex-spark",
 ) -> str:
     reject_initial = str(reject_initial_account_read)
     plan_field = f", 'planType': {account_plan_type!r}" if account_plan_type else ""
@@ -132,8 +133,8 @@ for line in sys.stdin:
         print(json.dumps({{
             "id": message["id"],
             "result": {{"data": [{{
-                "id": "gpt-5.3-codex-spark",
-                "model": "gpt-5.3-codex-spark",
+                "id": {model_id!r},
+                "model": {model_id!r},
             }}]}},
         }}), flush=True)
 """
@@ -185,6 +186,32 @@ def test_app_server_fetch_uses_only_account_methods(tmp_path):
         "model/list",
     ]
     assert not any(method.startswith(("thread/", "turn/")) for method in methods)
+
+
+def test_app_server_rejects_normalized_model_identity(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        model_id="gpt-5.3-codex-spark ",
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status == AccountStatus.ERROR
+    assert usage.error == "app server model id is invalid"
+    assert usage.five_hour is None
+    assert usage.weekly is None
 
 
 def test_app_server_requests_refresh_for_expiring_token(tmp_path):

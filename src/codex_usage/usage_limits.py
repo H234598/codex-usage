@@ -155,7 +155,7 @@ def merge_model_catalog(
     pools: Iterable[UsagePool], model_ids: Iterable[str]
 ) -> tuple[UsagePool, ...]:
     result = list(pools)
-    spark_in_catalog = any(_normalized(value) == SPARK_MODEL for value in model_ids)
+    spark_in_catalog = any(value == SPARK_MODEL for value in model_ids)
     spark_index = next(
         (index for index, pool in enumerate(result) if pool.key == SPARK_MODEL),
         None,
@@ -384,7 +384,14 @@ def _is_spark_limit(name: Any, metered_feature: Any) -> bool:
 
 
 def _normalized(value: Any) -> str:
-    return value.strip().casefold() if isinstance(value, str) else ""
+    if not isinstance(value, str) or not value:
+        return ""
+    if any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in value
+    ):
+        return ""
+    return value.casefold()
 
 
 def _percent(value: Any) -> float | None:

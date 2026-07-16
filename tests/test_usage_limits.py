@@ -418,6 +418,40 @@ def test_model_catalog_cannot_reenable_disabled_usage_pool():
     assert models[0].availability_sources == ("usage", "model_catalog")
 
 
+def test_model_catalog_does_not_normalize_spark_identity():
+    assert merge_model_catalog((), (f"{SPARK_MODEL} ",)) == ()
+    assert merge_model_catalog((), (SPARK_MODEL.upper(),)) == ()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("limit_name", f" {SPARK_MODEL}"),
+        ("metered_feature", f"{SPARK_METERED_FEATURE} "),
+    ],
+)
+def test_wham_does_not_normalize_spark_limit_identity(field, value):
+    item = {
+        "limit_name": "unrelated",
+        "metered_feature": "unrelated",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 10,
+                "limit_window_seconds": 604800,
+            }
+        },
+    }
+    item[field] = value
+
+    _, models = parse_wham_usage_pools(
+        {"additional_rate_limits": [item]},
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert models == ()
+
+
 def test_app_server_parses_dynamic_main_and_spark_buckets():
     main, models = parse_app_server_usage_pools(
         {
