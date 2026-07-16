@@ -28,7 +28,11 @@ def select_identity_consistent_candidates(
     auth_account_id: str | None,
 ) -> list[JsonCandidate]:
     """Keep structured responses from one backend account together."""
-    candidate_list = list(candidates)
+    candidate_list = [
+        candidate
+        for candidate in candidates
+        if _candidate_is_usable(candidate)
+    ]
     account_ids_by_user: dict[str, set[str]] = {}
     user_ids_by_account: dict[str, set[str]] = {}
     known_account_ids: set[str] = set()
@@ -186,7 +190,11 @@ def backend_identity_from_candidates(
     candidates: Iterable[JsonCandidate],
 ) -> tuple[str | None, str | None]:
     ordered_candidates = sorted(
-        enumerate(candidates),
+        (
+            (index, candidate)
+            for index, candidate in enumerate(candidates)
+            if _candidate_is_usable(candidate)
+        ),
         key=lambda item: (_candidate_priority(item[1]), -item[0]),
     )
     for _candidate_index, candidate in ordered_candidates:
@@ -201,7 +209,11 @@ def backend_plan_type_from_candidates(
     candidates: Iterable[JsonCandidate],
 ) -> str | None:
     ordered_candidates = sorted(
-        enumerate(candidates),
+        (
+            (index, candidate)
+            for index, candidate in enumerate(candidates)
+            if _candidate_is_usable(candidate)
+        ),
         key=lambda item: (_candidate_priority(item[1]), -item[0]),
     )
     for _candidate_index, candidate in ordered_candidates:
@@ -223,6 +235,14 @@ def _candidate_priority(candidate: JsonCandidate) -> int:
     ):
         return 1
     return 2
+
+
+def _candidate_is_usable(candidate: Any) -> bool:
+    return (
+        isinstance(candidate, JsonCandidate)
+        and isinstance(candidate.url, str)
+        and bool(candidate.url.strip())
+    )
 
 
 def _identity_value(value: Any, *, field: str) -> str | None:

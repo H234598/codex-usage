@@ -4,6 +4,7 @@ from codex_usage.extractor import JsonCandidate
 from codex_usage.identity import (
     backend_identity_from_candidates,
     backend_identity_from_payload,
+    backend_plan_type_from_candidates,
     backend_plan_type_from_payload,
     select_identity_consistent_candidates,
 )
@@ -98,6 +99,20 @@ def test_backend_identity_rejects_malformed_identity_fields(field, value):
 def test_backend_plan_type_rejects_malformed_values(value):
     with pytest.raises(ValueError, match="backend response plan_type is invalid"):
         backend_plan_type_from_payload({"plan_type": value})
+
+
+def test_identity_helpers_skip_candidates_without_usable_urls():
+    malformed = JsonCandidate(url=[], payload={"user_id": "wrong-user"})
+    valid = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={"user_id": "valid-user", "plan_type": "plus"},
+    )
+
+    assert backend_identity_from_candidates([malformed, valid]) == ("valid-user", None)
+    assert backend_plan_type_from_candidates([malformed, valid]) == "plus"
+    assert select_identity_consistent_candidates(
+        [malformed, valid], auth_user_id=None, auth_account_id=None
+    ) == [valid]
 
 
 def test_select_identity_consistent_candidates_does_not_mix_accounts():

@@ -28,6 +28,7 @@ def test_numeric_coercion_rejects_non_scalar_values(value):
 
 def test_json_loader_rejects_non_string_inputs():
     assert load_json_candidate(7, "{}") is None
+    assert load_json_candidate(" ", "{}") is None
     assert load_json_candidate(
         "https://chatgpt.com/backend-api/wham/usage", []
     ) is None

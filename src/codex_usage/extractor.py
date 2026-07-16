@@ -335,7 +335,7 @@ def _merge_window_source_names(first: LimitWindow, second: LimitWindow) -> str:
 
 
 def load_json_candidate(url: str, payload_text: str) -> JsonCandidate | None:
-    if not isinstance(url, str) or not isinstance(payload_text, str):
+    if not isinstance(url, str) or not url.strip() or not isinstance(payload_text, str):
         return None
     try:
         payload = loads_strict(payload_text)
@@ -356,7 +356,11 @@ def _extract_json_window(
     usage_windows: list[tuple[int, int, int, bool, LimitWindow]] = []
     generic_window_counts: dict[tuple[int, int], int] = {}
     for candidate_index, candidate in enumerate(candidates):
-        if not isinstance(candidate, JsonCandidate) or not isinstance(candidate.url, str):
+        if (
+            not isinstance(candidate, JsonCandidate)
+            or not isinstance(candidate.url, str)
+            or not candidate.url.strip()
+        ):
             continue
         candidate_priority = _wham_candidate_priority(candidate.url)
         blocks_additional = _main_wham_target_blocks_additional(candidate.payload, target)
