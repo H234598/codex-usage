@@ -8,6 +8,7 @@ import pytest
 from codex_usage.extractor import (
     JsonCandidate,
     _coerce_number,
+    _extract_progress_width_percent,
     _parse_datetime,
     _parse_time_today_or_next,
     _relative_reset_at,
@@ -380,6 +381,15 @@ def test_extract_windows_from_progress_bar_width_html():
     assert weekly.percent == 55
     assert weekly.reset_at is not None
     assert weekly.reset_at.strftime("%d.%m.%Y %H:%M") == "10.06.2026 05:05"
+
+
+def test_progress_bar_parser_rejects_conflicting_equal_rank_values():
+    html = """
+    <div class="transition-[width] rounded-full" style="width: 97%;"></div>
+    <div class="transition-[width] rounded-full" style="width: 55%;"></div>
+    """
+
+    assert _extract_progress_width_percent(html) is None
 
 
 def test_extract_windows_prefers_html_progress_over_hidden_text_clone():

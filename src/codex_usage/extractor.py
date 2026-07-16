@@ -1184,8 +1184,14 @@ def _extract_progress_width_percent(text: str) -> float | None:
     except (AssertionError, RuntimeError, ValueError):
         pass
     if parser.visible_candidates:
-        parser.visible_candidates.sort(key=lambda item: (item[0], -item[1]))
-        return parser.visible_candidates[0][2]
+        best_rank = min(item[0] for item in parser.visible_candidates)
+        best = [
+            item for item in parser.visible_candidates if item[0] == best_rank
+        ]
+        values = {item[2] for item in best}
+        if len(values) > 1:
+            return None
+        return best[0][2]
     if parser.candidates:
         return None
 
