@@ -114,7 +114,8 @@ def fetch_account_usage_app_server(
         has_dynamic_usage = bool(
             main
             and main.available
-            and any(window.has_usage_value for window in main.windows)
+            and main.windows
+            and all(window.has_usage_value for window in main.windows)
         )
         status = (
             AccountStatus.OK

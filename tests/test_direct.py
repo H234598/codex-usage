@@ -2043,6 +2043,46 @@ def test_fetch_account_usage_direct_marks_malformed_main_slot_partial(
     assert usage.weekly is not None and usage.weekly.remaining == 80
 
 
+def test_fetch_account_usage_direct_marks_reset_only_main_slot_partial(
+    tmp_path, monkeypatch
+):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    payload = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "plan_type": "pro",
+        "rate_limit": {
+            "primary_window": {"limit_window_seconds": 18000},
+            "secondary_window": {
+                "used_percent": 20,
+                "limit_window_seconds": 604800,
+            },
+        },
+    }
+    auth_result = ("token", {}, "user-test", "account-test", "pro")
+    monkeypatch.setattr(
+        "codex_usage.direct._load_auth_token_and_metadata",
+        lambda _path: auth_result,
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_stable_wham_usage",
+        lambda *_args, **_kwargs: payload,
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.main is not None
+    assert usage.main.available is True
+    assert usage.main.windows[0].has_usage_value is False
+    assert usage.weekly is not None and usage.weekly.remaining == 80
+
+
 def test_fetch_account_usage_direct_rejects_broad_auth_json_permissions(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
