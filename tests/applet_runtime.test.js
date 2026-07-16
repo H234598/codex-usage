@@ -204,6 +204,28 @@ test("window identity text is not normalized into a known name", () => {
   );
 });
 
+test("limit timestamps reject control-character normalization", () => {
+  const applet = makeApplet();
+
+  assert.throws(
+    () => applet._safeWindow({ name: "weekly", reset_at: "2026-07-10T15:00:00Z\u0000" }),
+    /text value exceeds strict limit/
+  );
+  assert.throws(
+    () => applet._validatePayload([{
+      account: "alpha",
+      captured_at: "2026-07-10T15:00:00Z\u0000",
+      five_hour: { name: "5h", remaining: 90 },
+      status: "ok",
+      stale: false,
+      cache_invalidated: false,
+      backend_configured: "direct",
+      backend_used: "direct",
+    }]),
+    /text value exceeds strict limit/
+  );
+});
+
 test("invalid absolute limit pairs cannot become visible usage", () => {
   const applet = makeApplet();
   const window = applet._safeWindow({

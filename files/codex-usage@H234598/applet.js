@@ -2597,8 +2597,8 @@ CodexUsageApplet.prototype = {
                 ["ok", "partial", "error", "login_required", "blocked"].indexOf(item.status) !== -1;
             let status = this._safeStatus(item.status);
             let error = this._safeText(item.error, MAX_TEXT_CHARS);
-            let capturedAt = this._safeText(item.captured_at, 80);
-            let valuesCapturedAt = this._safeText(item.values_captured_at, 80);
+            let capturedAt = this._strictText(item.captured_at, 80);
+            let valuesCapturedAt = this._strictText(item.values_captured_at, 80);
             let fiveHour = this._safeWindow(item.five_hour);
             let weekly = this._safeWindow(item.weekly);
             let main = this._safePool(item.main, "main");
@@ -2753,7 +2753,7 @@ CodexUsageApplet.prototype = {
             limit: limit,
             remaining: remaining,
             percent: percent,
-            reset_at: this._safeText(value.reset_at, 80),
+            reset_at: this._strictText(value.reset_at, 80),
             raw: this._safeText(value.raw, 500),
             source: this._safeText(value.source, 120)
         };
