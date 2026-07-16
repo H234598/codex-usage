@@ -2587,6 +2587,8 @@ CodexUsageApplet.prototype = {
                 ["ok", "partial", "error", "login_required", "blocked"].indexOf(item.status) !== -1;
             let status = this._safeStatus(item.status);
             let error = this._safeText(item.error, MAX_TEXT_CHARS);
+            let capturedAt = this._safeText(item.captured_at, 80);
+            let valuesCapturedAt = this._safeText(item.values_captured_at, 80);
             let fiveHour = this._safeWindow(item.five_hour);
             let weekly = this._safeWindow(item.weekly);
             let main = this._safePool(item.main, "main");
@@ -2601,6 +2603,10 @@ CodexUsageApplet.prototype = {
                 main,
                 models
             ) || this._hasModelPayloadUsageValue(models);
+            let captureMetadataInvalid = hasPayloadUsageValue && (
+                !this._captureTimestampUsable(capturedAt) ||
+                Boolean(valuesCapturedAt) && !this._captureTimestampUsable(valuesCapturedAt)
+            );
             if (!statusValid) {
                 status = "error";
                 error = error || "invalid usage status";
@@ -2616,6 +2622,16 @@ CodexUsageApplet.prototype = {
             if (hasPayloadUsageValue && (!backendConfigured || !backendUsed)) {
                 status = "error";
                 error = error || "backend provenance missing";
+                stale = true;
+                cacheInvalidated = true;
+                fiveHour = null;
+                weekly = null;
+                main = null;
+                models = Object.create(null);
+            }
+            if (captureMetadataInvalid) {
+                status = "error";
+                error = error || "invalid capture timestamp";
                 stale = true;
                 cacheInvalidated = true;
                 fiveHour = null;
@@ -2640,7 +2656,7 @@ CodexUsageApplet.prototype = {
             result.push({
                 account: account,
                 label: this._safeText(item.label, 120) || account,
-                captured_at: this._safeText(item.captured_at, 80),
+                captured_at: capturedAt,
                 five_hour: fiveHour,
                 weekly: weekly,
                 main: main,
@@ -2655,7 +2671,7 @@ CodexUsageApplet.prototype = {
                 backend_user_id: this._safeText(item.backend_user_id, 256),
                 backend_account_id: this._safeText(item.backend_account_id, 256),
                 fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
-                values_captured_at: this._safeText(item.values_captured_at, 80),
+                values_captured_at: valuesCapturedAt,
                 stale: stale,
                 cache_invalidated: cacheInvalidated
             });
@@ -5046,6 +5062,11 @@ CodexUsageApplet.prototype = {
         }
         let parsed = Date.parse(value);
         return Number.isFinite(parsed) ? parsed : null;
+    },
+
+    _captureTimestampUsable: function(value) {
+        let millis = this._dateMillis(value);
+        return millis !== null && !this._captureIsTooFarInFuture(value, Date.now());
     },
 
     _captureIsTooFarInFuture: function(value, referenceMs) {

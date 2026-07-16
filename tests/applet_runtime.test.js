@@ -558,6 +558,35 @@ test("invalid usage status clears values before rendering", () => {
   }
 });
 
+test("invalid capture metadata clears usage values", () => {
+  for (const metadata of [
+    { captured_at: "invalid-capture" },
+    { captured_at: "2099-01-01T00:00:00.000Z" },
+    {
+      captured_at: "2026-07-10T10:00:00.000Z",
+      values_captured_at: "invalid-values-capture",
+    },
+  ]) {
+    const applet = makeApplet();
+    const [usage] = applet._validatePayload([{
+      account: "alpha",
+      backend_configured: "direct",
+      backend_used: "direct",
+      five_hour: { name: "5h", remaining: 80 },
+      weekly: { name: "weekly", remaining: 60 },
+      status: "ok",
+      ...metadata,
+    }]);
+
+    assert.equal(usage.status, "error");
+    assert.equal(usage.error, "invalid capture timestamp");
+    assert.equal(usage.stale, true);
+    assert.equal(usage.cache_invalidated, true);
+    assert.equal(usage.five_hour, null);
+    assert.equal(usage.weekly, null);
+  }
+});
+
 test("invalid dynamic pool duration is rejected", () => {
   const applet = makeApplet();
   assert.throws(() => applet._safePool({
