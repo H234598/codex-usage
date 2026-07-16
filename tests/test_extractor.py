@@ -20,6 +20,11 @@ def test_numeric_coercion_rejects_integer_overflow_without_raising():
     assert _coerce_number(10**10000) is None
 
 
+@pytest.mark.parametrize("value", [{"percent": 97}, [97]])
+def test_numeric_coercion_rejects_non_scalar_values(value):
+    assert _coerce_number(value) is None
+
+
 def test_extract_windows_from_german_dom_text():
     body = """
     5 Stunden Nutzungsgrenze
@@ -172,6 +177,16 @@ def test_parse_datetime_rejects_boolean_timestamp_values():
 
     assert _parse_datetime(True, captured_at) is None
     assert _parse_datetime(False, captured_at) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"reset_at": "2026-06-08T04:26:00+02:00"}, ["2026-06-08"]],
+)
+def test_parse_datetime_rejects_non_string_non_numeric_values(value):
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    assert _parse_datetime(value, captured_at) is None
 
 
 def test_parse_datetime_rejects_overflowing_numeric_timestamps():

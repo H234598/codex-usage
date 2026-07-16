@@ -1746,7 +1746,9 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
             return datetime.fromtimestamp(timestamp, tz=_display_timezone(captured_at))
         except (OSError, OverflowError, ValueError):
             return None
-    raw = str(value).strip()
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
     for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y, %H:%M"):
         try:
             parsed = datetime.strptime(raw, fmt)
@@ -1816,7 +1818,7 @@ def _coerce_number(value: Any) -> float | None:
         return None
     if isinstance(value, (int, float)):
         return _finite_float(value)
-    return _parse_number(str(value))
+    return _parse_number(value) if isinstance(value, str) else None
 
 
 def _coerce_percent(value: Any) -> float | None:
