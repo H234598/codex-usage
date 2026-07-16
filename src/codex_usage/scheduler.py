@@ -124,9 +124,8 @@ def fetch_all(
                     if _should_persist_snapshot(usage):
                         save_usage_snapshot(usage)
                 except Exception as exc:
-                    usages[index] = replace(
+                    usages[index] = _usage_after_snapshot_failure(
                         usage,
-                        status=AccountStatus.ERROR,
                         error=f"snapshot save failed: {type(exc).__name__}",
                     )
     for usage in usages:
@@ -766,12 +765,9 @@ def watchdog(
                     if _should_persist_snapshot(usage):
                         save_usage_snapshot(usage)
                 except Exception as exc:
-                    usage = replace(
+                    usage = _usage_after_snapshot_failure(
                         usage,
-                        status=AccountStatus.ERROR,
                         error=f"snapshot save failed: {type(exc).__name__}",
-                        blocked_until=usage.blocked_until,
-                        blocked_reason=usage.blocked_reason,
                     )
             usages.append(usage)
 
@@ -780,6 +776,20 @@ def watchdog(
     else:
         print(render_table(usages), flush=True)
     return usages
+
+
+def _usage_after_snapshot_failure(usage: AccountUsage, *, error: str) -> AccountUsage:
+    return replace(
+        usage,
+        five_hour=None,
+        weekly=None,
+        main=None,
+        models=(),
+        values_captured_at=None,
+        status=AccountStatus.ERROR,
+        error=error,
+        cache_invalidated=True,
+    )
 
 
 def _current_supersedes_blocked_snapshot(

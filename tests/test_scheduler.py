@@ -407,6 +407,41 @@ def test_fetch_all_invalidates_cache_after_unexpected_fetch_failure(monkeypatch)
     assert result[0].weekly is None
 
 
+def test_fetch_all_clears_values_after_snapshot_save_failure(monkeypatch):
+    account = Account(id="broken", label="Broken", profile_dir="/tmp/broken")
+    usage = AccountUsage(
+        account_id="broken",
+        label="Broken",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage",
+        lambda *_args, **_kwargs: usage,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_current_usage",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read-only")),
+    )
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        headed=True,
+        save_snapshots=True,
+    )
+
+    assert result[0].status == AccountStatus.ERROR
+    assert result[0].error == "snapshot save failed: OSError"
+    assert result[0].cache_invalidated is True
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+    assert result[0].main is None
+    assert result[0].models == ()
+
+
 def test_fetch_all_serializes_authenticated_multi_account_polls(monkeypatch):
     accounts = (
         Account(
