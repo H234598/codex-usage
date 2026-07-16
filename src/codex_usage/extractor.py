@@ -513,7 +513,9 @@ def _main_wham_target_blocks_additional(payload: Any, target: str) -> bool:
         return False
     rate_limit = payload.get("rate_limit")
     if not isinstance(rate_limit, dict):
-        return False
+        # Model-specific buckets must never become legacy 5h/weekly values
+        # when response has no identifiable main bucket.
+        return "additional_rate_limits" in payload
     expected_key = "primary_window" if target == "five_hour" else "secondary_window"
     window = rate_limit.get(expected_key)
     if not isinstance(window, dict):

@@ -97,6 +97,35 @@ def test_extract_windows_does_not_treat_limit_only_as_usage():
     assert weekly.has_usage_value is False
 
 
+def test_extract_windows_does_not_promote_spark_only_bucket_to_main():
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={
+            "additional_rate_limits": [
+                {
+                    "limit_name": "GPT-5.3-Codex-Spark",
+                    "metered_feature": "codex_bengalfox",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 10,
+                            "limit_window_seconds": 604800,
+                        }
+                    },
+                }
+            ]
+        },
+    )
+
+    five, weekly = extract_windows(
+        body_text="",
+        json_candidates=[candidate],
+        now=datetime(2026, 7, 16, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is None
+    assert weekly is None
+
+
 def test_parse_datetime_rejects_unrepresentable_timezone_conversion():
     captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
 
