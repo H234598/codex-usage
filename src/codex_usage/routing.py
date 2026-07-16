@@ -19,7 +19,7 @@ from .private_io import (
     write_private_text,
 )
 from .spark_health import SPARK_HEALTH_MAX_AGE_SECONDS, spark_health_status
-from .usage_limits import SPARK_MODEL
+from .usage_limits import MAX_WINDOW_SECONDS, SPARK_MODEL
 
 POLICY_SCHEMA_VERSION = 1
 DECISION_SCHEMA_VERSION = 1
@@ -247,6 +247,8 @@ def _main_state(pool: UsagePool | None) -> tuple[str, dict[str, float]]:
         return "unknown", {}
     remaining: dict[str, float] = {}
     for window in pool.windows:
+        if not _window_identity_is_known(window):
+            return "unknown", {}
         if window.has_invalid_usage_value:
             return "unknown", {}
         value = window.remaining_percent
@@ -316,6 +318,8 @@ def _pool_usage_state(pool: UsagePool) -> str:
         return "invalid"
     if not pool.windows:
         return "unknown"
+    if any(not _window_identity_is_known(window) for window in pool.windows):
+        return "unknown"
     if any(window.has_invalid_usage_value for window in pool.windows):
         return "invalid"
     return (
@@ -339,6 +343,27 @@ def _pool_flags_are_valid(pool: UsagePool) -> bool:
             or isinstance(pool.limit_reached, bool)
         )
     )
+
+
+def _window_identity_is_known(window: Any) -> bool:
+    duration = getattr(window, "duration_seconds", None)
+    if duration is not None:
+        return (
+            isinstance(duration, int)
+            and not isinstance(duration, bool)
+            and 0 < duration <= MAX_WINDOW_SECONDS
+        )
+    name = getattr(window, "name", None)
+    if not isinstance(name, str):
+        return False
+    return name.strip().casefold() in {
+        "5h",
+        "5_hour",
+        "five_hour",
+        "w",
+        "week",
+        "weekly",
+    }
 
 
 def _valid_remaining_percent(value: Any) -> bool:

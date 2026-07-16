@@ -292,6 +292,46 @@ def test_routing_accepts_weekly_or_30_day_main_without_five_hour_window():
         assert result["decision"] == "main"
 
 
+def test_routing_blocks_main_when_window_identity_is_unknown():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(LimitWindow(name="unknown", remaining=80),),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
+def test_routing_does_not_select_spark_when_window_identity_is_unknown():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("weekly", 80, 604800),),
+            spark=UsagePool(
+                key=SPARK_MODEL,
+                display_name="Spark",
+                windows=(LimitWindow(name="unknown", remaining=99),),
+                available=True,
+            ),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "test",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_usage_unknown"
+
+
 def test_routing_blocks_at_exact_threshold_without_paid_override():
     result = evaluate_routing(
         _usage(
