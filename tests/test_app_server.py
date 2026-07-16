@@ -462,6 +462,22 @@ def test_response_for_rejects_non_integer_request_id_aliases():
     assert "timed out" in str(error.value)
 
 
+def test_response_for_rejects_explicit_null_error():
+    reader = type("Reader", (), {})()
+    reader.items = queue.Queue()
+    reader.items.put(b'{"id":1,"result":{},"error":null}')
+
+    with pytest.raises(AppServerProtocolError) as error:
+        _response_for(
+            reader,
+            1,
+            deadline=time.monotonic() + 0.01,
+            stderr_reader=object(),
+        )
+
+    assert "invalid error" in str(error.value)
+
+
 def test_app_server_missing_command_is_compatibility_failure(tmp_path):
     auth_home = tmp_path / "codex-home"
     auth_home.mkdir()

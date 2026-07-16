@@ -503,8 +503,12 @@ def _response_for(
             payload.get("id"), request_id
         ):
             continue
-        error = payload.get("error")
-        if error is not None:
+        if "error" in payload:
+            error = payload["error"]
+            if error is None:
+                raise AppServerProtocolError(
+                    "codex app server returned an invalid error"
+                )
             _raise_rpc_error(error)
         result = payload.get("result")
         if not isinstance(result, dict):
