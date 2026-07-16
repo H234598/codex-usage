@@ -336,6 +336,7 @@ def _extract_json_window(
     wham_main_window_counts: dict[int, int] = {}
     reset_only: list[tuple[int, int, int, bool, LimitWindow]] = []
     usage_windows: list[tuple[int, int, int, bool, LimitWindow]] = []
+    generic_window_counts: dict[tuple[int, int], int] = {}
     for candidate_index, candidate in enumerate(candidates):
         candidate_priority = _wham_candidate_priority(candidate.url)
         blocks_additional = _main_wham_target_blocks_additional(candidate.payload, target)
@@ -441,10 +442,16 @@ def _extract_json_window(
             path=_path,
         )
         if window is not None:
+            target_rank = _target_rank(_path, haystack, target)
+            if not _is_structural_window_path(_path):
+                count_key = (candidate_index, target_rank)
+                generic_window_counts[count_key] = (
+                    generic_window_counts.get(count_key, 0) + 1
+                )
             if window.has_usage_value:
                 ranked_windows.append(
                     (
-                        _target_rank(_path, haystack, target),
+                        target_rank,
                         0,
                         -candidate_index,
                         0 if window.reset_at is not None else 1,
@@ -462,6 +469,11 @@ def _extract_json_window(
                         window,
                     )
                 )
+    if any(count > 1 for count in generic_window_counts.values()):
+        # A generic response with multiple equally scoped windows cannot
+        # identify which value belongs to this target. Never use traversal
+        # order as an implicit authority.
+        return None
     if ranked_windows:
         ranked_windows.sort(key=lambda item: item[:5])
         return ranked_windows[0][5]
@@ -1911,6 +1923,13 @@ def _has_direct_structural_window(value: Any, target: str) -> bool:
         return False
     key = "primary_window" if target == "five_hour" else "secondary_window"
     return isinstance(value.get(key), dict)
+
+
+def _is_structural_window_path(path: str) -> bool:
+    return re.search(
+        r"(?:^|\.)[^.\[]*window(?:_config)?(?:\.|\[|$)",
+        path,
+    ) is not None
 
 
 def _looks_like_weekly(value: str) -> bool:

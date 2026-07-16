@@ -2157,6 +2157,22 @@ def test_extract_windows_rejects_malformed_wham_fields_beside_percentages(fields
     assert five.reset_at is not None
 
 
+def test_extract_windows_rejects_duplicate_generic_target_windows():
+    candidate = JsonCandidate(
+        url="https://example.test/usage",
+        payload={
+            "windows": [
+                {"type": "five_hour", "used_percent": 3},
+                {"type": "five_hour", "used_percent": 45},
+            ]
+        },
+    )
+
+    five, _weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert five is None
+
+
 @pytest.mark.parametrize(
     "fields",
     [
