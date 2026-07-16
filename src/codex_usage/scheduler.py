@@ -592,6 +592,38 @@ def _valid_percent(value: float | None) -> float | None:
     return value if 0 <= value <= 100 else None
 
 
+def _watch_cycle_is_healthy(
+    usages: Iterable[AccountUsage],
+    accounts: Iterable[Account],
+) -> bool:
+    results = list(usages)
+    expected = tuple(account.id for account in accounts)
+    if not expected:
+        return True
+    if len(results) != len(expected):
+        return False
+    try:
+        if {usage.account_id for usage in results} != set(expected):
+            return False
+        for usage in results:
+            if (
+                not isinstance(usage, AccountUsage)
+                or usage.status is not AccountStatus.OK
+                or usage.error is not None
+                or usage.stale is not False
+                or usage.cache_invalidated is not False
+            ):
+                return False
+            if not any(
+                window is not None and window.has_usage_value
+                for window in (usage.five_hour, usage.weekly)
+            ):
+                return False
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return True
+
+
 def watch(
     config: AppConfig,
     accounts: Iterable[Account],
@@ -637,6 +669,8 @@ def watch(
                 else:
                     print("\033[2J\033[H", end="")
                     print(render_table(usages), flush=True)
+                if not _watch_cycle_is_healthy(usages, account_list):
+                    raise RuntimeError("watch cycle returned unusable usage")
                 elapsed = max(time.monotonic() - started, 0.0)
                 _record_health(
                     "watch",

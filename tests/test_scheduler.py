@@ -337,6 +337,51 @@ def test_watch_subtracts_successful_cycle_duration_from_interval(monkeypatch):
     assert delays == [47.5]
 
 
+def test_watch_marks_unusable_usage_as_cycle_error(monkeypatch, capsys):
+    delays: list[int] = []
+    health_events: list[tuple[str, str]] = []
+
+    class StopAfterWait:
+        def is_set(self):
+            return False
+
+        def wait(self, delay):
+            delays.append(delay)
+            return True
+
+        def set(self):
+            return None
+
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.LOGIN_REQUIRED,
+        error="401",
+    )
+    monkeypatch.setattr("codex_usage.scheduler.Event", StopAfterWait)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_all",
+        lambda *args, **kwargs: [usage],
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.record_health_event",
+        lambda component, event, **kwargs: health_events.append((component, event)),
+    )
+
+    watch(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="table",
+        interval_seconds=60,
+    )
+
+    assert delays == [5]
+    assert health_events == [("watch", "cycle_error")]
+    assert "watch cycle failed" in capsys.readouterr().err
+
+
 def test_fetch_all_uses_direct_for_accounts_with_auth_and_browser_for_others(monkeypatch):
     accounts = (
         Account(
