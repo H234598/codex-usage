@@ -327,12 +327,19 @@ def _stabilize_authenticated_usage(
     )
     if not retain_five_hour and not retain_weekly:
         return usage
+    stabilized_main = _stabilize_main_pool(
+        usage.main,
+        previous,
+        retain_five_hour=retain_five_hour,
+        retain_weekly=retain_weekly,
+    )
     return replace(
         usage,
         label=usage.label,
         captured_at=usage.captured_at,
         five_hour=previous.five_hour if retain_five_hour else usage.five_hour,
         weekly=previous.weekly if retain_weekly else usage.weekly,
+        main=stabilized_main,
         auth_last_refresh=usage.auth_last_refresh,
         auth_access_expires_at=usage.auth_access_expires_at,
         auth_id_expires_at=usage.auth_id_expires_at,
@@ -342,6 +349,63 @@ def _stabilize_authenticated_usage(
         values_captured_at=previous.values_captured_at or previous.captured_at,
         stale=True,
     )
+
+
+def _stabilize_main_pool(
+    current: Any,
+    previous: AccountUsage,
+    *,
+    retain_five_hour: bool,
+    retain_weekly: bool,
+) -> Any:
+    if current is None:
+        return None
+    current_windows = list(current.windows)
+    previous_windows = (
+        tuple(previous.main.windows)
+        if previous.main is not None
+        else ()
+    )
+    replacements = (
+        ("five_hour", retain_five_hour, 18_000),
+        ("weekly", retain_weekly, 604_800),
+    )
+    for kind, retain, duration in replacements:
+        if not retain:
+            continue
+        previous_window = next(
+            (
+                window
+                for window in previous_windows
+                if _window_kind(window) == kind
+                or getattr(window, "duration_seconds", None) == duration
+            ),
+            None,
+        )
+        if previous_window is None:
+            previous_window = (
+                previous.five_hour
+                if kind == "five_hour"
+                else previous.weekly
+            )
+        if previous_window is None:
+            continue
+        current_index = next(
+            (
+                index
+                for index, window in enumerate(current_windows)
+                if _window_kind(window) == kind
+                or getattr(window, "duration_seconds", None) == duration
+            ),
+            None,
+        )
+        if current_index is None:
+            current_windows.append(previous_window)
+        else:
+            current_windows[current_index] = previous_window
+    if tuple(current_windows) == current.windows:
+        return current
+    return replace(current, windows=tuple(current_windows))
 
 
 def _has_unexpired_window_reset_discontinuity(

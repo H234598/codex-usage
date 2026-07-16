@@ -1014,6 +1014,8 @@ def test_authenticated_reset_fallback_is_applied_per_window():
 
     assert result.five_hour is not None and result.five_hour.remaining == 90
     assert result.weekly is not None and result.weekly.remaining == 70
+    assert result.main is not None
+    assert [window.remaining for window in result.main.windows] == [90, 70]
     assert result.stale is True
 
 
