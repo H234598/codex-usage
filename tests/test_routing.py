@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -103,6 +104,23 @@ def test_routing_does_not_select_catalog_only_spark_without_usage():
     assert result["decision"] == "main"
     assert result["reason"] == "spark_usage_unknown"
     assert result["usage_state"] == "known"
+
+
+@pytest.mark.parametrize("timestamp_field", ["captured_at", "values_captured_at"])
+def test_routing_fails_closed_for_naive_usage_timestamps(timestamp_field):
+    usage = _usage(main_windows=(_window("weekly", 80, 604800),))
+    usage = replace(usage, **{timestamp_field: NOW.replace(tzinfo=None)})
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "usage_timestamp_invalid"
+    assert result["model"] is None
 
 
 def test_routing_does_not_select_spark_when_usage_window_has_no_value():

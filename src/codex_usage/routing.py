@@ -129,15 +129,15 @@ def evaluate_routing(
 ) -> dict[str, Any]:
     if not isinstance(paid_overage_allowed, bool):
         raise ValueError("paid_overage_allowed must be a boolean")
-    checked_at = now or datetime.now(tz=UTC)
+    checked_at = now if now is not None else datetime.now(tz=UTC)
     normalized_role = role.strip().casefold()
     base = {
         "schema_version": DECISION_SCHEMA_VERSION,
         "account": usage.account_id,
         "backend_account_id": usage.backend_account_id,
         "role": role,
-        "checked_at": checked_at.isoformat(),
-        "captured_at": usage.captured_at.isoformat(),
+        "checked_at": _timestamp_text(checked_at),
+        "captured_at": _timestamp_text(usage.captured_at),
         "paid_overage_allowed": paid_overage_allowed,
         "policy_source": policy_source,
         "threshold_percent": MAIN_MINIMUM_REMAINING_PERCENT,
@@ -274,7 +274,13 @@ def _invalid_usage_reason(
         return "usage_stale"
     if usage.status not in (AccountStatus.OK, AccountStatus.PARTIAL):
         return f"usage_status_{usage.status.value}"
-    captured_at = usage.values_captured_at or usage.captured_at
+    captured_at = (
+        usage.values_captured_at
+        if usage.values_captured_at is not None
+        else usage.captured_at
+    )
+    if not _aware_datetime(now) or not _aware_datetime(captured_at):
+        return "usage_timestamp_invalid"
     try:
         age = (now.astimezone(UTC) - captured_at.astimezone(UTC)).total_seconds()
     except (AttributeError, TypeError, ValueError):
@@ -346,9 +352,27 @@ def _pool_resets(pool: UsagePool | None) -> dict[str, str | None]:
     if pool is None:
         return {}
     return {
-        window.name: window.reset_at.isoformat() if window.reset_at else None
+        window.name: _timestamp_text(window.reset_at)
         for window in pool.windows
     }
+
+
+def _aware_datetime(value: Any) -> bool:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return False
+    try:
+        return value.utcoffset() is not None
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
+def _timestamp_text(value: Any) -> str | None:
+    if value is None or not _aware_datetime(value):
+        return None
+    try:
+        return value.isoformat()
+    except (OverflowError, TypeError, ValueError):
+        return None
 
 
 def _blocked(
