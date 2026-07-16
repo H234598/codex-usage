@@ -1874,6 +1874,8 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
         label="Blocked",
         captured_at=now,
         status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
         blocked_until=datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
         blocked_reason="usage limit reached: weekly",
     )
@@ -2649,6 +2651,8 @@ def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetc
         label="Blocked",
         captured_at=datetime(2026, 6, 8, 4, 19, tzinfo=ZoneInfo("Europe/Berlin")),
         status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
         blocked_until=datetime(2026, 6, 8, 4, 20, 30, tzinfo=ZoneInfo("Europe/Berlin")),
     )
     refreshed_blocked = AccountUsage(

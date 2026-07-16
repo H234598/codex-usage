@@ -217,6 +217,30 @@ def test_backend_provenance_rejects_unknown_backend_fields():
     assert backend_provenance_matches(unknown_used, unknown_configured) is False
 
 
+@pytest.mark.parametrize(
+    ("backend_configured", "backend_used"),
+    (
+        (None, None),
+        ("", "direct"),
+        ("direct", ""),
+        ("direct", None),
+        (None, "direct"),
+    ),
+)
+def test_backend_provenance_rejects_missing_backend_fields(
+    backend_configured, backend_used
+):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured=backend_configured,
+        backend_used=backend_used,
+    )
+
+    assert backend_provenance_matches_configured(usage, "direct") is False
+
+
 def test_backend_provenance_rejects_unproven_cross_backend_fallback():
     direct = AccountUsage(
         account_id="account",
@@ -229,6 +253,7 @@ def test_backend_provenance_rejects_unproven_cross_backend_fallback():
         account_id="account",
         label="Account",
         captured_at=datetime.now(UTC),
+        backend_configured="app-server",
         backend_used="app-server",
     )
 
@@ -327,6 +352,7 @@ def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
         account_id="account",
         label="Account",
         captured_at=datetime.now(UTC),
+        backend_configured="app-server",
         backend_used="app-server",
     )
 
@@ -2536,6 +2562,8 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
             account_id="privat",
             label="Privat",
             captured_at=previous_capture,
+            backend_configured="browser",
+            backend_used="browser",
             five_hour=LimitWindow(
                 name="5h",
                 remaining=97,
@@ -2556,6 +2584,8 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
             label="Privat",
             captured_at=datetime(2026, 6, 8, 4, 25, tzinfo=timezone),
             status=AccountStatus.PARTIAL,
+            backend_configured="browser",
+            backend_used="browser",
             five_hour=LimitWindow(
                 name="5h",
                 reset_at=datetime(2026, 6, 8, 8, 5, tzinfo=timezone),
@@ -2577,6 +2607,41 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
     assert loaded.weekly.remaining == 55
     assert loaded.captured_at == datetime(2026, 6, 8, 4, 25, tzinfo=timezone)
     assert loaded.values_captured_at == previous_capture
+
+
+def test_save_usage_snapshot_rejects_unproven_existing_values(tmp_path):
+    timezone = ZoneInfo("Europe/Berlin")
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=timezone),
+            weekly=LimitWindow(name="weekly", remaining=55),
+        ),
+        snapshot_dir,
+    )
+
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 25, tzinfo=timezone),
+            status=AccountStatus.PARTIAL,
+            backend_configured="direct",
+            backend_used="direct",
+            backend_account_id="account-privat",
+            five_hour=LimitWindow(name="5h", remaining=80),
+        ),
+        snapshot_dir,
+    )
+
+    loaded = load_usage_snapshot("privat", snapshot_dir)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.remaining == 80
+    assert loaded.weekly is None
 
 
 def test_merge_does_not_restore_old_reset_into_inferred_inactive_five_hour():
@@ -2635,6 +2700,8 @@ def test_save_usage_snapshot_preserves_reset_when_usage_arrives_without_reset(tm
             account_id="privat",
             label="Privat",
             captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=timezone),
+            backend_configured="browser",
+            backend_used="browser",
             five_hour=LimitWindow(name="5h", remaining=97, reset_at=previous_reset),
         ),
         snapshot_dir,
@@ -2646,6 +2713,8 @@ def test_save_usage_snapshot_preserves_reset_when_usage_arrives_without_reset(tm
             label="Privat",
             captured_at=datetime(2026, 6, 8, 4, 25, tzinfo=timezone),
             status=AccountStatus.PARTIAL,
+            backend_configured="browser",
+            backend_used="browser",
             five_hour=LimitWindow(name="5h", remaining=80),
             error="reset time missing",
         ),

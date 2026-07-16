@@ -1535,6 +1535,8 @@ def test_latest_marks_old_current_values_stale(tmp_path, monkeypatch):
             account_id="privat",
             label="Privat",
             captured_at=datetime.now().astimezone() - timedelta(minutes=7),
+            backend_configured="direct",
+            backend_used="direct",
             five_hour=LimitWindow(name="5h", remaining=97),
             status=AccountStatus.OK,
         )
@@ -1561,6 +1563,7 @@ def test_latest_does_not_show_cached_window_after_reset(tmp_path, monkeypatch):
             label="Privat",
             captured_at=captured,
             status=AccountStatus.OK,
+            backend_configured="direct",
             backend_used="direct",
             five_hour=LimitWindow(
                 name="5h",

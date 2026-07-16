@@ -940,6 +940,8 @@ def test_latest_rejects_cached_values_after_auth_identity_changes(tmp_path):
         account_id="privat",
         label="Privat",
         captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", remaining=12),
         weekly=LimitWindow(name="weekly", remaining=34),
         backend_user_id="old-user",
@@ -997,6 +999,8 @@ def test_latest_rejects_identity_free_dynamic_cached_values(tmp_path):
             label="Privat",
             captured_at=datetime.now().astimezone(),
             status=AccountStatus.OK,
+            backend_configured="direct",
+            backend_used="direct",
             main=UsagePool(
                 key="main",
                 display_name="Codex",
@@ -1083,6 +1087,8 @@ def test_latest_rejects_cache_when_auth_identity_changes_during_read(tmp_path, m
         account_id="privat",
         label="Privat",
         captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", remaining=12),
         weekly=LimitWindow(name="weekly", remaining=34),
         backend_user_id="old-user",
@@ -1523,6 +1529,8 @@ def test_latest_uses_current_account_label_for_cached_usage(tmp_path):
             account_id="privat",
             label="Old Label",
             captured_at=datetime.now().astimezone(),
+            backend_configured="direct",
+            backend_used="direct",
             five_hour=LimitWindow(name="5h", remaining=80),
             weekly=LimitWindow(name="weekly", remaining=60),
         ),
@@ -1544,6 +1552,32 @@ def test_latest_uses_current_account_label_for_cached_usage(tmp_path):
     assert result[0].label == "New Label"
     assert result[0].weekly is not None
     assert result[0].weekly.remaining == 60
+
+
+def test_latest_rejects_cached_usage_without_backend_provenance(tmp_path):
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime.now().astimezone(),
+            status=AccountStatus.OK,
+            five_hour=LimitWindow(name="5h", remaining=80),
+            weekly=LimitWindow(name="weekly", remaining=60),
+        ),
+        snapshot_dir,
+    )
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="privat",
+                label="Privat",
+                profile_dir=str(tmp_path / "profile"),
+            ),
+        )
+    )
+
+    assert load_latest_usages(config, snapshot_dir) == []
 
 
 def test_usage_from_ingest_payload_clamps_far_future_capture_time():

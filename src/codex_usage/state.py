@@ -51,7 +51,9 @@ def backend_provenance_matches_configured(
         return False
     if not _backend_provenance_fields_valid(usage):
         return False
-    if usage.backend_configured and usage.backend_configured != configured_backend:
+    if not _backend_provenance_is_complete(usage):
+        return False
+    if usage.backend_configured != configured_backend:
         return False
     if usage.backend_used == "browser":
         # Browser can be an intentional fallback for an account configured
@@ -94,7 +96,20 @@ def _backend_provenance_fields_valid(usage: AccountUsage) -> bool:
 
 
 def _backend_value_valid(value: str | None, allowed: frozenset[str]) -> bool:
-    return value in {None, ""} or value in allowed
+    return value is None or value == "" or (
+        isinstance(value, str) and value in allowed
+    )
+
+
+def _backend_provenance_is_complete(usage: AccountUsage) -> bool:
+    return (
+        isinstance(usage.backend_configured, str)
+        and bool(usage.backend_configured)
+        and usage.backend_configured in KNOWN_BACKENDS
+        and isinstance(usage.backend_used, str)
+        and bool(usage.backend_used)
+        and usage.backend_used in KNOWN_BACKENDS
+    )
 
 
 def _has_backend_fallback_proof(usage: AccountUsage) -> bool:
@@ -201,6 +216,8 @@ def _save_usage(
             if (
                 preserve_existing_values
                 and not _authoritative_empty_limits(usage)
+                and _backend_provenance_is_complete(usage)
+                and _backend_provenance_is_complete(existing)
                 and backend_identity_matches(usage, existing)
                 and backend_provenance_matches(usage, existing)
             ):
