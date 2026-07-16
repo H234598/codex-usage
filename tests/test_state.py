@@ -1676,6 +1676,52 @@ def test_load_usage_snapshot_rejects_non_string_snapshot_text(tmp_path, field):
     assert load_usage_snapshot("invalid-snapshot-text", tmp_path) is None
 
 
+@pytest.mark.parametrize("value", [0, False, [], {}])
+def test_load_usage_snapshot_rejects_non_string_reset_timestamp(tmp_path, value):
+    payload = {
+        "account": "invalid-reset-type",
+        "label": "Invalid reset type",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "backend_configured": "direct",
+        "backend_used": "direct",
+        "backend_user_id": "user-test",
+        "backend_account_id": "account-test",
+        "five_hour": {"name": "5h", "remaining": 90, "reset_at": value},
+        "weekly": {"name": "weekly", "remaining": 80},
+    }
+    _write_trusted_snapshot(tmp_path / "invalid-reset-type.json", payload)
+
+    assert load_usage_snapshot("invalid-reset-type", tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "source_urls",
+    ["https://example.test", ["https://ok", 7], ["https://ok"] * 21],
+)
+def test_load_usage_snapshot_rejects_malformed_source_urls(tmp_path, source_urls):
+    payload = {
+        "account": "invalid-source-urls",
+        "label": "Invalid source URLs",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "backend_configured": "direct",
+        "backend_used": "direct",
+        "backend_user_id": "user-test",
+        "backend_account_id": "account-test",
+        "five_hour": {"name": "5h", "remaining": 90},
+        "weekly": {"name": "weekly", "remaining": 80},
+        "source_urls": source_urls,
+    }
+    _write_trusted_snapshot(tmp_path / "invalid-source-urls.json", payload)
+
+    assert load_usage_snapshot("invalid-source-urls", tmp_path) is None
+
+
 def test_load_usage_snapshot_honors_exhausted_pool_flag(tmp_path):
     payload = {
         "account": "exhausted-pool",

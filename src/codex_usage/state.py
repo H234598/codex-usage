@@ -1212,14 +1212,19 @@ def _window_from_dict(
     raw_duration = payload.get("duration_seconds")
     if raw_duration is not None and _snapshot_window_duration(raw_duration) is None:
         return None
-    reset_at = payload.get("reset_at")
+    raw_reset_at = payload.get("reset_at")
+    reset_at = (
+        None
+        if raw_reset_at is None or raw_reset_at == ""
+        else _snapshot_datetime(raw_reset_at)
+    )
     window = LimitWindow(
         name=_snapshot_text_or_default(payload.get("name"), "", limit=40),
         used=_optional_float(payload.get("used")),
         limit=_optional_float(payload.get("limit")),
         remaining=_optional_float(payload.get("remaining")),
         percent=_optional_float(payload.get("percent")),
-        reset_at=_snapshot_datetime(reset_at) if reset_at else None,
+        reset_at=reset_at,
         raw=_optional_snapshot_text(payload.get("raw"), limit=MAX_SNAPSHOT_TEXT),
         source=_snapshot_text_or_default(
             payload.get("source"), "unknown", limit=120
@@ -1442,7 +1447,9 @@ def _optional_datetime(value: Any) -> datetime | None:
 
 
 def _snapshot_datetime(value: Any) -> datetime:
-    parsed = datetime.fromisoformat(str(value))
+    if not isinstance(value, str):
+        raise ValueError("snapshot datetime must be a string")
+    parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return parsed.replace(tzinfo=LOCAL_TZ)
     return parsed
@@ -1489,13 +1496,15 @@ def _optional_snapshot_identity(value: Any, *, limit: int) -> str | None:
 
 
 def _snapshot_source_urls(value: Any) -> tuple[str, ...]:
-    if not isinstance(value, list):
+    if value is None:
         return ()
-    urls: list[str] = []
-    for item in value[:MAX_SNAPSHOT_URLS]:
-        if isinstance(item, str):
-            urls.append(_snapshot_text(item, limit=300))
-    return tuple(urls)
+    if (
+        not isinstance(value, list)
+        or len(value) > MAX_SNAPSHOT_URLS
+        or any(not isinstance(item, str) or not item.strip() for item in value)
+    ):
+        raise ValueError("invalid snapshot source URLs")
+    return tuple(_snapshot_text(item, limit=300) for item in value)
 
 
 def _validate_snapshot_account_id(account_id: str) -> None:
