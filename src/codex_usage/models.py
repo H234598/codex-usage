@@ -128,7 +128,10 @@ class UsagePool:
     def exhausted(self) -> bool:
         if not self.available or self.allowed is False or self.limit_reached is True:
             return True
-        return any(window.remaining_percent == 0 for window in self.windows)
+        return any(
+            window.has_invalid_usage_value or window.remaining_percent == 0
+            for window in self.windows
+        )
 
     def window_for_duration(self, duration_seconds: int) -> LimitWindow | None:
         return next(

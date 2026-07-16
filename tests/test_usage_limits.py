@@ -86,6 +86,16 @@ def test_usage_pool_exhaustion_prefers_absolute_usage_over_percent():
     assert pool.exhausted is True
 
 
+def test_usage_pool_treats_invalid_window_as_unusable():
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(LimitWindow(name="weekly", remaining=-1, percent=97),),
+    )
+
+    assert pool.exhausted is True
+
+
 def test_wham_keeps_main_and_spark_weekly_limits_separate():
     main, models = parse_wham_usage_pools(
         {

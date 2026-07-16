@@ -190,20 +190,21 @@ def evaluate_routing(
         }
 
     spark_reason = "spark_unavailable_or_exhausted"
-    if spark is not None and spark.available and not spark.exhausted:
+    if spark is not None and spark.available:
         if spark_state == "invalid":
             spark_reason = "spark_usage_invalid"
-        elif spark_state != "known":
-            spark_reason = "spark_usage_unknown"
-        elif spark_health_state == "failed":
-            spark_reason = "spark_health_failed"
-        elif (
-            spark_health_state == "healthy"
-            and spark_health.get("stale") is True
-        ):
-            spark_reason = "spark_health_stale"
-        else:
-            spark_reason = "spark_health_unverified"
+        elif not spark.exhausted:
+            if spark_state != "known":
+                spark_reason = "spark_usage_unknown"
+            elif spark_health_state == "failed":
+                spark_reason = "spark_health_failed"
+            elif (
+                spark_health_state == "healthy"
+                and spark_health.get("stale") is True
+            ):
+                spark_reason = "spark_health_stale"
+            else:
+                spark_reason = "spark_health_unverified"
     main_state, main_remaining = _main_state(usage.main)
     if main_state == "safe":
         return {
