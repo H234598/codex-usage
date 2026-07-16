@@ -117,6 +117,83 @@ def test_select_identity_consistent_candidates_does_not_mix_accounts():
     assert selected == [candidates[0]]
 
 
+def test_select_identity_consistent_candidates_drops_user_only_window_beside_exact_account():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "user_id": "shared-user",
+                "account_id": "account-a",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                    }
+                },
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown",
+            payload={
+                "user_id": "shared-user",
+                "rate_limit": {
+                    "secondary_window": {
+                        "used_percent": 99,
+                        "limit_window_seconds": 604_800,
+                    }
+                },
+            },
+        ),
+    ]
+
+    selected = select_identity_consistent_candidates(
+        candidates,
+        auth_user_id="shared-user",
+        auth_account_id="account-a",
+    )
+
+    assert selected == [candidates[0]]
+
+
+def test_select_identity_consistent_candidates_prefers_exact_account_over_user_alias():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage/settings",
+            payload={
+                "user_id": "shared-user",
+                "account_id": "shared-user",
+                "rate_limit": {
+                    "secondary_window": {
+                        "used_percent": 99,
+                        "limit_window_seconds": 604_800,
+                    }
+                },
+            },
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={
+                "user_id": "shared-user",
+                "account_id": "enterprise-account",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                    }
+                },
+            },
+        ),
+    ]
+
+    selected = select_identity_consistent_candidates(
+        candidates,
+        auth_user_id="shared-user",
+        auth_account_id="enterprise-account",
+    )
+
+    assert selected == [candidates[1]]
+
+
 def test_select_identity_consistent_candidates_rejects_foreign_user_on_shared_user_alias():
     candidate = JsonCandidate(
         url="https://chatgpt.com/backend-api/wham/usage",

@@ -96,6 +96,49 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     ).absolute()
 
 
+def test_service_units_escape_percent_specifiers_and_restore_config_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    executable = tmp_path / "bin" / "codex%usage"
+    executable.parent.mkdir()
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    profile_dir = tmp_path / "profile%user"
+    profile_dir.mkdir()
+    auth_home = tmp_path / "agent%user"
+    auth_home.mkdir()
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(profile_dir),
+        auth_json_path=str(auth_home / "auth.json"),
+        backend="direct",
+    )
+
+    monkeypatch.setattr("codex_usage.service._resolve_codex_usage", lambda: executable)
+
+    def fake_systemctl(*args, check=True):
+        stdout = ""
+        if args[0] == "is-enabled":
+            stdout = "enabled\n"
+        if args[0] == "is-active" and args[1].endswith("timer"):
+            stdout = "active\n"
+        if args[0] == "show":
+            stdout = "Result=success\nExecMainStatus=0\nExecMainCode=1\n"
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
+    config_path = tmp_path / "config" / "codex%usage" / "config.toml"
+
+    service_enable(AppConfig(accounts=(account,), interval_seconds=300), config_path)
+
+    service_path = tmp_path / "config" / "systemd" / "user" / "codex-usage.service"
+    service = service_path.read_text(encoding="utf-8")
+    assert "%%" in service
+    assert managed_service_config_path() == config_path.absolute()
+
+
 def test_service_uninstall_refuses_unmanaged_unit(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     unit_dir = tmp_path / "config" / "systemd" / "user"

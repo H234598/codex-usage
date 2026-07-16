@@ -113,24 +113,44 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
     body_text = _combined_payload_text(payload)
     text_sources = _payload_text_sources(payload)
     auth_user_id, auth_account_id = auth_identity_for_account(account)
+    raw_json_candidates = _json_candidates_from_payload(payload)
     json_candidates = select_identity_consistent_candidates(
-        _json_candidates_from_payload(payload),
+        raw_json_candidates,
         auth_user_id=auth_user_id,
         auth_account_id=auth_account_id,
     )
+    identity_candidates = json_candidates
+    if not identity_candidates:
+        # A rejected user-only response may still explain why this capture is
+        # partial. Keep its identity metadata for validation, never its limits.
+        identity_candidates = [
+            candidate
+            for candidate in raw_json_candidates
+            if backend_identity_from_payload(candidate.payload) != (None, None)
+        ]
     # A structured response with usage values is authoritative. If it only
     # identifies the already authenticated account, the rendered graph can
     # still be the only source for the limits; allow that fallback only after
     # the backend account identity has been fully confirmed.
     structured_identity_present = any(
         backend_identity_from_payload(candidate.payload) != (None, None)
-        for candidate in json_candidates
+        for candidate in identity_candidates
     )
     json_windows = extract_windows(
         body_text="",
         json_candidates=json_candidates,
         text_sources=(),
         now=captured_at,
+    )
+    raw_json_windows = extract_windows(
+        body_text="",
+        json_candidates=raw_json_candidates,
+        text_sources=(),
+        now=captured_at,
+    )
+    json_has_usage = any(
+        window is not None and window.has_usage_value
+        for window in (*json_windows, *raw_json_windows)
     )
     allow_dom_fallback = (
         not structured_identity_present
@@ -150,8 +170,8 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         )
     else:
         five_hour, weekly = json_windows
-    backend_user_id, backend_account_id = backend_identity_from_candidates(json_candidates)
-    backend_plan_type = backend_plan_type_from_candidates(json_candidates)
+    backend_user_id, backend_account_id = backend_identity_from_candidates(identity_candidates)
+    backend_plan_type = backend_plan_type_from_candidates(identity_candidates)
     auth_plan_type = auth_plan_type_for_account(account)
     backend_user_id, backend_account_id = canonical_backend_identity(
         backend_user_id,
@@ -161,6 +181,12 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         auth_plan_type=auth_plan_type,
         backend_plan_type=backend_plan_type,
         require_backend_identity=True,
+        require_backend_account_id=bool(auth_account_id and json_has_usage),
+        # Browser cookies do not prove which account is active when WHAM
+        # echoes the shared user ID as account_id. Never attribute those
+        # limits to a configured account; the direct backend has its own
+        # explicit account header and is intentionally unaffected here.
+        reject_ambiguous_backend_identity=bool(auth_account_id and backend_account_id),
     )
     status = (
         AccountStatus.OK
@@ -174,7 +200,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         _ingest_error(body_text, payload) if status != AccountStatus.OK else None
     )
     source_urls = {_redact_url(str(payload.get("url") or ""))}
-    source_urls.update(_redact_url(candidate.url) for candidate in json_candidates)
+    source_urls.update(_redact_url(candidate.url) for candidate in identity_candidates)
     source_urls.discard("")
     return AccountUsage(
         account_id=account.id,
@@ -202,11 +228,19 @@ def _structured_identity_matches_account(
     if not account.auth_json_path:
         return False
     backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
-    if not auth_account_id or not backend_account_id:
+    if not backend_account_id:
         return False
-    if backend_account_id != auth_account_id:
+    try:
+        canonical_backend_identity(
+            backend_user_id,
+            backend_account_id,
+            auth_user_id=auth_user_id,
+            auth_account_id=auth_account_id,
+            require_backend_identity=True,
+        )
+    except ValueError:
         return False
-    return not auth_user_id or not backend_user_id or backend_user_id == auth_user_id
+    return True
 
 
 def _ingest_error(body_text: str, payload: dict[str, Any]) -> str | None:
@@ -358,10 +392,22 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
 
     ordered_candidates: list[tuple[bool, int, int, int, JsonCandidate]] = []
     for candidate_index, item in enumerate(responses_by_key.values()):
-        if item.get("truncated") is True:
+        truncated = item.get("truncated")
+        if truncated is True or (
+            isinstance(truncated, str) and truncated.strip().casefold() == "true"
+        ):
             continue
         status = item.get("status")
+        if isinstance(status, bool):
+            status = None
+        elif isinstance(status, str) and status.strip().isdecimal():
+            status = int(status.strip())
         if isinstance(status, int) and status >= 400:
+            continue
+        ok = item.get("ok")
+        if ok is False or (
+            isinstance(ok, str) and ok.strip().casefold() == "false"
+        ):
             continue
         content_type = str(item.get("contentType") or item.get("content_type") or "").lower()
         if content_type and "json" not in content_type:
@@ -872,15 +918,24 @@ def ingest_and_save(
     current = load_current_usage(account.id, current_dir)
     known = _newest_known_usage(snapshot, current)
     if require_backend_identity:
-        _reject_ambiguous_browser_identity(config, account, payload)
-        if account.auth_json_path is not None:
-            if not _usage_matches_current_auth(account, usage):
-                raise ValueError("bridge payload belongs to a different backend account")
-        _reject_browser_identity_from_other_configured_account(
-            config,
-            account,
-            payload,
-        )
+        try:
+            _reject_ambiguous_browser_identity(config, account, payload)
+            if account.auth_json_path is not None:
+                if not _usage_matches_current_auth(account, usage):
+                    raise ValueError("bridge payload belongs to a different backend account")
+            _reject_browser_identity_from_other_configured_account(
+                config,
+                account,
+                payload,
+            )
+        except ValueError:
+            _invalidate_rejected_browser_state(
+                account,
+                snapshot,
+                current,
+                snapshot_dir,
+            )
+            raise
         if account.auth_json_path is None and known is None:
             raise ValueError("browser account identity is not initialized")
     if (
@@ -888,6 +943,12 @@ def ingest_and_save(
         and not backend_identity_matches(usage, known)
         and not _usage_matches_current_auth(account, usage)
     ):
+        _invalidate_rejected_browser_state(
+            account,
+            snapshot,
+            current,
+            snapshot_dir,
+        )
         raise ValueError("bridge payload belongs to a different backend account")
     if known is not None:
         try:
@@ -1017,6 +1078,28 @@ def _reject_browser_identity_from_other_configured_account(
         raise ValueError("browser payload has ambiguous backend account identity")
 
 
+def _invalidate_rejected_browser_state(
+    account: Account,
+    snapshot: AccountUsage | None,
+    current: AccountUsage | None,
+    snapshot_dir: Path | None,
+) -> None:
+    """Clear browser values after a proven identity switch or mismatch."""
+    if account.backend != "browser" or account.auth_json_path is not None:
+        return
+    known = _newest_known_usage(snapshot, current)
+    if known is None:
+        return
+    invalidated = replace(
+        _invalidate_cached_usage(account, known),
+        error="cached browser usage discarded after backend identity changed",
+        state_generation=load_state_generation(account.id, snapshot_dir),
+    )
+    save_usage_snapshot(invalidated, snapshot_dir)
+    current_dir = snapshot_dir.parent / "current" if snapshot_dir else None
+    save_current_usage(invalidated, current_dir)
+
+
 def _usage_matches_current_auth(account: Account, usage: AccountUsage) -> bool:
     try:
         auth_user_id, auth_account_id = auth_identity_for_account(account)
@@ -1072,14 +1155,19 @@ def _cached_usage_matches_current_auth(
     )
 
 
-def _invalidate_cached_usage(account: Account, usage: AccountUsage) -> AccountUsage:
+def _invalidate_cached_usage(
+    account: Account,
+    usage: AccountUsage,
+    *,
+    error: str = "cached usage discarded after auth.json identity change",
+) -> AccountUsage:
     return replace(
         usage,
         label=account.label,
         five_hour=None,
         weekly=None,
         status=AccountStatus.PARTIAL,
-        error="cached usage discarded after auth.json identity change",
+        error=error,
         backend_configured=account.backend,
         backend_used=account.backend,
         backend_user_id=None,
@@ -1091,35 +1179,69 @@ def _invalidate_cached_usage(account: Account, usage: AccountUsage) -> AccountUs
     )
 
 
+def _account_uses_authenticated_backend(account: Account) -> bool:
+    return account.backend == "app-server" or (
+        account.backend == "direct" and account.auth_json_path is not None
+    )
+
+
+def _invalidate_browser_cache(
+    account: Account,
+    usage: AccountUsage,
+) -> AccountUsage:
+    return replace(
+        _invalidate_cached_usage(account, usage),
+        error=(
+            "cached browser usage ignored for configured "
+            f"{account.backend} backend"
+        ),
+    )
+
+
 def _authenticated_snapshot_supersedes_browser_current(
     current: AccountUsage,
     snapshot: AccountUsage,
     interval_seconds: int,
 ) -> bool:
-    """Prefer a fresh complete authenticated snapshot over legacy browser state."""
+    """Prefer a fresh authoritative authenticated snapshot over browser state."""
     if current.backend_used != "browser":
         return False
     if snapshot.backend_used not in {"direct", "app-server"}:
         return False
-    if snapshot.status != AccountStatus.OK or snapshot.stale:
+    if snapshot.status not in {
+        AccountStatus.OK,
+        AccountStatus.PARTIAL,
+        AccountStatus.BLOCKED,
+    }:
+        return False
+    if snapshot.cache_invalidated:
         return False
     if not backend_identity_matches(current, snapshot):
         return False
-    if not (
-        snapshot.five_hour is not None
-        and snapshot.five_hour.has_usage_value
-        and snapshot.weekly is not None
-        and snapshot.weekly.has_usage_value
-    ):
+    has_usage_value = any(
+        window is not None and window.has_usage_value
+        for window in (snapshot.five_hour, snapshot.weekly)
+    )
+    authoritative_empty = (
+        snapshot.status in {AccountStatus.PARTIAL, AccountStatus.BLOCKED}
+        and snapshot.five_hour is None
+        and snapshot.weekly is None
+    )
+    if not has_usage_value and not authoritative_empty:
         return False
     try:
-        age_seconds = (
-            datetime.now(tz=LOCAL_TZ) - snapshot.captured_at
-        ).total_seconds()
+        now = datetime.now(tz=LOCAL_TZ)
+        age_seconds = (now - snapshot.captured_at).total_seconds()
+        values_captured_at = snapshot.values_captured_at or snapshot.captured_at
+        values_age_seconds = (now - values_captured_at).total_seconds()
     except (TypeError, AttributeError):
         return False
     freshness_window = max(int(interval_seconds), 60) + AUTHENTICATED_BRIDGE_GRACE_SECONDS
-    return 0 <= age_seconds <= freshness_window
+    if not 0 <= age_seconds <= freshness_window:
+        return False
+    if snapshot.stale and not 0 <= values_age_seconds <= freshness_window:
+        return False
+    return True
 
 
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
@@ -1167,6 +1289,18 @@ def _load_latest_usages_unlocked(
             auth_identity,
         ):
             current = _invalidate_cached_usage(account, current)
+        rejected_browser: AccountUsage | None = None
+        if _account_uses_authenticated_backend(account):
+            for candidate in (last_success, current):
+                if candidate is not None and candidate.backend_used == "browser":
+                    rejected_browser = _newest_known_usage(
+                        rejected_browser,
+                        candidate,
+                    )
+            if last_success is not None and last_success.backend_used == "browser":
+                last_success = None
+            if current is not None and current.backend_used == "browser":
+                current = None
         if auth_identity is not None:
             try:
                 auth_identity_after = auth_identity_for_account(account)
@@ -1191,6 +1325,8 @@ def _load_latest_usages_unlocked(
             usage = merge_current_with_last_success(current, last_success)
         elif last_success is not None:
             usage = last_success
+        elif rejected_browser is not None:
+            usage = _invalidate_browser_cache(account, rejected_browser)
         else:
             continue
         usage = replace(usage, label=account.label)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
+from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.render import (
     _auth_value,
     _fmt_number,
@@ -158,6 +158,47 @@ def test_render_table_converts_absolute_remaining_to_percent():
     assert "Limit 1000" not in rendered
 
 
+def test_render_prefers_percent_when_remaining_has_no_absolute_limit():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(name="5h", remaining=690, percent=69),
+    )
+
+    rendered = render_table([usage])
+
+    assert "69% verbleibend" in rendered
+    assert "690% verbleibend" not in rendered
+
+
+def test_render_rejects_denominatorless_absolute_remaining():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(name="5h", remaining=690),
+    )
+
+    rendered = render_table([usage])
+
+    assert "690% verbleibend" not in rendered
+    assert "100% verbleibend" not in rendered
+
+
+def test_render_table_treats_percent_only_window_as_remaining_percent():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(name="5h", percent=97),
+    )
+
+    rendered = render_table([usage])
+
+    assert "97% verbleibend" in rendered
+
+
 def test_render_account_values_is_compact_and_includes_missing_accounts():
     accounts = (
         Account(id="privat", label="Privat", profile_dir="/tmp/privat"),
@@ -193,6 +234,49 @@ def test_render_account_values_is_compact_and_includes_missing_accounts():
     assert "55% verbleibend" in rendered
     assert "Work" in rendered
     assert "Stand:" not in rendered
+
+
+def test_render_table_includes_dynamic_main_and_spark_limits():
+    reset = datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=reset,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="30d",
+                    remaining=95,
+                    percent=95,
+                    duration_seconds=2592000,
+                ),
+            ),
+        ),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                windows=(
+                    LimitWindow(
+                        name="weekly",
+                        remaining=100,
+                        percent=100,
+                        reset_at=reset,
+                        duration_seconds=604800,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    rendered = render_table([usage])
+
+    assert "Weitere Limits" in rendered
+    assert "30d 95% verbleibend" in rendered
+    assert "Spark" in rendered
+    assert "weekly 100% verbleibend bis 23.07.2026 04:00" in rendered
 
 
 def test_render_json_is_machine_readable():

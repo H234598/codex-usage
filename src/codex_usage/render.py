@@ -57,6 +57,8 @@ def render_account_overview(
         "5h Reset",
         "Woche Wert",
         "Woche Reset",
+        "Weitere Limits",
+        "Spark",
         "Status",
         "Profil",
         "Pfad",
@@ -95,7 +97,16 @@ def render_account_values(
         ]
         for account in sorted(accounts, key=lambda item: item.id)
     ]
-    headers = ["Account", "5h Wert", "5h Reset", "Woche Wert", "Woche Reset", "Status"]
+    headers = [
+        "Account",
+        "5h Wert",
+        "5h Reset",
+        "Woche Wert",
+        "Woche Reset",
+        "Weitere Limits",
+        "Spark",
+        "Status",
+    ]
     widths = [
         max(len(headers[index]), *(len(row[index]) for row in rows)) if rows else len(header)
         for index, header in enumerate(headers)
@@ -114,6 +125,8 @@ def render_table(usages: Iterable[AccountUsage]) -> str:
         "5h Reset",
         "Woche Wert",
         "Woche Reset",
+        "Weitere Limits",
+        "Spark",
         "Auth",
         "Status",
     ]
@@ -124,6 +137,8 @@ def render_table(usages: Iterable[AccountUsage]) -> str:
             _reset_value(usage.five_hour),
             _usage_value(usage.weekly),
             _reset_value(usage.weekly),
+            _extra_main_value(usage),
+            _spark_value(usage),
             _auth_value(usage),
             _status_value(usage),
         ]
@@ -166,14 +181,44 @@ def _auth_state(auth_json_path: str | None) -> str:
 
 def _overview_usage_values(usage: AccountUsage | None) -> list[str]:
     if usage is None:
-        return ["-", "-", "-", "-", "-"]
+        return ["-", "-", "-", "-", "-", "-", "-"]
     return [
         _cell(_usage_value(usage.five_hour), VALUE_CELL_MAX),
         _reset_value(usage.five_hour),
         _cell(_usage_value(usage.weekly), VALUE_CELL_MAX),
         _reset_value(usage.weekly),
+        _cell(_extra_main_value(usage), VALUE_CELL_MAX),
+        _cell(_spark_value(usage), VALUE_CELL_MAX),
         _cell(_status_value(usage), STATUS_CELL_MAX),
     ]
+
+
+def _extra_main_value(usage: AccountUsage) -> str:
+    if usage.main is None:
+        return "-"
+    values = [
+        f"{window.name} {_usage_value(window)}"
+        for window in usage.main.windows
+        if window.duration_seconds not in (18_000, 604_800)
+    ]
+    return "; ".join(values) if values else "-"
+
+
+def _spark_value(usage: AccountUsage) -> str:
+    pool = usage.model_pool("gpt-5.3-codex-spark")
+    if pool is None or not pool.available:
+        return "nicht verfügbar"
+    if pool.exhausted:
+        return "erschöpft"
+    if not pool.windows:
+        return "verfügbar; Limit unbekannt"
+    values = []
+    for window in pool.windows:
+        value = f"{window.name} {_usage_value(window)}"
+        if window.reset_at is not None:
+            value += f" bis {_reset_value(window)}"
+        values.append(value)
+    return "; ".join(values)
 
 
 def _usage_value(window: LimitWindow | None) -> str:
@@ -196,14 +241,8 @@ def _usage_value(window: LimitWindow | None) -> str:
         if limit != "-":
             parts.append(f"Limit {limit}")
     remaining_percent = _remaining_percent(window)
-    if remaining_percent is not None and (
-        window.used is not None or window.remaining is not None
-    ):
+    if remaining_percent is not None:
         parts.append(f"{_fmt_number(remaining_percent)}% verbleibend")
-    elif window.percent is not None:
-        percent = _fmt_number(window.percent)
-        if percent != "-":
-            parts.append(f"{percent}%")
     if not parts and window.raw:
         return _shorten(window.raw, 28)
     return "  ".join(parts) if parts else "-"
@@ -240,7 +279,13 @@ def _remaining_percent(window: LimitWindow) -> float | None:
                 0.0,
                 min(100.0, float(window.remaining) * 100 / float(window.limit)),
             )
+        if _is_finite_number(window.percent):
+            return max(0.0, min(100.0, float(window.percent)))
+        if not 0 <= float(window.remaining) <= 100:
+            return None
         return max(0.0, min(100.0, float(window.remaining)))
+    if _is_finite_number(window.percent):
+        return max(0.0, min(100.0, float(window.percent)))
     return None
 
 

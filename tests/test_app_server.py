@@ -123,6 +123,14 @@ for line in sys.stdin:
             }},
         }}
         print(json.dumps(response), flush=True)
+    elif method == "model/list":
+        print(json.dumps({{
+            "id": message["id"],
+            "result": {{"data": [{{
+                "id": "gpt-5.3-codex-spark",
+                "model": "gpt-5.3-codex-spark",
+            }}]}},
+        }}), flush=True)
 """
     path.write_text(source, encoding="utf-8")
     path.chmod(0o700)
@@ -159,12 +167,17 @@ def test_app_server_fetch_uses_only_account_methods(tmp_path):
     assert usage.backend_account_id == "account-test"
     assert usage.five_hour is not None and usage.five_hour.remaining == 83
     assert usage.weekly is not None and usage.weekly.remaining == 58
+    spark = usage.model_pool("gpt-5.3-codex-spark")
+    assert spark is not None
+    assert spark.windows == ()
+    assert spark.availability_sources == ("model_catalog",)
     methods = [item["method"] for item in json.loads(requests_path.read_text())]
     assert methods == [
         "initialize",
         "initialized",
         "account/read",
         "account/rateLimits/read",
+        "model/list",
     ]
     assert not any(method.startswith(("thread/", "turn/")) for method in methods)
 
@@ -842,7 +855,7 @@ def test_app_server_missing_window_error_identifies_available_weekly_limit():
     ) == "5h limit unavailable in app server response (plan plus; available window weekly)"
 
 
-def test_app_server_reports_missing_five_hour_window(
+def test_app_server_accepts_missing_five_hour_compatibility_window(
     tmp_path,
     monkeypatch,
 ):
@@ -882,13 +895,11 @@ def test_app_server_reports_missing_five_hour_window(
 
     usage = fetch_account_usage_app_server(account, codex_command=command)
 
-    assert usage.status == AccountStatus.PARTIAL
+    assert usage.status == AccountStatus.OK
     assert usage.five_hour is None
     assert usage.weekly is not None and usage.weekly.remaining == 53
-    assert usage.error == (
-        "5h limit unavailable in app server response "
-        "(plan plus; available window weekly)"
-    )
+    assert usage.error is None
+    assert usage.main is not None
 
 
 def test_app_server_missing_window_error_reports_unsupported_duration():

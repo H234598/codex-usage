@@ -122,6 +122,11 @@ function makeApplet(onReady) {
   applet._timeStyles = {};
   applet._durationStyles = {};
   applet._styleTargets = {};
+  applet._routingPolicy = null;
+  applet._routingDecisions = {};
+  applet._routingSettingsReady = false;
+  applet._syncingRoutingSettings = false;
+  applet._routingPolicyApplying = false;
   applet.panelHeight = 24;
   applet.panelAccountSeparator = "bar";
   applet.set_applet_label = () => {};
@@ -176,6 +181,72 @@ test("remaining percentage prefers absolute used and limit values", () => {
   );
   assert.equal(applet._remainingPercent({ remaining: undefined, percent: undefined }), null);
   assert.equal(applet._remainingPercent({ remaining: 690, limit: 1000 }), 69);
+  assert.equal(applet._remainingPercent({ remaining: 690, percent: 69 }), 69);
+  assert.equal(applet._remainingPercent({ remaining: 690 }), null);
+});
+
+test("invalid absolute limit pairs cannot become visible usage", () => {
+  const applet = makeApplet();
+  const window = applet._safeWindow({
+    name: "5h",
+    used: 0,
+    limit: 0,
+    remaining: 0,
+    percent: null,
+  });
+
+  assert.equal(window.used, null);
+  assert.equal(window.limit, null);
+  assert.equal(window.remaining, null);
+  assert.equal(window.percent, null);
+  assert.equal(applet._remainingPercent(window), null);
+});
+
+test("explicit percentages survive invalid absolute limit pairs", () => {
+  const applet = makeApplet();
+  const window = applet._safeWindow({
+    name: "5h",
+    used: 0,
+    limit: 0,
+    remaining: 690,
+    percent: 69,
+  });
+
+  assert.equal(window.used, null);
+  assert.equal(window.limit, null);
+  assert.equal(window.remaining, null);
+  assert.equal(window.percent, 69);
+  assert.equal(applet._remainingPercent(window), 69);
+});
+
+test("out-of-range explicit percentages cannot become visible usage", () => {
+  const applet = makeApplet();
+  const window = applet._safeWindow({ name: "5h", percent: 101 });
+
+  assert.equal(window.percent, null);
+  assert.equal(applet._remainingPercent(window), null);
+});
+
+test("invalid signed counters are sanitized before rendering", () => {
+  const applet = makeApplet();
+  const negativeUsed = applet._safeWindow({
+    name: "5h",
+    used: -1,
+    limit: 100,
+    remaining: 80,
+  });
+  const zeroLimit = applet._safeWindow({ name: "5h", limit: 0, remaining: 50 });
+  const negativeRemaining = applet._safeWindow({ name: "5h", remaining: -1 });
+
+  assert.equal(negativeUsed.used, null);
+  assert.equal(negativeUsed.limit, 100);
+  assert.equal(negativeUsed.remaining, null);
+  assert.equal(applet._remainingPercent(negativeUsed), null);
+  assert.equal(zeroLimit.limit, null);
+  assert.equal(zeroLimit.remaining, null);
+  assert.equal(applet._remainingPercent(zeroLimit), null);
+  assert.equal(negativeRemaining.remaining, 0);
+  assert.equal(applet._remainingPercent(negativeRemaining), 0);
 });
 
 test("average panel source requires both limit windows", () => {
@@ -189,6 +260,131 @@ test("average panel source requires both limit windows", () => {
 
   assert.equal(applet._panelValueForSource(usage, 3), null);
   assert.equal(applet._panelWindowForSource(usage, 3), null);
+});
+
+test("dynamic pools survive validation and drive Spark panel slots", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    label: "Alpha",
+    captured_at: "2026-07-16T10:00:00+00:00",
+    five_hour: null,
+    weekly: null,
+    main: {
+      key: "main",
+      display_name: "Codex",
+      windows: [{ name: "30d", duration_seconds: 2592000, remaining: 72 }],
+      available: true,
+      allowed: true,
+      limit_reached: false,
+      availability_sources: ["app_server"],
+    },
+    models: {
+      "gpt-5.3-codex-spark": {
+        key: "gpt-5.3-codex-spark",
+        display_name: "GPT-5.3-Codex-Spark",
+        windows: [
+          { name: "5h", duration_seconds: 18000, remaining: 40 },
+          { name: "weekly", duration_seconds: 604800, remaining: 80 },
+          { name: "30d", duration_seconds: 2592000, remaining: 25 },
+        ],
+        available: true,
+        allowed: true,
+        limit_reached: false,
+        availability_sources: ["rate_limits"],
+      },
+    },
+    status: "ok",
+  }]);
+
+  assert.equal(usage.main.windows[0].duration_seconds, 2592000);
+  assert.equal(applet._panelValueForSource(usage, 4), 40);
+  assert.equal(applet._panelValueForSource(usage, 5), 80);
+  assert.equal(applet._panelValueForSource(usage, 6), 60);
+  assert.equal(applet._panelValueForSource(usage, 7), 25);
+  assert.equal(applet._panelWindowForSource(usage, 6).name, "5h");
+});
+
+test("invalid dynamic pool duration is rejected", () => {
+  const applet = makeApplet();
+  assert.throws(() => applet._safePool({
+    key: "main",
+    windows: [{ name: "bad", duration_seconds: -1 }],
+    availability_sources: [],
+  }, "main"), /invalid limit duration/);
+});
+
+test("cache invalidation clears dynamic usage pools", () => {
+  const applet = makeApplet();
+  const invalidated = applet._clearInvalidatedUsage({
+    status: "ok",
+    main: { windows: [{ name: "weekly" }] },
+    models: { "gpt-5.3-codex-spark": { windows: [{ name: "weekly" }] } },
+  });
+
+  assert.equal(invalidated.main, null);
+  assert.equal(Object.keys(invalidated.models).length, 0);
+  assert.equal(invalidated.status, "partial");
+});
+
+test("routing policy changes preserve scope precedence inputs", () => {
+  const applet = makeApplet();
+  const current = {
+    schema_version: 1,
+    global: false,
+    account: { alpha: true },
+    group: { build: false },
+    agent: {},
+    job: {},
+  };
+  const desired = {
+    schema_version: 1,
+    global: true,
+    account: {},
+    group: { build: true },
+    agent: {},
+    job: { release: false },
+  };
+
+  assert.deepEqual(
+    Array.from(applet._routingPolicyCommands(current, desired), (command) => Array.from(command)),
+    [
+      ["global", "allow"],
+      ["account", "inherit", "alpha"],
+      ["group", "allow", "build"],
+      ["job", "deny", "release"],
+    ]
+  );
+});
+
+test("routing status validation keeps bounded decisions", () => {
+  const applet = makeApplet();
+  const state = applet._validateRoutingState({
+    schema_version: 1,
+    policy: {
+      schema_version: 1,
+      global: false,
+      account: {},
+      group: {},
+      agent: {},
+      job: {},
+    },
+    decisions: {
+      alpha: {
+        decision: "spark",
+        model: "gpt-5.3-codex-spark",
+        reason: "spark_available",
+        paid_overage_allowed: false,
+        policy_source: "global",
+        usage_state: "known",
+      },
+    },
+  });
+
+  assert.equal(state.decisions.alpha.decision, "spark");
+  assert.equal(applet._routingDecisionParts({ account: "alpha" }), null);
+  applet._routingDecisions = state.decisions;
+  assert.equal(applet._routingDecisionParts({ account: "alpha" }).plain, "Routing Spark · Regel global");
 });
 
 test("browser values do not merge with unknown provenance", () => {
@@ -446,8 +642,8 @@ test("cache invalidation clears old account values instead of preserving them", 
     label: "Alpha",
     captured_at: new Date().toISOString(),
     status: "partial",
-    five_hour: null,
-    weekly: null,
+    five_hour: { remaining: 1 },
+    weekly: { remaining: 2 },
     stale: true,
     cache_invalidated: true,
   }]);
@@ -456,6 +652,24 @@ test("cache invalidation clears old account values instead of preserving them", 
   assert.equal(merged[0].cache_invalidated, true);
   assert.equal(merged[0].five_hour, null);
   assert.equal(merged[0].weekly, null);
+});
+
+test("cache invalidation clears embedded limit windows", () => {
+  const applet = makeApplet();
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    status: "ok",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+    values_captured_at: "2026-07-10T10:00:00.000Z",
+    cache_invalidated: true,
+  }]);
+
+  assert.equal(merged[0].status, "partial");
+  assert.equal(merged[0].five_hour, null);
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].values_captured_at, null);
 });
 
 test("epoch reset timestamps remain valid and report zero duration", () => {
@@ -654,6 +868,70 @@ test("stale cached values mark the panel as a warning", () => {
   assert.equal(classes.includes("codex-usage-panel-error"), false);
 });
 
+test("partial usage marks the panel and account row as incomplete", () => {
+  const applet = makeApplet();
+  const classes = [];
+  applet._clearPanelClasses = () => { classes.length = 0; };
+  applet.actor = {
+    add_style_class_name: (name) => classes.push(name),
+    remove_style_class_name() {},
+  };
+  applet._usages[0].status = "partial";
+
+  applet._updatePanel();
+
+  assert.ok(classes.includes("codex-usage-panel-warning"));
+  assert.equal(
+    applet._usageSeverity(applet._usages[0]),
+    "codex-usage-warning"
+  );
+  applet._usages[0].five_hour = null;
+  applet._usages[0].weekly = null;
+  assert.equal(
+    applet._usageSeverity(applet._usages[0]),
+    "codex-usage-warning"
+  );
+});
+
+test("blocked usage is never rendered as a normal empty account", () => {
+  const applet = makeApplet();
+  const classes = [];
+  applet._clearPanelClasses = () => { classes.length = 0; };
+  applet.actor = {
+    add_style_class_name: (name) => classes.push(name),
+    remove_style_class_name() {},
+  };
+  applet._usages[0].status = "blocked";
+  applet._usages[0].five_hour = null;
+  applet._usages[0].weekly = null;
+
+  applet._updatePanel();
+
+  assert.ok(classes.includes("codex-usage-panel-error"));
+  assert.equal(applet._usageSeverity(applet._usages[0]), "codex-usage-error");
+});
+
+test("blocked usage enters the per-account error notification state", () => {
+  const applet = makeApplet();
+  applet.notifyErrors = false;
+  applet._usages[0].status = "blocked";
+
+  applet._notifyForPayload();
+
+  assert.equal(applet._errorState["alpha:blocked"], true);
+});
+
+test("partial usage enters the per-account warning notification state", () => {
+  const applet = makeApplet();
+  applet.notifyWarnings = false;
+  applet._usages[0].status = "partial";
+  applet._usages[0].error = "weekly window unavailable";
+
+  applet._notifyForPayload();
+
+  assert.equal(applet._warningState["alpha:partial"], true);
+});
+
 test("oversized process output force-stops the child and reports a bounded error", () => {
   const applet = makeApplet();
   let forced = 0;
@@ -689,6 +967,24 @@ test("command error handling survives menu failures", () => {
   const applet = makeApplet();
   applet.menu = { removeAll() { throw new Error("menu broken"); } };
   assert.doesNotThrow(() => applet._showCommandError("backend failed"));
+});
+
+test("command errors remain visible when the display timer redraws the panel", () => {
+  const applet = makeApplet();
+  const classes = [];
+  applet._clearPanelClasses = () => { classes.length = 0; };
+  applet.actor = {
+    add_style_class_name: (name) => classes.push(name),
+    remove_style_class_name() {},
+  };
+
+  applet._showCommandError("backend failed");
+  applet._updatePanel();
+  assert.ok(classes.includes("codex-usage-panel-error"));
+
+  applet._recordRefreshSuccess();
+  applet._updatePanel();
+  assert.equal(classes.includes("codex-usage-panel-error"), false);
 });
 
 test("restlaufzeit is rendered, styled and uses the per-surface target", () => {
@@ -2121,7 +2417,7 @@ test("configured cache accepts a more complete matching identity", () => {
   assert.equal(merged[0].weekly.remaining, 60);
 });
 
-test("configured cache cannot replace a browser snapshot from another identity", () => {
+test("configured authenticated cache replaces a browser snapshot from another identity", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
   applet._backendAccounts = {
@@ -2153,9 +2449,11 @@ test("configured cache cannot replace a browser snapshot from another identity",
     stale: false,
   }]);
 
-  assert.equal(merged[0].backend_used, "browser");
-  assert.equal(merged[0].backend_account_id, "account-old");
-  assert.equal(merged[0].stale, true);
+  assert.equal(merged[0].backend_used, "direct");
+  assert.equal(merged[0].backend_account_id, "account-new");
+  assert.equal(merged[0].five_hour.remaining, 80);
+  assert.equal(merged[0].weekly.remaining, 60);
+  assert.equal(merged[0].stale, false);
 });
 
 test("identity-less fresh and cached payloads cannot replace identified values", () => {
@@ -2252,7 +2550,7 @@ test("same backend account id remains authoritative when user id is omitted", ()
   assert.equal(merged[0].stale, false);
 });
 
-test("partial user identity cannot authorize a different backend account id", () => {
+test("configured authenticated cache replaces a browser user-only identity", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
   applet._backendAccounts = {
@@ -2284,11 +2582,50 @@ test("partial user identity cannot authorize a different backend account id", ()
     stale: false,
   }]);
 
-  assert.equal(merged[0].backend_used, "browser");
-  assert.equal(merged[0].backend_account_id, "");
-  assert.equal(merged[0].five_hour.remaining, 80);
-  assert.equal(merged[0].weekly.remaining, 60);
-  assert.equal(merged[0].stale, true);
+  assert.equal(merged[0].backend_used, "direct");
+  assert.equal(merged[0].backend_account_id, "account-new");
+  assert.equal(merged[0].five_hour.remaining, 90);
+  assert.equal(merged[0].weekly.remaining, 70);
+  assert.equal(merged[0].stale, false);
+});
+
+test("authenticated empty cache clears foreign browser windows", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  };
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    backend_configured: "direct",
+    backend_used: "browser",
+    backend_user_id: "user-old",
+    backend_account_id: "account-old",
+    five_hour: { remaining: 70 },
+    weekly: { remaining: 50 },
+    status: "ok",
+    stale: false,
+  }];
+
+  const merged = applet._mergeCachedPayload([{
+    account: "alpha",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    backend_configured: "direct",
+    backend_used: "direct",
+    backend_user_id: "user-new",
+    backend_account_id: "account-new",
+    five_hour: null,
+    weekly: null,
+    status: "partial",
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].backend_used, "direct");
+  assert.equal(merged[0].backend_account_id, "account-new");
+  assert.equal(merged[0].five_hour, null);
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].stale, false);
 });
 
 test("identity changes win over an older capture timestamp", () => {
@@ -2388,6 +2725,80 @@ test("authoritative empty direct limits clear cached windows", () => {
   assert.equal(merged[0].weekly, null);
   assert.equal(merged[0].captured_at, "2026-07-10T10:05:00.000Z");
   assert.equal(merged[0].stale, false);
+});
+
+test("authoritative authenticated errors clear cached windows", () => {
+  for (const mergeName of ["_mergeFreshPayload", "_mergeCachedPayload"]) {
+    const applet = makeApplet();
+    applet._usages = [{
+      account: "alpha",
+      captured_at: "2026-07-10T10:00:00.000Z",
+      five_hour: { remaining: 80 },
+      weekly: { remaining: 60 },
+      backend_used: "direct",
+      backend_user_id: "user-alpha",
+      backend_account_id: "account-alpha",
+      status: "ok",
+      stale: false,
+    }];
+    const merged = applet[mergeName]([{
+      account: "alpha",
+      status: "error",
+      error: "backend response has ambiguous account identity",
+      captured_at: "2026-07-10T10:05:00.000Z",
+      five_hour: null,
+      weekly: null,
+      backend_used: "direct",
+      backend_user_id: "user-alpha",
+      backend_account_id: "account-alpha",
+      cache_invalidated: true,
+      stale: false,
+    }]);
+
+    assert.equal(merged[0].five_hour, null);
+    assert.equal(merged[0].weekly, null);
+    assert.equal(merged[0].status, "error");
+    assert.equal(merged[0].captured_at, "2026-07-10T10:05:00.000Z");
+  }
+});
+
+test("transient authenticated errors preserve cached windows", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: {
+      name: "5h",
+      remaining: 80,
+      reset_at: "2026-07-10T15:00:00.000Z",
+    },
+    weekly: {
+      name: "weekly",
+      remaining: 60,
+      reset_at: "2026-07-17T10:00:00.000Z",
+    },
+    backend_used: "direct",
+    backend_user_id: "user-alpha",
+    backend_account_id: "account-alpha",
+    status: "ok",
+    stale: false,
+  }];
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    status: "error",
+    error: "direct fetch failed: network error",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    five_hour: null,
+    weekly: null,
+    backend_used: "direct",
+    backend_user_id: "user-alpha",
+    backend_account_id: "account-alpha",
+    stale: false,
+  }]);
+
+  assert.equal(merged[0].five_hour.remaining, 80);
+  assert.equal(merged[0].weekly.remaining, 60);
+  assert.equal(merged[0].stale, true);
 });
 
 test("fresh successful payload preserves cached reset under missing reset times", () => {
@@ -2562,21 +2973,32 @@ test("backend synchronization requests configuration without a live usage poll",
   applet._syncStyleRows = () => {};
   applet._addIdle = () => {};
   applet._refreshFormattedSurfaces = () => {};
-  let argv = null;
+  const commands = [];
   applet._spawnAuxJson = (value, callback) => {
-    argv = value;
-    callback({ accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }] }, null);
+    commands.push(value);
+    if (value[1] === "account") {
+      callback({ accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }] }, null);
+    }
   };
 
   applet._loadAccountBackends();
 
-  assert.deepEqual(argv, [
+  assert.deepEqual(commands[0], [
     "codex-usage",
     "account",
     "overview",
     "--format",
     "json",
     "--config-only",
+  ]);
+  assert.deepEqual(commands[1], [
+    "codex-usage",
+    "policy",
+    "status",
+    "--role",
+    "arbeitsbiene",
+    "--format",
+    "json",
   ]);
 });
 
@@ -2975,6 +3397,43 @@ test("service status errors preserve a previously active systemd owner", () => {
   assert.equal(continuationCalls, 1);
 });
 
+test("service status errors hand stale automatic polling back to the applet", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._serviceChecked = true;
+  applet._systemdActive = true;
+  applet._serviceAutoAttempted = true;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._cacheIsStale = () => true;
+  applet._spawnAuxJson = (_argv, callback) => callback(null, "status unavailable");
+
+  applet._checkServiceStatus(() => {});
+
+  assert.equal(applet._systemdActive, false);
+  assert.equal(applet._usesAppletPolling(), true);
+});
+
+test("service status errors hand an empty automatic cache back to the applet", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._serviceChecked = true;
+  applet._systemdActive = true;
+  applet._serviceAutoAttempted = true;
+  applet._usages = [];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._cacheIsStale = () => false;
+  applet._spawnAuxJson = (_argv, callback) => callback(null, "status unavailable");
+
+  applet._checkServiceStatus(() => {});
+
+  assert.equal(applet._systemdActive, false);
+  assert.equal(applet._usesAppletPolling(), true);
+});
+
 test("a valid inactive service status retries after a previous activation", () => {
   const applet = makeApplet();
   applet.pollOwner = "auto";
@@ -2999,6 +3458,29 @@ test("a valid inactive service status retries after a previous activation", () =
     "service enable --format json",
   ]);
   assert.equal(applet._serviceAutoAttempted, true);
+});
+
+test("a failed last service run never becomes the systemd poll owner", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._serviceChecked = true;
+  applet._systemdActive = true;
+  applet._serviceAutoAttempted = true;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._cacheIsStale = () => false;
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    installed: true,
+    enabled: true,
+    active: true,
+    service_result: "failed",
+  }, null);
+
+  applet._checkServiceStatus(() => {});
+
+  assert.equal(applet._systemdActive, false);
+  assert.equal(applet._serviceAutoAttempted, false);
 });
 
 test("an active unmanaged timer is not treated as the poll owner", () => {
@@ -3070,6 +3552,31 @@ test("service enable requires strict ownership booleans", () => {
   applet._enableBackgroundService();
   assert.equal(applet._systemdActive, false);
   assert.equal(applet._serviceAutoAttempted, false);
+  assert.notEqual(error, "");
+});
+
+test("service enable rejects a timer with a failed last run", () => {
+  const applet = makeApplet();
+  applet.pollOwner = "auto";
+  applet.autoRefresh = true;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._refreshFresh = () => {};
+  applet._spawnAuxJson = (_argv, callback) => {
+    callback({
+      installed: true,
+      enabled: true,
+      active: true,
+      service_result: "failed",
+    }, null);
+  };
+  let error = "";
+  applet._showCommandError = (value) => { error = value; };
+
+  applet._enableBackgroundService();
+
+  assert.equal(applet._systemdActive, false);
   assert.notEqual(error, "");
 });
 

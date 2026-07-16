@@ -27,6 +27,7 @@ from .direct import (
 from .extractor import LOCAL_TZ
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
+from .usage_limits import parse_app_server_usage_pools
 
 APP_SERVER_BACKEND = "app-server"
 APP_SERVER_TIMEOUT_SECONDS = 30
@@ -105,12 +106,17 @@ def fetch_account_usage_app_server(
         if _auth_email_changed(auth_email_before, auth_email):
             raise AppServerAuthError("auth.json email changed during rate-limit request")
         five_hour, weekly = _windows_from_response(payload)
+        main, model_pools = parse_app_server_usage_pools(
+            payload,
+            captured_at=captured_at,
+            model_ids=payload.get("_model_ids", ()),
+        )
+        has_dynamic_usage = bool(
+            main and any(window.has_usage_value for window in main.windows)
+        )
         status = (
             AccountStatus.OK
-            if five_hour is not None
-            and weekly is not None
-            and five_hour.has_usage_value
-            and weekly.has_usage_value
+            if has_dynamic_usage
             else AccountStatus.PARTIAL
         )
         return AccountUsage(
@@ -119,6 +125,8 @@ def fetch_account_usage_app_server(
             captured_at=captured_at,
             five_hour=five_hour,
             weekly=weekly,
+            main=main,
+            models=model_pools,
             status=status,
             error=(
                 None
@@ -269,23 +277,43 @@ def _read_rate_limits(
 
         try:
             read_account(2, refresh_token=refresh)
-            return _request_rate_limits(
+            rate_limits = _request_rate_limits(
                 process,
                 reader,
                 request_id=3,
                 deadline=deadline,
                 stderr_reader=stderr_reader,
             )
+            return _with_model_ids(
+                rate_limits,
+                _request_model_ids(
+                    process,
+                    reader,
+                    request_id=4,
+                    deadline=deadline,
+                    stderr_reader=stderr_reader,
+                ),
+            )
         except AppServerAuthError:
             if refresh:
                 raise
             read_account(4, refresh_token=True)
-            return _request_rate_limits(
+            rate_limits = _request_rate_limits(
                 process,
                 reader,
                 request_id=5,
                 deadline=deadline,
                 stderr_reader=stderr_reader,
+            )
+            return _with_model_ids(
+                rate_limits,
+                _request_model_ids(
+                    process,
+                    reader,
+                    request_id=6,
+                    deadline=deadline,
+                    stderr_reader=stderr_reader,
+                ),
             )
     finally:
         _stop_process(process)
@@ -317,6 +345,50 @@ def _request_rate_limits(
     if not isinstance(response, dict):
         raise AppServerProtocolError("app server rate-limit result is not an object")
     return response
+
+
+def _request_model_ids(
+    process: subprocess.Popen[bytes],
+    reader: _LineReader,
+    *,
+    request_id: int,
+    deadline: float,
+    stderr_reader: _StderrReader,
+) -> tuple[str, ...]:
+    _send(
+        process,
+        {
+            "method": "model/list",
+            "id": request_id,
+            "params": {"includeHidden": True, "limit": 100},
+        },
+    )
+    response = _response_for(
+        reader,
+        request_id,
+        deadline=deadline,
+        stderr_reader=stderr_reader,
+    )
+    data = response.get("data")
+    if not isinstance(data, list) or len(data) > 100:
+        raise AppServerProtocolError("app server model list is invalid")
+    model_ids: list[str] = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise AppServerProtocolError("app server model entry is invalid")
+        model = item.get("model") or item.get("id")
+        if not isinstance(model, str) or not model.strip() or len(model) > 120:
+            raise AppServerProtocolError("app server model id is invalid")
+        model_ids.append(model.strip())
+    return tuple(dict.fromkeys(model_ids))
+
+
+def _with_model_ids(
+    rate_limits: dict[str, Any], model_ids: tuple[str, ...]
+) -> dict[str, Any]:
+    result = dict(rate_limits)
+    result["_model_ids"] = model_ids
+    return result
 
 
 def _resolve_codex(explicit: str | None) -> str:

@@ -48,6 +48,14 @@ TITLE_MAX_CHARS = 500
 DIAGNOSTIC_MAX_KEYS = 40
 DIAGNOSTIC_MAX_FIELD_CHARS = 200
 LOGIN_HINTS = ("log in", "sign in", "anmelden", "einloggen", "continue with")
+LOGIN_PAGE_HINTS = (
+    "log in to start chatting",
+    "log in to get answers",
+    "continue with google",
+    "continue with apple",
+    "continue with phone",
+    "sign up for free",
+)
 CLOUDFLARE_HINTS = (
     "cloudflare",
     "checking your browser",
@@ -131,28 +139,15 @@ def fetch_account_usage(
                         page.wait_for_load_state("networkidle", timeout=12_000)
                     except PlaywrightTimeoutError:
                         pass
-                    body_text = _safe_body_text(page)
+                    body_text, text_sources = _safe_page_text_sources(page)
                     current_url = page.url
                 finally:
                     _close_context(context)
 
-        source_urls.update(_redact_url(candidate.url) for candidate in candidates)
+        raw_candidates = list(candidates)
+        source_urls.update(_redact_url(candidate.url) for candidate in raw_candidates)
         auth_user_id, auth_account_id = auth_identity_for_account(account)
         auth_plan_type = auth_plan_type_for_account(account)
-        try:
-            candidates = select_identity_consistent_candidates(
-                candidates,
-                auth_user_id=auth_user_id,
-                auth_account_id=auth_account_id,
-            )
-        except ValueError as exc:
-            return AccountUsage(
-                account_id=account.id,
-                label=account.label,
-                captured_at=captured_at,
-                status=AccountStatus.ERROR,
-                error=str(exc),
-            )
         if auth_identity_changed(
             before_user_id=auth_user_id_before,
             before_account_id=auth_account_id_before,
@@ -168,9 +163,32 @@ def fetch_account_usage(
                 status=AccountStatus.LOGIN_REQUIRED,
                 error="auth.json identity changed during browser request",
             )
+        try:
+            candidates = select_identity_consistent_candidates(
+                raw_candidates,
+                auth_user_id=auth_user_id,
+                auth_account_id=auth_account_id,
+            )
+        except ValueError as exc:
+            return AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                status=AccountStatus.ERROR,
+                error=str(exc),
+            )
+        identity_candidates = candidates
+        if not identity_candidates:
+            # Preserve rejected identity metadata for a partial result, never
+            # the limit values from an ambiguous user-only response.
+            identity_candidates = [
+                candidate
+                for candidate in raw_candidates
+                if backend_identity_from_payload(candidate.payload) != (None, None)
+            ]
         structured_identity_present = any(
             backend_identity_from_payload(candidate.payload) != (None, None)
-            for candidate in candidates
+            for candidate in identity_candidates
         )
         json_windows = extract_windows(
             body_text="",
@@ -178,31 +196,35 @@ def fetch_account_usage(
             text_sources=(),
             now=captured_at,
         )
+        raw_json_windows = extract_windows(
+            body_text="",
+            json_candidates=raw_candidates,
+            text_sources=(),
+            now=captured_at,
+        )
         json_has_usage = any(
             window is not None and window.has_usage_value
-            for window in json_windows
+            for window in (*json_windows, *raw_json_windows)
         )
         allow_dom_fallback = (
             not structured_identity_present
-            or (
-                not json_has_usage
-                and _structured_identity_matches_account(
-                    candidates,
-                    auth_user_id=auth_user_id,
-                    auth_account_id=auth_account_id,
-                )
+            or _structured_identity_matches_account(
+                candidates,
+                auth_user_id=auth_user_id,
+                auth_account_id=auth_account_id,
             )
         )
         if allow_dom_fallback:
             five_hour, weekly = extract_windows(
                 body_text=body_text,
                 json_candidates=candidates,
+                text_sources=text_sources,
                 now=captured_at,
             )
         else:
             five_hour, weekly = json_windows
-        backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
-        backend_plan_type = backend_plan_type_from_candidates(candidates)
+        backend_user_id, backend_account_id = backend_identity_from_candidates(identity_candidates)
+        backend_plan_type = backend_plan_type_from_candidates(identity_candidates)
         try:
             backend_user_id, backend_account_id = canonical_backend_identity(
                 backend_user_id,
@@ -212,6 +234,11 @@ def fetch_account_usage(
                 auth_plan_type=auth_plan_type,
                 backend_plan_type=backend_plan_type,
                 require_backend_identity=True,
+                require_backend_account_id=bool(auth_account_id and json_has_usage),
+                # A browser session cannot prove the selected account when
+                # WHAM echoes the shared user ID as account_id. Fail closed
+                # instead of displaying another account's limits.
+                reject_ambiguous_backend_identity=bool(auth_account_id and backend_account_id),
             )
         except DirectAuthError as exc:
             return AccountUsage(
@@ -271,12 +298,20 @@ def _structured_identity_matches_account(
     auth_user_id: str | None,
     auth_account_id: str | None,
 ) -> bool:
-    if not auth_account_id:
-        return False
     backend_user_id, backend_account_id = backend_identity_from_candidates(candidates)
-    if backend_account_id != auth_account_id:
+    if not backend_account_id:
         return False
-    return not auth_user_id or not backend_user_id or backend_user_id == auth_user_id
+    try:
+        canonical_backend_identity(
+            backend_user_id,
+            backend_account_id,
+            auth_user_id=auth_user_id,
+            auth_account_id=auth_account_id,
+            require_backend_identity=True,
+        )
+    except ValueError:
+        return False
+    return True
 
 
 def probe_account(
@@ -313,13 +348,14 @@ def probe_account(
                     page.wait_for_load_state("networkidle", timeout=12_000)
                 except PlaywrightTimeoutError:
                     pass
-                body_text = _safe_body_text(page)
+                body_text, text_sources = _safe_page_text_sources(page)
             finally:
                 _close_context(context)
 
     five_hour, weekly = extract_windows(
         body_text=body_text,
         json_candidates=candidates,
+        text_sources=text_sources,
         now=captured_at,
     )
     saved: list[str] = []
@@ -348,6 +384,9 @@ def diagnose_account(
 ) -> dict[str, Any]:
     captured_at = datetime.now(tz=LOCAL_TZ)
     profile_dir = _prepare_profile(account)
+    diagnostic_auth_path = auth_json_path
+    if diagnostic_auth_path is None and account.auth_json_path:
+        diagnostic_auth_path = Path(account.auth_json_path).expanduser()
     responses: list[dict[str, Any]] = []
     result: dict[str, Any] = {
         "account": account.id,
@@ -357,7 +396,7 @@ def diagnose_account(
         "captured_at": captured_at.isoformat(),
         "analytics_url": config.analytics_url,
         "headed": headed,
-        "codex_auth": _diagnose_auth_json(auth_json_path),
+        "codex_auth": _diagnose_auth_json(diagnostic_auth_path),
     }
 
     try:
@@ -393,7 +432,13 @@ def diagnose_account(
                             "final_url": _redact_url(page.url),
                             "title": title,
                             "main_status": main_response.status if main_response else None,
-                            "detected": _detect_page_state(page.url, title, body_text, responses),
+                            "detected": _detect_page_state(
+                                page.url,
+                                title,
+                                body_text,
+                                responses,
+                                main_status=main_response.status if main_response else None,
+                            ),
                             "body_excerpt": _safe_excerpt(body_text),
                             "responses": responses[-20:],
                             "screenshot": screenshot_path,
@@ -564,6 +609,35 @@ def _safe_body_text(page: Any) -> str:
         return ""
 
 
+def _safe_page_text_sources(page: Any) -> tuple[str, tuple[tuple[str, str], ...]]:
+    body_text = _safe_body_text(page)
+    html_text = _safe_html_text(page)
+    sources = tuple(
+        (source, text)
+        for source, text in (("bodyText", body_text), ("htmlText", html_text))
+        if text.strip()
+    )
+    return body_text, sources
+
+
+def _safe_html_text(page: Any) -> str:
+    try:
+        html_text = page.locator("html").evaluate(
+            """element => {
+                const clone = element.cloneNode(true);
+                clone.querySelectorAll(
+                    "script, style, link, meta, noscript, template"
+                ).forEach((child) => child.remove());
+                return clone.outerHTML || "";
+            }"""
+        )
+    except (AttributeError, PlaywrightError, TypeError):
+        return ""
+    if not isinstance(html_text, str):
+        return ""
+    return _limit_text(html_text, BROWSER_TEXT_MAX_CHARS)
+
+
 def _safe_title(page: Any) -> str:
     try:
         return _limit_text(page.title(), TITLE_MAX_CHARS)
@@ -587,20 +661,24 @@ def _detect_page_state(
     title: str,
     body_text: str,
     responses: list[dict[str, Any]] | None = None,
+    *,
+    main_status: int | None = None,
 ) -> str:
     haystack = f"{url}\n{title}\n{body_text}".lower()
     response_urls = "\n".join(str(item.get("url", "")) for item in responses or []).lower()
-    response_statuses = {item.get("status") for item in responses or []}
     if title.strip().lower() == "just a moment...":
         return "cloudflare"
-    if "/cdn-cgi/challenge-platform/" in response_urls:
-        return "cloudflare"
-    if 403 in response_statuses and "chatgpt.com/codex/cloud/settings/analytics" in haystack:
-        return "cloudflare"
-    if any(hint in haystack for hint in CLOUDFLARE_HINTS):
+    if (
+        main_status == 403
+        and "chatgpt.com/codex/cloud/settings/analytics" in url.lower()
+    ):
         return "cloudflare"
     if "auth" in url.lower() or any(hint in haystack for hint in LOGIN_HINTS):
         return "login_required"
+    if any(hint in haystack for hint in CLOUDFLARE_HINTS):
+        return "cloudflare"
+    if "/cdn-cgi/challenge-platform/" in response_urls:
+        return "cloudflare"
     if "5 stunden nutzungsgrenze" in haystack or "weekly usage limit" in haystack:
         return "analytics_page"
     if "codex" in haystack and "analytics" in haystack:
@@ -632,7 +710,7 @@ def _status_for_result(
     weekly: LimitWindow | None,
 ) -> AccountStatus:
     lower = body_text.lower()
-    if "auth" in current_url.lower() or (
+    if "auth" in current_url.lower() or _looks_like_login_page(lower) or (
         not _has_usage_value(five_hour)
         and not _has_usage_value(weekly)
         and any(hint in lower for hint in LOGIN_HINTS)
@@ -645,6 +723,10 @@ def _status_for_result(
 
 def _has_usage_value(window: LimitWindow | None) -> bool:
     return window is not None and window.has_usage_value
+
+
+def _looks_like_login_page(lower_body_text: str) -> bool:
+    return any(hint in lower_body_text for hint in LOGIN_PAGE_HINTS)
 
 
 def _launch_persistent_context(

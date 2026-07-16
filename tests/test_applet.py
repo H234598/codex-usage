@@ -29,6 +29,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
 
     assert metadata["uuid"] == APPLET_UUID
     assert metadata["version"] == project["project"]["version"]
+    assert metadata["comments"] == f"Version: {metadata['version']}"
     assert f'__version__ = "{metadata["version"]}"' in package_init
     assert metadata["max-instances"] == 1
     assert settings["refresh-interval"]["default"] == 300
@@ -39,6 +40,10 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     assert set(settings["panel-percent-source"]["options"].values()) == {
         "average",
         "five-hour",
+        "spark-average",
+        "spark-five-hour",
+        "spark-other",
+        "spark-weekly",
         "weekly",
     }
     panel_table = settings["account-panel-settings"]
@@ -52,7 +57,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     ]
     assert panel_table["columns"][2]["min"] == 1
     assert panel_table["columns"][2]["max"] == 100
-    assert set(panel_table["columns"][4]["options"].values()) == set(range(4))
+    assert set(panel_table["columns"][4]["options"].values()) == set(range(8))
     assert panel_table["columns"][3]["default"] is False
     assert settings["panel-account-separator"]["default"] == "bar"
     assert set(settings["panel-account-separator"]["options"].values()) == {
@@ -82,6 +87,16 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "Bisheriger Direktabruf": 0,
         "Codex App Server": 1,
     }
+    assert settings["routing-global-paid-credits"]["default"] is False
+    routing_table = settings["routing-credit-overrides"]
+    assert routing_table["show-buttons"] is True
+    assert [column["id"] for column in routing_table["columns"]] == [
+        "scope",
+        "identifier",
+        "enabled",
+        "allow",
+    ]
+    assert set(routing_table["columns"][0]["options"].values()) == set(range(4))
     date_table = settings["account-date-styles"]
     time_table = settings["account-time-styles"]
     for table in (date_table, time_table):
@@ -377,6 +392,49 @@ def test_reload_running_applet_verifies_the_loaded_version(monkeypatch) -> None:
     assert installer._reload_running_applet(expected_version=expected_version) == "ok"
     assert len(calls) == 2
     assert calls[1][0][-2] == "org.Cinnamon.Eval"
+
+
+def test_reload_running_applet_falls_back_to_cinnamon_dbus(monkeypatch) -> None:
+    calls = []
+    expected_version = "0.6.434"
+
+    class Result:
+        def __init__(self, returncode=0, stdout=""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/gdbus")
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if "org.Cinnamon.LookingGlass" in args:
+            return Result(returncode=1)
+        if "org.Cinnamon.ReloadXlet" in args:
+            return Result()
+        encoded = json.dumps([expected_version])
+        return Result(stdout=f"(true, {json.dumps(encoded)!r})")
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+
+    assert installer._reload_running_applet(expected_version=expected_version) == "ok"
+    assert "org.Cinnamon.ReloadXlet" in calls[1][0]
+    assert "org.Cinnamon.Eval" in calls[2][0]
+
+
+def test_reload_running_applet_reports_not_running_for_missing_cinnamon(monkeypatch) -> None:
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: name is not activatable"
+
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/gdbus")
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda *args, **kwargs: Result(),
+    )
+
+    assert installer._reload_running_applet(expected_version="0.6.435") == "not-running"
 
 
 def test_reload_running_applet_reports_a_stale_loaded_version(monkeypatch) -> None:

@@ -14,6 +14,8 @@ const ANALYTICS_URL = "https://chatgpt.com/codex/cloud/settings/analytics";
 const MAX_JSON_CHARS = 262144;
 const MAX_STDERR_CHARS = 4096;
 const MAX_ACCOUNTS = 100;
+const MAX_USAGE_POOLS = 20;
+const MAX_POOL_WINDOWS = 8;
 const MAX_TEXT_CHARS = 500;
 const COMMAND_TIMEOUT_MS = 120000;
 const AUX_COMMAND_TIMEOUT_MS = 30000;
@@ -69,6 +71,8 @@ CodexUsageApplet.prototype = {
         this.accountTimeStyles = [];
         this.accountDurationStyles = [];
         this.accountStyleTargets = [];
+        this.routingGlobalPaidCredits = false;
+        this.routingCreditOverrides = [];
 
         this._removed = false;
         this._sources = {};
@@ -79,6 +83,7 @@ CodexUsageApplet.prototype = {
         this._refreshFailures = 0;
         this._circuitOpenUntil = 0;
         this._lastRefreshError = "";
+        this._commandError = "";
         this._lastGoodPanel = { plain: "--", markup: "--" };
         this._lastGoodTooltip = "";
         this._generation = 0;
@@ -123,6 +128,11 @@ CodexUsageApplet.prototype = {
         this._timeStyles = Object.create(null);
         this._durationStyles = Object.create(null);
         this._styleTargets = Object.create(null);
+        this._routingPolicy = null;
+        this._routingDecisions = Object.create(null);
+        this._routingSettingsReady = false;
+        this._syncingRoutingSettings = false;
+        this._routingPolicyApplying = false;
         this._systemdActive = false;
         this._serviceChecked = false;
         this._serviceStatus = {};
@@ -203,6 +213,16 @@ CodexUsageApplet.prototype = {
         bind("account-time-styles", "accountTimeStyles", this._onTimeStylesChanged);
         bind("account-duration-styles", "accountDurationStyles", this._onDurationStylesChanged);
         bind("account-style-targets", "accountStyleTargets", this._onStyleTargetsChanged);
+        bind(
+            "routing-global-paid-credits",
+            "routingGlobalPaidCredits",
+            this._onRoutingSettingsChanged
+        );
+        bind(
+            "routing-credit-overrides",
+            "routingCreditOverrides",
+            this._onRoutingSettingsChanged
+        );
     },
 
     _runSafely: function(context, callback, fallback) {
@@ -234,6 +254,7 @@ CodexUsageApplet.prototype = {
     _recordRefreshSuccess: function() {
         this._refreshFailures = 0;
         this._lastRefreshError = "";
+        this._commandError = "";
     },
 
     _recordRefreshFailure: function(error) {
@@ -994,19 +1015,23 @@ CodexUsageApplet.prototype = {
                 !Array.isArray(payload) &&
                 typeof payload.installed === "boolean" &&
                 typeof payload.enabled === "boolean" &&
-                typeof payload.active === "boolean";
+                typeof payload.active === "boolean" &&
+                (payload.service_result === undefined ||
+                    typeof payload.service_result === "string");
             this._serviceChecked = true;
             if (validStatus) {
                 this._serviceStatus = payload;
-                this._systemdActive = Boolean(
-                    payload.installed && payload.enabled && payload.active
-                );
+                this._systemdActive = this._serviceStatusIsHealthy(payload);
                 if (!this._systemdActive) {
                     this._serviceAutoAttempted = false;
                 }
-            } else if (!wasChecked) {
-                this._serviceStatus = {};
-                this._systemdActive = false;
+            } else {
+                if (!wasChecked || !this._usages.length || this._cacheIsStale()) {
+                    this._systemdActive = false;
+                }
+                if (!wasChecked) {
+                    this._serviceStatus = {};
+                }
             }
             this._scheduleTimer();
             if (this._removed || this._safeMode) {
@@ -1034,6 +1059,26 @@ CodexUsageApplet.prototype = {
             }
             callback();
         }));
+    },
+
+    _serviceStatusIsHealthy: function(payload) {
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+            return false;
+        }
+        if (
+            typeof payload.installed !== "boolean" ||
+            typeof payload.enabled !== "boolean" ||
+            typeof payload.active !== "boolean"
+        ) {
+            return false;
+        }
+        if (
+            payload.service_result !== undefined &&
+            payload.service_result !== "success"
+        ) {
+            return false;
+        }
+        return Boolean(payload.installed && payload.enabled && payload.active);
     },
 
     _cacheIsStale: function() {
@@ -1251,6 +1296,252 @@ CodexUsageApplet.prototype = {
                     this._refreshFresh(false);
                 }
             }
+            this._loadRoutingState();
+        }));
+    },
+
+    _loadRoutingState: function() {
+        if (this._removed || this._safeMode || this._routingPolicyApplying) {
+            return;
+        }
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            return;
+        }
+        argv.push("policy", "status", "--role", "arbeitsbiene", "--format", "json");
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (error) {
+                global.log("[" + UUID + "] routing status failed: " + this._shortText(error, 180));
+                return;
+            }
+            let state;
+            try {
+                state = this._validateRoutingState(payload);
+            } catch (e) {
+                global.log("[" + UUID + "] invalid routing status: " + this._shortText(e, 180));
+                return;
+            }
+            this._routingPolicy = state.policy;
+            this._routingDecisions = state.decisions;
+            this._syncRoutingSettings(state.policy);
+            this._routingSettingsReady = true;
+            this._refreshFormattedSurfaces();
+        }));
+    },
+
+    _validateRoutingState: function(payload) {
+        if (!payload || payload.schema_version !== 1) {
+            throw new Error("unsupported routing status");
+        }
+        let policy = this._validateRoutingPolicy(payload.policy);
+        if (!payload.decisions || typeof payload.decisions !== "object" || Array.isArray(payload.decisions)) {
+            throw new Error("invalid routing decisions");
+        }
+        let decisions = Object.create(null);
+        let keys = Object.keys(payload.decisions);
+        if (keys.length > MAX_ACCOUNTS) {
+            throw new Error("too many routing decisions");
+        }
+        for (let i = 0; i < keys.length; i++) {
+            let account = this._safeText(keys[i], 64);
+            let value = payload.decisions[keys[i]];
+            if (!account || !value || typeof value !== "object" || Array.isArray(value)) {
+                throw new Error("invalid routing decision");
+            }
+            let decision = this._safeText(value.decision, 32);
+            if (["spark", "main", "credits", "blocked", "unchanged"].indexOf(decision) === -1) {
+                throw new Error("invalid routing decision value");
+            }
+            decisions[account] = {
+                decision: decision,
+                model: this._safeText(value.model, 120),
+                reason: this._safeText(value.reason, 120),
+                paid_overage_allowed: value.paid_overage_allowed === true,
+                policy_source: this._safeText(value.policy_source, 160),
+                usage_state: this._safeText(value.usage_state, 32)
+            };
+        }
+        return { policy: policy, decisions: decisions };
+    },
+
+    _validateRoutingPolicy: function(value) {
+        if (!value || value.schema_version !== 1 || typeof value.global !== "boolean") {
+            throw new Error("invalid routing policy");
+        }
+        let policy = { schema_version: 1, global: value.global };
+        ["account", "group", "agent", "job"].forEach(Lang.bind(this, function(scope) {
+            let source = value[scope];
+            if (!source || typeof source !== "object" || Array.isArray(source)) {
+                throw new Error("invalid routing policy scope");
+            }
+            let keys = Object.keys(source);
+            if (keys.length > 500) {
+                throw new Error("too many routing policy rules");
+            }
+            policy[scope] = Object.create(null);
+            for (let i = 0; i < keys.length; i++) {
+                let identifier = this._routingIdentifier(keys[i]);
+                if (typeof source[keys[i]] !== "boolean") {
+                    throw new Error("invalid routing policy rule");
+                }
+                policy[scope][identifier] = source[keys[i]];
+            }
+        }));
+        return policy;
+    },
+
+    _routingIdentifier: function(value) {
+        let identifier = this._safeText(value, 128);
+        if (!/^[A-Za-z0-9_.:@+\-]{1,128}$/.test(identifier)) {
+            throw new Error("invalid routing policy identifier");
+        }
+        return identifier;
+    },
+
+    _syncRoutingSettings: function(policy) {
+        let scopes = ["account", "group", "agent", "job"];
+        let rows = [];
+        for (let scopeIndex = 0; scopeIndex < scopes.length; scopeIndex++) {
+            let identifiers = Object.keys(policy[scopes[scopeIndex]]).sort();
+            for (let i = 0; i < identifiers.length; i++) {
+                rows.push({
+                    scope: scopeIndex,
+                    identifier: identifiers[i],
+                    enabled: true,
+                    allow: policy[scopes[scopeIndex]][identifiers[i]]
+                });
+            }
+        }
+        this._syncingRoutingSettings = true;
+        this.routingGlobalPaidCredits = policy.global;
+        this.routingCreditOverrides = rows;
+        try {
+            this.settings.setValue("routing-global-paid-credits", policy.global);
+            this.settings.setValue("routing-credit-overrides", rows);
+        } catch (e) {
+            global.log("[" + UUID + "] routing settings sync failed: " + String(e));
+        }
+        this._deferGuardRelease("_syncingRoutingSettings", "routing settings guard cleanup");
+    },
+
+    _onRoutingSettingsChanged: function() {
+        if (
+            !this._routingSettingsReady || this._syncingRoutingSettings ||
+            this._routingPolicyApplying || this._removed || this._safeMode
+        ) {
+            return;
+        }
+        let rows = this._normalizeRoutingRows(this.routingCreditOverrides);
+        let desired = {
+            schema_version: 1,
+            global: this.routingGlobalPaidCredits === true,
+            account: Object.create(null),
+            group: Object.create(null),
+            agent: Object.create(null),
+            job: Object.create(null)
+        };
+        let scopes = ["account", "group", "agent", "job"];
+        for (let i = 0; i < rows.length; i++) {
+            if (rows[i].enabled) {
+                desired[scopes[rows[i].scope]][rows[i].identifier] = rows[i].allow;
+            }
+        }
+        let commands = this._routingPolicyCommands(this._routingPolicy, desired);
+        if (!commands.length) {
+            return;
+        }
+        this._routingPolicyApplying = true;
+        this._applyRoutingPolicyCommands(commands, 0);
+    },
+
+    _normalizeRoutingRows: function(rows) {
+        if (!Array.isArray(rows) || rows.length > 500) {
+            throw new Error("invalid routing policy rows");
+        }
+        let result = [];
+        let seen = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            let row = rows[i];
+            let scope = Number(row && row.scope);
+            if (!Number.isInteger(scope) || scope < 0 || scope > 3 ||
+                typeof row.enabled !== "boolean" || typeof row.allow !== "boolean") {
+                throw new Error("invalid routing policy row");
+            }
+            let identifier = this._routingIdentifier(row.identifier);
+            let key = scope + ":" + identifier;
+            if (seen[key]) {
+                throw new Error("duplicate routing policy row");
+            }
+            seen[key] = true;
+            result.push({
+                scope: scope,
+                identifier: identifier,
+                enabled: row.enabled,
+                allow: row.allow
+            });
+        }
+        return result;
+    },
+
+    _routingPolicyCommands: function(current, desired) {
+        current = current || { global: false, account: {}, group: {}, agent: {}, job: {} };
+        let commands = [];
+        if (current.global !== desired.global) {
+            commands.push(["global", desired.global ? "allow" : "deny"]);
+        }
+        ["account", "group", "agent", "job"].forEach(function(scope) {
+            let identifiers = Object.create(null);
+            Object.keys(current[scope] || {}).forEach(function(identifier) {
+                identifiers[identifier] = true;
+            });
+            Object.keys(desired[scope]).forEach(function(identifier) {
+                identifiers[identifier] = true;
+            });
+            Object.keys(identifiers).sort().forEach(function(identifier) {
+                let before = current[scope] && current[scope][identifier];
+                let after = desired[scope][identifier];
+                if (after === undefined && before !== undefined) {
+                    commands.push([scope, "inherit", identifier]);
+                } else if (after !== undefined && after !== before) {
+                    commands.push([scope, after ? "allow" : "deny", identifier]);
+                }
+            });
+        });
+        return commands;
+    },
+
+    _applyRoutingPolicyCommands: function(commands, index) {
+        if (this._removed || this._safeMode) {
+            this._routingPolicyApplying = false;
+            return;
+        }
+        if (index >= commands.length) {
+            this._routingPolicyApplying = false;
+            this._loadRoutingState();
+            return;
+        }
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._routingPolicyApplying = false;
+            return;
+        }
+        argv.push("policy", "set", commands[index][0], commands[index][1]);
+        if (commands[index][2]) {
+            argv.push("--id", commands[index][2]);
+        }
+        argv.push("--format", "json");
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (error) {
+                this._routingPolicyApplying = false;
+                this._showCommandError(_("Routing-Richtlinie konnte nicht gespeichert werden: ") + error);
+                this._loadRoutingState();
+                return;
+            }
+            this._applyRoutingPolicyCommands(commands, index + 1);
         }));
     },
 
@@ -1309,6 +1600,8 @@ CodexUsageApplet.prototype = {
             captured_at: "",
             five_hour: null,
             weekly: null,
+            main: null,
+            models: Object.create(null),
             status: "partial",
             error: _("Noch keine gespeicherten Nutzungswerte"),
             blocked_until: "",
@@ -1407,8 +1700,8 @@ CodexUsageApplet.prototype = {
         if (
             !Number.isInteger(order) || order < 1 || order > 100 ||
             typeof row.muted !== "boolean" ||
-            !Number.isInteger(slot1) || slot1 < 0 || slot1 > 3 ||
-            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 3
+            !Number.isInteger(slot1) || slot1 < 0 || slot1 > 7 ||
+            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 7
         ) {
             return null;
         }
@@ -1564,7 +1857,11 @@ CodexUsageApplet.prototype = {
         return {
             "five-hour": 1,
             weekly: 2,
-            average: 3
+            average: 3,
+            "spark-five-hour": 4,
+            "spark-weekly": 5,
+            "spark-average": 6,
+            "spark-other": 7
         }[source] || 3;
     },
 
@@ -2094,9 +2391,7 @@ CodexUsageApplet.prototype = {
             if (
                 error ||
                 !payload ||
-                payload.installed !== true ||
-                payload.enabled !== true ||
-                payload.active !== true
+                !this._serviceStatusIsHealthy(payload)
             ) {
                 this._serviceAutoAttempted = false;
                 try {
@@ -2253,6 +2548,8 @@ CodexUsageApplet.prototype = {
                 captured_at: this._safeText(item.captured_at, 80),
                 five_hour: this._safeWindow(item.five_hour),
                 weekly: this._safeWindow(item.weekly),
+                main: this._safePool(item.main, "main"),
+                models: this._safePools(item.models),
                 status: this._safeStatus(item.status),
                 error: this._safeText(item.error, MAX_TEXT_CHARS),
                 blocked_until: this._safeText(item.blocked_until, 80),
@@ -2278,16 +2575,115 @@ CodexUsageApplet.prototype = {
         if (typeof value !== "object" || Array.isArray(value)) {
             throw new Error("invalid limit window");
         }
+        let used = this._safeNumber(value.used);
+        let limit = this._safeNumber(value.limit);
+        let remaining = this._safeNumber(value.remaining);
+        let percent = this._safeNumber(value.percent);
+        if (percent !== null && (percent < 0 || percent > 100)) {
+            // Explicit percentages outside the display domain are invalid;
+            // do not let _remainingPercent clamp them into a false value.
+            percent = null;
+        }
+        if (used !== null && used < 0) {
+            // A remaining counter from the same invalid absolute pair is not
+            // safe to render as a plausible percentage.
+            used = null;
+            remaining = null;
+        }
+        if (limit !== null && limit <= 0) {
+            used = null;
+            limit = null;
+            remaining = null;
+        }
+        if (remaining !== null && remaining < 0) {
+            remaining = 0;
+        }
+        if (
+            (limit === null || limit <= 0) &&
+            remaining !== null &&
+            (remaining < 0 || remaining > 100)
+        ) {
+            // A denominatorless absolute counter is not a percentage.
+            remaining = null;
+        }
         return {
             name: this._safeText(value.name, 40),
-            used: this._safeNumber(value.used),
-            limit: this._safeNumber(value.limit),
-            remaining: this._safeNumber(value.remaining),
-            percent: this._safeNumber(value.percent),
+            duration_seconds: this._safeDuration(value.duration_seconds),
+            used: used,
+            limit: limit,
+            remaining: remaining,
+            percent: percent,
             reset_at: this._safeText(value.reset_at, 80),
             raw: this._safeText(value.raw, 500),
             source: this._safeText(value.source, 120)
         };
+    },
+
+    _safeDuration: function(value) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+        if (typeof value !== "number" || !Number.isInteger(value) || value <= 0 || value > 315360000) {
+            throw new Error("invalid limit duration");
+        }
+        return value;
+    },
+
+    _safePool: function(value, expectedKey) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+        if (typeof value !== "object" || Array.isArray(value)) {
+            throw new Error("invalid usage pool");
+        }
+        let key = this._safeText(value.key, 80) || expectedKey || "";
+        if (!key || (expectedKey && key !== expectedKey)) {
+            throw new Error("invalid usage pool key");
+        }
+        if (!Array.isArray(value.windows) || value.windows.length > MAX_POOL_WINDOWS) {
+            throw new Error("invalid usage pool windows");
+        }
+        let sources = value.availability_sources;
+        if (!Array.isArray(sources) || sources.length > MAX_POOL_WINDOWS) {
+            throw new Error("invalid availability sources");
+        }
+        return {
+            key: key,
+            display_name: this._safeText(value.display_name, 120) || key,
+            windows: value.windows.map(Lang.bind(this, function(window) {
+                return this._safeWindow(window);
+            })),
+            available: value.available !== false,
+            allowed: typeof value.allowed === "boolean" ? value.allowed : null,
+            limit_reached: typeof value.limit_reached === "boolean" ? value.limit_reached : null,
+            metered_feature: this._safeText(value.metered_feature, 120),
+            availability_sources: sources.map(Lang.bind(this, function(source) {
+                return this._safeText(source, 120);
+            })).filter(function(source) { return Boolean(source); }),
+            exhausted: value.exhausted === true
+        };
+    },
+
+    _safePools: function(value) {
+        if (value === null || value === undefined) {
+            return Object.create(null);
+        }
+        if (typeof value !== "object" || Array.isArray(value)) {
+            throw new Error("invalid model usage pools");
+        }
+        let keys = Object.keys(value);
+        if (keys.length > MAX_USAGE_POOLS) {
+            throw new Error("too many model usage pools");
+        }
+        let result = Object.create(null);
+        for (let i = 0; i < keys.length; i++) {
+            let key = this._safeText(keys[i], 80);
+            if (!key || Object.prototype.hasOwnProperty.call(result, key)) {
+                throw new Error("invalid model usage pool key");
+            }
+            result[key] = this._safePool(value[keys[i]], key);
+        }
+        return result;
     },
 
     _safeNumber: function(value) {
@@ -2375,7 +2771,7 @@ CodexUsageApplet.prototype = {
                 continue;
             }
             if (item.cache_invalidated === true) {
-                merged.push(this._markUsageStale(item));
+                merged.push(this._clearInvalidatedUsage(item));
                 seen[item.account] = true;
                 continue;
             }
@@ -2393,6 +2789,9 @@ CodexUsageApplet.prototype = {
                     )
                 );
                 let oldBackend = this._safeBackend(old.backend_used, true);
+                // `latest` has already revalidated authenticated identities against the configured credentials.
+                let candidateAuthenticated =
+                    ["direct", "app-server"].indexOf(candidateBackend) !== -1;
                 let oldMatchesConfigured = Boolean(
                     this._backendRowsReady &&
                     this._backendMatchesConfigured(
@@ -2409,7 +2808,7 @@ CodexUsageApplet.prototype = {
                     candidateMatchesConfigured && oldCanBeReplaced
                 ) {
                     merged.push(
-                        (identityMatches || !oldIdentityPresent) ? item :
+                        (identityMatches || !oldIdentityPresent || candidateAuthenticated) ? item :
                             (this._hasCachedWindows(old) ? this._markUsageStale(old) : item)
                     );
                 } else {
@@ -2448,7 +2847,7 @@ CodexUsageApplet.prototype = {
             }
             freshAccounts[item.account] = true;
             if (item.cache_invalidated === true) {
-                merged.push(this._markUsageStale(item));
+                merged.push(this._clearInvalidatedUsage(item));
                 continue;
             }
             let old = previous[item.account];
@@ -2475,7 +2874,9 @@ CodexUsageApplet.prototype = {
             ) {
                 let authenticatedPartial = this._authenticatedPartial(item);
                 let resetlessBrowserUsage = this._hasResetlessBrowserUsage(item);
-                let hadFreshWindow = Boolean(item.five_hour || item.weekly);
+                let hadFreshWindow = Boolean(
+                    item.five_hour || item.weekly || this._hasDynamicWindows(item)
+                );
                 let usedCachedWindow = false;
                 let itemValuesCapturedAt = this._valuesCaptureForExpiry(item);
                 let oldValuesCapturedAt = this._valuesCaptureForExpiry(old);
@@ -2583,6 +2984,19 @@ CodexUsageApplet.prototype = {
             stale.status = "partial";
         }
         return stale;
+    },
+
+    _clearInvalidatedUsage: function(usage) {
+        let invalidated = this._markUsageStale(usage);
+        invalidated.five_hour = null;
+        invalidated.weekly = null;
+        invalidated.main = null;
+        invalidated.models = Object.create(null);
+        invalidated.values_captured_at = null;
+        if (invalidated.status === "ok") {
+            invalidated.status = "partial";
+        }
+        return invalidated;
     },
 
     _backendIdentityPresent: function(value) {
@@ -2694,9 +3108,11 @@ CodexUsageApplet.prototype = {
     _authoritativeEmptyLimits: function(item) {
         return Boolean(
             item &&
-            item.status === "partial" &&
+            (item.status === "partial" ||
+                (item.status === "error" && item.cache_invalidated === true)) &&
             !item.five_hour &&
             !item.weekly &&
+            !this._hasDynamicWindows(item) &&
             ["direct", "app-server"].indexOf(item.backend_used) !== -1
         );
     },
@@ -2710,7 +3126,20 @@ CodexUsageApplet.prototype = {
     },
 
     _hasCachedWindows: function(usage) {
-        return Boolean(usage && (usage.five_hour || usage.weekly));
+        return Boolean(usage && (usage.five_hour || usage.weekly || this._hasDynamicWindows(usage)));
+    },
+
+    _hasDynamicWindows: function(usage) {
+        if (!usage) {
+            return false;
+        }
+        if (usage.main && Array.isArray(usage.main.windows) && usage.main.windows.length) {
+            return true;
+        }
+        let models = usage.models && typeof usage.models === "object" ? usage.models : {};
+        return Object.keys(models).some(function(key) {
+            return models[key] && Array.isArray(models[key].windows) && models[key].windows.length;
+        });
     },
 
     _windowHasUsageValue: function(window) {
@@ -2757,6 +3186,9 @@ CodexUsageApplet.prototype = {
     },
 
     _windowDurationSeconds: function(window) {
+        if (window && Number.isInteger(window.duration_seconds) && window.duration_seconds > 0) {
+            return window.duration_seconds;
+        }
         let raw = this._safeText(window && window.raw, 500);
         let match = /"limit_window_seconds"\s*:\s*([0-9]+(?:\.[0-9]+)?)/.exec(raw);
         if (!match) {
@@ -2767,6 +3199,65 @@ CodexUsageApplet.prototype = {
             return null;
         }
         return value;
+    },
+
+    _modelPool: function(usage, key) {
+        if (!usage || !usage.models || typeof usage.models !== "object") {
+            return null;
+        }
+        return usage.models[key] || null;
+    },
+
+    _poolWindowForDuration: function(pool, durationSeconds) {
+        if (!pool || !Array.isArray(pool.windows)) {
+            return null;
+        }
+        for (let i = 0; i < pool.windows.length; i++) {
+            if (this._windowDurationSeconds(pool.windows[i]) === durationSeconds) {
+                return pool.windows[i];
+            }
+        }
+        return null;
+    },
+
+    _poolAverage: function(pool) {
+        let five = this._remainingPercent(this._poolWindowForDuration(pool, 18000));
+        let week = this._remainingPercent(this._poolWindowForDuration(pool, 604800));
+        return five === null || week === null ? null : (five + week) / 2;
+    },
+
+    _poolOtherWindow: function(pool) {
+        if (!pool || !Array.isArray(pool.windows)) {
+            return null;
+        }
+        let selected = null;
+        let selectedValue = null;
+        for (let i = 0; i < pool.windows.length; i++) {
+            let window = pool.windows[i];
+            if ([18000, 604800].indexOf(this._windowDurationSeconds(window)) !== -1) {
+                continue;
+            }
+            let value = this._remainingPercent(window);
+            if (!selected || (value !== null && (selectedValue === null || value < selectedValue))) {
+                selected = window;
+                selectedValue = value;
+            }
+        }
+        return selected;
+    },
+
+    _windowDisplayLabel: function(window) {
+        let duration = this._windowDurationSeconds(window);
+        if (duration === 18000) {
+            return "5h";
+        }
+        if (duration === 604800) {
+            return "Woche";
+        }
+        if (duration === 2592000) {
+            return "30d";
+        }
+        return this._safeText(window && window.name, 40) || "Limit";
     },
 
     _windowDurationMatches: function(current, cached, expectedKind) {
@@ -2946,6 +3437,9 @@ CodexUsageApplet.prototype = {
                 }
             }
         }
+        if (this._commandError) {
+            this._addDisabled(this.menu, this._commandError, "codex-usage-error");
+        }
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._addActions();
     },
@@ -2964,6 +3458,7 @@ CodexUsageApplet.prototype = {
         );
         this._setItemMarkup(summaryItem, summaryMarkup);
         this._addResetDetail(usage);
+        this._addDynamicLimitDetails(usage);
         this._addAccountControls(usage);
         let status = this._statusLabel(usage.status);
         if (usage.stale) {
@@ -3098,6 +3593,92 @@ CodexUsageApplet.prototype = {
             this._escapeMarkup("     Abruf " + backend);
         let item = this._addDisabled(this.menu, plain, "codex-usage-detail");
         this._setItemMarkup(item, markup);
+    },
+
+    _addDynamicLimitDetails: function(usage) {
+        let main = this._poolDetailParts(
+            usage.main,
+            usage.account,
+            "click",
+            "Weitere Limits",
+            [18000, 604800]
+        );
+        let spark = this._poolDetailParts(
+            this._modelPool(usage, "gpt-5.3-codex-spark"),
+            usage.account,
+            "click",
+            "Spark",
+            []
+        );
+        let routing = this._routingDecisionParts(usage);
+        [main, spark, routing].forEach(Lang.bind(this, function(parts) {
+            if (!parts) {
+                return;
+            }
+            let item = this._addDisabled(this.menu, parts.plain, "codex-usage-detail");
+            this._setItemMarkup(item, parts.markup);
+        }));
+    },
+
+    _poolDetailParts: function(pool, account, surface, prefix, excludedDurations) {
+        if (!pool) {
+            return null;
+        }
+        if (pool.available === false || pool.allowed === false) {
+            let unavailable = prefix + (pool.allowed === false ? " nicht freigegeben" : " nicht verfügbar");
+            return { plain: unavailable, markup: this._escapeMarkup(unavailable) };
+        }
+        let excluded = excludedDurations || [];
+        let windows = Array.isArray(pool.windows) ? pool.windows.filter(Lang.bind(this, function(window) {
+            return excluded.indexOf(this._windowDurationSeconds(window)) === -1;
+        })) : [];
+        if (!windows.length) {
+            if (excluded.length) {
+                return null;
+            }
+            let unknown = prefix + " verfügbar · Limit unbekannt";
+            return { plain: unknown, markup: this._escapeMarkup(unknown) };
+        }
+        let plain = [];
+        let markup = [];
+        for (let i = 0; i < windows.length; i++) {
+            let label = this._windowDisplayLabel(windows[i]);
+            let percent = this._percentParts(windows[i], account, surface);
+            let reset = this._windowResetParts(windows[i], account, surface, false);
+            plain.push(label + " " + percent.plain + (reset.plain ? " (" + reset.plain + ")" : ""));
+            markup.push(
+                this._escapeMarkup(label + " ") + percent.markup +
+                (reset.markup ? " (" + reset.markup + ")" : "")
+            );
+        }
+        return {
+            plain: prefix + " " + plain.join(" · "),
+            markup: this._escapeMarkup(prefix + " ") + markup.join(" · ")
+        };
+    },
+
+    _routingDecisionParts: function(usage) {
+        let decision = this._routingDecisions && this._routingDecisions[usage.account];
+        if (!decision) {
+            return null;
+        }
+        let labels = {
+            spark: "Spark",
+            main: "Hauptmodell",
+            credits: "Credits",
+            blocked: "blockiert",
+            unchanged: "unverändert"
+        };
+        let text = "Routing " + (labels[decision.decision] || decision.decision);
+        if (decision.decision === "credits") {
+            text += " · bezahlte Nutzung erlaubt";
+        } else if (decision.paid_overage_allowed) {
+            text += " · Credits freigegeben";
+        }
+        if (decision.policy_source) {
+            text += " · Regel " + decision.policy_source;
+        }
+        return { plain: text, markup: this._escapeMarkup(text) };
     },
 
     _backendSummary: function(usage) {
@@ -3362,16 +3943,16 @@ CodexUsageApplet.prototype = {
         let selected = this._panelItems().filter(function(item) {
             return item.visible;
         });
-        let hasError = false;
+        let hasError = Boolean(this._commandError);
         let values = [];
         let hasWarning = false;
         for (let i = 0; i < selected.length; i++) {
             let item = selected[i];
             let usage = item.usage;
-            if (["error", "login_required"].indexOf(usage.status) !== -1) {
+            if (["error", "login_required", "blocked"].indexOf(usage.status) !== -1) {
                 hasError = true;
             }
-            if (usage.stale) {
+            if (usage.stale || usage.status === "partial") {
                 hasWarning = true;
             }
             for (let j = 0; j < item.slots.length; j++) {
@@ -3396,6 +3977,14 @@ CodexUsageApplet.prototype = {
             this.actor.add_style_class_name("codex-usage-panel-warning");
         }
         let tooltip = this._tooltipContent();
+        if (this._commandError) {
+            let errorText = _("Fehler: ") + this._commandError;
+            tooltip = {
+                plain: errorText + (tooltip.plain ? "\n" + tooltip.plain : ""),
+                markup: this._escapeMarkup(errorText) +
+                    (tooltip.markup ? "\n" + tooltip.markup : "")
+            };
+        }
         if (this._refreshing) {
             let prefix = _("Aktualisiere …");
             tooltip = {
@@ -3512,7 +4101,7 @@ CodexUsageApplet.prototype = {
     },
 
     _panelSourceLabel: function(source) {
-        return { 1: "5h", 2: "W", 3: "Ø" }[source] || "?";
+        return { 1: "5h", 2: "W", 3: "Ø", 4: "S5h", 5: "SW", 6: "SØ", 7: "S+" }[source] || "?";
     },
 
     _panelValueForSource: function(usage, source) {
@@ -3523,6 +4112,19 @@ CodexUsageApplet.prototype = {
         }
         if (source === 2) {
             return week;
+        }
+        let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
+        if (source === 4) {
+            return this._remainingPercent(this._poolWindowForDuration(spark, 18000));
+        }
+        if (source === 5) {
+            return this._remainingPercent(this._poolWindowForDuration(spark, 604800));
+        }
+        if (source === 6) {
+            return this._poolAverage(spark);
+        }
+        if (source === 7) {
+            return this._remainingPercent(this._poolOtherWindow(spark));
         }
         if (five === null || week === null) {
             return null;
@@ -3537,6 +4139,26 @@ CodexUsageApplet.prototype = {
         if (source === 2) {
             return usage.weekly;
         }
+        let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
+        if (source === 4) {
+            return this._poolWindowForDuration(spark, 18000);
+        }
+        if (source === 5) {
+            return this._poolWindowForDuration(spark, 604800);
+        }
+        if (source === 6) {
+            let sparkFive = this._poolWindowForDuration(spark, 18000);
+            let sparkWeek = this._poolWindowForDuration(spark, 604800);
+            let sparkFiveValue = this._remainingPercent(sparkFive);
+            let sparkWeekValue = this._remainingPercent(sparkWeek);
+            if (sparkFiveValue === null || sparkWeekValue === null) {
+                return null;
+            }
+            return sparkFiveValue <= sparkWeekValue ? sparkFive : sparkWeek;
+        }
+        if (source === 7) {
+            return this._poolOtherWindow(spark);
+        }
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
         if (five === null || week === null) {
@@ -3549,17 +4171,26 @@ CodexUsageApplet.prototype = {
         let alert = this._alertSettings[item.usage.account] || this._defaultAlertRow(item.usage.account);
         let five = Number(alert["five-threshold"]);
         let weekly = Number(alert["weekly-threshold"]);
-        if (source === 1) {
+        if (source === 1 || source === 4) {
             return five;
         }
-        if (source === 2) {
+        if (source === 2 || source === 5 || source === 7) {
             return weekly;
         }
         let values = [];
-        if (this._remainingPercent(item.usage.five_hour) !== null) {
+        let pool = source === 6
+            ? this._modelPool(item.usage, "gpt-5.3-codex-spark")
+            : null;
+        let fiveWindow = pool
+            ? this._poolWindowForDuration(pool, 18000)
+            : item.usage.five_hour;
+        let weeklyWindow = pool
+            ? this._poolWindowForDuration(pool, 604800)
+            : item.usage.weekly;
+        if (this._remainingPercent(fiveWindow) !== null) {
             values.push(five);
         }
-        if (this._remainingPercent(item.usage.weekly) !== null) {
+        if (this._remainingPercent(weeklyWindow) !== null) {
             values.push(weekly);
         }
         return values.length
@@ -3631,6 +4262,27 @@ CodexUsageApplet.prototype = {
                 plainLines.push(resetPlain);
                 markupLines.push(resetMarkup);
             }
+            let main = this._poolDetailParts(
+                usage.main,
+                usage.account,
+                "hover",
+                "  Weitere Limits",
+                [18000, 604800]
+            );
+            let spark = this._poolDetailParts(
+                this._modelPool(usage, "gpt-5.3-codex-spark"),
+                usage.account,
+                "hover",
+                "  Spark",
+                []
+            );
+            let routing = this._routingDecisionParts(usage);
+            [main, spark, routing].forEach(function(parts) {
+                if (parts) {
+                    plainLines.push(parts.plain);
+                    markupLines.push(parts.markup);
+                }
+            });
         }
         return {
             plain: plainLines.join("\n"),
@@ -3644,7 +4296,7 @@ CodexUsageApplet.prototype = {
         for (let i = 0; i < this._usages.length; i++) {
             let usage = this._usages[i];
             let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
-            if (["error", "login_required"].indexOf(usage.status) !== -1) {
+            if (["error", "login_required", "blocked"].indexOf(usage.status) !== -1) {
                 let errorKey = usage.account + ":" + usage.status;
                 currentErrors[errorKey] = true;
                 if (this.notifyErrors && alert.errors && !this._errorState[errorKey]) {
@@ -3657,10 +4309,32 @@ CodexUsageApplet.prototype = {
                     );
                 }
             }
+            if (usage.status === "partial") {
+                let partialKey = usage.account + ":partial";
+                currentWarnings[partialKey] = true;
+                if (this.notifyWarnings && alert.warnings && !this._warningState[partialKey]) {
+                    Main.notify(
+                        _("Codex-Daten unvollständig: ") + usage.label,
+                        usage.error || _("Nicht alle Nutzungsfenster verfügbar")
+                    );
+                }
+            }
             let windows = [
                 ["5h", usage.five_hour, "five-threshold"],
                 ["Woche", usage.weekly, "weekly-threshold"]
             ];
+            let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
+            if (spark && Array.isArray(spark.windows)) {
+                for (let sparkIndex = 0; sparkIndex < spark.windows.length; sparkIndex++) {
+                    let sparkWindow = spark.windows[sparkIndex];
+                    let duration = this._windowDurationSeconds(sparkWindow);
+                    windows.push([
+                        "Spark " + this._windowDisplayLabel(sparkWindow),
+                        sparkWindow,
+                        duration === 18000 ? "five-threshold" : "weekly-threshold"
+                    ]);
+                }
+            }
             for (let j = 0; j < windows.length; j++) {
                 let remaining = this._remainingPercent(windows[j][1]);
                 let threshold = Number(alert[windows[j][2]]);
@@ -3682,15 +4356,14 @@ CodexUsageApplet.prototype = {
 
     _showCommandError: function(message) {
         let text = this._shortText(message || _("Unbekannter Fehler"), 240);
+        this._commandError = text;
         try {
             if (Array.isArray(this._usages) && this._usages.length) {
                 this._buildUsageMenu();
-                this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-                this._addDisabled(this.menu, text, "codex-usage-error");
             } else {
                 this.menu.removeAll();
                 this._addDisabled(this.menu, _("Codex Usage konnte nicht geladen werden"), "codex-usage-error");
-                this._addDisabled(this.menu, text, "codex-usage-detail");
+                this._addDisabled(this.menu, text, "codex-usage-error");
                 this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
                 this._addActions();
             }
@@ -3754,6 +4427,12 @@ CodexUsageApplet.prototype = {
             if (typeof window.limit === "number" && Number.isFinite(window.limit) &&
                 window.limit > 0) {
                 return Math.max(0, Math.min(100, window.remaining / window.limit * 100));
+            }
+            if (typeof window.percent === "number" && Number.isFinite(window.percent)) {
+                return Math.max(0, Math.min(100, window.percent));
+            }
+            if (window.remaining < 0 || window.remaining > 100) {
+                return null;
             }
             return Math.max(0, Math.min(100, window.remaining));
         }
@@ -4021,20 +4700,24 @@ CodexUsageApplet.prototype = {
     },
 
     _usageSeverity: function(usage) {
-        if (["error", "login_required"].indexOf(usage.status) !== -1) {
+        if (["error", "login_required", "blocked"].indexOf(usage.status) !== -1) {
             return "codex-usage-error";
         }
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
         let values = [five, week].filter(function(value) { return value !== null; });
         if (!values.length) {
+            if (usage.status === "partial") {
+                return "codex-usage-warning";
+            }
             return usage.stale ? "codex-usage-stale" : "";
         }
         let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
         let fiveThreshold = Number(alert["five-threshold"]);
         let weeklyThreshold = Number(alert["weekly-threshold"]);
         let critical = values.some(function(value) { return value <= 5; });
-        let warning = (five !== null && five <= fiveThreshold) ||
+        let warning = usage.status === "partial" ||
+            (five !== null && five <= fiveThreshold) ||
             (week !== null && week <= weeklyThreshold);
         if (critical) {
             return "codex-usage-critical";

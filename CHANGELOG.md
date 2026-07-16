@@ -1,5 +1,399 @@
 # Changelog
 
+## 0.6.449 - 2026-07-16
+### Added
+- Spark-Routing ist fail-closed: Ohne frischen erfolgreichen Live-Turn wird
+  Spark nicht ausgewählt; Timeout- und Limitfehler sperren den Modellpool.
+
+## 0.6.448 - 2026-07-13
+### Fixed
+- Standalone nicht-positive Cache-Limits werden nun ebenso als ungültig
+  markiert wie vollständige used/limit-Paare; das Applet entfernt die
+  redundante Gegenprüfung vor der Anzeige.
+
+## 0.6.447 - 2026-07-13
+### Fixed
+- Negative Zähler und alleinstehende nicht-positive Nenner werden vor der
+  Anzeige verworfen; negative Restwerte werden konsistent als erschöpft behandelt.
+
+## 0.6.446 - 2026-07-13
+### Fixed
+- Übernutzung (`used > limit`) wird in JSON- und Textcaptures konsistent als
+  `0% verbleibend` dargestellt, statt negative Zwischenwerte weiterzugeben.
+
+## 0.6.445 - 2026-07-13
+### Fixed
+- Der generische JSON-Extractor verwirft Restzähler bei alleinstehenden
+  nicht-positiven Limits und priorisiert explizite Prozentfelder korrekt.
+
+## 0.6.444 - 2026-07-13
+### Fixed
+- Prozentfelder außerhalb von `0..100` werden im State-Loader und Applet
+  verworfen, statt auf einen falschen sichtbaren Wert geklemmt zu werden.
+
+## 0.6.443 - 2026-07-13
+### Fixed
+- Die Applet-Payloadvalidierung verwirft ungültige absolute Limitpaare, bevor
+  sie als falsche Panelprozente gerendert werden.
+
+## 0.6.442 - 2026-07-13
+### Fixed
+- Der State-Loader verwirft alte Cachewerte aus ungültigen `0/0`-Limitpaaren,
+  ohne ausdrücklich gespeicherte Prozentwerte zu verlieren.
+
+## 0.6.441 - 2026-07-13
+### Fixed
+- Unqualifizierte Restwerte werden bei ungültigen absoluten `0/0`-Limits
+  verworfen, damit sie nicht als falsche Nutzungsprozente erscheinen.
+
+## 0.6.440 - 2026-07-13
+### Fixed
+- Der Extractor erzeugt aus nicht-positiven absoluten Limit-Nennern keine
+  falschen Nutzungswerte mehr; gültige denominatorlose Prozentwerte bleiben
+  erhalten.
+
+## 0.6.439 - 2026-07-13
+### Fixed
+- Der Watchdog übernimmt fensterbehaftete `BLOCKED`-Snapshots nur noch, wenn
+  ihre gespeicherte Erschöpfung und `blocked_until` weiterhin zusammenpassen.
+  Legacy-Snapshots ohne Fenster bleiben kompatibel.
+
+## 0.6.438 - 2026-07-13
+### Fixed
+- Der Watchdog wertet außerhalb `0..100` liegende Rest- und Prozentwerte nicht
+  mehr als erschöpfte Limits.
+
+## 0.6.437 - 2026-07-13
+### Fixed
+- Der Watchdog blockiert Accounts nicht mehr wegen nicht-positiver oder
+  beschädigter absoluter Limit-Nenner.
+
+## 0.6.436 - 2026-07-13
+### Fixed
+- Der Applet-Installer meldet einen fehlenden Cinnamon-D-Bus-Dienst jetzt als
+  `not-running` statt als unspezifisches `unavailable`.
+
+## 0.6.435 - 2026-07-13
+### Fixed
+- Der Applet-Installer nutzt beim Reload zusätzlich Cinnamon-D-Bus
+  `ReloadXlet`, wenn Looking Glass nicht verfügbar ist.
+
+## 0.6.434 - 2026-07-13
+### Fixed
+- Bereinigte, denominatorlose absolute Restwerte markieren den Snapshot jetzt
+  als `partial`, statt eine leere Window-Struktur als `ok` auszugeben.
+
+## 0.6.433 - 2026-07-13
+### Fixed
+- Verwirft der State-Loader denominatorlose absolute Restwerte aus alten
+  Snapshots, damit sie nicht als scheinbare Nutzungswerte weitergereicht werden.
+
+## 0.6.432 - 2026-07-13
+### Fixed
+- CLI, Watchdog und Applet verwenden bei denominatorlosen Restwerten dieselbe
+  fail-closed Prozentlogik; ein nacktes `remaining=690` wird nicht mehr zu
+  `100%`, während ein vorhandenes `percent=69` bevorzugt wird.
+
+## 0.6.431 - 2026-07-13
+### Fixed
+- Die Text-/HTML-Erkennung behandelt absolute `remaining`-Werte ohne Nenner
+  jetzt wie die JSON-Erkennung und lässt sie nicht als falsche Prozentwerte
+  durch.
+
+## 0.6.430 - 2026-07-13
+### Fixed
+- Absolute `remaining`-Felder ohne `limit` erzeugen nicht mehr versehentlich
+  einen gekappten `100% verbleibend`-Wert; ein explizites `used_percent` bleibt
+  stattdessen maßgeblich.
+
+## 0.6.429 - 2026-07-13
+### Fixed
+- Widersprüchliche `used_percent`- und `remaining_percent`-Felder erzeugen
+  keinen quellabhängigen Fantasiewert mehr; gültige Resetzeiten bleiben sichtbar.
+
+## 0.6.428 - 2026-07-13
+### Fixed
+- Mehrere Accounts mit gemeinsamer Benutzer-ID, aber unterschiedlichen
+  verifizierten Tariftypen werden nicht mehr fälschlich als mehrdeutig verworfen.
+
+## 0.6.427 - 2026-07-13
+### Fixed
+- Invalidierte Zustände transportieren oder übernehmen keine Limitfenster und
+  keine veraltete `values_captured_at`-Zeit mehr.
+
+## 0.6.426 - 2026-07-13
+### Fixed
+- Abgewiesene Browser-Payloads mit einer fremden Backend-Identität löschen
+  jetzt den alten Browser-Cache, damit kein Wert des vorherigen Accounts
+  weiter angezeigt wird.
+
+## 0.6.425 - 2026-07-13
+### Fixed
+- Nur explizit als `cache_invalidated` markierte Identitätsfehler leeren
+  authentifizierte Limitwerte; transiente Abruffehler behalten den letzten
+  sicher zugeordneten Wert als veraltet.
+
+## 0.6.424 - 2026-07-13
+### Fixed
+- Einzelkonto-Abrufe übernehmen jetzt die Mehrdeutigkeitsprüfung der gesamten
+  Konfiguration; ein ausgewähltes Konto kann Geschwisterkonten mit derselben
+  `user_id` nicht mehr aus dem Schutzpfad ausblenden.
+
+## 0.6.423 - 2026-07-13
+### Fixed
+- Das Applet stellt bei authentifizierten Fehlerantworten ohne Limitfenster
+  ebenfalls keine alten Werte mehr wieder her.
+
+## 0.6.422 - 2026-07-13
+### Fixed
+- Authentifizierte Fehlerantworten ohne Nutzungsfenster stellen keine alten
+  Limitwerte mehr wieder her; mehrdeutige Kontowerte bleiben dadurch leer.
+
+## 0.6.421 - 2026-07-13
+
+### Fixed
+
+- Mehrere `auth.json` mit gleicher `user_id` und unterschiedlichen
+  `account_id` werden unabhängig vom Plan-Typ als mehrdeutig behandelt; so
+  werden WHAM-Antworten mit gemeinsamem User-Alias nicht als falsche
+  Accountwerte angezeigt.
+
+## 0.6.420 - 2026-07-13
+
+### Fixed
+
+- Scheduler-Fallbacks interpretieren fehlerhafte relative Reset-Metadaten nicht
+  mehr als absoluten Reset; dadurch werden frische Limitwerte nicht durch alte
+  Prozentwerte ersetzt.
+
+## 0.6.419 - 2026-07-13
+
+### Fixed
+
+- Browser- und Bridge-Antworten mit nur der gemeinsamen `user_id` als
+  `account_id` werden bei konfigurierter Konto-ID verworfen, damit Cookies des
+  falschen Kontos keine plausiblen, aber falschen Limitwerte anzeigen.
+
+## 0.6.418 - 2026-07-13
+
+### Fixed
+
+- User-only-API-Antworten werden bei konfigurierter Account-ID nicht mehr mit
+  Limitwerten anderer Antworten vermischt; solche Kandidaten bleiben bis zur
+  eindeutigen Identifizierung unangezeigt.
+
+## 0.6.417 - 2026-07-13
+
+### Fixed
+
+- Die JSON-Fenstererkennung ordnet jetzt auch durationlose, verschachtelte
+  oder listenbasierte Buckets korrekt zu und ignoriert unscoped Werte sowie
+  falsch verschachtelte Gegenfenster.
+
+## 0.6.416 - 2026-07-13
+
+### Fixed
+
+- Ein authentifizierter `latest`-Datensatz ersetzt jetzt einen veralteten
+  Browser-Snapshot auch bei geänderter Backend-ID; dadurch bleiben alte
+  Cookie-Kontowerte nicht mehr in der Statusleiste sichtbar.
+
+## 0.6.415 - 2026-07-13
+
+### Fixed
+
+- Unvollständige Nutzungsdaten lösen bei aktivierten Account-Warnungen jetzt
+  eine deduplizierte Warnung aus.
+
+## 0.6.414 - 2026-07-13
+
+### Fixed
+
+- Erreichte Limits (`blocked`) werden jetzt auch in den per-Account-
+  Fehlerbenachrichtigungszustand aufgenommen.
+
+## 0.6.413 - 2026-07-13
+
+### Fixed
+
+- Fehler eines fehlgeschlagenen Applet-Abrufs bleiben über periodische
+  Anzeige-Redraws sichtbar und werden erst nach einem erfolgreichen frischen
+  Abruf entfernt.
+
+## 0.6.412 - 2026-07-13
+
+### Fixed
+
+- `blocked`-Accounts werden auch ohne verwertbare Fensterwerte als Fehlerzustand
+  in Statusleiste und Accountzeile dargestellt.
+
+## 0.6.411 - 2026-07-13
+
+### Fixed
+
+- Prozentzeichen in Pfaden werden in systemd-Units als Literale escaped; die
+  erkannte Config-Datei wird beim Abgleich wieder korrekt dekodiert.
+
+## 0.6.410 - 2026-07-13
+
+### Fixed
+
+- `partial` ohne verwertbare Fensterwerte wird als Warnung und nicht mehr als
+  bloß gespeicherter/staler Zustand klassifiziert.
+
+## 0.6.409 - 2026-07-13
+
+### Fixed
+
+- Teilvollständige Accountdaten werden im Applet jetzt als Warnzustand
+  markiert, damit gültige Einzelwerte nicht wie vollständig bestätigte Limits
+  wirken.
+
+## 0.6.408 - 2026-07-13
+
+### Fixed
+
+- Bei einem nicht lesbaren systemd-Status fällt die automatische Abfrage bei
+  leerem oder veraltetem Cache auf frische Applet-Abfragen zurück, statt alte
+  Werte dauerhaft als aktuell zu behandeln.
+
+## 0.6.407 - 2026-07-13
+
+### Fixed
+
+- Das Applet übernimmt einen aktiven systemd-Timer nicht mehr als Poll-Quelle,
+  wenn der letzte `codex-usage`-Dienstlauf fehlgeschlagen ist; dadurch bleiben
+  alte Cachewerte nicht unbemerkt als aktuell sichtbar.
+
+## 0.6.406 - 2026-07-13
+
+### Fixed
+
+- App-Server-Resetzeiten werden als absolute Zeitstempel erkannt; ein echter
+  Reset kann dadurch keinen alten Restwert mehr konservieren.
+
+## 0.6.405 - 2026-07-13
+
+### Fixed
+
+- Ein neueres valides Teil-Sample kann keinen alten vollstaendigen Quorum-Wert
+  mehr verdecken; widerspruechliche Direct-Antworten bleiben fail-closed.
+
+## 0.6.404 - 2026-07-13
+
+### Fixed
+
+- Widersprüchliche partielle WHAM-Samples werden nicht mehr stillschweigend
+  auf die Mehrheitsgruppe reduziert, wenn dadurch ein anderes gültiges Limit
+  verloren geht.
+
+## 0.6.403 - 2026-07-13
+
+### Fixed
+
+- Generische Limitantworten mit dauerlosen `primary_window`- und
+  `secondary_window`-Buckets werden jetzt getrennt statt den ersten Wert für
+  beide Anzeigen zu verwenden; explizit nicht unterstützte Fensterdauern
+  werden weiterhin verworfen.
+
+## 0.6.402 - 2026-07-13
+
+### Fixed
+
+- CLI und Applet bevorzugen ein vorhandenes Prozentfeld, wenn ein absolutes
+  Restmass ohne `limit` geliefert wird.
+
+## 0.6.401 - 2026-07-13
+
+### Fixed
+
+- Direct-Abfragen akzeptieren einen echten Fenster-Reset jetzt auch dann,
+  wenn WHAM nur den absoluten `reset_at`-Zeitstempel fortschreibt.
+
+## 0.6.400 - 2026-07-13
+
+### Fixed
+
+- Authentifizierte Konten verwenden keinen Browser-`BLOCKED`-Snapshot mehr,
+  der Limits eines anderen Cookie-Kontos konservieren koennte.
+
+## 0.6.399 - 2026-07-13
+
+### Fixed
+
+- Authentifizierte `direct`- und `app-server`-Konten zeigen keinen Browser-Cache
+  mit potenziell fremden Cookies mehr als Ersatzwert an.
+
+## 0.6.398 - 2026-07-13
+
+### Fixed
+
+- Bei mehreren passenden WHAM-Identitaeten gewinnt jetzt die exakt
+  konfigurierte Account-ID gegen einen gemeinsamen User-ID-Alias.
+
+## 0.6.397 - 2026-07-13
+
+### Fixed
+
+- Browser-Antworten werden erst nach der Auth-Identitaetspruefung ausgewertet;
+  eine waehrend des Abrufs rotierte `auth.json` fuehrt jetzt deterministisch zu
+  `login_required` statt zu einem generischen Fehlerpfad.
+
+## 0.6.396 - 2026-07-13
+
+### Fixed
+
+- Abgelaufene `id_token`-Claims koennen einen gueltigen `access_token` nicht mehr
+  durch veraltete Identitaets-, Tarif- oder E-Mail-Daten ueberstimmen.
+
+## 0.6.395 - 2026-07-13
+
+### Fixed
+
+- Applet-Version und Versionskommentar bleiben jetzt synchron und werden im
+  Konsistenztest geprüft.
+
+## 0.6.394 - 2026-07-13
+
+### Fixed
+
+- Der Browserpfad ergänzt fehlende Limitfenster aus dem bestätigten DOM jetzt
+  nach derselben Fensterregel wie die Bridge.
+
+## 0.6.393 - 2026-07-13
+
+### Fixed
+
+- Der isolierte Browserpfad akzeptiert bestaetigte WHAM-Antworten mit
+  `account_id == user_id` jetzt genauso wie die Bridge.
+
+## 0.6.392 - 2026-07-13
+
+### Fixed
+
+- Browser-DOM-Werte werden auch dann zugelassen, wenn WHAM die Konto-ID als bereits bestaetigte Benutzer-ID zurueckgibt.
+
+## 0.6.391 - 2026-07-13
+
+### Fixed
+
+- Prozent-only-Fenster werden in der CLI wie im Applet als verbleibender Wert
+  ausgegeben.
+
+## 0.6.390 - 2026-07-13
+
+### Fixed
+
+- Authentifizierte Teil-Snapshots mit frisch erfassten Nutzungswerten bleiben
+  auch bei einem übernommenen Resetzeitpunkt vorrangig vor Browserzuständen.
+
+## 0.6.389 - 2026-07-13
+
+### Fixed
+
+- Frische authentifizierte Teil- oder Leerbefunde verdrängen nun veraltete
+  Browserwerte in der Cache-Übersicht.
+
 ## 0.6.388 - 2026-07-13
 
 ### Fixed

@@ -167,6 +167,37 @@ def _reload_running_applet(*, expected_version: str | None = None) -> str:
     except (OSError, subprocess.TimeoutExpired):
         return "unavailable"
     if result.returncode != 0:
+        try:
+            fallback = subprocess.run(
+                [
+                    gdbus,
+                    "call",
+                    "--session",
+                    "--dest",
+                    "org.Cinnamon",
+                    "--object-path",
+                    "/org/Cinnamon",
+                    "--method",
+                    "org.Cinnamon.ReloadXlet",
+                    APPLET_UUID,
+                    "APPLET",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            fallback = None
+        if fallback is not None and fallback.returncode == 0:
+            if expected_version is None:
+                return "ok"
+            return _verify_running_applet_version(gdbus, expected_version)
+        if (
+            _dbus_service_unavailable(result)
+            and (fallback is None or _dbus_service_unavailable(fallback))
+        ):
+            return "not-running"
         return (
             _verify_running_applet_version(gdbus, expected_version)
             if expected_version is not None
@@ -175,6 +206,14 @@ def _reload_running_applet(*, expected_version: str | None = None) -> str:
     if expected_version is None:
         return "ok"
     return _verify_running_applet_version(gdbus, expected_version)
+
+
+def _dbus_service_unavailable(result: object) -> bool:
+    output = " ".join(
+        str(getattr(result, field, ""))
+        for field in ("stdout", "stderr")
+    ).casefold()
+    return "serviceunknown" in output or "name is not activatable" in output
 
 
 def _verify_running_applet_version(gdbus: str, expected_version: str) -> str:

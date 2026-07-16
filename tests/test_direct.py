@@ -12,6 +12,7 @@ from codex_usage.direct import (
     DirectAuthError,
     DirectFetchError,
     _fetch_stable_wham_usage,
+    _is_identity_attribution_error,
     _jwt_expiry,
     _select_stable_wham_usage,
     _signature_number,
@@ -83,6 +84,42 @@ def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
 
     with pytest.raises(DirectAuthError, match="token identities disagree"):
         auth_identity_from_payload(payload, path=path)
+
+
+def test_auth_identity_ignores_expired_id_token_when_access_token_is_current(tmp_path):
+    path = tmp_path / "auth.json"
+    payload = {
+        "tokens": {
+            "id_token": _jwt_with_claims(
+                {
+                    "exp": int(datetime.now(tz=UTC).timestamp()) - 60,
+                    "email": "old@example.test",
+                    "https://api.openai.com/auth": {
+                        "chatgpt_user_id": "old-user",
+                        "chatgpt_account_id": "old-account",
+                        "chatgpt_plan_type": "free",
+                    },
+                }
+            ),
+            "access_token": _jwt_with_claims(
+                {
+                    "exp": int(datetime.now(tz=UTC).timestamp()) + 3600,
+                    "email": "current@example.test",
+                    "https://api.openai.com/auth": {
+                        "chatgpt_user_id": "current-user",
+                        "chatgpt_account_id": "current-account",
+                        "chatgpt_plan_type": "plus",
+                    },
+                }
+            ),
+            "account_id": "current-account",
+        }
+    }
+
+    assert auth_identity_from_payload(payload, path=path) == (
+        "current-user",
+        "current-account",
+    )
 
 
 def test_auth_identity_rejects_changed_user_with_same_account():
@@ -160,6 +197,45 @@ def test_canonical_backend_identity_rejects_shared_user_without_auth_account_id(
             require_backend_identity=True,
             reject_ambiguous_backend_identity=True,
         )
+
+
+def test_canonical_backend_identity_rejects_user_only_response_with_auth_account_id():
+    with pytest.raises(ValueError, match="ambiguous account identity"):
+        canonical_backend_identity(
+            "shared-user",
+            None,
+            auth_user_id="shared-user",
+            auth_account_id="real-account",
+            require_backend_identity=True,
+            require_backend_account_id=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "error",
+    (
+        "backend response has no account identity",
+        "backend response has ambiguous account identity",
+        "backend response belongs to a different account",
+        "backend response contains multiple backend accounts",
+        "backend response does not identify one account",
+    ),
+)
+def test_identity_attribution_errors_invalidate_cached_values(error):
+    assert _is_identity_attribution_error(error) is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    (
+        "direct fetch failed: HTTP 500",
+        "direct fetch failed: network error",
+        "direct fetch failed: I/O error",
+        "direct response limits were inconsistent across samples",
+    ),
+)
+def test_transient_direct_errors_do_not_invalidate_cached_values(error):
+    assert _is_identity_attribution_error(error) is False
 
 
 def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkeypatch):
@@ -340,6 +416,58 @@ def test_select_stable_wham_usage_does_not_choose_empty_majority():
 
     with pytest.raises(DirectFetchError, match="inconsistent"):
         _select_stable_wham_usage([complete, empty, empty])
+
+
+def test_select_stable_wham_usage_rejects_conflicting_partial_windows():
+    def response(duration: int, used: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": duration,
+                }
+            },
+        }
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _select_stable_wham_usage(
+            [response(18_000, 3), response(604_800, 45), response(18_000, 3)]
+        )
+
+
+def test_select_stable_wham_usage_rejects_newer_partial_after_complete_quorum():
+    complete = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 3,
+                "limit_window_seconds": 18_000,
+                "reset_at": 1780894250,
+            },
+            "secondary_window": {
+                "used_percent": 45,
+                "limit_window_seconds": 604_800,
+                "reset_at": 1781060750,
+            },
+        },
+    }
+    partial = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": {
+            "secondary_window": {
+                "used_percent": 46,
+                "limit_window_seconds": 604_800,
+                "reset_at": 1781060750,
+            },
+        },
+    }
+
+    with pytest.raises(DirectFetchError, match="inconsistent"):
+        _select_stable_wham_usage([complete, complete, partial])
 
 
 def test_select_stable_wham_usage_does_not_choose_reset_only_majority():
@@ -811,6 +939,45 @@ def test_fetch_stable_wham_usage_accepts_latest_relative_reset_transition(
     assert payload["rate_limit"]["primary_window"]["used_percent"] == 0
 
 
+def test_fetch_stable_wham_usage_accepts_latest_absolute_reset_transition(
+    monkeypatch,
+):
+    def response(used: int, reset_at: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": used,
+                    "limit_window_seconds": 18000,
+                    "reset_at": reset_at,
+                },
+                "secondary_window": {
+                    "used_percent": 10,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784415934,
+                },
+            },
+        }
+
+    responses = iter(
+        (
+            response(50, 1783860000),
+            response(50, 1783860000),
+            response(0, 1783878000),
+        )
+    )
+    monkeypatch.setattr(
+        "codex_usage.direct._fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    payload = _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+    assert payload["rate_limit"]["primary_window"]["used_percent"] == 0
+    assert payload["rate_limit"]["primary_window"]["reset_at"] == 1783878000
+
+
 def test_fetch_stable_wham_usage_rejects_reset_with_missing_counterpart(
     monkeypatch,
 ):
@@ -1260,6 +1427,7 @@ def test_fetch_account_usage_direct_rejects_response_from_different_account(
 
     assert usage.status == AccountStatus.ERROR
     assert usage.error == "backend response belongs to a different account"
+    assert usage.cache_invalidated is True
 
 
 def test_fetch_account_usage_direct_accepts_same_account_with_different_user_id(
@@ -1393,6 +1561,75 @@ def test_fetch_account_usage_direct_rejects_shared_user_response_with_different_
     assert usage.error == "backend response belongs to a different account"
 
 
+def test_fetch_account_usage_direct_accepts_shared_user_alias_with_matching_plan(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": "secret-access-token",
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "shared-user",
+                                "chatgpt_plan_type": "free",
+                            }
+                        }
+                    ),
+                    "account_id": "free-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 5,
+                            "limit_window_seconds": 2_592_000,
+                        }
+                    },
+                    "user_id": "shared-user",
+                    "account_id": "shared-user",
+                    "plan_type": "free",
+                }
+            ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "codex_usage.direct.urlopen",
+        lambda request, *, timeout: FakeResponse(),
+    )
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.OK
+    assert usage.error is None
+    assert usage.main is not None
+    assert usage.main.windows[0].name == "30d"
+    assert usage.backend_user_id == "shared-user"
+    assert usage.backend_account_id == "free-account"
+
+
 @pytest.mark.parametrize("account_id", ["account\nforged", " ", 42])
 def test_fetch_account_usage_direct_rejects_invalid_auth_account_id(
     tmp_path,
@@ -1478,7 +1715,83 @@ def test_fetch_account_usage_direct_marks_reset_only_windows_partial(tmp_path, m
     assert usage.error == "usage limits not found in direct response"
 
 
-def test_fetch_account_usage_direct_explains_unsupported_plan_window(tmp_path, monkeypatch):
+def test_fetch_account_usage_direct_keeps_model_specific_spark_limit_separate(
+    tmp_path, monkeypatch
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    payload = {
+        "user_id": "user-nufker",
+        "account_id": "user-nufker",
+        "plan_type": "pro",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 20,
+                "limit_window_seconds": 604800,
+                "reset_at": 1784487570,
+            },
+            "secondary_window": None,
+        },
+        "additional_rate_limits": [
+            {
+                "limit_name": "GPT-5.3-Codex-Spark",
+                "metered_feature": "codex_bengalfox",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 1,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1784497193,
+                    },
+                    "secondary_window": None,
+                },
+            }
+        ],
+    }
+
+    class FakeResponse:
+        def __init__(self):
+            self.headers = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", lambda request, *, timeout: FakeResponse())
+    account = Account(
+        id="nufker",
+        label="Nufker",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is None
+    assert usage.weekly is not None
+    assert usage.weekly.used == 20
+    assert usage.weekly.remaining == 80
+    assert usage.error is None
+    assert usage.main is not None
+    assert usage.main.windows[0].remaining == 80
+    spark = usage.model_pool("gpt-5.3-codex-spark")
+    assert spark is not None
+    assert spark.windows[0].remaining == 99
+
+
+def test_fetch_account_usage_direct_supports_plan_specific_30_day_window(
+    tmp_path, monkeypatch
+):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
         json.dumps({"tokens": {"access_token": "secret-access-token"}}),
@@ -1520,13 +1833,13 @@ def test_fetch_account_usage_direct_explains_unsupported_plan_window(tmp_path, m
 
     usage = fetch_account_usage_direct(account)
 
-    assert usage.status == AccountStatus.PARTIAL
+    assert usage.status == AccountStatus.OK
     assert usage.five_hour is None
     assert usage.weekly is None
-    assert usage.error == (
-        "requested 5h/weekly limits unavailable in direct response "
-        "(plan free; backend window 2592000s)"
-    )
+    assert usage.error is None
+    assert usage.main is not None
+    assert usage.main.windows[0].name == "30d"
+    assert usage.main.windows[0].remaining == 95
 
 
 def test_fetch_account_usage_direct_ignores_overflowing_window_duration(
@@ -1617,13 +1930,12 @@ def test_fetch_account_usage_direct_reports_single_available_window(tmp_path, mo
 
     usage = fetch_account_usage_direct(account)
 
-    assert usage.status == AccountStatus.PARTIAL
+    assert usage.status == AccountStatus.OK
     assert usage.five_hour is None
     assert usage.weekly is not None and usage.weekly.remaining == 53
-    assert usage.error == (
-        "5h limit unavailable in direct response "
-        "(plan plus; available window weekly)"
-    )
+    assert usage.error is None
+    assert usage.main is not None
+    assert usage.main.windows[0].remaining == 53
 
 
 def test_fetch_account_usage_direct_rejects_broad_auth_json_permissions(tmp_path, monkeypatch):

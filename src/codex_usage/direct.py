@@ -19,6 +19,7 @@ from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
 from .identity import backend_identity_from_payload, backend_plan_type_from_payload
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
+from .usage_limits import parse_wham_usage_pools
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DIRECT_RESPONSE_SAMPLE_COUNT = 3
@@ -33,6 +34,17 @@ MAX_ACCESS_TOKEN_CHARS = 16_384
 MAX_AUTH_ID_CHARS = 256
 PLAN_TYPE_ALIASES = {"pro": "plus"}
 SUPPORTED_WINDOW_SECONDS = frozenset((18_000, 604_800))
+IDENTITY_CACHE_INVALIDATION_ERRORS = frozenset(
+    (
+        "backend response has no account identity",
+        "backend response has ambiguous account identity",
+        "backend response belongs to a different account",
+        "backend response contains multiple backend accounts",
+        "backend response does not identify one account",
+    )
+)
+
+
 def default_auth_json_path() -> Path:
     return Path.home() / ".codex" / "auth.json"
 
@@ -153,6 +165,7 @@ def fetch_account_usage_direct(
                 auth_plan_type=auth_plan_type,
                 backend_plan_type=backend_plan_type,
                 require_backend_identity=True,
+                require_backend_account_id=True,
                 reject_ambiguous_backend_identity=reject_ambiguous_backend_identity,
             )
         except ValueError as exc:
@@ -163,9 +176,17 @@ def fetch_account_usage_direct(
             json_candidates=(candidate,),
             now=captured_at,
         )
+        main, model_pools = parse_wham_usage_pools(
+            payload,
+            captured_at=captured_at,
+            source=f"json:{_redact_url(WHAM_USAGE_URL)}",
+        )
+        has_dynamic_usage = bool(
+            main and any(window.has_usage_value for window in main.windows)
+        )
         status = (
             AccountStatus.OK
-            if _has_usage_values(five_hour, weekly)
+            if has_dynamic_usage or _has_usage_values(five_hour, weekly)
             else AccountStatus.PARTIAL
         )
         error = (
@@ -179,6 +200,8 @@ def fetch_account_usage_direct(
             captured_at=captured_at,
             five_hour=five_hour,
             weekly=weekly,
+            main=main,
+            models=model_pools,
             status=status,
             error=error,
             auth_last_refresh=auth_metadata.get("auth_last_refresh"),
@@ -213,6 +236,7 @@ def fetch_account_usage_direct(
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             backend_user_id=auth_user_id,
             backend_account_id=auth_account_id,
+            cache_invalidated=_is_identity_attribution_error(str(exc)),
         )
 
 
@@ -282,6 +306,10 @@ def _is_retryable_direct_auth_error(error: DirectAuthError) -> bool:
     }
 
 
+def _is_identity_attribution_error(error: str) -> bool:
+    return error in IDENTITY_CACHE_INVALIDATION_ERRORS
+
+
 def auth_identity_changed(
     *,
     before_user_id: str | None,
@@ -336,7 +364,7 @@ def auth_identity_from_payload(
     if top_level_account_id is not None:
         account_ids.append(top_level_account_id)
     for token_name in ("id_token", "access_token"):
-        claims = _jwt_claims(tokens.get(token_name))
+        claims = _current_jwt_claims(tokens.get(token_name))
         if not isinstance(claims, dict):
             continue
         token_user_id: str | None = None
@@ -391,7 +419,7 @@ def auth_email_from_payload(
         return None
     emails: list[str] = []
     for token_name in ("id_token", "access_token"):
-        claims = _jwt_claims(tokens.get(token_name))
+        claims = _current_jwt_claims(tokens.get(token_name))
         if not isinstance(claims, dict) or "email" not in claims:
             continue
         email = _safe_auth_identity(claims.get("email"))
@@ -425,7 +453,7 @@ def auth_plan_type_from_payload(
         return None
     plan_types: list[str] = []
     for token_name in ("id_token", "access_token"):
-        claims = _jwt_claims(tokens.get(token_name))
+        claims = _current_jwt_claims(tokens.get(token_name))
         if not isinstance(claims, dict):
             continue
         auth_claims = claims.get("https://api.openai.com/auth")
@@ -545,6 +573,7 @@ def canonical_backend_identity(
     auth_plan_type: str | None = None,
     backend_plan_type: str | None = None,
     require_backend_identity: bool = False,
+    require_backend_account_id: bool = False,
     reject_ambiguous_backend_identity: bool = False,
 ) -> tuple[str | None, str | None]:
     if (
@@ -553,6 +582,8 @@ def canonical_backend_identity(
         and not (backend_user_id or backend_account_id)
     ):
         raise ValueError("backend response has no account identity")
+    if require_backend_account_id and auth_account_id and not backend_account_id:
+        raise ValueError("backend response has ambiguous account identity")
     if reject_ambiguous_backend_identity and auth_user_id and not auth_account_id:
         raise ValueError("backend response has ambiguous account identity")
     if (
@@ -775,17 +806,19 @@ def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
             -group[0][0],
         ),
     )
+    if _has_conflicting_partial_windows(best_group, groups, latest_payload=payloads[-1]):
+        raise DirectFetchError("direct response limits were inconsistent across samples")
     latest_index = len(payloads) - 1
     latest_is_in_best_group = any(index == latest_index for index, _ in best_group)
-    latest_is_relative_reset = _latest_response_is_relative_reset(
+    latest_is_reset = _latest_response_is_relative_reset(
         payloads,
         best_group,
-    )
+    ) or _latest_response_is_absolute_reset(payloads, best_group)
     if _has_reset_regression(payloads) and not latest_is_in_best_group:
-        if latest_is_relative_reset:
+        if latest_is_reset:
             return payloads[-1]
         raise DirectFetchError("direct response limits were inconsistent across samples")
-    if latest_is_relative_reset:
+    if latest_is_reset:
         return payloads[-1]
     if len(best_group) * 2 <= len(payloads):
         if _usage_response_progresses(payloads):
@@ -794,6 +827,57 @@ def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     if _latest_response_progresses_beyond_group(payloads, best_group):
         return payloads[-1]
     return best_group[0][1]
+
+
+def _has_conflicting_partial_windows(
+    best_group: list[tuple[int, dict[str, Any]]],
+    groups: dict[tuple, list[tuple[int, dict[str, Any]]]],
+    *,
+    latest_payload: dict[str, Any] | None = None,
+) -> bool:
+    """Reject a partial quorum that silently drops another valid window."""
+    best_payload = best_group[0][1]
+    best_identity = backend_identity_from_payload(best_payload)
+    best_durations = _supported_window_durations(best_payload)
+    if latest_payload is not None:
+        latest_durations = _supported_window_durations(latest_payload)
+        if (
+            len(best_durations) >= 2
+            and 0 < len(latest_durations) < len(best_durations)
+            and backend_identity_from_payload(latest_payload) == best_identity
+        ):
+            return True
+    if len(best_durations) >= 2:
+        return False
+    observed_durations = set(best_durations)
+    for group in groups.values():
+        if backend_identity_from_payload(group[0][1]) != best_identity:
+            continue
+        for _index, payload in group:
+            observed_durations.update(_supported_window_durations(payload))
+    return len(observed_durations) > len(best_durations)
+
+
+def _supported_window_durations(payload: dict[str, Any]) -> set[int]:
+    rate_limit = payload.get("rate_limit")
+    if not isinstance(rate_limit, dict):
+        return set()
+    durations: set[int] = set()
+    for key in ("primary_window", "secondary_window"):
+        window = rate_limit.get(key)
+        if not isinstance(window, dict):
+            continue
+        duration = _signature_number(window.get("limit_window_seconds"))
+        used_percent = _signature_number(window.get("used_percent"))
+        if (
+            duration is not None
+            and duration.is_integer()
+            and int(duration) in SUPPORTED_WINDOW_SECONDS
+            and used_percent is not None
+            and 0 <= used_percent <= 100
+        ):
+            durations.add(int(duration))
+    return durations
 
 
 def _usage_response_signature(payload: dict[str, Any]) -> tuple:
@@ -977,6 +1061,68 @@ def _latest_response_is_relative_reset(
     return reset_seen
 
 
+def _latest_response_is_absolute_reset(
+    payloads: list[dict[str, Any]],
+    best_group: list[tuple[int, dict[str, Any]]],
+) -> bool:
+    """Accept a reset identified by a forward absolute reset timestamp."""
+    if len(payloads) < 2 or not best_group:
+        return False
+    latest_index = len(payloads) - 1
+    if any(index == latest_index for index, _ in best_group):
+        return False
+    previous_index, previous = max(best_group, key=lambda item: item[0])
+    if previous_index >= latest_index:
+        return False
+    if backend_identity_from_payload(previous) != backend_identity_from_payload(payloads[-1]):
+        return False
+
+    reset_seen = False
+    for window_key in ("primary_window", "secondary_window"):
+        previous_window = _rate_limit_window(previous, window_key)
+        current_window = _rate_limit_window(payloads[-1], window_key)
+        if previous_window is None or current_window is None:
+            if previous_window is None and current_window is None:
+                continue
+            return False
+        previous_used = _signature_number(previous_window.get("used_percent"))
+        current_used = _signature_number(current_window.get("used_percent"))
+        if previous_used is None or current_used is None:
+            if previous_used is None and current_used is None:
+                continue
+            return False
+        previous_duration = _signature_number(previous_window.get("limit_window_seconds"))
+        current_duration = _signature_number(current_window.get("limit_window_seconds"))
+        if (
+            previous_duration is None
+            or current_duration is None
+            or previous_duration != current_duration
+        ):
+            return False
+        previous_reset = _signature_reset(previous_window.get("reset_at"))
+        current_reset = _signature_reset(current_window.get("reset_at"))
+        if previous_reset is None or current_reset is None:
+            # Without an absolute identity this counterpart cannot prove that
+            # a lower value belongs to the same reset transition.
+            if current_used < previous_used:
+                return False
+            if current_used - previous_used > DIRECT_PROGRESSIVE_STEP_PERCENT:
+                return False
+            continue
+        if current_reset < previous_reset:
+            return False
+        if current_reset > previous_reset:
+            if current_used > previous_used:
+                return False
+            reset_seen = True
+            continue
+        if current_used < previous_used:
+            return False
+        if current_used - previous_used > DIRECT_PROGRESSIVE_STEP_PERCENT:
+            return False
+    return reset_seen
+
+
 def _rate_limit_window(payload: dict[str, Any], key: str) -> dict[str, Any] | None:
     rate_limit = payload.get("rate_limit")
     if not isinstance(rate_limit, dict):
@@ -1094,6 +1240,21 @@ def _jwt_expiry(token: Any) -> datetime | None:
         return datetime.fromtimestamp(float(exp), tz=UTC).astimezone(LOCAL_TZ)
     except (OverflowError, OSError, ValueError):
         return None
+
+
+def _current_jwt_claims(token: Any) -> dict[str, Any] | None:
+    claims = _jwt_claims(token)
+    if not isinstance(claims, dict):
+        return None
+    expiry = claims.get("exp")
+    if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
+        return claims
+    try:
+        if not math.isfinite(float(expiry)):
+            return claims
+    except (OverflowError, TypeError, ValueError):
+        return claims
+    return None if float(expiry) <= time.time() else claims
 
 
 def _jwt_claims(token: Any) -> dict[str, Any] | None:

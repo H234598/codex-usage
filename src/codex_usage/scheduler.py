@@ -66,7 +66,9 @@ def fetch_all(
     save_snapshots: bool = False,
 ) -> list[AccountUsage]:
     account_list = list(accounts)
-    ambiguous_direct_accounts = _ambiguous_direct_accounts(account_list)
+    # A single-account command must not bypass ambiguity detection by selecting
+    # only one row from a configuration that contains a shared user identity.
+    ambiguous_direct_accounts = _ambiguous_direct_accounts(list(config.accounts))
     serial_fetch_required = _serial_fetch_required(
         account_list,
         headed=headed,
@@ -155,17 +157,23 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
             continue
         try:
             user_id, account_id = auth_identity_for_account(account)
-            plan_type = auth_plan_type_for_account(account)
         except DirectAuthError:
             continue
         if not user_id:
             continue
+        try:
+            plan_type = auth_plan_type_for_account(account)
+        except DirectAuthError:
+            plan_type = None
         identities.append((account.id, user_id, account_id, plan_type))
     ambiguous: set[str] = set()
     for index, (local_id, user_id, account_id, plan_type) in enumerate(identities):
-        for other_local_id, other_user_id, other_account_id, other_plan_type in identities[
-            index + 1 :
-        ]:
+        for (
+            other_local_id,
+            other_user_id,
+            other_account_id,
+            other_plan_type,
+        ) in identities[index + 1 :]:
             if user_id != other_user_id:
                 continue
             if account_id and other_account_id and account_id == other_account_id:
@@ -173,14 +181,21 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
             if not account_id or not other_account_id:
                 ambiguous.update((local_id, other_local_id))
                 continue
-            plans_are_ambiguous = (
-                plan_type is None
-                or other_plan_type is None
-                or _normalized_plan_type(plan_type) == _normalized_plan_type(other_plan_type)
-            )
-            if plans_are_ambiguous:
-                ambiguous.update((local_id, other_local_id))
+            if _plan_types_distinguish(plan_type, other_plan_type):
+                # Personal WHAM responses can echo the shared user ID as
+                # account_id. A matching backend plan, checked later against
+                # this token, distinguishes it from a same-user account with
+                # a different plan. Same-plan or incomplete identities remain
+                # fail-closed.
+                continue
+            ambiguous.update((local_id, other_local_id))
     return frozenset(ambiguous)
+
+
+def _plan_types_distinguish(left: str | None, right: str | None) -> bool:
+    if not left or not right:
+        return False
+    return _normalized_plan_type(left) != _normalized_plan_type(right)
 
 
 def _fetch_one(
@@ -344,6 +359,13 @@ def _has_unexpired_window_reset_discontinuity(
         return False
     if previous.reset_at <= reference_at or current.reset_at <= reference_at:
         return False
+    if _uses_absolute_reset_time(current) or _uses_absolute_reset_time(previous):
+        return False
+    if _has_relative_reset_metadata(current) or _has_relative_reset_metadata(previous):
+        # A relative countdown is the authoritative reset signal for direct
+        # responses. If its metadata is malformed, never reinterpret the
+        # accompanying timestamp as an absolute reset and retain old values.
+        return False
     if _uses_relative_reset_time(current) or _uses_relative_reset_time(previous):
         return False
     return (
@@ -364,6 +386,20 @@ def _uses_relative_reset_time(window: Any) -> bool:
         and reset_after is not None
         and 0 <= reset_after <= limit_window
     )
+
+
+def _has_relative_reset_metadata(window: Any) -> bool:
+    raw = getattr(window, "raw", None)
+    if not isinstance(raw, str):
+        return False
+    return re.search(
+        r'"(?:reset_after_seconds|resetafterseconds|reset_after|resetafter)"\s*:',
+        raw,
+    ) is not None
+
+
+def _uses_absolute_reset_time(window: Any) -> bool:
+    return getattr(window, "source", None) == "app-server"
 
 
 def _raw_number(raw: str, field: str) -> float | None:
@@ -497,6 +533,11 @@ def _remaining_percent(window) -> float | None:
         if limit is not None and limit > 0:
             remaining = remaining_value * 100 / limit
             return _clamp_percent(remaining)
+        percent = _finite_number(window.percent)
+        if percent is not None:
+            return _clamp_percent(percent)
+        if not 0 <= remaining_value <= 100:
+            return None
         return _clamp_percent(remaining_value)
     percent = _finite_number(window.percent)
     if percent is not None:
@@ -627,6 +668,7 @@ def watchdog(
             snapshot is not None
             and not _capture_is_too_far_in_future(snapshot, now)
             and _blocked_until_active(snapshot, now=now)
+            and _blocked_snapshot_is_consistent(snapshot, now=now)
             and _blocked_snapshot_matches_account(
                 account,
                 snapshot,
@@ -741,6 +783,14 @@ def _blocked_until_active(usage: AccountUsage, *, now: datetime) -> bool:
     )
 
 
+def _blocked_snapshot_is_consistent(usage: AccountUsage, *, now: datetime) -> bool:
+    """Validate stored block metadata without breaking legacy empty snapshots."""
+    if usage.five_hour is None and usage.weekly is None:
+        return True
+    blocked_until, _reason = _block_state(usage, now=now)
+    return blocked_until is not None and blocked_until == usage.blocked_until
+
+
 def _capture_is_too_far_in_future(
     usage: AccountUsage | None,
     reference_at: datetime,
@@ -761,6 +811,20 @@ def _blocked_snapshot_matches_account(
     configured_backend: str,
 ) -> bool:
     if not backend_provenance_matches_configured(snapshot, configured_backend):
+        return False
+    if (
+        snapshot.backend_used == "browser"
+        and (
+            configured_backend == "app-server"
+            or (
+                configured_backend == "direct"
+                and (auth_json_path is not None or account.auth_json_path is not None)
+            )
+        )
+    ):
+        # A browser block belongs to whichever account the browser cookies had
+        # active. It is not safe to attribute it to an authenticated account,
+        # especially when multiple accounts share a user ID.
         return False
     try:
         if auth_json_path is not None:
@@ -827,15 +891,21 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
 def _window_is_exhausted(window: Any) -> bool:
     if window is None:
         return False
-    if window.used is not None and window.limit is not None:
+    used = _finite_number(getattr(window, "used", None))
+    limit = _finite_number(getattr(window, "limit", None))
+    if (
+        used is not None
+        and limit is not None
+        and limit > 0
+    ):
         # Absolute usage is authoritative when a stale remaining field
         # conflicts with it.
-        return window.used >= window.limit
-    if window.remaining is not None:
-        return window.remaining <= 0
-    if window.percent is not None and window.percent <= 0:
-        return True
-    return False
+        return used >= limit
+    remaining = _finite_number(getattr(window, "remaining", None))
+    if remaining is not None and 0 <= remaining <= 100:
+        return remaining <= 0
+    percent = _finite_number(getattr(window, "percent", None))
+    return percent is not None and 0 <= percent <= 100 and percent <= 0
 
 
 def _should_persist_snapshot(usage: AccountUsage) -> bool:

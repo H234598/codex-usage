@@ -14,7 +14,7 @@ from .account_lock import account_lock
 from .config import default_state_dir
 from .extractor import LOCAL_TZ
 from .json_utils import loads_strict
-from .models import AccountStatus, AccountUsage, LimitWindow
+from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import (
     assert_no_symlink_ancestors,
     private_path_lock,
@@ -30,6 +30,8 @@ MAX_STATE_GENERATION_BYTES = 4096
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 KNOWN_BACKENDS = AUTHENTICATED_BACKENDS | frozenset(("browser",))
 WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
+MAX_MODEL_POOLS = 20
+MAX_POOL_WINDOWS = 8
 MAX_RESET_FUTURE_SKEW_SECONDS = 5 * 60
 KNOWN_FALLBACK_REASONS = frozenset(
     (
@@ -51,6 +53,11 @@ def backend_provenance_matches_configured(
         return False
     if usage.backend_configured and usage.backend_configured != configured_backend:
         return False
+    if usage.backend_used == "browser":
+        # Browser can be an intentional fallback for an account configured
+        # with an authenticated backend, but only when that provenance is
+        # explicit. An unlabelled browser snapshot is not attributable.
+        return usage.backend_configured == configured_backend
     if usage.backend_used not in AUTHENTICATED_BACKENDS:
         return True
     if usage.backend_used == configured_backend:
@@ -448,6 +455,8 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
     raw_weekly = payload.get("weekly")
     five_hour = _window_from_dict(raw_five_hour, expected_kind="five_hour")
     weekly = _window_from_dict(raw_weekly, expected_kind="weekly")
+    main = _pool_from_dict(payload.get("main"), expected_key="main")
+    model_pools = _model_pools_from_dict(payload.get("models"))
     invalid_window_fields = [
         field
         for field, raw_window, parsed_window in (
@@ -458,8 +467,18 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         and parsed_window is None
         and _window_from_dict(raw_window) is not None
     ]
+    sanitized_window_fields = [
+        field
+        for field, raw_window, parsed_window in (
+            ("five_hour", raw_five_hour, five_hour),
+            ("weekly", raw_weekly, weekly),
+        )
+        if _window_had_invalid_cached_value(raw_window, parsed_window)
+    ]
     status = AccountStatus(str(payload.get("status", "ok")))
     error = _optional_snapshot_text(payload.get("error"), limit=MAX_SNAPSHOT_TEXT)
+    cache_invalidated = payload.get("cache_invalidated") is True
+    values_captured_at = _optional_datetime(payload.get("values_captured_at"))
     if invalid_window_fields:
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
@@ -468,12 +487,30 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             + ", ".join(invalid_window_fields)
         )
         error = f"{error}; {invalid_error}" if error else invalid_error
+    if sanitized_window_fields:
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
+        sanitized_error = (
+            "invalid cached limit value: "
+            + ", ".join(sanitized_window_fields)
+        )
+        error = f"{error}; {sanitized_error}" if error else sanitized_error
+    if cache_invalidated:
+        five_hour = None
+        weekly = None
+        main = None
+        model_pools = ()
+        values_captured_at = None
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
     return AccountUsage(
         account_id=_snapshot_text(payload["account"], limit=64),
         label=_snapshot_text(payload.get("label") or payload["account"], limit=120),
         captured_at=_snapshot_datetime(payload["captured_at"]),
         five_hour=five_hour,
         weekly=weekly,
+        main=main,
+        models=model_pools,
         status=status,
         error=error,
         blocked_until=_optional_datetime(payload.get("blocked_until")),
@@ -496,9 +533,9 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         fallback_reason=_optional_snapshot_text(
             payload.get("fallback_reason"), limit=MAX_SNAPSHOT_TEXT
         ),
-        values_captured_at=_optional_datetime(payload.get("values_captured_at")),
-        stale=payload.get("stale") is True,
-        cache_invalidated=payload.get("cache_invalidated") is True,
+        values_captured_at=values_captured_at,
+        stale=payload.get("stale") is True or cache_invalidated,
+        cache_invalidated=cache_invalidated,
         state_generation=_optional_state_generation(payload.get("state_generation")),
     )
 
@@ -621,8 +658,15 @@ def _has_resetless_usage_window(usage: AccountUsage) -> bool:
 
 
 def _authoritative_empty_limits(usage: AccountUsage) -> bool:
+    if usage.status == AccountStatus.PARTIAL:
+        return (
+            usage.five_hour is None
+            and usage.weekly is None
+            and usage.backend_used in {"direct", "app-server"}
+        )
     return (
-        usage.status == AccountStatus.PARTIAL
+        usage.status == AccountStatus.ERROR
+        and usage.cache_invalidated
         and usage.five_hour is None
         and usage.weekly is None
         and usage.backend_used in {"direct", "app-server"}
@@ -758,6 +802,9 @@ def _is_inferred_inactive_five_hour(window: LimitWindow | None) -> bool:
 
 
 def _window_duration_seconds(window: LimitWindow | None) -> int | None:
+    duration = getattr(window, "duration_seconds", None)
+    if isinstance(duration, int) and not isinstance(duration, bool) and duration > 0:
+        return duration
     raw = getattr(window, "raw", None)
     if not isinstance(raw, str):
         return None
@@ -858,6 +905,21 @@ def _values_capture_for_expiry(usage: AccountUsage) -> datetime:
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
+    if (
+        left.backend_used in AUTHENTICATED_BACKENDS
+        and right.backend_used in AUTHENTICATED_BACKENDS
+        and not any(
+            (
+                left.backend_account_id,
+                right.backend_account_id,
+                left.backend_user_id,
+                right.backend_user_id,
+            )
+        )
+    ):
+        # An explicit authenticated backend without identity proof must not
+        # restore values captured before a possible account switch.
+        return False
     left_account_id = left.backend_account_id
     right_account_id = right.backend_account_id
     if bool(left_account_id) != bool(right_account_id):
@@ -889,10 +951,123 @@ def _window_from_dict(
         reset_at=_snapshot_datetime(reset_at) if reset_at else None,
         raw=_optional_snapshot_text(payload.get("raw"), limit=MAX_SNAPSHOT_TEXT),
         source=_snapshot_text(payload.get("source") or "unknown", limit=120),
+        duration_seconds=_snapshot_window_duration(payload.get("duration_seconds")),
     )
+    if window.percent is not None and not 0 <= window.percent <= 100:
+        # Explicit percentages outside the display domain are not usage
+        # values. Absolute fields can still provide a trustworthy result.
+        window = replace(window, percent=None)
+    if window.used is not None and window.used < 0:
+        # Do not let an unqualified remaining counter survive an invalid
+        # absolute usage pair and become a plausible cached percentage.
+        window = replace(window, used=None, remaining=None)
+    if window.limit is not None and window.limit <= 0:
+        window = replace(window, used=None, limit=None, remaining=None)
+    if window.remaining is not None and window.remaining < 0:
+        window = replace(window, remaining=0)
+    if (
+        window.limit is None or window.limit <= 0
+    ) and window.remaining is not None and not 0 <= window.remaining <= 100:
+        # Without a positive denominator, values outside the percentage range
+        # are ambiguous absolute counters and must not survive cache loading.
+        window = replace(window, remaining=None)
     if expected_kind is not None and not _window_matches_expected_kind(window, expected_kind):
         return None
     return window
+
+
+def _pool_from_dict(
+    payload: Any,
+    *,
+    expected_key: str | None = None,
+) -> UsagePool | None:
+    if not isinstance(payload, dict):
+        return None
+    key = _optional_snapshot_text(payload.get("key"), limit=120)
+    if not key or (expected_key is not None and key != expected_key):
+        return None
+    raw_windows = payload.get("windows")
+    if not isinstance(raw_windows, list) or len(raw_windows) > MAX_POOL_WINDOWS:
+        return None
+    windows: list[LimitWindow] = []
+    for raw_window in raw_windows:
+        window = _window_from_dict(raw_window)
+        if window is None:
+            return None
+        windows.append(window)
+    raw_sources = payload.get("availability_sources")
+    sources = tuple(
+        _snapshot_text(value, limit=40)
+        for value in raw_sources[:8]
+        if isinstance(value, str) and value.strip()
+    ) if isinstance(raw_sources, list) else ()
+    available = payload.get("available")
+    if not isinstance(available, bool):
+        return None
+    return UsagePool(
+        key=key,
+        display_name=_snapshot_text(
+            payload.get("display_name") or key,
+            limit=120,
+        ),
+        windows=tuple(windows),
+        available=available,
+        allowed=_optional_bool(payload.get("allowed")),
+        limit_reached=_optional_bool(payload.get("limit_reached")),
+        metered_feature=_optional_snapshot_text(
+            payload.get("metered_feature"), limit=120
+        ),
+        availability_sources=tuple(dict.fromkeys(sources)),
+    )
+
+
+def _model_pools_from_dict(payload: Any) -> tuple[UsagePool, ...]:
+    if not isinstance(payload, dict) or len(payload) > MAX_MODEL_POOLS:
+        return ()
+    pools: list[UsagePool] = []
+    for raw_key, raw_pool in payload.items():
+        if not isinstance(raw_key, str) or not raw_key.strip():
+            return ()
+        key = _snapshot_text(raw_key, limit=120)
+        pool = _pool_from_dict(raw_pool, expected_key=key)
+        if pool is None:
+            return ()
+        pools.append(pool)
+    return tuple(pools)
+
+
+def _snapshot_window_duration(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value > 0 else None
+
+
+def _window_had_invalid_cached_value(
+    payload: dict[str, Any] | None,
+    window: LimitWindow | None,
+) -> bool:
+    if not isinstance(payload, dict) or window is None:
+        return False
+    raw_used = _optional_float(payload.get("used"))
+    raw_limit = _optional_float(payload.get("limit"))
+    if raw_used is not None and raw_used < 0:
+        return not window.has_usage_value
+    if raw_limit is not None and raw_limit <= 0:
+        raw_percent = _optional_float(payload.get("percent"))
+        if raw_percent is not None and 0 <= raw_percent <= 100:
+            return False
+        return not window.has_usage_value
+    raw_percent = _optional_float(payload.get("percent"))
+    if raw_percent is not None and not 0 <= raw_percent <= 100:
+        return not window.has_usage_value
+    raw_remaining = _optional_float(payload.get("remaining"))
+    if raw_remaining is None or 0 <= raw_remaining <= 100:
+        return False
+    if window.limit is not None and window.limit > 0:
+        return False
+    return window.remaining is None and window.percent is None
 
 
 def _optional_float(value: Any) -> float | None:
@@ -903,6 +1078,10 @@ def _optional_float(value: Any) -> float | None:
     except (OverflowError, TypeError, ValueError):
         return None
     return coerced if math.isfinite(coerced) else None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _optional_state_generation(value: Any) -> int | None:

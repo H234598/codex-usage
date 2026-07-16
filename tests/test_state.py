@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from codex_usage.models import AccountStatus, AccountUsage, LimitWindow
+from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.state import (
     _localize_datetime,
     _snapshot_datetime,
@@ -22,6 +22,7 @@ from codex_usage.state import (
     remove_account_state,
     save_current_usage,
     save_usage_snapshot,
+    usage_from_dict,
 )
 
 
@@ -32,6 +33,61 @@ def test_naive_state_times_use_dst_aware_local_zone(monkeypatch):
 
     assert _snapshot_datetime("2026-10-26T00:15:00") == expected
     assert _localize_datetime(datetime(2026, 10, 26, 0, 15)) == expected
+
+
+def test_usage_state_round_trips_dynamic_main_and_spark_pools():
+    captured_at = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
+    weekly = LimitWindow(
+        name="weekly",
+        remaining=80,
+        percent=80,
+        duration_seconds=604800,
+        source="app-server",
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured_at,
+        weekly=weekly,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(weekly,),
+            availability_sources=("usage",),
+        ),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="GPT-5.3-Codex-Spark",
+                available=True,
+                metered_feature="codex_bengalfox",
+                availability_sources=("model_catalog",),
+            ),
+        ),
+    )
+
+    loaded = usage_from_dict(usage.as_dict())
+
+    assert loaded.main == usage.main
+    assert loaded.models == usage.models
+    assert loaded.weekly == weekly
+
+
+def test_usage_state_migrates_legacy_windows_to_main_pool():
+    loaded = usage_from_dict(
+        {
+            "account": "legacy",
+            "label": "Legacy",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "five_hour": {"name": "5h", "remaining": 90, "source": "legacy"},
+            "weekly": {"name": "weekly", "remaining": 70, "source": "legacy"},
+            "status": "ok",
+        }
+    )
+
+    assert loaded.main is not None
+    assert [window.duration_seconds for window in loaded.main.windows] == [18000, 604800]
+    assert loaded.main.availability_sources == ("legacy_fields",)
 
 
 def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
@@ -112,6 +168,23 @@ def test_backend_provenance_rejects_browser_merge_with_authenticated_backend():
 
     assert backend_provenance_matches(browser, direct) is False
     assert backend_provenance_matches(direct, browser) is False
+
+
+def test_backend_provenance_rejects_unconfigured_browser_for_direct_backend():
+    browser = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_used="browser",
+    )
+
+    assert backend_provenance_matches_configured(browser, "direct") is False
+    assert backend_provenance_matches_configured(browser, "app-server") is False
+    assert backend_provenance_matches_configured(browser, "browser") is False
+    assert backend_provenance_matches_configured(
+        replace(browser, backend_configured="browser"),
+        "browser",
+    ) is True
 
 
 def test_backend_provenance_rejects_browser_merge_with_unknown_backend():
@@ -730,6 +803,220 @@ def test_load_usage_snapshot_ignores_integer_overflow_in_window_number(tmp_path)
     assert loaded.weekly is not None and loaded.weekly.remaining == 55
 
 
+def test_load_usage_snapshot_drops_denominatorless_absolute_remaining(tmp_path):
+    payload = {
+        "account": "absolute-remaining",
+        "label": "Absolute remaining",
+        "captured_at": "2026-06-08T04:20:00+02:00",
+        "status": "ok",
+        "five_hour": {"name": "5h", "remaining": 690},
+        "weekly": {"name": "weekly", "remaining": 55},
+    }
+    (tmp_path / "absolute-remaining.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("absolute-remaining", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
+    assert loaded.weekly is not None and loaded.weekly.remaining == 55
+
+
+@pytest.mark.parametrize("remaining", [0, 50, 690])
+def test_load_usage_snapshot_discards_unqualified_remaining_with_non_positive_limit(
+    tmp_path,
+    remaining,
+):
+    payload = {
+        "account": "invalid-zero-limit",
+        "label": "Invalid zero limit",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "five_hour": {
+            "name": "5h",
+            "used": 0,
+            "limit": 0,
+            "remaining": remaining,
+        },
+    }
+    (tmp_path / "invalid-zero-limit.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("invalid-zero-limit", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.used is None
+    assert loaded.five_hour.limit is None
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.percent is None
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
+
+
+def test_load_usage_snapshot_preserves_explicit_percent_with_non_positive_limit(
+    tmp_path,
+):
+    payload = {
+        "account": "explicit-zero-limit-percent",
+        "label": "Explicit zero limit percent",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "five_hour": {
+            "name": "5h",
+            "used": 0,
+            "limit": 0,
+            "remaining": 690,
+            "percent": 69,
+        },
+    }
+    (tmp_path / "explicit-zero-limit-percent.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("explicit-zero-limit-percent", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.used is None
+    assert loaded.five_hour.limit is None
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.percent == 69
+    assert loaded.status == AccountStatus.OK
+
+
+def test_load_usage_snapshot_discards_standalone_non_positive_limit(tmp_path):
+    payload = {
+        "account": "standalone-zero-limit",
+        "label": "Standalone zero limit",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "five_hour": {"name": "5h", "limit": 0, "remaining": 50},
+    }
+    (tmp_path / "standalone-zero-limit.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("standalone-zero-limit", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.used is None
+    assert loaded.five_hour.limit is None
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.percent is None
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
+
+
+@pytest.mark.parametrize("percent", [-1, 101, 690])
+def test_load_usage_snapshot_discards_out_of_range_percent(percent, tmp_path):
+    payload = {
+        "account": "invalid-percent",
+        "label": "Invalid percent",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "five_hour": {"name": "5h", "percent": percent},
+    }
+    (tmp_path / "invalid-percent.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("invalid-percent", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.percent is None
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
+
+
+def test_load_usage_snapshot_discards_negative_used(tmp_path):
+    payload = {
+        "account": "negative-used",
+        "label": "Negative used",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "five_hour": {
+            "name": "5h",
+            "used": -1,
+            "limit": 100,
+            "remaining": 80,
+        },
+    }
+    (tmp_path / "negative-used.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("negative-used", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.used is None
+    assert loaded.five_hour.limit == 100
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
+
+
+def test_load_usage_snapshot_normalizes_negative_remaining(tmp_path):
+    payload = {
+        "account": "negative-remaining",
+        "label": "Negative remaining",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "five_hour": {"name": "5h", "limit": 100, "remaining": -1},
+    }
+    (tmp_path / "negative-remaining.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("negative-remaining", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.remaining == 0
+    assert loaded.status == AccountStatus.OK
+
+
+def test_load_usage_snapshot_keeps_percent_when_absolute_remaining_is_ambiguous(tmp_path):
+    payload = {
+        "account": "percent-remaining",
+        "label": "Percent remaining",
+        "captured_at": "2026-06-08T04:20:00+02:00",
+        "status": "ok",
+        "five_hour": {"name": "5h", "remaining": 690, "percent": 69},
+    }
+    (tmp_path / "percent-remaining.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("percent-remaining", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.percent == 69
+    assert loaded.status == AccountStatus.OK
+
+
 def test_load_usage_snapshot_ignores_symlink(tmp_path):
     target = tmp_path / "target.json"
     target.write_text(
@@ -871,6 +1158,96 @@ def test_current_status_keeps_last_success_values_separate(tmp_path):
     assert merged.values_captured_at == captured
     assert merged.stale is True
     assert merged.backend_used == "app-server"
+
+
+def test_invalidated_state_discards_embedded_limit_windows():
+    payload = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=80),
+        weekly=LimitWindow(name="weekly", remaining=60),
+        values_captured_at=datetime(2026, 6, 8, 4, 19, tzinfo=ZoneInfo("Europe/Berlin")),
+        cache_invalidated=True,
+    ).as_dict()
+    payload["five_hour"] = {"name": "5h", "remaining": 80}
+    payload["weekly"] = {"name": "weekly", "remaining": 60}
+    payload["values_captured_at"] = "2026-06-08T04:19:00+02:00"
+
+    loaded = usage_from_dict(payload)
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
+    assert loaded.five_hour is None
+    assert loaded.weekly is None
+    assert loaded.values_captured_at is None
+    assert loaded.stale is True
+
+
+@pytest.mark.parametrize("backend", ("direct", "app-server"))
+def test_authenticated_error_does_not_restore_last_success_values(backend):
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.ERROR,
+        error="backend response has ambiguous account identity",
+        backend_used=backend,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        cache_invalidated=True,
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured - timedelta(minutes=1),
+        status=AccountStatus.OK,
+        backend_used=backend,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=70),
+        weekly=LimitWindow(name="weekly", remaining=80),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+    assert merged.five_hour is None
+    assert merged.weekly is None
+
+
+@pytest.mark.parametrize("backend", ("direct", "app-server"))
+def test_authenticated_transient_error_keeps_last_success_values(backend):
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.ERROR,
+        error="direct fetch failed: network error",
+        backend_used=backend,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured - timedelta(minutes=1),
+        status=AccountStatus.OK,
+        backend_used=backend,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=70),
+        weekly=LimitWindow(name="weekly", remaining=80),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour == last_success.five_hour
+    assert merged.weekly == last_success.weekly
+    assert merged.stale is True
 
 
 def test_merge_current_with_last_success_fills_missing_window():
@@ -1167,6 +1544,30 @@ def test_merge_rejects_identified_current_data_from_unknown_cached_account():
     assert merged.five_hour is None
     assert merged.weekly is None
     assert merged.stale is False
+
+
+def test_merge_rejects_authenticated_snapshots_without_identity_proof():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        weekly=LimitWindow(name="weekly", remaining=55),
+        status=AccountStatus.PARTIAL,
+        backend_used="direct",
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=70),
+        backend_used="direct",
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged == current
 
 
 def test_merge_rejects_different_identified_backend_account():

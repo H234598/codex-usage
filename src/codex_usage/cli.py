@@ -5,6 +5,8 @@ import ipaddress
 import json
 import shutil
 import sys
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__
@@ -40,6 +42,13 @@ from .models import AccountStatus, AccountUsage
 from .private_io import read_private_text
 from .reactivate import REACTIVATION_BROWSERS, ReactivationError, reactivate_account
 from .render import render_account_overview, render_account_values, render_json, render_table
+from .routing import (
+    DEFAULT_MAX_USAGE_AGE_SECONDS,
+    effective_paid_overage,
+    evaluate_routing,
+    load_policy,
+    set_policy_rule,
+)
 from .scheduler import fetch_all, watch, watchdog
 from .service import (
     managed_service_config_path,
@@ -50,7 +59,8 @@ from .service import (
     service_status,
     service_uninstall,
 )
-from .state import remove_account_state
+from .spark_health import set_spark_health, spark_health_status
+from .state import load_current_usage, load_usage_snapshot, remove_account_state
 
 COMMAND_OVERVIEW = """\
 Komplette Command-Line-Usage:
@@ -81,6 +91,18 @@ Abruf und Ueberwachung:
   codex-usage watchdog [--account ACCOUNT] [--format table|json]
                        [--headed] [--backend direct|app-server] [--direct]
                        [--auth-json PATH]
+
+Routing und Credits:
+  codex-usage policy evaluate [ACCOUNT|--auth-json PATH] --role ROLE
+                              [--group ID] [--agent ID] [--job ID]
+                              [--max-age SEKUNDEN]
+  codex-usage policy set global allow|deny|inherit [--format json]
+  codex-usage policy set account|group|agent|job allow|deny|inherit --id ID
+                              [--format json]
+  codex-usage policy overview [--format json]
+  codex-usage policy status [--role ROLE] [--max-age SEKUNDEN] [--format json]
+  codex-usage spark-health --backend-account-id ID [--state healthy|failed]
+                            [--reason TEXT] [--format json]
 
 Analyse und Diagnose:
   codex-usage probe ACCOUNT [--headless] [--save-dir DIR]
@@ -134,6 +156,8 @@ KNOWN_COMMANDS = {
     "once",
     "watch",
     "watchdog",
+    "policy",
+    "spark-health",
     "probe",
     "diagnose",
     "ingest",
@@ -289,6 +313,81 @@ def _build_parser() -> argparse.ArgumentParser:
         help="auth.json fuer direkten Abruf ueberschreiben",
     )
     watchdog_cmd.set_defaults(func=_cmd_watchdog)
+
+    policy = sub.add_parser(
+        "policy",
+        help="Modellrouting und Freigabe bezahlter Credits verwalten",
+    )
+    policy_sub = policy.add_subparsers(dest="policy_command", required=True)
+    policy_evaluate = policy_sub.add_parser(
+        "evaluate",
+        help="Gespeicherte Usagewerte in eine Routingentscheidung umsetzen",
+    )
+    policy_evaluate.add_argument(
+        "account",
+        nargs="?",
+        help="Account-ID oder eindeutiges Label; alternativ --auth-json",
+    )
+    policy_evaluate.add_argument(
+        "--auth-json",
+        type=Path,
+        help="Account anhand kanonischer Backend-Account-ID zuordnen",
+    )
+    policy_evaluate.add_argument("--role", required=True)
+    policy_evaluate.add_argument("--group")
+    policy_evaluate.add_argument("--agent")
+    policy_evaluate.add_argument("--job")
+    policy_evaluate.add_argument(
+        "--max-age",
+        type=int,
+        default=DEFAULT_MAX_USAGE_AGE_SECONDS,
+        help="Maximales Alter der Usagewerte in Sekunden, Standard: 600",
+    )
+    policy_evaluate.add_argument("--format", choices=("json",), default="json")
+    policy_evaluate.set_defaults(func=_cmd_policy_evaluate)
+
+    policy_set = policy_sub.add_parser(
+        "set",
+        help="Credit-Freigabe fuer einen Scope setzen oder erben",
+    )
+    policy_set.add_argument(
+        "scope", choices=("global", "account", "group", "agent", "job")
+    )
+    policy_set.add_argument("value", choices=("allow", "deny", "inherit"))
+    policy_set.add_argument("--id", dest="identifier")
+    policy_set.add_argument("--format", choices=("json",), default="json")
+    policy_set.set_defaults(func=_cmd_policy_set)
+
+    policy_overview = policy_sub.add_parser(
+        "overview",
+        help="Gespeicherte Credit-Richtlinien anzeigen",
+    )
+    policy_overview.add_argument("--format", choices=("json",), default="json")
+    policy_overview.set_defaults(func=_cmd_policy_overview)
+
+    policy_status = policy_sub.add_parser(
+        "status",
+        help="Richtlinien und Routingentscheidungen aller Accounts anzeigen",
+    )
+    policy_status.add_argument("--role", default="arbeitsbiene")
+    policy_status.add_argument(
+        "--max-age",
+        type=int,
+        default=DEFAULT_MAX_USAGE_AGE_SECONDS,
+        help="Maximales Alter der Usagewerte in Sekunden, Standard: 600",
+    )
+    policy_status.add_argument("--format", choices=("json",), default="json")
+    policy_status.set_defaults(func=_cmd_policy_status)
+
+    spark_health = sub.add_parser(
+        "spark-health",
+        help="Letzten erfolgreichen oder fehlgeschlagenen Spark-Turn verwalten",
+    )
+    spark_health.add_argument("--backend-account-id", required=True)
+    spark_health.add_argument("--state", choices=("healthy", "failed"))
+    spark_health.add_argument("--reason")
+    spark_health.add_argument("--format", choices=("json",), default="json")
+    spark_health.set_defaults(func=_cmd_spark_health)
 
     probe = sub.add_parser("probe", help="Extraktionsquellen fuer einen Account untersuchen")
     probe.add_argument("account", help="Account-ID oder eindeutiges Label")
@@ -555,6 +654,139 @@ def _cmd_watchdog(args: argparse.Namespace) -> int:
         auth_json_path=args.auth_json,
     )
     return 0 if all(usage.status != AccountStatus.ERROR for usage in usages) else 2
+
+
+def _cmd_policy_evaluate(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = _resolve_policy_account(config, args.account, args.auth_json)
+    usage = _usage_for_policy(account)
+    if args.auth_json is not None:
+        _auth_user_id, auth_account_id = auth_identity_from_file(args.auth_json)
+        if usage.backend_account_id and usage.backend_account_id != auth_account_id:
+            raise ValueError("usage snapshot belongs to another backend account id")
+        usage = replace(usage, backend_account_id=auth_account_id)
+    policy = load_policy()
+    paid_overage_allowed, policy_source = effective_paid_overage(
+        policy,
+        account=account.id,
+        group=args.group,
+        agent=args.agent,
+        job=args.job,
+    )
+    result = evaluate_routing(
+        usage,
+        role=args.role,
+        paid_overage_allowed=paid_overage_allowed,
+        policy_source=policy_source,
+        max_age_seconds=args.max_age,
+    )
+    print(json.dumps(result, ensure_ascii=True, sort_keys=True))
+    return 0
+
+
+def _cmd_policy_set(args: argparse.Namespace) -> int:
+    values = {"allow": True, "deny": False, "inherit": None}
+    if args.scope == "global" and args.identifier:
+        raise ValueError("--id is not allowed for global policy")
+    if args.scope != "global" and not args.identifier:
+        raise ValueError("--id is required for account, group, agent and job policy")
+    policy = set_policy_rule(
+        args.scope,
+        args.identifier,
+        values[args.value],
+    )
+    print(json.dumps(policy, ensure_ascii=True, sort_keys=True))
+    return 0
+
+
+def _cmd_policy_overview(args: argparse.Namespace) -> int:
+    print(json.dumps(load_policy(), ensure_ascii=True, sort_keys=True))
+    return 0
+
+
+def _cmd_policy_status(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    policy = load_policy()
+    decisions = {}
+    for account in config.accounts:
+        paid_overage_allowed, policy_source = effective_paid_overage(
+            policy,
+            account=account.id,
+        )
+        decisions[account.id] = evaluate_routing(
+            _usage_for_policy(account),
+            role=args.role,
+            paid_overage_allowed=paid_overage_allowed,
+            policy_source=policy_source,
+            max_age_seconds=args.max_age,
+        )
+    print(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "policy": policy,
+                "decisions": decisions,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _cmd_spark_health(args: argparse.Namespace) -> int:
+    if args.state is None and args.reason is not None:
+        raise ValueError("--reason requires --state")
+    if args.state is None:
+        result = spark_health_status(args.backend_account_id)
+    else:
+        result = set_spark_health(
+            args.backend_account_id,
+            args.state,
+            reason=args.reason,
+        )
+    print(json.dumps(result, ensure_ascii=True, sort_keys=True))
+    return 0
+
+
+def _usage_for_policy(account) -> AccountUsage:
+    usage = load_current_usage(account.id) or load_usage_snapshot(account.id)
+    if usage is not None:
+        return usage
+    return AccountUsage(
+        account_id=account.id,
+        label=account.label,
+        captured_at=datetime.now(tz=UTC),
+        status=AccountStatus.ERROR,
+        error="no usage snapshot",
+        backend_configured=account.backend,
+    )
+
+
+def _resolve_policy_account(config, account_ref: str | None, auth_json: Path | None):
+    if auth_json is None:
+        if not account_ref:
+            raise ValueError("policy evaluate requires ACCOUNT or --auth-json")
+        return resolve_account(config, account_ref)
+    _user_id, backend_account_id = auth_identity_from_file(auth_json)
+    if not backend_account_id:
+        raise ValueError("auth.json has no canonical backend account id")
+    matches = []
+    for account in config.accounts:
+        try:
+            _configured_user_id, configured_account_id = auth_identity_for_account(account)
+        except (DirectAuthError, OSError, ValueError):
+            continue
+        if configured_account_id == backend_account_id:
+            matches.append(account)
+    if len(matches) != 1:
+        raise ValueError(
+            "auth.json backend account id must match exactly one configured account"
+        )
+    matched = matches[0]
+    if account_ref and resolve_account(config, account_ref).id != matched.id:
+        raise ValueError("ACCOUNT and --auth-json identify different accounts")
+    return matched
 
 
 def _cmd_probe(args: argparse.Namespace) -> int:
@@ -872,10 +1104,13 @@ def _load_overview_usages(config, accounts=None):
 def _overview_usage_json(usage: AccountUsage | None) -> dict | None:
     if usage is None:
         return None
+    serialized = usage.as_dict()
     return {
         "captured_at": usage.captured_at.isoformat(),
         "five_hour": _overview_window_json(usage.five_hour),
         "weekly": _overview_window_json(usage.weekly),
+        "main": serialized["main"],
+        "models": serialized["models"],
         "status": usage.status.value,
         "error": usage.error,
         "stale": usage.stale,

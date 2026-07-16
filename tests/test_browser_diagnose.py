@@ -123,6 +123,18 @@ def test_status_for_result_marks_reset_only_windows_partial():
     )
 
 
+def test_status_for_result_prioritizes_logged_out_page_over_stale_usage_values():
+    assert (
+        _status_for_result(
+            body_text="Log in to get answers based on saved chats Sign up for free",
+            current_url="https://chatgpt.com/",
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+        )
+        == AccountStatus.LOGIN_REQUIRED
+    )
+
+
 def test_save_diagnostic_screenshot_rejects_symlink_directory(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()

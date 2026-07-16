@@ -18,6 +18,7 @@ from codex_usage.scheduler import (
     _remaining_percent,
     _stabilize_authenticated_usage,
     _window_duration_seconds,
+    _window_is_exhausted,
     fetch_all,
     watch,
     watchdog,
@@ -49,10 +50,6 @@ def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(
         "codex_usage.scheduler.auth_identity_for_account",
         lambda account: identities[account.id],
     )
-    monkeypatch.setattr(
-        "codex_usage.scheduler.auth_plan_type_for_account",
-        lambda _account: "enterprise",
-    )
 
     assert _ambiguous_direct_accounts(accounts) == frozenset({"privat", "work"})
 
@@ -80,10 +77,6 @@ def test_ambiguous_direct_accounts_allows_local_aliases_of_same_account(monkeypa
         "codex_usage.scheduler.auth_identity_for_account",
         lambda account: identities[account.id],
     )
-    monkeypatch.setattr(
-        "codex_usage.scheduler.auth_plan_type_for_account",
-        lambda _account: "enterprise",
-    )
 
     assert _ambiguous_direct_accounts(accounts) == frozenset()
 
@@ -109,11 +102,11 @@ def test_ambiguous_direct_accounts_allows_shared_users_with_distinct_plans(
         "privat": ("shared-user", "free-account"),
         "work": ("shared-user", "enterprise-account"),
     }
-    plans = {"privat": "free", "work": "enterprise"}
     monkeypatch.setattr(
         "codex_usage.scheduler.auth_identity_for_account",
         lambda account: identities[account.id],
     )
+    plans = {"privat": "free", "work": "enterprise"}
     monkeypatch.setattr(
         "codex_usage.scheduler.auth_plan_type_for_account",
         lambda account: plans[account.id],
@@ -141,11 +134,11 @@ def test_ambiguous_direct_accounts_normalizes_plan_aliases(monkeypatch):
         "pro": ("shared-user", "pro-account"),
         "plus": ("shared-user", "plus-account"),
     }
-    plans = {"pro": "pro", "plus": "plus"}
     monkeypatch.setattr(
         "codex_usage.scheduler.auth_identity_for_account",
         lambda account: identities[account.id],
     )
+    plans = {"pro": "pro", "plus": "plus"}
     monkeypatch.setattr(
         "codex_usage.scheduler.auth_plan_type_for_account",
         lambda account: plans[account.id],
@@ -179,10 +172,6 @@ def test_ambiguous_direct_accounts_rejects_missing_account_id_for_shared_user(
         "codex_usage.scheduler.auth_identity_for_account",
         lambda account: identities[account.id],
     )
-    monkeypatch.setattr(
-        "codex_usage.scheduler.auth_plan_type_for_account",
-        lambda account: {"privat": "free", "work": "enterprise"}[account.id],
-    )
 
     assert _ambiguous_direct_accounts(accounts) == frozenset({"privat", "work"})
 
@@ -207,10 +196,6 @@ def test_fetch_all_passes_ambiguous_identity_guard_to_direct_reader(monkeypatch)
         "codex_usage.scheduler.auth_identity_for_account",
         lambda account: ("shared-user", f"{account.id}-account"),
     )
-    monkeypatch.setattr(
-        "codex_usage.scheduler.auth_plan_type_for_account",
-        lambda _account: "enterprise",
-    )
 
     def fake_fetch_direct(
         account,
@@ -230,6 +215,47 @@ def test_fetch_all_passes_ambiguous_identity_guard_to_direct_reader(monkeypatch)
     fetch_all(AppConfig(accounts=accounts), accounts)
 
     assert flags == {"privat": True, "work": True}
+
+
+def test_fetch_all_keeps_ambiguity_guard_for_selected_account(monkeypatch):
+    accounts = (
+        Account(
+            id="privat",
+            label="Privat",
+            profile_dir="/tmp/privat",
+            auth_json_path="/tmp/privat-auth.json",
+        ),
+        Account(
+            id="work",
+            label="Work",
+            profile_dir="/tmp/work",
+            auth_json_path="/tmp/work-auth.json",
+        ),
+    )
+    flags: dict[str, bool] = {}
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda account: ("shared-user", f"{account.id}-account"),
+    )
+
+    def fake_fetch_direct(
+        account,
+        *,
+        auth_json_path=None,
+        reject_ambiguous_backend_identity=False,
+    ):
+        flags[account.id] = reject_ambiguous_backend_identity
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+
+    fetch_all(AppConfig(accounts=accounts), (accounts[0],))
+
+    assert flags == {"privat": True}
 
 
 def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):
@@ -885,6 +911,53 @@ def test_authenticated_reset_fallback_is_applied_per_window():
     assert result.stale is True
 
 
+def test_authenticated_app_server_absolute_reset_is_not_replaced_by_old_value():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            used=90,
+            limit=100,
+            remaining=10,
+            percent=10,
+            reset_at=datetime(2026, 7, 12, 5, 0, tzinfo=timezone),
+            source="app-server",
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            used=10,
+            limit=100,
+            remaining=90,
+            percent=90,
+            reset_at=datetime(2026, 7, 18, 0, 0, tzinfo=timezone),
+            source="app-server",
+        ),
+        backend_used="app-server",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=replace(
+            previous.five_hour,
+            used=0,
+            remaining=100,
+            percent=100,
+            reset_at=datetime(2026, 7, 12, 10, 0, tzinfo=timezone),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+    assert result.five_hour is not None and result.five_hour.remaining == 100
+    assert result.stale is False
+
+
 def test_authenticated_app_server_fallback_is_not_reused_after_confirmation():
     timezone = ZoneInfo("Europe/Berlin")
     previous = AccountUsage(
@@ -1178,6 +1251,44 @@ def test_authenticated_stabilization_ignores_a_running_relative_countdown():
     assert result.stale is False
 
 
+def test_authenticated_stabilization_rejects_malformed_relative_reset_metadata():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous_captured = datetime(2026, 7, 12, 4, 10, tzinfo=timezone)
+    current_captured = datetime(2026, 7, 12, 4, 13, tzinfo=timezone)
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=previous_captured,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=50,
+            reset_at=previous_captured + timedelta(hours=5),
+            raw=(
+                '"limit_window_seconds": 18000, "reset_after_seconds": 18001'
+            ),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=current_captured,
+        five_hour=replace(
+            previous.five_hour,
+            remaining=100,
+            reset_at=current_captured + timedelta(hours=6),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=360)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.remaining == 100
+    assert result.stale is False
+
+
 def test_authenticated_stabilization_accepts_reset_with_dynamic_absolute_timestamp():
     timezone = ZoneInfo("Europe/Berlin")
     previous_captured = datetime(2026, 7, 12, 4, 10, tzinfo=timezone)
@@ -1402,12 +1513,23 @@ def test_scheduler_numeric_overflow_is_treated_as_missing():
 
 
 @pytest.mark.parametrize(
+    "window",
+    (
+        LimitWindow(name="5h", used=0, limit=0),
+        LimitWindow(name="5h", used=10, limit=-1),
+    ),
+)
+def test_scheduler_does_not_block_on_non_positive_absolute_limit(window):
+    assert _window_is_exhausted(window) is False
+
+
+@pytest.mark.parametrize(
     ("window", "expected"),
     [
         (LimitWindow(name="5h", used=120, limit=100), 0),
         (LimitWindow(name="5h", used=-20, limit=100), 100),
-        (LimitWindow(name="5h", remaining=120), 100),
-        (LimitWindow(name="5h", remaining=-20), 0),
+        (LimitWindow(name="5h", remaining=120), None),
+        (LimitWindow(name="5h", remaining=-20), None),
         (LimitWindow(name="5h", percent=120), 100),
         (LimitWindow(name="5h", percent=-20), 0),
         (LimitWindow(name="5h", percent=float("nan")), None),
@@ -1479,6 +1601,63 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
     assert result[0].blocked_until == blocked_snapshot.blocked_until
     assert result[1] == ok_usage
     assert saved == ["ok"]
+
+
+def test_watchdog_refetches_block_with_inconsistent_limit_windows(monkeypatch):
+    account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
+    now = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    blocked_until = datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin"))
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.BLOCKED,
+        blocked_until=blocked_until,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=50,
+            reset_at=blocked_until,
+        ),
+    )
+    fresh = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=99),
+        weekly=LimitWindow(name="weekly", remaining=98),
+    )
+    fetched_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        fetched_accounts.extend(account.id for account in fetch_accounts)
+        return [fresh]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+    )
+
+    assert fetched_accounts == ["blocked"]
+    assert result == [fresh]
 
 
 def test_watchdog_uses_dst_aware_local_timezone(monkeypatch):
@@ -1561,6 +1740,76 @@ def test_watchdog_refetches_far_future_blocked_snapshot(monkeypatch):
         AppConfig(accounts=(account,)),
         (account,),
         output="json",
+    )
+
+    assert fetched_accounts == ["blocked"]
+    assert result == [fresh]
+
+
+def test_watchdog_refetches_browser_block_for_authenticated_direct_account(
+    tmp_path,
+    monkeypatch,
+):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    now = datetime.now().astimezone()
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.BLOCKED,
+        blocked_until=now + timedelta(hours=2),
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="shared-user",
+        # A browser alias can contain the shared user ID instead of the
+        # account-specific ID, so identity matching alone cannot make it safe.
+        backend_account_id="shared-user",
+    )
+    fresh = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="shared-user",
+        backend_account_id="private-account",
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+    fetched_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        fetched_accounts.extend(selected.id for selected in fetch_accounts)
+        return [fresh]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        direct=True,
     )
 
     assert fetched_accounts == ["blocked"]
@@ -2149,6 +2398,26 @@ def test_window_exhaustion_percent_fallback_uses_remaining_semantics():
 
     assert _window_is_exhausted(LimitWindow(name="5h", percent=0)) is True
     assert _window_is_exhausted(LimitWindow(name="5h", percent=100)) is False
+
+
+@pytest.mark.parametrize(
+    "window",
+    (
+        LimitWindow(name="5h", remaining=-20),
+        LimitWindow(name="5h", remaining=120),
+        LimitWindow(name="5h", percent=-1),
+        LimitWindow(name="5h", percent=120),
+    ),
+)
+def test_window_exhaustion_ignores_out_of_range_percent_values(window):
+    from codex_usage.scheduler import _window_is_exhausted
+
+    assert _window_is_exhausted(window) is False
+
+
+def test_scheduler_remaining_percent_prefers_percent_without_denominator():
+    assert _remaining_percent(LimitWindow(name="5h", remaining=690, percent=69)) == 69
+    assert _remaining_percent(LimitWindow(name="5h", remaining=690)) is None
 
 
 def test_window_exhaustion_prefers_remaining_over_usage_percent():

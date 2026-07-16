@@ -43,6 +43,12 @@ def select_identity_consistent_candidates(
     def is_ambiguous_partial_identity(identity: tuple[str | None, str | None]) -> bool:
         user_id, account_id = identity
         if user_id and not account_id:
+            if auth_account_id:
+                # A shared user ID cannot distinguish two configured accounts.
+                # Do not mix a user-only limit response into an account-ID
+                # authenticated response, even when no foreign account ID was
+                # captured in the same browser batch.
+                return True
             user_account_ids = account_ids_by_user.get(user_id, set())
             return (
                 len(user_account_ids) > 1
@@ -87,6 +93,8 @@ def select_identity_consistent_candidates(
     if skipped_ambiguous_partial and not (auth_user_id or auth_account_id):
         raise ValueError("backend response contains multiple backend accounts")
     if not groups:
+        if skipped_ambiguous_partial and (auth_user_id or auth_account_id):
+            return []
         return candidate_list
     if len(groups) == 1:
         if (auth_user_id or auth_account_id) and not _response_identity_matches_auth(
@@ -101,7 +109,7 @@ def select_identity_consistent_candidates(
         raise ValueError("backend response contains multiple backend accounts")
 
     matching_groups = [
-        grouped_candidates
+        (identity, grouped_candidates)
         for identity, grouped_candidates in groups
         if _response_identity_matches_auth(
             backend_user_id=identity[0],
@@ -112,9 +120,19 @@ def select_identity_consistent_candidates(
     ]
     if len(matching_groups) == 0:
         raise ValueError("backend response belongs to a different account")
+    if auth_account_id:
+        exact_groups = [
+            grouped_candidates
+            for identity, grouped_candidates in matching_groups
+            if identity[1] == auth_account_id
+        ]
+        if len(exact_groups) == 1:
+            return exact_groups[0]
+        if exact_groups:
+            raise ValueError("backend response does not identify one account")
     if len(matching_groups) > 1:
         raise ValueError("backend response does not identify one account")
-    return matching_groups[0]
+    return matching_groups[0][1]
 
 
 def _identities_compatible(

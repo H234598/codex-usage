@@ -132,7 +132,7 @@ def managed_service_config_path() -> Path | None:
         try:
             argv = shlex.split(line[len("ExecStart="):])
             config_index = argv.index("--config")
-            return Path(argv[config_index + 1]).expanduser().absolute()
+            return Path(argv[config_index + 1].replace("%%", "%")).expanduser().absolute()
         except (ValueError, IndexError):
             return None
     return None
@@ -276,7 +276,8 @@ def _validate_home_path(path: Path) -> None:
 def _unit_quote(value: str) -> str:
     if "\x00" in value or "\n" in value or "\r" in value:
         raise ServiceError("systemd unit value contains invalid characters")
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return '"' + escaped.replace("%", "%%") + '"'
 
 
 def _systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:

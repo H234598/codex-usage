@@ -4,6 +4,7 @@
     "pages": [
       "general-page",
       "format-page",
+      "routing-page",
       "login-page",
       "alerts-page"
     ],
@@ -33,6 +34,13 @@
       "title": "Warnungen",
       "sections": [
         "alerts-section"
+      ]
+    },
+    "routing-page": {
+      "type": "page",
+      "title": "Routing und Credits",
+      "sections": [
+        "routing-section"
       ]
     },
     "login-page": {
@@ -127,6 +135,14 @@
       "keys": [
         "show-reactivation-actions",
         "reactivation-browser"
+      ]
+    },
+    "routing-section": {
+      "type": "section",
+      "title": "Bezahlte Nutzung",
+      "keys": [
+        "routing-global-paid-credits",
+        "routing-credit-overrides"
       ]
     }
   },
@@ -915,6 +931,50 @@
     "step": 60,
     "default": 300
   },
+  "routing-global-paid-credits": {
+    "type": "switch",
+    "description": "Bezahlte Credits global nach Inklusivlimit erlauben",
+    "tooltip": "Aus ist sicherer Standard. Dieser Schalter ändert keine OpenAI-Abrechnungseinstellung, kann aber bestehende Credits oder Auto-Top-Up zur Nutzung freigeben.",
+    "default": false
+  },
+  "routing-credit-overrides": {
+    "type": "list",
+    "description": "Abweichende Credit-Richtlinien",
+    "tooltip": "Priorität: Job, Gruppe, Agentin, Account, global. Gruppen-, Agentinnen- und Job-IDs müssen den IDs aus codex-master-mcp entsprechen.",
+    "columns": [
+      {
+        "id": "scope",
+        "title": "Ebene",
+        "type": "integer",
+        "options": {
+          "Account": 0,
+          "Gruppe": 1,
+          "Agentin": 2,
+          "Job": 3
+        }
+      },
+      {
+        "id": "identifier",
+        "title": "ID",
+        "type": "string"
+      },
+      {
+        "id": "enabled",
+        "title": "Eigene Regel",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "allow",
+        "title": "Credits erlauben",
+        "type": "boolean",
+        "default": false
+      }
+    ],
+    "height": 240,
+    "show-buttons": true,
+    "default": []
+  },
   "refresh-on-open": {
     "type": "switch",
     "description": "Beim Öffnen des Menüs aktualisieren",
@@ -958,7 +1018,11 @@
           "Aus": 0,
           "5h": 1,
           "Woche": 2,
-          "Mittelwert": 3
+          "Mittelwert": 3,
+          "Spark 5h": 4,
+          "Spark Woche": 5,
+          "Spark Mittelwert": 6,
+          "Spark weiteres Limit": 7
         }
       },
       {
@@ -969,7 +1033,11 @@
           "Aus": 0,
           "5h": 1,
           "Woche": 2,
-          "Mittelwert": 3
+          "Mittelwert": 3,
+          "Spark 5h": 4,
+          "Spark Woche": 5,
+          "Spark Mittelwert": 6,
+          "Spark weiteres Limit": 7
         }
       }
     ],
@@ -995,7 +1063,11 @@
     "options": {
       "Nur 5-Stunden-Limit": "five-hour",
       "Nur Wochenlimit": "weekly",
-      "Mittelwert aus beiden Limits": "average"
+      "Mittelwert aus beiden Limits": "average",
+      "Nur Spark-5-Stunden-Limit": "spark-five-hour",
+      "Nur Spark-Wochenlimit": "spark-weekly",
+      "Mittelwert aus beiden Spark-Limits": "spark-average",
+      "Knappstes weiteres Spark-Limit": "spark-other"
     },
     "default": "average"
   },

@@ -9,10 +9,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from codex_usage import __version__
 from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_latest_usages
 from codex_usage.cli import main
 from codex_usage.config import AppConfig, load_config
-from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
+from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
+from codex_usage.spark_health import set_spark_health
 from codex_usage.state import save_current_usage, save_usage_snapshot
 
 
@@ -63,6 +65,9 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage once" in output
     assert "codex-usage watch" in output
     assert "codex-usage watchdog" in output
+    assert "codex-usage policy evaluate [ACCOUNT|--auth-json PATH]" in output
+    assert "codex-usage policy set account|group|agent|job" in output
+    assert "codex-usage policy status" in output
     assert "codex-usage health" in output
     assert "--direct" in output
     assert "--backend direct|app-server" in output
@@ -87,6 +92,114 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage watch" in output
     assert "codex-usage service enable" in output
     assert "codex-usage watchdog" in output
+
+
+def test_policy_commands_are_machine_readable_and_use_saved_usage(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    configured_auth = tmp_path / "configured-auth.json"
+    agent_auth = tmp_path / "agent-auth.json"
+    for auth_path in (configured_auth, agent_auth):
+        auth_path.write_text(
+            json.dumps({"tokens": {"account_id": "backend-private"}}),
+            encoding="utf-8",
+        )
+        auth_path.chmod(0o600)
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "private",
+            "--auth-json",
+            str(configured_auth),
+        ]
+    ) == 0
+    capsys.readouterr()
+    now = datetime.now(ZoneInfo("Europe/Berlin"))
+    save_current_usage(
+        AccountUsage(
+            account_id="private",
+            label="Private",
+            captured_at=now,
+            status=AccountStatus.OK,
+            main=UsagePool(
+                key="main",
+                display_name="Codex",
+                windows=(
+                    LimitWindow(
+                        name="weekly",
+                        remaining=80,
+                        percent=80,
+                        duration_seconds=604800,
+                    ),
+                ),
+            ),
+            models=(
+                UsagePool(
+                    key="gpt-5.3-codex-spark",
+                    display_name="Spark",
+                    available=True,
+                    availability_sources=("model_catalog",),
+                ),
+            ),
+            backend_account_id="backend-private",
+        )
+    )
+    set_spark_health("backend-private", "healthy")
+
+    assert main(["policy", "set", "global", "deny"]) == 0
+    policy = json.loads(capsys.readouterr().out)
+    assert policy["global"] is False
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "policy",
+            "evaluate",
+            "private",
+            "--role",
+            "arbeitsbiene",
+        ]
+    ) == 0
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["schema_version"] == 1
+    assert decision["decision"] == "spark"
+    assert decision["model"] == "gpt-5.3-codex-spark"
+    assert decision["paid_overage_allowed"] is False
+
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "policy",
+            "evaluate",
+            "--auth-json",
+            str(agent_auth),
+            "--role",
+            "arbeitsbiene",
+        ]
+    ) == 0
+    auth_decision = json.loads(capsys.readouterr().out)
+    assert auth_decision["account"] == "private"
+    assert auth_decision["backend_account_id"] == "backend-private"
+
+    assert main(["--config", str(config_path), "policy", "status"]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["schema_version"] == 1
+    assert status["policy"]["global"] is False
+    assert status["decisions"]["private"]["decision"] == "spark"
+
+
+def test_policy_set_requires_identifier_for_non_global_scope(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    assert main(["policy", "set", "job", "allow"]) == 1
+
+    assert "--id is required" in capsys.readouterr().err
 
 
 def test_health_command_records_reads_and_clears(tmp_path, monkeypatch, capsys):
@@ -124,7 +237,7 @@ def test_root_version_reports_package_version(capsys):
             main(argv)
 
         assert exc.value.code == 0
-        assert capsys.readouterr().out == "codex-usage 0.6.388\n"
+        assert capsys.readouterr().out == f"codex-usage {__version__}\n"
 
 
 def test_root_without_subcommand_defaults_to_once(tmp_path, monkeypatch):
@@ -1173,7 +1286,7 @@ def test_ingest_binds_shared_user_browser_payload_to_selected_account(
     monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(payload)))
 
     assert main(["--config", str(config_path), "ingest", "privat", "--stdin"]) == 1
-    assert "ambiguous backend account identity" in capsys.readouterr().err
+    assert "ambiguous account identity" in capsys.readouterr().err
     assert load_latest_usages(load_config(config_path))[0:] == []
 
 

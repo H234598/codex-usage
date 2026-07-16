@@ -4,7 +4,7 @@ import json
 import math
 import os
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
@@ -42,6 +42,21 @@ LOCAL_TZ = _system_local_timezone()
 MAX_JSON_WALK_DEPTH = 24
 MAX_JSON_WALK_ITEMS = 1000
 MAX_JSON_FLATTEN_FIELDS = 2000
+PERCENT_COMPLEMENT_TOLERANCE = 0.01
+RELATIVE_RESET_HINTS = (
+    "reset_after_seconds",
+    "resetafterseconds",
+    "reset_after",
+    "resetafter",
+    "reset_seconds",
+    "resetseconds",
+    "reset_in_seconds",
+    "resetinseconds",
+    "seconds_until_reset",
+    "secondsuntilreset",
+    "reset_duration",
+    "resetduration",
+)
 
 FIVE_HOUR_LABELS = (
     "5 stunden nutzungsgrenze",
@@ -317,6 +332,8 @@ def _extract_json_window(
     captured_at: datetime,
 ) -> LimitWindow | None:
     matches: list[tuple[str, str, dict[str, Any], str, int]] = []
+    wham_window_counts: dict[int, int] = {}
+    wham_main_window_counts: dict[int, int] = {}
     reset_only: list[tuple[int, int, int, bool, LimitWindow]] = []
     usage_windows: list[tuple[int, int, int, bool, LimitWindow]] = []
     for candidate_index, candidate in enumerate(candidates):
@@ -326,14 +343,26 @@ def _extract_json_window(
             if blocks_additional and "additional_rate_limits" in path.lower():
                 continue
             obj_preview = _json_preview(obj)
-            wham_window = _window_from_wham_rate_limit_mapping(
-                obj,
-                target=target,
-                captured_at=captured_at,
-                source=f"json:{candidate.url}",
-                raw=f"{path} {obj_preview}"[:500],
+            is_rate_limit_path = _path_has_component(path, "rate_limit")
+            wham_window = (
+                _window_from_wham_rate_limit_mapping(
+                    obj,
+                    target=target,
+                    captured_at=captured_at,
+                    source=f"json:{candidate.url}",
+                    raw=f"{path} {obj_preview}"[:500],
+                )
+                if is_rate_limit_path
+                else None
             )
             if wham_window is not None:
+                wham_window_counts[candidate_index] = (
+                    wham_window_counts.get(candidate_index, 0) + 1
+                )
+                if "additional_rate_limits" not in path.casefold():
+                    wham_main_window_counts[candidate_index] = (
+                        wham_main_window_counts.get(candidate_index, 0) + 1
+                    )
                 if wham_window.has_usage_value:
                     usage_windows.append(
                         (
@@ -356,12 +385,43 @@ def _extract_json_window(
                     )
                 continue
             haystack = f"{path} {obj_preview}".lower()
+            has_target_scope = (
+                _has_window_scope(path, target)
+                or _has_window_scope(obj_preview, target)
+                or _has_direct_structural_window(obj, target)
+            )
+            if "limit_window_seconds" in obj and not is_rate_limit_path:
+                # A duration alone is not enough to identify a usage bucket.
+                # Keep explicitly scoped generic windows eligible, but never
+                # promote unrelated metadata by traversal order.
+                if not has_target_scope:
+                    continue
             if target == "five_hour" and not _looks_like_five_hour(haystack):
-                continue
+                if not has_target_scope:
+                    continue
             if target == "weekly" and not _looks_like_weekly(haystack):
-                continue
-            if any(word in haystack for word in ("limit", "usage", "nutzung", "reset")):
+                if not has_target_scope:
+                    continue
+            has_usage_context = any(
+                word in haystack for word in ("limit", "usage", "nutzung", "reset")
+            )
+            if has_usage_context or has_target_scope:
                 matches.append((candidate.url, path, obj, haystack, candidate_index))
+
+    if any(
+        main_count > 1
+        or (
+            main_count == 0
+            and wham_window_counts.get(candidate_index, 0) > 1
+        )
+        for candidate_index, main_count in wham_main_window_counts.items()
+    ) or any(
+        candidate_index not in wham_main_window_counts and count > 1
+        for candidate_index, count in wham_window_counts.items()
+    ):
+        # A single response cannot identify which duplicate rate-limit bucket
+        # belongs to this target. Never choose one by traversal order.
+        return None
 
     if usage_windows:
         # A newer usage value is authoritative; an older reset timestamp must
@@ -377,6 +437,8 @@ def _extract_json_window(
             captured_at=captured_at,
             source=f"json:{url}",
             raw=haystack[:500],
+            target=target,
+            path=_path,
         )
         if window is not None:
             if window.has_usage_value:
@@ -430,7 +492,36 @@ def _main_wham_target_blocks_additional(payload: Any, target: str) -> bool:
         return True
     duration = _coerce_number(window.get("limit_window_seconds"))
     expected_duration = 18_000 if target == "five_hour" else 604_800
-    return duration != expected_duration
+    if duration != expected_duration:
+        return True
+    # A present main bucket with only reset metadata is not permission to use
+    # a model-specific additional bucket as its usage value.
+    return not any(
+        (
+            _coerce_percent(window.get(key)) is not None
+            or _normalize_ratio_value(window.get(key)) is not None
+        )
+        for key in (
+            "used_percent",
+            "used_percentage",
+            "usage_percent",
+            "usage_percentage",
+            "consumed_percent",
+            "consumed_percentage",
+            "remaining_percent",
+            "remaining_percentage",
+            "available_percent",
+            "available_percentage",
+            "left_percent",
+            "left_percentage",
+            "used_ratio",
+            "usage_ratio",
+            "consumed_ratio",
+            "remaining_ratio",
+            "available_ratio",
+            "left_ratio",
+        )
+    )
 
 
 def _wham_window_path_priority(path: str, target: str) -> int:
@@ -461,49 +552,72 @@ def _window_from_wham_rate_limit_mapping(
         return None
 
     flat = _flatten_mapping(obj)
-    used_percent = _coerce_percent(
-        _pick_number(
-            flat,
-            (
-                "used_percent",
-                "used_percentage",
-                "usage_percent",
-                "usage_percentage",
-                "consumed_percent",
-                "consumed_percentage",
-            ),
-        )
+    used_percent_hints = (
+        "used_percent",
+        "used_percentage",
+        "usage_percent",
+        "usage_percentage",
+        "consumed_percent",
+        "consumed_percentage",
     )
-    if used_percent is None:
-        used_percent = _normalize_ratio_value(
-            _pick_number(flat, ("used_ratio", "usage_ratio", "consumed_ratio"))
-        )
+    used_ratio_hints = ("used_ratio", "usage_ratio", "consumed_ratio")
+    used_percent_aliases = _matching_number_values(
+        flat, used_percent_hints, _coerce_percent
+    )
+    used_ratio_aliases = _matching_number_values(
+        flat, used_ratio_hints, _normalize_ratio_value
+    )
+    used_percent = _coerce_percent(_pick_number(flat, used_percent_hints))
+    used_ratio = _normalize_ratio_value(_pick_number(flat, used_ratio_hints))
+    if not _values_are_consistent((*used_percent_aliases, *used_ratio_aliases)):
+        used_percent = None
+        used_ratio = None
+    elif used_percent is None:
+        used_percent = used_ratio
+
+    remaining_percent_hints = (
+        "remaining_percent",
+        "remaining_percentage",
+        "available_percent",
+        "available_percentage",
+        "left_percent",
+        "left_percentage",
+    )
+    remaining_ratio_hints = ("remaining_ratio", "available_ratio", "left_ratio")
+    remaining_percent_aliases = _matching_number_values(
+        flat, remaining_percent_hints, _coerce_percent
+    )
+    remaining_ratio_aliases = _matching_number_values(
+        flat, remaining_ratio_hints, _normalize_ratio_value
+    )
     remaining_percent = _coerce_percent(
-        _pick_number(
-            flat,
-            (
-                "remaining_percent",
-                "remaining_percentage",
-                "available_percent",
-                "available_percentage",
-                "left_percent",
-                "left_percentage",
-            ),
-        )
+        _pick_number(flat, remaining_percent_hints)
     )
-    if remaining_percent is None:
-        remaining_percent = _normalize_ratio_value(
-            _pick_number(flat, ("remaining_ratio", "available_ratio", "left_ratio"))
-        )
+    remaining_ratio = _normalize_ratio_value(
+        _pick_number(flat, remaining_ratio_hints)
+    )
+    if not _values_are_consistent(
+        (*remaining_percent_aliases, *remaining_ratio_aliases)
+    ):
+        remaining_percent = None
+        remaining_ratio = None
+    elif remaining_percent is None:
+        remaining_percent = remaining_ratio
     reset_at = _parse_datetime(obj.get("reset_at"), captured_at)
     if reset_at is None:
-        reset_after = _pick_number(
-            flat,
-            ("reset_after_seconds", "resetafterseconds", "reset_after", "resetafter"),
+        reset_at = _pick_datetime(
+            flat, ("reset", "reset_at", "resets_at", "next_reset"), captured_at
         )
+    if reset_at is None:
+        reset_after = _pick_number(flat, RELATIVE_RESET_HINTS)
         reset_at = _relative_reset_at(reset_after, captured_at)
     if used_percent is None and remaining_percent is None and reset_at is None:
         return None
+    if not _percentages_are_complementary(used_percent, remaining_percent):
+        # A contradictory pair cannot be attributed to either the consumed or
+        # remaining side without inventing a value. Keep only reset metadata.
+        used_percent = None
+        remaining_percent = None
 
     remaining = (
         max(100 - used_percent, 0)
@@ -541,24 +655,108 @@ def _window_from_mapping(
     captured_at: datetime,
     source: str,
     raw: str,
+    target: str | None = None,
+    path: str | None = None,
 ) -> LimitWindow | None:
-    flat = _flatten_mapping(obj)
-    used_percent = _coerce_percent(
-        _pick_number(
-            flat,
-            (
-                "used_percent",
-                "used_percentage",
-                "usage_percent",
-                "usage_percentage",
-                "consumed_percent",
-                "consumed_percentage",
-            ),
+    if target in {"five_hour", "weekly"} and path:
+        lower_path = path.casefold()
+        structural_key = (
+            "primary_window" if target == "five_hour" else "secondary_window"
         )
+        opposite_key = (
+            "secondary_window" if target == "five_hour" else "primary_window"
+        )
+        if _path_has_component(lower_path, opposite_key):
+            return None
+        if _path_has_component(lower_path, structural_key):
+            if not lower_path.endswith(f".{structural_key}"):
+                return None
+            duration = obj.get("limit_window_seconds")
+            if duration is not None:
+                expected_duration = 18_000 if target == "five_hour" else 604_800
+                if _coerce_number(duration) != expected_duration:
+                    return None
+            return _window_from_mapping(
+                obj,
+                name=name,
+                captured_at=captured_at,
+                source=source,
+                raw=raw,
+                target=target,
+                path=None,
+            )
+    if target in {"five_hour", "weekly"}:
+        # Some backend responses expose one or both buckets without
+        # durations. The generic field picker must not let the first bucket
+        # win for both target slots; use only the structural bucket belonging
+        # to the requested slot. WHAM responses with explicit durations are
+        # handled by _window_from_wham_rate_limit_mapping above.
+        structural_keys = ("primary_window", "secondary_window")
+        if any(isinstance(obj.get(key), dict) for key in structural_keys):
+            target_key = (
+                "primary_window" if target == "five_hour" else "secondary_window"
+            )
+            if not isinstance(obj.get(target_key), dict):
+                return None
+            target_window = obj[target_key]
+            duration = target_window.get("limit_window_seconds")
+            if duration is not None:
+                expected_duration = 18_000 if target == "five_hour" else 604_800
+                if _coerce_number(duration) != expected_duration:
+                    return None
+            obj = target_window
+    flat = _flatten_mapping(obj)
+    if target in {"five_hour", "weekly"}:
+        opposite = "weekly" if target == "five_hour" else "five_hour"
+        opposite_structural_key = (
+            "secondary_window" if target == "five_hour" else "primary_window"
+        )
+        flat = {
+            key: value
+            for key, value in flat.items()
+            if not _has_window_scope(key, opposite)
+            and not _path_has_component(key.casefold(), opposite_structural_key)
+        }
+        target_structural_key = (
+            "primary_window" if target == "five_hour" else "secondary_window"
+        )
+        target_scoped_keys = {
+            key
+            for key in flat
+            if _has_window_scope(key, target)
+            or _path_has_component(key.casefold(), target_structural_key)
+        }
+        if target_scoped_keys:
+            flat = {
+                key: value
+                for key, value in flat.items()
+                if key in target_scoped_keys
+            }
+    used_percent_hints = (
+        "used_percent",
+        "used_percentage",
+        "usage_percent",
+        "usage_percentage",
+        "consumed_percent",
+        "consumed_percentage",
     )
-    used_ratio = _normalize_ratio_value(
-        _pick_number(flat, ("used_ratio", "usage_ratio", "consumed_ratio"))
+    used_ratio_hints = ("used_ratio", "usage_ratio", "consumed_ratio")
+    used_percent_aliases = _matching_number_values(
+        flat, used_percent_hints, _coerce_percent
     )
+    used_ratio_aliases = _matching_number_values(
+        flat, used_ratio_hints, _normalize_ratio_value
+    )
+    used_percent = _coerce_percent(_pick_number(flat, used_percent_hints))
+    used_ratio = _normalize_ratio_value(_pick_number(flat, used_ratio_hints))
+    used_percent_conflict = not _values_are_consistent(
+        (*used_percent_aliases, *used_ratio_aliases)
+    )
+    if used_percent_conflict:
+        used_percent = None
+        used_ratio = None
+    elif used_percent is None:
+        used_percent = used_ratio
     used = _pick_number(
         flat,
         ("used", "usage", "current", "consumed", "num_used"),
@@ -576,45 +774,153 @@ def _window_from_mapping(
         ("limit", "max", "quota", "total", "capacity"),
         exclude_suffixes=("_seconds", "_minutes", "_hours"),
     )
+    remaining_percent_hints = (
+        "remaining_percent",
+        "remaining_percentage",
+        "available_percent",
+        "available_percentage",
+        "left_percent",
+        "left_percentage",
+    )
+    remaining_ratio_hints = ("remaining_ratio", "available_ratio", "left_ratio")
+    remaining_percent_aliases = _matching_number_values(
+        flat, remaining_percent_hints, _coerce_percent
+    )
+    remaining_ratio_aliases = _matching_number_values(
+        flat, remaining_ratio_hints, _normalize_ratio_value
+    )
     remaining_percent = _coerce_percent(
-        _pick_number(
-            flat,
-            (
-                "remaining_percent",
-                "remaining_percentage",
-                "available_percent",
-                "available_percentage",
-                "left_percent",
-                "left_percentage",
-            ),
-        )
+        _pick_number(flat, remaining_percent_hints)
     )
     remaining_ratio = _normalize_ratio_value(
-        _pick_number(flat, ("remaining_ratio", "available_ratio", "left_ratio"))
+        _pick_number(flat, remaining_ratio_hints)
     )
+    remaining_percent_conflict = not _values_are_consistent(
+        (*remaining_percent_aliases, *remaining_ratio_aliases)
+    )
+    if remaining_percent_conflict:
+        remaining_percent = None
+        remaining_ratio = None
+    elif remaining_percent is None:
+        remaining_percent = remaining_ratio
     remaining = _pick_number(
         flat,
         ("remaining", "left", "available"),
         exclude_suffixes=("_percent", "_percentage", "_ratio"),
     )
-    percent = _coerce_percent(_pick_number(flat, ("percent", "percentage")))
-    ratio = _normalize_ratio_value(_pick_number(flat, ("ratio",)))
-    reset_at = _pick_datetime(flat, ("reset", "reset_at", "resets_at", "next_reset"), captured_at)
-
-    if used_percent is None:
-        used_percent = used_ratio
-    if percent is None:
+    percent_hints = ("percent", "percentage")
+    ratio_hints = ("ratio",)
+    percent_aliases = _matching_number_values(flat, percent_hints, _coerce_percent)
+    ratio_aliases = _matching_number_values(
+        flat, ratio_hints, _normalize_ratio_value
+    )
+    percent = _coerce_percent(
+        _pick_number(
+            flat,
+            percent_hints,
+            exclude_suffixes=("_percent", "_percentage", "_ratio"),
+        )
+    )
+    ratio = _normalize_ratio_value(
+        _pick_number(
+            flat,
+            ratio_hints,
+            exclude_suffixes=("_percent", "_percentage", "_ratio"),
+        )
+    )
+    if not _values_are_consistent((*percent_aliases, *ratio_aliases)):
+        percent = None
+        ratio = None
+    elif percent is None:
         percent = ratio
+    reset_at = _pick_datetime(
+        flat, ("reset", "reset_at", "resets_at", "next_reset"), captured_at
+    )
+    if reset_at is None:
+        reset_after = _pick_number(flat, RELATIVE_RESET_HINTS)
+        reset_at = _relative_reset_at(reset_after, captured_at)
+
     has_explicit_remaining_percent = (
         remaining_percent is not None or remaining_ratio is not None
     )
+    explicit_remaining_percent = (
+        remaining_percent if remaining_percent is not None else remaining_ratio
+    )
+    remaining_percentage_values = tuple(
+        value
+        for value in (explicit_remaining_percent, percent)
+        if value is not None
+    )
+    if not (
+        all(
+            _percentages_are_complementary(used_percent, value)
+            for value in remaining_percentage_values
+        )
+        and all(
+            abs(first - second) <= PERCENT_COMPLEMENT_TOLERANCE
+            for first in remaining_percentage_values
+            for second in remaining_percentage_values
+        )
+    ):
+        # Keep generic JSON consistent with WHAM: conflicting percentage fields
+        # must not produce different values depending on the selected source.
+        used_percent = None
+        remaining_percent = None
+        remaining_ratio = None
+        percent = None
+        has_explicit_remaining_percent = False
+    invalid_absolute_limit = used is not None and limit is not None and limit <= 0
+    invalid_absolute_usage = used is not None and used < 0
+    if invalid_absolute_usage:
+        # Absolute usage counters cannot be negative; keep other trustworthy
+        # fields available for a reset-only or explicit percentage result.
+        used = None
+        # An unqualified remaining counter belongs to the invalid absolute
+        # pair and must not become a plausible percentage on its own.
+        remaining = None
+    if invalid_absolute_limit:
+        # A non-positive absolute denominator cannot produce a valid usage
+        # value. An unqualified `remaining` field is ambiguous here and must
+        # not be mistaken for a percentage; explicit percentage fields below
+        # remain available as their own source.
+        used = None
+        limit = None
+        remaining = None
+    elif limit is not None and limit <= 0:
+        # A standalone non-positive limit is not a usable denominator either.
+        # Drop it and any unqualified counter; explicit percentage fields are
+        # still handled below.
+        limit = None
+        remaining = None
+    if remaining is not None and remaining < 0:
+        remaining = (
+            None
+            if has_explicit_remaining_percent or percent is not None
+            else 0
+        )
+    if (
+        used_percent is not None
+        and used is None
+        and limit is None
+        and not has_explicit_remaining_percent
+    ):
+        # An unqualified `remaining` field may be an absolute count. Without a
+        # denominator, the explicit usage percentage is the only safe source.
+        remaining = None
+    if limit is None:
+        if has_explicit_remaining_percent:
+            remaining = explicit_remaining_percent
+        elif percent is not None:
+            # The standalone percentage is authoritative over an ambiguous
+            # unqualified `remaining` counter when no denominator exists.
+            remaining = None
     if used is not None and limit is not None:
         remaining = max(limit - used, 0)
         if limit > 0:
             # `percent` is the remaining percentage across WHAM, app-server,
             # rendering, and applet consumers. Absolute usage is authoritative
             # over conflicting percentage fields, so derive it from used/limit.
-            percent = 100 - (used / limit * 100)
+            percent = max(0, min(100, 100 - (used / limit * 100)))
         else:
             percent = None
     else:
@@ -645,6 +951,16 @@ def _window_from_mapping(
             percent = remaining
     if percent is not None and not 0 <= percent <= 100:
         percent = None
+    if (
+        limit is None
+        and remaining is not None
+        and percent is None
+        and not has_explicit_remaining_percent
+        and not 0 <= remaining <= 100
+    ):
+        # Never let an absolute, denominator-less count become a clamped
+        # 100% remaining value in the renderer.
+        remaining = None
 
     if all(value is None for value in (used, limit, remaining, percent, reset_at)):
         return None
@@ -693,9 +1009,21 @@ def _extract_text_window(
         used_percent = _extract_used_percent(chunk)
         reset_at = _extract_reset_at(chunk, captured_at)
 
+        if used is not None and limit is not None and limit <= 0:
+            used = None
+            limit = None
+            # Without a valid absolute denominator, an unqualified text
+            # value such as `50 remaining` is not safe to interpret as 50%.
+            # Explicit `%` and progress-bar values are processed separately.
+            remaining = None
+
         if used is not None and limit is not None:
             remaining = max(limit - used, 0)
-            percent = 100 - (used / limit * 100) if limit > 0 else None
+            percent = (
+                max(0, min(100, 100 - (used / limit * 100)))
+                if limit > 0
+                else None
+            )
         elif source == "htmlText" and progress_percent is not None:
             # The rendered bar is the visual source of truth for HTML. A
             # hidden text clone later in the same HTML fragment must not
@@ -709,6 +1037,22 @@ def _extract_text_window(
             percent = progress_percent
         elif remaining is None and used_percent is not None:
             remaining = max(100 - used_percent, 0)
+
+        if (
+            used is None
+            and limit is None
+            and used_percent is not None
+            and progress_percent is None
+        ):
+            # A text `remaining` value can be an absolute count. Keep a
+            # complementary percentage when present; otherwise derive it from
+            # the explicit used percentage.
+            if remaining is None or not _percentages_are_complementary(
+                used_percent,
+                remaining,
+            ):
+                remaining = max(100 - used_percent, 0)
+            percent = remaining
 
         if (
             remaining is not None
@@ -725,6 +1069,15 @@ def _extract_text_window(
             remaining = max(limit - used, 0)
         if percent is None and used is not None and limit:
             percent = used / limit * 100
+        if (
+            limit is None
+            and remaining is not None
+            and percent is None
+            and not 0 <= remaining <= 100
+        ):
+            # Without a denominator this absolute count cannot be rendered as
+            # a percentage; preserve only the reset metadata.
+            remaining = None
 
         window = LimitWindow(
             name=name,
@@ -1039,6 +1392,22 @@ def _pick_number(
     return None
 
 
+def _matching_number_values(
+    flat: dict[str, Any],
+    hints: tuple[str, ...],
+    converter: Callable[[Any], float | None],
+) -> tuple[float, ...]:
+    values: list[float] = []
+    for key, value in flat.items():
+        lower = key.lower().rsplit(".", 1)[-1]
+        if lower not in hints:
+            continue
+        number = converter(value)
+        if number is not None:
+            values.append(number)
+    return tuple(values)
+
+
 def _pick_datetime(
     flat: dict[str, Any],
     hints: tuple[str, ...],
@@ -1064,7 +1433,7 @@ def _pick_datetime(
 
 
 def _is_relative_reset_key(key: str) -> bool:
-    return "reset_after" in key or "resetafter" in key
+    return any(hint in key for hint in RELATIVE_RESET_HINTS)
 
 
 def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
@@ -1174,6 +1543,27 @@ def _coerce_percent(value: Any) -> float | None:
     return number if number is not None and 0 <= number <= 100 else None
 
 
+def _percentages_are_complementary(
+    used_percent: float | None,
+    remaining_percent: float | None,
+) -> bool:
+    if used_percent is None or remaining_percent is None:
+        return True
+    return (
+        abs((100 - used_percent) - remaining_percent)
+        <= PERCENT_COMPLEMENT_TOLERANCE
+    )
+
+
+def _values_are_consistent(values: Iterable[float]) -> bool:
+    values = tuple(values)
+    return all(
+        abs(first - second) <= PERCENT_COMPLEMENT_TOLERANCE
+        for first in values
+        for second in values
+    )
+
+
 def _normalize_ratio_value(value: Any) -> float | None:
     number = _coerce_number(value)
     if number is None:
@@ -1280,11 +1670,54 @@ def _looks_like_five_hour(value: str) -> bool:
         any(_contains_label(value, label) for label in FIVE_HOUR_LABELS)
         or any(
             _contains_label(value, word)
-            for word in ("five_hour", "five-hour", "5_hour", "5-hour", "5h")
+            for word in (
+                "five_hour",
+                "five-hour",
+                "5_hour",
+                "5-hour",
+                "5h",
+            )
         )
         or bool(re.search(r"\b5\s*h\b", value))
         or bool(re.search(r"\b5\b.{0,20}(hour|hours|stunden)", value))
     )
+
+
+def _has_window_scope(value: str, target: str) -> bool:
+    markers = (
+        (
+            "five_hour",
+            "five-hour",
+            "5_hour",
+            "5-hour",
+            "5h",
+            "five hour",
+        )
+        if target == "five_hour"
+        else (
+            "weekly",
+            "week",
+            "woche",
+            "wochen",
+            "woechentlich",
+            "wöchentlich",
+        )
+    )
+    return any(_contains_label(value.casefold(), marker) for marker in markers)
+
+
+def _path_has_component(path: str, component: str) -> bool:
+    return re.search(
+        rf"(?:^|\.){re.escape(component)}(?:\.|\[|$)",
+        path,
+    ) is not None
+
+
+def _has_direct_structural_window(value: Any, target: str) -> bool:
+    if not isinstance(value, dict):
+        return False
+    key = "primary_window" if target == "five_hour" else "secondary_window"
+    return isinstance(value.get(key), dict)
 
 
 def _looks_like_weekly(value: str) -> bool:

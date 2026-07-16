@@ -247,6 +247,79 @@ def test_ingest_accepts_matching_initialized_browser_identity(tmp_path):
     assert usage.weekly is not None and usage.weekly.used == 46
 
 
+def test_ingest_clears_browser_cache_after_backend_identity_switch(tmp_path):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="browser",
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    known = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="old-browser-user",
+        backend_account_id="old-browser-account",
+        five_hour=LimitWindow(name="5h", remaining=80),
+        weekly=LimitWindow(name="weekly", remaining=60),
+    )
+    save_usage_snapshot(known, snapshot_dir)
+    save_current_usage(known, snapshot_dir.parent / "current")
+    payload = {
+        "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "capturedAt": "2026-06-08T04:25:00+02:00",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "new-browser-user",
+                        "account_id": "new-browser-account",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 20,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 40,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="different backend account"):
+        ingest_and_save(
+            config,
+            "privat",
+            payload,
+            snapshot_dir,
+            require_backend_identity=True,
+        )
+
+    for saved in (
+        load_usage_snapshot("privat", snapshot_dir),
+        load_current_usage("privat", snapshot_dir.parent / "current"),
+    ):
+        assert saved is not None
+        assert saved.status == AccountStatus.PARTIAL
+        assert saved.cache_invalidated is True
+        assert saved.five_hour is None
+        assert saved.weekly is None
+        assert saved.error == "cached browser usage discarded after backend identity changed"
+
+
 def test_ingest_marks_browser_provenance_and_does_not_restore_direct_window(
     tmp_path,
 ):
@@ -722,6 +795,60 @@ def test_latest_rejects_cached_values_after_auth_identity_changes(tmp_path):
     assert invalidated[0].weekly is None
 
 
+def test_latest_discards_foreign_browser_values_with_shared_user_id(tmp_path):
+    auth_path = tmp_path / "privat-auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "shared-user",
+                                "chatgpt_plan_type": "free",
+                            }
+                        }
+                    ),
+                    "account_id": "private-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+        auth_json_path=str(auth_path),
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    foreign_browser = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="shared-user",
+        backend_account_id="enterprise-account",
+    )
+    save_usage_snapshot(foreign_browser, snapshot_dir)
+    save_current_usage(foreign_browser, snapshot_dir.parent / "current")
+
+    latest = load_latest_usages(config, snapshot_dir)
+
+    assert len(latest) == 1
+    assert latest[0].cache_invalidated is True
+    assert latest[0].backend_used == "direct"
+    assert latest[0].five_hour is None
+    assert latest[0].weekly is None
+
+
 def test_latest_rejects_cache_when_auth_identity_changes_during_read(tmp_path, monkeypatch):
     account = Account(
         id="privat",
@@ -816,6 +943,314 @@ def test_latest_does_not_let_legacy_browser_current_hide_auth_snapshot(
     assert result[0].backend_used == expected_backend
     assert result[0].five_hour is not None
     assert result[0].five_hour.remaining == expected_remaining
+
+
+def test_latest_prefers_fresh_authenticated_block_over_browser_current(tmp_path):
+    now = datetime.now().astimezone()
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    blocked = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=now - timedelta(seconds=30),
+        status=AccountStatus.BLOCKED,
+        error="usage limit reached",
+        blocked_until=now + timedelta(hours=1),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+    )
+    browser = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=10),
+        weekly=LimitWindow(name="weekly", remaining=20),
+    )
+    save_usage_snapshot(blocked, snapshot_dir)
+    save_current_usage(browser, snapshot_dir.parent / "current")
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].backend_used == "direct"
+    assert result[0].status == AccountStatus.BLOCKED
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+
+
+def test_latest_rejects_browser_cache_for_authenticated_direct_account(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "user-privat",
+                            }
+                        }
+                    ),
+                    "account_id": "account-privat",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+        auth_json_path=str(auth_path),
+    )
+    config = AppConfig(accounts=(account,))
+    now = datetime.now().astimezone()
+    browser = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=10),
+        weekly=LimitWindow(name="weekly", remaining=20),
+    )
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(browser, snapshot_dir)
+    save_current_usage(browser, snapshot_dir.parent / "current")
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].backend_used == "direct"
+    assert result[0].cache_invalidated is True
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+    assert result[0].error == "cached browser usage ignored for configured direct backend"
+
+
+@pytest.mark.parametrize("snapshot_window", ["weekly", None])
+def test_latest_does_not_let_browser_current_hide_fresh_authenticated_partial(
+    tmp_path,
+    snapshot_window,
+):
+    now = datetime.now().astimezone()
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    authenticated = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=now - timedelta(seconds=30),
+        status=AccountStatus.PARTIAL,
+        error="weekly limit unavailable" if snapshot_window else "requested limits unavailable",
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        weekly=(
+            LimitWindow(name="weekly", remaining=83)
+            if snapshot_window == "weekly"
+            else None
+        ),
+    )
+    browser = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+    save_usage_snapshot(authenticated, snapshot_dir)
+    save_current_usage(browser, snapshot_dir.parent / "current")
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].backend_used == "direct"
+    assert result[0].five_hour is None
+    if snapshot_window == "weekly":
+        assert result[0].weekly is not None
+        assert result[0].weekly.remaining == 83
+    else:
+        assert result[0].weekly is None
+
+
+def test_latest_accepts_fresh_authenticated_partial_with_restored_reset(
+    tmp_path,
+):
+    now = datetime.now().astimezone()
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    identity = {
+        "backend_configured": "direct",
+        "backend_used": "direct",
+        "backend_user_id": "user-privat",
+        "backend_account_id": "account-privat",
+    }
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=now - timedelta(minutes=1),
+            status=AccountStatus.OK,
+            five_hour=LimitWindow(
+                name="5h",
+                remaining=80,
+                reset_at=now + timedelta(hours=4),
+            ),
+            weekly=LimitWindow(
+                name="weekly",
+                remaining=60,
+                reset_at=now + timedelta(days=6),
+            ),
+            **identity,
+        ),
+        snapshot_dir,
+    )
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=now - timedelta(seconds=30),
+            status=AccountStatus.PARTIAL,
+            error="5h limit unavailable",
+            weekly=LimitWindow(name="weekly", remaining=59),
+            **identity,
+        ),
+        snapshot_dir,
+    )
+    cached = load_usage_snapshot("privat", snapshot_dir)
+    assert cached is not None and cached.stale is True
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=now,
+            status=AccountStatus.OK,
+            backend_configured="direct",
+            backend_used="browser",
+            backend_user_id="user-privat",
+            backend_account_id="account-privat",
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+        ),
+        snapshot_dir.parent / "current",
+    )
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].backend_used == "direct"
+    assert result[0].five_hour is None
+    assert result[0].weekly is not None
+    assert result[0].weekly.remaining == 59
+
+
+def test_latest_keeps_browser_when_authenticated_partial_values_are_stale(
+    tmp_path,
+):
+    now = datetime.now().astimezone()
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    identity = {
+        "backend_configured": "direct",
+        "backend_used": "direct",
+        "backend_user_id": "user-privat",
+        "backend_account_id": "account-privat",
+    }
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=now - timedelta(minutes=10),
+            status=AccountStatus.OK,
+            weekly=LimitWindow(
+                name="weekly",
+                remaining=60,
+                reset_at=now + timedelta(days=6),
+            ),
+            **identity,
+        ),
+        snapshot_dir,
+    )
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=now,
+            status=AccountStatus.PARTIAL,
+            error="5h limit unavailable",
+            weekly=LimitWindow(name="weekly", remaining=59),
+            **identity,
+        ),
+        snapshot_dir,
+    )
+    cached = load_usage_snapshot("privat", snapshot_dir)
+    assert cached is not None and cached.stale is True
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=now,
+            status=AccountStatus.OK,
+            backend_configured="direct",
+            backend_used="browser",
+            backend_user_id="user-privat",
+            backend_account_id="account-privat",
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+        ),
+        snapshot_dir.parent / "current",
+    )
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].backend_used == "browser"
+    assert result[0].five_hour is not None
+    assert result[0].five_hour.remaining == 97
+    assert result[0].weekly is not None
+    assert result[0].weekly.remaining == 55
 
 
 def test_latest_discards_far_future_current_and_keeps_valid_snapshot(tmp_path):
@@ -1045,6 +1480,46 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     assert usage.weekly.limit == 1000
     assert usage.backend_user_id == "user-test"
     assert usage.backend_account_id == "account-test"
+
+
+@pytest.mark.parametrize(
+    "response_fields",
+    (
+        {"status": "403"},
+        {"ok": False},
+        {"ok": "false"},
+        {"truncated": "true"},
+    ),
+)
+def test_usage_from_ingest_payload_ignores_failed_api_response_status_variants(
+    response_fields,
+):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    response = {
+        "url": "https://chatgpt.com/backend-api/wham/usage",
+        "contentType": "application/json",
+        "bodyText": json.dumps(
+            {
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                    },
+                    "secondary_window": {
+                        "used_percent": 45,
+                        "limit_window_seconds": 604_800,
+                    },
+                }
+            }
+        ),
+        **response_fields,
+    }
+
+    usage = usage_from_ingest_payload(account, {"apiResponses": [response]})
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.five_hour is None
+    assert usage.weekly is None
 
 
 def test_usage_from_ingest_payload_reports_missing_paid_five_hour_window():
@@ -1320,6 +1795,134 @@ def test_usage_from_ingest_payload_fills_missing_window_from_dom_for_confirmed_i
     assert usage.five_hour is not None and usage.five_hour.remaining == 97
     assert usage.weekly is not None and usage.weekly.remaining == 55
     assert usage.weekly.used == 45
+
+
+def test_usage_from_ingest_payload_rejects_user_id_as_account_id_for_dom_fallback(
+    tmp_path,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "user-test",
+                                "chatgpt_account_id": "account-test",
+                            }
+                        }
+                    ),
+                    "account_id": "account-test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+
+    with pytest.raises(ValueError, match="ambiguous account identity"):
+        usage_from_ingest_payload(
+            account,
+            {
+                "bodyText": (
+                    "5-hour limit 97% remaining Reset 12.07.2026 16:00 "
+                    "Weekly limit 55% remaining Reset 18.07.2026 08:00"
+                ),
+                "apiResponses": [
+                    {
+                        "url": "https://chatgpt.com/backend-api/wham/usage",
+                        "status": 200,
+                        "contentType": "application/json",
+                        "bodyText": json.dumps(
+                            {
+                                "user_id": "user-test",
+                                "account_id": "user-test",
+                                "rate_limit": {
+                                    "primary_window": None,
+                                    "secondary_window": {
+                                        "used_percent": 17,
+                                        "limit_window_seconds": 604800,
+                                    },
+                                },
+                            }
+                        ),
+                    }
+                ],
+            },
+        )
+
+
+def test_ingest_rejects_limit_values_without_backend_account_id(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "shared-user",
+                                "chatgpt_account_id": "account-a",
+                            }
+                        }
+                    ),
+                    "account_id": "account-a",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+    config = AppConfig(accounts=(account,))
+    payload = {
+        "bodyText": "5-hour limit 97% remaining Weekly limit 55% remaining",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "shared-user",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 3,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 45,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="ambiguous account identity"):
+        ingest_and_save(
+            config,
+            "privat",
+            payload,
+            tmp_path / "snapshots",
+            require_backend_identity=True,
+        )
+
+    assert load_usage_snapshot("privat", tmp_path / "snapshots") is None
 
 
 def test_usage_from_ingest_payload_keeps_probe_after_failed_page_hook_response():
@@ -1714,7 +2317,7 @@ def test_usage_from_ingest_payload_drops_old_success_after_latest_failed_respons
     assert "usage limits not found" in usage.error
 
 
-def test_usage_from_ingest_payload_canonicalizes_personal_account_identity(tmp_path):
+def test_usage_from_ingest_payload_rejects_ambiguous_personal_account_identity(tmp_path):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
         json.dumps(
@@ -1743,39 +2346,37 @@ def test_usage_from_ingest_payload_canonicalizes_personal_account_identity(tmp_p
         auth_json_path=str(auth_path),
     )
 
-    usage = usage_from_ingest_payload(
-        account,
-        {
-            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
-            "apiResponses": [
-                {
-                    "url": "https://chatgpt.com/backend-api/wham/usage",
-                    "status": 200,
-                    "contentType": "application/json",
-                    "bodyText": json.dumps(
-                        {
-                            "user_id": "user-test",
-                            "account_id": "user-test",
-                            "plan_type": "free",
-                            "rate_limit": {
-                                "primary_window": {
-                                    "used_percent": 3,
-                                    "limit_window_seconds": 18000,
+    with pytest.raises(ValueError, match="ambiguous account identity"):
+        usage_from_ingest_payload(
+            account,
+            {
+                "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+                "apiResponses": [
+                    {
+                        "url": "https://chatgpt.com/backend-api/wham/usage",
+                        "status": 200,
+                        "contentType": "application/json",
+                        "bodyText": json.dumps(
+                            {
+                                "user_id": "user-test",
+                                "account_id": "user-test",
+                                "plan_type": "free",
+                                "rate_limit": {
+                                    "primary_window": {
+                                        "used_percent": 3,
+                                        "limit_window_seconds": 18000,
+                                    },
+                                    "secondary_window": {
+                                        "used_percent": 45,
+                                        "limit_window_seconds": 604800,
+                                    },
                                 },
-                                "secondary_window": {
-                                    "used_percent": 45,
-                                    "limit_window_seconds": 604800,
-                                },
-                            },
-                        }
-                    ),
-                }
-            ],
-        },
-    )
-
-    assert usage.backend_user_id == "user-test"
-    assert usage.backend_account_id == "account-uuid"
+                            }
+                        ),
+                    }
+                ],
+            },
+        )
 
 
 def test_ingest_rejects_ambiguous_shared_user_browser_identity(tmp_path):
@@ -1845,7 +2446,7 @@ def test_ingest_rejects_ambiguous_shared_user_browser_identity(tmp_path):
         ],
     }
 
-    with pytest.raises(ValueError, match="ambiguous backend account identity"):
+    with pytest.raises(ValueError, match="ambiguous account identity"):
         ingest_and_save(
             config,
             "privat",

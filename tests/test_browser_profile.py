@@ -9,9 +9,11 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError
 
 from codex_usage.browser import (
+    _detect_page_state,
     _format_datetime,
     _prepare_profile,
     _profile_lock,
+    diagnose_account,
     fetch_account_usage,
 )
 from codex_usage.config import AppConfig
@@ -25,6 +27,41 @@ def test_browser_diagnostic_datetime_uses_dst_aware_local_timezone(monkeypatch):
     monkeypatch.setattr("codex_usage.browser.LOCAL_TZ", berlin)
 
     assert _format_datetime(value) == "2026-01-15T01:15:00+01:00"
+
+
+def test_diagnose_prioritizes_login_page_over_cloudflare_challenge_assets():
+    assert _detect_page_state(
+        "https://chatgpt.com/",
+        "ChatGPT",
+        "Log in to get answers based on saved chats",
+        [{"status": 200, "url": "https://chatgpt.com/cdn-cgi/challenge-platform/x"}],
+    ) == "login_required"
+
+
+def test_diagnose_does_not_treat_api_403_as_cloudflare_for_loaded_page():
+    analytics_url = "https://chatgpt.com/codex/cloud/settings/analytics"
+    api_url = "https://chatgpt.com/backend-api/wham/usage"
+
+    assert (
+        _detect_page_state(
+            analytics_url,
+            "Analytics",
+            "5-hour usage limit Weekly usage limit",
+            [{"status": 403, "url": api_url}],
+            main_status=200,
+        )
+        == "analytics_page"
+    )
+    assert (
+        _detect_page_state(
+            analytics_url,
+            "Just a moment...",
+            "",
+            [{"status": 403, "url": analytics_url}],
+            main_status=403,
+        )
+        == "cloudflare"
+    )
 
 
 def test_prepare_profile_rejects_symlink_root_without_marking_target(tmp_path):
@@ -139,7 +176,83 @@ def test_fetch_closes_context_when_navigation_fails(tmp_path, monkeypatch):
     assert context_state["closed"] is True
 
 
-def test_fetch_canonicalizes_browser_identity_from_configured_auth(tmp_path, monkeypatch):
+def test_diagnose_uses_configured_account_auth_json_by_default(tmp_path, monkeypatch):
+    auth_path = tmp_path / "accounts" / "privat" / "auth.json"
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+    captured = {}
+
+    def fake_diagnose_auth(path):
+        captured["path"] = path
+        return {"path": str(path)}
+
+    monkeypatch.setattr(
+        "codex_usage.browser._diagnose_auth_json",
+        fake_diagnose_auth,
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser._prepare_profile",
+        lambda _account: tmp_path / "profile",
+    )
+    monkeypatch.setattr("codex_usage.browser._profile_lock", lambda _profile: nullcontext())
+
+    class FakePage:
+        url = "https://chatgpt.com/codex/cloud/settings/analytics"
+
+        def on(self, *_args):
+            return None
+
+        def goto(self, *_args, **_kwargs):
+            return type("Response", (), {"status": 200})()
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr("codex_usage.browser.sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        "codex_usage.browser._launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr("codex_usage.browser._safe_body_text", lambda _page: "")
+    monkeypatch.setattr("codex_usage.browser._safe_title", lambda _page: "Analytics")
+    monkeypatch.setattr(
+        "codex_usage.browser._capture_diagnostic_response",
+        lambda _response, _responses: None,
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser._detect_page_state",
+        lambda *_args, **_kwargs: "ok",
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser._save_diagnostic_screenshot",
+        lambda *_args: None,
+    )
+
+    result = diagnose_account(account, AppConfig(accounts=(account,)))
+
+    assert result["codex_auth"]["path"] == str(auth_path)
+    assert captured["path"] == auth_path
+
+
+def test_fetch_rejects_ambiguous_browser_identity_from_configured_auth(tmp_path, monkeypatch):
     account = Account(
         id="privat",
         label="Privat",
@@ -212,13 +325,170 @@ def test_fetch_canonicalizes_browser_identity_from_configured_auth(tmp_path, mon
 
     usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
 
-    assert usage.status == "ok"
-    assert usage.backend_user_id == "user-test"
-    assert usage.backend_account_id == "account-uuid"
+    assert usage.status.value == "error"
+    assert usage.error == "backend response has ambiguous account identity"
     assert extract_kwargs["now"] == usage.captured_at
 
 
-def test_fetch_does_not_merge_dom_values_with_authenticated_json_usage(tmp_path, monkeypatch):
+def test_fetch_rejects_shared_user_id_account_alias(tmp_path, monkeypatch):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+
+    class FakeResponse:
+        url = "https://chatgpt.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return (
+                '{"user_id":"user-test","account_id":"user-test",'
+                '"rate_limit":{"primary_window":{"used_percent":3,'
+                '"limit_window_seconds":18000},"secondary_window":'
+                '{"used_percent":45,"limit_window_seconds":604800}}}'
+            )
+
+    class FakeLocator:
+        def inner_text(self, *, timeout):
+            return "5-hour limit 97% remaining Weekly limit 55% remaining"
+
+    class FakePage:
+        url = "https://chatgpt.com/codex/cloud/settings/analytics"
+
+        def on(self, event, callback):
+            if event == "response":
+                callback(FakeResponse())
+
+        def goto(self, *_args, **_kwargs):
+            return None
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def locator(self, *_args):
+            return FakeLocator()
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "codex_usage.browser._prepare_profile",
+        lambda _account: tmp_path / "profile",
+    )
+    monkeypatch.setattr("codex_usage.browser._profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr("codex_usage.browser.sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        "codex_usage.browser._launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser.auth_identity_for_account",
+        lambda _account: ("user-test", "account-uuid"),
+    )
+    monkeypatch.setattr("codex_usage.browser.auth_plan_type_for_account", lambda _account: None)
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status.value == "error"
+    assert usage.error == "backend response has ambiguous account identity"
+
+
+def test_fetch_rejects_limit_values_without_backend_account_id(tmp_path, monkeypatch):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+
+    class FakeResponse:
+        url = "https://chatgpt.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return (
+                '{"user_id":"user-test",'
+                '"rate_limit":{"primary_window":{"used_percent":3,'
+                '"limit_window_seconds":18000},"secondary_window":'
+                '{"used_percent":45,"limit_window_seconds":604800}}}'
+            )
+
+    class FakeLocator:
+        def inner_text(self, *, timeout):
+            return "5-hour limit 97% remaining Weekly limit 55% remaining"
+
+    class FakePage:
+        url = "https://chatgpt.com/codex/cloud/settings/analytics"
+
+        def on(self, event, callback):
+            if event == "response":
+                callback(FakeResponse())
+
+        def goto(self, *_args, **_kwargs):
+            return None
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def locator(self, *_args):
+            return FakeLocator()
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "codex_usage.browser._prepare_profile",
+        lambda _account: tmp_path / "profile",
+    )
+    monkeypatch.setattr("codex_usage.browser._profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr("codex_usage.browser.sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        "codex_usage.browser._launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser.auth_identity_for_account",
+        lambda _account: ("user-test", "account-uuid"),
+    )
+    monkeypatch.setattr("codex_usage.browser.auth_plan_type_for_account", lambda _account: None)
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status.value == "error"
+    assert usage.error == "backend response has ambiguous account identity"
+
+
+def test_fetch_fills_missing_window_from_confirmed_dom_usage(tmp_path, monkeypatch):
     account = Account(
         id="privat",
         label="Privat",
@@ -293,9 +563,91 @@ def test_fetch_does_not_merge_dom_values_with_authenticated_json_usage(tmp_path,
 
     usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
 
-    assert usage.status == "partial"
+    assert usage.status == "ok"
     assert usage.five_hour is not None and usage.five_hour.remaining == 97
-    assert usage.weekly is None
+    assert usage.weekly is not None and usage.weekly.remaining == 55
+
+
+def test_fetch_reads_rendered_html_progress_bars(tmp_path, monkeypatch):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+
+    class FakeLocator:
+        def inner_text(self, *, timeout):
+            return "5-hour limit Weekly usage limit"
+
+        def evaluate(self, _expression):
+            return """
+            <html><body>
+              <section>
+                <h2>5-hour limit</h2>
+                <div class="transition-[width]" style="width: 97%;"></div>
+              </section>
+              <section>
+                <h2>Weekly usage limit</h2>
+                <div class="transition-[width]" style="width: 55%;"></div>
+              </section>
+            </body></html>
+            """
+
+    class FakePage:
+        url = "https://chatgpt.com/codex/cloud/settings/analytics"
+
+        def on(self, *_args):
+            return None
+
+        def goto(self, *_args, **_kwargs):
+            return None
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def locator(self, *_args):
+            return FakeLocator()
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "codex_usage.browser._prepare_profile",
+        lambda _account: tmp_path / "profile",
+    )
+    monkeypatch.setattr("codex_usage.browser._profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr("codex_usage.browser.sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        "codex_usage.browser._launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser.backend_identity_from_candidates",
+        lambda _candidates: ("user-test", "account-uuid"),
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser.auth_identity_for_account",
+        lambda _account: ("user-test", "account-uuid"),
+    )
+    monkeypatch.setattr("codex_usage.browser.auth_plan_type_for_account", lambda _account: None)
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status == "ok"
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is not None and usage.weekly.remaining == 55
 
 
 def test_fetch_reports_missing_paid_five_hour_window_from_json(tmp_path, monkeypatch):
@@ -391,6 +743,20 @@ def test_fetch_rejects_browser_auth_identity_changed_during_request(tmp_path, mo
         auth_json_path=str(tmp_path / "auth.json"),
     )
 
+    class FakeResponse:
+        url = "https://chatgpt.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return (
+                '{"user_id":"old-user","account_id":"old-account",'
+                '"rate_limit":{"primary_window":{"used_percent":3,'
+                '"limit_window_seconds":18000}}}'
+            )
+
     class FakeLocator:
         def inner_text(self, *, timeout):
             return "5-hour usage limit 97% Weekly usage limit 55%"
@@ -398,8 +764,9 @@ def test_fetch_rejects_browser_auth_identity_changed_during_request(tmp_path, mo
     class FakePage:
         url = "https://chatgpt.com/codex/cloud/settings/analytics"
 
-        def on(self, *_args):
-            return None
+        def on(self, event, callback):
+            if event == "response":
+                callback(FakeResponse())
 
         def goto(self, *_args, **_kwargs):
             return None
