@@ -272,6 +272,48 @@ def test_usage_state_rejects_normalized_window_identity(name):
         )
 
 
+@pytest.mark.parametrize("field", ["main_key", "model_key"])
+def test_usage_state_rejects_normalized_pool_identity(field):
+    payload = {
+        "account": "invalid-pool-identity",
+        "label": "Invalid pool identity",
+        "captured_at": "2026-07-16T04:00:00+02:00",
+        "status": "partial",
+        "stale": False,
+        "cache_invalidated": False,
+        "five_hour": {"name": "5h", "remaining": 97},
+        "weekly": {"name": "weekly", "remaining": 55},
+        "main": {
+            "key": "main",
+            "windows": [],
+            "available": False,
+            "availability_sources": [],
+        },
+        "models": {
+            "gpt-5.3-codex-spark": {
+                "key": "gpt-5.3-codex-spark",
+                "windows": [],
+                "available": False,
+                "availability_sources": [],
+            }
+        },
+    }
+    if field == "main_key":
+        payload["main"]["key"] = " main"
+    else:
+        payload["models"] = {
+            "gpt-5.3-codex-spark ": payload["models"]["gpt-5.3-codex-spark"]
+        }
+
+    loaded = usage_from_dict(payload)
+
+    assert loaded.cache_invalidated is True
+    assert loaded.five_hour is None
+    assert loaded.weekly is None
+    assert loaded.main is None
+    assert loaded.models == ()
+
+
 @pytest.mark.parametrize(
     ("backend_configured", "backend_used"),
     ((None, None), ("direct", "app-server"), ("app-server", "direct")),

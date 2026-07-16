@@ -491,6 +491,24 @@ test("malformed pool source invalidates whole pool", () => {
   }, "main"), /invalid availability sources/);
 });
 
+test("pool identities are not normalized into trusted keys", () => {
+  const applet = makeApplet();
+
+  assert.throws(() => applet._safePool({
+    key: " main",
+    windows: [],
+    available: false,
+    availability_sources: [],
+  }, "main"), /invalid usage pool key/);
+  assert.throws(() => applet._safePools({
+    "gpt-5.3-codex-spark ": {
+      windows: [],
+      available: false,
+      availability_sources: [],
+    },
+  }), /invalid model usage pool key/);
+});
+
 test("Spark pools without positive usage cannot drive panel sources", () => {
   const applet = makeApplet();
   const usage = {

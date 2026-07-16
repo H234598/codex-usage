@@ -1292,7 +1292,11 @@ def _pool_from_dict(
 ) -> UsagePool | None:
     if not isinstance(payload, dict):
         return None
-    key = _optional_snapshot_text(payload.get("key"), limit=120)
+    key = (
+        expected_key
+        if "key" not in payload
+        else _optional_snapshot_identity(payload.get("key"), limit=120)
+    )
     if not key or (expected_key is not None and key != expected_key):
         return None
     raw_windows = payload.get("windows")
@@ -1353,9 +1357,9 @@ def _model_pools_from_dict(payload: Any) -> tuple[UsagePool, ...] | None:
         return None
     pools: list[UsagePool] = []
     for raw_key, raw_pool in payload.items():
-        if not isinstance(raw_key, str) or not raw_key.strip():
+        key = _optional_snapshot_identity(raw_key, limit=120)
+        if not key:
             return None
-        key = _snapshot_text(raw_key, limit=120)
         pool = _pool_from_dict(raw_pool, expected_key=key)
         if pool is None:
             return None

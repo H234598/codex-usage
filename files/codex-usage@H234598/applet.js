@@ -2776,7 +2776,14 @@ CodexUsageApplet.prototype = {
         if (typeof value !== "object" || Array.isArray(value)) {
             throw new Error("invalid usage pool");
         }
-        let key = this._safeText(value.key, 80) || expectedKey || "";
+        let key = "";
+        try {
+            key = value.key === undefined
+                ? expectedKey || ""
+                : this._strictText(value.key, 80);
+        } catch (e) {
+            throw new Error("invalid usage pool key");
+        }
         if (!key || (expectedKey && key !== expectedKey)) {
             throw new Error("invalid usage pool key");
         }
@@ -2853,7 +2860,12 @@ CodexUsageApplet.prototype = {
         }
         let result = Object.create(null);
         for (let i = 0; i < keys.length; i++) {
-            let key = this._safeText(keys[i], 80);
+            let key = "";
+            try {
+                key = this._strictText(keys[i], 80);
+            } catch (e) {
+                throw new Error("invalid model usage pool key");
+            }
             if (!key || Object.prototype.hasOwnProperty.call(result, key)) {
                 throw new Error("invalid model usage pool key");
             }
@@ -2959,10 +2971,11 @@ CodexUsageApplet.prototype = {
         if (typeof value !== "string") {
             throw new Error("invalid text value");
         }
-        if (value.length > limit || /[\u0000-\u001f\u007f]/.test(value)) {
+        if (value.length > limit || /[\u0000-\u001f\u007f]/.test(value) ||
+            value.trim() !== value) {
             throw new Error("text value exceeds strict limit");
         }
-        return value.trim();
+        return value;
     },
 
     _applyPayload: function(payload, fresh) {
