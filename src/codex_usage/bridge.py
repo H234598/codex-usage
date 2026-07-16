@@ -350,7 +350,12 @@ def _combined_payload_text(payload: dict[str, Any]) -> str:
 def _payload_text_sources(payload: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     sources: list[tuple[str, str]] = []
     seen: set[str] = set()
+    truncated_fields = _truncated_payload_fields(payload)
+    if truncated_fields is None:
+        return ()
     for field in TEXT_PAYLOAD_FIELDS:
+        if field in truncated_fields:
+            continue
         value = payload.get(field)
         if not isinstance(value, str):
             continue
@@ -360,6 +365,24 @@ def _payload_text_sources(payload: dict[str, Any]) -> tuple[tuple[str, str], ...
         seen.add(text)
         sources.append((field, text))
     return tuple(sources)
+
+
+def _truncated_payload_fields(payload: dict[str, Any]) -> set[str] | None:
+    if "truncatedFields" not in payload:
+        return set()
+    raw_fields = payload["truncatedFields"]
+    if not isinstance(raw_fields, dict):
+        return None
+    truncated: set[str] = set()
+    for field in TEXT_PAYLOAD_FIELDS:
+        if field not in raw_fields:
+            continue
+        value = raw_fields[field]
+        if not isinstance(value, bool):
+            return None
+        if value:
+            truncated.add(field)
+    return truncated
 
 
 def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate]:

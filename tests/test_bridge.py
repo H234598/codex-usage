@@ -262,6 +262,35 @@ def test_usage_from_ingest_payload_reports_empty_text_context():
     assert "textLength=0" in usage.error
 
 
+@pytest.mark.parametrize(
+    "truncated_fields",
+    [
+        {"bodyText": True},
+        {"bodyText": "true"},
+        [],
+        None,
+    ],
+)
+def test_usage_from_ingest_payload_ignores_truncated_text_fields(truncated_fields):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "capturedAt": "2026-06-08T04:20:00+02:00",
+            "bodyText": (
+                "5 Stunden Nutzungsgrenze 97% verbleibend "
+                "Wöchentliches Nutzungslimit 55% verbleibend"
+            ),
+            "truncatedFields": truncated_fields,
+        },
+    )
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.five_hour is None
+    assert usage.weekly is None
+
+
 def test_ingest_rejects_unidentified_browser_payload_before_saving(tmp_path):
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     config = AppConfig(accounts=(account,))
