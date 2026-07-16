@@ -569,7 +569,25 @@ def _window_from_wham_rate_limit_mapping(
         ("remaining", "left", "available"),
         exclude_suffixes=("_percent", "_percentage", "_ratio"),
     )
-    invalid_absolute_counter = (
+    invalid_absolute_counter = _has_invalid_number(
+        flat,
+        ("used", "usage", "current", "consumed", "num_used"),
+        exclude_suffixes=(
+            "_percent",
+            "_percentage",
+            "_ratio",
+            "_seconds",
+            "_minutes",
+            "_hours",
+        ),
+        converter=_coerce_number,
+    ) or _has_invalid_number(
+        flat,
+        ("remaining", "left", "available"),
+        exclude_suffixes=("_percent", "_percentage", "_ratio"),
+        converter=_coerce_number,
+    )
+    invalid_absolute_counter = invalid_absolute_counter or (
         (absolute_used is not None and absolute_used < 0)
         or (absolute_remaining is not None and absolute_remaining < 0)
     )
@@ -624,6 +642,15 @@ def _window_from_wham_rate_limit_mapping(
         remaining_ratio = None
     elif remaining_percent is None:
         remaining_percent = remaining_ratio
+    invalid_percentage_field = _has_invalid_number(
+        flat, used_percent_hints, converter=_coerce_percent
+    ) or _has_invalid_number(
+        flat, used_ratio_hints, converter=_normalize_ratio_value
+    ) or _has_invalid_number(
+        flat, remaining_percent_hints, converter=_coerce_percent
+    ) or _has_invalid_number(
+        flat, remaining_ratio_hints, converter=_normalize_ratio_value
+    )
     reset_at = _parse_datetime(obj.get("reset_at"), captured_at)
     if reset_at is None:
         reset_at = _pick_datetime(
@@ -632,7 +659,7 @@ def _window_from_wham_rate_limit_mapping(
     if reset_at is None:
         reset_after = _pick_number(flat, RELATIVE_RESET_HINTS)
         reset_at = _relative_reset_at(reset_after, captured_at)
-    if invalid_absolute_counter:
+    if invalid_absolute_counter or invalid_percentage_field:
         # A contradictory absolute counter invalidates percentage usage from
         # this WHAM object; retain only independent reset metadata.
         if reset_at is None:
@@ -865,6 +892,25 @@ def _window_from_mapping(
         ratio = None
     elif percent is None:
         percent = ratio
+    invalid_percentage_field = _has_invalid_number(
+        flat, used_percent_hints, converter=_coerce_percent
+    ) or _has_invalid_number(
+        flat, used_ratio_hints, converter=_normalize_ratio_value
+    ) or _has_invalid_number(
+        flat, remaining_percent_hints, converter=_coerce_percent
+    ) or _has_invalid_number(
+        flat, remaining_ratio_hints, converter=_normalize_ratio_value
+    ) or _has_invalid_number(
+        flat,
+        percent_hints,
+        exclude_suffixes=("_percent", "_percentage", "_ratio"),
+        converter=_coerce_percent,
+    ) or _has_invalid_number(
+        flat,
+        ratio_hints,
+        exclude_suffixes=("_percent", "_percentage", "_ratio"),
+        converter=_normalize_ratio_value,
+    )
     reset_at = _pick_datetime(
         flat, ("reset", "reset_at", "resets_at", "next_reset"), captured_at
     )
@@ -902,7 +948,29 @@ def _window_from_mapping(
         percent = None
         has_explicit_remaining_percent = False
     invalid_absolute_limit = used is not None and limit is not None and limit <= 0
-    invalid_absolute_usage = used is not None and used < 0
+    invalid_absolute_usage_field = _has_invalid_number(
+        flat,
+        ("used", "usage", "current", "consumed", "num_used"),
+        exclude_suffixes=(
+            "_percent",
+            "_percentage",
+            "_ratio",
+            "_seconds",
+            "_minutes",
+            "_hours",
+        ),
+        converter=_coerce_number,
+    )
+    invalid_absolute_usage = (
+        invalid_absolute_usage_field
+        or (used is not None and used < 0)
+    )
+    invalid_absolute_remaining_field = _has_invalid_number(
+        flat,
+        ("remaining", "left", "available"),
+        exclude_suffixes=("_percent", "_percentage", "_ratio"),
+        converter=_coerce_number,
+    )
     invalid_absolute_remaining = remaining is not None and (
         remaining < 0
         or (limit is not None and limit > 0 and remaining > limit)
@@ -913,6 +981,9 @@ def _window_from_mapping(
             and remaining_percent is None
             and remaining_ratio is None
         )
+    )
+    invalid_absolute_remaining = (
+        invalid_absolute_remaining_field or invalid_absolute_remaining
     )
     if invalid_absolute_usage:
         # A contradictory absolute counter invalidates every usage value from
@@ -937,11 +1008,29 @@ def _window_from_mapping(
         ratio = None
         has_explicit_remaining_percent = False
         explicit_remaining_percent = None
-        if remaining < 0 and limit is not None and limit > 0:
+        if remaining is not None and remaining < 0 and limit is not None and limit > 0:
             remaining = 0
             percent = 0
         else:
             remaining = None
+    has_valid_absolute_usage = (
+        used is not None
+        and limit is not None
+        and limit > 0
+    ) or (
+        remaining is not None
+        and limit is not None
+        and limit > 0
+        and 0 <= remaining <= limit
+    )
+    if invalid_percentage_field and not has_valid_absolute_usage:
+        used_percent = None
+        remaining_percent = None
+        remaining_ratio = None
+        percent = None
+        ratio = None
+        has_explicit_remaining_percent = False
+        explicit_remaining_percent = None
     if invalid_absolute_limit:
         # A non-positive absolute denominator cannot produce a valid usage
         # value. An unqualified `remaining` field is ambiguous here and must
@@ -1491,6 +1580,25 @@ def _matching_number_values(
         if number is not None:
             values.append(number)
     return tuple(values)
+
+
+def _has_invalid_number(
+    flat: dict[str, Any],
+    hints: tuple[str, ...],
+    converter: Callable[[Any], float | None],
+    *,
+    exclude_suffixes: tuple[str, ...] = (),
+) -> bool:
+    for key, value in flat.items():
+        if value is None:
+            continue
+        lower = key.lower().rsplit(".", 1)[-1]
+        if lower.endswith(exclude_suffixes):
+            continue
+        if any(lower == hint or hint in lower for hint in hints):
+            if converter(value) is None:
+                return True
+    return False
 
 
 def _pick_datetime(

@@ -1159,6 +1159,36 @@ def test_extract_windows_discards_percentages_beside_negative_usage(fields):
     assert five.has_usage_value is False
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"used": "bogus", "limit": 100, "percent": 97},
+        {"used": "NaN", "limit": 100, "percent": 97},
+        {"used": True, "limit": 100, "percent": 97},
+        {"remaining": "bogus", "percent": 97},
+        {"used_percent": "bogus", "percent": 97},
+        {"used_percent": 3, "percent": 101},
+    ],
+)
+def test_extract_windows_rejects_malformed_fields_beside_percentages(fields):
+    candidate = JsonCandidate(
+        url="https://example.test/usage",
+        payload={
+            "five_hour_usage_limit": {
+                **fields,
+                "reset_at": "2026-07-13T20:00:00+02:00",
+            }
+        },
+    )
+
+    five, _weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert five is not None
+    assert five.has_usage_value is False
+    assert five.remaining is None
+    assert five.percent is None
+
+
 def test_extract_windows_discards_percentage_beside_negative_remaining():
     candidate = JsonCandidate(
         url="https://example.test/usage",
@@ -2076,6 +2106,36 @@ def test_extract_windows_rejects_conflicting_wham_percentage_fields():
     ],
 )
 def test_extract_windows_rejects_negative_wham_counters_beside_percentages(fields):
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={
+            "rate_limit": {
+                "primary_window": {
+                    **fields,
+                    "limit_window_seconds": 18_000,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            }
+        },
+    )
+
+    five, _weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert five is not None
+    assert five.has_usage_value is False
+    assert five.percent is None
+    assert five.reset_at is not None
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"used": "bogus", "used_percent": 3},
+        {"used_percent": "bogus", "remaining_percent": 97},
+        {"used_percent": 101, "remaining_percent": 0},
+    ],
+)
+def test_extract_windows_rejects_malformed_wham_fields_beside_percentages(fields):
     candidate = JsonCandidate(
         url="https://chatgpt.com/backend-api/wham/usage",
         payload={
