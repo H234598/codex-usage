@@ -527,7 +527,8 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
     raw_weekly = payload.get("weekly")
     five_hour = _window_from_dict(raw_five_hour, expected_kind="five_hour")
     weekly = _window_from_dict(raw_weekly, expected_kind="weekly")
-    main = _pool_from_dict(payload.get("main"), expected_key="main")
+    raw_main = payload.get("main")
+    main = _pool_from_dict(raw_main, expected_key="main")
     model_pools = _model_pools_from_dict(payload.get("models"))
     invalid_window_fields = [
         field
@@ -539,6 +540,17 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         and parsed_window is None
         and _window_from_dict(raw_window) is not None
     ]
+    invalid_window_fields.extend(
+        field
+        for field, raw_window in (
+            ("five_hour", raw_five_hour),
+            ("weekly", raw_weekly),
+        )
+        if field in payload and raw_window is not None and not isinstance(raw_window, dict)
+    )
+    invalid_pool_fields = [
+        "main"
+    ] if "main" in payload and raw_main is not None and main is None else []
     sanitized_window_fields = [
         field
         for field, raw_window, parsed_window in (
@@ -591,6 +603,12 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             "invalid cached limit window slot: "
             + ", ".join(invalid_window_fields)
         )
+        error = f"{error}; {invalid_error}" if error else invalid_error
+        forced_stale = True
+    if invalid_pool_fields:
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
+        invalid_error = "invalid cached usage pool: " + ", ".join(invalid_pool_fields)
         error = f"{error}; {invalid_error}" if error else invalid_error
         forced_stale = True
     if sanitized_window_fields:

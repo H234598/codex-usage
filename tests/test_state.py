@@ -936,6 +936,52 @@ def test_load_usage_snapshot_ignores_malformed_window_shape(tmp_path, malformed_
     assert loaded.weekly.remaining == 55
 
 
+@pytest.mark.parametrize("malformed_window", ([], "not-an-object", 42))
+def test_load_usage_snapshot_marks_non_object_window_shape_stale(
+    malformed_window,
+):
+    loaded = usage_from_dict(
+        {
+            "account": "malformed-window",
+            "label": "Malformed window",
+            "captured_at": "2026-06-08T04:20:00+02:00",
+            "status": "ok",
+            "stale": False,
+            "cache_invalidated": False,
+            "five_hour": malformed_window,
+            "weekly": {"name": "weekly", "remaining": 55},
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.cache_invalidated is False
+    assert loaded.five_hour is None
+    assert loaded.weekly is not None and loaded.weekly.remaining == 55
+    assert loaded.error == "invalid cached limit window slot: five_hour"
+
+
+def test_load_usage_snapshot_marks_malformed_main_pool_stale():
+    loaded = usage_from_dict(
+        {
+            "account": "malformed-main",
+            "label": "Malformed main",
+            "captured_at": "2026-06-08T04:20:00+02:00",
+            "status": "ok",
+            "stale": False,
+            "cache_invalidated": False,
+            "main": [],
+            "five_hour": {"name": "5h", "remaining": 97},
+            "weekly": {"name": "weekly", "remaining": 55},
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.cache_invalidated is False
+    assert loaded.error == "invalid cached usage pool: main"
+
+
 def test_load_usage_snapshot_drops_window_stored_in_wrong_slot(tmp_path):
     payload = {
         "account": "wrong-slot",
