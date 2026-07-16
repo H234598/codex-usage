@@ -708,6 +708,24 @@ test("browser values do not merge with unknown provenance", () => {
   );
 });
 
+test("backend summary does not invent missing backend usage", () => {
+  const applet = makeApplet();
+
+  assert.equal(
+    applet._backendSummary({ backend_configured: "direct", backend_used: "" }),
+    "Unbekannt"
+  );
+  assert.equal(applet._backendSummary({}), "Unbekannt");
+  assert.equal(
+    applet._backendSummary({ backend_configured: "direct", backend_used: "direct" }),
+    "Direkt"
+  );
+  assert.equal(
+    applet._backendSummary({ backend_configured: "app-server", backend_used: "direct" }),
+    "App Server → Direkt"
+  );
+});
+
 test("fresh browser partial does not restore an unknown cached window", () => {
   const applet = makeApplet();
   applet._usages = [{

@@ -3876,8 +3876,17 @@ CodexUsageApplet.prototype = {
     },
 
     _backendSummary: function(usage) {
-        let configured = usage.backend_configured || "direct";
-        let used = usage.backend_used || configured;
+        let configured;
+        let used;
+        try {
+            configured = this._safeBackend(usage && usage.backend_configured);
+            used = this._safeBackend(usage && usage.backend_used, true);
+        } catch (e) {
+            return "Unbekannt";
+        }
+        if (!configured || !used) {
+            return "Unbekannt";
+        }
         let labels = {
             "direct": "Direkt",
             "app-server": "App Server",
