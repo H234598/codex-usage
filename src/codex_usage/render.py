@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
 from .extractor import LOCAL_TZ
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
+from .state import backend_provenance_matches_configured
 
 ACCOUNT_CELL_MAX = 40
 PATH_CELL_MAX = 80
@@ -19,7 +21,7 @@ AUTH_CELL_MAX = 28
 
 def render_json(usages: Iterable[AccountUsage]) -> str:
     return json.dumps(
-        [usage.as_dict() for usage in usages],
+        [_safe_usage_for_display(usage).as_dict() for usage in usages],
         ensure_ascii=False,
         indent=2,
         allow_nan=False,
@@ -40,7 +42,10 @@ def render_account_overview(
             _cell(account.backend, 16),
             _auth_state(account.auth_json_path),
             _auth_value(usage_by_account.get(account.id)),
-            *_overview_usage_values(usage_by_account.get(account.id)),
+            *_overview_usage_values(
+                usage_by_account.get(account.id),
+                expected_backend=account.backend,
+            ),
             _profile_state(account.profile_dir),
             _cell(str(Path(account.profile_dir).expanduser()), PATH_CELL_MAX),
         ]
@@ -93,7 +98,10 @@ def render_account_values(
     rows = [
         [
             _cell(account.label, ACCOUNT_CELL_MAX),
-            *_overview_usage_values(usages.get(account.id)),
+            *_overview_usage_values(
+                usages.get(account.id),
+                expected_backend=account.backend,
+            ),
         ]
         for account in sorted(accounts, key=lambda item: item.id)
     ]
@@ -130,20 +138,22 @@ def render_table(usages: Iterable[AccountUsage]) -> str:
         "Auth",
         "Status",
     ]
-    data = [
-        [
-            _cell(usage.label, ACCOUNT_CELL_MAX),
-            _usage_value(usage.five_hour),
-            _reset_value(usage.five_hour),
-            _usage_value(usage.weekly),
-            _reset_value(usage.weekly),
-            _extra_main_value(usage),
-            _spark_value(usage),
-            _auth_value(usage),
-            _status_value(usage),
-        ]
-        for usage in rows
-    ]
+    data = []
+    for usage in rows:
+        safe_usage = _safe_usage_for_display(usage)
+        data.append(
+            [
+                _cell(safe_usage.label, ACCOUNT_CELL_MAX),
+                _usage_value(safe_usage.five_hour),
+                _reset_value(safe_usage.five_hour),
+                _usage_value(safe_usage.weekly),
+                _reset_value(safe_usage.weekly),
+                _extra_main_value(safe_usage),
+                _spark_value(safe_usage),
+                _auth_value(safe_usage),
+                _status_value(safe_usage),
+            ]
+        )
     widths = [
         max(len(headers[index]), *(len(row[index]) for row in data)) if data else len(header)
         for index, header in enumerate(headers)
@@ -179,9 +189,14 @@ def _auth_state(auth_json_path: str | None) -> str:
     return "fehlt"
 
 
-def _overview_usage_values(usage: AccountUsage | None) -> list[str]:
+def _overview_usage_values(
+    usage: AccountUsage | None,
+    *,
+    expected_backend: str | None = None,
+) -> list[str]:
     if usage is None:
         return ["-", "-", "-", "-", "-", "-", "-"]
+    usage = _safe_usage_for_display(usage, expected_backend=expected_backend)
     return [
         _cell(_usage_value(usage.five_hour), VALUE_CELL_MAX),
         _reset_value(usage.five_hour),
@@ -191,6 +206,50 @@ def _overview_usage_values(usage: AccountUsage | None) -> list[str]:
         _cell(_spark_value(usage), VALUE_CELL_MAX),
         _cell(_status_value(usage), STATUS_CELL_MAX),
     ]
+
+
+def _safe_usage_for_display(
+    usage: AccountUsage,
+    *,
+    expected_backend: str | None = None,
+) -> AccountUsage:
+    if _usage_provenance_is_displayable(usage, expected_backend=expected_backend):
+        return usage
+    error = "incomplete usage backend provenance"
+    if usage.error:
+        error = f"{usage.error}; {error}"
+    return replace(
+        usage,
+        five_hour=None,
+        weekly=None,
+        main=None,
+        models=(),
+        error=error,
+        status=(
+            AccountStatus.PARTIAL
+            if usage.status == AccountStatus.OK
+            else usage.status
+        ),
+        values_captured_at=None,
+        stale=True,
+        cache_invalidated=True,
+    )
+
+
+def _usage_provenance_is_displayable(
+    usage: AccountUsage,
+    *,
+    expected_backend: str | None = None,
+) -> bool:
+    if usage.cache_invalidated:
+        return False
+    configured_backend = expected_backend or usage.backend_configured
+    if not isinstance(configured_backend, str) or not configured_backend:
+        return False
+    try:
+        return backend_provenance_matches_configured(usage, configured_backend)
+    except (AttributeError, TypeError, ValueError):
+        return False
 
 
 def _extra_main_value(usage: AccountUsage) -> str:

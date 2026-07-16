@@ -22,6 +22,8 @@ def test_render_table_contains_values():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         auth_last_refresh=datetime(2026, 7, 9, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
         auth_access_expires_at=datetime(2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
         five_hour=LimitWindow(
@@ -50,6 +52,22 @@ def test_render_table_contains_values():
     assert "69% verbleibend" in rendered
     assert "Auth" in rendered
     assert "bis 19.07.2026 23:17" in rendered
+
+
+def test_render_hides_values_without_backend_provenance():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    rendered = render_table([usage])
+
+    assert "97% verbleibend" not in rendered
+    assert "55% verbleibend" not in rendered
+    assert "incomplete usage backend prov" in rendered
 
 
 def test_render_uses_dst_aware_local_timezone(monkeypatch):
@@ -83,6 +101,8 @@ def test_render_table_labels_remaining_percent_windows():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(
             name="5h",
             used=3,
@@ -114,6 +134,8 @@ def test_render_table_prefers_absolute_usage_over_conflicting_remaining_fields()
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(
             name="5h",
             used=0,
@@ -134,6 +156,8 @@ def test_render_ignores_integer_overflow_without_hiding_other_window():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", used=10**309, limit=100),
         weekly=LimitWindow(name="weekly", used=10, limit=100),
     )
@@ -151,6 +175,8 @@ def test_render_table_converts_absolute_remaining_to_percent():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", limit=1000, remaining=690),
     )
 
@@ -165,6 +191,8 @@ def test_render_prefers_percent_when_remaining_has_no_absolute_limit():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", remaining=690, percent=69),
     )
 
@@ -225,6 +253,8 @@ def test_render_table_treats_percent_only_window_as_remaining_percent():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", percent=97),
     )
 
@@ -242,6 +272,8 @@ def test_render_account_values_is_compact_and_includes_missing_accounts():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(
             name="5h",
             used=3,
@@ -276,6 +308,8 @@ def test_render_table_includes_dynamic_main_and_spark_limits():
         account_id="private",
         label="Private",
         captured_at=reset,
+        backend_configured="direct",
+        backend_used="direct",
         main=UsagePool(
             key="main",
             display_name="Codex",
@@ -347,6 +381,8 @@ def test_render_json_is_machine_readable():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
     )
 
     rendered = render_json([usage])
@@ -376,6 +412,8 @@ def test_render_table_marks_stale_values_as_saved():
         account_id="privat",
         label="Privat",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
         stale=True,
     )
 
