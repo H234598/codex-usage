@@ -148,6 +148,22 @@ def fetch_account_usage(
 
         raw_candidates = list(candidates)
         source_urls.update(_redact_url(candidate.url) for candidate in raw_candidates)
+        page_state = _detect_page_state(
+            current_url,
+            page_title,
+            body_text,
+            main_status=main_status,
+        )
+        if page_state == "cloudflare":
+            return AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                status=AccountStatus.ERROR,
+                error="browser page blocked by cloudflare",
+                source_urls=tuple(sorted(source_urls)),
+                cache_invalidated=True,
+            )
         auth_user_id, auth_account_id = auth_identity_for_account(account)
         auth_plan_type = auth_plan_type_for_account(account)
         if auth_identity_changed(
@@ -279,12 +295,6 @@ def fetch_account_usage(
             current_url=current_url,
             five_hour=five_hour,
             weekly=weekly,
-            main_status=main_status,
-        )
-        page_state = _detect_page_state(
-            current_url,
-            page_title,
-            body_text,
             main_status=main_status,
         )
         error = None

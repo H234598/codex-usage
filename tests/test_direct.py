@@ -342,6 +342,17 @@ def test_canonical_backend_identity_rejects_user_only_response_with_auth_account
         )
 
 
+def test_canonical_backend_identity_rejects_identity_free_response_without_auth_ids():
+    with pytest.raises(ValueError, match="backend response has no account identity"):
+        canonical_backend_identity(
+            None,
+            None,
+            auth_user_id=None,
+            auth_account_id=None,
+            require_backend_identity=True,
+        )
+
+
 @pytest.mark.parametrize(
     "error",
     (
@@ -562,7 +573,7 @@ def test_fetch_account_usage_direct_rejects_identity_free_response(
     )
 
     assert usage.status == AccountStatus.ERROR
-    assert usage.error == "backend response identity cannot be verified"
+    assert usage.error == "backend response has no account identity"
     assert usage.cache_invalidated is True
 
 
@@ -2002,6 +2013,8 @@ def test_fetch_account_usage_direct_marks_reset_only_windows_partial(tmp_path, m
         def read(self, _limit):
             return json.dumps(
                 {
+                    "user_id": "user-test",
+                    "account_id": "account-test",
                     "rate_limit": {
                         "primary_window": {
                             "limit_window_seconds": 18000,
@@ -2130,6 +2143,8 @@ def test_fetch_account_usage_direct_supports_plan_specific_30_day_window(
         def read(self, _limit):
             return json.dumps(
                 {
+                    "user_id": "user-test",
+                    "account_id": "account-test",
                     "plan_type": "free",
                     "rate_limit": {
                         "primary_window": {
@@ -2183,6 +2198,8 @@ def test_fetch_account_usage_direct_ignores_overflowing_window_duration(
         def read(self, _limit):
             return json.dumps(
                 {
+                    "user_id": "user-test",
+                    "account_id": "account-test",
                     "rate_limit": {
                         "primary_window": {
                             "used_percent": 5,
@@ -2231,6 +2248,8 @@ def test_fetch_account_usage_direct_reports_single_available_window(tmp_path, mo
         def read(self, _limit):
             return json.dumps(
                 {
+                    "user_id": "user-test",
+                    "account_id": "account-test",
                     "plan_type": "pro",
                     "rate_limit": {
                         "primary_window": {
