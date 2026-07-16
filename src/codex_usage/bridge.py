@@ -398,23 +398,41 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
 
     ordered_candidates: list[tuple[bool, int, int, int, JsonCandidate]] = []
     for candidate_index, item in enumerate(responses_by_key.values()):
-        truncated = item.get("truncated")
-        if truncated is True or (
-            isinstance(truncated, str) and truncated.strip().casefold() == "true"
-        ):
-            continue
-        status = item.get("status")
-        if isinstance(status, bool):
-            status = None
-        elif isinstance(status, str) and status.strip().isdecimal():
-            status = int(status.strip())
-        if isinstance(status, int) and status >= 400:
-            continue
-        ok = item.get("ok")
-        if ok is False or (
-            isinstance(ok, str) and ok.strip().casefold() == "false"
-        ):
-            continue
+        if "truncated" in item:
+            truncated = item["truncated"]
+            if isinstance(truncated, bool):
+                if truncated:
+                    continue
+            elif isinstance(truncated, str):
+                normalized = truncated.strip().casefold()
+                if normalized == "true":
+                    continue
+                if normalized != "false":
+                    continue
+            else:
+                continue
+        if "status" in item:
+            status = item["status"]
+            if isinstance(status, bool):
+                continue
+            if isinstance(status, str):
+                try:
+                    status = int(status.strip()) if status.strip().isdecimal() else None
+                except ValueError:
+                    status = None
+            if not isinstance(status, int) or not 100 <= status <= 599:
+                continue
+            if status >= 400:
+                continue
+        if "ok" in item:
+            ok = item["ok"]
+            if isinstance(ok, str):
+                normalized = ok.strip().casefold()
+                ok = True if normalized == "true" else False if normalized == "false" else None
+            if not isinstance(ok, bool):
+                continue
+            if not ok:
+                continue
         content_type = str(item.get("contentType") or item.get("content_type") or "").lower()
         if content_type and "json" not in content_type:
             continue

@@ -1660,6 +1660,48 @@ def test_usage_from_ingest_payload_ignores_failed_api_response_status_variants(
     assert usage.weekly is None
 
 
+@pytest.mark.parametrize(
+    "response_fields",
+    (
+        {"status": 1},
+        {"status": "ok"},
+        {"ok": 1},
+        {"truncated": 1},
+        {"truncated": "no"},
+    ),
+)
+def test_usage_from_ingest_payload_rejects_invalid_api_response_metadata(
+    response_fields,
+):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    response = {
+        "url": "https://chatgpt.com/backend-api/wham/usage",
+        "contentType": "application/json",
+        "bodyText": json.dumps(
+            {
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                    },
+                    "secondary_window": {
+                        "used_percent": 45,
+                        "limit_window_seconds": 604_800,
+                    },
+                }
+            }
+        ),
+        **response_fields,
+    }
+
+    usage = usage_from_ingest_payload(account, {"apiResponses": [response]})
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.cache_invalidated is True
+    assert usage.five_hour is None
+    assert usage.weekly is None
+
+
 def test_usage_from_ingest_payload_reports_missing_paid_five_hour_window():
     account = Account(
         id="privat",
