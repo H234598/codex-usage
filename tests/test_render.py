@@ -244,6 +244,7 @@ def test_render_hides_percent_when_another_usage_field_is_invalid():
 
 def test_render_does_not_format_boolean_as_number():
     assert _fmt_number(True) == "-"
+    assert _fmt_number("97") == "-"
     assert _is_finite_number(True) is False
     assert _is_finite_number("97") is False
     assert _remaining_percent(LimitWindow(name="5h", used=True, limit=100)) is None

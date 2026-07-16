@@ -418,7 +418,7 @@ def _auth_value(usage: AccountUsage | None) -> str:
 
 
 def _fmt_number(value: float) -> str:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return "-"
     try:
         number = float(value)
