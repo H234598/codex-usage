@@ -203,15 +203,17 @@ def _wham_pool(
 ) -> UsagePool | None:
     if not isinstance(rate_limit, dict):
         return None
-    windows = tuple(
-        window
-        for slot in ("primary_window", "secondary_window")
-        if (
-            window := _wham_window(
-                rate_limit.get(slot), captured_at=captured_at, source=source
-            )
-        )
-        is not None
+    raw_windows = tuple(rate_limit.get(slot) for slot in ("primary_window", "secondary_window"))
+    parsed_windows = tuple(
+        _wham_window(raw, captured_at=captured_at, source=source)
+        if raw is not None
+        else None
+        for raw in raw_windows
+    )
+    windows = tuple(window for window in parsed_windows if window is not None)
+    window_shape_valid = all(
+        raw is None or window is not None
+        for raw, window in zip(raw_windows, parsed_windows, strict=True)
     )
     raw_allowed = rate_limit.get("allowed")
     raw_limit_reached = rate_limit.get("limit_reached")
@@ -231,7 +233,7 @@ def _wham_pool(
         key=key,
         display_name=display_name,
         windows=windows,
-        available=control_flags_valid,
+        available=control_flags_valid and window_shape_valid,
         allowed=allowed,
         limit_reached=limit_reached,
         metered_feature=metered_feature,
@@ -250,15 +252,17 @@ def _app_server_pool(
 ) -> UsagePool | None:
     if not isinstance(snapshot, dict):
         return None
-    windows = tuple(
-        window
-        for slot in ("primary", "secondary")
-        if (
-            window := _app_server_window(
-                snapshot.get(slot), captured_at=captured_at, source=source
-            )
-        )
-        is not None
+    raw_windows = tuple(snapshot.get(slot) for slot in ("primary", "secondary"))
+    parsed_windows = tuple(
+        _app_server_window(raw, captured_at=captured_at, source=source)
+        if raw is not None
+        else None
+        for raw in raw_windows
+    )
+    windows = tuple(window for window in parsed_windows if window is not None)
+    window_shape_valid = all(
+        raw is None or window is not None
+        for raw, window in zip(raw_windows, parsed_windows, strict=True)
     )
     raw_limit_reached = snapshot.get("rateLimitReachedType")
     limit_reached = (
@@ -277,7 +281,7 @@ def _app_server_pool(
         key=key,
         display_name=display_name,
         windows=windows,
-        available=control_flag_valid,
+        available=control_flag_valid and window_shape_valid,
         limit_reached=limit_reached,
         metered_feature=metered_feature,
         availability_sources=("usage",),

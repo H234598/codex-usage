@@ -949,6 +949,41 @@ def test_app_server_accepts_missing_five_hour_compatibility_window(
     assert usage.main is not None
 
 
+def test_app_server_marks_malformed_main_slot_partial(tmp_path, monkeypatch):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+        backend="app-server",
+    )
+    payload = {
+        "rateLimits": {
+            "primary": "malformed",
+            "secondary": {
+                "usedPercent": 20,
+                "windowDurationMins": 10080,
+            },
+        }
+    }
+    auth_context = (tmp_path / "auth.json", {}, "user-test", "account-test", "pro", None)
+    monkeypatch.setattr(
+        "codex_usage.app_server._auth_context",
+        lambda _account: auth_context,
+    )
+    monkeypatch.setattr(
+        "codex_usage.app_server._read_rate_limits",
+        lambda *_args, **_kwargs: payload,
+    )
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.main is not None
+    assert usage.main.available is False
+    assert usage.weekly is not None and usage.weekly.remaining == 80
+
+
 def test_app_server_missing_window_error_reports_unsupported_duration():
     payload = {
         "rateLimits": {

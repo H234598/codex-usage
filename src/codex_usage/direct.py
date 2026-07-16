@@ -186,12 +186,16 @@ def fetch_account_usage_direct(
             captured_at=captured_at,
             source=f"json:{_redact_url(WHAM_USAGE_URL)}",
         )
+        main_is_usable = main is None or main.available
         has_dynamic_usage = bool(
-            main and any(window.has_usage_value for window in main.windows)
+            main_is_usable
+            and main
+            and any(window.has_usage_value for window in main.windows)
         )
         status = (
             AccountStatus.OK
-            if has_dynamic_usage or _has_usage_values(five_hour, weekly)
+            if main_is_usable
+            and (has_dynamic_usage or _has_usage_values(five_hour, weekly))
             else AccountStatus.PARTIAL
         )
         error = (

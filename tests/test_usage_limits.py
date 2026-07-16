@@ -178,6 +178,27 @@ def test_wham_rejects_string_usage_percent():
     assert main.windows[0].remaining_percent is None
 
 
+def test_wham_disables_pool_when_one_present_window_is_malformed():
+    main, _ = parse_wham_usage_pools(
+        {
+            "rate_limit": {
+                "primary_window": "malformed",
+                "secondary_window": {
+                    "used_percent": 20,
+                    "limit_window_seconds": 604800,
+                },
+            }
+        },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.windows[0].name == "weekly"
+    assert main.exhausted is True
+
+
 def test_wham_ignores_unrelated_additional_rate_limit():
     _, models = parse_wham_usage_pools(
         {
@@ -330,6 +351,26 @@ def test_app_server_disables_main_when_codex_bucket_has_wrong_shape():
     assert main is not None
     assert main.available is False
     assert main.windows == ()
+
+
+def test_app_server_disables_pool_when_one_present_window_is_malformed():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": "malformed",
+                "secondary": {
+                    "usedPercent": 20,
+                    "windowDurationMins": 10080,
+                },
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.windows[0].name == "weekly"
+    assert main.exhausted is True
 
 
 def test_app_server_rejects_string_usage_percent():
