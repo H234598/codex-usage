@@ -1679,6 +1679,46 @@ test("legacy conditional style rows migrate to the corresponding mode", () => {
   assert.equal(migrated["below-color"], 3);
 });
 
+test("malformed numeric settings are rejected instead of coerced", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._normalizePanelRow({
+    tag: "A",
+    order: "1",
+    muted: false,
+    slot1: 1,
+    slot2: 0,
+  }, "alpha"), null);
+  assert.equal(applet._normalizeAlertRow({
+    "five-threshold": "20",
+    "weekly-threshold": 20,
+    warnings: true,
+    errors: true,
+  }, "alpha"), null);
+  assert.equal(applet._normalizeStyleRow({
+    mode: "1",
+    threshold: 20,
+    font: 0,
+    size: 0,
+    bold: false,
+    italic: false,
+    color: 0,
+    background: 0,
+    "below-font": 0,
+    "below-size": 0,
+    "below-bold": true,
+    "below-italic": false,
+    "below-color": 3,
+    "below-background": 0,
+  }, "alpha", "percent"), null);
+  assert.equal(applet._normalizeTargetRow({
+    element: "0",
+    panel: true,
+    hover: true,
+    click: true,
+  }, "alpha"), null);
+});
+
 test("alert setting changes refresh the panel immediately", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

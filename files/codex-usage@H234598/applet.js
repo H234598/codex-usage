@@ -1499,7 +1499,7 @@ CodexUsageApplet.prototype = {
         let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             let row = rows[i];
-            let scope = Number(row && row.scope);
+            let scope = this._strictIntegerSetting(row && row.scope);
             if (!Number.isInteger(scope) || scope < 0 || scope > 3 ||
                 typeof row.enabled !== "boolean" || typeof row.allow !== "boolean") {
                 throw new Error("invalid routing policy row");
@@ -1732,9 +1732,9 @@ CodexUsageApplet.prototype = {
             return null;
         }
         let tag = this._safeText(row.tag, 8);
-        let order = Number(row.order);
-        let slot1 = Number(row.slot1);
-        let slot2 = Number(row.slot2);
+        let order = this._strictIntegerSetting(row.order);
+        let slot1 = this._strictIntegerSetting(row.slot1);
+        let slot2 = this._strictIntegerSetting(row.slot2);
         if (
             !Number.isInteger(order) || order < 1 || order > 100 ||
             typeof row.muted !== "boolean" ||
@@ -1793,8 +1793,8 @@ CodexUsageApplet.prototype = {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
-        let five = Number(row["five-threshold"]);
-        let weekly = Number(row["weekly-threshold"]);
+        let five = this._strictIntegerSetting(row["five-threshold"]);
+        let weekly = this._strictIntegerSetting(row["weekly-threshold"]);
         if (
             !Number.isInteger(five) || five < 0 || five > 100 ||
             !Number.isInteger(weekly) || weekly < 0 || weekly > 100 ||
@@ -2030,27 +2030,33 @@ CodexUsageApplet.prototype = {
         }
         let format = kind === "percent"
             ? 0
-            : (row.format === undefined ? 0 : Number(row.format));
+            : (row.format === undefined ? 0 : this._strictIntegerSetting(row.format));
         let mode = row.mode === undefined
             ? (row.conditional === true ? 1 : 0)
-            : Number(row.mode);
+            : this._strictIntegerSetting(row.mode);
         let threshold = row.threshold === undefined
             ? (kind === "duration" ? 120 : 20)
-            : Number(row.threshold);
-        let font = row.font === undefined ? 0 : Number(row.font);
-        let size = row.size === undefined ? 0 : Number(row.size);
+            : this._strictIntegerSetting(row.threshold);
+        let font = row.font === undefined ? 0 : this._strictIntegerSetting(row.font);
+        let size = row.size === undefined ? 0 : this._strictIntegerSetting(row.size);
         let bold = row.bold === undefined ? false : row.bold;
         let italic = row.italic === undefined ? false : row.italic;
-        let color = row.color === undefined ? 0 : Number(row.color);
-        let background = row.background === undefined ? 0 : Number(row.background);
-        let belowFont = row["below-font"] === undefined ? 0 : Number(row["below-font"]);
-        let belowSize = row["below-size"] === undefined ? 0 : Number(row["below-size"]);
+        let color = row.color === undefined ? 0 : this._strictIntegerSetting(row.color);
+        let background = row.background === undefined ? 0 : this._strictIntegerSetting(row.background);
+        let belowFont = row["below-font"] === undefined
+            ? 0
+            : this._strictIntegerSetting(row["below-font"]);
+        let belowSize = row["below-size"] === undefined
+            ? 0
+            : this._strictIntegerSetting(row["below-size"]);
         let belowBold = row["below-bold"] === undefined ? true : row["below-bold"];
         let belowItalic = row["below-italic"] === undefined ? false : row["below-italic"];
-        let belowColor = row["below-color"] === undefined ? 3 : Number(row["below-color"]);
+        let belowColor = row["below-color"] === undefined
+            ? 3
+            : this._strictIntegerSetting(row["below-color"]);
         let belowBackground = row["below-background"] === undefined
             ? 0
-            : Number(row["below-background"]);
+            : this._strictIntegerSetting(row["below-background"]);
         let maxFormat = kind === "date" ? 3 : (kind === "duration" ? 3 : 2);
         let maxThreshold = kind === "duration" ? 10080 : 100;
         if (
@@ -2125,7 +2131,9 @@ CodexUsageApplet.prototype = {
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._safeText(currentRows[i] && currentRows[i].account, 64);
-                let element = Number(currentRows[i] && currentRows[i].element);
+                let element = this._strictIntegerSetting(
+                    currentRows[i] && currentRows[i].element
+                );
                 let key = account + ":" + element;
                 if (!account || current[key] || !this._backendAccounts[account]) {
                     continue;
@@ -2161,7 +2169,7 @@ CodexUsageApplet.prototype = {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
-        let element = Number(row.element);
+        let element = this._strictIntegerSetting(row.element);
         if (
             !Number.isInteger(element) || element < 0 || element > 3 ||
             typeof row.panel !== "boolean" || typeof row.hover !== "boolean" ||
@@ -2396,7 +2404,7 @@ CodexUsageApplet.prototype = {
                 return;
             }
             seen[account] = true;
-            let backendValue = Number(row.backend);
+            let backendValue = this._strictIntegerSetting(row.backend);
             if (backendValue !== 0 && backendValue !== 1) {
                 this._loadAccountBackends();
                 return;
@@ -5110,6 +5118,10 @@ CodexUsageApplet.prototype = {
             return fallback;
         }
         return Math.max(minimum, Math.min(maximum, Math.round(parsed)));
+    },
+
+    _strictIntegerSetting: function(value) {
+        return typeof value === "number" && Number.isInteger(value) ? value : null;
     },
 
     _shortText: function(value, limit) {
