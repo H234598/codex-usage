@@ -590,6 +590,15 @@ def test_policy_rejects_truthy_non_boolean_rule(tmp_path):
         set_policy_rule("global", None, "false", path=tmp_path / "routing-policy.json")
 
 
+@pytest.mark.parametrize("scope", [None, 1, []])
+def test_policy_rejects_malformed_scope(scope, tmp_path):
+    with pytest.raises(
+        ValueError,
+        match="policy scope must be global, account, group, agent or job",
+    ):
+        set_policy_rule(scope, None, False, path=tmp_path / "routing-policy.json")
+
+
 @pytest.mark.parametrize("role", [None, 1, [], {}, "   "])
 def test_routing_rejects_invalid_role_before_decision(role):
     with pytest.raises(ValueError, match="role must be a non-empty string"):

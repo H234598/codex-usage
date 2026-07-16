@@ -87,6 +87,8 @@ def set_policy_rule(
 ) -> dict[str, Any]:
     if value is not None and not isinstance(value, bool):
         raise ValueError("policy value must be a boolean or None")
+    if not isinstance(scope, str):
+        raise ValueError("policy scope must be global, account, group, agent or job")
     normalized_scope = scope.strip().casefold()
     if normalized_scope not in ("global", *POLICY_SCOPES):
         raise ValueError("policy scope must be global, account, group, agent or job")
