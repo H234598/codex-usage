@@ -181,7 +181,10 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         auth_account_id=auth_account_id,
         auth_plan_type=auth_plan_type,
         backend_plan_type=backend_plan_type,
-        require_backend_identity=True,
+        # Manual CLI ingest has no backend response identity. The secure
+        # browser bridge path enforces identity in ingest_and_save(); keep
+        # parser-only/manual diagnostics usable without attributing them.
+        require_backend_identity=bool(auth_user_id or auth_account_id),
         require_backend_account_id=bool(auth_account_id and json_has_usage),
         # Browser cookies do not prove which account is active when WHAM
         # echoes the shared user ID as account_id. Never attribute those
