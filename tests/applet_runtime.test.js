@@ -138,6 +138,8 @@ function makeApplet(onReady) {
     {
       account: "alpha",
       label: "Alpha",
+      backend_configured: "direct",
+      backend_used: "direct",
       status: "ok",
       five_hour: { remaining: 80, reset_at: "2026-07-10T15:00:00+00:00" },
       weekly: { remaining: 60, reset_at: "2026-07-11T15:00:00+00:00" },
@@ -145,6 +147,8 @@ function makeApplet(onReady) {
     {
       account: "beta",
       label: "Beta",
+      backend_configured: "direct",
+      backend_used: "direct",
       status: "ok",
       five_hour: { remaining: 40, reset_at: "2026-07-10T16:00:00+00:00" },
       weekly: { remaining: 90, reset_at: "2026-07-12T16:00:00+00:00" },
@@ -832,6 +836,8 @@ test("cached payloads preserve omitted accounts and newer values", () => {
     {
       account: "alpha",
       label: "Alpha",
+      backend_configured: "direct",
+      backend_used: "direct",
       captured_at: new Date(Date.now() - 10 * 1000).toISOString(),
       status: "ok",
       five_hour: { remaining: 80 },
@@ -840,6 +846,8 @@ test("cached payloads preserve omitted accounts and newer values", () => {
     {
       account: "beta",
       label: "Beta",
+      backend_configured: "direct",
+      backend_used: "direct",
       captured_at: new Date(Date.now() - 20 * 1000).toISOString(),
       status: "ok",
       five_hour: { remaining: 70 },
@@ -854,6 +862,8 @@ test("cached payloads preserve omitted accounts and newer values", () => {
     {
       account: "alpha",
       label: "Alpha",
+      backend_configured: "direct",
+      backend_used: "direct",
       captured_at: new Date(Date.now() - 30 * 1000).toISOString(),
       status: "ok",
       five_hour: { remaining: 20 },
@@ -1560,6 +1570,7 @@ test("account synchronization refreshes cached values immediately", () => {
   applet._addIdle = () => {};
   let refreshed = 0;
   applet._refreshFormattedSurfaces = () => { refreshed += 1; };
+  applet._refreshFresh = () => {};
   applet._loadAccountBackends();
   assert.equal(refreshed, 1);
 });
@@ -1680,6 +1691,29 @@ test("backend synchronization clears unknown values after a backend change", () 
   assert.equal(applet._usages.length, 1);
   assert.equal(applet._usages[0].backend_configured, "app-server");
   assert.equal(applet._usages[0].backend_used, "");
+  assert.equal(applet._usages[0].five_hour, null);
+  assert.equal(applet._usages[0].weekly, null);
+  assert.equal(applet._usages[0].stale, true);
+});
+
+test("backend synchronization clears values without used provenance", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    label: "Alpha",
+    backend_configured: "direct",
+    backend_used: "",
+    status: "ok",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    five_hour: { remaining: 80 },
+    weekly: { remaining: 60 },
+  }];
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  };
+
+  assert.equal(applet._ensureBackendUsageRows(), true);
   assert.equal(applet._usages[0].five_hour, null);
   assert.equal(applet._usages[0].weekly, null);
   assert.equal(applet._usages[0].stale, true);

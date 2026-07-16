@@ -1617,12 +1617,15 @@ CodexUsageApplet.prototype = {
 
     _backendMatchesConfigured: function(usage, configuredBackend) {
         let configured = this._safeBackend(usage && usage.backend_configured);
+        if (!configured) {
+            return !this._hasCachedWindows(usage);
+        }
         if (configured && configured !== configuredBackend) {
             return false;
         }
         let used = this._safeBackend(usage && usage.backend_used, true);
         if (["direct", "app-server"].indexOf(used) === -1) {
-            return true;
+            return !this._hasCachedWindows(usage);
         }
         if (used === configuredBackend) {
             return true;
