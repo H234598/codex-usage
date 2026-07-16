@@ -2930,6 +2930,30 @@ test("arbitrary fallback text cannot authorize cross-backend provenance", () => 
   );
 });
 
+test("overlong backend identity cannot be truncated into a valid value", () => {
+  const applet = makeApplet();
+  assert.throws(
+    () => applet._validatePayload([{
+      account: "alpha",
+      status: "ok",
+      captured_at: "2026-07-10T10:00:00.000Z",
+      backend_configured: "direct",
+      backend_used: "direct",
+      backend_account_id: "account-alpha" + "x".repeat(300),
+      main: {
+        key: "main",
+        available: true,
+        allowed: null,
+        limit_reached: null,
+        exhausted: false,
+        availability_sources: ["usage"],
+        windows: [{ name: "weekly", remaining: 80 }],
+      },
+    }]),
+    /text value exceeds strict limit/,
+  );
+});
+
 test("mismatched cached data can fill an empty backend placeholder", () => {
   const applet = makeApplet();
   applet._usages = [{

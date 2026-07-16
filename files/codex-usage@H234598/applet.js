@@ -2580,7 +2580,7 @@ CodexUsageApplet.prototype = {
             if (!item || typeof item !== "object" || Array.isArray(item)) {
                 throw new Error("invalid account entry");
             }
-            let account = this._safeText(item.account, 64);
+            let account = this._strictText(item.account, 64);
             if (!account) {
                 throw new Error("account id missing");
             }
@@ -2676,9 +2676,9 @@ CodexUsageApplet.prototype = {
                 auth_access_expires_at: this._safeText(item.auth_access_expires_at, 80),
                 backend_configured: backendConfigured,
                 backend_used: backendUsed,
-                backend_user_id: this._safeText(item.backend_user_id, 256),
-                backend_account_id: this._safeText(item.backend_account_id, 256),
-                fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
+                backend_user_id: this._strictText(item.backend_user_id, 256),
+                backend_account_id: this._strictText(item.backend_account_id, 256),
+                fallback_reason: this._strictText(item.fallback_reason, MAX_TEXT_CHARS),
                 values_captured_at: valuesCapturedAt,
                 stale: stale,
                 cache_invalidated: cacheInvalidated
@@ -2939,6 +2939,19 @@ CodexUsageApplet.prototype = {
             text = text.slice(0, limit);
         }
         return text;
+    },
+
+    _strictText: function(value, limit) {
+        if (value === null || value === undefined) {
+            return "";
+        }
+        if (typeof value !== "string") {
+            throw new Error("invalid text value");
+        }
+        if (value.length > limit || /[\u0000-\u001f\u007f]/.test(value)) {
+            throw new Error("text value exceeds strict limit");
+        }
+        return value.trim();
     },
 
     _applyPayload: function(payload, fresh) {
@@ -3204,16 +3217,16 @@ CodexUsageApplet.prototype = {
 
     _backendIdentityPresent: function(value) {
         return Boolean(
-            this._safeText(value && value.backend_user_id, 256) ||
-            this._safeText(value && value.backend_account_id, 256)
+            this._strictText(value && value.backend_user_id, 256) ||
+            this._strictText(value && value.backend_account_id, 256)
         );
     },
 
     _backendIdentityIsIncomplete: function(candidate, known) {
-        let candidateUser = this._safeText(candidate && candidate.backend_user_id, 256);
-        let candidateAccount = this._safeText(candidate && candidate.backend_account_id, 256);
-        let knownUser = this._safeText(known && known.backend_user_id, 256);
-        let knownAccount = this._safeText(known && known.backend_account_id, 256);
+        let candidateUser = this._strictText(candidate && candidate.backend_user_id, 256);
+        let candidateAccount = this._strictText(candidate && candidate.backend_account_id, 256);
+        let knownUser = this._strictText(known && known.backend_user_id, 256);
+        let knownAccount = this._strictText(known && known.backend_account_id, 256);
         if (!this._backendIdentityPresent(known)) {
             return false;
         }
@@ -3233,10 +3246,10 @@ CodexUsageApplet.prototype = {
     },
 
     _backendIdentityMatches: function(left, right) {
-        let leftUser = this._safeText(left && left.backend_user_id, 256);
-        let rightUser = this._safeText(right && right.backend_user_id, 256);
-        let leftAccount = this._safeText(left && left.backend_account_id, 256);
-        let rightAccount = this._safeText(right && right.backend_account_id, 256);
+        let leftUser = this._strictText(left && left.backend_user_id, 256);
+        let rightUser = this._strictText(right && right.backend_user_id, 256);
+        let leftAccount = this._strictText(left && left.backend_account_id, 256);
+        let rightAccount = this._strictText(right && right.backend_account_id, 256);
         if (Boolean(leftAccount) !== Boolean(rightAccount)) {
             return false;
         }
@@ -3251,10 +3264,10 @@ CodexUsageApplet.prototype = {
     },
 
     _backendIdentityCompatible: function(left, right) {
-        let leftUser = this._safeText(left && left.backend_user_id, 256);
-        let rightUser = this._safeText(right && right.backend_user_id, 256);
-        let leftAccount = this._safeText(left && left.backend_account_id, 256);
-        let rightAccount = this._safeText(right && right.backend_account_id, 256);
+        let leftUser = this._strictText(left && left.backend_user_id, 256);
+        let rightUser = this._strictText(right && right.backend_user_id, 256);
+        let leftAccount = this._strictText(left && left.backend_account_id, 256);
+        let rightAccount = this._strictText(right && right.backend_account_id, 256);
         if (leftAccount || rightAccount) {
             return Boolean(
                 leftAccount &&
@@ -3297,7 +3310,7 @@ CodexUsageApplet.prototype = {
         if (["direct", "app-server"].indexOf(backendUsed) === -1) {
             return false;
         }
-        let reason = this._safeText(usage && usage.fallback_reason, MAX_TEXT_CHARS);
+        let reason = this._strictText(usage && usage.fallback_reason, MAX_TEXT_CHARS);
         if (
             reason === "previous direct limits retained after reset transition" ||
             reason === "previous authenticated limits retained after reset transition"
