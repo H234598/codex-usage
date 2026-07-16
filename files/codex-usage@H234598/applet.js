@@ -2767,7 +2767,10 @@ CodexUsageApplet.prototype = {
             throw new Error("invalid usage pool windows");
         }
         let sources = value.availability_sources;
-        if (!Array.isArray(sources) || sources.length > MAX_POOL_WINDOWS) {
+        if (!Array.isArray(sources) || sources.length > MAX_POOL_WINDOWS ||
+            sources.some(Lang.bind(this, function(source) {
+                return typeof source !== "string" || !this._safeText(source, 120);
+            }))) {
             throw new Error("invalid availability sources");
         }
         let allowedValid = value.allowed === null || value.allowed === undefined ||

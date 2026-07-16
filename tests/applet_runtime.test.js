@@ -440,6 +440,20 @@ test("contradictory exhaustion metadata disables a pool", () => {
   assert.equal(pool.available, false);
 });
 
+test("malformed pool source invalidates whole pool", () => {
+  const applet = makeApplet();
+
+  assert.throws(() => applet._safePool({
+    key: "main",
+    windows: [{ name: "weekly", duration_seconds: 604800, remaining: 90 }],
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    availability_sources: ["rate_limits", { source: "untrusted" }],
+  }, "main"), /invalid availability sources/);
+});
+
 test("Spark pools without positive usage cannot drive panel sources", () => {
   const applet = makeApplet();
   const usage = {
