@@ -21,6 +21,7 @@ from codex_usage.bridge import (
     _make_handler,
     _newest_known_usage,
     _parse_captured_at,
+    _redact_url,
     bridge_token_for_account,
     bridge_token_matches,
     ingest_and_save,
@@ -65,6 +66,11 @@ def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
         _parse_captured_at(None, strict=True)
     with pytest.raises(ValueError, match="invalid"):
         _parse_captured_at("not-a-timestamp", strict=True)
+
+
+@pytest.mark.parametrize("url", [None, [], {}, "http://[malformed"])
+def test_redact_url_rejects_malformed_external_values(url):
+    assert _redact_url(url) == ""
 
 
 @pytest.mark.parametrize("captured_at", [0, False, [], {}])

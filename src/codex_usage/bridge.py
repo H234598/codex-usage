@@ -204,7 +204,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         window is not None and window.has_usage_value
         for window in (five_hour, weekly)
     )
-    source_urls = {_redact_url(str(payload.get("url") or ""))}
+    source_urls = {_redact_url(payload.get("url"))}
     source_urls.update(_redact_url(candidate.url) for candidate in identity_candidates)
     source_urls.discard("")
     return AccountUsage(
@@ -252,7 +252,7 @@ def _structured_identity_matches_account(
 def _ingest_error(body_text: str, payload: dict[str, Any]) -> str | None:
     text_length = payload.get("textLength") if payload.get("textLength") is not None else None
     context = (
-        f" url={_safe_context_value(_redact_url(str(payload.get('url') or '')), 200)}"
+        f" url={_safe_context_value(_redact_url(payload.get('url')), 200)}"
         f" title={_safe_context_value(payload.get('title'), 80)}"
         f" ready={_safe_context_value(payload.get('readyState'), 40)}"
         f" textLength={_safe_context_value(text_length, 40)}"
@@ -299,7 +299,7 @@ def save_bridge_debug_payload(
             field: payload[field] for field in DEBUG_PAYLOAD_FIELDS if field in payload
         }
         if "url" in debug_payload:
-            debug_payload["url"] = _redact_url(str(debug_payload.get("url") or ""))
+            debug_payload["url"] = _redact_url(debug_payload.get("url"))
         for field in DEBUG_TEXT_FIELDS:
             value = debug_payload.get(field)
             if isinstance(value, str):
@@ -603,7 +603,7 @@ def _sanitize_api_response(item: Any) -> dict[str, Any] | None:
         return None
     redacted = {field: item[field] for field in DEBUG_API_RESPONSE_FIELDS if field in item}
     if "url" in redacted:
-        redacted["url"] = _redact_url(str(redacted.get("url") or ""))
+        redacted["url"] = _redact_url(redacted.get("url"))
     for field in ("bodyText", "body", "text", "bodyExcerpt", "error"):
         value = redacted.get(field)
         if isinstance(value, str):
@@ -1696,10 +1696,13 @@ def _parse_captured_at(value: Any, *, strict: bool = False) -> datetime:
     return parsed
 
 
-def _redact_url(url: str) -> str:
-    if not url:
+def _redact_url(url: Any) -> str:
+    if not isinstance(url, str) or not url:
         return ""
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except (TypeError, ValueError):
+        return ""
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
 
 
