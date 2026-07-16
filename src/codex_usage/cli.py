@@ -778,7 +778,11 @@ def _usage_for_policy(
     usage = load_current_usage(account.id) or load_usage_snapshot(account.id)
     if usage is None:
         return _invalid_policy_usage(account, "no usage snapshot")
-    if not backend_provenance_matches_configured(usage, account.backend):
+    if (
+        usage.backend_configured != account.backend
+        or usage.backend_used not in {"browser", "direct", "app-server"}
+        or not backend_provenance_matches_configured(usage, account.backend)
+    ):
         return _invalid_policy_usage(account, "usage backend provenance mismatch")
     required_auth_path = auth_json_path
     if required_auth_path is None and account.auth_json_path:
