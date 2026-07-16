@@ -1401,6 +1401,34 @@ def test_extract_windows_rejects_conflicting_standalone_percent_field():
 @pytest.mark.parametrize(
     "fields",
     [
+        {"remaining": 50, "percent": 90},
+        {"remaining": 50, "remaining_percent": 90},
+        {"remaining": 50, "used_percent": 10},
+    ],
+)
+def test_extract_windows_rejects_ambiguous_denominatorless_remaining_conflicts(
+    fields,
+):
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/generic",
+        payload={
+            "five_hour_usage_limit": {
+                **fields,
+                "reset_at": "2026-06-08T06:50:00+02:00",
+            }
+        },
+    )
+
+    five, _weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert five is not None
+    assert five.has_usage_value is False
+    assert five.reset_at is not None
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
         {"used_percent": 3, "usage_percent": 45},
         {"remaining_percent": 97, "available_percent": 55},
         {"used_ratio": 0.03, "consumed_ratio": 0.45},

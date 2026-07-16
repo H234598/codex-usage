@@ -977,6 +977,39 @@ def _window_from_mapping(
         remaining_ratio = None
         percent = None
         has_explicit_remaining_percent = False
+
+    ambiguous_remaining_conflict = (
+        limit is None
+        and remaining is not None
+        and 0 <= remaining <= 100
+        and (
+            (
+                percent is not None
+                and abs(remaining - percent) > PERCENT_COMPLEMENT_TOLERANCE
+            )
+            or (
+                used_percent is not None
+                and not _percentages_are_complementary(used_percent, remaining)
+            )
+            or (
+                explicit_remaining_percent is not None
+                and abs(remaining - explicit_remaining_percent)
+                > PERCENT_COMPLEMENT_TOLERANCE
+            )
+        )
+    )
+    if ambiguous_remaining_conflict:
+        # A denominator-less counter in percentage range cannot be reconciled
+        # with a different percentage source. Keep reset metadata only.
+        used_percent = None
+        remaining = None
+        remaining_percent = None
+        remaining_ratio = None
+        percent = None
+        ratio = None
+        has_explicit_remaining_percent = False
+        explicit_remaining_percent = None
+
     invalid_absolute_limit = used is not None and limit is not None and limit <= 0
     invalid_absolute_usage_field = _has_invalid_number(
         flat,
