@@ -3410,7 +3410,9 @@ CodexUsageApplet.prototype = {
         if (!Array.isArray(pool.windows) || !pool.windows.length ||
             !pool.windows.every(Lang.bind(this, function(window) {
                 let value = this._remainingPercent(window);
-                return value !== null && value > 0;
+                let duration = this._windowDurationSeconds(window);
+                let name = this._safeText(window && window.name, 40);
+                return value !== null && value > 0 && (duration !== null || Boolean(name));
             }))) {
             return false;
         }
