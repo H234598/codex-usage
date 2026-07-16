@@ -12,6 +12,7 @@ from codex_usage.direct import (
     DirectAuthError,
     DirectFetchError,
     _current_jwt_claims,
+    _extract_auth_details,
     _fetch_stable_wham_usage,
     _is_identity_attribution_error,
     _jwt_expiry,
@@ -65,6 +66,21 @@ def test_jwt_claims_reject_invalid_exp_types(expiry):
 
     assert _jwt_expiry(token) is None
     assert _current_jwt_claims(token) is None
+
+
+def test_jwt_claims_reject_extra_segments():
+    token = _jwt_with_claims({"sub": "account"}) + ".extra"
+
+    assert _current_jwt_claims(token) is None
+
+
+@pytest.mark.parametrize("token", [" secret-access-token", "secret-access-token "])
+def test_auth_details_reject_whitespace_wrapped_access_token(tmp_path, token):
+    with pytest.raises(DirectAuthError, match="invalid characters"):
+        _extract_auth_details(
+            {"tokens": {"access_token": token}},
+            path=tmp_path / "auth.json",
+        )
 
 
 def test_jwt_expiry_uses_dst_aware_local_zone(monkeypatch):
@@ -1672,7 +1688,7 @@ def test_fetch_account_usage_direct_accepts_shared_user_alias_with_matching_plan
     assert usage.backend_account_id == "free-account"
 
 
-@pytest.mark.parametrize("account_id", ["account\nforged", " ", 42])
+@pytest.mark.parametrize("account_id", ["account\nforged", " account ", " ", 42])
 def test_fetch_account_usage_direct_rejects_invalid_auth_account_id(
     tmp_path,
     monkeypatch,

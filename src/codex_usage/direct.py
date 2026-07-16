@@ -502,7 +502,6 @@ def _auth_account_id_from_payload(
         return None
     if not isinstance(value, str):
         raise DirectAuthError(f"auth.json account_id is invalid: {path}")
-    value = value.strip()
     if not value or len(value) > MAX_AUTH_ID_CHARS or any(
         char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
         for char in value
@@ -514,7 +513,6 @@ def _auth_account_id_from_payload(
 def _safe_auth_identity(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    value = value.strip()
     if not value or len(value) > MAX_AUTH_ID_CHARS or any(
         char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
         for char in value
@@ -526,7 +524,6 @@ def _safe_auth_identity(value: Any) -> str | None:
 def _safe_auth_plan_type(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    value = value.strip()
     if not value or len(value) > 64 or any(
         char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value
     ):
@@ -645,9 +642,8 @@ def _extract_auth_details(
     if not isinstance(tokens, dict):
         raise DirectAuthError(f"auth.json has no tokens object: {path}")
     access_token = tokens.get("access_token")
-    if not isinstance(access_token, str) or not access_token.strip():
+    if not isinstance(access_token, str) or not access_token:
         raise DirectAuthError(f"auth.json has no access_token: {path}")
-    access_token = access_token.strip()
     if len(access_token) > MAX_ACCESS_TOKEN_CHARS:
         raise DirectAuthError("auth.json access_token too large")
     if any(
@@ -1309,7 +1305,7 @@ def _jwt_claims(token: Any) -> dict[str, Any] | None:
     if not isinstance(token, str):
         return None
     parts = token.split(".")
-    if len(parts) < 2:
+    if len(parts) != 3 or not parts[1]:
         return None
     payload = parts[1] + "=" * (-len(parts[1]) % 4)
     try:
