@@ -264,12 +264,12 @@ def _app_server_pool(
     limit_reached = (
         raw_limit_reached
         if isinstance(raw_limit_reached, bool)
-        else bool(raw_limit_reached)
-        if isinstance(raw_limit_reached, str)
+        else True
+        if isinstance(raw_limit_reached, str) and raw_limit_reached.strip()
         else None
     )
-    control_flag_valid = raw_limit_reached is None or isinstance(
-        raw_limit_reached, (bool, str)
+    control_flag_valid = raw_limit_reached is None or isinstance(raw_limit_reached, bool) or (
+        isinstance(raw_limit_reached, str) and bool(raw_limit_reached.strip())
     )
     if not windows and raw_limit_reached is None:
         return None

@@ -376,6 +376,28 @@ def test_app_server_disables_pool_with_invalid_limit_reached_flag():
     assert models[0].exhausted is True
 
 
+@pytest.mark.parametrize("reached_type", ["", "   "])
+def test_app_server_disables_pool_with_empty_limit_reached_flag(reached_type):
+    _, models = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex_bengalfox": {
+                    "primary": {
+                        "usedPercent": 1,
+                        "windowDurationMins": 10080,
+                    },
+                    "rateLimitReachedType": reached_type,
+                }
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].available is False
+    assert models[0].exhausted is True
+
+
 def test_model_catalog_does_not_mark_spark_available_without_usage_bucket():
     _, models = parse_app_server_usage_pools(
         {"rateLimits": {}},
