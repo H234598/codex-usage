@@ -1890,6 +1890,7 @@ def test_scheduler_blocks_on_non_positive_absolute_limit(window):
         (LimitWindow(name="5h", percent=120), None),
         (LimitWindow(name="5h", percent=-20), None),
         (LimitWindow(name="5h", percent=True), None),
+        (LimitWindow(name="5h", remaining="97"), None),
         (LimitWindow(name="5h", percent=float("nan")), None),
         (LimitWindow(name="5h", percent=float("inf")), None),
     ],

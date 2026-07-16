@@ -668,7 +668,7 @@ def _remaining_percent(window) -> float | None:
 
 
 def _finite_number(value) -> float | None:
-    if value is None or isinstance(value, bool):
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
         number = float(value)

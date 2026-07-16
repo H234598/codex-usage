@@ -430,7 +430,7 @@ def _fmt_number(value: float) -> str:
 
 
 def _is_finite_number(value: float | None) -> bool:
-    if value is None or isinstance(value, bool):
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     try:
         return math.isfinite(float(value))
