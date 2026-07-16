@@ -497,7 +497,9 @@ def _response_for(
             payload = loads_strict(item.decode("utf-8"))
         except (UnicodeDecodeError, ValueError) as exc:
             raise AppServerProtocolError("codex app server returned invalid JSON") from exc
-        if not isinstance(payload, dict) or payload.get("id") != request_id:
+        if not isinstance(payload, dict) or not _response_id_matches(
+            payload.get("id"), request_id
+        ):
             continue
         error = payload.get("error")
         if error is not None:
@@ -507,6 +509,10 @@ def _response_for(
             raise AppServerProtocolError("codex app server result is not an object")
         return result
     raise AppServerProtocolError("too many codex app server messages")
+
+
+def _response_id_matches(value: Any, request_id: int) -> bool:
+    return type(value) is type(request_id) and value == request_id
 
 
 def _raise_rpc_error(error: Any) -> None:

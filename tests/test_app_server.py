@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import json
+import queue
 import signal
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -10,10 +12,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from codex_usage.app_server import (
+    AppServerFetchError,
     AppServerProtocolError,
     AppServerUnavailableError,
     _LineReader,
     _missing_usage_limits_error,
+    _response_for,
     _should_refresh,
     _stop_process,
     _window,
@@ -413,6 +417,22 @@ def test_app_server_rejects_auth_without_account_identity(tmp_path):
 
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error == "auth.json has no account identity"
+
+
+def test_response_for_rejects_non_integer_request_id_aliases():
+    reader = type("Reader", (), {})()
+    reader.items = queue.Queue()
+    reader.items.put(b'{"id":true,"result":{}}')
+
+    with pytest.raises(AppServerFetchError) as error:
+        _response_for(
+            reader,
+            1,
+            deadline=time.monotonic() + 0.01,
+            stderr_reader=object(),
+        )
+
+    assert "timed out" in str(error.value)
 
 
 def test_app_server_missing_command_is_compatibility_failure(tmp_path):
