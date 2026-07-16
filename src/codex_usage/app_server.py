@@ -155,6 +155,7 @@ def fetch_account_usage_app_server(
             error=_bounded_error(exc),
             backend_configured=account.backend,
             backend_used=APP_SERVER_BACKEND,
+            cache_invalidated=True,
         )
     except AppServerUnavailableError:
         raise
@@ -167,6 +168,7 @@ def fetch_account_usage_app_server(
             error=_bounded_error(exc),
             backend_configured=account.backend,
             backend_used=APP_SERVER_BACKEND,
+            cache_invalidated=True,
         )
 
 

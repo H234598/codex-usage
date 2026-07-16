@@ -267,6 +267,33 @@ def test_app_server_rejects_auth_identity_changed_during_rate_limit_read(
 
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error == "auth.json identity changed during rate-limit request"
+    assert usage.cache_invalidated is True
+
+
+def test_app_server_protocol_failure_invalidates_cache(monkeypatch, tmp_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+        backend="app-server",
+    )
+    monkeypatch.setattr(
+        "codex_usage.app_server._auth_context",
+        lambda _account: (tmp_path / "auth.json", {}, "user", "account", "free", None),
+    )
+    monkeypatch.setattr(
+        "codex_usage.app_server._read_rate_limits",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AppServerProtocolError("malformed app-server response")
+        ),
+    )
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.ERROR
+    assert usage.error == "malformed app-server response"
+    assert usage.cache_invalidated is True
 
 
 def test_app_server_rejects_auth_plan_change_during_rate_limit_read(
