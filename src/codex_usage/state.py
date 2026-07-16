@@ -1289,12 +1289,17 @@ def _pool_from_dict(
         if window is None:
             return None
         windows.append(window)
-    raw_sources = payload.get("availability_sources")
-    sources = tuple(
-        _snapshot_text(value, limit=40)
-        for value in raw_sources[:8]
-        if isinstance(value, str) and value.strip()
-    ) if isinstance(raw_sources, list) else ()
+    if "availability_sources" not in payload:
+        sources = ()
+    else:
+        raw_sources = payload.get("availability_sources")
+        if (
+            not isinstance(raw_sources, list)
+            or len(raw_sources) > 8
+            or any(not isinstance(value, str) or not value.strip() for value in raw_sources)
+        ):
+            return None
+        sources = tuple(_snapshot_text(value, limit=40) for value in raw_sources)
     available = payload.get("available")
     if not isinstance(available, bool):
         return None

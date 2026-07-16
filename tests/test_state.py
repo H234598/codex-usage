@@ -1587,6 +1587,52 @@ def test_load_usage_snapshot_disables_pool_with_invalid_control_flag(tmp_path, f
     assert loaded.cache_invalidated is True
 
 
+@pytest.mark.parametrize(
+    "sources",
+    [
+        None,
+        "rate_limits",
+        [""],
+        ["rate_limits", 42],
+        ["rate_limits"] * 9,
+    ],
+)
+def test_load_usage_snapshot_rejects_malformed_pool_sources(tmp_path, sources):
+    payload = {
+        "account": "invalid-pool-sources",
+        "label": "Invalid pool sources",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "models": {
+            "gpt-5.3-codex-spark": {
+                "key": "gpt-5.3-codex-spark",
+                "display_name": "Spark",
+                "available": True,
+                "windows": [
+                    {
+                        "name": "weekly",
+                        "remaining": 90,
+                        "duration_seconds": 604800,
+                    }
+                ],
+                "exhausted": False,
+                "availability_sources": sources,
+            }
+        },
+    }
+    _write_trusted_snapshot(tmp_path / "invalid-pool-sources.json", payload)
+
+    loaded = load_usage_snapshot("invalid-pool-sources", tmp_path)
+
+    assert loaded is not None
+    assert loaded.models == ()
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
+    assert loaded.error == "invalid cached model pools: models"
+
+
 def test_load_usage_snapshot_honors_exhausted_pool_flag(tmp_path):
     payload = {
         "account": "exhausted-pool",
