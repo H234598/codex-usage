@@ -697,6 +697,19 @@ test("exhausted pool details do not look available", () => {
   assert.equal(parts.plain, "Spark erschöpft");
 });
 
+test("unknown pool windows never appear as numeric details", () => {
+  const applet = makeApplet();
+  const parts = applet._poolDetailParts({
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    windows: [{ name: "unknown", remaining: 90 }],
+  }, "alpha", "click", "Spark", []);
+
+  assert.equal(parts.plain, "Spark verfügbar · Limit unbekannt");
+});
+
 test("cache invalidation clears dynamic usage pools", () => {
   const applet = makeApplet();
   const invalidated = applet._clearInvalidatedUsage({

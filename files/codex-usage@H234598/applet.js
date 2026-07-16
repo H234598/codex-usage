@@ -3884,7 +3884,8 @@ CodexUsageApplet.prototype = {
         }
         let excluded = excludedDurations || [];
         let windows = Array.isArray(pool.windows) ? pool.windows.filter(Lang.bind(this, function(window) {
-            return excluded.indexOf(this._windowDurationSeconds(window)) === -1;
+            return excluded.indexOf(this._windowDurationSeconds(window)) === -1 &&
+                this._windowIdentityIsKnown(window);
         })) : [];
         if (!windows.length) {
             if (excluded.length) {
@@ -4602,6 +4603,9 @@ CodexUsageApplet.prototype = {
             if (spark && Array.isArray(spark.windows)) {
                 for (let sparkIndex = 0; sparkIndex < spark.windows.length; sparkIndex++) {
                     let sparkWindow = spark.windows[sparkIndex];
+                    if (!this._windowIdentityIsKnown(sparkWindow)) {
+                        continue;
+                    }
                     let duration = this._windowDurationSeconds(sparkWindow);
                     windows.push([
                         "Spark " + this._windowDisplayLabel(sparkWindow),
