@@ -19,6 +19,17 @@ def test_spark_health_defaults_to_unknown(tmp_path):
     assert result["reason"] == "no_successful_spark_turn"
 
 
+def test_spark_health_ignores_deeply_nested_json(tmp_path):
+    nested_json = "[" * 2_000 + "]" * 2_000
+    path = tmp_path / "health.json"
+    path.write_text(nested_json, encoding="utf-8")
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["state"] == "unknown"
+    assert result["reason"] == "no_successful_spark_turn"
+
+
 def test_spark_health_success_is_fresh_until_expiry(tmp_path):
     path = tmp_path / "health.json"
     set_spark_health("backend-nufker", "healthy", path=path, now=NOW)

@@ -137,7 +137,7 @@ def _load_records(path: Path) -> dict[str, dict[str, Any]]:
             max_bytes=SPARK_HEALTH_MAX_BYTES,
         )
         payload = loads_strict(text)
-    except (OSError, TypeError, ValueError, UnicodeDecodeError):
+    except (OSError, RecursionError, TypeError, ValueError, UnicodeDecodeError):
         return {}
     if not isinstance(payload, dict) or payload.get("version") != SPARK_HEALTH_VERSION:
         return {}
