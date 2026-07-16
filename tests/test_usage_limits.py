@@ -135,6 +135,27 @@ def test_usage_pool_validity_requires_strict_controls(
     assert pool.has_valid_usage is expected
 
 
+@pytest.mark.parametrize("name", ["", "unknown", "Limit"])
+def test_usage_pool_validity_requires_known_window_identity(name):
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(LimitWindow(name=name, remaining=97),),
+    )
+
+    assert pool.has_valid_usage is False
+
+
+def test_usage_pool_duration_proves_window_identity_without_name():
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(LimitWindow(name="", remaining=97, duration_seconds=604800),),
+    )
+
+    assert pool.has_valid_usage is True
+
+
 def test_empty_catalog_pool_is_unknown_not_exhausted():
     pool = UsagePool(
         key=SPARK_MODEL,

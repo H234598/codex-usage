@@ -46,6 +46,18 @@ class LimitWindow:
         return not self.has_invalid_usage_value and self.remaining_percent is not None
 
     @property
+    def has_known_identity(self) -> bool:
+        if (
+            isinstance(self.duration_seconds, int)
+            and not isinstance(self.duration_seconds, bool)
+            and self.duration_seconds > 0
+        ):
+            return True
+        if not isinstance(self.name, str):
+            return False
+        return self.name.strip().casefold() not in {"", "unknown", "limit"}
+
+    @property
     def remaining_percent(self) -> float | None:
         if self.has_invalid_usage_value:
             return None
@@ -137,7 +149,9 @@ class UsagePool:
                 and isinstance(self.windows, tuple)
                 and self.windows
                 and all(
-                    isinstance(window, LimitWindow) and window.has_usage_value
+                    isinstance(window, LimitWindow)
+                    and window.has_known_identity
+                    and window.has_usage_value
                     for window in self.windows
                 )
             )

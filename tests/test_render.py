@@ -376,6 +376,34 @@ def test_render_table_hides_unavailable_dynamic_pools():
     assert "nicht verfügbar" in rendered
 
 
+def test_render_table_hides_dynamic_pools_without_window_identity():
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="unknown", remaining=95),),
+        ),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                windows=(LimitWindow(name="", remaining=90),),
+            ),
+        ),
+    )
+
+    rendered = render_table([usage])
+
+    assert "95% verbleibend" not in rendered
+    assert "90% verbleibend" not in rendered
+    assert "nicht verfügbar" in rendered
+
+
 def test_render_json_is_machine_readable():
     usage = AccountUsage(
         account_id="privat",

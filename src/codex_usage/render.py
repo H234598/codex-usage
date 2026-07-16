@@ -257,6 +257,7 @@ def _extra_main_value(usage: AccountUsage) -> str:
         usage.cache_invalidated
         or usage.main is None
         or usage.main.available is not True
+        or not usage.main.has_valid_usage
     ):
         return "-"
     values = [
@@ -271,7 +272,7 @@ def _spark_value(usage: AccountUsage) -> str:
     if usage.cache_invalidated:
         return "nicht verfügbar"
     pool = usage.model_pool("gpt-5.3-codex-spark")
-    if pool is None or not pool.available:
+    if pool is None or pool.available is not True or not pool.has_valid_usage:
         return "nicht verfügbar"
     if pool.exhausted:
         return "erschöpft"
