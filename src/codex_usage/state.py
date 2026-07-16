@@ -1244,6 +1244,9 @@ def _window_had_invalid_cached_value(
         return True
     raw_used = _optional_float(payload.get("used"))
     raw_limit = _optional_float(payload.get("limit"))
+    raw_remaining = _optional_float(payload.get("remaining"))
+    if raw_remaining is not None and raw_remaining < 0:
+        return True
     if raw_used is not None and raw_used < 0:
         return not window.has_usage_value
     if raw_limit is not None and raw_limit <= 0:
@@ -1253,9 +1256,6 @@ def _window_had_invalid_cached_value(
         return not window.has_usage_value
     raw_percent = _optional_float(payload.get("percent"))
     if raw_percent is not None and not 0 <= raw_percent <= 100:
-        return True
-    raw_remaining = _optional_float(payload.get("remaining"))
-    if raw_remaining is not None and raw_remaining < 0:
         return True
     if (
         raw_remaining is not None

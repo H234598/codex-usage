@@ -1117,6 +1117,36 @@ def test_load_usage_snapshot_preserves_explicit_percent_with_non_positive_limit(
     assert loaded.status == AccountStatus.OK
 
 
+def test_load_usage_snapshot_marks_negative_remaining_beside_explicit_percent_stale(
+    tmp_path,
+):
+    payload = {
+        "account": "negative-remaining-with-percent",
+        "label": "Negative remaining with percent",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "five_hour": {
+            "name": "5h",
+            "limit": 0,
+            "remaining": -1,
+            "percent": 50,
+        },
+    }
+    (tmp_path / "negative-remaining-with-percent.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("negative-remaining-with-percent", tmp_path)
+
+    assert loaded is not None
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.error == "invalid cached limit value: five_hour"
+
+
 def test_load_usage_snapshot_discards_standalone_non_positive_limit(tmp_path):
     payload = {
         "account": "standalone-zero-limit",
