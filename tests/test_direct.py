@@ -679,6 +679,44 @@ def test_select_stable_wham_usage_rejects_malformed_spark_limit_structure(value)
         _select_stable_wham_usage([response, response, response])
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("limit_name", {"value": "GPT-5.3-Codex-Spark"}), ("metered_feature", ["codex_bengalfox"])],
+)
+def test_select_stable_wham_ignores_non_string_spark_identifiers(field, value):
+    response = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 3,
+                "limit_window_seconds": 18_000,
+            },
+            "secondary_window": {
+                "used_percent": 45,
+                "limit_window_seconds": 604_800,
+            },
+        },
+        "additional_rate_limits": [
+            {
+                "limit_name": "unrelated",
+                "metered_feature": "unrelated",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 1,
+                        "limit_window_seconds": 604_800,
+                    }
+                },
+            }
+        ],
+    }
+    response["additional_rate_limits"][0][field] = value
+
+    selected = _select_stable_wham_usage([response, response, response])
+
+    assert selected["additional_rate_limits"]
+
+
 @pytest.mark.parametrize("field", ["allowed", "limit_reached"])
 def test_select_stable_wham_usage_rejects_conflicting_main_limit_flags(field):
     def response(value: bool) -> dict:

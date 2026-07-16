@@ -384,7 +384,7 @@ def _is_spark_limit(name: Any, metered_feature: Any) -> bool:
 
 
 def _normalized(value: Any) -> str:
-    return str(value or "").strip().casefold()
+    return value.strip().casefold() if isinstance(value, str) else ""
 
 
 def _percent(value: Any) -> float | None:

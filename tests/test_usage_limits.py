@@ -7,6 +7,7 @@ import pytest
 from codex_usage.extractor import LOCAL_TZ
 from codex_usage.models import AccountUsage, LimitWindow, UsagePool
 from codex_usage.usage_limits import (
+    SPARK_METERED_FEATURE,
     SPARK_MODEL,
     legacy_windows,
     merge_model_catalog,
@@ -287,6 +288,32 @@ def test_wham_ignores_unrelated_additional_rate_limit():
                 }
             ]
         },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert models == ()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("limit_name", {"value": SPARK_MODEL}), ("metered_feature", [SPARK_METERED_FEATURE])],
+)
+def test_wham_ignores_non_string_spark_identifiers(field, value):
+    item = {
+        "limit_name": "unrelated",
+        "metered_feature": "unrelated",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 10,
+                "limit_window_seconds": 604800,
+            }
+        },
+    }
+    item[field] = value
+
+    _, models = parse_wham_usage_pools(
+        {"additional_rate_limits": [item]},
         captured_at=NOW,
         source="wham",
     )
