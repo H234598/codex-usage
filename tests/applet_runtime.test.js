@@ -421,6 +421,26 @@ test("malformed cache controls fail closed during payload validation", () => {
   assert.equal(merged.weekly, null);
 });
 
+test("ok payload without usage values fails closed", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    captured_at: new Date().toISOString(),
+    five_hour: { name: "5h", reset_at: "2026-07-10T15:00:00+00:00" },
+    weekly: { name: "weekly", reset_at: "2026-07-11T15:00:00+00:00" },
+    status: "ok",
+  }]);
+
+  assert.equal(usage.status, "error");
+  assert.equal(usage.error, "usage values missing");
+  assert.equal(usage.stale, true);
+  assert.equal(usage.cache_invalidated, true);
+  assert.equal(usage.five_hour, null);
+  assert.equal(usage.weekly, null);
+  assert.equal(usage.main, null);
+  assert.deepEqual(Object.keys(usage.models), []);
+});
+
 test("invalid dynamic pool duration is rejected", () => {
   const applet = makeApplet();
   assert.throws(() => applet._safePool({

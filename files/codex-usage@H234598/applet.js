@@ -2545,16 +2545,37 @@ CodexUsageApplet.prototype = {
             let staleFlagInvalid = item.stale !== undefined && typeof item.stale !== "boolean";
             let cacheInvalidatedFlagInvalid = item.cache_invalidated !== undefined &&
                 typeof item.cache_invalidated !== "boolean";
+            let status = this._safeStatus(item.status);
+            let error = this._safeText(item.error, MAX_TEXT_CHARS);
+            let fiveHour = this._safeWindow(item.five_hour);
+            let weekly = this._safeWindow(item.weekly);
+            let main = this._safePool(item.main, "main");
+            let models = this._safePools(item.models);
+            let stale = item.stale === true || staleFlagInvalid;
+            let cacheInvalidated = item.cache_invalidated === true || cacheInvalidatedFlagInvalid;
+            if (
+                status === "ok" &&
+                !this._hasPayloadUsageValue(fiveHour, weekly, main, models)
+            ) {
+                status = "error";
+                error = error || "usage values missing";
+                stale = true;
+                cacheInvalidated = true;
+                fiveHour = null;
+                weekly = null;
+                main = null;
+                models = Object.create(null);
+            }
             result.push({
                 account: account,
                 label: this._safeText(item.label, 120) || account,
                 captured_at: this._safeText(item.captured_at, 80),
-                five_hour: this._safeWindow(item.five_hour),
-                weekly: this._safeWindow(item.weekly),
-                main: this._safePool(item.main, "main"),
-                models: this._safePools(item.models),
-                status: this._safeStatus(item.status),
-                error: this._safeText(item.error, MAX_TEXT_CHARS),
+                five_hour: fiveHour,
+                weekly: weekly,
+                main: main,
+                models: models,
+                status: status,
+                error: error,
                 blocked_until: this._safeText(item.blocked_until, 80),
                 blocked_reason: this._safeText(item.blocked_reason, MAX_TEXT_CHARS),
                 auth_access_expires_at: this._safeText(item.auth_access_expires_at, 80),
@@ -2564,8 +2585,8 @@ CodexUsageApplet.prototype = {
                 backend_account_id: this._safeText(item.backend_account_id, 256),
                 fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
                 values_captured_at: this._safeText(item.values_captured_at, 80),
-                stale: item.stale === true || staleFlagInvalid,
-                cache_invalidated: item.cache_invalidated === true || cacheInvalidatedFlagInvalid
+                stale: stale,
+                cache_invalidated: cacheInvalidated
             });
         }
         return result;
@@ -2709,6 +2730,25 @@ CodexUsageApplet.prototype = {
             result[key] = this._safePool(value[keys[i]], key);
         }
         return result;
+    },
+
+    _hasPayloadUsageValue: function(fiveHour, weekly, main, models) {
+        let windows = [fiveHour, weekly];
+        if (main && Array.isArray(main.windows)) {
+            windows = windows.concat(main.windows);
+        }
+        if (models && typeof models === "object") {
+            let keys = Object.keys(models);
+            for (let i = 0; i < keys.length; i++) {
+                let pool = models[keys[i]];
+                if (pool && Array.isArray(pool.windows)) {
+                    windows = windows.concat(pool.windows);
+                }
+            }
+        }
+        return windows.some(Lang.bind(this, function(window) {
+            return this._windowHasUsageValue(window);
+        }));
     },
 
     _safeNumber: function(value) {
