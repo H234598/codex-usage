@@ -2602,7 +2602,7 @@ CodexUsageApplet.prototype = {
             remaining = null;
         }
         if (remaining !== null && remaining < 0) {
-            remaining = 0;
+            remaining = null;
         }
         if (
             (limit === null || limit <= 0) &&

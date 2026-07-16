@@ -245,8 +245,8 @@ test("invalid signed counters are sanitized before rendering", () => {
   assert.equal(zeroLimit.limit, null);
   assert.equal(zeroLimit.remaining, null);
   assert.equal(applet._remainingPercent(zeroLimit), null);
-  assert.equal(negativeRemaining.remaining, 0);
-  assert.equal(applet._remainingPercent(negativeRemaining), 0);
+  assert.equal(negativeRemaining.remaining, null);
+  assert.equal(applet._remainingPercent(negativeRemaining), null);
 });
 
 test("absolute remaining above limit cannot become safe percentage", () => {
