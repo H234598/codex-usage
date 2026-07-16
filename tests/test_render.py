@@ -313,6 +313,35 @@ def test_render_table_includes_dynamic_main_and_spark_limits():
     assert "weekly 100% verbleibend bis 23.07.2026 04:00" in rendered
 
 
+def test_render_table_hides_unavailable_dynamic_pools():
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            available=False,
+            windows=(LimitWindow(name="30d", remaining=95),),
+        ),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                available=True,
+                windows=(LimitWindow(name="weekly", remaining=100),),
+            ),
+        ),
+        cache_invalidated=True,
+    )
+
+    rendered = render_table([usage])
+
+    assert "30d 95% verbleibend" not in rendered
+    assert "weekly 100% verbleibend" not in rendered
+    assert "nicht verfügbar" in rendered
+
+
 def test_render_json_is_machine_readable():
     usage = AccountUsage(
         account_id="privat",

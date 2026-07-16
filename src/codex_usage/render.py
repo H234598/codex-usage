@@ -194,7 +194,11 @@ def _overview_usage_values(usage: AccountUsage | None) -> list[str]:
 
 
 def _extra_main_value(usage: AccountUsage) -> str:
-    if usage.main is None:
+    if (
+        usage.cache_invalidated
+        or usage.main is None
+        or usage.main.available is not True
+    ):
         return "-"
     values = [
         f"{window.name} {_usage_value(window)}"
@@ -205,6 +209,8 @@ def _extra_main_value(usage: AccountUsage) -> str:
 
 
 def _spark_value(usage: AccountUsage) -> str:
+    if usage.cache_invalidated:
+        return "nicht verfügbar"
     pool = usage.model_pool("gpt-5.3-codex-spark")
     if pool is None or not pool.available:
         return "nicht verfügbar"
