@@ -529,7 +529,12 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
     weekly = _window_from_dict(raw_weekly, expected_kind="weekly")
     raw_main = payload.get("main")
     main = _pool_from_dict(raw_main, expected_key="main")
-    model_pools = _model_pools_from_dict(payload.get("models"))
+    raw_models = payload.get("models")
+    parsed_model_pools = _model_pools_from_dict(raw_models)
+    invalid_model_fields = [
+        "models"
+    ] if "models" in payload and parsed_model_pools is None else []
+    model_pools = parsed_model_pools or ()
     invalid_window_fields = [
         field
         for field, raw_window, parsed_window in (
@@ -611,6 +616,13 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         invalid_error = "invalid cached usage pool: " + ", ".join(invalid_pool_fields)
         error = f"{error}; {invalid_error}" if error else invalid_error
         forced_stale = True
+    if invalid_model_fields:
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
+        invalid_error = "invalid cached model pools: " + ", ".join(invalid_model_fields)
+        error = f"{error}; {invalid_error}" if error else invalid_error
+        forced_stale = True
+        cache_invalidated = True
     if sanitized_window_fields:
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
@@ -1229,17 +1241,17 @@ def _pool_from_dict(
     return pool
 
 
-def _model_pools_from_dict(payload: Any) -> tuple[UsagePool, ...]:
+def _model_pools_from_dict(payload: Any) -> tuple[UsagePool, ...] | None:
     if not isinstance(payload, dict) or len(payload) > MAX_MODEL_POOLS:
-        return ()
+        return None
     pools: list[UsagePool] = []
     for raw_key, raw_pool in payload.items():
         if not isinstance(raw_key, str) or not raw_key.strip():
-            return ()
+            return None
         key = _snapshot_text(raw_key, limit=120)
         pool = _pool_from_dict(raw_pool, expected_key=key)
         if pool is None:
-            return ()
+            return None
         pools.append(pool)
     return tuple(pools)
 

@@ -982,6 +982,46 @@ def test_load_usage_snapshot_marks_malformed_main_pool_stale():
     assert loaded.error == "invalid cached usage pool: main"
 
 
+@pytest.mark.parametrize(
+    "malformed_models",
+    ([], None, {"gpt-5.3-codex-spark": []}),
+)
+def test_load_usage_snapshot_invalidates_malformed_model_pools(malformed_models):
+    loaded = usage_from_dict(
+        {
+            "account": "malformed-models",
+            "label": "Malformed models",
+            "captured_at": "2026-06-08T04:20:00+02:00",
+            "status": "ok",
+            "stale": False,
+            "cache_invalidated": False,
+            "main": {
+                "key": "main",
+                "display_name": "Codex",
+                "available": True,
+                "windows": [
+                    {"name": "5h", "remaining": 97, "duration_seconds": 18000},
+                    {
+                        "name": "weekly",
+                        "remaining": 55,
+                        "duration_seconds": 604800,
+                    },
+                ],
+            },
+            "models": malformed_models,
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.cache_invalidated is True
+    assert loaded.five_hour is None
+    assert loaded.weekly is None
+    assert loaded.main is None
+    assert loaded.models == ()
+    assert loaded.error == "invalid cached model pools: models"
+
+
 def test_load_usage_snapshot_drops_window_stored_in_wrong_slot(tmp_path):
     payload = {
         "account": "wrong-slot",
