@@ -590,6 +590,17 @@ def test_policy_rejects_truthy_non_boolean_rule(tmp_path):
         set_policy_rule("global", None, "false", path=tmp_path / "routing-policy.json")
 
 
+@pytest.mark.parametrize("role", [None, 1, [], {}, "   "])
+def test_routing_rejects_invalid_role_before_decision(role):
+    with pytest.raises(ValueError, match="role must be a non-empty string"):
+        evaluate_routing(
+            _usage(main_windows=(_window("weekly", 90, 604800),)),
+            role=role,
+            paid_overage_allowed=False,
+            now=NOW,
+        )
+
+
 def test_routing_allows_credits_only_for_known_low_main_limit():
     low = evaluate_routing(
         _usage(main_windows=(_window("weekly", 5, 604800),)),
