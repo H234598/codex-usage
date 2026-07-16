@@ -74,6 +74,13 @@ def test_jwt_claims_reject_extra_segments():
     assert _current_jwt_claims(token) is None
 
 
+def test_jwt_claims_reject_nonstandard_json_constants():
+    payload = base64.urlsafe_b64encode(b'{"sub":NaN}').rstrip(b"=").decode("ascii")
+    token = f"e30.{payload}.signature"
+
+    assert _current_jwt_claims(token) is None
+
+
 @pytest.mark.parametrize("token", [" secret-access-token", "secret-access-token "])
 def test_auth_details_reject_whitespace_wrapped_access_token(tmp_path, token):
     with pytest.raises(DirectAuthError, match="invalid characters"):
