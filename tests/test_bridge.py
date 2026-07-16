@@ -1678,6 +1678,8 @@ def test_usage_from_ingest_payload_extracts_api_responses():
     "response_fields",
     (
         {"status": "403"},
+        {"status": 302},
+        {"status": "304"},
         {"ok": False},
         {"ok": "false"},
         {"truncated": "true"},
@@ -3806,7 +3808,9 @@ const pageWindow = {
             requestSequence: 1,
             url: "https://chatgpt.com/backend-api/wham/usage",
             status: 200,
+            ok: true,
             contentType: "application/json",
+            truncated: false,
             bodyText: JSON.stringify({
               rate_limit: {
                 primary_window: { used_percent: 20, limit_window_seconds: 18000 },
@@ -3903,6 +3907,134 @@ setTimeout(() => {
     assert result.returncode == 0, result.stderr
 
 
+def test_generated_content_rejects_incomplete_main_response_metadata(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+const refreshRequests = [];
+const probeFetches = [];
+let messageHandler = null;
+const pageWindow = {
+  addEventListener(type, callback) {
+    if (type === "message") {
+      messageHandler = callback;
+    }
+  },
+  postMessage(message) {
+    if (!message || message.type !== "codexUsageRefresh") {
+      return;
+    }
+    refreshRequests.push(message);
+    setTimeout(() => {
+      messageHandler({
+        source: pageWindow,
+        data: {
+          type: "codexUsageApiResponses",
+          requestId: message.requestId,
+          responses: [{
+            source: "page-fetch",
+            requestSequence: 1,
+            url: "https://chatgpt.com/backend-api/wham/usage",
+            status: 200,
+            contentType: "application/json",
+            bodyText: JSON.stringify({
+              rate_limit: {
+                primary_window: { used_percent: 20, limit_window_seconds: 18000 },
+                secondary_window: { used_percent: 60, limit_window_seconds: 604800 }
+              }
+            })
+          }]
+        }
+      });
+    }, 0);
+  }
+};
+const text = "Codex analytics page text with enough content";
+const document = {
+  title: "Codex",
+  readyState: "complete",
+  body: { innerText: text },
+  documentElement: {
+    cloneNode() {
+      return {
+        textContent: text,
+        outerHTML: "<html><body>Codex</body></html>",
+        querySelectorAll() { return { forEach() {} }; }
+      };
+    }
+  },
+  querySelectorAll() { return []; }
+};
+const runtime = {
+  id: "test-extension",
+  lastError: null,
+  sendMessage(message, callback) {
+    messages.push(message);
+    callback({ ok: true });
+  }
+};
+const sandbox = {
+  window: pageWindow,
+  document,
+  chrome: { runtime },
+  location: {
+    href: "https://chatgpt.com/codex/cloud/settings/analytics",
+    origin: "https://chatgpt.com"
+  },
+  fetch: async (url) => {
+    probeFetches.push(url);
+    return {
+      headers: { get() { return "application/json"; } },
+      text: async () => JSON.stringify({ detail: "fallback probe" })
+    };
+  },
+  Date,
+  JSON,
+  Map,
+  Array,
+  Number,
+  String,
+  Object,
+  Promise,
+  URL,
+  console,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => {
+  const ingest = messages.find((message) => message.type === "codexUsageIngest");
+  if (refreshRequests.length !== 1 || probeFetches.length !== 4 || !ingest) {
+    throw new Error(JSON.stringify({ messages, refreshRequests, probeFetches }));
+  }
+  process.exit(0);
+}, 700);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "content.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_generated_content_serializes_overlapping_sends(tmp_path):
     node = shutil.which("node")
     if node is None:
@@ -3950,7 +4082,9 @@ const pageWindow = {
               requestSequence: refreshCount,
               url: "https://chatgpt.com/backend-api/wham/usage",
               status: 200,
+              ok: true,
               contentType: "application/json",
+              truncated: false,
               bodyText: JSON.stringify({
                 rate_limit: {
                   primary_window: { used_percent: 20, limit_window_seconds: 18000 },

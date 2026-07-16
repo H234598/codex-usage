@@ -476,7 +476,7 @@ def _response_metadata_is_valid(item: dict[str, Any]) -> bool:
                 status = int(status.strip()) if status.strip().isdecimal() else None
             except ValueError:
                 status = None
-        if not isinstance(status, int) or not 100 <= status <= 599 or status >= 400:
+        if not isinstance(status, int) or not 200 <= status < 300:
             return False
     if "ok" in item:
         ok = item["ok"]
@@ -1789,16 +1789,21 @@ function codexUsageApiResponseIsNewer(candidate, current) {{
 
 function codexUsageIsMainUsageResponse(item) {{
   try {{
+    if (!item || typeof item !== "object" || Array.isArray(item)) {{
+      return false;
+    }}
     const parsed = new URL(String((item && item.url) || ""), location.origin);
     const path = parsed.pathname.replace(/\\/+$/, "") || "/";
     if (parsed.origin !== location.origin || path !== "/backend-api/wham/usage") {{
       return false;
     }}
-    if (item.truncated === true) {{
-      return false;
-    }}
-    const status = Number(item.status);
-    if (Number.isFinite(status) && (status < 200 || status >= 300)) {{
+    if (
+      !Number.isInteger(item.status)
+      || item.status < 200
+      || item.status >= 300
+      || item.ok !== true
+      || item.truncated !== false
+    ) {{
       return false;
     }}
     const bodyText = String(item.bodyText || item.body || item.text || "");
