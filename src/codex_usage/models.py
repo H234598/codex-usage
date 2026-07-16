@@ -6,6 +6,21 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+_KNOWN_WINDOW_NAMES = frozenset(
+    {
+        "5h",
+        "5_hour",
+        "five_hour",
+        "w",
+        "week",
+        "weekly",
+        "30d",
+        "30_day",
+        "month",
+        "monthly",
+    }
+)
+
 
 class AccountStatus(StrEnum):
     OK = "ok"
@@ -55,7 +70,7 @@ class LimitWindow:
             return True
         if not isinstance(self.name, str):
             return False
-        return self.name.strip().casefold() not in {"", "unknown", "limit"}
+        return self.name.strip().casefold() in _KNOWN_WINDOW_NAMES
 
     @property
     def remaining_percent(self) -> float | None:

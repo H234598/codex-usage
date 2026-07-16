@@ -136,7 +136,7 @@ def test_usage_pool_validity_requires_strict_controls(
     assert pool.has_valid_usage is expected
 
 
-@pytest.mark.parametrize("name", ["", "unknown", "Limit"])
+@pytest.mark.parametrize("name", ["", "unknown", "Limit", "garbage"])
 def test_usage_pool_validity_requires_known_window_identity(name):
     pool = UsagePool(
         key=SPARK_MODEL,
