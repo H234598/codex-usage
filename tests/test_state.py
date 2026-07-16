@@ -1197,7 +1197,7 @@ def test_load_usage_snapshot_discards_negative_used(tmp_path):
     assert loaded.error == "invalid cached limit value: five_hour"
 
 
-def test_load_usage_snapshot_normalizes_negative_remaining(tmp_path):
+def test_load_usage_snapshot_rejects_negative_remaining(tmp_path):
     payload = {
         "account": "negative-remaining",
         "label": "Negative remaining",
@@ -1216,8 +1216,10 @@ def test_load_usage_snapshot_normalizes_negative_remaining(tmp_path):
 
     assert loaded is not None
     assert loaded.five_hour is not None
-    assert loaded.five_hour.remaining == 0
-    assert loaded.status == AccountStatus.OK
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
 
 
 def test_load_usage_snapshot_keeps_percent_when_absolute_remaining_is_ambiguous(tmp_path):
