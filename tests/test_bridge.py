@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 from datetime import datetime, timedelta
+from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.error import HTTPError
@@ -3363,23 +3364,78 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
     try:
         with pytest.raises(HTTPError) as missing:
             post()
-        assert missing.value.code == 401
+        assert missing.value.code == 403
         with pytest.raises(HTTPError) as wrong:
-            post({"Authorization": "Bearer wrong-token"})
+            post(
+                {
+                    "Origin": "https://chatgpt.com",
+                    "Authorization": "Bearer wrong-token",
+                }
+            )
         assert wrong.value.code == 401
-        with post({"Authorization": f"Bearer {token}"}) as response:
+        with pytest.raises(HTTPError) as outside_origin:
+            post(
+                {
+                    "Origin": "https://evil.example",
+                    "Authorization": f"Bearer {token}",
+                }
+            )
+        assert outside_origin.value.code == 403
+        with post(
+            {
+                "Origin": "https://chatgpt.com",
+                "Authorization": f"Bearer {token}",
+            }
+        ) as response:
             assert response.status == 200
             assert json.loads(response.read())["status"] == "ok"
         assert bridge_token_matches(account.id, token) is True
         assert revoke_bridge_token(account.id) is True
         with pytest.raises(HTTPError) as revoked:
-            post({"Authorization": f"Bearer {token}"})
+            post(
+                {
+                    "Origin": "https://chatgpt.com",
+                    "Authorization": f"Bearer {token}",
+                }
+            )
         assert revoked.value.code == 401
         replacement = bridge_token_for_account(account.id)
         assert replacement != token
-        with post({"Authorization": f"Bearer {replacement}"}) as response:
+        with post(
+            {
+                "Origin": "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+                "Authorization": f"Bearer {replacement}",
+            }
+        ) as response:
             assert response.status == 200
             assert json.loads(response.read())["status"] == "ok"
+        connection = HTTPConnection(server.server_address[0], server.server_address[1], timeout=5)
+        try:
+            connection.putrequest("POST", "/ingest")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", str(len(body)))
+            connection.putheader("Origin", "https://chatgpt.com")
+            connection.putheader("Authorization", f"Bearer {replacement}")
+            connection.putheader("Authorization", f"Bearer {replacement}")
+            connection.endheaders(body)
+            duplicate_auth = connection.getresponse()
+            assert duplicate_auth.status == 401
+            duplicate_auth.read()
+        finally:
+            connection.close()
+        connection = HTTPConnection(server.server_address[0], server.server_address[1], timeout=5)
+        try:
+            connection.putrequest("POST", "/ingest")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "9" * 100)
+            connection.putheader("Origin", "https://chatgpt.com")
+            connection.putheader("Authorization", f"Bearer {replacement}")
+            connection.endheaders()
+            oversized_length = connection.getresponse()
+            assert oversized_length.status == 413
+            oversized_length.read()
+        finally:
+            connection.close()
         options = Request(
             endpoint,
             method="OPTIONS",
@@ -3491,7 +3547,10 @@ def test_http_bridge_accepts_account_added_after_server_start(tmp_path, monkeypa
             endpoint,
             data=body,
             method="POST",
-            headers={"Authorization": f"Bearer {second_token}"},
+            headers={
+                "Origin": "https://chatgpt.com",
+                "Authorization": f"Bearer {second_token}",
+            },
         )
         with urlopen(request, timeout=5) as response:
             assert response.status == 200

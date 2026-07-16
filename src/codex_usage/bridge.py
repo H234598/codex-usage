@@ -61,6 +61,7 @@ MAX_INGEST_BYTES = 10_000_000
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
 AUTHENTICATED_BRIDGE_GRACE_SECONDS = 60
 BRIDGE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{32,128}")
+CHROME_EXTENSION_ORIGIN_RE = re.compile(r"chrome-extension://[a-p]{32}")
 TEXT_PAYLOAD_FIELDS = (
     "bodyText",
     "body_text",
@@ -1392,9 +1393,21 @@ def _make_handler(
             if self.path != "/ingest":
                 self._send_json(404, {"error": "not found"})
                 return
+            content_lengths = self.headers.get_all("Content-Length") or []
+            transfer_encodings = self.headers.get_all("Transfer-Encoding") or []
+            if len(content_lengths) != 1 or transfer_encodings:
+                self._send_json(413, {"error": "invalid payload size"})
+                return
+            content_length_text = content_lengths[0]
+            if (
+                not re.fullmatch(r"[0-9]+", content_length_text)
+                or len(content_length_text) > len(str(MAX_INGEST_BYTES))
+            ):
+                self._send_json(413, {"error": "invalid payload size"})
+                return
             try:
-                content_length = int(self.headers.get("content-length", "0"))
-            except (TypeError, ValueError):
+                content_length = int(content_length_text)
+            except ValueError:
                 self._send_json(413, {"error": "invalid payload size"})
                 return
             if content_length <= 0 or content_length > MAX_INGEST_BYTES:
@@ -1413,7 +1426,10 @@ def _make_handler(
             if request_config is None:
                 self._send_json(503, {"error": "configuration unavailable"})
                 return
-            account_ref = str(payload.get("account") or "")
+            account_ref = payload.get("account")
+            if not isinstance(account_ref, str) or not account_ref:
+                self._send_json(401, {"error": "authorization required"})
+                return
             if not self._is_authorized(account_ref, request_config):
                 self._send_json(401, {"error": "authorization required"})
                 return
@@ -1495,11 +1511,12 @@ def _make_handler(
             return "https://chatgpt.com"
 
         def _is_allowed_origin(self) -> bool:
-            origin = self.headers.get("Origin", "")
-            return (
-                not origin
-                or origin == "https://chatgpt.com"
-                or origin.startswith("chrome-extension://")
+            origins = self.headers.get_all("Origin") or []
+            if len(origins) != 1:
+                return False
+            origin = origins[0]
+            return origin == "https://chatgpt.com" or bool(
+                CHROME_EXTENSION_ORIGIN_RE.fullmatch(origin)
             )
 
         def _config_for_request(self) -> AppConfig | None:
@@ -1511,17 +1528,24 @@ def _make_handler(
                 return None
 
         def _is_authorized(self, account_ref: str, request_config: AppConfig) -> bool:
+            if not isinstance(account_ref, str) or not account_ref:
+                return False
             try:
                 resolve_account(request_config, account_ref)
             except KeyError:
                 return False
-            authorization = self.headers.get("Authorization", "")
+            authorizations = self.headers.get_all("Authorization") or []
+            if len(authorizations) != 1:
+                return False
+            authorization = authorizations[0]
             prefix = "Bearer "
             if config_path is None and not tokens.get(account_ref):
                 return False
             if not authorization.startswith(prefix):
                 return False
-            supplied = authorization[len(prefix):].strip()
+            supplied = authorization[len(prefix):]
+            if not supplied or supplied != supplied.strip():
+                return False
             return bridge_token_matches(account_ref, supplied)
 
     return BridgeHandler
