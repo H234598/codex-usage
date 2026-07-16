@@ -491,29 +491,12 @@ def _response_metadata_is_valid(item: dict[str, Any]) -> bool:
     if any(field not in item for field in ("status", "ok", "truncated")):
         return False
     truncated = item["truncated"]
-    if isinstance(truncated, bool):
-        if truncated:
-            return False
-    elif isinstance(truncated, str):
-        normalized = truncated.strip().casefold()
-        if normalized != "false":
-            return False
-    else:
+    if not isinstance(truncated, bool) or truncated:
         return False
     status = item["status"]
-    if isinstance(status, bool):
-        return False
-    if isinstance(status, str):
-        try:
-            status = int(status.strip()) if status.strip().isdecimal() else None
-        except ValueError:
-            status = None
-    if not isinstance(status, int) or not 200 <= status < 300:
+    if isinstance(status, bool) or not isinstance(status, int) or not 200 <= status < 300:
         return False
     ok = item["ok"]
-    if isinstance(ok, str):
-        normalized = ok.strip().casefold()
-        ok = True if normalized == "true" else False if normalized == "false" else None
     if not isinstance(ok, bool) or not ok:
         return False
     content_types = []

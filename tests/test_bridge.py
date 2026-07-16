@@ -1845,9 +1845,12 @@ def test_usage_from_ingest_payload_rejects_missing_api_response_metadata(missing
     "response_fields",
     (
         {"status": 1},
+        {"status": "200"},
         {"status": "ok"},
         {"ok": 1},
+        {"ok": "true"},
         {"truncated": 1},
+        {"truncated": "false"},
         {"truncated": "no"},
         {"contentType": ["application/json"]},
         {"contentType": None},
