@@ -126,6 +126,25 @@ def test_wham_supports_30_day_main_window_without_inventing_5h_or_weekly():
     assert legacy_windows(main) == (None, None)
 
 
+def test_wham_rejects_string_usage_percent():
+    main, _ = parse_wham_usage_pools(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": "5",
+                    "limit_window_seconds": 604800,
+                }
+            }
+        },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert main is not None
+    assert main.windows[0].remaining is None
+    assert main.windows[0].remaining_percent is None
+
+
 def test_wham_ignores_unrelated_additional_rate_limit():
     _, models = parse_wham_usage_pools(
         {
@@ -278,6 +297,26 @@ def test_app_server_disables_main_when_codex_bucket_has_wrong_shape():
     assert main is not None
     assert main.available is False
     assert main.windows == ()
+
+
+def test_app_server_rejects_string_usage_percent():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {
+                        "usedPercent": "2",
+                        "windowDurationMins": 300,
+                    }
+                }
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.windows[0].remaining is None
+    assert main.windows[0].remaining_percent is None
 
 
 def test_app_server_disables_spark_with_conflicting_duplicate_buckets():

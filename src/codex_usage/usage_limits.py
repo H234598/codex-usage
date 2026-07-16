@@ -381,7 +381,7 @@ def _normalized(value: Any) -> str:
 
 
 def _percent(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
         number = float(value)
