@@ -862,7 +862,15 @@ def _cmd_latest(args: argparse.Namespace) -> int:
         print(render_json(usages))
     else:
         print(render_table(usages) if usages else "Keine Snapshots vorhanden.")
-    return 0
+    return (
+        0
+        if _all_usage_results_valid(
+            usages,
+            (account.id for account in config.accounts),
+            predicate=_is_safe_watchdog_usage,
+        )
+        else 2
+    )
 
 
 def _cmd_values(args: argparse.Namespace) -> int:

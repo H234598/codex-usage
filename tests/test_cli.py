@@ -1259,6 +1259,19 @@ def test_ingest_and_latest_show_manual_snapshot(tmp_path, monkeypatch, capsys):
     assert "69% verbleibend" in latest
 
 
+def test_latest_fails_closed_when_account_snapshot_is_missing(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+
+    assert main(["--config", str(config_path), "account", "add", "private"]) == 0
+    capsys.readouterr()
+
+    assert main(["--config", str(config_path), "latest"]) == 2
+    assert "Keine Snapshots vorhanden." in capsys.readouterr().out
+
+
 def test_ingest_binds_shared_user_browser_payload_to_selected_account(
     tmp_path, monkeypatch, capsys
 ):
