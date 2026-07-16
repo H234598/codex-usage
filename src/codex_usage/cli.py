@@ -5,7 +5,6 @@ import ipaddress
 import json
 import shutil
 import sys
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -60,7 +59,12 @@ from .service import (
     service_uninstall,
 )
 from .spark_health import set_spark_health, spark_health_status
-from .state import load_current_usage, load_usage_snapshot, remove_account_state
+from .state import (
+    backend_provenance_matches_configured,
+    load_current_usage,
+    load_usage_snapshot,
+    remove_account_state,
+)
 
 COMMAND_OVERVIEW = """\
 Komplette Command-Line-Usage:
@@ -681,12 +685,7 @@ def _cmd_watchdog(args: argparse.Namespace) -> int:
 def _cmd_policy_evaluate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     account = _resolve_policy_account(config, args.account, args.auth_json)
-    usage = _usage_for_policy(account)
-    if args.auth_json is not None:
-        _auth_user_id, auth_account_id = auth_identity_from_file(args.auth_json)
-        if usage.backend_account_id and usage.backend_account_id != auth_account_id:
-            raise ValueError("usage snapshot belongs to another backend account id")
-        usage = replace(usage, backend_account_id=auth_account_id)
+    usage = _usage_for_policy(account, auth_json_path=args.auth_json)
     policy = load_policy()
     paid_overage_allowed, policy_source = effective_paid_overage(
         policy,
@@ -771,17 +770,51 @@ def _cmd_spark_health(args: argparse.Namespace) -> int:
     return 0
 
 
-def _usage_for_policy(account) -> AccountUsage:
+def _usage_for_policy(
+    account,
+    *,
+    auth_json_path: Path | None = None,
+) -> AccountUsage:
     usage = load_current_usage(account.id) or load_usage_snapshot(account.id)
-    if usage is not None:
-        return usage
+    if usage is None:
+        return _invalid_policy_usage(account, "no usage snapshot")
+    if not backend_provenance_matches_configured(usage, account.backend):
+        return _invalid_policy_usage(account, "usage backend provenance mismatch")
+    required_auth_path = auth_json_path
+    if required_auth_path is None and account.auth_json_path:
+        required_auth_path = Path(account.auth_json_path)
+    if required_auth_path is not None:
+        try:
+            auth_user_id, auth_account_id = auth_identity_from_file(
+                required_auth_path
+            )
+        except (DirectAuthError, OSError, ValueError):
+            return _invalid_policy_usage(account, "auth.json identity unavailable")
+        if (
+            usage.backend_used not in {"direct", "app-server"}
+            or not usage.backend_account_id
+            or auth_identity_changed(
+                before_user_id=usage.backend_user_id,
+                before_account_id=usage.backend_account_id,
+                after_user_id=auth_user_id,
+                after_account_id=auth_account_id,
+            )
+        ):
+            return _invalid_policy_usage(account, "usage auth identity mismatch")
+    return usage
+
+
+def _invalid_policy_usage(account, error: str) -> AccountUsage:
     return AccountUsage(
         account_id=account.id,
         label=account.label,
         captured_at=datetime.now(tz=UTC),
         status=AccountStatus.ERROR,
-        error="no usage snapshot",
+        error=error,
         backend_configured=account.backend,
+        backend_used=account.backend,
+        stale=True,
+        cache_invalidated=True,
     )
 
 

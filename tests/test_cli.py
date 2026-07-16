@@ -174,6 +174,8 @@ def test_policy_commands_are_machine_readable_and_use_saved_usage(
                     ),
                 ),
             ),
+            backend_configured="direct",
+            backend_used="direct",
             models=(
                 UsagePool(
                     key="gpt-5.3-codex-spark",
@@ -236,6 +238,108 @@ def test_policy_commands_are_machine_readable_and_use_saved_usage(
     assert status["schema_version"] == 1
     assert status["policy"]["global"] is False
     assert status["decisions"]["private"]["decision"] == "spark"
+
+
+def test_policy_fails_closed_for_cached_backend_mismatch(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "private"]) == 0
+    capsys.readouterr()
+    save_current_usage(
+        AccountUsage(
+            account_id="private",
+            label="Private",
+            captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+            status=AccountStatus.OK,
+            main=UsagePool(
+                key="main",
+                display_name="Codex",
+                windows=(LimitWindow(name="weekly", remaining=80),),
+            ),
+            backend_configured="direct",
+            backend_used="app-server",
+        )
+    )
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "policy",
+                "evaluate",
+                "private",
+                "--role",
+                "arbeitsbiene",
+            ]
+        )
+        == 0
+    )
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["decision"] == "blocked"
+    assert decision["reason"] == "cache_invalidated"
+
+
+def test_policy_does_not_relabel_identity_free_auth_cache(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"account_id": "backend-private"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "private",
+                "--auth-json",
+                str(auth_path),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    save_current_usage(
+        AccountUsage(
+            account_id="private",
+            label="Private",
+            captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+            status=AccountStatus.OK,
+            main=UsagePool(
+                key="main",
+                display_name="Codex",
+                windows=(LimitWindow(name="weekly", remaining=80),),
+            ),
+            backend_configured="direct",
+            backend_used="direct",
+        )
+    )
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "policy",
+                "evaluate",
+                "--auth-json",
+                str(auth_path),
+                "--role",
+                "arbeitsbiene",
+            ]
+        )
+        == 0
+    )
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["decision"] == "blocked"
+    assert decision["reason"] == "cache_invalidated"
 
 
 def test_policy_set_requires_identifier_for_non_global_scope(tmp_path, monkeypatch, capsys):
