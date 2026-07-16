@@ -760,7 +760,19 @@ test("unknown pool windows never appear as numeric details", () => {
     windows: [{ name: "unknown", remaining: 90 }],
   }, "alpha", "click", "Spark", []);
 
-  assert.equal(parts.plain, "Spark verfügbar · Limit unbekannt");
+  assert.equal(parts.plain, "Spark nicht verfügbar · Limit unbekannt");
+  const mixed = applet._poolDetailParts({
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    windows: [
+      { name: "weekly", remaining: 90 },
+      { name: "unknown", remaining: 90 },
+    ],
+  }, "alpha", "click", "Spark", []);
+
+  assert.equal(mixed.plain, "Spark nicht verfügbar · Limit unbekannt");
 });
 
 test("cache invalidation clears dynamic usage pools", () => {

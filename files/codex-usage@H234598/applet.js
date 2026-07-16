@@ -3898,15 +3898,23 @@ CodexUsageApplet.prototype = {
             return { plain: unavailable, markup: this._escapeMarkup(unavailable) };
         }
         let excluded = excludedDurations || [];
-        let windows = Array.isArray(pool.windows) ? pool.windows.filter(Lang.bind(this, function(window) {
+        let rawWindows = Array.isArray(pool.windows) ? pool.windows : [];
+        if (rawWindows.some(Lang.bind(this, function(window) {
+            return !this._windowIdentityIsKnown(window) ||
+                this._remainingPercent(window) === null;
+        }))) {
+            let unavailable = prefix + " nicht verfügbar · Limit unbekannt";
+            return { plain: unavailable, markup: this._escapeMarkup(unavailable) };
+        }
+        let windows = rawWindows.filter(Lang.bind(this, function(window) {
             return excluded.indexOf(this._windowDurationSeconds(window)) === -1 &&
                 this._windowIdentityIsKnown(window);
-        })) : [];
+        }));
         if (!windows.length) {
             if (excluded.length) {
                 return null;
             }
-            let unknown = prefix + " verfügbar · Limit unbekannt";
+            let unknown = prefix + " nicht verfügbar · Limit unbekannt";
             return { plain: unknown, markup: this._escapeMarkup(unknown) };
         }
         let plain = [];
