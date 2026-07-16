@@ -273,6 +273,7 @@ def _fetch_one(
             error=f"fetch failed: {type(exc).__name__}",
             backend_configured=account.backend,
             backend_used=backend_override or account.backend,
+            cache_invalidated=True,
         )
 
 

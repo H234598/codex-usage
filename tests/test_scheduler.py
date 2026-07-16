@@ -383,6 +383,30 @@ def test_fetch_all_uses_direct_for_accounts_with_auth_and_browser_for_others(mon
     assert [usage.backend_used for usage in usages] == ["direct", "browser"]
 
 
+def test_fetch_all_invalidates_cache_after_unexpected_fetch_failure(monkeypatch):
+    account = Account(
+        id="broken",
+        label="Broken",
+        profile_dir="/tmp/broken",
+        auth_json_path="/tmp/broken-auth.json",
+        backend="direct",
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise RuntimeError("backend crashed")
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fail_fetch)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,), direct=True)
+
+    assert len(result) == 1
+    assert result[0].status == AccountStatus.ERROR
+    assert result[0].backend_used == "direct"
+    assert result[0].cache_invalidated is True
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+
+
 def test_fetch_all_serializes_authenticated_multi_account_polls(monkeypatch):
     accounts = (
         Account(
