@@ -43,10 +43,7 @@ class LimitWindow:
 
     @property
     def has_usage_value(self) -> bool:
-        return any(
-            value is not None
-            for value in (self.used, self.remaining, self.percent)
-        )
+        return not self.has_invalid_usage_value and self.remaining_percent is not None
 
     @property
     def remaining_percent(self) -> float | None:
@@ -68,6 +65,13 @@ class LimitWindow:
             if not 0 <= remaining <= limit:
                 return None
             return _valid_percent(remaining / limit * 100.0)
+        if remaining is not None and 0 <= remaining <= 100:
+            if self.percent is None:
+                return remaining
+            explicit_percent = _valid_percent(self.percent)
+            if explicit_percent is not None and abs(remaining - explicit_percent) < 0.01:
+                return explicit_percent
+            return None
         if self.percent is not None:
             return _valid_percent(self.percent)
         return None

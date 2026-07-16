@@ -45,6 +45,21 @@ def test_remaining_percent_prefers_absolute_usage_over_percent():
     assert window.remaining_percent == 0
 
 
+@pytest.mark.parametrize(
+    ("window", "expected"),
+    [
+        (LimitWindow(name="5h", remaining=97), True),
+        (LimitWindow(name="5h", percent=97), True),
+        (LimitWindow(name="5h", remaining=690), False),
+        (LimitWindow(name="5h", remaining=55, percent=69), False),
+        (LimitWindow(name="5h", used=-1, limit=100, remaining=80), False),
+        (LimitWindow(name="5h", percent=float("nan")), False),
+    ],
+)
+def test_has_usage_value_requires_verified_remaining_percentage(window, expected):
+    assert window.has_usage_value is expected
+
+
 def test_usage_pool_exhaustion_prefers_absolute_usage_over_percent():
     pool = UsagePool(
         key="main",
