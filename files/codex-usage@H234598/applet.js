@@ -3421,9 +3421,7 @@ CodexUsageApplet.prototype = {
         if (!Array.isArray(pool.windows) || !pool.windows.length ||
             !pool.windows.every(Lang.bind(this, function(window) {
                 let value = this._remainingPercent(window);
-                let duration = this._windowDurationSeconds(window);
-                let name = this._safeText(window && window.name, 40);
-                return value !== null && value > 0 && (duration !== null || Boolean(name));
+                return value !== null && value > 0 && this._windowIdentityIsKnown(window);
             }))) {
             return false;
         }
@@ -3437,6 +3435,20 @@ CodexUsageApplet.prototype = {
             return false;
         }
         return true;
+    },
+
+    _windowIdentityIsKnown: function(window) {
+        let duration = this._windowDurationSeconds(window);
+        if (duration !== null) {
+            return true;
+        }
+        let name = this._safeText(window && window.name, 40).toLowerCase();
+        name = name.replace(/[-\s]+/g, "_");
+        return [
+            "5h", "5_hour", "five_hour",
+            "w", "week", "weekly",
+            "30d", "30_day", "month", "monthly"
+        ].indexOf(name) !== -1;
     },
 
     _poolWindowForDuration: function(pool, durationSeconds) {
