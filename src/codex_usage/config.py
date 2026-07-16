@@ -65,9 +65,11 @@ def load_config(path: Path | None = None) -> AppConfig:
     interval = _strict_int(data.get("interval_seconds", 300), "interval_seconds")
     if interval < 60:
         raise ValueError("interval_seconds must be at least 60")
-    analytics_url = str(
-        data.get("analytics_url", "https://chatgpt.com/codex/cloud/settings/analytics")
+    analytics_url = data.get(
+        "analytics_url", "https://chatgpt.com/codex/cloud/settings/analytics"
     )
+    if not isinstance(analytics_url, str):
+        raise ValueError("analytics_url must be an https://chatgpt.com URL")
     _validate_analytics_url(analytics_url)
     headless = _strict_bool(data.get("headless", True), "headless")
     config = AppConfig(
@@ -217,21 +219,52 @@ def resolve_account(config: AppConfig, account_ref: str) -> Account:
 def _account_from_data(item: object) -> Account:
     if not isinstance(item, dict):
         raise ValueError("account entry must be a TOML table")
-    account_id = str(item.get("id", "")).strip()
+    raw_account_id = item.get("id", "")
+    if not isinstance(raw_account_id, str):
+        raise ValueError("account id must be a string")
+    account_id = raw_account_id.strip()
     _validate_account_id(account_id)
-    label = str(item.get("label") or account_id)
-    profile_dir = str(item.get("profile_dir") or _default_profile_root(account_id))
-    browser = str(item.get("browser") or "firefox")
+    raw_label = item.get("label")
+    if raw_label in (None, ""):
+        label = account_id
+    elif not isinstance(raw_label, str):
+        raise ValueError("account label must be a string")
+    else:
+        label = raw_label
+    raw_profile_dir = item.get("profile_dir")
+    if raw_profile_dir in (None, ""):
+        profile_dir = str(_default_profile_root(account_id))
+    elif not isinstance(raw_profile_dir, str):
+        raise ValueError("profile_dir must be a string")
+    else:
+        profile_dir = raw_profile_dir
+    raw_browser = item.get("browser")
+    if raw_browser in (None, ""):
+        browser = "firefox"
+    elif not isinstance(raw_browser, str):
+        raise ValueError("browser must be a string")
+    else:
+        browser = raw_browser
     _validate_browser(browser)
     auth_json_path = item.get("auth_json_path")
-    backend = str(item.get("backend") or "direct")
+    if auth_json_path == "":
+        auth_json_path = None
+    elif auth_json_path is not None and not isinstance(auth_json_path, str):
+        raise ValueError("auth_json_path must be a string")
+    raw_backend = item.get("backend")
+    if raw_backend in (None, ""):
+        backend = "direct"
+    elif not isinstance(raw_backend, str):
+        raise ValueError("backend must be a string")
+    else:
+        backend = raw_backend
     _validate_backend(backend)
     return Account(
         id=account_id,
         label=label,
         profile_dir=profile_dir,
         browser=browser,
-        auth_json_path=str(auth_json_path) if auth_json_path else None,
+        auth_json_path=auth_json_path,
         backend=backend,
     )
 

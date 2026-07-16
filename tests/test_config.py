@@ -195,6 +195,33 @@ id = "privat"
         load_config(config_path)
 
 
+@pytest.mark.parametrize(
+    "field",
+    ("id", "label", "profile_dir", "browser", "auth_json_path", "backend"),
+)
+def test_load_config_rejects_non_string_account_fields(tmp_path, field):
+    config_path = tmp_path / "config.toml"
+    account_id = "" if field == "id" else 'id = "privat"\n'
+    config_path.write_text(
+        f"""
+[[accounts]]
+{account_id}{field} = 123
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_config(config_path)
+
+
+def test_load_config_rejects_non_string_analytics_url(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("analytics_url = 123\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="analytics_url"):
+        load_config(config_path)
+
+
 def test_load_config_rejects_symlink_config_file(tmp_path):
     target = tmp_path / "outside.toml"
     target.write_text("interval_seconds = 300\n", encoding="utf-8")
