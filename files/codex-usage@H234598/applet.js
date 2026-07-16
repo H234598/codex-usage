@@ -3224,6 +3224,22 @@ CodexUsageApplet.prototype = {
         return usage.models[key] || null;
     },
 
+    _poolIsUsable: function(pool) {
+        if (!pool || pool.available !== true) {
+            return false;
+        }
+        if (pool.allowed !== null && pool.allowed !== undefined && pool.allowed !== true) {
+            return false;
+        }
+        if (pool.limit_reached !== null && pool.limit_reached !== undefined && pool.limit_reached !== false) {
+            return false;
+        }
+        if (pool.exhausted !== null && pool.exhausted !== undefined && pool.exhausted !== false) {
+            return false;
+        }
+        return true;
+    },
+
     _poolWindowForDuration: function(pool, durationSeconds) {
         if (!pool || !Array.isArray(pool.windows)) {
             return null;
@@ -4141,6 +4157,9 @@ CodexUsageApplet.prototype = {
             return week;
         }
         let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
+        if (source >= 4 && source <= 7 && !this._poolIsUsable(spark)) {
+            return null;
+        }
         if (source === 4) {
             return this._remainingPercent(this._poolWindowForDuration(spark, 18000));
         }
@@ -4167,6 +4186,9 @@ CodexUsageApplet.prototype = {
             return usage.weekly;
         }
         let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
+        if (source >= 4 && source <= 7 && !this._poolIsUsable(spark)) {
+            return null;
+        }
         if (source === 4) {
             return this._poolWindowForDuration(spark, 18000);
         }

@@ -317,6 +317,42 @@ test("dynamic pools survive validation and drive Spark panel slots", () => {
   assert.equal(applet._panelWindowForSource(usage, 6).name, "5h");
 });
 
+test("unusable Spark pools cannot drive panel sources", () => {
+  const applet = makeApplet();
+  for (const control of [
+    { available: false },
+    { available: true, allowed: false },
+    { available: true, limit_reached: true },
+    { available: true, exhausted: true },
+    { available: true, allowed: "false" },
+  ]) {
+    const [usage] = applet._validatePayload([{
+      account: "alpha",
+      label: "Alpha",
+      captured_at: "2026-07-16T10:00:00+00:00",
+      five_hour: null,
+      weekly: null,
+      models: {
+        "gpt-5.3-codex-spark": {
+          key: "gpt-5.3-codex-spark",
+          windows: [
+            { name: "5h", duration_seconds: 18000, remaining: 40 },
+            { name: "weekly", duration_seconds: 604800, remaining: 80 },
+          ],
+          ...control,
+          availability_sources: ["rate_limits"],
+        },
+      },
+      status: "ok",
+    }]);
+
+    for (const source of [4, 5, 6, 7]) {
+      assert.equal(applet._panelValueForSource(usage, source), null);
+      assert.equal(applet._panelWindowForSource(usage, source), null);
+    }
+  }
+});
+
 test("malformed cache controls fail closed during payload validation", () => {
   const applet = makeApplet();
   const [validated] = applet._validatePayload([{
