@@ -1791,6 +1791,46 @@ def test_usage_from_ingest_payload_rejects_invalid_api_response_metadata(
     assert usage.weekly is None
 
 
+def test_usage_from_ingest_payload_rejects_invalid_api_response_body_alias():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    valid_body = json.dumps(
+        {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 3,
+                    "limit_window_seconds": 18_000,
+                },
+                "secondary_window": {
+                    "used_percent": 45,
+                    "limit_window_seconds": 604_800,
+                },
+            },
+        }
+    )
+
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "apiResponses": [
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": [],
+                    "body": valid_body,
+                }
+            ]
+        },
+    )
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.cache_invalidated is True
+    assert usage.five_hour is None
+    assert usage.weekly is None
+
+
 def test_usage_from_ingest_payload_reports_missing_paid_five_hour_window():
     account = Account(
         id="privat",

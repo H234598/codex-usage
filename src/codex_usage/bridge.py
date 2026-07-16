@@ -445,7 +445,19 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
         if not isinstance(raw_url, str):
             continue
         url = _redact_url(raw_url)
-        body = item.get("bodyText") or item.get("body") or item.get("text")
+        body_values: list[str] = []
+        body_fields_valid = True
+        for field in ("bodyText", "body", "text"):
+            if field not in item:
+                continue
+            value = item[field]
+            if not isinstance(value, str):
+                body_fields_valid = False
+                break
+            body_values.append(value)
+        if not body_fields_valid:
+            continue
+        body = next((value for value in body_values if value.strip()), None)
         if not url or not isinstance(body, str):
             continue
         candidate = load_json_candidate(url, body)
