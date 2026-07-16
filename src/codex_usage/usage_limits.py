@@ -79,17 +79,27 @@ def parse_app_server_usage_pools(
 ) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
     by_id = payload.get("rateLimitsByLimitId")
     by_id = by_id if isinstance(by_id, dict) else {}
+    raw_main_payload = by_id.get("codex")
+    malformed_main_bucket = "codex" in by_id and not isinstance(raw_main_payload, dict)
     main_payload = by_id.get("codex")
     if not isinstance(main_payload, dict):
         main_payload = payload.get("rateLimits")
-    main = _app_server_pool(
-        key=MAIN_POOL_KEY,
-        display_name="Codex",
-        snapshot=main_payload,
-        metered_feature=None,
-        captured_at=captured_at,
-        source=source,
-    )
+    if malformed_main_bucket:
+        main = UsagePool(
+            key=MAIN_POOL_KEY,
+            display_name="Codex",
+            available=False,
+            availability_sources=("usage",),
+        )
+    else:
+        main = _app_server_pool(
+            key=MAIN_POOL_KEY,
+            display_name="Codex",
+            snapshot=main_payload,
+            metered_feature=None,
+            captured_at=captured_at,
+            source=source,
+        )
 
     spark_payloads: list[dict[str, Any]] = []
     invalid_spark_entry = False

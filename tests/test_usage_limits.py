@@ -264,6 +264,22 @@ def test_app_server_parses_dynamic_main_and_spark_buckets():
     assert models[0].windows[0].reset_at is not None
 
 
+def test_app_server_disables_main_when_codex_bucket_has_wrong_shape():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 2, "windowDurationMins": 300}
+            },
+            "rateLimitsByLimitId": {"codex": "malformed"},
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.windows == ()
+
+
 def test_app_server_disables_spark_with_conflicting_duplicate_buckets():
     _, models = parse_app_server_usage_pools(
         {
