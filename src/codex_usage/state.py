@@ -69,7 +69,7 @@ def backend_provenance_matches_configured(
 
 def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
     """Avoid merging values across authenticated backends without fallback proof."""
-    if not _backend_provenance_fields_valid(left) or not _backend_provenance_fields_valid(right):
+    if not _backend_provenance_is_complete(left) or not _backend_provenance_is_complete(right):
         return False
     if (
         left.backend_configured
@@ -741,6 +741,11 @@ def merge_current_with_last_success(
     if _authoritative_empty_limits(current):
         return current
     if not backend_identity_matches(current, last_success):
+        return current
+    if (
+        not _backend_provenance_is_complete(current)
+        or not _backend_provenance_is_complete(last_success)
+    ):
         return current
     if not backend_provenance_matches(current, last_success):
         return current

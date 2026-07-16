@@ -930,6 +930,7 @@ def test_fetch_all_retains_direct_values_across_future_reset_jump(monkeypatch):
             percent=89,
             reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
         ),
+        backend_configured="direct",
         backend_used="direct",
         backend_user_id="user-direct",
         backend_account_id="account-direct",
@@ -956,6 +957,7 @@ def test_fetch_all_retains_direct_values_across_future_reset_jump(monkeypatch):
             percent=99,
             reset_at=datetime(2026, 7, 18, 8, 30, 25, tzinfo=timezone),
         ),
+        backend_configured="direct",
         backend_used="direct",
         backend_user_id="user-direct",
         backend_account_id="account-direct",
@@ -1000,6 +1002,7 @@ def test_fetch_all_stabilizes_app_server_against_direct_snapshot(monkeypatch):
             percent=89,
             reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
         ),
+        backend_configured="direct",
         backend_used="direct",
         backend_user_id="user-account",
         backend_account_id="account-id",
@@ -1020,6 +1023,7 @@ def test_fetch_all_stabilizes_app_server_against_direct_snapshot(monkeypatch):
             percent=99,
             reset_at=datetime(2026, 7, 18, 8, 30, 25, tzinfo=timezone),
         ),
+        backend_configured="direct",
         backend_used="app-server",
         backend_user_id="user-account",
         backend_account_id="account-id",
@@ -1168,6 +1172,7 @@ def test_authenticated_reset_fallback_is_applied_per_window():
             remaining=80,
             reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
         ),
+        backend_configured="app-server",
         backend_used="direct",
         backend_user_id="user-account",
         backend_account_id="account-id",
@@ -1186,6 +1191,7 @@ def test_authenticated_reset_fallback_is_applied_per_window():
             remaining=70,
             reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
         ),
+        backend_configured="app-server",
         backend_used="app-server",
         backend_user_id="user-account",
         backend_account_id="account-id",
@@ -1198,6 +1204,33 @@ def test_authenticated_reset_fallback_is_applied_per_window():
     assert result.main is not None
     assert [window.remaining for window in result.main.windows] == [90, 70]
     assert result.stale is True
+
+
+def test_authenticated_stabilization_rejects_previous_without_configured_backend():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(name="5h", remaining=90),
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=LimitWindow(name="5h", remaining=99),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
 
 
 def test_authenticated_app_server_absolute_reset_is_not_replaced_by_old_value():
@@ -1312,6 +1345,7 @@ def test_fetch_all_reuses_direct_reset_fallback_on_next_poll(monkeypatch):
             percent=89,
             reset_at=datetime(2026, 7, 18, 8, 2, 42, tzinfo=timezone),
         ),
+        backend_configured="direct",
         backend_used="direct",
         backend_user_id="user-direct",
         backend_account_id="account-direct",
@@ -1332,6 +1366,7 @@ def test_fetch_all_reuses_direct_reset_fallback_on_next_poll(monkeypatch):
             percent=99,
             reset_at=datetime(2026, 7, 18, 8, 30, 25, tzinfo=timezone),
         ),
+        backend_configured="direct",
         backend_used="direct",
         backend_user_id="user-direct",
         backend_account_id="account-direct",

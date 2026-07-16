@@ -31,6 +31,7 @@ from .health import record_health_event
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
 from .state import (
+    _backend_provenance_is_complete,
     backend_identity_matches,
     backend_provenance_matches,
     backend_provenance_matches_configured,
@@ -306,6 +307,8 @@ def _stabilize_authenticated_usage(
         previous is None
         or previous.status != AccountStatus.OK
         or previous.backend_used not in AUTHENTICATED_BACKENDS
+        or not _backend_provenance_is_complete(usage)
+        or not _backend_provenance_is_complete(previous)
         or not backend_identity_matches(usage, previous)
     ):
         return usage
