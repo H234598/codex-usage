@@ -112,10 +112,7 @@ def fetch_account_usage_app_server(
             model_ids=payload.get("_model_ids", ()),
         )
         has_dynamic_usage = bool(
-            main
-            and main.available
-            and main.windows
-            and all(window.has_usage_value for window in main.windows)
+            main and main.has_valid_usage
         )
         status = (
             AccountStatus.OK

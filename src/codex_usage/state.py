@@ -727,11 +727,7 @@ def merge_current_with_last_success(
 
 def _has_complete_usage_windows(usage: AccountUsage) -> bool:
     if usage.main is not None:
-        return bool(
-            usage.main.available
-            and usage.main.windows
-            and all(window.has_usage_value for window in usage.main.windows)
-        )
+        return usage.main.has_valid_usage
     return bool(
         usage.five_hour is not None
         and usage.weekly is not None
@@ -1140,11 +1136,7 @@ def _has_valid_core_usage(
             window is not None and window.has_usage_value
             for window in (five_hour, weekly)
         )
-    return (
-        main.available
-        and bool(main.windows)
-        and all(window.has_usage_value for window in main.windows)
-    )
+    return main.has_valid_usage
 
 
 def _pool_from_dict(

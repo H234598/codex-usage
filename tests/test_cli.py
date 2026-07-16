@@ -112,6 +112,24 @@ def test_successful_usage_validates_dynamic_main_pool(available, expected):
     assert _is_successful_usage(usage) is expected
 
 
+@pytest.mark.parametrize("field", ["allowed", "limit_reached"])
+def test_successful_usage_rejects_invalid_dynamic_main_flags(field):
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="weekly", remaining=80),),
+            **{field: "false"},
+        ),
+    )
+
+    assert _is_successful_usage(usage) is False
+
+
 def test_policy_commands_are_machine_readable_and_use_saved_usage(
     tmp_path, monkeypatch, capsys
 ):

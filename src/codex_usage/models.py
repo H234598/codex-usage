@@ -125,19 +125,44 @@ class UsagePool:
     availability_sources: tuple[str, ...] = field(default_factory=tuple)
 
     @property
+    def has_valid_usage(self) -> bool:
+        try:
+            return bool(
+                self.available is True
+                and (self.allowed is None or isinstance(self.allowed, bool))
+                and (
+                    self.limit_reached is None
+                    or isinstance(self.limit_reached, bool)
+                )
+                and isinstance(self.windows, tuple)
+                and self.windows
+                and all(
+                    isinstance(window, LimitWindow) and window.has_usage_value
+                    for window in self.windows
+                )
+            )
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+    @property
     def exhausted(self) -> bool:
-        if (
-            not isinstance(self.available, bool)
-            or not self.available
-            or (self.allowed is not None and not isinstance(self.allowed, bool))
-            or (self.limit_reached is not None and not isinstance(self.limit_reached, bool))
-            or self.allowed is False
-            or self.limit_reached is True
-        ):
+        if not isinstance(self.windows, tuple):
             return True
-        return any(
-            window.has_invalid_usage_value or window.remaining_percent == 0
-            for window in self.windows
+        if not self.windows:
+            return (
+                self.available is not True
+                or (self.allowed is not None and not isinstance(self.allowed, bool))
+                or (
+                    self.limit_reached is not None
+                    and not isinstance(self.limit_reached, bool)
+                )
+                or self.allowed is False
+                or self.limit_reached is True
+            )
+        if not self.has_valid_usage:
+            return True
+        return self.allowed is False or self.limit_reached is True or any(
+            window.remaining_percent == 0 for window in self.windows
         )
 
     def window_for_duration(self, duration_seconds: int) -> LimitWindow | None:

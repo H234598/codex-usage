@@ -109,6 +109,44 @@ def test_usage_pool_treats_invalid_control_flag_as_unusable(field):
     assert pool.exhausted is True
 
 
+@pytest.mark.parametrize(
+    ("available", "allowed", "limit_reached", "expected"),
+    [
+        (True, None, None, True),
+        (True, False, None, True),
+        (True, None, True, True),
+        (False, None, None, False),
+        (True, "false", None, False),
+        (True, None, "false", False),
+    ],
+)
+def test_usage_pool_validity_requires_strict_controls(
+    available, allowed, limit_reached, expected
+):
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(LimitWindow(name="weekly", remaining=97, percent=97),),
+        available=available,
+        allowed=allowed,
+        limit_reached=limit_reached,
+    )
+
+    assert pool.has_valid_usage is expected
+
+
+def test_empty_catalog_pool_is_unknown_not_exhausted():
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        available=True,
+        availability_sources=("model_catalog",),
+    )
+
+    assert pool.has_valid_usage is False
+    assert pool.exhausted is False
+
+
 def test_wham_keeps_main_and_spark_weekly_limits_separate():
     main, models = parse_wham_usage_pools(
         {
