@@ -22,6 +22,7 @@ from codex_usage.bridge import (
     _newest_known_usage,
     _parse_captured_at,
     _redact_url,
+    _sanitize_debug_number,
     bridge_token_for_account,
     bridge_token_matches,
     ingest_and_save,
@@ -71,6 +72,14 @@ def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
 @pytest.mark.parametrize("url", [None, [], {}, "http://[malformed"])
 def test_redact_url_rejects_malformed_external_values(url):
     assert _redact_url(url) == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    [float("inf"), float("-inf"), float("nan"), "9" * 5000],
+)
+def test_debug_number_sanitizer_rejects_non_finite_and_unbounded_values(value):
+    assert _sanitize_debug_number(value) is None
 
 
 @pytest.mark.parametrize("captured_at", [0, False, [], {}])
