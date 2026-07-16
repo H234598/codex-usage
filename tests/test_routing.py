@@ -301,6 +301,21 @@ def test_routing_rejects_truthy_non_boolean_paid_policy():
         )
 
 
+@pytest.mark.parametrize("max_age", [float("nan"), float("inf"), 600.0, "600"])
+def test_routing_rejects_non_integer_or_non_finite_age_limit(max_age):
+    with pytest.raises(
+        ValueError,
+        match="max_age_seconds must be a finite integer of at least 60",
+    ):
+        evaluate_routing(
+            _usage(main_windows=(_window("weekly", 80, 604800),)),
+            role="arbeitsbiene",
+            paid_overage_allowed=False,
+            now=NOW,
+            max_age_seconds=max_age,
+        )
+
+
 @pytest.mark.parametrize("remaining", [float("nan"), -1, 101])
 def test_routing_treats_invalid_main_percent_as_unknown(remaining):
     result = evaluate_routing(

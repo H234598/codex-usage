@@ -262,8 +262,12 @@ def _main_state(pool: UsagePool | None) -> tuple[str, dict[str, float]]:
 def _invalid_usage_reason(
     usage: AccountUsage, *, now: datetime, max_age_seconds: int
 ) -> str | None:
-    if isinstance(max_age_seconds, bool) or max_age_seconds < 60:
-        raise ValueError("max_age_seconds must be at least 60")
+    if (
+        not isinstance(max_age_seconds, int)
+        or isinstance(max_age_seconds, bool)
+        or max_age_seconds < 60
+    ):
+        raise ValueError("max_age_seconds must be a finite integer of at least 60")
     if usage.cache_invalidated:
         return "cache_invalidated"
     if usage.stale:
