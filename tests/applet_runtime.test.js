@@ -350,6 +350,19 @@ test("invalid pool control flags disable pool", () => {
   }
 });
 
+test("exhausted pool details do not look available", () => {
+  const applet = makeApplet();
+  const parts = applet._poolDetailParts({
+    available: true,
+    allowed: true,
+    limit_reached: true,
+    exhausted: false,
+    windows: [{ name: "weekly", remaining: 0 }],
+  }, "alpha", "click", "Spark", []);
+
+  assert.equal(parts.plain, "Spark erschöpft");
+});
+
 test("cache invalidation clears dynamic usage pools", () => {
   const applet = makeApplet();
   const invalidated = applet._clearInvalidatedUsage({

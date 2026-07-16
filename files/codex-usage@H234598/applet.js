@@ -3637,8 +3637,19 @@ CodexUsageApplet.prototype = {
         if (!pool) {
             return null;
         }
-        if (pool.available === false || pool.allowed === false) {
-            let unavailable = prefix + (pool.allowed === false ? " nicht freigegeben" : " nicht verfügbar");
+        if (
+            pool.available === false ||
+            pool.allowed === false ||
+            pool.limit_reached === true ||
+            pool.exhausted === true
+        ) {
+            let unavailable = prefix + (
+                pool.allowed === false
+                    ? " nicht freigegeben"
+                    : (pool.limit_reached === true || pool.exhausted === true
+                        ? " erschöpft"
+                        : " nicht verfügbar")
+            );
             return { plain: unavailable, markup: this._escapeMarkup(unavailable) };
         }
         let excluded = excludedDurations || [];
