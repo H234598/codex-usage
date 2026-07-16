@@ -645,6 +645,25 @@ test("invalid dynamic pool duration is rejected", () => {
   }, "main"), /invalid limit duration/);
 });
 
+test("oversized raw window duration cannot prove window identity", () => {
+  const applet = makeApplet();
+  const pool = applet._safePool({
+    key: "gpt-5.3-codex-spark",
+    windows: [{
+      name: "untrusted-window",
+      raw: '{"limit_window_seconds":315360001}',
+      remaining: 90,
+    }],
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    availability_sources: ["rate_limits"],
+  }, "gpt-5.3-codex-spark");
+
+  assert.equal(applet._poolIsUsable(pool), false);
+});
+
 test("pool availability must be an explicit boolean", () => {
   const applet = makeApplet();
   assert.throws(() => applet._safePool({

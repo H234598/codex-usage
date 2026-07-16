@@ -3401,7 +3401,7 @@ CodexUsageApplet.prototype = {
             return null;
         }
         let value = Number(match[1]);
-        if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
+        if (!Number.isFinite(value) || value <= 0 || value > 315360000 || !Number.isInteger(value)) {
             return null;
         }
         return value;
