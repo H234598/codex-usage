@@ -224,6 +224,8 @@ def _spark_value(usage: AccountUsage) -> str:
 def _usage_value(window: LimitWindow | None) -> str:
     if window is None:
         return "-"
+    if window.has_invalid_usage_value:
+        return "-"
     if _is_remaining_percent_window(window):
         return f"{window.remaining:.0f}% verbleibend"
     parts: list[str] = []
@@ -249,6 +251,8 @@ def _usage_value(window: LimitWindow | None) -> str:
 
 
 def _is_remaining_percent_window(window: LimitWindow) -> bool:
+    if window.has_invalid_usage_value:
+        return False
     remaining = _valid_percent(window.remaining)
     percent = _valid_percent(window.percent)
     if (

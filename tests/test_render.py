@@ -10,6 +10,7 @@ from codex_usage.render import (
     _is_finite_number,
     _is_remaining_percent_window,
     _remaining_percent,
+    _usage_value,
     render_account_values,
     render_json,
     render_table,
@@ -198,6 +199,19 @@ def test_render_fails_closed_for_invalid_remaining_percent_values():
     ):
         assert _remaining_percent(window) is None
         assert _is_remaining_percent_window(window) is False
+
+
+def test_render_hides_percent_when_another_usage_field_is_invalid():
+    window = LimitWindow(
+        name="5h",
+        used="bad",
+        limit=100,
+        remaining=97,
+        percent=97,
+    )
+
+    assert _usage_value(window) == "-"
+    assert _is_remaining_percent_window(window) is False
 
 
 def test_render_does_not_format_boolean_as_number():
