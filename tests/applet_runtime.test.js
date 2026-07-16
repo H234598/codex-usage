@@ -191,6 +191,19 @@ test("remaining percentage prefers absolute used and limit values", () => {
   assert.equal(applet._remainingPercent({ remaining: 97, percent: 97 }), 97);
 });
 
+test("window identity text is not normalized into a known name", () => {
+  const applet = makeApplet();
+
+  assert.throws(
+    () => applet._safeWindow({ name: "weekly\u0000", remaining: 90 }),
+    /text value exceeds strict limit/
+  );
+  assert.throws(
+    () => applet._safeWindow({ name: "weekly" + "x".repeat(40), remaining: 90 }),
+    /text value exceeds strict limit/
+  );
+});
+
 test("invalid absolute limit pairs cannot become visible usage", () => {
   const applet = makeApplet();
   const window = applet._safeWindow({
@@ -584,6 +597,27 @@ test("ok payload without usage values fails closed", () => {
   assert.equal(usage.weekly, null);
   assert.equal(usage.main, null);
   assert.deepEqual(Object.keys(usage.models), []);
+});
+
+test("unknown window identity cannot mark payload as usable", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    captured_at: new Date().toISOString(),
+    main: {
+      key: "main",
+      windows: [{ name: "untrusted-window", remaining: 97 }],
+      available: true,
+      exhausted: false,
+      availability_sources: ["usage"],
+    },
+    status: "ok",
+  }]);
+
+  assert.equal(usage.status, "error");
+  assert.equal(usage.error, "usage values missing");
+  assert.equal(usage.cache_invalidated, true);
+  assert.equal(usage.main, null);
 });
 
 test("invalid usage status clears values before rendering", () => {

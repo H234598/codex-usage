@@ -2738,7 +2738,7 @@ CodexUsageApplet.prototype = {
             remaining = null;
         }
         return {
-            name: this._safeText(value.name, 40),
+            name: this._strictText(value.name, 40),
             duration_seconds: this._safeDuration(value.duration_seconds),
             used: used,
             limit: limit,
@@ -2868,15 +2868,17 @@ CodexUsageApplet.prototype = {
 
     _hasPayloadUsageValue: function(fiveHour, weekly, main, models) {
         if (main) {
-            return main.available === true &&
+                return main.available === true &&
                 Array.isArray(main.windows) &&
                 main.windows.length > 0 &&
                 main.windows.every(Lang.bind(this, function(window) {
-                    return this._windowHasUsageValue(window);
+                    return this._windowHasUsageValue(window) &&
+                        this._windowIdentityIsKnown(window);
                 }));
         }
         return [fiveHour, weekly].some(Lang.bind(this, function(window) {
-            return this._windowHasUsageValue(window);
+            return this._windowHasUsageValue(window) &&
+                this._windowIdentityIsKnown(window);
         }));
     },
 
