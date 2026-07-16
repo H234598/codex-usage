@@ -363,7 +363,15 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
         if usage.state_generation != generation:
             return None
         return usage
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
         return None
 
 

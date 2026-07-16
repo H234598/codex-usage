@@ -828,6 +828,13 @@ def test_load_usage_snapshot_ignores_invalid_json(tmp_path):
     assert load_usage_snapshot("privat", tmp_path) is None
 
 
+def test_load_usage_snapshot_ignores_deeply_nested_json(tmp_path):
+    nested_json = "[" * 2_000 + "]" * 2_000
+    (tmp_path / "privat.json").write_text(nested_json, encoding="utf-8")
+
+    assert load_usage_snapshot("privat", tmp_path) is None
+
+
 def test_remove_account_state_deletes_current_snapshot_and_debug(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     usage = AccountUsage(
