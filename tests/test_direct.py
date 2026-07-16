@@ -544,6 +544,29 @@ def test_select_stable_wham_usage_rejects_conflicting_spark_windows():
         _select_stable_wham_usage([response(1), response(1), response(99)])
 
 
+@pytest.mark.parametrize("field", ["allowed", "limit_reached"])
+def test_select_stable_wham_usage_rejects_conflicting_main_limit_flags(field):
+    def response(value: bool) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                field: value,
+                "primary_window": {
+                    "used_percent": 3,
+                    "limit_window_seconds": 18_000,
+                },
+                "secondary_window": {
+                    "used_percent": 45,
+                    "limit_window_seconds": 604_800,
+                },
+            },
+        }
+
+    with pytest.raises(DirectFetchError, match="main limit flags were inconsistent"):
+        _select_stable_wham_usage([response(False), response(False), response(True)])
+
+
 def test_select_stable_wham_usage_rejects_newer_partial_after_complete_quorum():
     complete = {
         "user_id": "user-test",
