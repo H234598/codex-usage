@@ -810,6 +810,8 @@ def _fetch_stable_wham_usage(
 def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     if _has_conflicting_main_limit_flags(payloads):
         raise DirectFetchError("direct response main limit flags were inconsistent across samples")
+    if _has_malformed_main_limit_structure(payloads):
+        raise DirectFetchError("direct response main limits were malformed")
     if _has_malformed_spark_limit_structure(payloads):
         raise DirectFetchError("direct response Spark limits were malformed")
     groups: dict[tuple, list[tuple[int, dict[str, Any]]]] = {}
@@ -891,6 +893,13 @@ def _has_conflicting_spark_limits(payloads: list[dict[str, Any]]) -> bool:
 def _has_conflicting_main_limit_flags(payloads: list[dict[str, Any]]) -> bool:
     signatures = [_main_limit_signature(payload) for payload in payloads]
     return len(set(signatures)) > 1
+
+
+def _has_malformed_main_limit_structure(payloads: list[dict[str, Any]]) -> bool:
+    return any(
+        "rate_limit" in payload and not isinstance(payload["rate_limit"], dict)
+        for payload in payloads
+    )
 
 
 def _has_malformed_spark_limit_structure(payloads: list[dict[str, Any]]) -> bool:

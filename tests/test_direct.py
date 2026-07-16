@@ -522,6 +522,18 @@ def test_select_stable_wham_usage_does_not_choose_empty_majority():
         _select_stable_wham_usage([complete, empty, empty])
 
 
+@pytest.mark.parametrize("value", [[], "malformed", 42, None])
+def test_select_stable_wham_usage_rejects_malformed_main_limit_structure(value):
+    response = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": value,
+    }
+
+    with pytest.raises(DirectFetchError, match="main limits were malformed"):
+        _select_stable_wham_usage([response, response, response])
+
+
 def test_select_stable_wham_usage_rejects_conflicting_partial_windows():
     def response(duration: int, used: int) -> dict:
         return {
