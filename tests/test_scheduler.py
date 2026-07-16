@@ -14,6 +14,7 @@ from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.scheduler import (
     _ambiguous_direct_accounts,
     _apply_watchdog_block,
+    _fetch_one,
     _is_more_conservative_direct_usage,
     _raw_number,
     _remaining_percent,
@@ -575,6 +576,31 @@ def test_fetch_all_invalidates_cache_after_unexpected_fetch_failure(monkeypatch)
     assert result[0].cache_invalidated is True
     assert result[0].five_hour is None
     assert result[0].weekly is None
+
+
+def test_fetch_one_rejects_malformed_backend_override_fail_closed():
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        backend="direct",
+    )
+
+    result = _fetch_one(
+        AppConfig(accounts=(account,)),
+        account,
+        headed=False,
+        direct=False,
+        backend_override=[],
+        auth_json_path=None,
+    )
+
+    assert result.status == AccountStatus.ERROR
+    assert result.error == "fetch failed: ValueError"
+    assert result.backend_used is None
+    assert result.cache_invalidated is True
+    assert result.five_hour is None
+    assert result.weekly is None
 
 
 def test_fetch_all_expires_reset_windows_before_return(monkeypatch):

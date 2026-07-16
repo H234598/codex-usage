@@ -230,8 +230,13 @@ def _fetch_one(
     global_lock_held: bool = False,
     reject_ambiguous_backend_identity: bool = False,
 ) -> AccountUsage:
+    backend: object = None
     try:
-        backend = "direct" if direct else (backend_override or account.backend)
+        backend = "direct" if direct else (
+            backend_override if backend_override is not None else account.backend
+        )
+        if not isinstance(backend, str) or backend not in AUTHENTICATED_BACKENDS:
+            raise ValueError("invalid backend selection")
         use_auth_backend = (
             direct
             or backend == "app-server"
@@ -296,7 +301,11 @@ def _fetch_one(
             status=AccountStatus.ERROR,
             error=f"fetch failed: {type(exc).__name__}",
             backend_configured=account.backend,
-            backend_used=backend,
+            backend_used=(
+                backend
+                if isinstance(backend, str) and backend in AUTHENTICATED_BACKENDS
+                else None
+            ),
             cache_invalidated=True,
         )
 
