@@ -350,6 +350,8 @@ test("dynamic pools survive validation and drive Spark panel slots", () => {
   const [usage] = applet._validatePayload([{
     account: "alpha",
     label: "Alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-16T10:00:00+00:00",
     five_hour: null,
     weekly: null,
@@ -392,6 +394,8 @@ test("known exhausted main pool keeps its zero usage value", () => {
   const applet = makeApplet();
   const [usage] = applet._validatePayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-16T10:00:00+00:00",
     five_hour: null,
     weekly: null,
@@ -460,6 +464,8 @@ test("unusable Spark pools cannot drive panel sources", () => {
     const [usage] = applet._validatePayload([{
       account: "alpha",
       label: "Alpha",
+      backend_configured: "direct",
+      backend_used: "direct",
       captured_at: "2026-07-16T10:00:00+00:00",
       five_hour: null,
       weekly: null,
@@ -3273,6 +3279,52 @@ test("payload validation rejects unknown backend provenance", () => {
     }]),
     /invalid backend provenance/
   );
+});
+
+test("payload usage without complete backend provenance fails closed", () => {
+  for (const provenance of [
+    { backend_used: "direct" },
+    { backend_configured: "direct" },
+    {},
+  ]) {
+    const applet = makeApplet();
+    const [usage] = applet._validatePayload([{
+      account: "alpha",
+      ...provenance,
+      five_hour: { name: "5h", remaining: 80 },
+      weekly: { name: "weekly", remaining: 60 },
+      status: "ok",
+    }]);
+
+    assert.equal(usage.status, "error");
+    assert.equal(usage.error, "backend provenance missing");
+    assert.equal(usage.cache_invalidated, true);
+    assert.equal(usage.five_hour, null);
+    assert.equal(usage.weekly, null);
+  }
+
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    backend_configured: "direct",
+    backend_used: "",
+    models: {
+      "gpt-5.3-codex-spark": {
+        key: "gpt-5.3-codex-spark",
+        windows: [{ name: "weekly", duration_seconds: 604800, remaining: 80 }],
+        available: true,
+        allowed: true,
+        limit_reached: false,
+        exhausted: false,
+        availability_sources: ["rate_limits"],
+      },
+    },
+    status: "partial",
+  }]);
+
+  assert.equal(usage.status, "error");
+  assert.equal(usage.error, "backend provenance missing");
+  assert.deepEqual(Object.keys(usage.models), []);
 });
 
 test("backend account maps preserve prototype-like account ids", () => {

@@ -2589,11 +2589,30 @@ CodexUsageApplet.prototype = {
             let weekly = this._safeWindow(item.weekly);
             let main = this._safePool(item.main, "main");
             let models = this._safePools(item.models);
+            let backendConfigured = this._validatedBackend(item.backend_configured);
+            let backendUsed = this._validatedBackend(item.backend_used, true);
             let stale = item.stale === true || staleFlagInvalid;
             let cacheInvalidated = item.cache_invalidated === true || cacheInvalidatedFlagInvalid;
+            let hasPayloadUsageValue = this._hasPayloadUsageValue(
+                fiveHour,
+                weekly,
+                main,
+                models
+            ) || this._hasModelPayloadUsageValue(models);
+            if (hasPayloadUsageValue && (!backendConfigured || !backendUsed)) {
+                status = "error";
+                error = error || "backend provenance missing";
+                stale = true;
+                cacheInvalidated = true;
+                fiveHour = null;
+                weekly = null;
+                main = null;
+                models = Object.create(null);
+            }
             if (
                 status === "ok" &&
-                !this._hasPayloadUsageValue(fiveHour, weekly, main, models)
+                !this._hasPayloadUsageValue(fiveHour, weekly, main, models) &&
+                !this._hasModelPayloadUsageValue(models)
             ) {
                 status = "error";
                 error = error || "usage values missing";
@@ -2617,8 +2636,8 @@ CodexUsageApplet.prototype = {
                 blocked_until: this._safeText(item.blocked_until, 80),
                 blocked_reason: this._safeText(item.blocked_reason, MAX_TEXT_CHARS),
                 auth_access_expires_at: this._safeText(item.auth_access_expires_at, 80),
-                backend_configured: this._validatedBackend(item.backend_configured),
-                backend_used: this._validatedBackend(item.backend_used, true),
+                backend_configured: backendConfigured,
+                backend_used: backendUsed,
                 backend_user_id: this._safeText(item.backend_user_id, 256),
                 backend_account_id: this._safeText(item.backend_account_id, 256),
                 fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
@@ -2812,6 +2831,15 @@ CodexUsageApplet.prototype = {
         }
         return [fiveHour, weekly].some(Lang.bind(this, function(window) {
             return this._windowHasUsageValue(window);
+        }));
+    },
+
+    _hasModelPayloadUsageValue: function(models) {
+        if (!models || typeof models !== "object") {
+            return false;
+        }
+        return Object.keys(models).some(Lang.bind(this, function(key) {
+            return this._poolIsUsable(models[key]);
         }));
     },
 
