@@ -271,7 +271,7 @@ def _fetch_one(
             status=AccountStatus.ERROR,
             error=f"fetch failed: {type(exc).__name__}",
             backend_configured=account.backend,
-            backend_used=backend_override or account.backend,
+            backend_used=backend,
             cache_invalidated=True,
         )
 

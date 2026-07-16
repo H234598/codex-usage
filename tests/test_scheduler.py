@@ -454,6 +454,26 @@ def test_fetch_all_invalidates_cache_after_unexpected_fetch_failure(monkeypatch)
     assert result[0].weekly is None
 
 
+def test_direct_override_failure_keeps_direct_provenance(monkeypatch):
+    account = Account(
+        id="broken",
+        label="Broken",
+        profile_dir="/tmp/broken",
+        backend="browser",
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise RuntimeError("backend crashed")
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fail_fetch)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,), direct=True)
+
+    assert result[0].status == AccountStatus.ERROR
+    assert result[0].backend_configured == "browser"
+    assert result[0].backend_used == "direct"
+
+
 def test_fetch_all_clears_values_after_snapshot_save_failure(monkeypatch):
     account = Account(id="broken", label="Broken", profile_dir="/tmp/broken")
     usage = AccountUsage(
