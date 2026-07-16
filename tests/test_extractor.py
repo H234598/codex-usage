@@ -1136,6 +1136,87 @@ def test_extract_windows_discards_negative_absolute_usage():
     assert weekly is None
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"used": -1, "limit": 100, "percent": 97},
+        {"used": -1, "limit": 100, "used_percent": 3},
+        {"used": -1, "limit": 100, "remaining_percent": 97},
+    ],
+)
+def test_extract_windows_discards_percentages_beside_negative_usage(fields):
+    candidate = JsonCandidate(
+        url="https://example.test/usage",
+        payload={"five_hour_usage_limit": fields},
+    )
+
+    five, _weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert five is not None
+    assert five.limit == 100
+    assert five.remaining is None
+    assert five.percent is None
+    assert five.has_usage_value is False
+
+
+def test_extract_windows_discards_percentage_beside_negative_remaining():
+    candidate = JsonCandidate(
+        url="https://example.test/usage",
+        payload={
+            "five_hour_usage_limit": {
+                "remaining": -1,
+                "limit": 100,
+                "percent": 97,
+            }
+        },
+    )
+
+    five, _weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert five is not None
+    assert five.remaining == 0
+    assert five.percent == 0
+    assert five.has_usage_value is True
+
+
+def test_extract_windows_discards_percentage_beside_out_of_range_remaining():
+    candidate = JsonCandidate(
+        url="https://example.test/usage",
+        payload={
+            "five_hour_usage_limit": {
+                "remaining": 101,
+                "percent": 97,
+                "reset_at": "2026-07-13T20:00:00+02:00",
+            }
+        },
+    )
+
+    five, _weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert five is not None
+    assert five.remaining is None
+    assert five.percent is None
+    assert five.has_usage_value is False
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "5-hour limit -1 / 100 used 3% used Reset 08.06.2026 04:26",
+        "5-hour limit -1 / 100 used 97% remaining Reset 08.06.2026 04:26",
+        "5-hour limit -1 / 100 used <div style=\"width: 97%;\"></div>",
+        "5-hour limit -1 remaining 97% remaining Reset 08.06.2026 04:26",
+    ],
+)
+def test_extract_text_window_discards_percentages_beside_invalid_absolute_values(body):
+    five, _weekly = extract_windows(body_text=body)
+
+    assert five is not None
+    assert five.remaining is None
+    assert five.percent is None
+    assert five.has_usage_value is False
+
+
 def test_extract_windows_normalizes_negative_remaining_to_exhausted():
     candidates = [
         JsonCandidate(
@@ -1984,6 +2065,35 @@ def test_extract_windows_rejects_conflicting_wham_percentage_fields():
 
     assert five is not None
     assert five.has_usage_value is False
+    assert five.reset_at is not None
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"used": -1, "used_percent": 3},
+        {"remaining": -1, "remaining_percent": 97},
+    ],
+)
+def test_extract_windows_rejects_negative_wham_counters_beside_percentages(fields):
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={
+            "rate_limit": {
+                "primary_window": {
+                    **fields,
+                    "limit_window_seconds": 18_000,
+                    "reset_at": "2026-06-08T06:50:00+02:00",
+                }
+            }
+        },
+    )
+
+    five, _weekly = extract_windows(body_text="", json_candidates=[candidate])
+
+    assert five is not None
+    assert five.has_usage_value is False
+    assert five.percent is None
     assert five.reset_at is not None
 
 

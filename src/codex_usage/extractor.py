@@ -552,6 +552,27 @@ def _window_from_wham_rate_limit_mapping(
         return None
 
     flat = _flatten_mapping(obj)
+    absolute_used = _pick_number(
+        flat,
+        ("used", "usage", "current", "consumed", "num_used"),
+        exclude_suffixes=(
+            "_percent",
+            "_percentage",
+            "_ratio",
+            "_seconds",
+            "_minutes",
+            "_hours",
+        ),
+    )
+    absolute_remaining = _pick_number(
+        flat,
+        ("remaining", "left", "available"),
+        exclude_suffixes=("_percent", "_percentage", "_ratio"),
+    )
+    invalid_absolute_counter = (
+        (absolute_used is not None and absolute_used < 0)
+        or (absolute_remaining is not None and absolute_remaining < 0)
+    )
     used_percent_hints = (
         "used_percent",
         "used_percentage",
@@ -611,6 +632,17 @@ def _window_from_wham_rate_limit_mapping(
     if reset_at is None:
         reset_after = _pick_number(flat, RELATIVE_RESET_HINTS)
         reset_at = _relative_reset_at(reset_after, captured_at)
+    if invalid_absolute_counter:
+        # A contradictory absolute counter invalidates percentage usage from
+        # this WHAM object; retain only independent reset metadata.
+        if reset_at is None:
+            return None
+        return LimitWindow(
+            name="5h" if target == "five_hour" else "weekly",
+            reset_at=reset_at,
+            raw=raw,
+            source=source,
+        )
     if used_percent is None and remaining_percent is None and reset_at is None:
         return None
     if not _percentages_are_complementary(used_percent, remaining_percent):
@@ -871,13 +903,45 @@ def _window_from_mapping(
         has_explicit_remaining_percent = False
     invalid_absolute_limit = used is not None and limit is not None and limit <= 0
     invalid_absolute_usage = used is not None and used < 0
+    invalid_absolute_remaining = remaining is not None and (
+        remaining < 0
+        or (limit is not None and limit > 0 and remaining > limit)
+        or (
+            limit is None
+            and remaining > 100
+            and used_percent is None
+            and remaining_percent is None
+            and remaining_ratio is None
+        )
+    )
     if invalid_absolute_usage:
-        # Absolute usage counters cannot be negative; keep other trustworthy
-        # fields available for a reset-only or explicit percentage result.
+        # A contradictory absolute counter invalidates every usage value from
+        # this object. Keep only independent limit/reset metadata.
         used = None
-        # An unqualified remaining counter belongs to the invalid absolute
-        # pair and must not become a plausible percentage on its own.
         remaining = None
+        used_percent = None
+        remaining_percent = None
+        remaining_ratio = None
+        percent = None
+        ratio = None
+        has_explicit_remaining_percent = False
+        explicit_remaining_percent = None
+    elif invalid_absolute_remaining:
+        # A negative or out-of-range absolute remaining counter must not be
+        # masked by a separate optimistic percentage from the same object.
+        used = None
+        used_percent = None
+        remaining_percent = None
+        remaining_ratio = None
+        percent = None
+        ratio = None
+        has_explicit_remaining_percent = False
+        explicit_remaining_percent = None
+        if remaining < 0 and limit is not None and limit > 0:
+            remaining = 0
+            percent = 0
+        else:
+            remaining = None
     if invalid_absolute_limit:
         # A non-positive absolute denominator cannot produce a valid usage
         # value. An unqualified `remaining` field is ambiguous here and must
@@ -1008,6 +1072,12 @@ def _extract_text_window(
         remaining = _extract_remaining(chunk)
         used_percent = _extract_used_percent(chunk)
         reset_at = _extract_reset_at(chunk, captured_at)
+        invalid_absolute_usage = used is not None and used < 0
+        invalid_absolute_remaining = remaining is not None and (
+            remaining < 0
+            or (limit is not None and limit > 0 and remaining > limit)
+            or (limit is None and remaining > 100 and used_percent is None)
+        )
 
         if used is not None and limit is not None and limit <= 0:
             used = None
@@ -1017,10 +1087,14 @@ def _extract_text_window(
             # Explicit `%` and progress-bar values are processed separately.
             remaining = None
 
-        if used is not None and used < 0:
+        if invalid_absolute_usage or invalid_absolute_remaining:
+            # Do not let a contradictory absolute value fall back to a
+            # positive text percentage or rendered progress bar.
             used = None
             remaining = None
             percent = None
+            used_percent = None
+            progress_percent = None
 
         if used is not None and limit is not None:
             remaining = max(limit - used, 0)
