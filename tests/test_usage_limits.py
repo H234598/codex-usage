@@ -51,6 +51,7 @@ def test_remaining_percent_prefers_absolute_usage_over_percent():
         (LimitWindow(name="5h", remaining=97), True),
         (LimitWindow(name="5h", percent=97), True),
         (LimitWindow(name="5h", remaining=690), False),
+        (LimitWindow(name="5h", remaining=690, percent=97), True),
         (LimitWindow(name="5h", remaining=55, percent=69), False),
         (LimitWindow(name="5h", used=-1, limit=100, remaining=80), False),
         (LimitWindow(name="5h", percent=float("nan")), False),
@@ -58,6 +59,13 @@ def test_remaining_percent_prefers_absolute_usage_over_percent():
 )
 def test_has_usage_value_requires_verified_remaining_percentage(window, expected):
     assert window.has_usage_value is expected
+
+
+def test_invalid_remaining_cannot_override_percent():
+    window = LimitWindow(name="5h", remaining=-1, percent=97)
+
+    assert window.has_invalid_usage_value is True
+    assert window.remaining_percent is None
 
 
 def test_usage_pool_exhaustion_prefers_absolute_usage_over_percent():

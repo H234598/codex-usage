@@ -246,6 +246,8 @@ def _main_state(pool: UsagePool | None) -> tuple[str, dict[str, float]]:
         return "unknown", {}
     remaining: dict[str, float] = {}
     for window in pool.windows:
+        if window.has_invalid_usage_value:
+            return "unknown", {}
         value = window.remaining_percent
         if value is None:
             return "unknown", {}

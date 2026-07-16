@@ -347,6 +347,27 @@ def test_routing_treats_invalid_main_percent_as_unknown(remaining):
     assert result["reason"] == "main_limit_unknown"
 
 
+def test_routing_rejects_invalid_remaining_with_percent():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(
+                LimitWindow(
+                    name="weekly",
+                    remaining=-1,
+                    percent=97,
+                    duration_seconds=604800,
+                ),
+            )
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
 @pytest.mark.parametrize("flag", ["allowed", "limit_reached", "available"])
 def test_routing_fails_closed_for_invalid_main_pool_flags(flag):
     main = UsagePool(

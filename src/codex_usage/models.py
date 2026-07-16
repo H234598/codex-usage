@@ -47,6 +47,8 @@ class LimitWindow:
 
     @property
     def remaining_percent(self) -> float | None:
+        if self.has_invalid_usage_value:
+            return None
         if any(
             value is not None and _finite_number(value) is None
             for value in (self.used, self.limit, self.remaining, self.percent)
@@ -96,6 +98,13 @@ class LimitWindow:
         if self.remaining is not None and remaining is not None and remaining < 0:
             return True
         if self.remaining is not None and remaining is None:
+            return True
+        if (
+            limit is None
+            and remaining is not None
+            and remaining > 100
+            and self.percent is None
+        ):
             return True
         return bool(
             limit is not None
