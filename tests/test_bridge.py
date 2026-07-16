@@ -32,7 +32,7 @@ from codex_usage.bridge import (
     write_bridge_extension,
 )
 from codex_usage.config import AppConfig, add_or_update_account, save_config
-from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
+from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.state import (
     load_current_usage,
     load_state_generation,
@@ -931,6 +931,60 @@ def test_latest_rejects_cached_values_after_auth_identity_changes(tmp_path):
     assert invalidated[0].cache_invalidated is True
     assert invalidated[0].five_hour is None
     assert invalidated[0].weekly is None
+
+
+def test_latest_rejects_identity_free_dynamic_cached_values(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "id_token": _jwt_with_claims(
+                        {
+                            "https://api.openai.com/auth": {
+                                "chatgpt_user_id": "current-user",
+                            }
+                        }
+                    ),
+                    "account_id": "current-account",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        backend="direct",
+        auth_json_path=str(auth_path),
+    )
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime.now().astimezone(),
+            status=AccountStatus.OK,
+            main=UsagePool(
+                key="main",
+                display_name="Codex",
+                windows=(LimitWindow(name="weekly", remaining=72),),
+            ),
+        ),
+        snapshot_dir,
+    )
+
+    result = load_latest_usages(config, snapshot_dir)
+
+    assert len(result) == 1
+    assert result[0].cache_invalidated is True
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+    assert result[0].main is None
+    assert result[0].models == ()
 
 
 def test_latest_discards_foreign_browser_values_with_shared_user_id(tmp_path):
