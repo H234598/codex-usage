@@ -1077,6 +1077,8 @@ def test_load_usage_snapshot_disables_pool_with_invalid_control_flag(tmp_path, f
     spark = loaded.model_pool("gpt-5.3-codex-spark")
     assert spark is not None
     assert spark.available is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
 
 
 def test_load_usage_snapshot_honors_exhausted_pool_flag(tmp_path):
@@ -1110,6 +1112,8 @@ def test_load_usage_snapshot_honors_exhausted_pool_flag(tmp_path):
     spark = loaded.model_pool("gpt-5.3-codex-spark")
     assert spark is not None
     assert spark.available is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
 
 
 def test_load_usage_snapshot_rejects_numeric_string_values(tmp_path):

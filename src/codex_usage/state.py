@@ -538,6 +538,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         model_pools = ()
         values_captured_at = None
         cache_invalidated = True
+    forced_stale = False
     if cache_invalidated:
         five_hour = None
         weekly = None
@@ -546,6 +547,24 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         values_captured_at = None
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
+    if status == AccountStatus.OK and not _has_valid_core_usage(
+        five_hour,
+        weekly,
+        main,
+    ):
+        status = AccountStatus.PARTIAL
+        missing_error = "missing cached usage value"
+        error = f"{error}; {missing_error}" if error else missing_error
+        forced_stale = True
+        cache_invalidated = True
+        five_hour = None
+        weekly = None
+        main = None
+        model_pools = tuple(
+            replace(pool, windows=(), available=False)
+            for pool in model_pools
+        )
+        values_captured_at = None
     return AccountUsage(
         account_id=_snapshot_text(payload["account"], limit=64),
         label=_snapshot_text(payload.get("label") or payload["account"], limit=120),
@@ -584,6 +603,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             or status_missing
             or bool(metadata_errors)
             or cache_invalidated
+            or forced_stale
         ),
         cache_invalidated=cache_invalidated,
         state_generation=_optional_state_generation(payload.get("state_generation")),
@@ -1038,6 +1058,23 @@ def _window_from_dict(
     if expected_kind is not None and not _window_matches_expected_kind(window, expected_kind):
         return None
     return window
+
+
+def _has_valid_core_usage(
+    five_hour: LimitWindow | None,
+    weekly: LimitWindow | None,
+    main: UsagePool | None,
+) -> bool:
+    if main is None:
+        return any(
+            window is not None and window.has_usage_value
+            for window in (five_hour, weekly)
+        )
+    return (
+        main.available
+        and bool(main.windows)
+        and all(window.has_usage_value for window in main.windows)
+    )
 
 
 def _pool_from_dict(
