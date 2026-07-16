@@ -614,14 +614,24 @@ def _watch_cycle_is_healthy(
                 or usage.cache_invalidated is not False
             ):
                 return False
-            if not any(
-                window is not None and window.has_usage_value
-                for window in (usage.five_hour, usage.weekly)
-            ):
+            if not _has_usable_core_usage(usage):
                 return False
     except (AttributeError, TypeError, ValueError):
         return False
     return True
+
+
+def _has_usable_core_usage(usage: AccountUsage) -> bool:
+    if usage.main is not None:
+        return bool(
+            usage.main.available
+            and usage.main.windows
+            and all(window.has_usage_value for window in usage.main.windows)
+        )
+    return any(
+        window is not None and window.has_usage_value
+        for window in (usage.five_hour, usage.weekly)
+    )
 
 
 def watch(

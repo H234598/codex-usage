@@ -18,6 +18,7 @@ from codex_usage.scheduler import (
     _raw_number,
     _remaining_percent,
     _stabilize_authenticated_usage,
+    _watch_cycle_is_healthy,
     _window_duration_seconds,
     _window_is_exhausted,
     fetch_all,
@@ -2599,6 +2600,25 @@ def test_watchdog_blocks_exhausted_window_without_usable_reset_time():
     assert blocked.status == AccountStatus.BLOCKED
     assert blocked.blocked_until is None
     assert blocked.blocked_reason == "usage limit reached: 5h; reset time unknown"
+
+
+@pytest.mark.parametrize("available, expected", [(True, True), (False, False)])
+def test_watch_cycle_health_validates_dynamic_main_pool(available, expected):
+    account = Account(id="dynamic", label="Dynamic", profile_dir="/tmp/dynamic")
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            available=available,
+            windows=(LimitWindow(name="weekly", remaining=80),),
+        ),
+    )
+
+    assert _watch_cycle_is_healthy([usage], [account]) is expected
 
 
 def test_watchdog_blocks_exhausted_dynamic_main_window():
