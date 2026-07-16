@@ -700,7 +700,9 @@ def _watch_cycle_is_healthy(
                 and backend_provenance_matches_configured(usage, account.backend)
             ):
                 return False
-            if not _has_usable_core_usage(usage):
+            if not _has_usable_core_usage(usage) or not _watch_core_resets_current(
+                usage
+            ):
                 return False
     except (AttributeError, TypeError, ValueError):
         return False
@@ -714,6 +716,31 @@ def _has_usable_core_usage(usage: AccountUsage) -> bool:
         window is not None and window.has_usage_value
         for window in (usage.five_hour, usage.weekly)
     )
+
+
+def _watch_core_resets_current(usage: AccountUsage) -> bool:
+    now = datetime.now(tz=LOCAL_TZ)
+    windows = (
+        usage.main.windows
+        if usage.main is not None
+        else tuple(
+            window
+            for window in (usage.five_hour, usage.weekly)
+            if window is not None
+        )
+    )
+    for window in windows:
+        reset_at = window.reset_at
+        if reset_at is None:
+            continue
+        if not isinstance(reset_at, datetime) or reset_at.tzinfo is None:
+            return False
+        try:
+            if reset_at <= now:
+                return False
+        except (OverflowError, TypeError, ValueError):
+            return False
+    return True
 
 
 def _watch_failure_usages(
