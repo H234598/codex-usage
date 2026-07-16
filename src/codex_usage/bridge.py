@@ -404,13 +404,10 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
         if not url:
             continue
         key = (str(item.get("source") or ""), url)
-        sequence = item.get("requestSequence")
-        if isinstance(sequence, bool):
-            sequence = None
-        elif isinstance(sequence, int) and sequence >= 0:
-            pass
-        elif isinstance(sequence, str) and sequence.isdecimal():
-            sequence = int(sequence)
+        if "requestSequence" in item:
+            sequence = item["requestSequence"]
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+                continue
         else:
             sequence = None
         previous_sequence = response_sequences.get(key)

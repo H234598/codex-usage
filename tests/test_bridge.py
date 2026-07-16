@@ -2558,6 +2558,30 @@ def test_json_candidates_keep_each_response_url():
     ]
 
 
+@pytest.mark.parametrize(
+    "request_sequence",
+    (None, True, False, -1, 1.5, "1", "", "invalid", [], {}),
+)
+def test_json_candidates_reject_malformed_request_sequence(request_sequence):
+    candidates = _json_candidates_from_payload(
+        {
+            "apiResponses": [
+                {
+                    "url": "https://example.test/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
+                    "requestSequence": request_sequence,
+                    "bodyText": json.dumps({"usage": {}}),
+                }
+            ]
+        }
+    )
+
+    assert candidates == []
+
+
 def test_usage_from_ingest_payload_prefers_latest_response_across_sources():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
 
