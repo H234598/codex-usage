@@ -661,7 +661,8 @@ def _watch_cycle_is_healthy(
     accounts: Iterable[Account],
 ) -> bool:
     results = list(usages)
-    expected = tuple(account.id for account in accounts)
+    account_list = list(accounts)
+    expected = tuple(account.id for account in account_list)
     if not expected:
         return True
     if len(results) != len(expected):
@@ -669,6 +670,7 @@ def _watch_cycle_is_healthy(
     try:
         if {usage.account_id for usage in results} != set(expected):
             return False
+        accounts_by_id = {account.id: account for account in account_list}
         for usage in results:
             if (
                 not isinstance(usage, AccountUsage)
@@ -676,6 +678,13 @@ def _watch_cycle_is_healthy(
                 or usage.error is not None
                 or usage.stale is not False
                 or usage.cache_invalidated is not False
+            ):
+                return False
+            account = accounts_by_id.get(usage.account_id)
+            if account is None or not (
+                usage.backend_configured == account.backend
+                and usage.backend_used in AUTHENTICATED_BACKENDS | {"browser"}
+                and backend_provenance_matches_configured(usage, account.backend)
             ):
                 return False
             if not _has_usable_core_usage(usage):
@@ -692,6 +701,44 @@ def _has_usable_core_usage(usage: AccountUsage) -> bool:
         window is not None and window.has_usage_value
         for window in (usage.five_hour, usage.weekly)
     )
+
+
+def _watch_failure_usages(
+    accounts: Iterable[Account],
+    attempted: Iterable[AccountUsage] | None,
+    *,
+    error: str,
+) -> list[AccountUsage]:
+    try:
+        attempted_by_id = {
+            usage.account_id: usage
+            for usage in (attempted or ())
+            if isinstance(usage, AccountUsage)
+        }
+    except (AttributeError, TypeError, ValueError):
+        attempted_by_id = {}
+    captured_at = datetime.now(tz=LOCAL_TZ)
+    failures: list[AccountUsage] = []
+    for account in accounts:
+        attempted_usage = attempted_by_id.get(account.id)
+        detail = (
+            attempted_usage.error
+            if attempted_usage is not None and attempted_usage.error
+            else error
+        )
+        detail = " ".join(str(detail).split())[:240] or "watch cycle failed"
+        failures.append(
+            AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                status=AccountStatus.ERROR,
+                error=detail,
+                backend_configured=account.backend,
+                cache_invalidated=True,
+            )
+        )
+    return failures
 
 
 def watch(
@@ -724,6 +771,7 @@ def watch(
     try:
         while not stop_event.is_set():
             started = time.monotonic()
+            usages: list[AccountUsage] = []
             try:
                 usages = fetch_all(
                     config,
@@ -734,13 +782,13 @@ def watch(
                     auth_json_path=auth_json_path,
                     save_snapshots=True,
                 )
+                if not _watch_cycle_is_healthy(usages, account_list):
+                    raise RuntimeError("watch cycle returned unusable usage")
                 if output == "json":
                     print(render_json(usages), flush=True)
                 else:
                     print("\033[2J\033[H", end="")
                     print(render_table(usages), flush=True)
-                if not _watch_cycle_is_healthy(usages, account_list):
-                    raise RuntimeError("watch cycle returned unusable usage")
                 elapsed = max(time.monotonic() - started, 0.0)
                 _record_health(
                     "watch",
@@ -761,6 +809,16 @@ def watch(
                     error_class=type(exc).__name__,
                 )
                 message = " ".join(str(exc).split())[:240] or type(exc).__name__
+                failure_usages = _watch_failure_usages(
+                    account_list,
+                    usages,
+                    error=f"watch cycle failed: {message}",
+                )
+                if output == "json":
+                    print(render_json(failure_usages), flush=True)
+                else:
+                    print("\033[2J\033[H", end="")
+                    print(render_table(failure_usages), flush=True)
                 print(f"Fehler: watch cycle failed: {message}", file=sys.stderr, flush=True)
                 delay = min(interval, 5 * (2 ** min(consecutive_failures - 1, 6)))
             if stop_event.wait(delay):
@@ -1110,6 +1168,12 @@ def _window_is_exhausted(window: Any) -> bool:
         )
     ):
         return True
+    try:
+        remaining_percent = window.remaining_percent
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return True
+    if remaining_percent is None:
+        return True
     if used is not None and limit is not None:
         if limit <= 0 or used < 0:
             return True
@@ -1128,7 +1192,7 @@ def _window_is_exhausted(window: Any) -> bool:
         return True
     if percent is not None:
         return not 0 <= percent <= 100 or percent <= 0
-    return False
+    return True
 
 
 def _should_persist_snapshot(usage: AccountUsage) -> bool:

@@ -1171,6 +1171,29 @@ def test_load_usage_snapshot_discards_out_of_range_percent(percent, tmp_path):
     assert loaded.error == "invalid cached limit value: five_hour"
 
 
+def test_load_usage_snapshot_marks_invalid_percent_beside_remaining_stale(tmp_path):
+    payload = {
+        "account": "invalid-percent-with-remaining",
+        "label": "Invalid percent with remaining",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "five_hour": {"name": "5h", "remaining": 97, "percent": 101},
+    }
+    (tmp_path / "invalid-percent-with-remaining.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("invalid-percent-with-remaining", tmp_path)
+
+    assert loaded is not None
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.error == "invalid cached limit value: five_hour"
+
+
 def test_load_usage_snapshot_discards_valid_values_beside_invalid_numeric_field(tmp_path):
     payload = {
         "account": "invalid-numeric",

@@ -4647,7 +4647,14 @@ CodexUsageApplet.prototype = {
                 return window.remaining / window.limit * 100;
             }
             if (typeof window.percent === "number" && Number.isFinite(window.percent)) {
-                return window.percent >= 0 && window.percent <= 100 ? window.percent : null;
+                if (window.percent < 0 || window.percent > 100) {
+                    return null;
+                }
+                if (window.remaining <= 100 &&
+                    Math.abs(window.remaining - window.percent) >= 0.01) {
+                    return null;
+                }
+                return window.percent;
             }
             if (window.remaining < 0 || window.remaining > 100) {
                 return null;

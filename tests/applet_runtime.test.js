@@ -187,6 +187,8 @@ test("remaining percentage prefers absolute used and limit values", () => {
   assert.equal(applet._remainingPercent({ remaining: 690, limit: 1000 }), 69);
   assert.equal(applet._remainingPercent({ remaining: 690, percent: 69 }), 69);
   assert.equal(applet._remainingPercent({ remaining: 690 }), null);
+  assert.equal(applet._remainingPercent({ remaining: 50, percent: 90 }), null);
+  assert.equal(applet._remainingPercent({ remaining: 97, percent: 97 }), 97);
 });
 
 test("invalid absolute limit pairs cannot become visible usage", () => {

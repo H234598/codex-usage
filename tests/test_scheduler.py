@@ -383,6 +383,88 @@ def test_watch_marks_unusable_usage_as_cycle_error(monkeypatch, capsys):
     assert "watch cycle failed" in capsys.readouterr().err
 
 
+def test_watch_clears_unusable_values_from_failure_output(monkeypatch, capsys):
+    class StopAfterWait:
+        def is_set(self):
+            return False
+
+        def wait(self, _delay):
+            return True
+
+        def set(self):
+            return None
+
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        stale=True,
+        error="old values retained",
+    )
+    monkeypatch.setattr("codex_usage.scheduler.Event", StopAfterWait)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_all",
+        lambda *args, **kwargs: [usage],
+    )
+
+    watch(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="table",
+        interval_seconds=60,
+    )
+
+    captured = capsys.readouterr()
+    assert "97%" not in captured.out
+    assert "55%" not in captured.out
+    assert "error: old values retained" in captured.out
+
+
+def test_watch_failure_json_contains_no_values(monkeypatch, capsys):
+    class StopAfterWait:
+        def is_set(self):
+            return False
+
+        def wait(self, _delay):
+            return True
+
+        def set(self):
+            return None
+
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        status=AccountStatus.PARTIAL,
+        error="usage limits not found",
+    )
+    monkeypatch.setattr("codex_usage.scheduler.Event", StopAfterWait)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_all",
+        lambda *args, **kwargs: [usage],
+    )
+
+    watch(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        interval_seconds=60,
+    )
+
+    payload = capsys.readouterr().out
+    assert '"five_hour": null' in payload
+    assert '"weekly": null' in payload
+    assert '"status": "error"' in payload
+    assert '"remaining": 97' not in payload
+    assert '"remaining": 55' not in payload
+
+
 def test_fetch_all_uses_direct_for_accounts_with_auth_and_browser_for_others(monkeypatch):
     accounts = (
         Account(
@@ -2573,6 +2655,7 @@ def test_window_exhaustion_blocks_invalid_usage_even_with_safe_percent():
     (
         LimitWindow(name="5h", remaining=-20),
         LimitWindow(name="5h", remaining=120),
+        LimitWindow(name="5h", remaining=50, percent=90),
         LimitWindow(name="5h", percent=-1),
         LimitWindow(name="5h", percent=120),
         LimitWindow(name="5h", percent=True),
@@ -2605,6 +2688,10 @@ def test_window_exhaustion_prefers_absolute_usage_over_conflicting_remaining():
     ) is True
 
 
+def test_window_exhaustion_treats_missing_usage_as_exhausted():
+    assert _window_is_exhausted(LimitWindow(name="5h")) is True
+
+
 def test_watchdog_blocks_exhausted_window_without_usable_reset_time():
     usage = AccountUsage(
         account_id="blocked",
@@ -2632,6 +2719,8 @@ def test_watch_cycle_health_validates_dynamic_main_pool(available, expected):
         label="Dynamic",
         captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
         status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
         main=UsagePool(
             key="main",
             display_name="Codex",
@@ -2641,6 +2730,19 @@ def test_watch_cycle_health_validates_dynamic_main_pool(available, expected):
     )
 
     assert _watch_cycle_is_healthy([usage], [account]) is expected
+
+
+def test_watch_cycle_health_rejects_missing_backend_provenance():
+    account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
+    usage = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=80),
+    )
+
+    assert _watch_cycle_is_healthy([usage], (item for item in [account])) is False
 
 
 def test_watchdog_blocks_exhausted_dynamic_main_window():

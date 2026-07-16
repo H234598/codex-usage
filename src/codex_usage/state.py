@@ -568,6 +568,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         and _optional_datetime(raw_values_captured_at) is None
     )
     values_captured_at = _optional_datetime(raw_values_captured_at)
+    forced_stale = False
     metadata_errors: list[str] = []
     if status_missing:
         metadata_errors.append("missing cached status")
@@ -591,6 +592,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             + ", ".join(invalid_window_fields)
         )
         error = f"{error}; {invalid_error}" if error else invalid_error
+        forced_stale = True
     if sanitized_window_fields:
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
@@ -599,6 +601,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             + ", ".join(sanitized_window_fields)
         )
         error = f"{error}; {sanitized_error}" if error else sanitized_error
+        forced_stale = True
     if invalid_values_captured_at:
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
@@ -610,7 +613,6 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         model_pools = ()
         values_captured_at = None
         cache_invalidated = True
-    forced_stale = False
     if cache_invalidated:
         five_hour = None
         weekly = None
@@ -1251,7 +1253,7 @@ def _window_had_invalid_cached_value(
         return not window.has_usage_value
     raw_percent = _optional_float(payload.get("percent"))
     if raw_percent is not None and not 0 <= raw_percent <= 100:
-        return not window.has_usage_value
+        return True
     raw_remaining = _optional_float(payload.get("remaining"))
     if raw_remaining is not None and raw_remaining < 0:
         return True

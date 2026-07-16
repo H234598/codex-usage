@@ -280,6 +280,45 @@ def test_policy_fails_closed_for_cached_backend_mismatch(tmp_path, monkeypatch, 
     assert decision["reason"] == "cache_invalidated"
 
 
+def test_policy_fails_closed_for_invalid_cached_percent_with_remaining(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "private"]) == 0
+    capsys.readouterr()
+    save_current_usage(
+        AccountUsage(
+            account_id="private",
+            label="Private",
+            captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+            status=AccountStatus.OK,
+            five_hour=LimitWindow(name="5h", remaining=97, percent=101),
+            backend_configured="direct",
+            backend_used="direct",
+            backend_account_id="backend-private",
+        )
+    )
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "policy",
+                "evaluate",
+                "private",
+                "--role",
+                "arbeitsbiene",
+            ]
+        )
+        == 0
+    )
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["decision"] == "blocked"
+    assert decision["reason"] == "usage_stale"
+
+
 def test_policy_does_not_relabel_identity_free_auth_cache(
     tmp_path, monkeypatch, capsys
 ):
