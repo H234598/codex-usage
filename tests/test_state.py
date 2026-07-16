@@ -182,6 +182,79 @@ def test_usage_state_invalid_invalidation_flag_discards_values():
     assert loaded.five_hour is None
 
 
+@pytest.mark.parametrize("field", ["backend_user_id", "backend_account_id"])
+def test_usage_state_rejects_normalized_backend_identity(field):
+    loaded = usage_from_dict(
+        {
+            "account": "invalid-backend-identity",
+            "label": "Invalid backend identity",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "status": "ok",
+            "stale": False,
+            "cache_invalidated": False,
+            "backend_configured": "direct",
+            "backend_used": "direct",
+            field: " account-privat ",
+            "five_hour": {"name": "5h", "remaining": 90},
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
+    assert loaded.stale is True
+    assert loaded.five_hour is None
+    assert f"invalid cached backend identity: {field}" in loaded.error
+
+
+@pytest.mark.parametrize("value", [None, True, -1, "not-an-integer"])
+def test_usage_state_rejects_malformed_state_generation(value):
+    loaded = usage_from_dict(
+        {
+            "account": "invalid-generation",
+            "label": "Invalid generation",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "status": "ok",
+            "stale": False,
+            "cache_invalidated": False,
+            "state_generation": value,
+            "five_hour": {"name": "5h", "remaining": 90},
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
+    assert loaded.stale is True
+    assert loaded.five_hour is None
+    assert loaded.error == "invalid cached state generation"
+
+
+@pytest.mark.parametrize("duration", [0, True, "18000", -1])
+def test_usage_state_rejects_malformed_window_duration(duration):
+    loaded = usage_from_dict(
+        {
+            "account": "invalid-duration",
+            "label": "Invalid duration",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "status": "partial",
+            "stale": False,
+            "cache_invalidated": False,
+            "five_hour": {
+                "name": "5h",
+                "remaining": 90,
+                "duration_seconds": duration,
+            },
+            "weekly": {"name": "weekly", "remaining": 55},
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.cache_invalidated is False
+    assert loaded.five_hour is None
+    assert loaded.weekly is not None and loaded.weekly.remaining == 55
+    assert loaded.error == "invalid cached limit window slot: five_hour"
+
+
 @pytest.mark.parametrize(
     ("backend_configured", "backend_used"),
     ((None, None), ("direct", "app-server"), ("app-server", "direct")),

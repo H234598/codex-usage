@@ -590,9 +590,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             ("five_hour", raw_five_hour, five_hour),
             ("weekly", raw_weekly, weekly),
         )
-        if isinstance(raw_window, dict)
-        and parsed_window is None
-        and _window_from_dict(raw_window) is not None
+        if isinstance(raw_window, dict) and parsed_window is None
     ]
     invalid_window_fields.extend(
         field
@@ -634,6 +632,27 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         and _optional_datetime(raw_values_captured_at) is None
     )
     values_captured_at = _optional_datetime(raw_values_captured_at)
+    raw_state_generation = payload.get("state_generation")
+    state_generation = _optional_state_generation(raw_state_generation)
+    invalid_state_generation = (
+        "state_generation" in payload
+        and (raw_state_generation is None or state_generation is None)
+    )
+    raw_backend_fields = (
+        ("backend_configured", payload.get("backend_configured")),
+        ("backend_used", payload.get("backend_used")),
+        ("backend_user_id", payload.get("backend_user_id")),
+        ("backend_account_id", payload.get("backend_account_id")),
+    )
+    backend_fields = {
+        field: _optional_snapshot_identity(value, limit=256)
+        for field, value in raw_backend_fields
+    }
+    invalid_backend_fields = [
+        field
+        for field, raw_value in raw_backend_fields
+        if raw_value is not None and backend_fields[field] is None
+    ]
     forced_stale = False
     metadata_errors: list[str] = []
     if status_missing:
@@ -693,6 +712,21 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         model_pools = ()
         values_captured_at = None
         cache_invalidated = True
+    if invalid_state_generation:
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
+        generation_error = "invalid cached state generation"
+        error = f"{error}; {generation_error}" if error else generation_error
+        cache_invalidated = True
+    if invalid_backend_fields:
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
+        identity_error = (
+            "invalid cached backend identity: "
+            + ", ".join(invalid_backend_fields)
+        )
+        error = f"{error}; {identity_error}" if error else identity_error
+        cache_invalidated = True
     if cache_invalidated:
         five_hour = None
         weekly = None
@@ -738,14 +772,10 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         auth_access_expires_at=_optional_datetime(payload.get("auth_access_expires_at")),
         auth_id_expires_at=_optional_datetime(payload.get("auth_id_expires_at")),
         source_urls=_snapshot_source_urls(payload.get("source_urls")),
-        backend_configured=_optional_snapshot_text(
-            payload.get("backend_configured"), limit=40
-        ),
-        backend_used=_optional_snapshot_text(payload.get("backend_used"), limit=40),
-        backend_user_id=_optional_snapshot_text(payload.get("backend_user_id"), limit=256),
-        backend_account_id=_optional_snapshot_text(
-            payload.get("backend_account_id"), limit=256
-        ),
+        backend_configured=backend_fields["backend_configured"],
+        backend_used=backend_fields["backend_used"],
+        backend_user_id=backend_fields["backend_user_id"],
+        backend_account_id=backend_fields["backend_account_id"],
         fallback_reason=_optional_snapshot_text(
             payload.get("fallback_reason"), limit=MAX_SNAPSHOT_TEXT
         ),
@@ -760,7 +790,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             or forced_stale
         ),
         cache_invalidated=cache_invalidated,
-        state_generation=_optional_state_generation(payload.get("state_generation")),
+        state_generation=state_generation,
     )
 
 
@@ -1177,6 +1207,9 @@ def _window_from_dict(
 ) -> LimitWindow | None:
     if not isinstance(payload, dict):
         return None
+    raw_duration = payload.get("duration_seconds")
+    if raw_duration is not None and _snapshot_window_duration(raw_duration) is None:
+        return None
     reset_at = payload.get("reset_at")
     window = LimitWindow(
         name=_snapshot_text(payload.get("name") or "", limit=40),
@@ -1187,7 +1220,7 @@ def _window_from_dict(
         reset_at=_snapshot_datetime(reset_at) if reset_at else None,
         raw=_optional_snapshot_text(payload.get("raw"), limit=MAX_SNAPSHOT_TEXT),
         source=_snapshot_text(payload.get("source") or "unknown", limit=120),
-        duration_seconds=_snapshot_window_duration(payload.get("duration_seconds")),
+        duration_seconds=_snapshot_window_duration(raw_duration),
     )
     if any(
         _snapshot_number_is_invalid(payload, field)
@@ -1426,6 +1459,17 @@ def _optional_snapshot_text(value: Any, *, limit: int) -> str | None:
     if not isinstance(value, str):
         return None
     return _snapshot_text(value, limit=limit)
+
+
+def _optional_snapshot_identity(value: Any, *, limit: int) -> str | None:
+    if not isinstance(value, str) or not value or len(value) > limit:
+        return None
+    if any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in value
+    ):
+        return None
+    return value
 
 
 def _snapshot_source_urls(value: Any) -> tuple[str, ...]:
