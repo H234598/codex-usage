@@ -620,6 +620,21 @@ def canonical_backend_identity(
     require_backend_account_id: bool = False,
     reject_ambiguous_backend_identity: bool = False,
 ) -> tuple[str | None, str | None]:
+    for field, value, maximum in (
+        ("backend_user_id", backend_user_id, MAX_AUTH_ID_CHARS),
+        ("backend_account_id", backend_account_id, MAX_AUTH_ID_CHARS),
+        ("auth_user_id", auth_user_id, MAX_AUTH_ID_CHARS),
+        ("auth_account_id", auth_account_id, MAX_AUTH_ID_CHARS),
+        ("auth_plan_type", auth_plan_type, 64),
+        ("backend_plan_type", backend_plan_type, 64),
+    ):
+        if value is not None and (
+            not isinstance(value, str)
+            or not value
+            or len(value) > maximum
+            or any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value)
+        ):
+            raise ValueError(f"{field} is invalid")
     if require_backend_identity and not (backend_user_id or backend_account_id):
         raise ValueError("backend response has no account identity")
     if require_backend_account_id and auth_account_id and not backend_account_id:

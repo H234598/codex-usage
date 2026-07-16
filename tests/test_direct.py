@@ -354,6 +354,29 @@ def test_canonical_backend_identity_rejects_identity_free_response_without_auth_
 
 
 @pytest.mark.parametrize(
+    "field, value",
+    (
+        ("backend_user_id", 1),
+        ("backend_account_id", []),
+        ("auth_user_id", {}),
+        ("auth_account_id", " "),
+        ("auth_plan_type", 1),
+        ("backend_plan_type", []),
+    ),
+)
+def test_canonical_backend_identity_rejects_malformed_fields(field, value):
+    arguments = {
+        "backend_user_id": None,
+        "backend_account_id": None,
+        "auth_user_id": None,
+        "auth_account_id": None,
+    }
+    arguments[field] = value
+    with pytest.raises(ValueError, match=f"{field} is invalid"):
+        canonical_backend_identity(**arguments)
+
+
+@pytest.mark.parametrize(
     "error",
     (
         "backend response has no account identity",
