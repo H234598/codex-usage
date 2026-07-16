@@ -529,7 +529,7 @@ test("Spark pools without a window identity cannot drive panel sources", () => {
 
 test("Spark pools with unknown window names cannot drive panel sources", () => {
   const applet = makeApplet();
-  for (const name of ["unknown", "Limit", "untrusted-window"]) {
+  for (const name of ["unknown", "Limit", "5-hour", "untrusted-window"]) {
     const pool = applet._safePool({
       key: "gpt-5.3-codex-spark",
       windows: [{ name, remaining: 90 }],

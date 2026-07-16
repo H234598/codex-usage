@@ -3477,7 +3477,6 @@ CodexUsageApplet.prototype = {
                 "monthly": 2592000
             };
             let named = this._strictText(window && window.name, 40).toLowerCase();
-            named = named.replace(/[-\s]+/g, "_");
             if (!named) {
                 return true;
             }
@@ -3492,7 +3491,6 @@ CodexUsageApplet.prototype = {
             return named === canonical;
         }
         let name = this._strictText(window && window.name, 40).toLowerCase();
-        name = name.replace(/[-\s]+/g, "_");
         return [
             "5h", "5_hour", "five_hour",
             "w", "week", "weekly",
