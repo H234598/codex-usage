@@ -101,6 +101,8 @@ def test_successful_usage_validates_dynamic_main_pool(available, expected):
         label="Private",
         captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
         status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
         main=UsagePool(
             key="main",
             display_name="Codex",
@@ -119,11 +121,30 @@ def test_successful_usage_rejects_invalid_dynamic_main_flags(field):
         label="Private",
         captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
         status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
         main=UsagePool(
             key="main",
             display_name="Codex",
             windows=(LimitWindow(name="weekly", remaining=80),),
             **{field: "false"},
+        ),
+    )
+
+    assert _is_successful_usage(usage) is False
+
+
+def test_successful_usage_requires_complete_backend_provenance():
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            available=True,
+            windows=(LimitWindow(name="weekly", remaining=80),),
         ),
     )
 
@@ -609,6 +630,8 @@ def test_once_direct_passes_auth_json_and_saves_snapshots(tmp_path, monkeypatch,
                 account_id="privat",
                 label="privat",
                 captured_at=datetime.now().astimezone(),
+                backend_configured="direct",
+                backend_used="direct",
                 five_hour=LimitWindow(name="5h", remaining=97),
             )
         ]
@@ -1197,6 +1220,8 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
                 auth_access_expires_at=datetime(
                     2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")
                 ),
+                backend_configured="direct",
+                backend_used="direct",
                 five_hour=LimitWindow(
                     name="5h",
                     used=3,
@@ -1259,6 +1284,8 @@ def test_account_overview_json_shows_live_values(tmp_path, monkeypatch, capsys):
                 account_id=account.id,
                 label=account.label,
                 captured_at=captured_at,
+                backend_configured="direct",
+                backend_used="direct",
                 five_hour=LimitWindow(
                     name="5h",
                     used=3,
@@ -1317,6 +1344,8 @@ def test_values_shows_compact_live_values_for_all_accounts(tmp_path, monkeypatch
                 account_id=account.id,
                 label=account.label,
                 captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+                backend_configured="direct",
+                backend_used="direct",
                 five_hour=LimitWindow(
                     name="5h",
                     used=3,

@@ -1204,7 +1204,7 @@ def _overview_window_json(window) -> dict | None:
 
 
 def _is_successful_usage(usage: AccountUsage) -> bool:
-    if not isinstance(usage, AccountUsage):
+    if not _has_valid_usage_provenance(usage):
         return False
     if (
         usage.status is not AccountStatus.OK
@@ -1224,8 +1224,25 @@ def _is_successful_usage(usage: AccountUsage) -> bool:
         return False
 
 
-def _is_safe_watchdog_usage(usage: AccountUsage) -> bool:
+def _has_valid_usage_provenance(usage: AccountUsage) -> bool:
     if not isinstance(usage, AccountUsage):
+        return False
+    configured = usage.backend_configured
+    used = usage.backend_used
+    if configured not in {"direct", "app-server"} or used not in {
+        "browser",
+        "direct",
+        "app-server",
+    }:
+        return False
+    try:
+        return backend_provenance_matches_configured(usage, configured)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _is_safe_watchdog_usage(usage: AccountUsage) -> bool:
+    if not _has_valid_usage_provenance(usage):
         return False
     if usage.cache_invalidated is not False or usage.stale is not False:
         return False
