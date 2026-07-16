@@ -1668,6 +1668,9 @@ def test_usage_from_ingest_payload_ignores_failed_api_response_status_variants(
         {"ok": 1},
         {"truncated": 1},
         {"truncated": "no"},
+        {"contentType": ["application/json"]},
+        {"contentType": None},
+        {"url": ["https://chatgpt.com/backend-api/wham/usage"]},
     ),
 )
 def test_usage_from_ingest_payload_rejects_invalid_api_response_metadata(

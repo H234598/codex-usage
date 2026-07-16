@@ -373,7 +373,10 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
     for item in response_items:
         if not isinstance(item, dict):
             continue
-        url = _redact_url(str(item.get("url") or ""))
+        raw_url = item.get("url")
+        if not isinstance(raw_url, str):
+            continue
+        url = _redact_url(raw_url)
         if not url:
             continue
         key = (str(item.get("source") or ""), url)
@@ -433,10 +436,19 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
                 continue
             if not ok:
                 continue
-        content_type = str(item.get("contentType") or item.get("content_type") or "").lower()
-        if content_type and "json" not in content_type:
+        content_types = []
+        content_type_invalid = False
+        for field in ("contentType", "content_type"):
+            if field not in item:
+                continue
+            value = item[field]
+            if not isinstance(value, str) or not value.strip():
+                content_type_invalid = True
+                break
+            content_types.append(value.strip().lower())
+        if content_type_invalid or any("json" not in value for value in content_types):
             continue
-        url = _redact_url(str(item.get("url") or ""))
+        url = _redact_url(raw_url)
         body = item.get("bodyText") or item.get("body") or item.get("text")
         if not url or not isinstance(body, str):
             continue
