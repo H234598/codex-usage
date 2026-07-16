@@ -1179,6 +1179,7 @@ def test_load_usage_snapshot_discards_negative_used(tmp_path):
             "used": -1,
             "limit": 100,
             "remaining": 80,
+            "percent": 97,
         },
     }
     (tmp_path / "negative-used.json").write_text(
@@ -1192,6 +1193,7 @@ def test_load_usage_snapshot_discards_negative_used(tmp_path):
     assert loaded.five_hour is not None
     assert loaded.five_hour.used is None
     assert loaded.five_hour.limit == 100
+    assert loaded.five_hour.percent is None
     assert loaded.five_hour.has_usage_value is False
     assert loaded.status == AccountStatus.PARTIAL
     assert loaded.error == "invalid cached limit value: five_hour"

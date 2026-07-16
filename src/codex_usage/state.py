@@ -1017,7 +1017,7 @@ def _window_from_dict(
     if window.used is not None and window.used < 0:
         # Do not let an unqualified remaining counter survive an invalid
         # absolute usage pair and become a plausible cached percentage.
-        window = replace(window, used=None, remaining=None)
+        window = replace(window, used=None, remaining=None, percent=None)
     if window.limit is not None and window.limit <= 0:
         window = replace(window, used=None, limit=None, remaining=None)
     if window.remaining is not None and window.remaining < 0:
