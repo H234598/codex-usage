@@ -67,6 +67,12 @@ def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
         _parse_captured_at("not-a-timestamp", strict=True)
 
 
+@pytest.mark.parametrize("captured_at", [0, False, [], {}])
+def test_parse_captured_at_rejects_present_non_string_values(captured_at):
+    with pytest.raises(ValueError, match="ISO-8601"):
+        _parse_captured_at(captured_at)
+
+
 @pytest.mark.parametrize(
     "captured_at",
     [None, "", "not-a-timestamp", "2026-01-15T00:15:00", "2099-01-15T00:15:00Z"],

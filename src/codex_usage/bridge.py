@@ -1675,7 +1675,7 @@ def _parse_captured_at(value: Any, *, strict: bool = False) -> datetime:
         if strict:
             raise ValueError("capture timestamp is required")
         return received_at
-    if strict and not isinstance(value, str):
+    if not isinstance(value, str):
         raise ValueError("capture timestamp must be an ISO-8601 string")
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
