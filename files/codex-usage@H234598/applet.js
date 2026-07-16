@@ -2660,10 +2660,14 @@ CodexUsageApplet.prototype = {
         let limit = this._safeNumber(value.limit);
         let remaining = this._safeNumber(value.remaining);
         let percent = this._safeNumber(value.percent);
-        if (percent !== null && (percent < 0 || percent > 100)) {
+        let percentInvalid = percent !== null && (percent < 0 || percent > 100);
+        if (percentInvalid) {
             // Explicit percentages outside the display domain are invalid;
             // do not let _remainingPercent clamp them into a false value.
             percent = null;
+            if (!(used !== null && limit !== null && limit > 0)) {
+                remaining = null;
+            }
         }
         if (used !== null && used < 0) {
             // A remaining counter from the same invalid absolute pair is not

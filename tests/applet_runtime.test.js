@@ -228,9 +228,16 @@ test("explicit percentages survive invalid absolute limit pairs", () => {
 test("out-of-range explicit percentages cannot become visible usage", () => {
   const applet = makeApplet();
   const window = applet._safeWindow({ name: "5h", percent: 101 });
+  const mixedWindow = applet._safeWindow({
+    name: "5h",
+    remaining: 97,
+    percent: 101,
+  });
 
   assert.equal(window.percent, null);
   assert.equal(applet._remainingPercent(window), null);
+  assert.equal(mixedWindow.remaining, null);
+  assert.equal(applet._remainingPercent(mixedWindow), null);
 });
 
 test("invalid signed counters are sanitized before rendering", () => {
