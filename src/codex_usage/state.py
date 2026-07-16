@@ -755,7 +755,9 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         values_captured_at = None
     return AccountUsage(
         account_id=_snapshot_text(payload["account"], limit=64),
-        label=_snapshot_text(payload.get("label") or payload["account"], limit=120),
+        label=_snapshot_text_or_default(
+            payload.get("label"), payload["account"], limit=120
+        ),
         captured_at=_snapshot_datetime(payload["captured_at"]),
         five_hour=five_hour,
         weekly=weekly,
@@ -1212,14 +1214,16 @@ def _window_from_dict(
         return None
     reset_at = payload.get("reset_at")
     window = LimitWindow(
-        name=_snapshot_text(payload.get("name") or "", limit=40),
+        name=_snapshot_text_or_default(payload.get("name"), "", limit=40),
         used=_optional_float(payload.get("used")),
         limit=_optional_float(payload.get("limit")),
         remaining=_optional_float(payload.get("remaining")),
         percent=_optional_float(payload.get("percent")),
         reset_at=_snapshot_datetime(reset_at) if reset_at else None,
         raw=_optional_snapshot_text(payload.get("raw"), limit=MAX_SNAPSHOT_TEXT),
-        source=_snapshot_text(payload.get("source") or "unknown", limit=120),
+        source=_snapshot_text_or_default(
+            payload.get("source"), "unknown", limit=120
+        ),
         duration_seconds=_snapshot_window_duration(raw_duration),
     )
     if any(
@@ -1312,9 +1316,8 @@ def _pool_from_dict(
     )
     pool = UsagePool(
         key=key,
-        display_name=_snapshot_text(
-            payload.get("display_name") or key,
-            limit=120,
+        display_name=_snapshot_text_or_default(
+            payload.get("display_name"), key, limit=120
         ),
         windows=tuple(windows),
         # Invalid control flags cannot prove availability. Disable pool.
@@ -1454,10 +1457,18 @@ def _saved_datetime(value: Any) -> datetime:
 
 
 def _snapshot_text(value: Any, *, limit: int) -> str:
-    text = " ".join(str(value).split())
+    if not isinstance(value, str):
+        raise ValueError("snapshot text must be a string")
+    text = " ".join(value.split())
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."
+
+
+def _snapshot_text_or_default(value: Any, default: str, *, limit: int) -> str:
+    if value is None or value == "":
+        return default
+    return _snapshot_text(value, limit=limit)
 
 
 def _optional_snapshot_text(value: Any, *, limit: int) -> str | None:

@@ -1633,6 +1633,49 @@ def test_load_usage_snapshot_rejects_malformed_pool_sources(tmp_path, sources):
     assert loaded.error == "invalid cached model pools: models"
 
 
+@pytest.mark.parametrize("field", ["label", "window_name", "pool_display_name"])
+def test_load_usage_snapshot_rejects_non_string_snapshot_text(tmp_path, field):
+    payload = {
+        "account": "invalid-snapshot-text",
+        "label": "Invalid snapshot text",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "backend_configured": "direct",
+        "backend_used": "direct",
+        "backend_user_id": "user-test",
+        "backend_account_id": "account-test",
+        "five_hour": {"name": "5h", "remaining": 90},
+        "weekly": {"name": "weekly", "remaining": 80},
+        "models": {
+            "gpt-5.3-codex-spark": {
+                "key": "gpt-5.3-codex-spark",
+                "display_name": "Spark",
+                "available": True,
+                "windows": [
+                    {
+                        "name": "weekly",
+                        "remaining": 70,
+                        "duration_seconds": 604800,
+                    }
+                ],
+                "exhausted": False,
+                "availability_sources": ["rate_limits"],
+            }
+        },
+    }
+    if field == "label":
+        payload["label"] = 0
+    elif field == "window_name":
+        payload["five_hour"]["name"] = {}
+    else:
+        payload["models"]["gpt-5.3-codex-spark"]["display_name"] = []
+    _write_trusted_snapshot(tmp_path / "invalid-snapshot-text.json", payload)
+
+    assert load_usage_snapshot("invalid-snapshot-text", tmp_path) is None
+
+
 def test_load_usage_snapshot_honors_exhausted_pool_flag(tmp_path):
     payload = {
         "account": "exhausted-pool",
