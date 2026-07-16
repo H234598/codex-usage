@@ -952,6 +952,8 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
 def _window_is_exhausted(window: Any) -> bool:
     if window is None:
         return False
+    if getattr(window, "has_invalid_usage_value", False):
+        return True
     raw_used = getattr(window, "used", None)
     raw_limit = getattr(window, "limit", None)
     raw_remaining = getattr(window, "remaining", None)

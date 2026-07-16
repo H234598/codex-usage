@@ -2494,6 +2494,12 @@ def test_window_exhaustion_percent_fallback_uses_remaining_semantics():
     assert _window_is_exhausted(LimitWindow(name="5h", percent=100)) is False
 
 
+def test_window_exhaustion_blocks_invalid_usage_even_with_safe_percent():
+    from codex_usage.scheduler import _window_is_exhausted
+
+    assert _window_is_exhausted(LimitWindow(name="5h", used=-1, percent=97)) is True
+
+
 @pytest.mark.parametrize(
     "window",
     (
