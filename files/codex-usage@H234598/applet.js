@@ -2583,6 +2583,8 @@ CodexUsageApplet.prototype = {
             let staleFlagInvalid = item.stale !== undefined && typeof item.stale !== "boolean";
             let cacheInvalidatedFlagInvalid = item.cache_invalidated !== undefined &&
                 typeof item.cache_invalidated !== "boolean";
+            let statusValid = typeof item.status === "string" &&
+                ["ok", "partial", "error", "login_required", "blocked"].indexOf(item.status) !== -1;
             let status = this._safeStatus(item.status);
             let error = this._safeText(item.error, MAX_TEXT_CHARS);
             let fiveHour = this._safeWindow(item.five_hour);
@@ -2599,6 +2601,18 @@ CodexUsageApplet.prototype = {
                 main,
                 models
             ) || this._hasModelPayloadUsageValue(models);
+            if (!statusValid) {
+                status = "error";
+                error = error || "invalid usage status";
+                stale = true;
+                cacheInvalidated = true;
+                if (hasPayloadUsageValue) {
+                    fiveHour = null;
+                    weekly = null;
+                    main = null;
+                    models = Object.create(null);
+                }
+            }
             if (hasPayloadUsageValue && (!backendConfigured || !backendUsed)) {
                 status = "error";
                 error = error || "backend provenance missing";

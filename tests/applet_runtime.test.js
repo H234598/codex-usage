@@ -537,6 +537,27 @@ test("ok payload without usage values fails closed", () => {
   assert.deepEqual(Object.keys(usage.models), []);
 });
 
+test("invalid usage status clears values before rendering", () => {
+  for (const status of [undefined, "unknown"]) {
+    const applet = makeApplet();
+    const [usage] = applet._validatePayload([{
+      account: "alpha",
+      backend_configured: "direct",
+      backend_used: "direct",
+      five_hour: { name: "5h", remaining: 80 },
+      weekly: { name: "weekly", remaining: 60 },
+      status,
+    }]);
+
+    assert.equal(usage.status, "error");
+    assert.equal(usage.error, "invalid usage status");
+    assert.equal(usage.stale, true);
+    assert.equal(usage.cache_invalidated, true);
+    assert.equal(usage.five_hour, null);
+    assert.equal(usage.weekly, null);
+  }
+});
+
 test("invalid dynamic pool duration is rejected", () => {
   const applet = makeApplet();
   assert.throws(() => applet._safePool({
