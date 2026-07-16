@@ -864,7 +864,7 @@ def _blocked_until_active(usage: AccountUsage, *, now: datetime) -> bool:
 
 def _blocked_snapshot_is_consistent(usage: AccountUsage, *, now: datetime) -> bool:
     """Validate stored block metadata without breaking legacy empty snapshots."""
-    if usage.five_hour is None and usage.weekly is None:
+    if not _watchdog_windows(usage):
         return True
     try:
         blocked_until, _reason = _block_state(usage, now=now)
@@ -951,7 +951,7 @@ def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage
 def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None, str | None]:
     saturated_windows: list[tuple[datetime, str]] = []
     unknown_reset_names: list[str] = []
-    for window in (usage.five_hour, usage.weekly):
+    for window in _watchdog_windows(usage):
         if window is None or not _window_is_exhausted(window):
             continue
         reset_at = getattr(window, "reset_at", None)
@@ -981,6 +981,16 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
     if blocked_until <= now:
         return None, None
     return blocked_until, reason
+
+
+def _watchdog_windows(usage: AccountUsage) -> tuple[Any, ...]:
+    if usage.main is not None and usage.main.windows:
+        return usage.main.windows
+    return tuple(
+        window
+        for window in (usage.five_hour, usage.weekly)
+        if window is not None
+    )
 
 
 def _window_is_exhausted(window: Any) -> bool:

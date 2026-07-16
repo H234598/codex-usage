@@ -10,7 +10,7 @@ import pytest
 
 from codex_usage.app_server import AppServerUnavailableError
 from codex_usage.config import AppConfig
-from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
+from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.scheduler import (
     _ambiguous_direct_accounts,
     _apply_watchdog_block,
@@ -2599,6 +2599,31 @@ def test_watchdog_blocks_exhausted_window_without_usable_reset_time():
     assert blocked.status == AccountStatus.BLOCKED
     assert blocked.blocked_until is None
     assert blocked.blocked_reason == "usage limit reached: 5h; reset time unknown"
+
+
+def test_watchdog_blocks_exhausted_dynamic_main_window():
+    reset_at = datetime(2099, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="weekly", remaining=0, reset_at=reset_at),),
+        ),
+    )
+
+    blocked = _apply_watchdog_block(
+        usage,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert blocked.status == AccountStatus.BLOCKED
+    assert blocked.blocked_until == reset_at
+    assert blocked.blocked_reason == (
+        f"usage limit reached: weekly; release at {reset_at.isoformat()}"
+    )
 
 
 def test_watchdog_blocks_until_latest_reset_when_multiple_windows_are_exhausted(monkeypatch):
