@@ -1008,6 +1008,30 @@ def test_load_usage_snapshot_drops_window_stored_in_wrong_slot(tmp_path):
     assert loaded.error == "invalid cached limit window slot: five_hour"
 
 
+def test_load_usage_snapshot_drops_conflicting_window_name_and_duration():
+    loaded = usage_from_dict(
+        {
+            "account": "conflicting-window",
+            "label": "Conflicting Window",
+            "captured_at": "2026-06-08T04:20:00+02:00",
+            "status": "ok",
+            "stale": False,
+            "cache_invalidated": False,
+            "five_hour": {
+                "name": "30d",
+                "duration_seconds": 18000,
+                "remaining": 17,
+            },
+            "weekly": {"name": "weekly", "remaining": 55},
+        }
+    )
+
+    assert loaded.five_hour is None
+    assert loaded.weekly is not None and loaded.weekly.remaining == 55
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit window slot: five_hour"
+
+
 def test_load_usage_snapshot_rejects_boolean_window_numbers(tmp_path):
     payload = {
         "account": "boolean-values",

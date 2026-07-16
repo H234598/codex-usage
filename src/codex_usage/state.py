@@ -912,6 +912,9 @@ def _window_matches_expected_kind(
     if kind is not None and kind != expected_kind:
         return False
     duration = _window_duration_seconds(window)
+    name = getattr(window, "name", None)
+    if kind is None and isinstance(name, str) and name.strip():
+        return False
     if kind is None and duration is None:
         return False
     expected_duration = WINDOW_DURATIONS.get(expected_kind)
