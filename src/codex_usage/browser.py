@@ -769,7 +769,7 @@ def _main_response_failed(status: int | None) -> bool:
         isinstance(status, bool)
         or not isinstance(status, int)
         or status < 200
-        or status >= 400
+        or status >= 300
     )
 
 

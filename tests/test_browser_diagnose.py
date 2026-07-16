@@ -142,6 +142,8 @@ def test_status_for_result_prioritizes_logged_out_page_over_stale_usage_values()
         (403, AccountStatus.ERROR),
         (429, AccountStatus.ERROR),
         (500, AccountStatus.ERROR),
+        (302, AccountStatus.ERROR),
+        (304, AccountStatus.ERROR),
     ],
 )
 def test_status_for_result_rejects_failed_main_response_with_usage_values(
