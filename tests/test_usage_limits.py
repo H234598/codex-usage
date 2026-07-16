@@ -402,6 +402,24 @@ def test_app_server_disables_spark_when_exact_bucket_is_malformed():
     assert models[0].exhausted is True
 
 
+def test_app_server_rejects_explicit_window_duration_above_maximum():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {
+                        "usedPercent": 7,
+                        "windowDurationMins": (10 * 365 * 24 * 60) + 1,
+                    }
+                }
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is None
+
+
 @pytest.mark.parametrize(
     ("reached_type", "expected"),
     [(True, True), (False, False), ("primary_window", True)],

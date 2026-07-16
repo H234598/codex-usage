@@ -308,12 +308,14 @@ def _app_server_window(
 ) -> LimitWindow | None:
     if not isinstance(value, dict):
         return None
-    duration_minutes = _positive_int(value.get("windowDurationMins"))
-    if "windowDurationMins" in value and duration_minutes is None:
+    duration_minutes = _strict_int(value.get("windowDurationMins"))
+    if "windowDurationMins" in value and (
+        duration_minutes is None
+        or duration_minutes <= 0
+        or duration_minutes * 60 > MAX_WINDOW_SECONDS
+    ):
         return None
     duration = duration_minutes * 60 if duration_minutes is not None else None
-    if duration is not None and duration > MAX_WINDOW_SECONDS:
-        duration = None
     used = _percent(value.get("usedPercent"))
     reset_at = _reset_at(value.get("resetsAt"), None, captured_at=captured_at)
     if duration is None and used is None and reset_at is None:
