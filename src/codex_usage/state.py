@@ -1063,9 +1063,10 @@ def _pool_from_dict(
         return None
     raw_allowed = payload.get("allowed")
     raw_limit_reached = payload.get("limit_reached")
+    raw_exhausted = payload.get("exhausted")
     control_flags_valid = all(
         value is None or isinstance(value, bool)
-        for value in (raw_allowed, raw_limit_reached)
+        for value in (raw_allowed, raw_limit_reached, raw_exhausted)
     )
     return UsagePool(
         key=key,
@@ -1075,7 +1076,7 @@ def _pool_from_dict(
         ),
         windows=tuple(windows),
         # Invalid control flags cannot prove availability. Disable pool.
-        available=available and control_flags_valid,
+        available=available and control_flags_valid and raw_exhausted is not True,
         allowed=raw_allowed if isinstance(raw_allowed, bool) else None,
         limit_reached=(
             raw_limit_reached if isinstance(raw_limit_reached, bool) else None
@@ -1145,7 +1146,7 @@ def _snapshot_number_is_invalid(payload: dict[str, Any], field: str) -> bool:
     if field not in payload or payload[field] is None:
         return False
     value = payload[field]
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return True
     try:
         return not math.isfinite(float(value))
@@ -1154,7 +1155,7 @@ def _snapshot_number_is_invalid(payload: dict[str, Any], field: str) -> bool:
 
 
 def _optional_float(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     try:
         coerced = float(value)

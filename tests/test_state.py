@@ -1042,7 +1042,7 @@ def test_load_usage_snapshot_discards_valid_values_beside_invalid_numeric_field(
     assert loaded.error == "invalid cached limit value: five_hour"
 
 
-@pytest.mark.parametrize("field", ["allowed", "limit_reached"])
+@pytest.mark.parametrize("field", ["allowed", "limit_reached", "exhausted"])
 def test_load_usage_snapshot_disables_pool_with_invalid_control_flag(tmp_path, field):
     pool = {
         "key": "gpt-5.3-codex-spark",
@@ -1077,6 +1077,64 @@ def test_load_usage_snapshot_disables_pool_with_invalid_control_flag(tmp_path, f
     spark = loaded.model_pool("gpt-5.3-codex-spark")
     assert spark is not None
     assert spark.available is False
+
+
+def test_load_usage_snapshot_honors_exhausted_pool_flag(tmp_path):
+    payload = {
+        "account": "exhausted-pool",
+        "label": "Exhausted pool",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "models": {
+            "gpt-5.3-codex-spark": {
+                "key": "gpt-5.3-codex-spark",
+                "display_name": "Spark",
+                "available": True,
+                "exhausted": True,
+                "windows": [
+                    {"name": "weekly", "remaining": 90, "duration_seconds": 604800}
+                ],
+            }
+        },
+    }
+    (tmp_path / "exhausted-pool.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("exhausted-pool", tmp_path)
+
+    assert loaded is not None
+    spark = loaded.model_pool("gpt-5.3-codex-spark")
+    assert spark is not None
+    assert spark.available is False
+
+
+def test_load_usage_snapshot_rejects_numeric_string_values(tmp_path):
+    payload = {
+        "account": "numeric-string",
+        "label": "Numeric string",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "five_hour": {"name": "5h", "remaining": "90"},
+    }
+    (tmp_path / "numeric-string.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("numeric-string", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
 
 
 def test_load_usage_snapshot_discards_values_with_invalid_values_timestamp(tmp_path):
