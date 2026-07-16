@@ -583,7 +583,7 @@ def test_fetch_fills_missing_window_from_confirmed_dom_usage(tmp_path, monkeypat
                 callback(FakeResponse())
 
         def goto(self, *_args, **_kwargs):
-            return None
+            return type("Response", (), {"status": 200})()
 
         def wait_for_load_state(self, *_args, **_kwargs):
             return None
@@ -661,7 +661,7 @@ def test_fetch_reads_rendered_html_progress_bars(tmp_path, monkeypatch):
             return None
 
         def goto(self, *_args, **_kwargs):
-            return None
+            return type("Response", (), {"status": 200})()
 
         def wait_for_load_state(self, *_args, **_kwargs):
             return None
@@ -746,7 +746,7 @@ def test_fetch_reports_missing_paid_five_hour_window_from_json(tmp_path, monkeyp
                 callback(FakeResponse())
 
         def goto(self, *_args, **_kwargs):
-            return None
+            return type("Response", (), {"status": 200})()
 
         def wait_for_load_state(self, *_args, **_kwargs):
             return None
@@ -907,7 +907,7 @@ def test_fetch_accepts_browser_pro_plus_plan_alias_transition(tmp_path, monkeypa
             return None
 
         def goto(self, *_args, **_kwargs):
-            return None
+            return type("Response", (), {"status": 200})()
 
         def wait_for_load_state(self, *_args, **_kwargs):
             return None

@@ -763,9 +763,9 @@ def _status_for_result(
 
 
 def _main_response_failed(status: int | None) -> bool:
-    if status is None:
-        return False
     return (
+        status is None
+        or
         isinstance(status, bool)
         or not isinstance(status, int)
         or status < 200

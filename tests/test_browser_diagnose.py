@@ -118,6 +118,7 @@ def test_status_for_result_marks_reset_only_windows_partial():
             current_url="https://chatgpt.com/codex/cloud/settings/analytics",
             five_hour=window,
             weekly=window,
+            main_status=200,
         )
         == AccountStatus.PARTIAL
     )
@@ -130,6 +131,7 @@ def test_status_for_result_prioritizes_logged_out_page_over_stale_usage_values()
             current_url="https://chatgpt.com/",
             five_hour=LimitWindow(name="5h", remaining=97),
             weekly=LimitWindow(name="weekly", remaining=55),
+            main_status=200,
         )
         == AccountStatus.LOGIN_REQUIRED
     )
@@ -138,6 +140,7 @@ def test_status_for_result_prioritizes_logged_out_page_over_stale_usage_values()
 @pytest.mark.parametrize(
     ("main_status", "expected"),
     [
+        (None, AccountStatus.ERROR),
         (401, AccountStatus.LOGIN_REQUIRED),
         (403, AccountStatus.ERROR),
         (429, AccountStatus.ERROR),
