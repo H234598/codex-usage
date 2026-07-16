@@ -375,6 +375,8 @@ def expire_reset_windows(
     expired_names: list[str] = []
     five_hour = usage.five_hour
     weekly = usage.weekly
+    five_hour_expired = False
+    weekly_expired = False
     values_captured_at = _values_capture_for_expiry(usage)
     if _cached_window_expired(
         five_hour,
@@ -383,6 +385,7 @@ def expire_reset_windows(
         expected_kind="five_hour",
     ):
         expired_names.append("5h")
+        five_hour_expired = True
         five_hour = None
     if _cached_window_expired(
         weekly,
@@ -391,7 +394,29 @@ def expire_reset_windows(
         expected_kind="weekly",
     ):
         expired_names.append("weekly")
+        weekly_expired = True
         weekly = None
+    main, main_expired = _expire_pool_windows(
+        usage.main,
+        usage=usage,
+        values_captured_at=values_captured_at,
+        reference_at=reference_at,
+        expired_names=expired_names,
+    )
+    model_pools: tuple[UsagePool, ...] = ()
+    models_changed = False
+    for pool in usage.models:
+        updated_pool, pool_expired = _expire_pool_windows(
+            pool,
+            usage=usage,
+            values_captured_at=values_captured_at,
+            reference_at=reference_at,
+            expired_names=expired_names,
+            name_prefix=pool.key,
+        )
+        models_changed = models_changed or pool_expired
+        model_pools += (updated_pool,)
+    core_expired = five_hour_expired or weekly_expired or main_expired
     try:
         blocked_until_expired = (
             usage.status == AccountStatus.BLOCKED
@@ -404,21 +429,24 @@ def expire_reset_windows(
         usage.status == AccountStatus.BLOCKED
         and not five_hour
         and not weekly
+        and not (main and main.windows)
         and (usage.blocked_until is None or blocked_until_expired)
     )
 
-    if not expired_names and not clear_expired_block:
+    if not models_changed and not core_expired and not clear_expired_block:
         return usage
 
-    if expired_names:
+    if core_expired:
         names = ", ".join(expired_names)
         error = f"cached limit window expired: {names}; refresh required"
-    else:
+    elif clear_expired_block:
         error = "cached blocked state expired; refresh required"
+    else:
+        error = usage.error
     status = usage.status
     blocked_until = usage.blocked_until
     blocked_reason = usage.blocked_reason
-    if status == AccountStatus.OK:
+    if core_expired and status == AccountStatus.OK:
         status = AccountStatus.PARTIAL
     elif clear_expired_block:
         status = AccountStatus.PARTIAL
@@ -428,12 +456,48 @@ def expire_reset_windows(
         usage,
         five_hour=five_hour,
         weekly=weekly,
+        main=main,
+        models=model_pools,
         status=status,
         error=error,
         blocked_until=blocked_until,
         blocked_reason=blocked_reason,
-        stale=True,
+        stale=usage.stale or core_expired or clear_expired_block,
     )
+
+
+def _expire_pool_windows(
+    pool: UsagePool | None,
+    *,
+    usage: AccountUsage,
+    values_captured_at: datetime,
+    reference_at: datetime,
+    expired_names: list[str],
+    name_prefix: str | None = None,
+) -> tuple[UsagePool | None, bool]:
+    if pool is None or not pool.windows:
+        return pool, False
+    remaining: list[LimitWindow] = []
+    expired = False
+    for window in pool.windows:
+        if _cached_window_expired(
+            window,
+            captured_at=_window_expiry_capture(usage, window, values_captured_at),
+            reference_at=reference_at,
+        ):
+            expired = True
+            name = f"{name_prefix}:{window.name}" if name_prefix else window.name
+            if name not in expired_names:
+                expired_names.append(name)
+        else:
+            remaining.append(window)
+    if not expired:
+        return pool, False
+    return replace(
+        pool,
+        windows=tuple(remaining),
+        available=pool.available and bool(remaining),
+    ), True
 
 
 def _window_expiry_capture(
@@ -662,6 +726,12 @@ def merge_current_with_last_success(
 
 
 def _has_complete_usage_windows(usage: AccountUsage) -> bool:
+    if usage.main is not None:
+        return bool(
+            usage.main.available
+            and usage.main.windows
+            and all(window.has_usage_value for window in usage.main.windows)
+        )
     return bool(
         usage.five_hour is not None
         and usage.weekly is not None

@@ -333,6 +333,37 @@ def test_merge_rejects_unproven_cross_backend_cache_values():
     assert merged.weekly is None
 
 
+def test_merge_prefers_newer_complete_dynamic_main_snapshot():
+    timezone = ZoneInfo("Europe/Berlin")
+    current = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=datetime(2026, 7, 12, 9, 40, tzinfo=timezone),
+        status=AccountStatus.OK,
+        backend_used="direct",
+        backend_user_id="user-dynamic",
+        backend_account_id="account-dynamic",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="30d", remaining=20, duration_seconds=2_592_000),),
+        ),
+    )
+    newer = replace(
+        current,
+        captured_at=current.captured_at + timedelta(minutes=1),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="30d", remaining=80, duration_seconds=2_592_000),),
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, newer)
+
+    assert merged is newer
+
+
 def test_expire_reset_windows_drops_only_expired_cached_values():
     reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
@@ -359,6 +390,96 @@ def test_expire_reset_windows_drops_only_expired_cached_values():
     assert expired.status == AccountStatus.PARTIAL
     assert expired.stale is True
     assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
+def test_expire_reset_windows_handles_dynamic_core_and_model_pools():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=reference_at,
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="30d",
+                    duration_seconds=2_592_000,
+                    remaining=80,
+                    reset_at=reference_at - timedelta(seconds=1),
+                ),
+            ),
+        ),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                windows=(
+                    LimitWindow(
+                        name="weekly",
+                        duration_seconds=604800,
+                        remaining=90,
+                        reset_at=reference_at + timedelta(hours=1),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.main is not None
+    assert expired.main.windows == ()
+    assert expired.main.available is False
+    assert expired.models[0].windows == usage.models[0].windows
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert "30d" in (expired.error or "")
+
+
+def test_expire_reset_windows_does_not_stale_core_for_expired_spark_only():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=reference_at,
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="weekly",
+                    duration_seconds=604800,
+                    remaining=80,
+                    reset_at=reference_at + timedelta(hours=1),
+                ),
+            ),
+        ),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                windows=(
+                    LimitWindow(
+                        name="weekly",
+                        duration_seconds=604800,
+                        remaining=90,
+                        reset_at=reference_at - timedelta(seconds=1),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.status == AccountStatus.OK
+    assert expired.stale is False
+    assert expired.main is usage.main
+    assert expired.models[0].windows == ()
+    assert expired.models[0].available is False
 
 
 def test_expire_reset_windows_expires_resetless_windows_by_duration():
