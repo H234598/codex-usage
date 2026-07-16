@@ -1368,7 +1368,7 @@ def _snapshot_window_duration(value: Any) -> int | None:
         return None
     if isinstance(value, bool) or not isinstance(value, int):
         return None
-    return value if value > 0 else None
+    return value if 0 < value <= MAX_WINDOW_SECONDS else None
 
 
 def _window_had_invalid_cached_value(

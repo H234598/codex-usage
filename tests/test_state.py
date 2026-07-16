@@ -229,7 +229,7 @@ def test_usage_state_rejects_malformed_state_generation(value):
     assert loaded.error == "invalid cached state generation"
 
 
-@pytest.mark.parametrize("duration", [0, True, "18000", -1])
+@pytest.mark.parametrize("duration", [0, True, "18000", -1, 315360001, 10**309])
 def test_usage_state_rejects_malformed_window_duration(duration):
     loaded = usage_from_dict(
         {
