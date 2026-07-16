@@ -108,6 +108,9 @@ DEBUG_API_RESPONSE_FIELDS = (
     "error",
     "requestSequence",
 )
+KNOWN_BRIDGE_RESPONSE_SOURCES = frozenset(
+    ("content-probe", "page-fetch", "page-hook", "page-refresh")
+)
 
 
 def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> AccountUsage:
@@ -499,7 +502,11 @@ def _response_without_sequence(item: dict[str, Any]) -> dict[str, Any]:
 
 def _bridge_response_source(item: dict[str, Any]) -> str | None:
     value = item.get("source", "")
-    return value if isinstance(value, str) else None
+    if not isinstance(value, str):
+        return None
+    # Empty source keeps compatibility with older manually generated payloads.
+    # Named sources affect candidate freshness and must come from known hooks.
+    return value if not value or value in KNOWN_BRIDGE_RESPONSE_SOURCES else None
 
 
 def _response_metadata_is_valid(item: dict[str, Any]) -> bool:
