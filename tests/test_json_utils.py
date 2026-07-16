@@ -10,3 +10,8 @@ def test_loads_strict_rejects_deeply_nested_json_as_value_error():
 
     with pytest.raises(ValueError, match="JSON nesting is too deep"):
         loads_strict(nested_json)
+
+
+def test_loads_strict_rejects_duplicate_object_keys():
+    with pytest.raises(ValueError, match="duplicate JSON key: usage"):
+        loads_strict('{"usage": 97, "usage": 55}')
