@@ -2788,7 +2788,8 @@ CodexUsageApplet.prototype = {
         let limitReached = limitReachedValid && typeof value.limit_reached === "boolean"
             ? value.limit_reached
             : null;
-        let available = value.available && allowedValid && limitReachedValid && exhaustedValid;
+        let available = value.available && allowedValid && limitReachedValid &&
+            exhaustedValid && typeof value.exhausted === "boolean";
         if (
             exhaustedValid &&
             typeof value.exhausted === "boolean" &&
@@ -3419,7 +3420,7 @@ CodexUsageApplet.prototype = {
         if (pool.limit_reached !== null && pool.limit_reached !== undefined && pool.limit_reached !== false) {
             return false;
         }
-        if (pool.exhausted !== null && pool.exhausted !== undefined && pool.exhausted !== false) {
+        if (pool.exhausted !== false) {
             return false;
         }
         return true;

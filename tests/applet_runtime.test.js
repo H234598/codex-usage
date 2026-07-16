@@ -369,6 +369,7 @@ test("dynamic pools survive validation and drive Spark panel slots", () => {
       available: true,
       allowed: true,
       limit_reached: false,
+      exhausted: false,
       availability_sources: ["app_server"],
     },
     models: {
@@ -383,6 +384,7 @@ test("dynamic pools survive validation and drive Spark panel slots", () => {
         available: true,
         allowed: true,
         limit_reached: false,
+        exhausted: false,
         availability_sources: ["rate_limits"],
       },
     },
@@ -618,6 +620,21 @@ test("invalid pool control flags disable pool", () => {
 
     assert.equal(pool.available, false);
   }
+});
+
+test("missing derived exhaustion flag disables pool", () => {
+  const applet = makeApplet();
+  const pool = applet._safePool({
+    key: "gpt-5.3-codex-spark",
+    windows: [{ name: "weekly", duration_seconds: 604800, remaining: 90 }],
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    availability_sources: ["rate_limits"],
+  }, "gpt-5.3-codex-spark");
+
+  assert.equal(pool.available, false);
+  assert.equal(applet._poolIsUsable(pool), false);
 });
 
 test("exhausted pool details do not look available", () => {
