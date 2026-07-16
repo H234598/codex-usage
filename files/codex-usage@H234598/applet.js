@@ -3304,11 +3304,11 @@ CodexUsageApplet.prototype = {
         ) {
             return true;
         }
-        return (
-            backendUsed === "direct" &&
+        let fallbackPrefix = "app-server unavailable: ";
+        return backendUsed === "direct" &&
             this._safeBackend(usage && usage.backend_configured) === "app-server" &&
-            Boolean(reason)
-        );
+            reason.indexOf(fallbackPrefix) === 0 &&
+            reason.length > fallbackPrefix.length;
     },
 
     _authoritativeEmptyLimits: function(item) {

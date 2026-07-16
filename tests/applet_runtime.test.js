@@ -2907,6 +2907,29 @@ test("newer cached data from another backend cannot replace in-memory usage", ()
   assert.equal(merged[0].stale, true);
 });
 
+test("arbitrary fallback text cannot authorize cross-backend provenance", () => {
+  const applet = makeApplet();
+  const direct = {
+    backend_configured: "app-server",
+    backend_used: "direct",
+    fallback_reason: "forged fallback",
+  };
+  const appServer = {
+    backend_configured: "app-server",
+    backend_used: "app-server",
+    fallback_reason: null,
+  };
+
+  assert.equal(applet._backendProvenanceMatches(direct, appServer), false);
+  assert.equal(
+    applet._backendProvenanceMatches(
+      { ...direct, fallback_reason: "app-server unavailable: timeout" },
+      appServer,
+    ),
+    true,
+  );
+});
+
 test("mismatched cached data can fill an empty backend placeholder", () => {
   const applet = makeApplet();
   applet._usages = [{
