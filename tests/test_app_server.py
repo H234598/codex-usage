@@ -480,6 +480,34 @@ def test_app_server_rejects_auth_without_account_identity(tmp_path):
     assert usage.error == "auth.json has no account identity"
 
 
+def test_app_server_rejects_invalid_access_token_expiry(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    invalid_payload = base64.urlsafe_b64encode(
+        json.dumps({"exp": "not-a-number"}).encode()
+    ).rstrip(b"=")
+    invalid_token = f"e30.{invalid_payload.decode()}.signature"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    payload = json.loads(auth_path.read_text(encoding="utf-8"))
+    payload["tokens"]["access_token"] = invalid_token
+    auth_path.write_text(json.dumps(payload), encoding="utf-8")
+    auth_path.chmod(0o600)
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == f"auth.json access_token expiry is invalid: {auth_path}"
+    assert usage.cache_invalidated is True
+
+
 def test_response_for_rejects_non_integer_request_id_aliases():
     reader = type("Reader", (), {})()
     reader.items = queue.Queue()

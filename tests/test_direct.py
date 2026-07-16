@@ -97,6 +97,17 @@ def test_jwt_claims_reject_invalid_exp_types(expiry):
     assert _current_jwt_claims(token) is None
 
 
+@pytest.mark.parametrize("expiry", [True, "not-a-number", []])
+def test_auth_details_rejects_invalid_access_token_expiry(tmp_path, expiry):
+    token = _jwt_with_claims({"exp": expiry})
+
+    with pytest.raises(DirectAuthError, match="access_token expiry is invalid"):
+        _extract_auth_details(
+            {"tokens": {"access_token": token}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_jwt_claims_reject_extra_segments():
     token = _jwt_with_claims({"sub": "account"}) + ".extra"
 

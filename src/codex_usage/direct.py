@@ -694,7 +694,24 @@ def _extract_auth_details(
         for char in access_token
     ):
         raise DirectAuthError("auth.json access_token contains invalid characters")
+    _validate_access_token_expiry(access_token, path=path)
     return access_token, auth_metadata_from_payload(payload)
+
+
+def _validate_access_token_expiry(token: str, *, path: Path) -> None:
+    claims = _jwt_claims(token)
+    if not isinstance(claims, dict) or "exp" not in claims:
+        return
+    expiry = claims.get("exp")
+    if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
+        raise DirectAuthError(f"auth.json access_token expiry is invalid: {path}")
+    try:
+        numeric_expiry = float(expiry)
+        if not math.isfinite(numeric_expiry):
+            raise ValueError
+        datetime.fromtimestamp(numeric_expiry, tz=UTC)
+    except (OverflowError, OSError, TypeError, ValueError):
+        raise DirectAuthError(f"auth.json access_token expiry is invalid: {path}") from None
 
 
 def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:

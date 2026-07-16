@@ -16,11 +16,11 @@ from . import __version__
 from .direct import (
     DirectAuthError,
     _auth_plan_type_changed,
+    _extract_auth_details,
     _normalized_plan_type,
     auth_email_from_payload,
     auth_identity_changed,
     auth_identity_from_payload,
-    auth_metadata_from_payload,
     auth_plan_type_from_payload,
     read_auth_json_file,
 )
@@ -194,10 +194,11 @@ def _auth_context(
         raise DirectAuthError("invalid auth.json") from exc
     if not isinstance(payload, dict):
         raise DirectAuthError("invalid auth.json structure")
+    _, auth_metadata = _extract_auth_details(payload, path=path)
     auth_user_id, auth_account_id = auth_identity_from_payload(payload, path=path)
     return (
         path,
-        auth_metadata_from_payload(payload),
+        auth_metadata,
         auth_user_id,
         auth_account_id,
         auth_plan_type_from_payload(payload, path=path),
