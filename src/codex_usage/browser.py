@@ -130,7 +130,7 @@ def fetch_account_usage(
                         "response",
                         lambda response: _capture_json_response(response, candidates),
                     )
-                    page.goto(
+                    main_response = page.goto(
                         config.analytics_url,
                         wait_until="domcontentloaded",
                         timeout=timeout_ms,
@@ -141,6 +141,8 @@ def fetch_account_usage(
                         pass
                     body_text, text_sources = _safe_page_text_sources(page)
                     current_url = page.url
+                    page_title = _safe_title(page)
+                    main_status = getattr(main_response, "status", None)
                 finally:
                     _close_context(context)
 
@@ -162,6 +164,7 @@ def fetch_account_usage(
                 captured_at=captured_at,
                 status=AccountStatus.LOGIN_REQUIRED,
                 error="auth.json identity changed during browser request",
+                cache_invalidated=True,
             )
         try:
             candidates = select_identity_consistent_candidates(
@@ -176,6 +179,7 @@ def fetch_account_usage(
                 captured_at=captured_at,
                 status=AccountStatus.ERROR,
                 error=str(exc),
+                cache_invalidated=True,
             )
         identity_candidates = candidates
         if not identity_candidates:
@@ -247,6 +251,7 @@ def fetch_account_usage(
                 captured_at=captured_at,
                 status=AccountStatus.LOGIN_REQUIRED,
                 error=str(exc),
+                cache_invalidated=True,
             )
         except ValueError as exc:
             return AccountUsage(
@@ -255,6 +260,7 @@ def fetch_account_usage(
                 captured_at=captured_at,
                 status=AccountStatus.ERROR,
                 error=str(exc),
+                cache_invalidated=True,
             )
         status = _status_for_result(
             body_text=body_text,
@@ -262,6 +268,27 @@ def fetch_account_usage(
             five_hour=five_hour,
             weekly=weekly,
         )
+        page_state = _detect_page_state(
+            current_url,
+            page_title,
+            body_text,
+            main_status=main_status,
+        )
+        error = None
+        cache_invalidated = False
+        if page_state == "cloudflare":
+            status = AccountStatus.ERROR
+            error = "browser page blocked by cloudflare"
+            cache_invalidated = True
+        elif status == AccountStatus.LOGIN_REQUIRED:
+            error = "browser login required"
+            cache_invalidated = True
+        elif not _has_usage_value(five_hour) and not _has_usage_value(weekly):
+            error = "browser page has no usable usage limits"
+            cache_invalidated = True
+        if cache_invalidated:
+            five_hour = None
+            weekly = None
         return AccountUsage(
             account_id=account.id,
             label=account.label,
@@ -269,10 +296,11 @@ def fetch_account_usage(
             five_hour=five_hour,
             weekly=weekly,
             status=status,
-            error=None,
+            error=error,
             source_urls=tuple(sorted(source_urls)),
             backend_user_id=backend_user_id,
             backend_account_id=backend_account_id,
+            cache_invalidated=cache_invalidated,
         )
     except PlaywrightError as exc:
         return AccountUsage(
@@ -281,6 +309,7 @@ def fetch_account_usage(
             captured_at=captured_at,
             status=AccountStatus.ERROR,
             error=_clean_error(str(exc)),
+            cache_invalidated=True,
         )
     except DirectAuthError as exc:
         return AccountUsage(
@@ -289,6 +318,7 @@ def fetch_account_usage(
             captured_at=captured_at,
             status=AccountStatus.LOGIN_REQUIRED,
             error=str(exc),
+            cache_invalidated=True,
         )
 
 
@@ -641,7 +671,7 @@ def _safe_html_text(page: Any) -> str:
 def _safe_title(page: Any) -> str:
     try:
         return _limit_text(page.title(), TITLE_MAX_CHARS)
-    except PlaywrightError:
+    except (AttributeError, PlaywrightError, TypeError):
         return ""
 
 

@@ -176,6 +176,66 @@ def test_fetch_closes_context_when_navigation_fails(tmp_path, monkeypatch):
     assert context_state["closed"] is True
 
 
+def test_fetch_cloudflare_clears_values_and_invalidates_cache(tmp_path, monkeypatch):
+    analytics_url = "https://chatgpt.com/codex/cloud/settings/analytics"
+    account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
+
+    class FakeResponse:
+        status = 403
+
+    class FakePage:
+        url = analytics_url
+
+        def on(self, *_args):
+            return None
+
+        def goto(self, *_args, **_kwargs):
+            return FakeResponse()
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def title(self):
+            return "Just a moment..."
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "codex_usage.browser._prepare_profile",
+        lambda _account: tmp_path / "profile",
+    )
+    monkeypatch.setattr("codex_usage.browser._profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr("codex_usage.browser.sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        "codex_usage.browser._launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.browser._safe_page_text_sources",
+        lambda _page: ("", ()),
+    )
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status.value == "error"
+    assert usage.error == "browser page blocked by cloudflare"
+    assert usage.cache_invalidated is True
+    assert usage.five_hour is None
+    assert usage.weekly is None
+
+
 def test_diagnose_uses_configured_account_auth_json_by_default(tmp_path, monkeypatch):
     auth_path = tmp_path / "accounts" / "privat" / "auth.json"
     account = Account(
@@ -825,6 +885,7 @@ def test_fetch_rejects_browser_auth_identity_changed_during_request(tmp_path, mo
 
     assert usage.status == "login_required"
     assert usage.error == "auth.json identity changed during browser request"
+    assert usage.cache_invalidated is True
 
 
 def test_fetch_accepts_browser_pro_plus_plan_alias_transition(tmp_path, monkeypatch):

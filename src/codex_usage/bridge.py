@@ -200,6 +200,10 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
     error = (
         _ingest_error(body_text, payload) if status != AccountStatus.OK else None
     )
+    cache_invalidated = not any(
+        window is not None and window.has_usage_value
+        for window in (five_hour, weekly)
+    )
     source_urls = {_redact_url(str(payload.get("url") or ""))}
     source_urls.update(_redact_url(candidate.url) for candidate in identity_candidates)
     source_urls.discard("")
@@ -216,6 +220,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         backend_used="browser",
         backend_user_id=backend_user_id,
         backend_account_id=backend_account_id,
+        cache_invalidated=cache_invalidated,
     )
 
 

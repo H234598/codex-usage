@@ -1658,6 +1658,30 @@ def test_authoritative_empty_direct_limits_do_not_restore_old_values():
     assert merged == current
 
 
+def test_cache_invalidated_browser_limits_do_not_restore_old_values():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.ERROR,
+        backend_used="browser",
+        cache_invalidated=True,
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        backend_used="browser",
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged == current
+
+
 @pytest.mark.parametrize("backend", ("direct", "app-server"))
 def test_partial_authenticated_limits_do_not_restore_missing_window(backend):
     captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))

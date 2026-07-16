@@ -708,6 +708,8 @@ def _has_resetless_usage_window(usage: AccountUsage) -> bool:
 
 
 def _authoritative_empty_limits(usage: AccountUsage) -> bool:
+    if usage.cache_invalidated and usage.five_hour is None and usage.weekly is None:
+        return True
     if usage.status == AccountStatus.PARTIAL:
         return (
             usage.five_hour is None

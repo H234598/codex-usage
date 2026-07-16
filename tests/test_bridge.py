@@ -254,6 +254,7 @@ def test_usage_from_ingest_payload_reports_empty_text_context():
     )
 
     assert usage.status == AccountStatus.PARTIAL
+    assert usage.cache_invalidated is True
     assert usage.error is not None
     assert "missing page text" in usage.error
     assert "ready=complete" in usage.error
@@ -1654,6 +1655,7 @@ def test_usage_from_ingest_payload_ignores_failed_api_response_status_variants(
     usage = usage_from_ingest_payload(account, {"apiResponses": [response]})
 
     assert usage.status == AccountStatus.PARTIAL
+    assert usage.cache_invalidated is True
     assert usage.five_hour is None
     assert usage.weekly is None
 
@@ -1710,6 +1712,7 @@ def test_usage_from_ingest_payload_reports_missing_paid_five_hour_window():
     assert usage.status == AccountStatus.PARTIAL
     assert usage.five_hour is None
     assert usage.weekly is not None and usage.weekly.remaining == 90
+    assert usage.cache_invalidated is False
     assert usage.error.startswith("missing page text")
 
 
