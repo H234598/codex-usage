@@ -2592,6 +2592,7 @@ CodexUsageApplet.prototype = {
             // safe to render as a plausible percentage.
             used = null;
             remaining = null;
+            percent = null;
         }
         if (limit !== null && limit <= 0) {
             used = null;
@@ -2600,6 +2601,7 @@ CodexUsageApplet.prototype = {
         }
         if (remaining !== null && limit !== null && limit > 0 && remaining > limit) {
             remaining = null;
+            percent = null;
         }
         if (remaining !== null && remaining < 0) {
             remaining = null;

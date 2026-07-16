@@ -234,6 +234,7 @@ test("invalid signed counters are sanitized before rendering", () => {
     used: -1,
     limit: 100,
     remaining: 80,
+    percent: 97,
   });
   const zeroLimit = applet._safeWindow({ name: "5h", limit: 0, remaining: 50 });
   const negativeRemaining = applet._safeWindow({ name: "5h", remaining: -1, percent: 97 });
@@ -241,6 +242,7 @@ test("invalid signed counters are sanitized before rendering", () => {
   assert.equal(negativeUsed.used, null);
   assert.equal(negativeUsed.limit, 100);
   assert.equal(negativeUsed.remaining, null);
+  assert.equal(negativeUsed.percent, null);
   assert.equal(applet._remainingPercent(negativeUsed), null);
   assert.equal(zeroLimit.limit, null);
   assert.equal(zeroLimit.remaining, null);
@@ -248,6 +250,20 @@ test("invalid signed counters are sanitized before rendering", () => {
   assert.equal(negativeRemaining.remaining, null);
   assert.equal(negativeRemaining.percent, null);
   assert.equal(applet._remainingPercent(negativeRemaining), null);
+});
+
+test("out of range absolute remaining cannot preserve explicit percentage", () => {
+  const applet = makeApplet();
+  const window = applet._safeWindow({
+    name: "5h",
+    remaining: 101,
+    limit: 100,
+    percent: 97,
+  });
+
+  assert.equal(window.remaining, null);
+  assert.equal(window.percent, null);
+  assert.equal(applet._remainingPercent(window), null);
 });
 
 test("absolute remaining above limit cannot become safe percentage", () => {
