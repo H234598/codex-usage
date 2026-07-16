@@ -227,8 +227,20 @@ def fetch_account_usage(
             )
         else:
             five_hour, weekly = json_windows
-        backend_user_id, backend_account_id = backend_identity_from_candidates(identity_candidates)
-        backend_plan_type = backend_plan_type_from_candidates(identity_candidates)
+        try:
+            backend_user_id, backend_account_id = backend_identity_from_candidates(
+                identity_candidates
+            )
+            backend_plan_type = backend_plan_type_from_candidates(identity_candidates)
+        except ValueError as exc:
+            return AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=captured_at,
+                status=AccountStatus.ERROR,
+                error=str(exc),
+                cache_invalidated=True,
+            )
         try:
             backend_user_id, backend_account_id = canonical_backend_identity(
                 backend_user_id,

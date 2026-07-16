@@ -830,6 +830,8 @@ def _fetch_stable_wham_usage(
             if attempt + 1 >= DIRECT_STABILITY_ATTEMPTS:
                 raise
             time.sleep(DIRECT_STABILITY_RETRY_DELAY_SECONDS)
+        except ValueError as exc:
+            raise DirectFetchError(str(exc)) from exc
         except StopIteration:
             # Test doubles with only one sample batch must still exercise the
             # original rejection path instead of leaking an iterator error.

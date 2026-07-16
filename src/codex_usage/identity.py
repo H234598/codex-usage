@@ -16,8 +16,8 @@ def backend_identity_from_payload(
     if not isinstance(payload, dict):
         return None, None
     return (
-        _identity_value(payload.get("user_id")),
-        _identity_value(payload.get("account_id")),
+        _identity_value(payload.get("user_id"), field="user_id"),
+        _identity_value(payload.get("account_id"), field="account_id"),
     )
 
 
@@ -225,12 +225,16 @@ def _candidate_priority(candidate: JsonCandidate) -> int:
     return 2
 
 
-def _identity_value(value: Any) -> str | None:
+def _identity_value(value: Any, *, field: str) -> str | None:
+    if value is None:
+        return None
     if not isinstance(value, str):
-        return None
-    value = " ".join(value.split())
-    if not value or len(value) > MAX_BACKEND_ID_CHARS:
-        return None
+        raise ValueError(f"backend response {field} is invalid")
+    if not value or len(value) > MAX_BACKEND_ID_CHARS or any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in value
+    ):
+        raise ValueError(f"backend response {field} is invalid")
     return value
 
 

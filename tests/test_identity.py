@@ -3,6 +3,7 @@ import pytest
 from codex_usage.extractor import JsonCandidate
 from codex_usage.identity import (
     backend_identity_from_candidates,
+    backend_identity_from_payload,
     select_identity_consistent_candidates,
 )
 
@@ -76,6 +77,20 @@ def test_latest_partial_usage_identity_does_not_restore_older_account_id():
     ]
 
     assert backend_identity_from_candidates(candidates) == ("new-user", None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("user_id", []),
+        ("account_id", 42),
+        ("user_id", " "),
+        ("account_id", "account\nforged"),
+    ],
+)
+def test_backend_identity_rejects_malformed_identity_fields(field, value):
+    with pytest.raises(ValueError, match=f"backend response {field} is invalid"):
+        backend_identity_from_payload({field: value})
 
 
 def test_select_identity_consistent_candidates_does_not_mix_accounts():
