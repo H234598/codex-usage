@@ -3464,9 +3464,34 @@ CodexUsageApplet.prototype = {
     _windowIdentityIsKnown: function(window) {
         let duration = this._windowDurationSeconds(window);
         if (duration !== null) {
-            return true;
+            let namedDuration = {
+                "5h": 18000,
+                "5_hour": 18000,
+                "five_hour": 18000,
+                "w": 604800,
+                "week": 604800,
+                "weekly": 604800,
+                "30d": 2592000,
+                "30_day": 2592000,
+                "month": 2592000,
+                "monthly": 2592000
+            };
+            let named = this._strictText(window && window.name, 40).toLowerCase();
+            named = named.replace(/[-\s]+/g, "_");
+            if (!named) {
+                return true;
+            }
+            if (Object.prototype.hasOwnProperty.call(namedDuration, named)) {
+                return duration === namedDuration[named];
+            }
+            let canonical = duration % 86400 === 0
+                ? (duration / 86400) + "d"
+                : (duration % 3600 === 0
+                    ? (duration / 3600) + "h"
+                    : duration + "s");
+            return named === canonical;
         }
-        let name = this._safeText(window && window.name, 40).toLowerCase();
+        let name = this._strictText(window && window.name, 40).toLowerCase();
         name = name.replace(/[-\s]+/g, "_");
         return [
             "5h", "5_hour", "five_hour",

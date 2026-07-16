@@ -542,6 +542,17 @@ test("Spark pools with unknown window names cannot drive panel sources", () => {
 
     assert.equal(applet._poolIsUsable(pool), false, name);
   }
+  const conflicting = applet._safePool({
+    key: "gpt-5.3-codex-spark",
+    windows: [{ name: "5h", duration_seconds: 604800, remaining: 90 }],
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    availability_sources: ["rate_limits"],
+  }, "gpt-5.3-codex-spark");
+
+  assert.equal(applet._poolIsUsable(conflicting), false);
 });
 
 test("unusable Spark pools cannot drive panel sources", () => {

@@ -20,6 +20,26 @@ _KNOWN_WINDOW_NAMES = frozenset(
         "monthly",
     }
 )
+_WINDOW_NAME_DURATIONS = {
+    "5h": 18_000,
+    "5_hour": 18_000,
+    "five_hour": 18_000,
+    "w": 604_800,
+    "week": 604_800,
+    "weekly": 604_800,
+    "30d": 2_592_000,
+    "30_day": 2_592_000,
+    "month": 2_592_000,
+    "monthly": 2_592_000,
+}
+
+
+def _canonical_window_name(duration: int) -> str:
+    if duration % 86_400 == 0:
+        return f"{duration // 86_400}d"
+    if duration % 3_600 == 0:
+        return f"{duration // 3_600}h"
+    return f"{duration}s"
 
 
 class AccountStatus(StrEnum):
@@ -62,12 +82,22 @@ class LimitWindow:
 
     @property
     def has_known_identity(self) -> bool:
-        if (
-            isinstance(self.duration_seconds, int)
-            and not isinstance(self.duration_seconds, bool)
-            and self.duration_seconds > 0
-        ):
-            return True
+        if self.duration_seconds is not None:
+            if (
+                not isinstance(self.duration_seconds, int)
+                or isinstance(self.duration_seconds, bool)
+                or self.duration_seconds <= 0
+            ):
+                return False
+            if not isinstance(self.name, str):
+                return False
+            normalized_name = self.name.strip().casefold()
+            if not normalized_name:
+                return True
+            expected_duration = _WINDOW_NAME_DURATIONS.get(normalized_name)
+            if expected_duration is not None:
+                return self.duration_seconds == expected_duration
+            return normalized_name == _canonical_window_name(self.duration_seconds)
         if not isinstance(self.name, str):
             return False
         return self.name.strip().casefold() in _KNOWN_WINDOW_NAMES

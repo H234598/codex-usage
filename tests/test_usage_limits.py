@@ -157,6 +157,30 @@ def test_usage_pool_duration_proves_window_identity_without_name():
     assert pool.has_valid_usage is True
 
 
+@pytest.mark.parametrize(
+    ("name", "duration"),
+    [("5h", 604800), ("garbage", 604800), ("weekly", 18000)],
+)
+def test_usage_pool_rejects_conflicting_window_identity(name, duration):
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(LimitWindow(name=name, remaining=97, duration_seconds=duration),),
+    )
+
+    assert pool.has_valid_usage is False
+
+
+def test_usage_pool_accepts_canonical_dynamic_window_identity():
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(LimitWindow(name="10d", remaining=97, duration_seconds=864000),),
+    )
+
+    assert pool.has_valid_usage is True
+
+
 def test_empty_catalog_pool_is_unknown_not_exhausted():
     pool = UsagePool(
         key=SPARK_MODEL,
