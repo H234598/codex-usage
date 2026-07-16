@@ -90,6 +90,61 @@ def test_usage_state_migrates_legacy_windows_to_main_pool():
     assert loaded.main.availability_sources == ("legacy_fields",)
 
 
+def test_usage_state_missing_control_metadata_is_stale():
+    loaded = usage_from_dict(
+        {
+            "account": "legacy-controls",
+            "label": "Legacy controls",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "status": "ok",
+            "five_hour": {"name": "5h", "remaining": 90},
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.five_hour is not None
+    assert loaded.error is not None
+    assert "missing cached stale flag" in loaded.error
+
+
+def test_usage_state_missing_status_never_defaults_to_ok():
+    loaded = usage_from_dict(
+        {
+            "account": "missing-status",
+            "label": "Missing status",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "stale": False,
+            "cache_invalidated": False,
+            "five_hour": {"name": "5h", "remaining": 90},
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.error is not None
+    assert "missing cached status" in loaded.error
+
+
+def test_usage_state_invalid_invalidation_flag_discards_values():
+    loaded = usage_from_dict(
+        {
+            "account": "invalid-control",
+            "label": "Invalid control",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "status": "ok",
+            "stale": False,
+            "cache_invalidated": "false",
+            "five_hour": {"name": "5h", "remaining": 90},
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
+    assert loaded.stale is True
+    assert loaded.five_hour is None
+
+
 def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
     direct = AccountUsage(
         account_id="account",
@@ -728,6 +783,8 @@ def test_load_usage_snapshot_drops_window_stored_in_wrong_slot(tmp_path):
         "label": "Wrong Slot",
         "captured_at": "2026-06-08T04:20:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {
             "name": "weekly",
             "remaining": 17,
@@ -809,6 +866,8 @@ def test_load_usage_snapshot_drops_denominatorless_absolute_remaining(tmp_path):
         "label": "Absolute remaining",
         "captured_at": "2026-06-08T04:20:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {"name": "5h", "remaining": 690},
         "weekly": {"name": "weekly", "remaining": 55},
     }
@@ -838,6 +897,8 @@ def test_load_usage_snapshot_discards_unqualified_remaining_with_non_positive_li
         "label": "Invalid zero limit",
         "captured_at": "2026-07-13T18:00:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {
             "name": "5h",
             "used": 0,
@@ -871,6 +932,8 @@ def test_load_usage_snapshot_preserves_explicit_percent_with_non_positive_limit(
         "label": "Explicit zero limit percent",
         "captured_at": "2026-07-13T18:00:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {
             "name": "5h",
             "used": 0,
@@ -901,6 +964,8 @@ def test_load_usage_snapshot_discards_standalone_non_positive_limit(tmp_path):
         "label": "Standalone zero limit",
         "captured_at": "2026-07-13T18:00:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {"name": "5h", "limit": 0, "remaining": 50},
     }
     (tmp_path / "standalone-zero-limit.json").write_text(
@@ -928,6 +993,8 @@ def test_load_usage_snapshot_discards_out_of_range_percent(percent, tmp_path):
         "label": "Invalid percent",
         "captured_at": "2026-07-13T18:00:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {"name": "5h", "percent": percent},
     }
     (tmp_path / "invalid-percent.json").write_text(
@@ -951,6 +1018,8 @@ def test_load_usage_snapshot_discards_valid_values_beside_invalid_numeric_field(
         "label": "Invalid numeric",
         "captured_at": "2026-07-13T18:00:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {
             "name": "5h",
             "remaining": 97,
@@ -993,6 +1062,8 @@ def test_load_usage_snapshot_disables_pool_with_invalid_control_flag(tmp_path, f
         "label": "Invalid pool flag",
         "captured_at": "2026-07-13T18:00:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "models": {"gpt-5.3-codex-spark": pool},
     }
     (tmp_path / "invalid-pool-flag.json").write_text(
@@ -1043,6 +1114,8 @@ def test_load_usage_snapshot_discards_negative_used(tmp_path):
         "label": "Negative used",
         "captured_at": "2026-07-13T18:00:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {
             "name": "5h",
             "used": -1,
@@ -1072,6 +1145,8 @@ def test_load_usage_snapshot_normalizes_negative_remaining(tmp_path):
         "label": "Negative remaining",
         "captured_at": "2026-07-13T18:00:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {"name": "5h", "limit": 100, "remaining": -1},
     }
     (tmp_path / "negative-remaining.json").write_text(
@@ -1093,6 +1168,8 @@ def test_load_usage_snapshot_keeps_percent_when_absolute_remaining_is_ambiguous(
         "label": "Percent remaining",
         "captured_at": "2026-06-08T04:20:00+02:00",
         "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
         "five_hour": {"name": "5h", "remaining": 690, "percent": 69},
     }
     (tmp_path / "percent-remaining.json").write_text(

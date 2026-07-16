@@ -475,9 +475,20 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         )
         if _window_had_invalid_cached_value(raw_window, parsed_window)
     ]
-    status = AccountStatus(str(payload.get("status", "ok")))
+    raw_status = payload.get("status")
+    status_missing = "status" not in payload
+    status = AccountStatus(str(raw_status)) if not status_missing else AccountStatus.PARTIAL
     error = _optional_snapshot_text(payload.get("error"), limit=MAX_SNAPSHOT_TEXT)
-    cache_invalidated = payload.get("cache_invalidated") is True
+    raw_cache_invalidated = payload.get("cache_invalidated")
+    cache_flag_invalid = (
+        "cache_invalidated" in payload
+        and not isinstance(raw_cache_invalidated, bool)
+    )
+    cache_invalidated = raw_cache_invalidated is True or cache_flag_invalid
+    raw_stale = payload.get("stale")
+    stale_flag_invalid = "stale" in payload and not isinstance(raw_stale, bool)
+    stale_metadata_missing = "stale" not in payload
+    cache_metadata_missing = "cache_invalidated" not in payload
     raw_values_captured_at = payload.get("values_captured_at")
     invalid_values_captured_at = (
         "values_captured_at" in payload
@@ -485,6 +496,21 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         and _optional_datetime(raw_values_captured_at) is None
     )
     values_captured_at = _optional_datetime(raw_values_captured_at)
+    metadata_errors: list[str] = []
+    if status_missing:
+        metadata_errors.append("missing cached status")
+    if stale_metadata_missing:
+        metadata_errors.append("missing cached stale flag")
+    elif stale_flag_invalid:
+        metadata_errors.append("invalid cached stale flag")
+    if cache_metadata_missing:
+        metadata_errors.append("missing cached invalidation flag")
+    elif cache_flag_invalid:
+        metadata_errors.append("invalid cached invalidation flag")
+    if metadata_errors:
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
+        error = "; ".join((*filter(None, (error,)), *metadata_errors))
     if invalid_window_fields:
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
@@ -551,7 +577,14 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             payload.get("fallback_reason"), limit=MAX_SNAPSHOT_TEXT
         ),
         values_captured_at=values_captured_at,
-        stale=payload.get("stale") is True or cache_invalidated,
+        stale=(
+            raw_stale is True
+            or stale_metadata_missing
+            or stale_flag_invalid
+            or status_missing
+            or bool(metadata_errors)
+            or cache_invalidated
+        ),
         cache_invalidated=cache_invalidated,
         state_generation=_optional_state_generation(payload.get("state_generation")),
     )
