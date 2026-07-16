@@ -2542,6 +2542,9 @@ CodexUsageApplet.prototype = {
                 throw new Error("duplicate account id");
             }
             seenAccounts[account] = true;
+            let staleFlagInvalid = item.stale !== undefined && typeof item.stale !== "boolean";
+            let cacheInvalidatedFlagInvalid = item.cache_invalidated !== undefined &&
+                typeof item.cache_invalidated !== "boolean";
             result.push({
                 account: account,
                 label: this._safeText(item.label, 120) || account,
@@ -2561,8 +2564,8 @@ CodexUsageApplet.prototype = {
                 backend_account_id: this._safeText(item.backend_account_id, 256),
                 fallback_reason: this._safeText(item.fallback_reason, MAX_TEXT_CHARS),
                 values_captured_at: this._safeText(item.values_captured_at, 80),
-                stale: item.stale === true,
-                cache_invalidated: item.cache_invalidated === true
+                stale: item.stale === true || staleFlagInvalid,
+                cache_invalidated: item.cache_invalidated === true || cacheInvalidatedFlagInvalid
             });
         }
         return result;

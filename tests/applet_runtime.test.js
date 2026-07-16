@@ -317,6 +317,25 @@ test("dynamic pools survive validation and drive Spark panel slots", () => {
   assert.equal(applet._panelWindowForSource(usage, 6).name, "5h");
 });
 
+test("malformed cache controls fail closed during payload validation", () => {
+  const applet = makeApplet();
+  const [validated] = applet._validatePayload([{
+    account: "alpha",
+    captured_at: new Date().toISOString(),
+    five_hour: { name: "5h", remaining: 80 },
+    weekly: { name: "weekly", remaining: 60 },
+    status: "error",
+    stale: "false",
+    cache_invalidated: "false",
+  }]);
+
+  assert.equal(validated.stale, true);
+  assert.equal(validated.cache_invalidated, true);
+  const [merged] = applet._mergeFreshPayload([validated]);
+  assert.equal(merged.five_hour, null);
+  assert.equal(merged.weekly, null);
+});
+
 test("invalid dynamic pool duration is rejected", () => {
   const applet = makeApplet();
   assert.throws(() => applet._safePool({
