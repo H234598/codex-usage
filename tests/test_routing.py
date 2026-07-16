@@ -219,6 +219,22 @@ def test_routing_fails_closed_for_stale_spark_health():
     assert result["reason"] == "spark_health_stale"
 
 
+def test_routing_fails_closed_for_expired_limit_reset():
+    expired = replace(
+        _window("weekly", 99, 604800),
+        reset_at=NOW - timedelta(seconds=1),
+    )
+    result = evaluate_routing(
+        _usage(main_windows=(expired,)),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
 @pytest.mark.parametrize(
     "spark_health",
     [

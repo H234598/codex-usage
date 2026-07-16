@@ -171,7 +171,11 @@ def evaluate_routing(
     base["spark_health"] = spark_health
     spark = usage.model_pool(SPARK_MODEL)
     spark_health_state = spark_health.get("state")
-    spark_state = _pool_usage_state(spark) if spark is not None else "unknown"
+    spark_state = (
+        _pool_usage_state(spark, now=checked_at)
+        if spark is not None
+        else "unknown"
+    )
     spark_health_fresh = _spark_health_is_fresh(spark_health, now=checked_at)
     if (
         spark is not None
@@ -205,7 +209,7 @@ def evaluate_routing(
                 spark_reason = "spark_health_stale"
             else:
                 spark_reason = "spark_health_unverified"
-    main_state, main_remaining = _main_state(usage.main)
+    main_state, main_remaining = _main_state(usage.main, now=checked_at)
     if main_state == "safe":
         return {
             **base,
@@ -237,7 +241,11 @@ def evaluate_routing(
     return _blocked(base, "main_limit_unknown", usage_state="unknown")
 
 
-def _main_state(pool: UsagePool | None) -> tuple[str, dict[str, float]]:
+def _main_state(
+    pool: UsagePool | None,
+    *,
+    now: datetime,
+) -> tuple[str, dict[str, float]]:
     if (
         pool is None
         or not _pool_flags_are_valid(pool)
@@ -248,6 +256,8 @@ def _main_state(pool: UsagePool | None) -> tuple[str, dict[str, float]]:
     remaining: dict[str, float] = {}
     for window in pool.windows:
         if not _window_identity_is_known(window):
+            return "unknown", {}
+        if not _window_reset_is_current(window, now=now):
             return "unknown", {}
         if window.has_invalid_usage_value:
             return "unknown", {}
@@ -313,12 +323,14 @@ def _spark_health_is_fresh(payload: dict[str, Any], *, now: datetime) -> bool:
     return -300 <= age <= SPARK_HEALTH_MAX_AGE_SECONDS
 
 
-def _pool_usage_state(pool: UsagePool) -> str:
+def _pool_usage_state(pool: UsagePool, *, now: datetime) -> str:
     if not _pool_flags_are_valid(pool):
         return "invalid"
     if not pool.windows:
         return "unknown"
     if any(not _window_identity_is_known(window) for window in pool.windows):
+        return "unknown"
+    if any(not _window_reset_is_current(window, now=now) for window in pool.windows):
         return "unknown"
     if any(window.has_invalid_usage_value for window in pool.windows):
         return "invalid"
@@ -343,6 +355,18 @@ def _pool_flags_are_valid(pool: UsagePool) -> bool:
             or isinstance(pool.limit_reached, bool)
         )
     )
+
+
+def _window_reset_is_current(window: Any, *, now: datetime) -> bool:
+    reset_at = getattr(window, "reset_at", None)
+    if reset_at is None:
+        return True
+    if not _aware_datetime(reset_at) or not _aware_datetime(now):
+        return False
+    try:
+        return reset_at.astimezone(UTC) > now.astimezone(UTC)
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        return False
 
 
 def _window_identity_is_known(window: Any) -> bool:
