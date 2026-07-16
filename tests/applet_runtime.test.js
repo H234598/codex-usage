@@ -365,6 +365,65 @@ test("dynamic pools survive validation and drive Spark panel slots", () => {
   assert.equal(applet._panelWindowForSource(usage, 6).name, "5h");
 });
 
+test("known exhausted main pool keeps its zero usage value", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    captured_at: "2026-07-16T10:00:00+00:00",
+    five_hour: null,
+    weekly: null,
+    main: {
+      key: "main",
+      windows: [{ name: "weekly", duration_seconds: 604800, remaining: 0 }],
+      available: true,
+      allowed: true,
+      limit_reached: false,
+      exhausted: true,
+      availability_sources: ["app_server"],
+    },
+    status: "ok",
+  }]);
+
+  assert.equal(usage.status, "ok");
+  assert.equal(usage.main.available, true);
+  assert.equal(applet._remainingPercent(usage.main.windows[0]), 0);
+});
+
+test("contradictory exhaustion metadata disables a pool", () => {
+  const applet = makeApplet();
+  const pool = applet._safePool({
+    key: "main",
+    windows: [{ name: "weekly", duration_seconds: 604800, remaining: 0 }],
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    availability_sources: [],
+  }, "main");
+
+  assert.equal(pool.available, false);
+});
+
+test("Spark pools without positive usage cannot drive panel sources", () => {
+  const applet = makeApplet();
+  const usage = {
+    account: "alpha",
+    models: {
+      "gpt-5.3-codex-spark": {
+        key: "gpt-5.3-codex-spark",
+        windows: [{ name: "weekly", duration_seconds: 604800 }],
+        available: true,
+        allowed: true,
+        limit_reached: false,
+        availability_sources: ["rate_limits"],
+      },
+    },
+  };
+
+  const [pool] = Object.values(applet._safePools(usage.models));
+  assert.equal(applet._poolIsUsable(pool), false);
+});
+
 test("unusable Spark pools cannot drive panel sources", () => {
   const applet = makeApplet();
   for (const control of [

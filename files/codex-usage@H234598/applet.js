@@ -2691,15 +2691,33 @@ CodexUsageApplet.prototype = {
         if (typeof value.available !== "boolean") {
             throw new Error("invalid usage pool availability");
         }
+        let allowed = allowedValid && typeof value.allowed === "boolean"
+            ? value.allowed
+            : null;
+        let limitReached = limitReachedValid && typeof value.limit_reached === "boolean"
+            ? value.limit_reached
+            : null;
+        let available = value.available && allowedValid && limitReachedValid && exhaustedValid;
+        if (
+            exhaustedValid &&
+            typeof value.exhausted === "boolean" &&
+            value.exhausted !== this._poolExhaustedByFields(
+                value.available,
+                allowed,
+                limitReached,
+                windows
+            )
+        ) {
+            // Derived exhaustion must agree with serialized control flags.
+            available = false;
+        }
         return {
             key: key,
             display_name: this._safeText(value.display_name, 120) || key,
             windows: windows,
-            available: value.available && allowedValid && limitReachedValid && exhaustedValid,
-            allowed: allowedValid && typeof value.allowed === "boolean" ? value.allowed : null,
-            limit_reached: limitReachedValid && typeof value.limit_reached === "boolean"
-                ? value.limit_reached
-                : null,
+            available: available,
+            allowed: allowed,
+            limit_reached: limitReached,
             metered_feature: this._safeText(value.metered_feature, 120),
             availability_sources: sources.map(Lang.bind(this, function(source) {
                 return this._safeText(source, 120);
@@ -2730,6 +2748,19 @@ CodexUsageApplet.prototype = {
             result[key] = this._safePool(value[keys[i]], key);
         }
         return result;
+    },
+
+    _poolExhaustedByFields: function(available, allowed, limitReached, windows) {
+        if (available !== true || allowed === false || limitReached === true) {
+            return true;
+        }
+        if (!Array.isArray(windows) || !windows.length) {
+            return false;
+        }
+        return windows.some(Lang.bind(this, function(window) {
+            let value = this._remainingPercent(window);
+            return value === null || value === 0;
+        }));
     },
 
     _hasPayloadUsageValue: function(fiveHour, weekly, main, models) {
@@ -3270,6 +3301,13 @@ CodexUsageApplet.prototype = {
 
     _poolIsUsable: function(pool) {
         if (!pool || pool.available !== true) {
+            return false;
+        }
+        if (!Array.isArray(pool.windows) || !pool.windows.length ||
+            !pool.windows.every(Lang.bind(this, function(window) {
+                let value = this._remainingPercent(window);
+                return value !== null && value > 0;
+            }))) {
             return false;
         }
         if (pool.allowed !== null && pool.allowed !== undefined && pool.allowed !== true) {
