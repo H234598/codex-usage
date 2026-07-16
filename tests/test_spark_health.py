@@ -1,6 +1,8 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from codex_usage.spark_health import (
     SPARK_HEALTH_MAX_RECORDS,
     set_spark_health,
@@ -51,6 +53,35 @@ def test_spark_health_rejects_naive_checked_at(tmp_path):
 
     assert result["state"] == "unknown"
     assert result["reason"] == "invalid_spark_health_record"
+
+
+def test_spark_health_fails_closed_for_invalid_clock(tmp_path):
+    path = tmp_path / "health.json"
+    set_spark_health("backend-nufker", "healthy", path=path, now=NOW)
+
+    result = spark_health_status(
+        "backend-nufker",
+        path=path,
+        now=NOW.replace(tzinfo=None),
+    )
+
+    assert result == {
+        "state": "unknown",
+        "reason": "invalid_health_clock",
+        "checked_at": None,
+        "stale": False,
+    }
+
+
+@pytest.mark.parametrize("invalid_now", [0, "now", NOW.replace(tzinfo=None)])
+def test_set_spark_health_rejects_invalid_clock(tmp_path, invalid_now):
+    with pytest.raises(ValueError, match="timezone-aware"):
+        set_spark_health(
+            "backend-nufker",
+            "healthy",
+            path=tmp_path / "health.json",
+            now=invalid_now,
+        )
 
 
 def test_refreshing_old_account_keeps_health_record_in_bounded_rotation(tmp_path):

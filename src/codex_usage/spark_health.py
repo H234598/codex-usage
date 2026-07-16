@@ -36,13 +36,15 @@ def spark_health_status(
     now: datetime | None = None,
     max_age_seconds: int = SPARK_HEALTH_MAX_AGE_SECONDS,
 ) -> dict[str, Any]:
-    checked_at = now or datetime.now(UTC)
+    checked_at = now if now is not None else datetime.now(UTC)
     if (
         not isinstance(max_age_seconds, int)
         or isinstance(max_age_seconds, bool)
         or max_age_seconds < 60
     ):
         raise ValueError("max_age_seconds must be at least 60")
+    if not _aware_datetime(checked_at):
+        return _unknown_health("invalid_health_clock")
     if not isinstance(backend_account_id, str) or not _IDENTIFIER_RE.fullmatch(backend_account_id):
         return _unknown_health("missing_backend_account_id")
     records = _load_records(path or default_spark_health_path())
@@ -88,7 +90,9 @@ def set_spark_health(
         raise ValueError("backend_account_id is invalid")
     if state not in SPARK_HEALTH_STATES:
         raise ValueError("spark health state must be healthy or failed")
-    current_time = now or datetime.now(UTC)
+    current_time = now if now is not None else datetime.now(UTC)
+    if not _aware_datetime(current_time):
+        raise ValueError("spark health timestamp must be timezone-aware")
     health_path = path or default_spark_health_path()
     _prepare_health_directory(health_path.parent)
     record = {
@@ -174,6 +178,15 @@ def _parse_timestamp(value: Any) -> datetime | None:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return None
     return parsed
+
+
+def _aware_datetime(value: Any) -> bool:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return False
+    try:
+        return value.utcoffset() is not None
+    except (OverflowError, TypeError, ValueError):
+        return False
 
 
 def _safe_reason(value: Any) -> str | None:
