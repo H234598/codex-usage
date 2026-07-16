@@ -901,7 +901,7 @@ def _blocked_snapshot_matches_account(
 
 def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage:
     blocked_until, blocked_reason = _block_state(usage, now=now)
-    if blocked_until is None:
+    if blocked_until is None and blocked_reason is None:
         return usage
     return replace(
         usage,
@@ -914,11 +914,24 @@ def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage
 
 def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None, str | None]:
     saturated_windows: list[tuple[datetime, str]] = []
+    unknown_reset_names: list[str] = []
     for window in (usage.five_hour, usage.weekly):
-        if window is None or window.reset_at is None:
+        if window is None or not _window_is_exhausted(window):
             continue
-        if _window_is_exhausted(window):
-            saturated_windows.append((window.reset_at, window.name))
+        reset_at = getattr(window, "reset_at", None)
+        try:
+            reset_timezone = reset_at.tzinfo
+            reset_offset = reset_at.utcoffset()
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            reset_timezone = None
+            reset_offset = None
+        if reset_timezone is None or reset_offset is None:
+            unknown_reset_names.append(window.name)
+            continue
+        saturated_windows.append((reset_at, window.name))
+    if unknown_reset_names:
+        names = ", ".join(unknown_reset_names)
+        return None, f"usage limit reached: {names}; reset time unknown"
     if not saturated_windows:
         return None, None
     blocked_until, _window_name = max(saturated_windows, key=lambda item: item[0])

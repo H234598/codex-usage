@@ -13,6 +13,7 @@ from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.scheduler import (
     _ambiguous_direct_accounts,
+    _apply_watchdog_block,
     _is_more_conservative_direct_usage,
     _raw_number,
     _remaining_percent,
@@ -2527,6 +2528,25 @@ def test_window_exhaustion_prefers_absolute_usage_over_conflicting_remaining():
     assert _window_is_exhausted(
         LimitWindow(name="5h", used=100, limit=100, remaining=100, percent=100)
     ) is True
+
+
+def test_watchdog_blocks_exhausted_window_without_usable_reset_time():
+    usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=LimitWindow(name="5h", remaining=0),
+        weekly=LimitWindow(name="weekly", remaining=99),
+    )
+
+    blocked = _apply_watchdog_block(
+        usage,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert blocked.status == AccountStatus.BLOCKED
+    assert blocked.blocked_until is None
+    assert blocked.blocked_reason == "usage limit reached: 5h; reset time unknown"
 
 
 def test_watchdog_blocks_until_latest_reset_when_multiple_windows_are_exhausted(monkeypatch):
