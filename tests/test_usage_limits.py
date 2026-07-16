@@ -33,6 +33,36 @@ def test_remaining_percent_fails_closed_for_invalid_values(window, expected):
     assert window.remaining_percent == expected
 
 
+def test_remaining_percent_prefers_absolute_usage_over_percent():
+    window = LimitWindow(
+        name="5h",
+        used=100,
+        limit=100,
+        remaining=100,
+        percent=100,
+    )
+
+    assert window.remaining_percent == 0
+
+
+def test_usage_pool_exhaustion_prefers_absolute_usage_over_percent():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(
+            LimitWindow(
+                name="5h",
+                used=100,
+                limit=100,
+                remaining=100,
+                percent=100,
+            ),
+        ),
+    )
+
+    assert pool.exhausted is True
+
+
 def test_wham_keeps_main_and_spark_weekly_limits_separate():
     main, models = parse_wham_usage_pools(
         {

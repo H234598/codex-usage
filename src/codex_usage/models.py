@@ -50,29 +50,54 @@ class LimitWindow:
 
     @property
     def remaining_percent(self) -> float | None:
-        if self.percent is not None:
-            return _valid_percent(self.percent)
+        if any(
+            value is not None and _finite_number(value) is None
+            for value in (self.used, self.limit, self.remaining, self.percent)
+        ):
+            return None
+        used = _finite_number(self.used)
         limit = _finite_number(self.limit)
         remaining = _finite_number(self.remaining)
-        if limit is not None and limit > 0 and remaining is not None:
+        if used is not None and limit is not None:
+            if limit <= 0 or used < 0:
+                return None
+            if used >= limit:
+                return 0.0
+            return _valid_percent((limit - used) / limit * 100.0)
+        if limit is not None and remaining is not None and limit > 0:
             if not 0 <= remaining <= limit:
                 return None
             return _valid_percent(remaining / limit * 100.0)
+        if self.percent is not None:
+            return _valid_percent(self.percent)
         return None
 
     @property
     def has_invalid_usage_value(self) -> bool:
-        if self.percent is not None:
-            return _valid_percent(self.percent) is None
         limit = _finite_number(self.limit)
+        used = _finite_number(self.used)
         remaining = _finite_number(self.remaining)
+        percent = _valid_percent(self.percent) if self.percent is not None else None
+        if any(
+            value is not None and _finite_number(value) is None
+            for value in (self.used, self.limit, self.remaining)
+        ):
+            return True
+        if self.percent is not None and percent is None:
+            return True
+        if used is not None and used < 0:
+            return True
         if self.limit is not None and (limit is None or limit <= 0):
+            return True
+        if self.remaining is not None and remaining is not None and remaining < 0:
             return True
         if self.remaining is not None and remaining is None:
             return True
-        if limit is None or remaining is None:
-            return False
-        return not 0 <= remaining <= limit
+        return bool(
+            limit is not None
+            and remaining is not None
+            and not 0 <= remaining <= limit
+        )
 
 
 @dataclass(frozen=True)
