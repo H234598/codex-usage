@@ -262,6 +262,52 @@ def test_app_server_disables_spark_with_conflicting_duplicate_buckets():
     assert models[0].exhausted is True
 
 
+@pytest.mark.parametrize(
+    ("reached_type", "expected"),
+    [(True, True), (False, False), ("primary_window", True)],
+)
+def test_app_server_preserves_limit_reached_flag(reached_type, expected):
+    _, models = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex_bengalfox": {
+                    "primary": {
+                        "usedPercent": 1,
+                        "windowDurationMins": 10080,
+                    },
+                    "rateLimitReachedType": reached_type,
+                }
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].limit_reached is expected
+    assert models[0].exhausted is expected
+
+
+def test_app_server_disables_pool_with_invalid_limit_reached_flag():
+    _, models = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex_bengalfox": {
+                    "primary": {
+                        "usedPercent": 1,
+                        "windowDurationMins": 10080,
+                    },
+                    "rateLimitReachedType": {"value": "false"},
+                }
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].available is False
+    assert models[0].exhausted is True
+
+
 def test_model_catalog_does_not_mark_spark_available_without_usage_bucket():
     _, models = parse_app_server_usage_pools(
         {"rateLimits": {}},

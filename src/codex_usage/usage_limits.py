@@ -248,15 +248,24 @@ def _app_server_pool(
         )
         is not None
     )
-    reached_type = snapshot.get("rateLimitReachedType")
-    limit_reached = bool(reached_type) if isinstance(reached_type, str) else None
-    if not windows and limit_reached is None:
+    raw_limit_reached = snapshot.get("rateLimitReachedType")
+    limit_reached = (
+        raw_limit_reached
+        if isinstance(raw_limit_reached, bool)
+        else bool(raw_limit_reached)
+        if isinstance(raw_limit_reached, str)
+        else None
+    )
+    control_flag_valid = raw_limit_reached is None or isinstance(
+        raw_limit_reached, (bool, str)
+    )
+    if not windows and raw_limit_reached is None:
         return None
     return UsagePool(
         key=key,
         display_name=display_name,
         windows=windows,
-        available=True,
+        available=control_flag_valid,
         limit_reached=limit_reached,
         metered_feature=metered_feature,
         availability_sources=("usage",),
