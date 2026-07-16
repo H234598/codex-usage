@@ -190,6 +190,7 @@ def test_render_rejects_denominatorless_absolute_remaining():
 def test_render_fails_closed_for_invalid_remaining_percent_values():
     for window in (
         LimitWindow(name="5h", remaining=101, percent=101),
+        LimitWindow(name="5h", remaining=-1, percent=97),
         LimitWindow(name="5h", remaining=120, limit=100),
         LimitWindow(name="5h", percent=True),
         LimitWindow(name="5h", remaining=float("nan"), limit=100),

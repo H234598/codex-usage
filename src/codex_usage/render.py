@@ -270,6 +270,8 @@ def _is_remaining_percent_window(window: LimitWindow) -> bool:
 
 
 def _remaining_percent(window: LimitWindow) -> float | None:
+    if window.has_invalid_usage_value:
+        return None
     if any(
         value is not None and not _is_finite_number(value)
         for value in (window.used, window.limit, window.remaining, window.percent)

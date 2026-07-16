@@ -531,6 +531,8 @@ def _is_more_conservative_direct_usage(
 
 
 def _remaining_percent(window) -> float | None:
+    if getattr(window, "has_invalid_usage_value", False):
+        return None
     raw_used = getattr(window, "used", None)
     raw_limit = getattr(window, "limit", None)
     raw_remaining = getattr(window, "remaining", None)
