@@ -684,6 +684,23 @@ def test_window_mapping_ignores_invalid_codex_duration_without_top_level_fallbac
     assert weekly is not None and weekly.used == 2
 
 
+@pytest.mark.parametrize("value", [[], "malformed", 42])
+def test_window_mapping_rejects_malformed_limit_map(value):
+    with pytest.raises(
+        AppServerProtocolError,
+        match="rateLimitsByLimitId is not an object",
+    ):
+        _windows_from_response(
+            {
+                "rateLimits": {
+                    "primary": {"usedPercent": 1, "windowDurationMins": 300},
+                    "secondary": {"usedPercent": 2, "windowDurationMins": 10080},
+                },
+                "rateLimitsByLimitId": value,
+            }
+        )
+
+
 def test_window_mapping_keeps_weekly_only_bucket_as_weekly():
     five, weekly = _windows_from_response(
         {

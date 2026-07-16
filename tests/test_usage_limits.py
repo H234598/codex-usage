@@ -404,6 +404,24 @@ def test_app_server_disables_main_when_codex_bucket_has_wrong_shape():
     assert main.windows == ()
 
 
+@pytest.mark.parametrize("value", [[], "malformed", 42])
+def test_app_server_disables_main_when_limit_map_has_wrong_shape(value):
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 2, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 3, "windowDurationMins": 10080},
+            },
+            "rateLimitsByLimitId": value,
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.has_valid_usage is False
+
+
 def test_app_server_disables_pool_when_one_present_window_is_malformed():
     main, _ = parse_app_server_usage_pools(
         {

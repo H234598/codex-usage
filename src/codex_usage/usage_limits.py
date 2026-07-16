@@ -77,14 +77,15 @@ def parse_app_server_usage_pools(
     model_ids: Iterable[str] = (),
     source: str = "app-server",
 ) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
-    by_id = payload.get("rateLimitsByLimitId")
-    by_id = by_id if isinstance(by_id, dict) else {}
+    raw_by_id = payload.get("rateLimitsByLimitId")
+    malformed_by_id = raw_by_id is not None and not isinstance(raw_by_id, dict)
+    by_id = raw_by_id if isinstance(raw_by_id, dict) else {}
     raw_main_payload = by_id.get("codex")
     malformed_main_bucket = "codex" in by_id and not isinstance(raw_main_payload, dict)
     main_payload = by_id.get("codex")
     if not isinstance(main_payload, dict):
         main_payload = payload.get("rateLimits")
-    if malformed_main_bucket:
+    if malformed_by_id or malformed_main_bucket:
         main = UsagePool(
             key=MAIN_POOL_KEY,
             display_name="Codex",

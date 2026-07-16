@@ -534,7 +534,12 @@ def _windows_from_response(
     payload: dict[str, Any],
 ) -> tuple[LimitWindow | None, LimitWindow | None]:
     snapshot = payload.get("rateLimits")
-    by_id = payload.get("rateLimitsByLimitId")
+    raw_by_id = payload.get("rateLimitsByLimitId")
+    if raw_by_id is not None and not isinstance(raw_by_id, dict):
+        raise AppServerProtocolError(
+            "app server rateLimitsByLimitId is not an object"
+        )
+    by_id = raw_by_id if isinstance(raw_by_id, dict) else {}
     codex_snapshot = by_id.get("codex") if isinstance(by_id, dict) else None
     has_codex_buckets = isinstance(codex_snapshot, dict) and any(
         isinstance(codex_snapshot.get(key), dict) for key in ("primary", "secondary")
