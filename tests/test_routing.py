@@ -322,6 +322,34 @@ def test_routing_blocks_main_when_window_identity_is_unknown():
     assert result["reason"] == "main_limit_unknown"
 
 
+def test_routing_blocks_main_when_window_duration_is_unsupported():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("unknown", 80, 3600),),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
+def test_routing_blocks_main_when_window_name_and_duration_conflict():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("weekly", 80, 18000),),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
 def test_routing_does_not_select_spark_when_window_identity_is_unknown():
     result = evaluate_routing(
         _usage(
@@ -330,6 +358,32 @@ def test_routing_does_not_select_spark_when_window_identity_is_unknown():
                 key=SPARK_MODEL,
                 display_name="Spark",
                 windows=(LimitWindow(name="unknown", remaining=99),),
+                available=True,
+            ),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "test",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_usage_unknown"
+
+
+def test_routing_does_not_select_spark_for_unsupported_window_duration():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("weekly", 80, 604800),),
+            spark=UsagePool(
+                key=SPARK_MODEL,
+                display_name="Spark",
+                windows=(_window("unknown", 99, 3600),),
                 available=True,
             ),
         ),

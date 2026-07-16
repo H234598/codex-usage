@@ -19,13 +19,31 @@ from .private_io import (
     write_private_text,
 )
 from .spark_health import SPARK_HEALTH_MAX_AGE_SECONDS, spark_health_status
-from .usage_limits import MAX_WINDOW_SECONDS, SPARK_MODEL
+from .usage_limits import (
+    FIVE_HOUR_SECONDS,
+    SPARK_MODEL,
+    WEEKLY_SECONDS,
+)
 
 POLICY_SCHEMA_VERSION = 1
 DECISION_SCHEMA_VERSION = 1
 MAIN_MODEL = "gpt-5.4-mini"
 MAIN_MINIMUM_REMAINING_PERCENT = 10.0
 DEFAULT_MAX_USAGE_AGE_SECONDS = 600
+THIRTY_DAY_SECONDS = 30 * 24 * 60 * 60
+WINDOW_NAME_DURATIONS = {
+    "5h": FIVE_HOUR_SECONDS,
+    "5_hour": FIVE_HOUR_SECONDS,
+    "five_hour": FIVE_HOUR_SECONDS,
+    "w": WEEKLY_SECONDS,
+    "week": WEEKLY_SECONDS,
+    "weekly": WEEKLY_SECONDS,
+    "30d": THIRTY_DAY_SECONDS,
+    "30_day": THIRTY_DAY_SECONDS,
+    "month": THIRTY_DAY_SECONDS,
+    "monthly": THIRTY_DAY_SECONDS,
+}
+SUPPORTED_WINDOW_SECONDS = frozenset(WINDOW_NAME_DURATIONS.values())
 MAX_POLICY_BYTES = 64 * 1024
 POLICY_SCOPES = ("account", "group", "agent", "job")
 IDENTIFIER_RE = re.compile(r"[A-Za-z0-9_.:@+-]{1,128}")
@@ -371,23 +389,19 @@ def _window_reset_is_current(window: Any, *, now: datetime) -> bool:
 
 def _window_identity_is_known(window: Any) -> bool:
     duration = getattr(window, "duration_seconds", None)
-    if duration is not None:
-        return (
-            isinstance(duration, int)
-            and not isinstance(duration, bool)
-            and 0 < duration <= MAX_WINDOW_SECONDS
-        )
     name = getattr(window, "name", None)
-    if not isinstance(name, str):
+    if duration is not None and (
+        not isinstance(duration, int)
+        or isinstance(duration, bool)
+        or duration not in SUPPORTED_WINDOW_SECONDS
+    ):
         return False
-    return name.strip().casefold() in {
-        "5h",
-        "5_hour",
-        "five_hour",
-        "w",
-        "week",
-        "weekly",
-    }
+    if not isinstance(name, str) or not name.strip():
+        return duration in SUPPORTED_WINDOW_SECONDS
+    expected_duration = WINDOW_NAME_DURATIONS.get(name.strip().casefold())
+    if expected_duration is None:
+        return False
+    return duration is None or duration == expected_duration
 
 
 def _valid_remaining_percent(value: Any) -> bool:
