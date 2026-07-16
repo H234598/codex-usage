@@ -371,6 +371,34 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
         if not isinstance(snapshot_account, str) or snapshot_account != account_id:
             return None
         usage = usage_from_dict(payload)
+        provenance_is_valid = (
+            _backend_provenance_is_complete(usage)
+            and isinstance(usage.backend_configured, str)
+            and backend_provenance_matches_configured(
+                usage,
+                usage.backend_configured,
+            )
+        )
+        if not provenance_is_valid:
+            error = "incomplete cached backend provenance"
+            if usage.error:
+                error = f"{usage.error}; {error}"
+            usage = replace(
+                usage,
+                five_hour=None,
+                weekly=None,
+                main=None,
+                models=(),
+                error=error,
+                status=(
+                    AccountStatus.PARTIAL
+                    if usage.status == AccountStatus.OK
+                    else usage.status
+                ),
+                values_captured_at=None,
+                stale=True,
+                cache_invalidated=True,
+            )
         generation = _read_state_generation(
             _state_generation_path(account_id, directory),
             account_id,

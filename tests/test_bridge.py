@@ -80,6 +80,8 @@ def test_ingest_rejects_invalid_capture_timestamp_before_saving(tmp_path, captur
             account_id="privat",
             label="Privat",
             captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+            backend_configured="direct",
+            backend_used="direct",
             five_hour=LimitWindow(name="5h", remaining=97),
             weekly=LimitWindow(name="weekly", remaining=55),
             backend_user_id="browser-user",

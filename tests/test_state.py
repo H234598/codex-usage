@@ -26,6 +26,12 @@ from codex_usage.state import (
 )
 
 
+def _write_trusted_snapshot(path, payload):
+    payload.setdefault("backend_configured", "direct")
+    payload.setdefault("backend_used", "direct")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_naive_state_times_use_dst_aware_local_zone(monkeypatch):
     berlin = ZoneInfo("Europe/Berlin")
     monkeypatch.setattr("codex_usage.state.LOCAL_TZ", berlin)
@@ -174,6 +180,44 @@ def test_usage_state_invalid_invalidation_flag_discards_values():
     assert loaded.cache_invalidated is True
     assert loaded.stale is True
     assert loaded.five_hour is None
+
+
+@pytest.mark.parametrize(
+    ("backend_configured", "backend_used"),
+    ((None, None), ("direct", "app-server")),
+)
+def test_load_usage_snapshot_invalidates_untrusted_backend_provenance(
+    tmp_path,
+    backend_configured,
+    backend_used,
+):
+    payload = {
+        "account": "untrusted-provenance",
+        "label": "Untrusted provenance",
+        "captured_at": "2026-07-16T04:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "five_hour": {"name": "5h", "remaining": 97},
+        "weekly": {"name": "weekly", "remaining": 55},
+        "backend_configured": backend_configured,
+        "backend_used": backend_used,
+    }
+    path = tmp_path / "untrusted-provenance.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_usage_snapshot("untrusted-provenance", tmp_path)
+
+    assert loaded is not None
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.cache_invalidated is True
+    assert loaded.five_hour is None
+    assert loaded.weekly is None
+    assert loaded.main is None
+    assert loaded.models == ()
+    assert loaded.values_captured_at is None
+    assert loaded.error == "incomplete cached backend provenance"
 
 
 def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
@@ -963,6 +1007,8 @@ def test_stale_state_generation_cannot_recreate_removed_account_state(tmp_path, 
         account_id="race",
         label="Race",
         captured_at=captured_at,
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", remaining=97),
         weekly=LimitWindow(name="weekly", remaining=55),
         state_generation=generation,
@@ -999,7 +1045,7 @@ def test_load_usage_snapshot_ignores_malformed_window_shape(tmp_path, malformed_
         "five_hour": malformed_window,
         "weekly": {"name": "weekly", "remaining": 55},
     }
-    (tmp_path / "partial.json").write_text(json.dumps(payload), encoding="utf-8")
+    _write_trusted_snapshot(tmp_path / "partial.json", payload)
 
     loaded = load_usage_snapshot("partial", tmp_path)
 
@@ -1113,7 +1159,7 @@ def test_load_usage_snapshot_drops_window_stored_in_wrong_slot(tmp_path):
         },
         "weekly": {"name": "weekly", "remaining": 55},
     }
-    (tmp_path / "wrong-slot.json").write_text(json.dumps(payload), encoding="utf-8")
+    _write_trusted_snapshot(tmp_path / "wrong-slot.json", payload)
 
     loaded = load_usage_snapshot("wrong-slot", tmp_path)
 
@@ -1162,10 +1208,7 @@ def test_load_usage_snapshot_rejects_boolean_window_numbers(tmp_path):
             "percent": False,
         },
     }
-    (tmp_path / "boolean-values.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "boolean-values.json", payload)
 
     loaded = load_usage_snapshot("boolean-values", tmp_path)
 
@@ -1192,10 +1235,7 @@ def test_load_usage_snapshot_ignores_integer_overflow_in_window_number(tmp_path)
             "remaining": 55,
         },
     }
-    (tmp_path / "overflow-values.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "overflow-values.json", payload)
 
     loaded = load_usage_snapshot("overflow-values", tmp_path)
 
@@ -1216,10 +1256,7 @@ def test_load_usage_snapshot_drops_denominatorless_absolute_remaining(tmp_path):
         "five_hour": {"name": "5h", "remaining": 690},
         "weekly": {"name": "weekly", "remaining": 55},
     }
-    (tmp_path / "absolute-remaining.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "absolute-remaining.json", payload)
 
     loaded = load_usage_snapshot("absolute-remaining", tmp_path)
 
@@ -1251,10 +1288,7 @@ def test_load_usage_snapshot_discards_unqualified_remaining_with_non_positive_li
             "remaining": remaining,
         },
     }
-    (tmp_path / "invalid-zero-limit.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "invalid-zero-limit.json", payload)
 
     loaded = load_usage_snapshot("invalid-zero-limit", tmp_path)
 
@@ -1287,10 +1321,7 @@ def test_load_usage_snapshot_preserves_explicit_percent_with_non_positive_limit(
             "percent": 69,
         },
     }
-    (tmp_path / "explicit-zero-limit-percent.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "explicit-zero-limit-percent.json", payload)
 
     loaded = load_usage_snapshot("explicit-zero-limit-percent", tmp_path)
 
@@ -1320,9 +1351,9 @@ def test_load_usage_snapshot_marks_negative_remaining_beside_explicit_percent_st
             "percent": 50,
         },
     }
-    (tmp_path / "negative-remaining-with-percent.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
+    _write_trusted_snapshot(
+        tmp_path / "negative-remaining-with-percent.json",
+        payload,
     )
 
     loaded = load_usage_snapshot("negative-remaining-with-percent", tmp_path)
@@ -1343,10 +1374,7 @@ def test_load_usage_snapshot_discards_standalone_non_positive_limit(tmp_path):
         "cache_invalidated": False,
         "five_hour": {"name": "5h", "limit": 0, "remaining": 50},
     }
-    (tmp_path / "standalone-zero-limit.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "standalone-zero-limit.json", payload)
 
     loaded = load_usage_snapshot("standalone-zero-limit", tmp_path)
 
@@ -1372,10 +1400,7 @@ def test_load_usage_snapshot_discards_out_of_range_percent(percent, tmp_path):
         "cache_invalidated": False,
         "five_hour": {"name": "5h", "percent": percent},
     }
-    (tmp_path / "invalid-percent.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "invalid-percent.json", payload)
 
     loaded = load_usage_snapshot("invalid-percent", tmp_path)
 
@@ -1397,9 +1422,9 @@ def test_load_usage_snapshot_marks_invalid_percent_beside_remaining_stale(tmp_pa
         "cache_invalidated": False,
         "five_hour": {"name": "5h", "remaining": 97, "percent": 101},
     }
-    (tmp_path / "invalid-percent-with-remaining.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
+    _write_trusted_snapshot(
+        tmp_path / "invalid-percent-with-remaining.json",
+        payload,
     )
 
     loaded = load_usage_snapshot("invalid-percent-with-remaining", tmp_path)
@@ -1424,10 +1449,7 @@ def test_load_usage_snapshot_discards_valid_values_beside_invalid_numeric_field(
             "percent": "NaN",
         },
     }
-    (tmp_path / "invalid-numeric.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "invalid-numeric.json", payload)
 
     loaded = load_usage_snapshot("invalid-numeric", tmp_path)
 
@@ -1464,10 +1486,7 @@ def test_load_usage_snapshot_disables_pool_with_invalid_control_flag(tmp_path, f
         "cache_invalidated": False,
         "models": {"gpt-5.3-codex-spark": pool},
     }
-    (tmp_path / "invalid-pool-flag.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "invalid-pool-flag.json", payload)
 
     loaded = load_usage_snapshot("invalid-pool-flag", tmp_path)
 
@@ -1499,10 +1518,7 @@ def test_load_usage_snapshot_honors_exhausted_pool_flag(tmp_path):
             }
         },
     }
-    (tmp_path / "exhausted-pool.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "exhausted-pool.json", payload)
 
     loaded = load_usage_snapshot("exhausted-pool", tmp_path)
 
@@ -1524,10 +1540,7 @@ def test_load_usage_snapshot_rejects_numeric_string_values(tmp_path):
         "cache_invalidated": False,
         "five_hour": {"name": "5h", "remaining": "90"},
     }
-    (tmp_path / "numeric-string.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "numeric-string.json", payload)
 
     loaded = load_usage_snapshot("numeric-string", tmp_path)
 
@@ -1584,10 +1597,7 @@ def test_load_usage_snapshot_discards_negative_used(tmp_path):
             "percent": 97,
         },
     }
-    (tmp_path / "negative-used.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "negative-used.json", payload)
 
     loaded = load_usage_snapshot("negative-used", tmp_path)
 
@@ -1611,10 +1621,7 @@ def test_load_usage_snapshot_rejects_negative_remaining(tmp_path):
         "cache_invalidated": False,
         "five_hour": {"name": "5h", "limit": 100, "remaining": -1},
     }
-    (tmp_path / "negative-remaining.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "negative-remaining.json", payload)
 
     loaded = load_usage_snapshot("negative-remaining", tmp_path)
 
@@ -1649,10 +1656,7 @@ def test_load_usage_snapshot_rejects_remaining_conflicts_with_percent(
             "percent": 97,
         },
     }
-    (tmp_path / "invalid-remaining-percent.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "invalid-remaining-percent.json", payload)
 
     loaded = load_usage_snapshot("invalid-remaining-percent", tmp_path)
 
@@ -1677,10 +1681,7 @@ def test_load_usage_snapshot_keeps_percent_when_absolute_remaining_is_ambiguous(
         "cache_invalidated": False,
         "five_hour": {"name": "5h", "remaining": 690, "percent": 69},
     }
-    (tmp_path / "percent-remaining.json").write_text(
-        json.dumps(payload),
-        encoding="utf-8",
-    )
+    _write_trusted_snapshot(tmp_path / "percent-remaining.json", payload)
 
     loaded = load_usage_snapshot("percent-remaining", tmp_path)
 
@@ -1778,6 +1779,8 @@ def test_load_legacy_snapshot_localizes_naive_datetimes(tmp_path):
         "label": "Legacy",
         "captured_at": "2099-06-08T04:20:00",
         "status": "blocked",
+        "backend_configured": "direct",
+        "backend_used": "direct",
         "blocked_until": "2099-06-08T06:50:00",
         "five_hour": {
             "name": "5h",
@@ -2964,12 +2967,16 @@ def test_save_current_usage_normalizes_naive_capture_before_order_check(tmp_path
         account_id="privat",
         label="Privat",
         captured_at=datetime(2099, 1, 2, 12, tzinfo=UTC),
+        backend_configured="direct",
+        backend_used="direct",
         weekly=LimitWindow(name="weekly", remaining=55),
     )
     older_naive = AccountUsage(
         account_id="privat",
         label="Privat",
         captured_at=datetime(2099, 1, 1, 0),
+        backend_configured="direct",
+        backend_used="direct",
     )
 
     save_current_usage(newer, current_dir)
