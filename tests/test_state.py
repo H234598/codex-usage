@@ -978,7 +978,10 @@ def test_load_usage_snapshot_marks_malformed_main_pool_stale():
 
     assert loaded.status == AccountStatus.PARTIAL
     assert loaded.stale is True
-    assert loaded.cache_invalidated is False
+    assert loaded.cache_invalidated is True
+    assert loaded.five_hour is None
+    assert loaded.weekly is None
+    assert loaded.main is None
     assert loaded.error == "invalid cached usage pool: main"
 
 

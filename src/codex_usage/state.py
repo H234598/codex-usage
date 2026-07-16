@@ -616,6 +616,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         invalid_error = "invalid cached usage pool: " + ", ".join(invalid_pool_fields)
         error = f"{error}; {invalid_error}" if error else invalid_error
         forced_stale = True
+        cache_invalidated = True
     if invalid_model_fields:
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
