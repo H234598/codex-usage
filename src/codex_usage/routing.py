@@ -19,6 +19,7 @@ from .private_io import (
     write_private_text,
 )
 from .spark_health import SPARK_HEALTH_MAX_AGE_SECONDS, spark_health_status
+from .state import backend_provenance_matches_configured
 from .usage_limits import (
     FIVE_HOUR_SECONDS,
     SPARK_MODEL,
@@ -307,6 +308,10 @@ def _invalid_usage_reason(
         return "usage_stale"
     if usage.status not in (AccountStatus.OK, AccountStatus.PARTIAL):
         return f"usage_status_{usage.status.value}"
+    if not isinstance(usage.backend_configured, str) or not backend_provenance_matches_configured(
+        usage, usage.backend_configured
+    ):
+        return "backend_provenance_invalid"
     captured_at = (
         usage.values_captured_at
         if usage.values_captured_at is not None

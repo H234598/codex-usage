@@ -50,6 +50,8 @@ def _usage(
         models=(spark,) if spark else (),
         stale=stale,
         backend_account_id=backend_account_id,
+        backend_configured="direct",
+        backend_used="direct",
     )
 
 
@@ -496,6 +498,8 @@ def test_routing_fails_closed_for_invalid_main_pool_flags(flag):
             status=AccountStatus.OK,
             main=main,
             backend_account_id="backend-private",
+            backend_configured="direct",
+            backend_used="direct",
         ),
         role="arbeitsbiene",
         paid_overage_allowed=True,
@@ -504,6 +508,30 @@ def test_routing_fails_closed_for_invalid_main_pool_flags(flag):
 
     assert result["decision"] == "blocked"
     assert result["reason"] == "main_limit_unknown"
+
+
+@pytest.mark.parametrize(
+    ("backend_configured", "backend_used"),
+    [(None, "direct"), ("direct", None), ("app-server", "direct")],
+)
+def test_routing_fails_closed_for_invalid_backend_provenance(
+    backend_configured, backend_used
+):
+    usage = replace(
+        _usage(main_windows=(_window("weekly", 90, 604800),)),
+        backend_configured=backend_configured,
+        backend_used=backend_used,
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "backend_provenance_invalid"
 
 
 @pytest.mark.parametrize("flag", ["allowed", "limit_reached", "available"])
