@@ -577,6 +577,44 @@ def test_fetch_all_invalidates_cache_after_unexpected_fetch_failure(monkeypatch)
     assert result[0].weekly is None
 
 
+def test_fetch_all_expires_reset_windows_before_return(monkeypatch):
+    account = Account(id="expired", label="Expired", profile_dir="/tmp/expired")
+    now = datetime.now().astimezone()
+    usage = AccountUsage(
+        account_id="expired",
+        label="Expired",
+        captured_at=now,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=97,
+            reset_at=now - timedelta(seconds=1),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=55,
+            reset_at=now + timedelta(days=6),
+        ),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage",
+        lambda *_args, **_kwargs: usage,
+    )
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        headed=True,
+    )
+
+    assert result[0].status == AccountStatus.PARTIAL
+    assert result[0].stale is True
+    assert result[0].five_hour is None
+    assert result[0].weekly is not None
+    assert result[0].weekly.remaining == 55
+    assert result[0].main is not None
+    assert [window.name for window in result[0].main.windows] == ["weekly"]
+
+
 def test_direct_override_failure_keeps_direct_provenance(monkeypatch):
     account = Account(
         id="broken",

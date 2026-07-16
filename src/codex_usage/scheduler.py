@@ -34,6 +34,7 @@ from .state import (
     backend_identity_matches,
     backend_provenance_matches,
     backend_provenance_matches_configured,
+    expire_reset_windows,
     load_current_usage,
     load_state_generation,
     load_usage_snapshot,
@@ -89,6 +90,12 @@ def fetch_all(
             reject_ambiguous_backend_identity=account.id in ambiguous_direct_accounts,
         )
         usage = replace(usage, state_generation=state_generation)
+        # A successful transport response can still contain a reset timestamp
+        # that was already expired when captured. Such values are not usage.
+        usage = expire_reset_windows(
+            usage,
+            reference_at=usage.captured_at,
+        )
         if usage.status != AccountStatus.OK or usage.backend_used not in AUTHENTICATED_BACKENDS:
             return usage
         previous = load_usage_snapshot(account.id)
