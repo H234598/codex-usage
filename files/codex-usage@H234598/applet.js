@@ -1314,6 +1314,7 @@ CodexUsageApplet.prototype = {
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
             if (error) {
                 global.log("[" + UUID + "] routing status failed: " + this._shortText(error, 180));
+                this._clearRoutingState();
                 return;
             }
             let state;
@@ -1321,6 +1322,7 @@ CodexUsageApplet.prototype = {
                 state = this._validateRoutingState(payload);
             } catch (e) {
                 global.log("[" + UUID + "] invalid routing status: " + this._shortText(e, 180));
+                this._clearRoutingState();
                 return;
             }
             this._routingPolicy = state.policy;
@@ -1329,6 +1331,20 @@ CodexUsageApplet.prototype = {
             this._routingSettingsReady = true;
             this._refreshFormattedSurfaces();
         }));
+    },
+
+    _clearRoutingState: function() {
+        let hadState = Boolean(
+            this._routingPolicy !== null ||
+            this._routingSettingsReady ||
+            (this._routingDecisions && Object.keys(this._routingDecisions).length)
+        );
+        this._routingPolicy = null;
+        this._routingDecisions = Object.create(null);
+        this._routingSettingsReady = false;
+        if (hadState) {
+            this._refreshFormattedSurfaces();
+        }
     },
 
     _validateRoutingState: function(payload) {
@@ -1354,13 +1370,32 @@ CodexUsageApplet.prototype = {
             if (["spark", "main", "credits", "blocked", "unchanged"].indexOf(decision) === -1) {
                 throw new Error("invalid routing decision value");
             }
+            let model = this._safeText(value.model, 120);
+            let paidOverageAllowed = value.paid_overage_allowed;
+            if (typeof paidOverageAllowed !== "boolean") {
+                throw new Error("invalid routing credit flag");
+            }
+            if (decision === "credits" && paidOverageAllowed !== true) {
+                throw new Error("credits decision without paid-overage approval");
+            }
+            if (
+                (decision === "spark" && model !== "gpt-5.3-codex-spark") ||
+                ((decision === "main" || decision === "credits") && model !== "gpt-5.4-mini") ||
+                ((decision === "blocked" || decision === "unchanged") && model)
+            ) {
+                throw new Error("routing decision model mismatch");
+            }
+            let usageState = this._safeText(value.usage_state, 32);
+            if (["known", "unknown", "not_applicable"].indexOf(usageState) === -1) {
+                throw new Error("invalid routing usage state");
+            }
             decisions[account] = {
                 decision: decision,
-                model: this._safeText(value.model, 120),
+                model: model,
                 reason: this._safeText(value.reason, 120),
-                paid_overage_allowed: value.paid_overage_allowed === true,
+                paid_overage_allowed: paidOverageAllowed,
                 policy_source: this._safeText(value.policy_source, 160),
-                usage_state: this._safeText(value.usage_state, 32)
+                usage_state: usageState
             };
         }
         return { policy: policy, decisions: decisions };

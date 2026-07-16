@@ -641,6 +641,49 @@ test("routing status validation keeps bounded decisions", () => {
   assert.equal(applet._routingDecisionParts({ account: "alpha" }).plain, "Routing Spark · Regel global");
 });
 
+test("routing status rejects inconsistent credit decisions", () => {
+  const applet = makeApplet();
+  assert.throws(() => applet._validateRoutingState({
+    schema_version: 1,
+    policy: {
+      schema_version: 1,
+      global: false,
+      account: {},
+      group: {},
+      agent: {},
+      job: {},
+    },
+    decisions: {
+      alpha: {
+        decision: "credits",
+        model: "gpt-5.4-mini",
+        reason: "paid_overage_explicitly_allowed",
+        paid_overage_allowed: false,
+        policy_source: "global",
+        usage_state: "known",
+      },
+    },
+  }), /credits decision without paid-overage approval/);
+});
+
+test("routing status errors clear old decisions", () => {
+  const applet = makeApplet();
+  applet._routingPolicy = { schema_version: 1, global: true };
+  applet._routingDecisions = { alpha: { decision: "credits" } };
+  applet._routingSettingsReady = true;
+  let refreshes = 0;
+  applet._refreshFormattedSurfaces = () => { refreshes += 1; };
+  applet._baseCommandArgv = () => [];
+  applet._spawnAuxJson = (_argv, callback) => callback(null, "bridge unavailable");
+
+  applet._loadRoutingState();
+
+  assert.equal(applet._routingPolicy, null);
+  assert.deepEqual(Object.keys(applet._routingDecisions), []);
+  assert.equal(applet._routingSettingsReady, false);
+  assert.equal(refreshes, 1);
+});
+
 test("browser values do not merge with unknown provenance", () => {
   const applet = makeApplet();
   const browser = { backend_used: "browser", backend_configured: "direct" };
