@@ -737,6 +737,37 @@ test("fresh browser partial does not restore an unknown cached window", () => {
   assert.equal(merged[0].weekly, null);
 });
 
+test("incomplete provenance cannot restore cached usage during fresh merge", () => {
+  const applet = makeApplet();
+  const capturedAt = new Date();
+  const resetAt = new Date(capturedAt.getTime() + 5 * 60 * 60 * 1000).toISOString();
+  applet._usages = [{
+    account: "alpha",
+    label: "Alpha",
+    captured_at: new Date(capturedAt.getTime() - 60 * 1000).toISOString(),
+    status: "ok",
+    backend_configured: "direct",
+    backend_used: "",
+    five_hour: { name: "5h", remaining: 80, reset_at: resetAt },
+    weekly: null,
+  }];
+
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    label: "Alpha",
+    captured_at: capturedAt.toISOString(),
+    status: "partial",
+    backend_configured: "direct",
+    backend_used: "direct",
+    five_hour: { name: "5h", reset_at: resetAt },
+    weekly: null,
+  }]);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].five_hour.remaining, undefined);
+  assert.equal(applet._remainingPercent(merged[0].five_hour), null);
+});
+
 test("a missed five-minute poll marks cached values stale after one grace minute", () => {
   const applet = makeApplet();
   applet.refreshInterval = 300;
@@ -758,6 +789,8 @@ test("far-future captures are stale and cannot replace current usage", () => {
   const farFutureCapture = new Date(Date.now() + 10 * 60 * 1000).toISOString();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: currentCapture,
     five_hour: { remaining: 80 },
     weekly: { remaining: 60 },
@@ -767,6 +800,8 @@ test("far-future captures are stale and cannot replace current usage", () => {
 
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: farFutureCapture,
     five_hour: { remaining: 10 },
     weekly: { remaining: 20 },
@@ -2163,16 +2198,20 @@ test("successful reactivation queues a refresh behind an active refresh", () => 
   assert.equal(applet._reactivationRefreshPending, false);
 });
 
-test("partial fresh payload preserves each missing window from stale cache", () => {
+test("partial authenticated payload does not restore missing window from stale cache", () => {
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-10T10:00:00.000Z",
     five_hour: { name: "5h", remaining: 80 },
     weekly: { name: "weekly", remaining: 60 },
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     status: "partial",
     captured_at: "2026-07-10T10:05:00.000Z",
     five_hour: { remaining: 70 },
@@ -2180,9 +2219,9 @@ test("partial fresh payload preserves each missing window from stale cache", () 
     stale: false,
   }]);
   assert.equal(merged[0].five_hour.remaining, 70);
-  assert.equal(merged[0].weekly.remaining, 60);
-  assert.equal(merged[0].stale, true);
-  assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].stale, false);
+  assert.equal(merged[0].values_captured_at, undefined);
 });
 
 
@@ -2190,6 +2229,7 @@ test("browser fresh resetless usage does not restore an older counterpart", () =
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
     captured_at: "2026-07-10T10:00:00.000Z",
     backend_used: "browser",
     five_hour: { name: "5h", remaining: 80 },
@@ -2197,6 +2237,7 @@ test("browser fresh resetless usage does not restore an older counterpart", () =
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
     status: "partial",
     backend_used: "browser",
     captured_at: "2026-07-10T10:05:00.000Z",
@@ -2216,6 +2257,8 @@ test("partial fresh window does not inherit a cached value from another duration
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-10T10:00:00.000Z",
     five_hour: {
       name: "5h",
@@ -2228,6 +2271,8 @@ test("partial fresh window does not inherit a cached value from another duration
 
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     status: "partial",
     captured_at: "2026-07-10T10:05:00.000Z",
     five_hour: {
@@ -2245,16 +2290,20 @@ test("partial fresh window does not inherit a cached value from another duration
   assert.equal(merged[0].stale, false);
 });
 
-test("partial fresh payload expires resetless cached windows by duration", () => {
+test("partial authenticated payload does not restore expired resetless cache", () => {
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-10T10:00:00.000Z",
     five_hour: { name: "5h", remaining: 80 },
     weekly: { name: "weekly", remaining: 60 }
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     status: "partial",
     captured_at: "2026-07-10T16:00:00.000Z",
     five_hour: null,
@@ -2263,8 +2312,8 @@ test("partial fresh payload expires resetless cached windows by duration", () =>
   }]);
 
   assert.equal(merged[0].five_hour, null);
-  assert.equal(merged[0].weekly.remaining, 60);
-  assert.equal(merged[0].stale, true);
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].stale, false);
 });
 
 test("partial authenticated payload drops an old inferred five hour value", () => {
@@ -2989,27 +3038,31 @@ test("identity changes win over an older capture timestamp", () => {
   assert.equal(merged[0].weekly.remaining, 90);
 });
 
-test("partial fresh payload preserves usage under reset-only windows", () => {
+test("partial authenticated payload does not restore usage under reset-only windows", () => {
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-10T10:00:00.000Z",
     five_hour: { name: "5h", remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
     weekly: { name: "weekly", remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     status: "partial",
     captured_at: "2026-07-10T10:05:00.000Z",
     five_hour: { name: "5h", reset_at: "2026-07-10T16:00:00.000Z" },
     weekly: null,
     stale: false,
   }]);
-  assert.equal(merged[0].five_hour.remaining, 80);
+  assert.equal(merged[0].five_hour.remaining, undefined);
   assert.equal(merged[0].five_hour.reset_at, "2026-07-10T16:00:00.000Z");
-  assert.equal(merged[0].weekly.remaining, 60);
-  assert.equal(merged[0].stale, true);
-  assert.equal(merged[0].values_captured_at, "2026-07-10T10:00:00.000Z");
+  assert.equal(merged[0].weekly, null);
+  assert.equal(merged[0].stale, false);
+  assert.equal(merged[0].values_captured_at, undefined);
 });
 
 test("expired reset-only fresh window does not restore old usage", () => {
@@ -3101,6 +3154,7 @@ test("transient authenticated errors preserve cached windows", () => {
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
     captured_at: "2026-07-10T10:00:00.000Z",
     five_hour: {
       name: "5h",
@@ -3120,6 +3174,7 @@ test("transient authenticated errors preserve cached windows", () => {
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
     status: "error",
     error: "direct fetch failed: network error",
     captured_at: "2026-07-10T10:05:00.000Z",
@@ -3140,12 +3195,16 @@ test("fresh successful payload preserves cached reset under missing reset times"
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-10T10:00:00.000Z",
     five_hour: { name: "5h", remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
     weekly: { name: "weekly", remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
   }];
   const merged = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     status: "ok",
     captured_at: "2026-07-10T10:05:00.000Z",
     five_hour: { name: "5h", remaining: 70 },
@@ -3165,6 +3224,8 @@ test("older or invalid fresh captures cannot regress newer cached usage", () => 
   const applet = makeApplet();
   applet._usages = [{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-10T10:10:00.000Z",
     five_hour: { remaining: 80, reset_at: "2026-07-10T15:00:00.000Z" },
     weekly: { remaining: 60, reset_at: "2026-07-11T15:00:00.000Z" },
@@ -3173,6 +3234,8 @@ test("older or invalid fresh captures cannot regress newer cached usage", () => 
   }];
   const older = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "2026-07-10T10:05:00.000Z",
     five_hour: { remaining: 20, reset_at: "2026-07-10T14:00:00.000Z" },
     weekly: { remaining: 30, reset_at: "2026-07-11T14:00:00.000Z" },
@@ -3185,6 +3248,8 @@ test("older or invalid fresh captures cannot regress newer cached usage", () => 
 
   const invalid = applet._mergeFreshPayload([{
     account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
     captured_at: "not-a-timestamp",
     five_hour: { remaining: 10 },
     weekly: { remaining: 15 },

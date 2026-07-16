@@ -3223,12 +3223,15 @@ CodexUsageApplet.prototype = {
     _backendProvenanceMatches: function(left, right) {
         let leftConfigured = this._safeBackend(left && left.backend_configured);
         let rightConfigured = this._safeBackend(right && right.backend_configured);
+        let leftUsed = this._safeBackend(left && left.backend_used, true);
+        let rightUsed = this._safeBackend(right && right.backend_used, true);
+        if (!leftConfigured || !rightConfigured || !leftUsed || !rightUsed) {
+            return false;
+        }
         if (leftConfigured && rightConfigured && leftConfigured !== rightConfigured) {
             return false;
         }
         let authenticated = ["direct", "app-server"];
-        let leftUsed = this._safeBackend(left && left.backend_used, true);
-        let rightUsed = this._safeBackend(right && right.backend_used, true);
         if (leftUsed === "browser" || rightUsed === "browser") {
             return leftUsed === "browser" && rightUsed === "browser";
         }
