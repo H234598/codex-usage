@@ -357,21 +357,26 @@ def _has_unexpired_window_reset_discontinuity(
         or previous.reset_at is None
     ):
         return False
-    if previous.reset_at <= reference_at or current.reset_at <= reference_at:
+    try:
+        if previous.reset_at <= reference_at or current.reset_at <= reference_at:
+            return False
+        if _uses_absolute_reset_time(current) or _uses_absolute_reset_time(previous):
+            return False
+        if _has_relative_reset_metadata(current) or _has_relative_reset_metadata(previous):
+            # A relative countdown is the authoritative reset signal for direct
+            # responses. If its metadata is malformed, never reinterpret the
+            # accompanying timestamp as an absolute reset and retain old values.
+            return False
+        if _uses_relative_reset_time(current) or _uses_relative_reset_time(previous):
+            return False
+        return (
+            abs((current.reset_at - previous.reset_at).total_seconds())
+            > DIRECT_RESET_DISCONTINUITY_SECONDS
+        )
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        # Unknown reset ordering must never retain older, possibly exhausted,
+        # values.
         return False
-    if _uses_absolute_reset_time(current) or _uses_absolute_reset_time(previous):
-        return False
-    if _has_relative_reset_metadata(current) or _has_relative_reset_metadata(previous):
-        # A relative countdown is the authoritative reset signal for direct
-        # responses. If its metadata is malformed, never reinterpret the
-        # accompanying timestamp as an absolute reset and retain old values.
-        return False
-    if _uses_relative_reset_time(current) or _uses_relative_reset_time(previous):
-        return False
-    return (
-        abs((current.reset_at - previous.reset_at).total_seconds())
-        > DIRECT_RESET_DISCONTINUITY_SECONDS
-    )
 
 
 def _uses_relative_reset_time(window: Any) -> bool:
@@ -518,35 +523,59 @@ def _is_more_conservative_direct_usage(
             current_window.reset_at is not None
             and previous_window.reset_at is not None
         ):
-            decisions.append(current_window.reset_at <= previous_window.reset_at)
+            try:
+                decisions.append(current_window.reset_at <= previous_window.reset_at)
+            except (AttributeError, OverflowError, TypeError, ValueError):
+                return False
     return bool(decisions) and all(decisions)
 
 
 def _remaining_percent(window) -> float | None:
+    raw_used = getattr(window, "used", None)
+    raw_limit = getattr(window, "limit", None)
+    raw_remaining = getattr(window, "remaining", None)
+    raw_percent = getattr(window, "percent", None)
     used = _finite_number(window.used)
     limit = _finite_number(window.limit)
-    if used is not None and limit is not None and limit > 0:
-        remaining = (limit - used) * 100 / limit
-        return _clamp_percent(remaining)
     remaining_value = _finite_number(window.remaining)
+    percent = _finite_number(window.percent)
+    if any(
+        raw is not None and parsed is None
+        for raw, parsed in (
+            (raw_used, used),
+            (raw_limit, limit),
+            (raw_remaining, remaining_value),
+            (raw_percent, percent),
+        )
+    ):
+        return None
+    if used is not None and limit is not None and limit > 0:
+        if used < 0:
+            return None
+        if used >= limit:
+            return 0.0
+        remaining = (limit - used) * 100 / limit
+        return _valid_percent(remaining)
+    if limit is not None and limit <= 0:
+        return None
     if remaining_value is not None:
         if limit is not None and limit > 0:
+            if not 0 <= remaining_value <= limit:
+                return None
             remaining = remaining_value * 100 / limit
-            return _clamp_percent(remaining)
-        percent = _finite_number(window.percent)
+            return _valid_percent(remaining)
         if percent is not None:
-            return _clamp_percent(percent)
+            return _valid_percent(percent)
         if not 0 <= remaining_value <= 100:
             return None
-        return _clamp_percent(remaining_value)
-    percent = _finite_number(window.percent)
+        return remaining_value
     if percent is not None:
-        return _clamp_percent(percent)
+        return _valid_percent(percent)
     return None
 
 
 def _finite_number(value) -> float | None:
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     try:
         number = float(value)
@@ -555,10 +584,10 @@ def _finite_number(value) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _clamp_percent(value: float) -> float | None:
-    if not math.isfinite(value):
+def _valid_percent(value: float | None) -> float | None:
+    if value is None or not math.isfinite(value):
         return None
-    return max(0.0, min(100.0, value))
+    return value if 0 <= value <= 100 else None
 
 
 def watch(
@@ -771,24 +800,30 @@ def _current_supersedes_blocked_snapshot(
         return False
     try:
         return current.captured_at > blocked_snapshot.captured_at
-    except TypeError:
+    except (AttributeError, OverflowError, TypeError, ValueError):
         return False
 
 
 def _blocked_until_active(usage: AccountUsage, *, now: datetime) -> bool:
-    return bool(
-        usage.status == AccountStatus.BLOCKED
-        and usage.blocked_until is not None
-        and usage.blocked_until > now
-    )
+    try:
+        return bool(
+            usage.status == AccountStatus.BLOCKED
+            and usage.blocked_until is not None
+            and usage.blocked_until > now
+        )
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        return False
 
 
 def _blocked_snapshot_is_consistent(usage: AccountUsage, *, now: datetime) -> bool:
     """Validate stored block metadata without breaking legacy empty snapshots."""
     if usage.five_hour is None and usage.weekly is None:
         return True
-    blocked_until, _reason = _block_state(usage, now=now)
-    return blocked_until is not None and blocked_until == usage.blocked_until
+    try:
+        blocked_until, _reason = _block_state(usage, now=now)
+        return blocked_until is not None and blocked_until == usage.blocked_until
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        return False
 
 
 def _capture_is_too_far_in_future(
@@ -891,21 +926,43 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
 def _window_is_exhausted(window: Any) -> bool:
     if window is None:
         return False
-    used = _finite_number(getattr(window, "used", None))
-    limit = _finite_number(getattr(window, "limit", None))
-    if (
-        used is not None
-        and limit is not None
-        and limit > 0
+    raw_used = getattr(window, "used", None)
+    raw_limit = getattr(window, "limit", None)
+    raw_remaining = getattr(window, "remaining", None)
+    raw_percent = getattr(window, "percent", None)
+    used = _finite_number(raw_used)
+    limit = _finite_number(raw_limit)
+    remaining = _finite_number(raw_remaining)
+    percent = _finite_number(raw_percent)
+    if any(
+        raw is not None and parsed is None
+        for raw, parsed in (
+            (raw_used, used),
+            (raw_limit, limit),
+            (raw_remaining, remaining),
+            (raw_percent, percent),
+        )
     ):
+        return True
+    if used is not None and limit is not None:
+        if limit <= 0 or used < 0:
+            return True
         # Absolute usage is authoritative when a stale remaining field
         # conflicts with it.
         return used >= limit
-    remaining = _finite_number(getattr(window, "remaining", None))
-    if remaining is not None and 0 <= remaining <= 100:
-        return remaining <= 0
-    percent = _finite_number(getattr(window, "percent", None))
-    return percent is not None and 0 <= percent <= 100 and percent <= 0
+    if limit is not None and limit <= 0:
+        return True
+    if remaining is not None:
+        if remaining < 0:
+            return True
+        if remaining <= 100:
+            return remaining <= 0
+        if percent is not None and 0 <= percent <= 100:
+            return percent <= 0
+        return True
+    if percent is not None:
+        return not 0 <= percent <= 100 or percent <= 0
+    return False
 
 
 def _should_persist_snapshot(usage: AccountUsage) -> bool:

@@ -478,7 +478,13 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
     status = AccountStatus(str(payload.get("status", "ok")))
     error = _optional_snapshot_text(payload.get("error"), limit=MAX_SNAPSHOT_TEXT)
     cache_invalidated = payload.get("cache_invalidated") is True
-    values_captured_at = _optional_datetime(payload.get("values_captured_at"))
+    raw_values_captured_at = payload.get("values_captured_at")
+    invalid_values_captured_at = (
+        "values_captured_at" in payload
+        and raw_values_captured_at is not None
+        and _optional_datetime(raw_values_captured_at) is None
+    )
+    values_captured_at = _optional_datetime(raw_values_captured_at)
     if invalid_window_fields:
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
@@ -495,6 +501,17 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             + ", ".join(sanitized_window_fields)
         )
         error = f"{error}; {sanitized_error}" if error else sanitized_error
+    if invalid_values_captured_at:
+        if status == AccountStatus.OK:
+            status = AccountStatus.PARTIAL
+        timestamp_error = "invalid cached values timestamp"
+        error = f"{error}; {timestamp_error}" if error else timestamp_error
+        five_hour = None
+        weekly = None
+        main = None
+        model_pools = ()
+        values_captured_at = None
+        cache_invalidated = True
     if cache_invalidated:
         five_hour = None
         weekly = None
@@ -953,6 +970,11 @@ def _window_from_dict(
         source=_snapshot_text(payload.get("source") or "unknown", limit=120),
         duration_seconds=_snapshot_window_duration(payload.get("duration_seconds")),
     )
+    if any(
+        _snapshot_number_is_invalid(payload, field)
+        for field in ("used", "limit", "remaining", "percent")
+    ):
+        window = replace(window, used=None, limit=None, remaining=None, percent=None)
     if window.percent is not None and not 0 <= window.percent <= 100:
         # Explicit percentages outside the display domain are not usage
         # values. Absolute fields can still provide a trustworthy result.
@@ -1004,6 +1026,12 @@ def _pool_from_dict(
     available = payload.get("available")
     if not isinstance(available, bool):
         return None
+    raw_allowed = payload.get("allowed")
+    raw_limit_reached = payload.get("limit_reached")
+    control_flags_valid = all(
+        value is None or isinstance(value, bool)
+        for value in (raw_allowed, raw_limit_reached)
+    )
     return UsagePool(
         key=key,
         display_name=_snapshot_text(
@@ -1011,9 +1039,12 @@ def _pool_from_dict(
             limit=120,
         ),
         windows=tuple(windows),
-        available=available,
-        allowed=_optional_bool(payload.get("allowed")),
-        limit_reached=_optional_bool(payload.get("limit_reached")),
+        # Invalid control flags cannot prove availability. Disable pool.
+        available=available and control_flags_valid,
+        allowed=raw_allowed if isinstance(raw_allowed, bool) else None,
+        limit_reached=(
+            raw_limit_reached if isinstance(raw_limit_reached, bool) else None
+        ),
         metered_feature=_optional_snapshot_text(
             payload.get("metered_feature"), limit=120
         ),
@@ -1050,6 +1081,11 @@ def _window_had_invalid_cached_value(
 ) -> bool:
     if not isinstance(payload, dict) or window is None:
         return False
+    if any(
+        _snapshot_number_is_invalid(payload, field)
+        for field in ("used", "limit", "remaining", "percent")
+    ):
+        return True
     raw_used = _optional_float(payload.get("used"))
     raw_limit = _optional_float(payload.get("limit"))
     if raw_used is not None and raw_used < 0:
@@ -1068,6 +1104,18 @@ def _window_had_invalid_cached_value(
     if window.limit is not None and window.limit > 0:
         return False
     return window.remaining is None and window.percent is None
+
+
+def _snapshot_number_is_invalid(payload: dict[str, Any], field: str) -> bool:
+    if field not in payload or payload[field] is None:
+        return False
+    value = payload[field]
+    if isinstance(value, bool):
+        return True
+    try:
+        return not math.isfinite(float(value))
+    except (OverflowError, TypeError, ValueError):
+        return True
 
 
 def _optional_float(value: Any) -> float | None:

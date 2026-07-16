@@ -142,6 +142,14 @@ def test_policy_commands_are_machine_readable_and_use_saved_usage(
                 UsagePool(
                     key="gpt-5.3-codex-spark",
                     display_name="Spark",
+                    windows=(
+                        LimitWindow(
+                            name="weekly",
+                            remaining=90,
+                            percent=90,
+                            duration_seconds=604800,
+                        ),
+                    ),
                     available=True,
                     availability_sources=("model_catalog",),
                 ),

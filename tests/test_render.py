@@ -8,6 +8,7 @@ from codex_usage.render import (
     _auth_value,
     _fmt_number,
     _is_finite_number,
+    _is_remaining_percent_window,
     _remaining_percent,
     render_account_values,
     render_json,
@@ -184,6 +185,24 @@ def test_render_rejects_denominatorless_absolute_remaining():
 
     assert "690% verbleibend" not in rendered
     assert "100% verbleibend" not in rendered
+
+
+def test_render_fails_closed_for_invalid_remaining_percent_values():
+    for window in (
+        LimitWindow(name="5h", remaining=101, percent=101),
+        LimitWindow(name="5h", remaining=120, limit=100),
+        LimitWindow(name="5h", percent=True),
+        LimitWindow(name="5h", remaining=float("nan"), limit=100),
+        LimitWindow(name="5h", percent=float("inf")),
+    ):
+        assert _remaining_percent(window) is None
+        assert _is_remaining_percent_window(window) is False
+
+
+def test_render_does_not_format_boolean_as_number():
+    assert _fmt_number(True) == "-"
+    assert _is_finite_number(True) is False
+    assert _remaining_percent(LimitWindow(name="5h", used=True, limit=100)) is None
 
 
 def test_render_table_treats_percent_only_window_as_remaining_percent():

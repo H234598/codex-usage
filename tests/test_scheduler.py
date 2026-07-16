@@ -1289,6 +1289,37 @@ def test_authenticated_stabilization_rejects_malformed_relative_reset_metadata()
     assert result.stale is False
 
 
+def test_authenticated_stabilization_rejects_incomparable_reset_timestamps():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 4, 10, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=50,
+            reset_at=datetime(2026, 7, 12, 9, 10),
+        ),
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 4, 13, tzinfo=timezone),
+        five_hour=replace(
+            previous.five_hour,
+            remaining=99,
+            reset_at=datetime(2026, 7, 12, 10, 13, tzinfo=timezone),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=360)
+
+    assert result is current
+    assert result.five_hour is not None and result.five_hour.remaining == 99
+
+
 def test_authenticated_stabilization_accepts_reset_with_dynamic_absolute_timestamp():
     timezone = ZoneInfo("Europe/Berlin")
     previous_captured = datetime(2026, 7, 12, 4, 10, tzinfo=timezone)
@@ -1519,24 +1550,26 @@ def test_scheduler_numeric_overflow_is_treated_as_missing():
         LimitWindow(name="5h", used=10, limit=-1),
     ),
 )
-def test_scheduler_does_not_block_on_non_positive_absolute_limit(window):
-    assert _window_is_exhausted(window) is False
+def test_scheduler_blocks_on_non_positive_absolute_limit(window):
+    assert _window_is_exhausted(window) is True
 
 
 @pytest.mark.parametrize(
     ("window", "expected"),
     [
         (LimitWindow(name="5h", used=120, limit=100), 0),
-        (LimitWindow(name="5h", used=-20, limit=100), 100),
+        (LimitWindow(name="5h", used=-20, limit=100), None),
         (LimitWindow(name="5h", remaining=120), None),
         (LimitWindow(name="5h", remaining=-20), None),
-        (LimitWindow(name="5h", percent=120), 100),
-        (LimitWindow(name="5h", percent=-20), 0),
+        (LimitWindow(name="5h", remaining=120, limit=100), None),
+        (LimitWindow(name="5h", percent=120), None),
+        (LimitWindow(name="5h", percent=-20), None),
+        (LimitWindow(name="5h", percent=True), None),
         (LimitWindow(name="5h", percent=float("nan")), None),
         (LimitWindow(name="5h", percent=float("inf")), None),
     ],
 )
-def test_scheduler_remaining_percent_clamps_malformed_values(window, expected):
+def test_scheduler_remaining_percent_fails_closed_for_malformed_values(window, expected):
     assert _remaining_percent(window) == expected
 
 
@@ -2407,12 +2440,13 @@ def test_window_exhaustion_percent_fallback_uses_remaining_semantics():
         LimitWindow(name="5h", remaining=120),
         LimitWindow(name="5h", percent=-1),
         LimitWindow(name="5h", percent=120),
+        LimitWindow(name="5h", percent=True),
     ),
 )
-def test_window_exhaustion_ignores_out_of_range_percent_values(window):
+def test_window_exhaustion_blocks_out_of_range_percent_values(window):
     from codex_usage.scheduler import _window_is_exhausted
 
-    assert _window_is_exhausted(window) is False
+    assert _window_is_exhausted(window) is True
 
 
 def test_scheduler_remaining_percent_prefers_percent_without_denominator():

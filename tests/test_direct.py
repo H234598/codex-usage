@@ -11,6 +11,7 @@ from codex_usage.direct import (
     MAX_AUTH_JSON_BYTES,
     DirectAuthError,
     DirectFetchError,
+    _current_jwt_claims,
     _fetch_stable_wham_usage,
     _is_identity_attribution_error,
     _jwt_expiry,
@@ -56,6 +57,14 @@ def test_jwt_expiry_ignores_non_object_payloads():
         token = f"e30.{payload.decode('ascii')}.signature"
 
         assert _jwt_expiry(token) is None
+
+
+@pytest.mark.parametrize("expiry", [True, "not-a-number", float("inf")])
+def test_jwt_claims_reject_invalid_exp_types(expiry):
+    token = _jwt_with_claims({"exp": expiry, "sub": "account"})
+
+    assert _jwt_expiry(token) is None
+    assert _current_jwt_claims(token) is None
 
 
 def test_jwt_expiry_uses_dst_aware_local_zone(monkeypatch):
@@ -435,6 +444,39 @@ def test_select_stable_wham_usage_rejects_conflicting_partial_windows():
         _select_stable_wham_usage(
             [response(18_000, 3), response(604_800, 45), response(18_000, 3)]
         )
+
+
+def test_select_stable_wham_usage_rejects_conflicting_spark_windows():
+    def response(used: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 3,
+                    "limit_window_seconds": 18_000,
+                },
+                "secondary_window": {
+                    "used_percent": 45,
+                    "limit_window_seconds": 604_800,
+                },
+            },
+            "additional_rate_limits": [
+                {
+                    "limit_name": "GPT-5.3-Codex-Spark",
+                    "metered_feature": "codex_bengalfox",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": used,
+                            "limit_window_seconds": 604_800,
+                        }
+                    },
+                }
+            ],
+        }
+
+    with pytest.raises(DirectFetchError, match="Spark limits were inconsistent"):
+        _select_stable_wham_usage([response(1), response(1), response(99)])
 
 
 def test_select_stable_wham_usage_rejects_newer_partial_after_complete_quorum():

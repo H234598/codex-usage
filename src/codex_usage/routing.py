@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -17,7 +18,7 @@ from .private_io import (
     read_private_text,
     write_private_text,
 )
-from .spark_health import spark_health_status
+from .spark_health import SPARK_HEALTH_MAX_AGE_SECONDS, spark_health_status
 from .usage_limits import SPARK_MODEL
 
 POLICY_SCHEMA_VERSION = 1
@@ -65,6 +66,8 @@ def set_policy_rule(
     *,
     path: Path | None = None,
 ) -> dict[str, Any]:
+    if value is not None and not isinstance(value, bool):
+        raise ValueError("policy value must be a boolean or None")
     normalized_scope = scope.strip().casefold()
     if normalized_scope not in ("global", *POLICY_SCOPES):
         raise ValueError("policy scope must be global, account, group, agent or job")
@@ -124,6 +127,8 @@ def evaluate_routing(
     max_age_seconds: int = DEFAULT_MAX_USAGE_AGE_SECONDS,
     spark_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if not isinstance(paid_overage_allowed, bool):
+        raise ValueError("paid_overage_allowed must be a boolean")
     checked_at = now or datetime.now(tz=UTC)
     normalized_role = role.strip().casefold()
     base = {
@@ -151,20 +156,30 @@ def evaluate_routing(
     if invalid_reason:
         return _blocked(base, invalid_reason, usage_state="unknown")
 
-    spark_health = spark_health or spark_health_status(
-        usage.backend_account_id or usage.account_id,
-        now=checked_at,
-    )
+    if spark_health is None:
+        spark_health = spark_health_status(
+            usage.backend_account_id or usage.account_id,
+            now=checked_at,
+        )
+    elif not isinstance(spark_health, dict):
+        spark_health = {
+            "state": "unknown",
+            "reason": "invalid_spark_health",
+            "checked_at": None,
+            "stale": False,
+        }
     base["spark_health"] = spark_health
     spark = usage.model_pool(SPARK_MODEL)
     spark_health_state = spark_health.get("state")
+    spark_state = _pool_usage_state(spark) if spark is not None else "unknown"
+    spark_health_fresh = _spark_health_is_fresh(spark_health, now=checked_at)
     if (
         spark is not None
         and spark.available
         and not spark.exhausted
-        and spark_health_state == "healthy"
+        and spark_state == "known"
+        and spark_health_fresh
     ):
-        spark_state = _pool_usage_state(spark)
         return {
             **base,
             "decision": "spark",
@@ -176,11 +191,19 @@ def evaluate_routing(
 
     spark_reason = "spark_unavailable_or_exhausted"
     if spark is not None and spark.available and not spark.exhausted:
-        spark_reason = (
-            "spark_health_failed"
-            if spark_health_state == "failed"
-            else "spark_health_unverified"
-        )
+        if spark_state == "invalid":
+            spark_reason = "spark_usage_invalid"
+        elif spark_state != "known":
+            spark_reason = "spark_usage_unknown"
+        elif spark_health_state == "failed":
+            spark_reason = "spark_health_failed"
+        elif (
+            spark_health_state == "healthy"
+            and spark_health.get("stale") is True
+        ):
+            spark_reason = "spark_health_stale"
+        else:
+            spark_reason = "spark_health_unverified"
     main_state, main_remaining = _main_state(usage.main)
     if main_state == "safe":
         return {
@@ -214,12 +237,19 @@ def evaluate_routing(
 
 
 def _main_state(pool: UsagePool | None) -> tuple[str, dict[str, float]]:
-    if pool is None or not pool.available or not pool.windows:
+    if (
+        pool is None
+        or not _pool_flags_are_valid(pool)
+        or not pool.available
+        or not pool.windows
+    ):
         return "unknown", {}
     remaining: dict[str, float] = {}
     for window in pool.windows:
         value = window.remaining_percent
         if value is None:
+            return "unknown", {}
+        if not _valid_remaining_percent(value):
             return "unknown", {}
         remaining[window.name] = value
     if pool.allowed is False or pool.limit_reached is True:
@@ -252,14 +282,60 @@ def _invalid_usage_reason(
     return None
 
 
+def _spark_health_is_fresh(payload: dict[str, Any], *, now: datetime) -> bool:
+    if payload.get("state") != "healthy" or payload.get("stale") is not False:
+        return False
+    checked_at = payload.get("checked_at")
+    if not isinstance(checked_at, str):
+        return False
+    try:
+        timestamp = datetime.fromisoformat(checked_at)
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            return False
+        age = (now.astimezone(UTC) - timestamp.astimezone(UTC)).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return -300 <= age <= SPARK_HEALTH_MAX_AGE_SECONDS
+
+
 def _pool_usage_state(pool: UsagePool) -> str:
+    if not _pool_flags_are_valid(pool):
+        return "invalid"
     if not pool.windows:
         return "unknown"
+    if any(window.has_invalid_usage_value for window in pool.windows):
+        return "invalid"
     return (
-        "known"
-        if all(window.remaining_percent is not None for window in pool.windows)
+        "invalid"
+        if any(
+            value is not None and not _valid_remaining_percent(value)
+            for value in (window.remaining_percent for window in pool.windows)
+        )
         else "unknown"
+        if any(window.remaining_percent is None for window in pool.windows)
+        else "known"
     )
+
+
+def _pool_flags_are_valid(pool: UsagePool) -> bool:
+    return (
+        isinstance(pool.available, bool)
+        and (pool.allowed is None or isinstance(pool.allowed, bool))
+        and (
+            pool.limit_reached is None
+            or isinstance(pool.limit_reached, bool)
+        )
+    )
+
+
+def _valid_remaining_percent(value: Any) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        numeric = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return False
+    return math.isfinite(numeric) and 0 <= numeric <= 100
 
 
 def _pool_resets(pool: UsagePool | None) -> dict[str, str | None]:

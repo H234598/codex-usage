@@ -945,6 +945,98 @@ def test_load_usage_snapshot_discards_out_of_range_percent(percent, tmp_path):
     assert loaded.error == "invalid cached limit value: five_hour"
 
 
+def test_load_usage_snapshot_discards_valid_values_beside_invalid_numeric_field(tmp_path):
+    payload = {
+        "account": "invalid-numeric",
+        "label": "Invalid numeric",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "five_hour": {
+            "name": "5h",
+            "remaining": 97,
+            "percent": "NaN",
+        },
+    }
+    (tmp_path / "invalid-numeric.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("invalid-numeric", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.percent is None
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
+
+
+@pytest.mark.parametrize("field", ["allowed", "limit_reached"])
+def test_load_usage_snapshot_disables_pool_with_invalid_control_flag(tmp_path, field):
+    pool = {
+        "key": "gpt-5.3-codex-spark",
+        "display_name": "Spark",
+        "available": True,
+        "windows": [
+            {
+                "name": "weekly",
+                "remaining": 90,
+                "duration_seconds": 604800,
+            }
+        ],
+        field: "false",
+    }
+    payload = {
+        "account": "invalid-pool-flag",
+        "label": "Invalid pool flag",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "models": {"gpt-5.3-codex-spark": pool},
+    }
+    (tmp_path / "invalid-pool-flag.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("invalid-pool-flag", tmp_path)
+
+    assert loaded is not None
+    spark = loaded.model_pool("gpt-5.3-codex-spark")
+    assert spark is not None
+    assert spark.available is False
+
+
+def test_load_usage_snapshot_discards_values_with_invalid_values_timestamp(tmp_path):
+    captured = datetime(2026, 7, 13, 18, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    payload = AccountUsage(
+        account_id="invalid-values-timestamp",
+        label="Invalid values timestamp",
+        captured_at=captured,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="weekly", remaining=90),),
+        ),
+        values_captured_at=captured,
+    ).as_dict()
+    payload["values_captured_at"] = "not-a-timestamp"
+
+    loaded = usage_from_dict(payload)
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
+    assert loaded.stale is True
+    assert loaded.five_hour is None
+    assert loaded.weekly is None
+    assert loaded.main is None
+    assert loaded.models == ()
+    assert loaded.error == "invalid cached values timestamp"
+
+
 def test_load_usage_snapshot_discards_negative_used(tmp_path):
     payload = {
         "account": "negative-used",

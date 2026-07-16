@@ -2,16 +2,35 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
+
 from codex_usage.extractor import LOCAL_TZ
-from codex_usage.models import AccountUsage
+from codex_usage.models import AccountUsage, LimitWindow, UsagePool
 from codex_usage.usage_limits import (
     SPARK_MODEL,
     legacy_windows,
+    merge_model_catalog,
     parse_app_server_usage_pools,
     parse_wham_usage_pools,
 )
 
 NOW = datetime(2026, 7, 16, 4, 0, tzinfo=LOCAL_TZ)
+
+
+@pytest.mark.parametrize(
+    ("window", "expected"),
+    [
+        (LimitWindow(name="5h", remaining=690, limit=1000), 69.0),
+        (LimitWindow(name="5h", remaining=float("nan"), limit=100), None),
+        (LimitWindow(name="5h", remaining=float("inf"), limit=100), None),
+        (LimitWindow(name="5h", remaining=50, limit=float("inf")), None),
+        (LimitWindow(name="5h", remaining=120, limit=100), None),
+        (LimitWindow(name="5h", percent=float("nan")), None),
+        (LimitWindow(name="5h", percent=101), None),
+    ],
+)
+def test_remaining_percent_fails_closed_for_invalid_values(window, expected):
+    assert window.remaining_percent == expected
 
 
 def test_wham_keeps_main_and_spark_weekly_limits_separate():
@@ -100,6 +119,79 @@ def test_wham_ignores_unrelated_additional_rate_limit():
     assert models == ()
 
 
+@pytest.mark.parametrize("field", ["allowed", "limit_reached"])
+def test_wham_disables_spark_pool_with_invalid_control_flag(field):
+    _, models = parse_wham_usage_pools(
+        {
+            "additional_rate_limits": [
+                {
+                    "limit_name": SPARK_MODEL,
+                    "rate_limit": {
+                        field: "false",
+                        "primary_window": {
+                            "used_percent": 1,
+                            "limit_window_seconds": 604800,
+                        },
+                    },
+                }
+            ]
+        },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert len(models) == 1
+    assert models[0].available is False
+    assert models[0].exhausted is True
+
+
+def test_wham_disables_spark_pool_with_conflicting_duplicate_entries():
+    _, models = parse_wham_usage_pools(
+        {
+            "additional_rate_limits": [
+                {
+                    "limit_name": SPARK_MODEL,
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 1,
+                            "limit_window_seconds": 604800,
+                        }
+                    },
+                },
+                {
+                    "metered_feature": "codex_bengalfox",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 100,
+                            "limit_window_seconds": 604800,
+                        }
+                    },
+                },
+            ]
+        },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert len(models) == 1
+    assert models[0].available is False
+    assert models[0].exhausted is True
+
+
+def test_model_catalog_cannot_reenable_disabled_usage_pool():
+    disabled = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        available=False,
+        availability_sources=("usage",),
+    )
+
+    models = merge_model_catalog((disabled,), (SPARK_MODEL,))
+
+    assert models[0].available is False
+    assert models[0].availability_sources == ("usage", "model_catalog")
+
+
 def test_app_server_parses_dynamic_main_and_spark_buckets():
     main, models = parse_app_server_usage_pools(
         {
@@ -142,7 +234,35 @@ def test_app_server_parses_dynamic_main_and_spark_buckets():
     assert models[0].windows[0].reset_at is not None
 
 
-def test_model_catalog_marks_spark_available_when_usage_bucket_is_absent():
+def test_app_server_disables_spark_with_conflicting_duplicate_buckets():
+    _, models = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "spark_a": {
+                    "limitId": "codex_bengalfox",
+                    "primary": {
+                        "usedPercent": 1,
+                        "windowDurationMins": 10080,
+                    },
+                },
+                "spark_b": {
+                    "limitName": "GPT-5.3-Codex-Spark",
+                    "primary": {
+                        "usedPercent": 100,
+                        "windowDurationMins": 10080,
+                    },
+                },
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].available is False
+    assert models[0].exhausted is True
+
+
+def test_model_catalog_does_not_mark_spark_available_without_usage_bucket():
     _, models = parse_app_server_usage_pools(
         {"rateLimits": {}},
         captured_at=NOW,
@@ -151,7 +271,8 @@ def test_model_catalog_marks_spark_available_when_usage_bucket_is_absent():
 
     assert len(models) == 1
     assert models[0].key == SPARK_MODEL
-    assert models[0].available is True
+    assert models[0].available is False
+    assert models[0].exhausted is True
     assert models[0].windows == ()
     assert models[0].availability_sources == ("model_catalog",)
 

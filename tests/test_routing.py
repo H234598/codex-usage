@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.routing import (
     effective_paid_overage,
@@ -77,7 +79,7 @@ def test_routing_prefers_spark_with_weekly_only_limit():
     assert result["usage_state"] == "known"
 
 
-def test_routing_prefers_catalog_only_spark_but_marks_usage_unknown():
+def test_routing_does_not_select_catalog_only_spark_without_usage():
     spark = UsagePool(
         key=SPARK_MODEL,
         display_name="Spark",
@@ -98,8 +100,35 @@ def test_routing_prefers_catalog_only_spark_but_marks_usage_unknown():
         },
     )
 
-    assert result["decision"] == "spark"
-    assert result["usage_state"] == "unknown"
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_usage_unknown"
+    assert result["usage_state"] == "known"
+
+
+def test_routing_does_not_select_spark_when_usage_window_has_no_value():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(LimitWindow(name="weekly", duration_seconds=604800),),
+        available=True,
+        availability_sources=("usage",),
+    )
+
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "test",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_usage_unknown"
 
 
 def test_routing_fails_closed_when_spark_health_is_unknown():
@@ -145,6 +174,64 @@ def test_routing_fails_closed_after_spark_health_failure():
 
     assert result["decision"] == "main"
     assert result["reason"] == "spark_health_failed"
+
+
+def test_routing_fails_closed_for_stale_spark_health():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+    )
+
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "successful_spark_turn",
+            "checked_at": NOW.isoformat(),
+            "stale": True,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_health_stale"
+
+
+@pytest.mark.parametrize(
+    "spark_health",
+    [
+        {"state": "healthy", "stale": False},
+        {
+            "state": "healthy",
+            "stale": False,
+            "checked_at": (NOW - timedelta(hours=2)).isoformat(),
+        },
+        "healthy",
+    ],
+)
+def test_routing_fails_closed_for_invalid_supplied_spark_health(spark_health):
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("weekly", 80, 604800),),
+            spark=UsagePool(
+                key=SPARK_MODEL,
+                display_name="Spark",
+                windows=(_window("weekly", 99, 604800),),
+                available=True,
+            ),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health=spark_health,
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_health_unverified"
 
 
 def test_routing_uses_main_when_spark_is_exhausted_and_all_main_windows_are_safe():
@@ -202,6 +289,113 @@ def test_routing_blocks_at_exact_threshold_without_paid_override():
 
     assert result["decision"] == "blocked"
     assert result["reason"] == "main_limit_at_or_below_threshold"
+
+
+def test_routing_rejects_truthy_non_boolean_paid_policy():
+    with pytest.raises(ValueError, match="paid_overage_allowed must be a boolean"):
+        evaluate_routing(
+            _usage(main_windows=(_window("weekly", 5, 604800),)),
+            role="arbeitsbiene",
+            paid_overage_allowed="false",
+            now=NOW,
+        )
+
+
+@pytest.mark.parametrize("remaining", [float("nan"), -1, 101])
+def test_routing_treats_invalid_main_percent_as_unknown(remaining):
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", remaining, 604800),)),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
+@pytest.mark.parametrize("flag", ["allowed", "limit_reached", "available"])
+def test_routing_fails_closed_for_invalid_main_pool_flags(flag):
+    main = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(_window("weekly", 80, 604800),),
+        availability_sources=("usage",),
+        **{flag: "false"},
+    )
+
+    result = evaluate_routing(
+        AccountUsage(
+            account_id="private",
+            label="Private",
+            captured_at=NOW,
+            status=AccountStatus.OK,
+            main=main,
+            backend_account_id="backend-private",
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
+@pytest.mark.parametrize("flag", ["allowed", "limit_reached", "available"])
+def test_routing_fails_closed_for_invalid_spark_pool_flags(flag):
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        **{flag: "false"},
+    )
+
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "test",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_usage_invalid"
+
+
+def test_routing_does_not_select_spark_for_invalid_percent():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 101, 604800),),
+        available=True,
+    )
+
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "successful_spark_turn",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_usage_invalid"
+
+
+def test_policy_rejects_truthy_non_boolean_rule(tmp_path):
+    with pytest.raises(ValueError, match="policy value must be a boolean or None"):
+        set_policy_rule("global", None, "false", path=tmp_path / "routing-policy.json")
 
 
 def test_routing_allows_credits_only_for_known_low_main_limit():

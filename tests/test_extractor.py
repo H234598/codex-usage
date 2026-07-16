@@ -298,6 +298,17 @@ def test_extract_windows_text_rejects_denominatorless_absolute_remaining():
     assert five.reset_at is not None
 
 
+def test_extract_windows_text_discards_negative_remaining():
+    five, _weekly = extract_windows(
+        body_text="5-hour limit -1 remaining Reset 08.06.2026 04:26",
+        now=datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.has_usage_value is False
+    assert five.reset_at is not None
+
+
 def test_extract_windows_prefers_absolute_usage_over_conflicting_used_percent():
     body = """
     5-hour limit
@@ -1153,6 +1164,20 @@ def test_extract_text_window_clamps_over_limit_absolute_usage_to_zero_remaining(
     assert five.limit == 100
     assert five.remaining == 0
     assert five.percent == 0
+
+
+def test_extract_text_window_discards_negative_absolute_usage():
+    five, _weekly = extract_windows(
+        body_text="5-hour limit -20 / 100 used Reset 08.06.2026 06:50",
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert five is not None
+    assert five.used is None
+    assert five.limit == 100
+    assert five.remaining is None
+    assert five.percent is None
+    assert five.has_usage_value is False
 
 
 def test_extract_windows_rejects_conflicting_generic_percentage_fields():

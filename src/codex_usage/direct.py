@@ -19,7 +19,11 @@ from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
 from .identity import backend_identity_from_payload, backend_plan_type_from_payload
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
-from .usage_limits import parse_wham_usage_pools
+from .usage_limits import (
+    SPARK_METERED_FEATURE,
+    SPARK_MODEL,
+    parse_wham_usage_pools,
+)
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DIRECT_RESPONSE_SAMPLE_COUNT = 3
@@ -808,6 +812,8 @@ def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
     )
     if _has_conflicting_partial_windows(best_group, groups, latest_payload=payloads[-1]):
         raise DirectFetchError("direct response limits were inconsistent across samples")
+    if _has_conflicting_spark_limits(payloads):
+        raise DirectFetchError("direct response Spark limits were inconsistent across samples")
     latest_index = len(payloads) - 1
     latest_is_in_best_group = any(index == latest_index for index, _ in best_group)
     latest_is_reset = _latest_response_is_relative_reset(
@@ -856,6 +862,46 @@ def _has_conflicting_partial_windows(
         for _index, payload in group:
             observed_durations.update(_supported_window_durations(payload))
     return len(observed_durations) > len(best_durations)
+
+
+def _has_conflicting_spark_limits(payloads: list[dict[str, Any]]) -> bool:
+    signatures = [_spark_limit_signature(payload) for payload in payloads]
+    return len(set(signatures)) > 1
+
+
+def _spark_limit_signature(payload: dict[str, Any]) -> tuple | None:
+    additional = payload.get("additional_rate_limits")
+    if not isinstance(additional, list):
+        return None
+    for item in additional[:100]:
+        if not isinstance(item, dict) or not _is_spark_limit_response(
+            item.get("limit_name"), item.get("metered_feature")
+        ):
+            continue
+        rate_limit = item.get("rate_limit")
+        if not isinstance(rate_limit, dict):
+            return ("invalid",)
+        return (
+            _signature_flag(rate_limit.get("allowed")),
+            _signature_flag(rate_limit.get("limit_reached")),
+            tuple(
+                _usage_window_signature(rate_limit.get(key))
+                for key in ("primary_window", "secondary_window")
+            ),
+        )
+    return None
+
+
+def _is_spark_limit_response(name: Any, metered_feature: Any) -> bool:
+    return str(name or "").strip().casefold() in {
+        SPARK_MODEL.casefold(),
+    } or str(metered_feature or "").strip().casefold() == SPARK_METERED_FEATURE.casefold()
+
+
+def _signature_flag(value: Any) -> bool | None | tuple[str, str, str]:
+    if value is None or isinstance(value, bool):
+        return value
+    return ("invalid", type(value).__name__, str(value))
 
 
 def _supported_window_durations(payload: dict[str, Any]) -> set[int]:
@@ -1234,7 +1280,7 @@ def _jwt_expiry(token: Any) -> datetime | None:
     if not isinstance(claims, dict):
         return None
     exp = claims.get("exp")
-    if not isinstance(exp, (int, float)):
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
         return None
     try:
         return datetime.fromtimestamp(float(exp), tz=UTC).astimezone(LOCAL_TZ)
@@ -1246,14 +1292,16 @@ def _current_jwt_claims(token: Any) -> dict[str, Any] | None:
     claims = _jwt_claims(token)
     if not isinstance(claims, dict):
         return None
+    if "exp" not in claims:
+        return claims
     expiry = claims.get("exp")
     if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
-        return claims
+        return None
     try:
         if not math.isfinite(float(expiry)):
-            return claims
+            return None
     except (OverflowError, TypeError, ValueError):
-        return claims
+        return None
     return None if float(expiry) <= time.time() else claims
 
 

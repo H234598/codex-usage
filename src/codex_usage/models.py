@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
@@ -50,10 +51,28 @@ class LimitWindow:
     @property
     def remaining_percent(self) -> float | None:
         if self.percent is not None:
-            return self.percent
-        if self.limit is not None and self.limit > 0 and self.remaining is not None:
-            return max(0.0, min(100.0, self.remaining / self.limit * 100.0))
+            return _valid_percent(self.percent)
+        limit = _finite_number(self.limit)
+        remaining = _finite_number(self.remaining)
+        if limit is not None and limit > 0 and remaining is not None:
+            if not 0 <= remaining <= limit:
+                return None
+            return _valid_percent(remaining / limit * 100.0)
         return None
+
+    @property
+    def has_invalid_usage_value(self) -> bool:
+        if self.percent is not None:
+            return _valid_percent(self.percent) is None
+        limit = _finite_number(self.limit)
+        remaining = _finite_number(self.remaining)
+        if self.limit is not None and (limit is None or limit <= 0):
+            return True
+        if self.remaining is not None and remaining is None:
+            return True
+        if limit is None or remaining is None:
+            return False
+        return not 0 <= remaining <= limit
 
 
 @dataclass(frozen=True)
@@ -214,3 +233,18 @@ def _pool_to_dict(pool: UsagePool | None) -> dict[str, Any] | None:
         "availability_sources": list(pool.availability_sources),
         "exhausted": pool.exhausted,
     }
+
+
+def _finite_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _valid_percent(value: Any) -> float | None:
+    number = _finite_number(value)
+    return number if number is not None and 0 <= number <= 100 else None

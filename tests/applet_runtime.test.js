@@ -249,6 +249,18 @@ test("invalid signed counters are sanitized before rendering", () => {
   assert.equal(applet._remainingPercent(negativeRemaining), 0);
 });
 
+test("absolute remaining above limit cannot become safe percentage", () => {
+  const applet = makeApplet();
+  const window = applet._safeWindow({
+    name: "5h",
+    remaining: 120,
+    limit: 100,
+  });
+
+  assert.equal(window.remaining, null);
+  assert.equal(applet._remainingPercent(window), null);
+});
+
 test("average panel source requires both limit windows", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];
@@ -312,6 +324,30 @@ test("invalid dynamic pool duration is rejected", () => {
     windows: [{ name: "bad", duration_seconds: -1 }],
     availability_sources: [],
   }, "main"), /invalid limit duration/);
+});
+
+test("pool availability must be an explicit boolean", () => {
+  const applet = makeApplet();
+  assert.throws(() => applet._safePool({
+    key: "main",
+    windows: [],
+    availability_sources: [],
+  }, "main"), /invalid usage pool availability/);
+});
+
+test("invalid pool control flags disable pool", () => {
+  const applet = makeApplet();
+  for (const field of ["allowed", "limit_reached"]) {
+    const pool = applet._safePool({
+      key: "main",
+      windows: [],
+      available: true,
+      availability_sources: [],
+      [field]: "false",
+    }, "main");
+
+    assert.equal(pool.available, false);
+  }
 });
 
 test("cache invalidation clears dynamic usage pools", () => {

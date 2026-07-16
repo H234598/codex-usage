@@ -1,6 +1,11 @@
+import json
 from datetime import UTC, datetime, timedelta
 
-from codex_usage.spark_health import set_spark_health, spark_health_status
+from codex_usage.spark_health import (
+    SPARK_HEALTH_MAX_RECORDS,
+    set_spark_health,
+    spark_health_status,
+)
 
 NOW = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
 
@@ -29,6 +34,40 @@ def test_spark_health_failure_stays_fail_closed(tmp_path):
     set_spark_health("backend-nufker", "failed", reason="spark_turn_timeout", path=path, now=NOW)
 
     result = spark_health_status("backend-nufker", path=path, now=NOW + timedelta(days=30))
+
+    assert result["state"] == "failed"
+    assert result["reason"] == "spark_turn_timeout"
+
+
+def test_spark_health_rejects_naive_checked_at(tmp_path):
+    path = tmp_path / "health.json"
+    set_spark_health("backend-nufker", "healthy", path=path, now=NOW)
+    payload = json.loads(path.read_text())
+    record = next(iter(payload["records"].values()))
+    record["checked_at"] = "2026-07-16T04:00:00"
+    path.write_text(json.dumps(payload))
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["state"] == "unknown"
+    assert result["reason"] == "invalid_spark_health_record"
+
+
+def test_refreshing_old_account_keeps_health_record_in_bounded_rotation(tmp_path):
+    path = tmp_path / "health.json"
+    for index in range(SPARK_HEALTH_MAX_RECORDS):
+        set_spark_health(f"backend-{index}", "healthy", path=path, now=NOW)
+
+    set_spark_health(
+        "backend-0",
+        "failed",
+        reason="spark_turn_timeout",
+        path=path,
+        now=NOW,
+    )
+    set_spark_health("backend-new", "healthy", path=path, now=NOW)
+
+    result = spark_health_status("backend-0", path=path, now=NOW)
 
     assert result["state"] == "failed"
     assert result["reason"] == "spark_turn_timeout"

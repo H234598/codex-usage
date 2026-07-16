@@ -31,6 +31,8 @@ def parse_wham_usage_pools(
         source=source,
     )
     models: list[UsagePool] = []
+    spark_pools: list[UsagePool] = []
+    invalid_spark_entry = False
     additional = payload.get("additional_rate_limits")
     if isinstance(additional, list):
         for item in additional[:100]:
@@ -46,9 +48,25 @@ def parse_wham_usage_pools(
                 captured_at=captured_at,
                 source=source,
             )
-            if pool is not None:
-                models.append(pool)
-                break
+            if pool is None:
+                invalid_spark_entry = True
+                continue
+            spark_pools.append(pool)
+    if spark_pools:
+        spark = spark_pools[0]
+        if invalid_spark_entry or any(pool != spark for pool in spark_pools[1:]):
+            spark = replace(spark, available=False)
+        models.append(spark)
+    elif invalid_spark_entry:
+        models.append(
+            UsagePool(
+                key=SPARK_MODEL,
+                display_name="GPT-5.3-Codex-Spark",
+                available=False,
+                metered_feature=SPARK_METERED_FEATURE,
+                availability_sources=("usage",),
+            )
+        )
     return main, tuple(models)
 
 
@@ -73,19 +91,21 @@ def parse_app_server_usage_pools(
         source=source,
     )
 
-    spark_payload = by_id.get(SPARK_METERED_FEATURE)
-    if not isinstance(spark_payload, dict):
-        spark_payload = next(
-            (
-                value
-                for value in by_id.values()
-                if isinstance(value, dict)
-                and _is_spark_limit(value.get("limitName"), value.get("limitId"))
-            ),
-            None,
-        )
-    models: tuple[UsagePool, ...] = ()
-    if isinstance(spark_payload, dict):
+    spark_payloads: list[dict[str, Any]] = []
+    exact_spark_payload = by_id.get(SPARK_METERED_FEATURE)
+    if isinstance(exact_spark_payload, dict):
+        spark_payloads.append(exact_spark_payload)
+    for value in by_id.values():
+        if (
+            isinstance(value, dict)
+            and value is not exact_spark_payload
+            and _is_spark_limit(value.get("limitName"), value.get("limitId"))
+        ):
+            spark_payloads.append(value)
+
+    spark_pools: list[UsagePool] = []
+    invalid_spark_entry = False
+    for spark_payload in spark_payloads:
         spark = _app_server_pool(
             key=SPARK_MODEL,
             display_name="GPT-5.3-Codex-Spark",
@@ -94,8 +114,27 @@ def parse_app_server_usage_pools(
             captured_at=captured_at,
             source=source,
         )
-        if spark is not None:
-            models = (spark,)
+        if spark is None:
+            invalid_spark_entry = True
+        else:
+            spark_pools.append(spark)
+
+    models: tuple[UsagePool, ...] = ()
+    if spark_pools:
+        spark = spark_pools[0]
+        if invalid_spark_entry or any(pool != spark for pool in spark_pools[1:]):
+            spark = replace(spark, available=False)
+        models = (spark,)
+    elif invalid_spark_entry:
+        models = (
+            UsagePool(
+                key=SPARK_MODEL,
+                display_name="GPT-5.3-Codex-Spark",
+                available=False,
+                metered_feature=SPARK_METERED_FEATURE,
+                availability_sources=("usage",),
+            ),
+        )
     return main, merge_model_catalog(models, model_ids)
 
 
@@ -113,7 +152,8 @@ def merge_model_catalog(
             UsagePool(
                 key=SPARK_MODEL,
                 display_name="GPT-5.3-Codex-Spark",
-                available=True,
+                # Catalog entitlement alone is not usage evidence.
+                available=False,
                 metered_feature=SPARK_METERED_FEATURE,
                 availability_sources=("model_catalog",),
             )
@@ -122,7 +162,6 @@ def merge_model_catalog(
         pool = result[spark_index]
         result[spark_index] = replace(
             pool,
-            available=True,
             availability_sources=_unique(
                 (*pool.availability_sources, "model_catalog")
             ),
@@ -162,15 +201,25 @@ def _wham_pool(
         )
         is not None
     )
-    allowed = _optional_bool(rate_limit.get("allowed"))
-    limit_reached = _optional_bool(rate_limit.get("limit_reached"))
-    if not windows and allowed is None and limit_reached is None:
+    raw_allowed = rate_limit.get("allowed")
+    raw_limit_reached = rate_limit.get("limit_reached")
+    allowed = _optional_bool(raw_allowed)
+    limit_reached = _optional_bool(raw_limit_reached)
+    control_flags_valid = all(
+        value is None or isinstance(value, bool)
+        for value in (raw_allowed, raw_limit_reached)
+    )
+    if (
+        not windows
+        and raw_allowed is None
+        and raw_limit_reached is None
+    ):
         return None
     return UsagePool(
         key=key,
         display_name=display_name,
         windows=windows,
-        available=True,
+        available=control_flags_valid,
         allowed=allowed,
         limit_reached=limit_reached,
         metered_feature=metered_feature,

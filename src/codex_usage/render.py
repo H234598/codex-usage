@@ -249,43 +249,62 @@ def _usage_value(window: LimitWindow | None) -> str:
 
 
 def _is_remaining_percent_window(window: LimitWindow) -> bool:
-    if not (
-        _is_finite_number(window.remaining)
-        and _is_finite_number(window.percent)
-        and abs(float(window.remaining) - float(window.percent)) < 0.01
+    remaining = _valid_percent(window.remaining)
+    percent = _valid_percent(window.percent)
+    if (
+        remaining is None
+        or percent is None
+        or abs(remaining - percent) >= 0.01
     ):
         return False
     if _is_finite_number(window.used) and _is_finite_number(window.limit):
-        if float(window.limit) <= 0:
+        used = float(window.used)
+        limit = float(window.limit)
+        if limit <= 0 or used < 0:
             return False
-        derived = (float(window.limit) - float(window.used)) * 100 / float(window.limit)
-        return abs(float(window.remaining) - derived) < 0.01
+        derived = (limit - used) * 100 / limit
+        return abs(remaining - derived) < 0.01
     return window.limit is None or (
         _is_finite_number(window.limit) and abs(float(window.limit) - 100) < 0.01
     )
 
 
 def _remaining_percent(window: LimitWindow) -> float | None:
+    if any(
+        value is not None and not _is_finite_number(value)
+        for value in (window.used, window.limit, window.remaining, window.percent)
+    ):
+        return None
+    if window.percent is not None and _valid_percent(window.percent) is None:
+        return None
+    if window.limit is not None and float(window.limit) <= 0:
+        return None
     if (
         _is_finite_number(window.used)
         and _is_finite_number(window.limit)
-        and float(window.limit) > 0
     ):
-        remaining = (float(window.limit) - float(window.used)) * 100 / float(window.limit)
+        used = float(window.used)
+        limit = float(window.limit)
+        if used < 0:
+            return None
+        remaining = (limit - used) * 100 / limit
         return max(0.0, min(100.0, remaining))
     if _is_finite_number(window.remaining):
         if _is_finite_number(window.limit) and float(window.limit) > 0:
+            remaining_value = float(window.remaining)
+            if not 0 <= remaining_value <= float(window.limit):
+                return None
             return max(
                 0.0,
-                min(100.0, float(window.remaining) * 100 / float(window.limit)),
+                min(100.0, remaining_value * 100 / float(window.limit)),
             )
         if _is_finite_number(window.percent):
-            return max(0.0, min(100.0, float(window.percent)))
+            return _valid_percent(window.percent)
         if not 0 <= float(window.remaining) <= 100:
             return None
-        return max(0.0, min(100.0, float(window.remaining)))
+        return float(window.remaining)
     if _is_finite_number(window.percent):
-        return max(0.0, min(100.0, float(window.percent)))
+        return _valid_percent(window.percent)
     return None
 
 
@@ -327,6 +346,8 @@ def _auth_value(usage: AccountUsage | None) -> str:
 
 
 def _fmt_number(value: float) -> str:
+    if isinstance(value, bool):
+        return "-"
     try:
         number = float(value)
     except (OverflowError, TypeError, ValueError):
@@ -337,12 +358,19 @@ def _fmt_number(value: float) -> str:
 
 
 def _is_finite_number(value: float | None) -> bool:
-    if value is None:
+    if value is None or isinstance(value, bool):
         return False
     try:
         return math.isfinite(float(value))
     except (OverflowError, TypeError, ValueError):
         return False
+
+
+def _valid_percent(value: float | None) -> float | None:
+    if not _is_finite_number(value):
+        return None
+    number = float(value)
+    return number if 0 <= number <= 100 else None
 
 
 def _cell(value: str, max_len: int) -> str:

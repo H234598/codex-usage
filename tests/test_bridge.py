@@ -14,7 +14,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from codex_usage.bridge import (
+    _authenticated_snapshot_supersedes_browser_current,
+    _browser_payload_is_covered_by_authenticated_state,
     _make_handler,
+    _newest_known_usage,
     _parse_captured_at,
     bridge_token_for_account,
     bridge_token_matches,
@@ -51,6 +54,136 @@ def test_parse_captured_at_uses_dst_aware_local_zone(monkeypatch):
 
     assert _parse_captured_at("2026-01-15T00:15:00") == expected
     assert _parse_captured_at("2026-01-14T23:15:00Z") == expected
+
+
+def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
+    with pytest.raises(ValueError, match="timezone"):
+        _parse_captured_at("2026-01-15T00:15:00", strict=True)
+    with pytest.raises(ValueError, match="required"):
+        _parse_captured_at(None, strict=True)
+    with pytest.raises(ValueError, match="invalid"):
+        _parse_captured_at("not-a-timestamp", strict=True)
+
+
+@pytest.mark.parametrize(
+    "captured_at",
+    [None, "", "not-a-timestamp", "2026-01-15T00:15:00", "2099-01-15T00:15:00Z"],
+)
+def test_ingest_rejects_invalid_capture_timestamp_before_saving(tmp_path, captured_at):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    snapshot_dir = tmp_path / "snapshots"
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+            backend_user_id="browser-user",
+            backend_account_id="browser-account",
+        ),
+        snapshot_dir,
+    )
+    payload = {
+        "bodyText": "5-hour limit 42 / 100 Weekly limit 310 / 1000",
+        "apiResponses": [
+            {
+                "url": "https://chatgpt.com/backend-api/wham/usage",
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": json.dumps(
+                    {
+                        "user_id": "browser-user",
+                        "account_id": "browser-account",
+                        "rate_limit": {
+                            "primary_window": {
+                                "used_percent": 42,
+                                "limit_window_seconds": 18000,
+                            },
+                            "secondary_window": {
+                                "used_percent": 31,
+                                "limit_window_seconds": 604800,
+                            },
+                        },
+                    }
+                ),
+            }
+        ],
+    }
+    if captured_at is not None:
+        payload["capturedAt"] = captured_at
+
+    with pytest.raises(ValueError, match="capture timestamp"):
+        ingest_and_save(
+            config,
+            "privat",
+            payload,
+            snapshot_dir,
+            require_backend_identity=True,
+        )
+
+    saved = load_usage_snapshot("privat", snapshot_dir)
+    assert saved is not None
+    assert saved.five_hour is not None and saved.five_hour.remaining == 97
+
+
+def test_ingest_rejects_conflicting_capture_timestamp_fields(tmp_path):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    config = AppConfig(accounts=(account,))
+    payload = {
+        "capturedAt": "2026-01-15T00:15:00Z",
+        "captured_at": "2026-01-15T01:15:00Z",
+        "bodyText": "5-hour limit 42 / 100 Weekly limit 310 / 1000",
+    }
+
+    with pytest.raises(ValueError, match="conflicting capture timestamps"):
+        ingest_and_save(config, "privat", payload, tmp_path / "snapshots")
+
+
+def test_bridge_rejects_incomparable_known_timestamps():
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 1, 15, 0, 15),
+    )
+    snapshot = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 1, 15, 0, 15, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    with pytest.raises(ValueError, match="not comparable"):
+        _newest_known_usage(current, snapshot)
+
+
+def test_bridge_blocks_browser_when_authenticated_timestamp_is_incomparable():
+    browser = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 1, 15, 0, 15, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_used="browser",
+        backend_user_id="user",
+        backend_account_id="account",
+    )
+    authenticated = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 1, 15, 0, 15),
+        status=AccountStatus.PARTIAL,
+        backend_used="direct",
+        backend_user_id="user",
+        backend_account_id="account",
+    )
+
+    assert _browser_payload_is_covered_by_authenticated_state(
+        AppConfig(accounts=()), browser, authenticated
+    )
+    assert _authenticated_snapshot_supersedes_browser_current(
+        browser,
+        authenticated,
+        300,
+    )
 
 
 def test_latest_default_cache_uses_shared_account_lock(monkeypatch):
@@ -210,6 +343,7 @@ def test_ingest_accepts_matching_initialized_browser_identity(tmp_path):
     )
     payload = {
         "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "capturedAt": "2026-06-08T04:25:00+02:00",
         "apiResponses": [
             {
                 "url": "https://chatgpt.com/backend-api/wham/usage",
@@ -556,6 +690,7 @@ def test_ingest_uses_newer_current_identity_than_old_snapshot(tmp_path):
     )
     payload = {
         "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+        "capturedAt": "2026-06-08T04:35:00+02:00",
         "apiResponses": [
             {
                 "url": "https://chatgpt.com/backend-api/wham/usage",
@@ -2694,6 +2829,7 @@ def test_ingest_rejects_payload_from_different_backend_account(tmp_path):
             "privat",
             {
                 "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+                "capturedAt": "2026-06-08T04:25:00+02:00",
                 "apiResponses": [
                     {
                         "url": "https://chatgpt.com/backend-api/wham/usage",
@@ -2765,6 +2901,7 @@ def test_ingest_accepts_new_authenticated_account_after_snapshot_switch(tmp_path
         "privat",
         {
             "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "capturedAt": "2026-06-08T04:25:00+02:00",
             "apiResponses": [
                 {
                     "url": "https://chatgpt.com/backend-api/wham/usage",
@@ -3192,6 +3329,7 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
     endpoint = f"http://127.0.0.1:{server.server_address[1]}/ingest"
     payload = {
         "account": account.id,
+        "capturedAt": "2026-06-08T04:25:00+02:00",
         "apiResponses": [
             {
                 "url": "https://chatgpt.com/backend-api/wham/usage",
@@ -3323,6 +3461,7 @@ def test_http_bridge_accepts_account_added_after_server_start(tmp_path, monkeypa
         second_token = bridge_token_for_account("second")
         payload = {
             "account": "second",
+            "capturedAt": "2026-06-08T04:25:00+02:00",
             "apiResponses": [
                 {
                     "url": "https://chatgpt.com/backend-api/wham/usage",

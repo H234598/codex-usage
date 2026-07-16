@@ -100,7 +100,9 @@ def set_spark_health(
     }
     with private_path_lock(health_path, label="spark health lock"):
         records = _load_records(health_path)
-        records[_health_key(backend_account_id)] = record
+        record_key = _health_key(backend_account_id)
+        records.pop(record_key, None)
+        records[record_key] = record
         records = dict(list(records.items())[-SPARK_HEALTH_MAX_RECORDS:])
         payload = json.dumps(
             {"version": SPARK_HEALTH_VERSION, "records": records},
@@ -169,7 +171,9 @@ def _parse_timestamp(value: Any) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
 
 
 def _safe_reason(value: Any) -> str | None:

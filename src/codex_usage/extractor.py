@@ -1017,6 +1017,11 @@ def _extract_text_window(
             # Explicit `%` and progress-bar values are processed separately.
             remaining = None
 
+        if used is not None and used < 0:
+            used = None
+            remaining = None
+            percent = None
+
         if used is not None and limit is not None:
             remaining = max(limit - used, 0)
             percent = (
@@ -1142,10 +1147,10 @@ def _label_pattern(label: str) -> str:
 
 def _extract_used_limit(text: str) -> tuple[float | None, float | None]:
     patterns = (
-        r"(?P<used>\d+(?:[.,]\d+)?)\s*/\s*(?P<limit>\d+(?:[.,]\d+)?)",
-        r"(?P<used>\d+(?:[.,]\d+)?)\s+(?:von|of)\s+(?P<limit>\d+(?:[.,]\d+)?)",
-        r"(?:used|genutzt|verbraucht)\D{0,40}(?P<used>\d+(?:[.,]\d+)?)\D{0,20}"
-        r"(?:limit|max|grenze)\D{0,40}(?P<limit>\d+(?:[.,]\d+)?)",
+        r"(?P<used>[+-]?\d+(?:[.,]\d+)?)\s*/\s*(?P<limit>[+-]?\d+(?:[.,]\d+)?)",
+        r"(?P<used>[+-]?\d+(?:[.,]\d+)?)\s+(?:von|of)\s+(?P<limit>[+-]?\d+(?:[.,]\d+)?)",
+        r"(?:used|genutzt|verbraucht)\D{0,40}(?P<used>[+-]?\d+(?:[.,]\d+)?)\D{0,20}"
+        r"(?:limit|max|grenze)\D{0,40}(?P<limit>[+-]?\d+(?:[.,]\d+)?)",
     )
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -1155,14 +1160,14 @@ def _extract_used_limit(text: str) -> tuple[float | None, float | None]:
 
 
 def _extract_percent(text: str) -> float | None:
-    match = re.search(r"(?P<percent>\d+(?:[.,]\d+)?)\s*%", text)
+    match = re.search(r"(?P<percent>[+-]?\d+(?:[.,]\d+)?)\s*%", text)
     return _parse_percent(match.group("percent")) if match else None
 
 
 def _extract_used_percent(text: str) -> float | None:
     patterns = (
-        r"(?P<used>\d+(?:[.,]\d+)?)\s*%\s*(?:used|genutzt|verbraucht)",
-        r"(?:used|genutzt|verbraucht)\D{0,10}(?P<used>\d+(?:[.,]\d+)?)\s*%",
+        r"(?P<used>[+-]?\d+(?:[.,]\d+)?)\s*%\s*(?:used|genutzt|verbraucht)",
+        r"(?:used|genutzt|verbraucht)\D{0,10}(?P<used>[+-]?\d+(?:[.,]\d+)?)\s*%",
     )
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -1326,10 +1331,10 @@ def _is_hidden_progress_element(
 
 def _extract_remaining(text: str) -> float | None:
     patterns = (
-        r"(?P<remaining>\d+(?:[.,]\d+)?)\s*%?\s*"
+        r"(?P<remaining>[+-]?\d+(?:[.,]\d+)?)\s*%?\s*"
         r"(?:remaining|left|verbleibend|uebrig|übrig)",
         r"(?:remaining|left|verbleibend|uebrig|übrig)\s+"
-        r"(?P<remaining>\d+(?:[.,]\d+)?)",
+        r"(?P<remaining>[+-]?\d+(?:[.,]\d+)?)",
     )
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)

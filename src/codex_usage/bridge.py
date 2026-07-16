@@ -109,7 +109,7 @@ DEBUG_API_RESPONSE_FIELDS = (
 
 
 def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> AccountUsage:
-    captured_at = _parse_captured_at(payload.get("capturedAt") or payload.get("captured_at"))
+    captured_at = _parse_captured_at(_captured_at_value(payload))
     body_text = _combined_payload_text(payload)
     text_sources = _payload_text_sources(payload)
     auth_user_id, auth_account_id = auth_identity_for_account(account)
@@ -938,6 +938,10 @@ def ingest_and_save(
             raise
         if account.auth_json_path is None and known is None:
             raise ValueError("browser account identity is not initialized")
+    # Diagnostic/manual parsing may use receive time. Never let that fallback
+    # cross the browser ingest trust boundary.
+    if require_backend_identity:
+        _parse_captured_at(_captured_at_value(payload), strict=True)
     if (
         known is not None
         and not backend_identity_matches(usage, known)
@@ -954,8 +958,8 @@ def ingest_and_save(
         try:
             if usage.captured_at < known.captured_at:
                 raise ValueError("bridge payload is older than known state")
-        except TypeError:
-            pass
+        except TypeError as exc:
+            raise ValueError("bridge payload timestamps are not comparable") from exc
     if known is not None and _browser_payload_is_covered_by_authenticated_state(
         config,
         usage,
@@ -993,7 +997,9 @@ def _browser_payload_is_covered_by_authenticated_state(
         try:
             age = (browser_usage.captured_at - known_usage.captured_at).total_seconds()
         except (AttributeError, TypeError):
-            continue
+            # Unknown ordering must block browser data from replacing
+            # authenticated state.
+            return True
         if 0 <= age <= freshness_window:
             return True
     return False
@@ -1009,8 +1015,8 @@ def _newest_known_usage(
         return snapshot
     try:
         return current if current.captured_at >= snapshot.captured_at else snapshot
-    except TypeError:
-        return current
+    except TypeError as exc:
+        raise ValueError("known usage timestamps are not comparable") from exc
 
 
 def _reject_ambiguous_browser_identity(
@@ -1235,7 +1241,9 @@ def _authenticated_snapshot_supersedes_browser_current(
         values_captured_at = snapshot.values_captured_at or snapshot.captured_at
         values_age_seconds = (now - values_captured_at).total_seconds()
     except (TypeError, AttributeError):
-        return False
+        # Do not merge browser values when authenticated freshness cannot be
+        # established.
+        return True
     freshness_window = max(int(interval_seconds), 60) + AUTHENTICATED_BRIDGE_GRACE_SECONDS
     if not 0 <= age_seconds <= freshness_window:
         return False
@@ -1523,21 +1531,41 @@ def _log_bridge_error(message: str, exc: Exception) -> None:
     print(f"{message}: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
 
 
-def _parse_captured_at(value: Any) -> datetime:
+def _captured_at_value(payload: dict[str, Any]) -> Any:
+    fields = [field for field in ("capturedAt", "captured_at") if field in payload]
+    if not fields:
+        return None
+    values = [payload[field] for field in fields]
+    if len(values) == 2 and values[0] != values[1]:
+        raise ValueError("conflicting capture timestamps")
+    return values[0]
+
+
+def _parse_captured_at(value: Any, *, strict: bool = False) -> datetime:
     received_at = datetime.now(tz=LOCAL_TZ)
-    if value:
-        try:
-            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            if parsed.tzinfo is None or parsed.utcoffset() is None:
-                parsed = parsed.replace(tzinfo=LOCAL_TZ)
-            else:
-                parsed = parsed.astimezone(LOCAL_TZ)
-        except (OSError, OverflowError, ValueError):
-            pass
-        else:
-            if parsed <= received_at + timedelta(seconds=MAX_CAPTURE_FUTURE_SECONDS):
-                return parsed
-    return received_at
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if strict:
+            raise ValueError("capture timestamp is required")
+        return received_at
+    if strict and not isinstance(value, str):
+        raise ValueError("capture timestamp must be an ISO-8601 string")
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (OSError, OverflowError, ValueError) as exc:
+        if strict:
+            raise ValueError("invalid capture timestamp") from exc
+        return received_at
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        if strict:
+            raise ValueError("capture timestamp must include timezone")
+        parsed = parsed.replace(tzinfo=LOCAL_TZ)
+    else:
+        parsed = parsed.astimezone(LOCAL_TZ)
+    if parsed > received_at + timedelta(seconds=MAX_CAPTURE_FUTURE_SECONDS):
+        if strict:
+            raise ValueError("capture timestamp is too far in the future")
+        return received_at
+    return parsed
 
 
 def _redact_url(url: str) -> str:

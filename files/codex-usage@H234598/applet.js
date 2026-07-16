@@ -2595,6 +2595,9 @@ CodexUsageApplet.prototype = {
             limit = null;
             remaining = null;
         }
+        if (remaining !== null && limit !== null && limit > 0 && remaining > limit) {
+            remaining = null;
+        }
         if (remaining !== null && remaining < 0) {
             remaining = 0;
         }
@@ -2647,15 +2650,25 @@ CodexUsageApplet.prototype = {
         if (!Array.isArray(sources) || sources.length > MAX_POOL_WINDOWS) {
             throw new Error("invalid availability sources");
         }
+        let allowedValid = value.allowed === null || value.allowed === undefined ||
+            typeof value.allowed === "boolean";
+        let limitReachedValid = value.limit_reached === null || value.limit_reached === undefined ||
+            typeof value.limit_reached === "boolean";
+        let windows = value.windows.map(Lang.bind(this, function(window) {
+            return this._safeWindow(window);
+        }));
+        if (typeof value.available !== "boolean") {
+            throw new Error("invalid usage pool availability");
+        }
         return {
             key: key,
             display_name: this._safeText(value.display_name, 120) || key,
-            windows: value.windows.map(Lang.bind(this, function(window) {
-                return this._safeWindow(window);
-            })),
-            available: value.available !== false,
-            allowed: typeof value.allowed === "boolean" ? value.allowed : null,
-            limit_reached: typeof value.limit_reached === "boolean" ? value.limit_reached : null,
+            windows: windows,
+            available: value.available && allowedValid && limitReachedValid,
+            allowed: allowedValid && typeof value.allowed === "boolean" ? value.allowed : null,
+            limit_reached: limitReachedValid && typeof value.limit_reached === "boolean"
+                ? value.limit_reached
+                : null,
             metered_feature: this._safeText(value.metered_feature, 120),
             availability_sources: sources.map(Lang.bind(this, function(source) {
                 return this._safeText(source, 120);
@@ -4421,23 +4434,32 @@ CodexUsageApplet.prototype = {
         if (typeof window.used === "number" && Number.isFinite(window.used) &&
             typeof window.limit === "number" && Number.isFinite(window.limit) &&
             window.limit > 0) {
-            return Math.max(0, Math.min(100, 100 - (window.used / window.limit * 100)));
+            if (window.used < 0) {
+                return null;
+            }
+            if (window.used >= window.limit) {
+                return 0;
+            }
+            return 100 - (window.used / window.limit * 100);
         }
         if (typeof window.remaining === "number" && Number.isFinite(window.remaining)) {
             if (typeof window.limit === "number" && Number.isFinite(window.limit) &&
                 window.limit > 0) {
-                return Math.max(0, Math.min(100, window.remaining / window.limit * 100));
+                if (window.remaining < 0 || window.remaining > window.limit) {
+                    return null;
+                }
+                return window.remaining / window.limit * 100;
             }
             if (typeof window.percent === "number" && Number.isFinite(window.percent)) {
-                return Math.max(0, Math.min(100, window.percent));
+                return window.percent >= 0 && window.percent <= 100 ? window.percent : null;
             }
             if (window.remaining < 0 || window.remaining > 100) {
                 return null;
             }
-            return Math.max(0, Math.min(100, window.remaining));
+            return window.remaining;
         }
         if (typeof window.percent === "number" && Number.isFinite(window.percent)) {
-            return Math.max(0, Math.min(100, window.percent));
+            return window.percent >= 0 && window.percent <= 100 ? window.percent : null;
         }
         return null;
     },
