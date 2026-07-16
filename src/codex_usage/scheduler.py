@@ -150,13 +150,18 @@ def _serial_fetch_required(
 
 
 def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
+    configured_auth_account_ids = {
+        account.id for account in accounts if account.auth_json_path
+    }
     identities: list[tuple[str, str, str | None, str | None]] = []
+    identity_lookup_failed: set[str] = set()
     for account in accounts:
         if not account.auth_json_path:
             continue
         try:
             user_id, account_id = auth_identity_for_account(account)
         except DirectAuthError:
+            identity_lookup_failed.add(account.id)
             continue
         if not user_id:
             continue
@@ -166,6 +171,14 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
             plan_type = None
         identities.append((account.id, user_id, account_id, plan_type))
     ambiguous: set[str] = set()
+    identity_account_ids = {account_id for account_id, *_ in identities}
+    unidentified_account_ids = (
+        configured_auth_account_ids - identity_account_ids - identity_lookup_failed
+    )
+    if len(configured_auth_account_ids) > 1 and unidentified_account_ids:
+        # An opaque, identity-less auth file cannot prove which backend account
+        # a direct response belongs to when multiple auth accounts are loaded.
+        ambiguous.update(configured_auth_account_ids)
     for index, (local_id, user_id, account_id, plan_type) in enumerate(identities):
         for (
             other_local_id,

@@ -175,6 +175,10 @@ def fetch_account_usage_direct(
             )
         except ValueError as exc:
             raise DirectFetchError(str(exc)) from exc
+        if reject_ambiguous_backend_identity and not (
+            auth_user_id or auth_account_id
+        ):
+            raise DirectFetchError("backend response identity cannot be verified")
         candidate = JsonCandidate(url=WHAM_USAGE_URL, payload=payload)
         five_hour, weekly = extract_windows(
             body_text="",

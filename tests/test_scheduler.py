@@ -260,6 +260,47 @@ def test_fetch_all_keeps_ambiguity_guard_for_selected_account(monkeypatch):
     assert flags == {"privat": True}
 
 
+def test_fetch_all_marks_unidentified_auth_accounts_ambiguous(monkeypatch):
+    accounts = (
+        Account(
+            id="privat",
+            label="Privat",
+            profile_dir="/tmp/privat",
+            auth_json_path="/tmp/privat-auth.json",
+        ),
+        Account(
+            id="work",
+            label="Work",
+            profile_dir="/tmp/work",
+            auth_json_path="/tmp/work-auth.json",
+        ),
+    )
+    flags: dict[str, bool] = {}
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda _account: (None, None),
+    )
+
+    def fake_fetch_direct(
+        account,
+        *,
+        auth_json_path=None,
+        reject_ambiguous_backend_identity=False,
+    ):
+        flags[account.id] = reject_ambiguous_backend_identity
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+
+    fetch_all(AppConfig(accounts=accounts), accounts)
+
+    assert flags == {"privat": True, "work": True}
+
+
 def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):
     delays: list[int] = []
     health_events: list[tuple[str, str]] = []
