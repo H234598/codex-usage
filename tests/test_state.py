@@ -184,7 +184,7 @@ def test_usage_state_invalid_invalidation_flag_discards_values():
 
 @pytest.mark.parametrize(
     ("backend_configured", "backend_used"),
-    ((None, None), ("direct", "app-server")),
+    ((None, None), ("direct", "app-server"), ("app-server", "direct")),
 )
 def test_load_usage_snapshot_invalidates_untrusted_backend_provenance(
     tmp_path,
@@ -202,6 +202,7 @@ def test_load_usage_snapshot_invalidates_untrusted_backend_provenance(
         "weekly": {"name": "weekly", "remaining": 55},
         "backend_configured": backend_configured,
         "backend_used": backend_used,
+        "fallback_reason": "forged fallback",
     }
     path = tmp_path / "untrusted-provenance.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -405,7 +406,9 @@ def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
         captured_at=datetime.now(UTC),
         backend_configured="app-server",
         backend_used="direct",
-        fallback_reason="installed Codex does not support rate-limit RPC",
+        fallback_reason=(
+            "app-server unavailable: installed Codex does not support rate-limit RPC"
+        ),
     )
     app_server = AccountUsage(
         account_id="account",
@@ -417,6 +420,19 @@ def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
 
     assert backend_provenance_matches_configured(direct, "app-server") is True
     assert backend_provenance_matches(direct, app_server) is True
+
+
+def test_backend_provenance_rejects_arbitrary_app_server_fallback_reason():
+    direct = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="app-server",
+        backend_used="direct",
+        fallback_reason="arbitrary fallback text",
+    )
+
+    assert backend_provenance_matches_configured(direct, "app-server") is False
 
 
 def test_merge_rejects_unproven_cross_backend_cache_values():

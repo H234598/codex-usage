@@ -33,6 +33,7 @@ WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
 MAX_MODEL_POOLS = 20
 MAX_POOL_WINDOWS = 8
 MAX_RESET_FUTURE_SKEW_SECONDS = 5 * 60
+APP_SERVER_FALLBACK_REASON_PREFIX = "app-server unavailable: "
 KNOWN_FALLBACK_REASONS = frozenset(
     (
         "previous direct limits retained after reset transition",
@@ -113,14 +114,17 @@ def _backend_provenance_is_complete(usage: AccountUsage) -> bool:
 
 
 def _has_backend_fallback_proof(usage: AccountUsage) -> bool:
-    if usage.backend_used not in AUTHENTICATED_BACKENDS:
+    if (
+        usage.backend_configured != "app-server"
+        or usage.backend_used != "direct"
+    ):
         return False
     if usage.fallback_reason in KNOWN_FALLBACK_REASONS:
         return True
     return bool(
-        usage.backend_used == "direct"
-        and usage.backend_configured == "app-server"
-        and usage.fallback_reason
+        isinstance(usage.fallback_reason, str)
+        and usage.fallback_reason.startswith(APP_SERVER_FALLBACK_REASON_PREFIX)
+        and len(usage.fallback_reason) > len(APP_SERVER_FALLBACK_REASON_PREFIX)
     )
 
 

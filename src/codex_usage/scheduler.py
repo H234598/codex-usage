@@ -31,6 +31,7 @@ from .health import record_health_event
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
 from .state import (
+    APP_SERVER_FALLBACK_REASON_PREFIX,
     _backend_provenance_is_complete,
     backend_identity_matches,
     backend_provenance_matches,
@@ -247,11 +248,14 @@ def _fetch_one(
                         if reject_ambiguous_backend_identity:
                             direct_kwargs["reject_ambiguous_backend_identity"] = True
                         usage = fetch_account_usage_direct(account, **direct_kwargs)
+                        fallback_detail = " ".join(str(exc).split())
                         return replace(
                             usage,
                             backend_configured=account.backend,
                             backend_used="direct",
-                            fallback_reason=" ".join(str(exc).split())[:500],
+                            fallback_reason=(
+                                f"{APP_SERVER_FALLBACK_REASON_PREFIX}{fallback_detail}"
+                            )[:500],
                         )
                 direct_kwargs = {"auth_json_path": auth_json_path}
                 if reject_ambiguous_backend_identity:

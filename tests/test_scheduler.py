@@ -3019,4 +3019,4 @@ def test_app_server_falls_back_only_when_unavailable(monkeypatch):
     result = fetch_all(AppConfig(accounts=(account,)), (account,))
 
     assert result[0].backend_used == "direct"
-    assert result[0].fallback_reason == "unsupported"
+    assert result[0].fallback_reason == "app-server unavailable: unsupported"
