@@ -292,6 +292,28 @@ def test_app_server_disables_spark_with_conflicting_duplicate_buckets():
     assert models[0].exhausted is True
 
 
+def test_app_server_disables_spark_when_exact_bucket_is_malformed():
+    _, models = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex_bengalfox": "malformed",
+                "spark_alias": {
+                    "limitName": "GPT-5.3-Codex-Spark",
+                    "primary": {
+                        "usedPercent": 1,
+                        "windowDurationMins": 10080,
+                    },
+                },
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].available is False
+    assert models[0].exhausted is True
+
+
 @pytest.mark.parametrize(
     ("reached_type", "expected"),
     [(True, True), (False, False), ("primary_window", True)],

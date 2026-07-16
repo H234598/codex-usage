@@ -92,8 +92,11 @@ def parse_app_server_usage_pools(
     )
 
     spark_payloads: list[dict[str, Any]] = []
+    invalid_spark_entry = False
     exact_spark_payload = by_id.get(SPARK_METERED_FEATURE)
-    if isinstance(exact_spark_payload, dict):
+    if SPARK_METERED_FEATURE in by_id and not isinstance(exact_spark_payload, dict):
+        invalid_spark_entry = True
+    elif isinstance(exact_spark_payload, dict):
         spark_payloads.append(exact_spark_payload)
     for value in by_id.values():
         if (
@@ -104,7 +107,6 @@ def parse_app_server_usage_pools(
             spark_payloads.append(value)
 
     spark_pools: list[UsagePool] = []
-    invalid_spark_entry = False
     for spark_payload in spark_payloads:
         spark = _app_server_pool(
             key=SPARK_MODEL,
