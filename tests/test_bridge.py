@@ -17,6 +17,7 @@ import pytest
 from codex_usage.bridge import (
     _authenticated_snapshot_supersedes_browser_current,
     _browser_payload_is_covered_by_authenticated_state,
+    _json_candidates_from_payload,
     _make_handler,
     _newest_known_usage,
     _parse_captured_at,
@@ -2234,6 +2235,73 @@ def test_usage_from_ingest_payload_prefers_latest_response_for_endpoint():
     assert usage.five_hour.used == 20
     assert usage.weekly is not None
     assert usage.weekly.used == 60
+
+
+def test_usage_from_ingest_payload_rejects_conflicting_equal_sequence_responses():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+
+    def response(five_hour: int) -> dict[str, object]:
+        return {
+            "url": "https://chatgpt.com/backend-api/wham/usage",
+            "status": 200,
+            "contentType": "application/json",
+            "requestSequence": 1,
+            "bodyText": json.dumps(
+                {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": five_hour,
+                            "limit_window_seconds": 18_000,
+                        },
+                        "secondary_window": {
+                            "used_percent": 45,
+                            "limit_window_seconds": 604_800,
+                        },
+                    }
+                }
+            ),
+        }
+
+    usage = usage_from_ingest_payload(
+        account,
+        {
+            "url": "https://chatgpt.com/codex/cloud/settings/analytics",
+            "bodyText": "Codex analytics",
+            "apiResponses": [response(3), response(45)],
+        },
+    )
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.cache_invalidated is True
+    assert usage.five_hour is None
+    assert usage.weekly is None
+
+
+def test_json_candidates_keep_each_response_url():
+    body = json.dumps({"usage": {}})
+    candidates = _json_candidates_from_payload(
+        {
+            "apiResponses": [
+                {
+                    "url": "https://example.test/first",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": body,
+                },
+                {
+                    "url": "https://example.test/second",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": body,
+                },
+            ]
+        }
+    )
+
+    assert [candidate.url for candidate in candidates] == [
+        "https://example.test/first",
+        "https://example.test/second",
+    ]
 
 
 def test_usage_from_ingest_payload_prefers_latest_response_across_sources():

@@ -365,6 +365,7 @@ def _payload_text_sources(payload: dict[str, Any]) -> tuple[tuple[str, str], ...
 def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate]:
     responses_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     response_sequences: dict[tuple[str, str], int | None] = {}
+    conflicting_keys: set[tuple[str, str]] = set()
     response_items: list[Any] = []
     for field in ("apiResponses", "api_responses"):
         value = payload.get(field)
@@ -390,63 +391,35 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
         else:
             sequence = None
         previous_sequence = response_sequences.get(key)
-        if (
-            key in responses_by_key
-            and previous_sequence is not None
-            and (sequence is None or sequence < previous_sequence)
-        ):
-            continue
+        if key in responses_by_key:
+            if previous_sequence is not None and (
+                sequence is None or sequence < previous_sequence
+            ):
+                continue
+            if sequence is None:
+                responses_by_key[key] = item
+                response_sequences[key] = sequence
+                continue
+            if sequence == previous_sequence:
+                if _response_without_sequence(responses_by_key[key]) != (
+                    _response_without_sequence(item)
+                ):
+                    conflicting_keys.add(key)
+                continue
+            conflicting_keys.discard(key)
         responses_by_key[key] = item
         response_sequences[key] = sequence
 
+    for key in conflicting_keys:
+        responses_by_key.pop(key, None)
+        response_sequences.pop(key, None)
+
     ordered_candidates: list[tuple[bool, int, int, int, JsonCandidate]] = []
     for candidate_index, item in enumerate(responses_by_key.values()):
-        if "truncated" in item:
-            truncated = item["truncated"]
-            if isinstance(truncated, bool):
-                if truncated:
-                    continue
-            elif isinstance(truncated, str):
-                normalized = truncated.strip().casefold()
-                if normalized == "true":
-                    continue
-                if normalized != "false":
-                    continue
-            else:
-                continue
-        if "status" in item:
-            status = item["status"]
-            if isinstance(status, bool):
-                continue
-            if isinstance(status, str):
-                try:
-                    status = int(status.strip()) if status.strip().isdecimal() else None
-                except ValueError:
-                    status = None
-            if not isinstance(status, int) or not 100 <= status <= 599:
-                continue
-            if status >= 400:
-                continue
-        if "ok" in item:
-            ok = item["ok"]
-            if isinstance(ok, str):
-                normalized = ok.strip().casefold()
-                ok = True if normalized == "true" else False if normalized == "false" else None
-            if not isinstance(ok, bool):
-                continue
-            if not ok:
-                continue
-        content_types = []
-        content_type_invalid = False
-        for field in ("contentType", "content_type"):
-            if field not in item:
-                continue
-            value = item[field]
-            if not isinstance(value, str) or not value.strip():
-                content_type_invalid = True
-                break
-            content_types.append(value.strip().lower())
-        if content_type_invalid or any("json" not in value for value in content_types):
+        if not _response_metadata_is_valid(item):
+            continue
+        raw_url = item.get("url")
+        if not isinstance(raw_url, str):
             continue
         url = _redact_url(raw_url)
         body = item.get("bodyText") or item.get("body") or item.get("text")
@@ -472,6 +445,53 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
     # depend on the order in which sources arrived in the ingest payload.
     ordered_candidates.sort(key=lambda item: item[:4])
     return [item[4] for item in ordered_candidates]
+
+
+def _response_without_sequence(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in item.items()
+        if key != "requestSequence"
+    }
+
+
+def _response_metadata_is_valid(item: dict[str, Any]) -> bool:
+    if "truncated" in item:
+        truncated = item["truncated"]
+        if isinstance(truncated, bool):
+            if truncated:
+                return False
+        elif isinstance(truncated, str):
+            normalized = truncated.strip().casefold()
+            if normalized != "false":
+                return False
+        else:
+            return False
+    if "status" in item:
+        status = item["status"]
+        if isinstance(status, bool):
+            return False
+        if isinstance(status, str):
+            try:
+                status = int(status.strip()) if status.strip().isdecimal() else None
+            except ValueError:
+                status = None
+        if not isinstance(status, int) or not 100 <= status <= 599 or status >= 400:
+            return False
+    if "ok" in item:
+        ok = item["ok"]
+        if isinstance(ok, str):
+            normalized = ok.strip().casefold()
+            ok = True if normalized == "true" else False if normalized == "false" else None
+        if not isinstance(ok, bool) or not ok:
+            return False
+    for field in ("contentType", "content_type"):
+        if field not in item:
+            continue
+        value = item[field]
+        if not isinstance(value, str) or not value.strip() or "json" not in value.casefold():
+            return False
+    return True
 
 
 def _bridge_response_source_priority(value: Any) -> int:
