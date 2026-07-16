@@ -11,7 +11,7 @@ import pytest
 
 from codex_usage import __version__
 from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_latest_usages
-from codex_usage.cli import main
+from codex_usage.cli import _is_successful_usage, main
 from codex_usage.config import AppConfig, load_config
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.spark_health import set_spark_health
@@ -92,6 +92,24 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage watch" in output
     assert "codex-usage service enable" in output
     assert "codex-usage watchdog" in output
+
+
+@pytest.mark.parametrize("available, expected", [(True, True), (False, False)])
+def test_successful_usage_validates_dynamic_main_pool(available, expected):
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            available=available,
+            windows=(LimitWindow(name="weekly", remaining=80),),
+        ),
+    )
+
+    assert _is_successful_usage(usage) is expected
 
 
 def test_policy_commands_are_machine_readable_and_use_saved_usage(
