@@ -96,6 +96,19 @@ def test_usage_pool_treats_invalid_window_as_unusable():
     assert pool.exhausted is True
 
 
+@pytest.mark.parametrize("field", ["available", "allowed", "limit_reached"])
+def test_usage_pool_treats_invalid_control_flag_as_unusable(field):
+    values = {field: "false"}
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(LimitWindow(name="weekly", remaining=97, percent=97),),
+        **values,
+    )
+
+    assert pool.exhausted is True
+
+
 def test_wham_keeps_main_and_spark_weekly_limits_separate():
     main, models = parse_wham_usage_pools(
         {

@@ -126,7 +126,14 @@ class UsagePool:
 
     @property
     def exhausted(self) -> bool:
-        if not self.available or self.allowed is False or self.limit_reached is True:
+        if (
+            not isinstance(self.available, bool)
+            or not self.available
+            or (self.allowed is not None and not isinstance(self.allowed, bool))
+            or (self.limit_reached is not None and not isinstance(self.limit_reached, bool))
+            or self.allowed is False
+            or self.limit_reached is True
+        ):
             return True
         return any(
             window.has_invalid_usage_value or window.remaining_percent == 0
