@@ -1208,7 +1208,8 @@ def _cached_usage_matches_current_auth(
     if not (usage.backend_user_id or usage.backend_account_id):
         # Identity-free status records are still useful; identity-free limits
         # are not safe to attribute after an auth.json change.
-        return not _usage_has_any_usage_value(usage)
+        windows = _usage_windows(usage)
+        return windows == ()
     auth_user_id, auth_account_id = auth_identity
     return _usage_matches_auth_identity(
         usage,
@@ -1283,6 +1284,8 @@ def _authenticated_snapshot_supersedes_browser_current(
     if not backend_identity_matches(current, snapshot):
         return False
     snapshot_windows = _usage_windows(snapshot)
+    if snapshot_windows is None:
+        return False
     has_usage_value = any(window.has_usage_value for window in snapshot_windows)
     authoritative_empty = (
         snapshot.status in {AccountStatus.PARTIAL, AccountStatus.BLOCKED}
@@ -1307,27 +1310,22 @@ def _authenticated_snapshot_supersedes_browser_current(
     return True
 
 
-def _usage_windows(usage: AccountUsage) -> tuple[Any, ...]:
+def _usage_windows(usage: AccountUsage) -> tuple[Any, ...] | None:
     try:
         windows: list[Any] = [usage.five_hour, usage.weekly]
+        if not isinstance(usage.models, tuple):
+            return None
         pools = [usage.main, *usage.models]
     except (AttributeError, TypeError):
-        return ()
+        return None
     for pool in pools:
         if pool is None:
             continue
         pool_windows = getattr(pool, "windows", None)
         if not isinstance(pool_windows, tuple):
-            return ()
+            return None
         windows.extend(pool_windows)
     return tuple(window for window in windows if window is not None)
-
-
-def _usage_has_any_usage_value(usage: AccountUsage) -> bool:
-    try:
-        return any(window.has_usage_value for window in _usage_windows(usage))
-    except (AttributeError, TypeError, ValueError):
-        return False
 
 
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
