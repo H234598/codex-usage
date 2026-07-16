@@ -1224,6 +1224,47 @@ def test_load_usage_snapshot_rejects_negative_remaining(tmp_path):
     assert loaded.error == "invalid cached limit value: five_hour"
 
 
+@pytest.mark.parametrize(
+    "remaining",
+    [-1, 101, 120],
+)
+def test_load_usage_snapshot_rejects_remaining_conflicts_with_percent(
+    tmp_path,
+    remaining,
+):
+    payload = {
+        "account": "invalid-remaining-percent",
+        "label": "Invalid remaining percent",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "five_hour": {
+            "name": "5h",
+            "used": 20,
+            "limit": 100,
+            "remaining": remaining,
+            "percent": 97,
+        },
+    }
+    (tmp_path / "invalid-remaining-percent.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    loaded = load_usage_snapshot("invalid-remaining-percent", tmp_path)
+
+    assert loaded is not None
+    assert loaded.five_hour is not None
+    assert loaded.five_hour.used is None
+    assert loaded.five_hour.limit == 100
+    assert loaded.five_hour.remaining is None
+    assert loaded.five_hour.percent is None
+    assert loaded.five_hour.has_usage_value is False
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.error == "invalid cached limit value: five_hour"
+
+
 def test_load_usage_snapshot_keeps_percent_when_absolute_remaining_is_ambiguous(tmp_path):
     payload = {
         "account": "percent-remaining",

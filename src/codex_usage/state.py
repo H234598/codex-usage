@@ -1021,7 +1021,14 @@ def _window_from_dict(
     if window.limit is not None and window.limit <= 0:
         window = replace(window, used=None, limit=None, remaining=None)
     if window.remaining is not None and window.remaining < 0:
-        window = replace(window, remaining=None)
+        window = replace(window, used=None, remaining=None, percent=None)
+    if (
+        window.limit is not None
+        and window.limit > 0
+        and window.remaining is not None
+        and window.remaining > window.limit
+    ):
+        window = replace(window, used=None, remaining=None, percent=None)
     if (
         window.limit is None or window.limit <= 0
     ) and window.remaining is not None and not 0 <= window.remaining <= 100:
@@ -1136,6 +1143,13 @@ def _window_had_invalid_cached_value(
         return not window.has_usage_value
     raw_remaining = _optional_float(payload.get("remaining"))
     if raw_remaining is not None and raw_remaining < 0:
+        return True
+    if (
+        raw_remaining is not None
+        and raw_limit is not None
+        and raw_limit > 0
+        and raw_remaining > raw_limit
+    ):
         return True
     if raw_remaining is None or 0 <= raw_remaining <= 100:
         return False
