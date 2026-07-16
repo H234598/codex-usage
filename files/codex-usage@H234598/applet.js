@@ -2600,10 +2600,12 @@ CodexUsageApplet.prototype = {
             remaining = null;
         }
         if (remaining !== null && limit !== null && limit > 0 && remaining > limit) {
+            used = null;
             remaining = null;
             percent = null;
         }
         if (remaining !== null && remaining < 0) {
+            used = null;
             remaining = null;
             percent = null;
         }
@@ -4472,6 +4474,40 @@ CodexUsageApplet.prototype = {
 
     _remainingPercent: function(window) {
         if (!window) {
+            return null;
+        }
+        let hasUsed = window.used !== null && window.used !== undefined;
+        let hasLimit = window.limit !== null && window.limit !== undefined;
+        let hasRemaining = window.remaining !== null && window.remaining !== undefined;
+        let hasPercent = window.percent !== null && window.percent !== undefined;
+        if (
+            (hasUsed && (typeof window.used !== "number" || !Number.isFinite(window.used))) ||
+            (hasLimit && (typeof window.limit !== "number" || !Number.isFinite(window.limit))) ||
+            (hasRemaining && (
+                typeof window.remaining !== "number" ||
+                !Number.isFinite(window.remaining)
+            )) ||
+            (hasPercent && (typeof window.percent !== "number" || !Number.isFinite(window.percent)))
+        ) {
+            return null;
+        }
+        if (hasUsed && window.used < 0) {
+            return null;
+        }
+        if (hasLimit && window.limit <= 0) {
+            return null;
+        }
+        if (hasRemaining && window.remaining < 0) {
+            return null;
+        }
+        if (
+            hasRemaining &&
+            hasLimit &&
+            window.remaining > window.limit
+        ) {
+            return null;
+        }
+        if (hasPercent && (window.percent < 0 || window.percent > 100)) {
             return null;
         }
         if (typeof window.used === "number" && Number.isFinite(window.used) &&

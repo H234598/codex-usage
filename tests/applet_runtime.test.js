@@ -252,6 +252,37 @@ test("invalid signed counters are sanitized before rendering", () => {
   assert.equal(applet._remainingPercent(negativeRemaining), null);
 });
 
+test("invalid absolute remaining cannot preserve absolute usage", () => {
+  const applet = makeApplet();
+  for (const remaining of [-1, 120]) {
+    const window = applet._safeWindow({
+      name: "5h",
+      used: 20,
+      limit: 100,
+      remaining,
+      percent: 97,
+    });
+
+    assert.equal(window.used, null);
+    assert.equal(window.remaining, null);
+    assert.equal(window.percent, null);
+    assert.equal(applet._remainingPercent(window), null);
+  }
+});
+
+test("remaining percentage rejects invalid raw fields", () => {
+  const applet = makeApplet();
+  for (const window of [
+    { used: -1, percent: 97 },
+    { limit: 0, percent: 97 },
+    { used: 20, limit: 100, remaining: -1 },
+    { used: 20, limit: 100, remaining: 120 },
+    { used: 20, limit: 100, percent: 101 },
+  ]) {
+    assert.equal(applet._remainingPercent(window), null);
+  }
+});
+
 test("out of range absolute remaining cannot preserve explicit percentage", () => {
   const applet = makeApplet();
   const window = applet._safeWindow({
