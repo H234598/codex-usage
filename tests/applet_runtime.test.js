@@ -431,6 +431,8 @@ test("known exhausted main pool keeps its zero usage value", () => {
       availability_sources: ["app_server"],
     },
     status: "ok",
+    stale: false,
+    cache_invalidated: false,
   }]);
 
   assert.equal(usage.status, "ok");
@@ -618,6 +620,25 @@ test("unknown window identity cannot mark payload as usable", () => {
   assert.equal(usage.error, "usage values missing");
   assert.equal(usage.cache_invalidated, true);
   assert.equal(usage.main, null);
+});
+
+test("missing freshness metadata cannot mark usage fresh", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    captured_at: new Date().toISOString(),
+    five_hour: { name: "5h", remaining: 97 },
+    weekly: { name: "weekly", remaining: 55 },
+    backend_configured: "direct",
+    backend_used: "direct",
+    status: "ok",
+  }]);
+
+  assert.equal(usage.status, "partial");
+  assert.equal(usage.error, "usage freshness metadata missing");
+  assert.equal(usage.stale, true);
+  assert.equal(usage.cache_invalidated, false);
+  assert.equal(usage.five_hour.remaining, 97);
 });
 
 test("invalid usage status clears values before rendering", () => {

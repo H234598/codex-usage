@@ -2591,6 +2591,8 @@ CodexUsageApplet.prototype = {
             let staleFlagInvalid = item.stale !== undefined && typeof item.stale !== "boolean";
             let cacheInvalidatedFlagInvalid = item.cache_invalidated !== undefined &&
                 typeof item.cache_invalidated !== "boolean";
+            let staleFlagMissing = item.stale === undefined;
+            let cacheInvalidatedFlagMissing = item.cache_invalidated === undefined;
             let statusValid = typeof item.status === "string" &&
                 ["ok", "partial", "error", "login_required", "blocked"].indexOf(item.status) !== -1;
             let status = this._safeStatus(item.status);
@@ -2611,6 +2613,8 @@ CodexUsageApplet.prototype = {
                 main,
                 models
             ) || this._hasModelPayloadUsageValue(models);
+            let freshnessMetadataMissing = hasPayloadUsageValue &&
+                (staleFlagMissing || cacheInvalidatedFlagMissing);
             let captureMetadataInvalid = hasPayloadUsageValue && (
                 !this._captureTimestampUsable(capturedAt) ||
                 Boolean(valuesCapturedAt) && !this._captureTimestampUsable(valuesCapturedAt)
@@ -2646,6 +2650,11 @@ CodexUsageApplet.prototype = {
                 weekly = null;
                 main = null;
                 models = Object.create(null);
+            }
+            if (freshnessMetadataMissing) {
+                status = status === "ok" ? "partial" : status;
+                error = error || "usage freshness metadata missing";
+                stale = true;
             }
             if (
                 status === "ok" &&
