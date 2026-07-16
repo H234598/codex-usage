@@ -5,7 +5,10 @@ from typing import Any
 
 
 def loads_strict(value: str | bytes | bytearray) -> Any:
-    return json.loads(value, parse_constant=_reject_constant)
+    try:
+        return json.loads(value, parse_constant=_reject_constant)
+    except RecursionError as exc:
+        raise ValueError("JSON nesting is too deep") from exc
 
 
 def _reject_constant(value: str) -> None:
