@@ -2648,6 +2648,33 @@ def test_watchdog_blocks_exhausted_dynamic_main_window():
     )
 
 
+@pytest.mark.parametrize("field, value", [("allowed", False), ("limit_reached", True)])
+def test_watchdog_blocks_main_pool_flags_even_with_remaining_value(field, value):
+    reset_at = datetime(2099, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="weekly", remaining=50, reset_at=reset_at),),
+            **{field: value},
+        ),
+    )
+
+    blocked = _apply_watchdog_block(
+        usage,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert blocked.status == AccountStatus.BLOCKED
+    assert blocked.blocked_until == reset_at
+    assert blocked.blocked_reason == (
+        f"usage limit reached: weekly; release at {reset_at.isoformat()}"
+    )
+
+
 def test_watchdog_blocks_until_latest_reset_when_multiple_windows_are_exhausted(monkeypatch):
     accounts = (Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked"),)
     exhausted_usage = AccountUsage(

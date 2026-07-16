@@ -1021,8 +1021,12 @@ def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage
 def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None, str | None]:
     saturated_windows: list[tuple[datetime, str]] = []
     unknown_reset_names: list[str] = []
-    for window in _watchdog_windows(usage):
-        if window is None or not _window_is_exhausted(window):
+    watchdog_windows = _watchdog_windows(usage)
+    pool_forces_block = _pool_forces_watchdog_block(usage.main)
+    if pool_forces_block and not watchdog_windows:
+        return None, "usage limit reached: main; reset time unknown"
+    for window in watchdog_windows:
+        if window is None or (not pool_forces_block and not _window_is_exhausted(window)):
             continue
         reset_at = getattr(window, "reset_at", None)
         try:
@@ -1051,6 +1055,26 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
     if blocked_until <= now:
         return None, None
     return blocked_until, reason
+
+
+def _pool_forces_watchdog_block(pool: Any) -> bool:
+    if pool is None:
+        return False
+    try:
+        return bool(
+            pool.allowed is False
+            or pool.limit_reached is True
+            or (
+                pool.allowed is not None
+                and not isinstance(pool.allowed, bool)
+            )
+            or (
+                pool.limit_reached is not None
+                and not isinstance(pool.limit_reached, bool)
+            )
+        )
+    except (AttributeError, TypeError, ValueError):
+        return True
 
 
 def _watchdog_windows(usage: AccountUsage) -> tuple[Any, ...]:
