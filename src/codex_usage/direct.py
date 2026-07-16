@@ -381,22 +381,27 @@ def auth_identity_from_payload(
         claims = _current_jwt_claims(tokens.get(token_name))
         if not isinstance(claims, dict):
             continue
-        token_user_id: str | None = None
-        token_account_id: str | None = None
+        claim_sources = [claims]
         auth_claims = claims.get("https://api.openai.com/auth")
-        if isinstance(auth_claims, dict):
-            token_user_id = _safe_auth_identity(
-                auth_claims.get("chatgpt_user_id") or auth_claims.get("user_id")
+        if "https://api.openai.com/auth" in claims:
+            if not isinstance(auth_claims, dict):
+                raise DirectAuthError(f"auth.json token auth claims are invalid: {path}")
+            claim_sources.append(auth_claims)
+        for claim_source in claim_sources:
+            user_ids.extend(
+                _strict_auth_identity_values(
+                    claim_source,
+                    ("chatgpt_user_id", "user_id"),
+                    path=path,
+                )
             )
-            token_account_id = _safe_auth_identity(auth_claims.get("chatgpt_account_id"))
-        if token_user_id is None:
-            token_user_id = _safe_auth_identity(
-                claims.get("chatgpt_user_id") or claims.get("user_id")
+            account_ids.extend(
+                _strict_auth_identity_values(
+                    claim_source,
+                    ("chatgpt_account_id",),
+                    path=path,
+                )
             )
-        if token_user_id is not None:
-            user_ids.append(token_user_id)
-        if token_account_id is not None:
-            account_ids.append(token_account_id)
     if len(set(user_ids)) > 1 or len(set(account_ids)) > 1:
         raise DirectAuthError(f"auth.json token identities disagree: {path}")
     return (
@@ -529,6 +534,23 @@ def _safe_auth_identity(value: Any) -> str | None:
     ):
         return None
     return value
+
+
+def _strict_auth_identity_values(
+    claims: dict[str, Any],
+    names: tuple[str, ...],
+    *,
+    path: Path,
+) -> list[str]:
+    values: list[str] = []
+    for name in names:
+        if name not in claims:
+            continue
+        value = _safe_auth_identity(claims[name])
+        if value is None:
+            raise DirectAuthError(f"auth.json token identity claim is invalid: {path}")
+        values.append(value)
+    return values
 
 
 def _safe_auth_plan_type(value: Any) -> str | None:

@@ -146,6 +146,35 @@ def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
         auth_identity_from_payload(payload, path=path)
 
 
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"https://api.openai.com/auth": {"chatgpt_user_id": ["not-an-id"]}},
+        {
+            "https://api.openai.com/auth": {
+                "chatgpt_user_id": "user-a",
+                "user_id": "user-b",
+            }
+        },
+        {"https://api.openai.com/auth": "not-an-object"},
+    ],
+)
+def test_auth_identity_rejects_malformed_or_conflicting_claims(tmp_path, claims):
+    path = tmp_path / "auth.json"
+    payload = {
+        "tokens": {
+            "access_token": _jwt_with_claims(claims),
+            "account_id": "account-uuid",
+        }
+    }
+
+    with pytest.raises(
+        DirectAuthError,
+        match=r"identity claim|auth claims|identities disagree",
+    ):
+        auth_identity_from_payload(payload, path=path)
+
+
 def test_auth_identity_ignores_expired_id_token_when_access_token_is_current(tmp_path):
     path = tmp_path / "auth.json"
     payload = {
