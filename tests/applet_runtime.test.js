@@ -236,7 +236,7 @@ test("invalid signed counters are sanitized before rendering", () => {
     remaining: 80,
   });
   const zeroLimit = applet._safeWindow({ name: "5h", limit: 0, remaining: 50 });
-  const negativeRemaining = applet._safeWindow({ name: "5h", remaining: -1 });
+  const negativeRemaining = applet._safeWindow({ name: "5h", remaining: -1, percent: 97 });
 
   assert.equal(negativeUsed.used, null);
   assert.equal(negativeUsed.limit, 100);
@@ -246,6 +246,7 @@ test("invalid signed counters are sanitized before rendering", () => {
   assert.equal(zeroLimit.remaining, null);
   assert.equal(applet._remainingPercent(zeroLimit), null);
   assert.equal(negativeRemaining.remaining, null);
+  assert.equal(negativeRemaining.percent, null);
   assert.equal(applet._remainingPercent(negativeRemaining), null);
 });
 

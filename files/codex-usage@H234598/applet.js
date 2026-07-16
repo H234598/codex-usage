@@ -2603,6 +2603,7 @@ CodexUsageApplet.prototype = {
         }
         if (remaining !== null && remaining < 0) {
             remaining = null;
+            percent = null;
         }
         if (
             (limit === null || limit <= 0) &&
