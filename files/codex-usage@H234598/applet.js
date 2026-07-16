@@ -4232,6 +4232,9 @@ CodexUsageApplet.prototype = {
     _panelValueForSource: function(usage, source) {
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
+        if (source >= 1 && source <= 3 && usage.main && !this._poolIsUsable(usage.main)) {
+            return null;
+        }
         if (source === 1) {
             return five;
         }
@@ -4261,6 +4264,9 @@ CodexUsageApplet.prototype = {
     },
 
     _panelWindowForSource: function(usage, source) {
+        if (source >= 1 && source <= 3 && usage.main && !this._poolIsUsable(usage.main)) {
+            return null;
+        }
         if (source === 1) {
             return usage.five_hour;
         }

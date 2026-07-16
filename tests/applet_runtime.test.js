@@ -322,6 +322,23 @@ test("average panel source requires both limit windows", () => {
   assert.equal(applet._panelWindowForSource(usage, 3), null);
 });
 
+test("legacy panel sources cannot bypass an unusable main pool", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.main = {
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: true,
+    windows: [{ name: "weekly", duration_seconds: 604800, remaining: 0 }],
+  };
+
+  for (const source of [1, 2, 3]) {
+    assert.equal(applet._panelValueForSource(usage, source), null);
+    assert.equal(applet._panelWindowForSource(usage, source), null);
+  }
+});
+
 test("dynamic pools survive validation and drive Spark panel slots", () => {
   const applet = makeApplet();
   const [usage] = applet._validatePayload([{
