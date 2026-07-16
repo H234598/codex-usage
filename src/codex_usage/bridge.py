@@ -397,13 +397,16 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
     for item in response_items:
         if not isinstance(item, dict):
             continue
+        source = _bridge_response_source(item)
+        if source is None:
+            continue
         raw_url = item.get("url")
         if not isinstance(raw_url, str):
             continue
         url = _redact_url(raw_url)
         if not url:
             continue
-        key = (str(item.get("source") or ""), url)
+        key = (source, url)
         if "requestSequence" in item:
             sequence = item["requestSequence"]
             if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
@@ -459,14 +462,17 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
             continue
         candidate = load_json_candidate(url, body)
         if candidate is not None:
+            source = _bridge_response_source(item)
+            if source is None:
+                continue
             sequence = response_sequences.get(
-                (str(item.get("source") or ""), url)
+                (source, url)
             )
             ordered_candidates.append(
                 (
                     sequence is not None,
                     sequence if sequence is not None else -1,
-                    _bridge_response_source_priority(item.get("source")),
+                    _bridge_response_source_priority(source),
                     candidate_index,
                     candidate,
                 )
@@ -485,6 +491,11 @@ def _response_without_sequence(item: dict[str, Any]) -> dict[str, Any]:
         for key, value in item.items()
         if key != "requestSequence"
     }
+
+
+def _bridge_response_source(item: dict[str, Any]) -> str | None:
+    value = item.get("source", "")
+    return value if isinstance(value, str) else None
 
 
 def _response_metadata_is_valid(item: dict[str, Any]) -> bool:
@@ -511,7 +522,9 @@ def _response_metadata_is_valid(item: dict[str, Any]) -> bool:
 
 
 def _bridge_response_source_priority(value: Any) -> int:
-    source = str(value or "")
+    if not isinstance(value, str):
+        return 0
+    source = value
     return {
         "content-probe": 10,
         "page-refresh": 20,

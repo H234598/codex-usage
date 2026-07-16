@@ -2585,6 +2585,27 @@ def test_json_candidates_reject_malformed_request_sequence(request_sequence):
     assert candidates == []
 
 
+@pytest.mark.parametrize("source", [None, False, 0, [], {}])
+def test_json_candidates_reject_malformed_response_source(source):
+    candidates = _json_candidates_from_payload(
+        {
+            "apiResponses": [
+                {
+                    "source": source,
+                    "url": "https://example.test/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
+                    "bodyText": json.dumps({"usage": {}}),
+                }
+            ]
+        }
+    )
+
+    assert candidates == []
+
+
 def test_usage_from_ingest_payload_prefers_latest_response_across_sources():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
 
