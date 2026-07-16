@@ -14,6 +14,7 @@ from codex_usage.direct import (
     _current_jwt_claims,
     _extract_auth_details,
     _fetch_stable_wham_usage,
+    _fetch_wham_usage,
     _is_identity_attribution_error,
     _jwt_expiry,
     _select_stable_wham_usage,
@@ -50,6 +51,33 @@ def _jwt_with_claims(claims: dict) -> str:
 )
 def test_signature_number_rejects_non_finite_values_without_raising(value):
     assert _signature_number(value) is None
+
+
+@pytest.mark.parametrize("status", [None, True, "200", 199, 300])
+def test_fetch_wham_usage_rejects_invalid_http_status(status, monkeypatch):
+    class FakeResponse:
+        status = 200
+
+        def __init__(self):
+            self.status = status
+            self.headers = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return b"{}"
+
+    monkeypatch.setattr(
+        "codex_usage.direct.urlopen",
+        lambda request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(DirectFetchError, match="invalid HTTP status"):
+        _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
 def test_jwt_expiry_ignores_non_object_payloads():
@@ -295,6 +323,8 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
     captured = {}
 
     class FakeResponse:
+        status = 200
+
         def __enter__(self):
             return self
 
@@ -1550,6 +1580,8 @@ def test_fetch_account_usage_direct_rejects_response_from_different_account(
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __enter__(self):
             return self
 
@@ -1605,6 +1637,8 @@ def test_fetch_account_usage_direct_accepts_same_account_with_different_user_id(
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __enter__(self):
             return self
 
@@ -1676,6 +1710,8 @@ def test_fetch_account_usage_direct_rejects_shared_user_response_with_different_
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __enter__(self):
             return self
 
@@ -1741,6 +1777,8 @@ def test_fetch_account_usage_direct_accepts_shared_user_alias_with_matching_plan
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __enter__(self):
             return self
 
@@ -1829,6 +1867,8 @@ def test_fetch_account_usage_direct_marks_reset_only_windows_partial(tmp_path, m
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __init__(self):
             self.headers = {"content-type": "application/json"}
 
@@ -1907,6 +1947,8 @@ def test_fetch_account_usage_direct_keeps_model_specific_spark_limit_separate(
     }
 
     class FakeResponse:
+        status = 200
+
         def __init__(self):
             self.headers = {"content-type": "application/json"}
 
@@ -1953,6 +1995,8 @@ def test_fetch_account_usage_direct_supports_plan_specific_30_day_window(
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __init__(self):
             self.headers = {"content-type": "application/json"}
 
@@ -2007,6 +2051,8 @@ def test_fetch_account_usage_direct_ignores_overflowing_window_duration(
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __enter__(self):
             return self
 
@@ -2050,6 +2096,8 @@ def test_fetch_account_usage_direct_reports_single_available_window(tmp_path, mo
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __init__(self):
             self.headers = {"content-type": "application/json"}
 
@@ -2268,6 +2316,8 @@ def test_fetch_account_usage_direct_rejects_non_json_content_type(tmp_path, monk
     auth_path.chmod(0o600)
 
     class FakeResponse:
+        status = 200
+
         def __init__(self):
             self.headers = {"content-type": "text/html; charset=utf-8"}
 

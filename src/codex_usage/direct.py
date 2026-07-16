@@ -741,6 +741,15 @@ def _fetch_wham_usage(
     )
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
+            status = getattr(response, "status", None)
+            if (
+                status is None
+                or isinstance(status, bool)
+                or not isinstance(status, int)
+                or status < 200
+                or status >= 300
+            ):
+                raise DirectFetchError("direct response has invalid HTTP status")
             content_type = _response_content_type(response).lower()
             if content_type and "json" not in content_type:
                 raise DirectFetchError("direct response is not JSON content")
