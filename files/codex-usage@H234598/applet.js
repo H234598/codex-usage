@@ -2657,6 +2657,8 @@ CodexUsageApplet.prototype = {
             typeof value.allowed === "boolean";
         let limitReachedValid = value.limit_reached === null || value.limit_reached === undefined ||
             typeof value.limit_reached === "boolean";
+        let exhaustedValid = value.exhausted === null || value.exhausted === undefined ||
+            typeof value.exhausted === "boolean";
         let windows = value.windows.map(Lang.bind(this, function(window) {
             return this._safeWindow(window);
         }));
@@ -2667,7 +2669,7 @@ CodexUsageApplet.prototype = {
             key: key,
             display_name: this._safeText(value.display_name, 120) || key,
             windows: windows,
-            available: value.available && allowedValid && limitReachedValid,
+            available: value.available && allowedValid && limitReachedValid && exhaustedValid,
             allowed: allowedValid && typeof value.allowed === "boolean" ? value.allowed : null,
             limit_reached: limitReachedValid && typeof value.limit_reached === "boolean"
                 ? value.limit_reached
@@ -2676,7 +2678,9 @@ CodexUsageApplet.prototype = {
             availability_sources: sources.map(Lang.bind(this, function(source) {
                 return this._safeText(source, 120);
             })).filter(function(source) { return Boolean(source); }),
-            exhausted: value.exhausted === true
+            exhausted: exhaustedValid && typeof value.exhausted === "boolean"
+                ? value.exhausted
+                : null
         };
     },
 

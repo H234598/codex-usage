@@ -325,6 +325,7 @@ test("unusable Spark pools cannot drive panel sources", () => {
     { available: true, limit_reached: true },
     { available: true, exhausted: true },
     { available: true, allowed: "false" },
+    { available: true, exhausted: "false" },
   ]) {
     const [usage] = applet._validatePayload([{
       account: "alpha",
@@ -392,7 +393,7 @@ test("pool availability must be an explicit boolean", () => {
 
 test("invalid pool control flags disable pool", () => {
   const applet = makeApplet();
-  for (const field of ["allowed", "limit_reached"]) {
+  for (const field of ["allowed", "limit_reached", "exhausted"]) {
     const pool = applet._safePool({
       key: "main",
       windows: [],
