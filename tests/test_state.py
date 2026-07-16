@@ -73,6 +73,37 @@ def test_usage_state_round_trips_dynamic_main_and_spark_pools():
     assert loaded.weekly == weekly
 
 
+def test_usage_state_round_trips_exhausted_dynamic_limit():
+    captured_at = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
+    reset_at = datetime(2026, 7, 17, 4, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="exhausted",
+        label="Exhausted",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="weekly",
+                    remaining=0,
+                    percent=0,
+                    duration_seconds=604800,
+                    reset_at=reset_at,
+                ),
+            ),
+        ),
+    )
+
+    loaded = usage_from_dict(usage.as_dict())
+
+    assert loaded.status == AccountStatus.OK
+    assert loaded.cache_invalidated is False
+    assert loaded.main == usage.main
+    assert loaded.main is not None and loaded.main.exhausted is True
+
+
 def test_usage_state_migrates_legacy_windows_to_main_pool():
     loaded = usage_from_dict(
         {

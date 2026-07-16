@@ -1174,7 +1174,7 @@ def _pool_from_dict(
         value is None or isinstance(value, bool)
         for value in (raw_allowed, raw_limit_reached, raw_exhausted)
     )
-    return UsagePool(
+    pool = UsagePool(
         key=key,
         display_name=_snapshot_text(
             payload.get("display_name") or key,
@@ -1182,7 +1182,7 @@ def _pool_from_dict(
         ),
         windows=tuple(windows),
         # Invalid control flags cannot prove availability. Disable pool.
-        available=available and control_flags_valid and raw_exhausted is not True,
+        available=available and control_flags_valid,
         allowed=raw_allowed if isinstance(raw_allowed, bool) else None,
         limit_reached=(
             raw_limit_reached if isinstance(raw_limit_reached, bool) else None
@@ -1192,6 +1192,10 @@ def _pool_from_dict(
         ),
         availability_sources=tuple(dict.fromkeys(sources)),
     )
+    if isinstance(raw_exhausted, bool) and raw_exhausted != pool.exhausted:
+        # The derived flag may not contradict the actual limit fields.
+        pool = replace(pool, available=False)
+    return pool
 
 
 def _model_pools_from_dict(payload: Any) -> tuple[UsagePool, ...]:

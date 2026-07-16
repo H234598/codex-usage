@@ -159,11 +159,26 @@ class UsagePool:
                 or self.allowed is False
                 or self.limit_reached is True
             )
-        if not self.has_valid_usage:
+        if (
+            self.available is not True
+            or (self.allowed is not None and not isinstance(self.allowed, bool))
+            or (
+                self.limit_reached is not None
+                and not isinstance(self.limit_reached, bool)
+            )
+            or self.allowed is False
+            or self.limit_reached is True
+        ):
             return True
-        return self.allowed is False or self.limit_reached is True or any(
-            window.remaining_percent == 0 for window in self.windows
-        )
+        try:
+            return any(
+                not isinstance(window, LimitWindow)
+                or window.has_invalid_usage_value
+                or window.remaining_percent == 0
+                for window in self.windows
+            )
+        except (AttributeError, TypeError, ValueError):
+            return True
 
     def window_for_duration(self, duration_seconds: int) -> LimitWindow | None:
         return next(
