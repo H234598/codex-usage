@@ -135,6 +135,30 @@ def test_status_for_result_prioritizes_logged_out_page_over_stale_usage_values()
     )
 
 
+@pytest.mark.parametrize(
+    ("main_status", "expected"),
+    [
+        (401, AccountStatus.LOGIN_REQUIRED),
+        (403, AccountStatus.ERROR),
+        (429, AccountStatus.ERROR),
+        (500, AccountStatus.ERROR),
+    ],
+)
+def test_status_for_result_rejects_failed_main_response_with_usage_values(
+    main_status, expected
+):
+    assert (
+        _status_for_result(
+            body_text="5-hour usage limit 97% Weekly usage limit 55%",
+            current_url="https://chatgpt.com/codex/cloud/settings/analytics",
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+            main_status=main_status,
+        )
+        == expected
+    )
+
+
 def test_save_diagnostic_screenshot_rejects_symlink_directory(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()

@@ -267,6 +267,7 @@ def fetch_account_usage(
             current_url=current_url,
             five_hour=five_hour,
             weekly=weekly,
+            main_status=main_status,
         )
         page_state = _detect_page_state(
             current_url,
@@ -282,6 +283,9 @@ def fetch_account_usage(
             cache_invalidated = True
         elif status == AccountStatus.LOGIN_REQUIRED:
             error = "browser login required"
+            cache_invalidated = True
+        elif _main_response_failed(main_status):
+            error = f"browser analytics request failed: HTTP {main_status}"
             cache_invalidated = True
         elif not _has_usage_value(five_hour) and not _has_usage_value(weekly):
             error = "browser page has no usable usage limits"
@@ -738,7 +742,14 @@ def _status_for_result(
     current_url: str,
     five_hour: LimitWindow | None,
     weekly: LimitWindow | None,
+    main_status: int | None = None,
 ) -> AccountStatus:
+    if _main_response_failed(main_status):
+        return (
+            AccountStatus.LOGIN_REQUIRED
+            if main_status in {401, 407}
+            else AccountStatus.ERROR
+        )
     lower = body_text.lower()
     if "auth" in current_url.lower() or _looks_like_login_page(lower) or (
         not _has_usage_value(five_hour)
@@ -749,6 +760,17 @@ def _status_for_result(
     if not _has_usage_value(five_hour) or not _has_usage_value(weekly):
         return AccountStatus.PARTIAL
     return AccountStatus.OK
+
+
+def _main_response_failed(status: int | None) -> bool:
+    if status is None:
+        return False
+    return (
+        isinstance(status, bool)
+        or not isinstance(status, int)
+        or status < 200
+        or status >= 400
+    )
 
 
 def _has_usage_value(window: LimitWindow | None) -> bool:
