@@ -12,6 +12,7 @@ from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePo
 from codex_usage.state import (
     _localize_datetime,
     _snapshot_datetime,
+    _window_duration_seconds,
     backend_provenance_matches,
     backend_provenance_matches_configured,
     expire_reset_windows,
@@ -892,6 +893,17 @@ def test_expire_reset_windows_ignores_overflowing_raw_duration():
     assert expired.status == AccountStatus.PARTIAL
     assert expired.stale is True
     assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        '{"limit_window_seconds": 315360001}',
+        f'{{"limit_window_seconds": {10**309}}}',
+    ),
+)
+def test_state_ignores_oversized_raw_window_duration(raw):
+    assert _window_duration_seconds(LimitWindow(name="5h", raw=raw)) is None
 
 
 def test_expire_reset_windows_uses_values_capture_for_mixed_cache():

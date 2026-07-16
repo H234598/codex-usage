@@ -43,6 +43,7 @@ from .state import (
     save_current_usage,
     save_usage_snapshot,
 )
+from .usage_limits import MAX_WINDOW_SECONDS
 
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
@@ -595,7 +596,12 @@ def _window_duration_seconds(window: Any) -> int | None:
         value = float(match.group(1))
     except (OverflowError, ValueError):
         return None
-    if not math.isfinite(value) or value <= 0 or not value.is_integer():
+    if (
+        not math.isfinite(value)
+        or value <= 0
+        or value > MAX_WINDOW_SECONDS
+        or not value.is_integer()
+    ):
         return None
     return int(value)
 

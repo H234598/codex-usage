@@ -21,6 +21,7 @@ from .private_io import (
     read_private_text,
     write_private_text,
 )
+from .usage_limits import MAX_WINDOW_SECONDS
 
 MAX_SNAPSHOT_BYTES = 1_000_000
 SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -1086,7 +1087,12 @@ def _window_duration_seconds(window: LimitWindow | None) -> int | None:
         value = float(match.group(1))
     except ValueError:
         return None
-    if not math.isfinite(value) or value <= 0 or not value.is_integer():
+    if (
+        not math.isfinite(value)
+        or value <= 0
+        or value > MAX_WINDOW_SECONDS
+        or not value.is_integer()
+    ):
         return None
     return int(value)
 

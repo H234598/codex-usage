@@ -1893,6 +1893,15 @@ def test_scheduler_numeric_overflow_is_treated_as_missing():
     assert _window_duration_seconds(window) is None
 
 
+def test_scheduler_ignores_oversized_finite_raw_window_duration():
+    window = LimitWindow(
+        name="5h",
+        raw='{"limit_window_seconds": 315360001}',
+    )
+
+    assert _window_duration_seconds(window) is None
+
+
 @pytest.mark.parametrize(
     "window",
     (
