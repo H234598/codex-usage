@@ -421,6 +421,11 @@ def test_progress_bar_parser_rejects_conflicting_equal_rank_values():
     assert _extract_progress_width_percent(html) is None
 
 
+def test_progress_bar_fragment_rejects_ambiguous_width_values():
+    assert _extract_progress_width_percent("width: 42%; width: 97%;") is None
+    assert _extract_progress_width_percent("width: 101%; width: 97%;") is None
+
+
 def test_extract_windows_prefers_html_progress_over_hidden_text_clone():
     html = """
     <section>

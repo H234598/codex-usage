@@ -1440,8 +1440,8 @@ def _extract_progress_width_percent(text: str) -> float | None:
     if parser.candidates:
         return None
 
-    # Keep plain-text and malformed-fragment compatibility for captures that
-    # contain a style fragment but no parseable start tag.
+    # Keep single-value compatibility for captures that contain a style
+    # fragment but no parseable start tag. Multiple values lack provenance.
     matches = list(
         re.finditer(
             r"\bwidth\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
@@ -1450,7 +1450,13 @@ def _extract_progress_width_percent(text: str) -> float | None:
         )
     )
     if matches:
-        return _parse_percent(matches[-1].group("percent"))
+        values: list[float] = []
+        for match in matches:
+            percent = _parse_percent(match.group("percent"))
+            if percent is None:
+                return None
+            values.append(percent)
+        return values[0] if len(set(values)) == 1 else None
     return None
 
 
