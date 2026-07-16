@@ -559,7 +559,11 @@ def _response_identity_matches_auth(
 ) -> bool:
     if backend_account_id and auth_account_id:
         if backend_account_id == auth_account_id:
-            return True
+            return (
+                not backend_user_id
+                or not auth_user_id
+                or backend_user_id == auth_user_id
+            )
         if backend_account_id == auth_user_id:
             return not backend_user_id or backend_user_id == auth_user_id
         return False

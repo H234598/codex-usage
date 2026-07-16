@@ -247,6 +247,17 @@ def test_canonical_backend_identity_rejects_foreign_user_on_shared_user_alias():
         )
 
 
+def test_canonical_backend_identity_rejects_foreign_user_on_exact_account():
+    with pytest.raises(ValueError, match="backend response belongs to a different account"):
+        canonical_backend_identity(
+            "foreign-user",
+            "real-account",
+            auth_user_id="real-user",
+            auth_account_id="real-account",
+            require_backend_identity=True,
+        )
+
+
 def test_canonical_backend_identity_rejects_shared_user_without_auth_account_id():
     with pytest.raises(ValueError, match="ambiguous account identity"):
         canonical_backend_identity(
@@ -1627,7 +1638,7 @@ def test_fetch_account_usage_direct_rejects_response_from_different_account(
     assert usage.cache_invalidated is True
 
 
-def test_fetch_account_usage_direct_accepts_same_account_with_different_user_id(
+def test_fetch_account_usage_direct_rejects_same_account_with_different_user_id(
     tmp_path,
     monkeypatch,
 ):
@@ -1688,9 +1699,9 @@ def test_fetch_account_usage_direct_accepts_same_account_with_different_user_id(
 
     usage = fetch_account_usage_direct(account)
 
-    assert usage.status == AccountStatus.OK
-    assert usage.backend_user_id == "auth-user"
-    assert usage.backend_account_id == "server-account"
+    assert usage.status == AccountStatus.ERROR
+    assert usage.error == "backend response belongs to a different account"
+    assert usage.cache_invalidated is True
 
 
 @pytest.mark.parametrize("plan_type", ["enterprise", None])

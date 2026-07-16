@@ -212,6 +212,23 @@ def test_select_identity_consistent_candidates_rejects_foreign_user_on_shared_us
         )
 
 
+def test_select_identity_consistent_candidates_rejects_foreign_user_on_exact_account():
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={
+            "user_id": "foreign-user",
+            "account_id": "real-account",
+        },
+    )
+
+    with pytest.raises(ValueError, match="different account"):
+        select_identity_consistent_candidates(
+            [candidate],
+            auth_user_id="real-user",
+            auth_account_id="real-account",
+        )
+
+
 def test_select_identity_consistent_candidates_drops_ambiguous_partial_identity():
     candidates = [
         JsonCandidate(
