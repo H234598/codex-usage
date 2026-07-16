@@ -2733,20 +2733,15 @@ CodexUsageApplet.prototype = {
     },
 
     _hasPayloadUsageValue: function(fiveHour, weekly, main, models) {
-        let windows = [fiveHour, weekly];
-        if (main && Array.isArray(main.windows)) {
-            windows = windows.concat(main.windows);
+        if (main) {
+            return main.available === true &&
+                Array.isArray(main.windows) &&
+                main.windows.length > 0 &&
+                main.windows.every(Lang.bind(this, function(window) {
+                    return this._windowHasUsageValue(window);
+                }));
         }
-        if (models && typeof models === "object") {
-            let keys = Object.keys(models);
-            for (let i = 0; i < keys.length; i++) {
-                let pool = models[keys[i]];
-                if (pool && Array.isArray(pool.windows)) {
-                    windows = windows.concat(pool.windows);
-                }
-            }
-        }
-        return windows.some(Lang.bind(this, function(window) {
+        return [fiveHour, weekly].some(Lang.bind(this, function(window) {
             return this._windowHasUsageValue(window);
         }));
     },

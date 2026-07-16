@@ -395,6 +395,7 @@ test("unusable Spark pools cannot drive panel sources", () => {
       status: "ok",
     }]);
 
+    assert.equal(usage.status, "error");
     for (const source of [4, 5, 6, 7]) {
       assert.equal(applet._panelValueForSource(usage, source), null);
       assert.equal(applet._panelWindowForSource(usage, source), null);
