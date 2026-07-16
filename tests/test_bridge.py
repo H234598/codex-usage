@@ -94,6 +94,8 @@ def test_ingest_rejects_invalid_capture_timestamp_before_saving(tmp_path, captur
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "browser-user",
@@ -325,6 +327,8 @@ def test_ingest_rejects_first_browser_identity_before_saving(tmp_path):
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "wrong-browser-user",
@@ -381,6 +385,8 @@ def test_ingest_accepts_matching_initialized_browser_identity(tmp_path):
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "browser-user",
@@ -445,6 +451,8 @@ def test_ingest_clears_browser_cache_after_backend_identity_switch(tmp_path):
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "new-browser-user",
@@ -516,6 +524,8 @@ def test_ingest_marks_browser_provenance_and_does_not_restore_direct_window(
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "browser-user",
@@ -577,6 +587,8 @@ def test_ingest_rejects_browser_payload_over_recent_authenticated_current(tmp_pa
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "browser-user",
@@ -653,6 +665,8 @@ def test_ingest_rejects_browser_payload_when_current_error_has_recent_auth_snaps
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "browser-user",
@@ -728,6 +742,8 @@ def test_ingest_uses_newer_current_identity_than_old_snapshot(tmp_path):
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "new-user",
@@ -800,6 +816,8 @@ def test_ingest_rejects_payload_older_than_newer_current_state(tmp_path):
                         "url": "https://chatgpt.com/backend-api/wham/usage",
                         "status": 200,
                         "contentType": "application/json",
+                        "ok": True,
+                        "truncated": False,
                         "bodyText": json.dumps(
                             {
                                 "user_id": "browser-user",
@@ -872,6 +890,8 @@ def test_bridge_revalidates_auth_identity_before_saving(tmp_path, monkeypatch):
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "old-user",
@@ -1703,6 +1723,8 @@ def test_usage_from_ingest_payload_extracts_api_responses():
                     "url": "https://chatgpt.com/backend-api/wham/usage?secret=1",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {
                             "user_id": "user-test",
@@ -1754,7 +1776,10 @@ def test_usage_from_ingest_payload_ignores_failed_api_response_status_variants(
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     response = {
         "url": "https://chatgpt.com/backend-api/wham/usage",
+        "status": 200,
         "contentType": "application/json",
+        "ok": True,
+        "truncated": False,
         "bodyText": json.dumps(
             {
                 "rate_limit": {
@@ -1771,6 +1796,40 @@ def test_usage_from_ingest_payload_ignores_failed_api_response_status_variants(
         ),
         **response_fields,
     }
+
+    usage = usage_from_ingest_payload(account, {"apiResponses": [response]})
+
+    assert usage.status == AccountStatus.PARTIAL
+    assert usage.cache_invalidated is True
+    assert usage.five_hour is None
+    assert usage.weekly is None
+
+
+@pytest.mark.parametrize("missing_field", ("status", "ok", "truncated", "contentType"))
+def test_usage_from_ingest_payload_rejects_missing_api_response_metadata(missing_field):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    response = {
+        "url": "https://chatgpt.com/backend-api/wham/usage",
+        "status": 200,
+        "ok": True,
+        "contentType": "application/json",
+        "truncated": False,
+        "bodyText": json.dumps(
+            {
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 3,
+                        "limit_window_seconds": 18_000,
+                    },
+                    "secondary_window": {
+                        "used_percent": 45,
+                        "limit_window_seconds": 604_800,
+                    },
+                }
+            }
+        ),
+    }
+    response.pop(missing_field)
 
     usage = usage_from_ingest_payload(account, {"apiResponses": [response]})
 
@@ -1799,7 +1858,10 @@ def test_usage_from_ingest_payload_rejects_invalid_api_response_metadata(
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     response = {
         "url": "https://chatgpt.com/backend-api/wham/usage",
+        "status": 200,
         "contentType": "application/json",
+        "ok": True,
+        "truncated": False,
         "bodyText": json.dumps(
             {
                 "rate_limit": {
@@ -1852,6 +1914,8 @@ def test_usage_from_ingest_payload_rejects_invalid_api_response_body_alias():
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": [],
                     "body": valid_body,
                 }
@@ -1881,6 +1945,8 @@ def test_usage_from_ingest_payload_reports_missing_paid_five_hour_window():
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "user-test",
@@ -1933,6 +1999,8 @@ def test_usage_from_ingest_payload_merges_both_api_response_field_names():
                     "url": "https://chatgpt.com/backend-api/wham/settings/user",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps({"user_id": "user-test"}),
                 }
             ],
@@ -1941,6 +2009,8 @@ def test_usage_from_ingest_payload_merges_both_api_response_field_names():
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {
                             "user_id": "user-test",
@@ -2008,6 +2078,8 @@ def test_usage_from_ingest_payload_does_not_mix_identity_json_with_dom_values(
                     "url": "https://chatgpt.com/backend-api/wham/settings/user",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps({"user_id": "user-test"}),
                 }
             ],
@@ -2061,6 +2133,8 @@ def test_usage_from_ingest_payload_uses_dom_for_confirmed_identity_without_limit
                     "url": "https://chatgpt.com/backend-api/wham/settings/user",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {"user_id": "user-test", "account_id": "account-test"}
                     ),
@@ -2117,6 +2191,8 @@ def test_usage_from_ingest_payload_fills_missing_window_from_dom_for_confirmed_i
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {
                             "user_id": "user-test",
@@ -2184,6 +2260,8 @@ def test_usage_from_ingest_payload_rejects_user_id_as_account_id_for_dom_fallbac
                         "url": "https://chatgpt.com/backend-api/wham/usage",
                         "status": 200,
                         "contentType": "application/json",
+                        "ok": True,
+                        "truncated": False,
                         "bodyText": json.dumps(
                             {
                                 "user_id": "user-test",
@@ -2238,6 +2316,8 @@ def test_ingest_rejects_limit_values_without_backend_account_id(tmp_path):
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "shared-user",
@@ -2283,6 +2363,8 @@ def test_usage_from_ingest_payload_keeps_probe_after_failed_page_hook_response()
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 401,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps({"detail": "Unauthorized"}),
                 },
                 {
@@ -2290,6 +2372,8 @@ def test_usage_from_ingest_payload_keeps_probe_after_failed_page_hook_response()
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {
                             "user_id": "user-test",
@@ -2328,6 +2412,7 @@ def test_usage_from_ingest_payload_ignores_truncated_json_api_responses():
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
                     "truncated": True,
                     "bodyText": json.dumps(
                         {
@@ -2363,6 +2448,8 @@ def test_usage_from_ingest_payload_prefers_latest_response_for_endpoint():
             "url": "https://chatgpt.com/backend-api/wham/usage?cache=refresh",
             "status": 200,
             "contentType": "application/json",
+            "ok": True,
+            "truncated": False,
             "requestSequence": sequence,
             "bodyText": json.dumps(
                 {
@@ -2404,6 +2491,8 @@ def test_usage_from_ingest_payload_rejects_conflicting_equal_sequence_responses(
             "url": "https://chatgpt.com/backend-api/wham/usage",
             "status": 200,
             "contentType": "application/json",
+            "ok": True,
+            "truncated": False,
             "requestSequence": 1,
             "bodyText": json.dumps(
                 {
@@ -2445,12 +2534,16 @@ def test_json_candidates_keep_each_response_url():
                     "url": "https://example.test/first",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": body,
                 },
                 {
                     "url": "https://example.test/second",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": body,
                 },
             ]
@@ -2472,6 +2565,8 @@ def test_usage_from_ingest_payload_prefers_latest_response_across_sources():
             "url": "https://chatgpt.com/backend-api/wham/usage",
             "status": 200,
             "contentType": "application/json",
+            "ok": True,
+            "truncated": False,
             "requestSequence": sequence,
             "bodyText": json.dumps(
                 {
@@ -2519,6 +2614,8 @@ def test_usage_from_ingest_payload_rejects_mixed_backend_identities():
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "user-a",
@@ -2537,6 +2634,8 @@ def test_usage_from_ingest_payload_rejects_mixed_backend_identities():
                 "url": "https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "user-b",
@@ -2565,6 +2664,8 @@ def test_usage_from_ingest_payload_rejects_disjoint_partial_identities():
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "user-a",
@@ -2581,6 +2682,8 @@ def test_usage_from_ingest_payload_rejects_disjoint_partial_identities():
                 "url": "https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "account_id": "account-b",
@@ -2635,6 +2738,8 @@ def test_usage_from_ingest_payload_prefers_configured_identity_when_candidates_m
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "user-a",
@@ -2656,6 +2761,8 @@ def test_usage_from_ingest_payload_prefers_configured_identity_when_candidates_m
                 "url": "https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "user-b",
@@ -2696,6 +2803,8 @@ def test_usage_from_ingest_payload_drops_old_success_after_latest_failed_respons
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {
                             "rate_limit": {
@@ -2767,6 +2876,8 @@ def test_usage_from_ingest_payload_rejects_ambiguous_personal_account_identity(t
                         "url": "https://chatgpt.com/backend-api/wham/usage",
                         "status": 200,
                         "contentType": "application/json",
+                        "ok": True,
+                        "truncated": False,
                         "bodyText": json.dumps(
                             {
                                 "user_id": "user-test",
@@ -2836,6 +2947,8 @@ def test_ingest_rejects_ambiguous_shared_user_browser_identity(tmp_path):
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "shared-user",
@@ -2909,6 +3022,8 @@ def test_ingest_rejects_browser_identity_known_for_another_configured_account(tm
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "shared-user",
@@ -2982,6 +3097,8 @@ def test_usage_from_ingest_payload_rejects_shared_user_response_with_different_p
                         "url": "https://chatgpt.com/backend-api/wham/usage",
                         "status": 200,
                         "contentType": "application/json",
+                        "ok": True,
+                        "truncated": False,
                         "bodyText": json.dumps(
                             {
                                 "user_id": "shared-user",
@@ -3034,6 +3151,8 @@ def test_usage_from_ingest_payload_rejects_mismatched_auth_account(tmp_path):
                         "url": "https://chatgpt.com/backend-api/wham/usage",
                         "status": 200,
                         "contentType": "application/json",
+                        "ok": True,
+                        "truncated": False,
                         "bodyText": json.dumps(
                             {
                                 "user_id": "user-test",
@@ -3111,6 +3230,8 @@ def test_ingest_rejects_payload_from_different_backend_account(tmp_path):
                         "url": "https://chatgpt.com/backend-api/wham/usage",
                         "status": 200,
                         "contentType": "application/json",
+                        "ok": True,
+                        "truncated": False,
                         "bodyText": json.dumps(
                             {
                                 "user_id": "user-shared",
@@ -3183,6 +3304,8 @@ def test_ingest_accepts_new_authenticated_account_after_snapshot_switch(tmp_path
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {
                             "user_id": "user-test",
@@ -3234,6 +3357,8 @@ def test_usage_from_ingest_payload_ignores_failed_html_api_responses():
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json; charset=utf-8",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {
                             "five_hour_usage_limit": {
@@ -3611,6 +3736,8 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
                 "url": "https://chatgpt.com/backend-api/wham/usage",
                 "status": 200,
                 "contentType": "application/json",
+                "ok": True,
+                "truncated": False,
                 "bodyText": json.dumps(
                     {
                         "user_id": "user-test",
@@ -3798,6 +3925,8 @@ def test_http_bridge_accepts_account_added_after_server_start(tmp_path, monkeypa
                     "url": "https://chatgpt.com/backend-api/wham/usage",
                     "status": 200,
                     "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
                     "bodyText": json.dumps(
                         {
                             "user_id": "second-user",

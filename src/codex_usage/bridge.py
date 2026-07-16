@@ -491,42 +491,43 @@ def _response_without_sequence(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _response_metadata_is_valid(item: dict[str, Any]) -> bool:
-    if "truncated" in item:
-        truncated = item["truncated"]
-        if isinstance(truncated, bool):
-            if truncated:
-                return False
-        elif isinstance(truncated, str):
-            normalized = truncated.strip().casefold()
-            if normalized != "false":
-                return False
-        else:
+    if any(field not in item for field in ("status", "ok", "truncated")):
+        return False
+    truncated = item["truncated"]
+    if isinstance(truncated, bool):
+        if truncated:
             return False
-    if "status" in item:
-        status = item["status"]
-        if isinstance(status, bool):
+    elif isinstance(truncated, str):
+        normalized = truncated.strip().casefold()
+        if normalized != "false":
             return False
-        if isinstance(status, str):
-            try:
-                status = int(status.strip()) if status.strip().isdecimal() else None
-            except ValueError:
-                status = None
-        if not isinstance(status, int) or not 200 <= status < 300:
-            return False
-    if "ok" in item:
-        ok = item["ok"]
-        if isinstance(ok, str):
-            normalized = ok.strip().casefold()
-            ok = True if normalized == "true" else False if normalized == "false" else None
-        if not isinstance(ok, bool) or not ok:
-            return False
+    else:
+        return False
+    status = item["status"]
+    if isinstance(status, bool):
+        return False
+    if isinstance(status, str):
+        try:
+            status = int(status.strip()) if status.strip().isdecimal() else None
+        except ValueError:
+            status = None
+    if not isinstance(status, int) or not 200 <= status < 300:
+        return False
+    ok = item["ok"]
+    if isinstance(ok, str):
+        normalized = ok.strip().casefold()
+        ok = True if normalized == "true" else False if normalized == "false" else None
+    if not isinstance(ok, bool) or not ok:
+        return False
+    content_types = []
     for field in ("contentType", "content_type"):
         if field not in item:
             continue
         value = item[field]
         if not isinstance(value, str) or not value.strip() or "json" not in value.casefold():
             return False
-    return True
+        content_types.append(value)
+    return bool(content_types)
 
 
 def _bridge_response_source_priority(value: Any) -> int:

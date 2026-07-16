@@ -1492,11 +1492,13 @@ def test_ingest_binds_shared_user_browser_payload_to_selected_account(
 
     payload = {
         "apiResponses": [
-            {
-                "url": "https://chatgpt.com/backend-api/wham/usage",
-                "status": 200,
-                "contentType": "application/json",
-                "bodyText": json.dumps(
+                {
+                    "url": "https://chatgpt.com/backend-api/wham/usage",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "ok": True,
+                    "truncated": False,
+                    "bodyText": json.dumps(
                     {
                         "user_id": shared_user,
                         "account_id": shared_user,
