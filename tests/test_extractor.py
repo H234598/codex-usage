@@ -1222,6 +1222,8 @@ def test_extract_windows_discards_percentages_beside_negative_usage(fields):
         {"used": "bogus", "limit": 100, "percent": 97},
         {"used": "NaN", "limit": 100, "percent": 97},
         {"used": True, "limit": 100, "percent": 97},
+        {"used": 42, "limit": "bogus", "percent": 58},
+        {"used_percent": 3, "limit": "bogus"},
         {"remaining": "bogus", "percent": 97},
         {"used_percent": "bogus", "percent": 97},
         {"used_percent": 3, "percent": 101},

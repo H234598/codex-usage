@@ -863,6 +863,12 @@ def _window_from_mapping(
         ("limit", "max", "quota", "total", "capacity"),
         exclude_suffixes=("_seconds", "_minutes", "_hours"),
     )
+    invalid_absolute_limit_field = _has_invalid_number(
+        flat,
+        ("limit", "max", "quota", "total", "capacity"),
+        exclude_suffixes=("_seconds", "_minutes", "_hours"),
+        converter=_coerce_number,
+    )
     remaining_percent_hints = (
         "remaining_percent",
         "remaining_percentage",
@@ -1048,6 +1054,19 @@ def _window_from_mapping(
     invalid_absolute_remaining = (
         invalid_absolute_remaining_field or invalid_absolute_remaining
     )
+    if invalid_absolute_limit_field:
+        # A malformed denominator makes every usage value in this object
+        # unverifiable; keep only independent reset metadata.
+        used = None
+        limit = None
+        remaining = None
+        used_percent = None
+        remaining_percent = None
+        remaining_ratio = None
+        percent = None
+        ratio = None
+        has_explicit_remaining_percent = False
+        explicit_remaining_percent = None
     if invalid_absolute_usage:
         # A contradictory absolute counter invalidates every usage value from
         # this object. Keep only independent limit/reset metadata.
