@@ -86,6 +86,7 @@ def fetch_account_usage_direct(
                 auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
                 backend_user_id=auth_user_id,
                 backend_account_id=auth_account_id,
+                cache_invalidated=True,
             )
         try:
             payload = _fetch_stable_wham_usage(
@@ -227,6 +228,7 @@ def fetch_account_usage_direct(
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             backend_user_id=auth_user_id,
             backend_account_id=auth_account_id,
+            cache_invalidated=True,
         )
     except DirectFetchError as exc:
         return AccountUsage(
@@ -240,7 +242,7 @@ def fetch_account_usage_direct(
             auth_id_expires_at=auth_metadata.get("auth_id_expires_at"),
             backend_user_id=auth_user_id,
             backend_account_id=auth_account_id,
-            cache_invalidated=_is_identity_attribution_error(str(exc)),
+            cache_invalidated=True,
         )
 
 

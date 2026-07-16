@@ -1374,6 +1374,7 @@ def test_fetch_account_usage_direct_does_not_retry_unchanged_auth_after_401(
     assert calls == ["same-token"]
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error == "direct auth failed: HTTP 401"
+    assert usage.cache_invalidated is True
 
 
 def test_fetch_account_usage_direct_does_not_retry_expired_rotated_auth(
@@ -2190,6 +2191,7 @@ def test_fetch_account_usage_direct_marks_expired_auth_before_network(tmp_path, 
     assert usage.error is not None
     assert "expired" in usage.error
     assert "reactivate privat" in usage.error
+    assert usage.cache_invalidated is True
 
 
 def test_fetch_account_usage_direct_reports_missing_auth_json(tmp_path):
