@@ -1361,16 +1361,17 @@ CodexUsageApplet.prototype = {
             throw new Error("too many routing decisions");
         }
         for (let i = 0; i < keys.length; i++) {
-            let account = this._safeText(keys[i], 64);
+            let account = this._strictText(keys[i], 64);
             let value = payload.decisions[keys[i]];
-            if (!account || !value || typeof value !== "object" || Array.isArray(value)) {
+            if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) ||
+                !value || typeof value !== "object" || Array.isArray(value)) {
                 throw new Error("invalid routing decision");
             }
-            let decision = this._safeText(value.decision, 32);
+            let decision = this._strictText(value.decision, 32);
             if (["spark", "main", "credits", "blocked", "unchanged"].indexOf(decision) === -1) {
                 throw new Error("invalid routing decision value");
             }
-            let model = this._safeText(value.model, 120);
+            let model = this._strictText(value.model, 120);
             let paidOverageAllowed = value.paid_overage_allowed;
             if (typeof paidOverageAllowed !== "boolean") {
                 throw new Error("invalid routing credit flag");
@@ -1385,7 +1386,7 @@ CodexUsageApplet.prototype = {
             ) {
                 throw new Error("routing decision model mismatch");
             }
-            let usageState = this._safeText(value.usage_state, 32);
+            let usageState = this._strictText(value.usage_state, 32);
             if (["known", "unknown", "not_applicable"].indexOf(usageState) === -1) {
                 throw new Error("invalid routing usage state");
             }
@@ -1428,7 +1429,7 @@ CodexUsageApplet.prototype = {
     },
 
     _routingIdentifier: function(value) {
-        let identifier = this._safeText(value, 128);
+        let identifier = this._strictText(value, 128);
         if (!/^[A-Za-z0-9_.:@+\-]{1,128}$/.test(identifier)) {
             throw new Error("invalid routing policy identifier");
         }

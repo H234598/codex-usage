@@ -945,6 +945,54 @@ test("routing status rejects inconsistent credit decisions", () => {
   }), /credits decision without paid-overage approval/);
 });
 
+test("routing status rejects normalized trusted identities", () => {
+  const applet = makeApplet();
+  const makePayload = () => ({
+    schema_version: 1,
+    policy: {
+      schema_version: 1,
+      global: false,
+      account: {},
+      group: {},
+      agent: {},
+      job: {},
+    },
+    decisions: {
+      alpha: {
+        decision: "spark",
+        model: "gpt-5.3-codex-spark",
+        reason: "spark_available",
+        paid_overage_allowed: false,
+        policy_source: "global",
+        usage_state: "known",
+      },
+    },
+  });
+
+  const decisionCases = [
+    ["account key", (payload) => {
+      payload.decisions = { " alpha": payload.decisions.alpha };
+    }],
+    ["decision", (payload) => {
+      payload.decisions.alpha.decision = "spark ";
+    }],
+    ["model", (payload) => {
+      payload.decisions.alpha.model = "gpt-5.3-codex-spark ";
+    }],
+    ["usage state", (payload) => {
+      payload.decisions.alpha.usage_state = "known ";
+    }],
+    ["policy key", (payload) => {
+      payload.policy.account = { " alpha": true };
+    }],
+  ];
+  decisionCases.forEach(([, mutate]) => {
+    const payload = makePayload();
+    mutate(payload);
+    assert.throws(() => applet._validateRoutingState(payload));
+  });
+});
+
 test("routing status errors clear old decisions", () => {
   const applet = makeApplet();
   applet._routingPolicy = { schema_version: 1, global: true };
