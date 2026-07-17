@@ -1098,6 +1098,11 @@ def watchdog(
 
     for account in account_list:
         snapshot = load_usage_snapshot(account.id)
+        authenticated_fetch = _watchdog_uses_authenticated_fetch(
+            account,
+            direct=direct,
+            backend_override=backend_override,
+        )
         if (
             snapshot is not None
             and not _capture_is_too_far_in_future(snapshot, now)
@@ -1108,6 +1113,7 @@ def watchdog(
                 snapshot,
                 auth_json_path=auth_json_path,
                 configured_backend=effective_backend or account.backend,
+                authenticated_fetch=authenticated_fetch,
             )
             and not _current_supersedes_blocked_snapshot(
                 account,
@@ -1115,6 +1121,7 @@ def watchdog(
                 load_current_usage(account.id),
                 auth_json_path=auth_json_path,
                 configured_backend=effective_backend or account.backend,
+                authenticated_fetch=authenticated_fetch,
             )
         ):
             try:
@@ -1209,6 +1216,7 @@ def _current_supersedes_blocked_snapshot(
     *,
     auth_json_path: Path | None,
     configured_backend: str,
+    authenticated_fetch: bool,
 ) -> bool:
     if current is None or current.status == AccountStatus.BLOCKED:
         return False
@@ -1217,6 +1225,7 @@ def _current_supersedes_blocked_snapshot(
         current,
         auth_json_path=auth_json_path,
         configured_backend=configured_backend,
+        authenticated_fetch=authenticated_fetch,
     ):
         return False
     try:
@@ -1265,19 +1274,11 @@ def _blocked_snapshot_matches_account(
     *,
     auth_json_path: Path | None,
     configured_backend: str,
+    authenticated_fetch: bool,
 ) -> bool:
     if not backend_provenance_matches_configured(snapshot, configured_backend):
         return False
-    if (
-        snapshot.backend_used == "browser"
-        and (
-            configured_backend == "app-server"
-            or (
-                configured_backend == "direct"
-                and (auth_json_path is not None or account.auth_json_path is not None)
-            )
-        )
-    ):
+    if snapshot.backend_used == "browser" and authenticated_fetch:
         # A browser block belongs to whichever account the browser cookies had
         # active. It is not safe to attribute it to an authenticated account,
         # especially when multiple accounts share a user ID.
@@ -1287,6 +1288,10 @@ def _blocked_snapshot_matches_account(
             auth_user_id, auth_account_id = auth_identity_from_file(auth_json_path)
         elif account.auth_json_path:
             auth_user_id, auth_account_id = auth_identity_for_account(account)
+        elif authenticated_fetch:
+            auth_user_id, auth_account_id = auth_identity_from_file(
+                default_auth_json_path()
+            )
         else:
             return True
     except DirectAuthError:
@@ -1307,6 +1312,20 @@ def _blocked_snapshot_matches_account(
         # Reuse is safe only when the current auth has no account ID either.
         return auth_account_id is None and snapshot.backend_user_id == auth_user_id
     return False
+
+
+def _watchdog_uses_authenticated_fetch(
+    account: Account,
+    *,
+    direct: bool,
+    backend_override: str | None,
+) -> bool:
+    return bool(
+        direct
+        or backend_override is not None
+        or account.backend == "app-server"
+        or account.auth_json_path
+    )
 
 
 def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage:

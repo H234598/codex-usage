@@ -2240,6 +2240,8 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
         status=AccountStatus.BLOCKED,
         backend_configured="direct",
         backend_used="direct",
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
         blocked_until=datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
         blocked_reason="usage limit reached: weekly",
     )
@@ -2277,6 +2279,10 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
         return None
 
     monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", fake_load_usage_snapshot)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_from_file",
+        lambda path: ("shared-user", "default-account"),
+    )
     monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", fake_save_usage_snapshot)
 
@@ -2292,6 +2298,126 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
     assert result[0].blocked_until == blocked_snapshot.blocked_until
     assert result[1] == ok_usage
     assert saved == ["ok"]
+
+
+def test_watchdog_direct_refetches_browser_block_without_account_auth(monkeypatch):
+    account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
+    now = datetime.now().astimezone()
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="browser",
+        blocked_until=now + timedelta(hours=2),
+    )
+    fresh = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=97),
+    )
+    fetched_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        fetched_accounts.extend(selected.id for selected in fetch_accounts)
+        return [fresh]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        direct=True,
+    )
+
+    assert fetched_accounts == ["blocked"]
+    assert result == [fresh]
+
+
+def test_watchdog_direct_rechecks_default_auth_identity_for_block(
+    monkeypatch,
+):
+    account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
+    now = datetime.now().astimezone()
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-old",
+        backend_account_id="account-old",
+        blocked_until=now + timedelta(hours=2),
+    )
+    fresh = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-new",
+        backend_account_id="account-new",
+        five_hour=LimitWindow(name="5h", remaining=97),
+    )
+    fetched_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        fetched_accounts.extend(selected.id for selected in fetch_accounts)
+        return [fresh]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_from_file",
+        lambda path: ("user-new", "account-new"),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        direct=True,
+    )
+
+    assert fetched_accounts == ["blocked"]
+    assert result == [fresh]
 
 
 def test_watchdog_contains_state_generation_failure_for_blocked_snapshot(monkeypatch):
