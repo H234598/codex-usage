@@ -631,6 +631,33 @@ def test_routing_does_not_select_ambiguous_spark_pool():
     assert result["decision"] == "main"
 
 
+def test_routing_does_not_select_noncanonical_spark_pool():
+    spark = UsagePool(
+        key=SPARK_MODEL.upper(),
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+    )
+
+    result = evaluate_routing(
+        replace(
+            _usage(main_windows=(_window("weekly", 80, 604800),)),
+            models=(spark,),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "successful_spark_turn",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+
+
 def test_policy_rejects_truthy_non_boolean_rule(tmp_path):
     with pytest.raises(ValueError, match="policy value must be a boolean or None"):
         set_policy_rule("global", None, "false", path=tmp_path / "routing-policy.json")

@@ -356,7 +356,11 @@ class AccountUsage:
                 return None
             if pool.key.casefold() == normalized:
                 matches.append(pool)
-        return matches[0] if len(matches) == 1 else None
+        return (
+            matches[0]
+            if len(matches) == 1 and matches[0].key == model
+            else None
+        )
 
 
 def _window_to_dict(window: LimitWindow | None) -> dict[str, Any] | None:
