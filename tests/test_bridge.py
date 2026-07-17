@@ -4075,6 +4075,18 @@ def test_bridge_token_rejects_non_private_token_file(tmp_path, monkeypatch, muta
         bridge_token_for_account("privat")
 
 
+def test_bridge_token_rejects_noncanonical_token_file_whitespace(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    token = bridge_token_for_account("privat")
+    token_path = tmp_path / "data" / "codex-usage" / "bridge-tokens" / "privat.token"
+    token_path.write_text(token + " \n", encoding="utf-8")
+
+    assert bridge_token_matches("privat", token) is False
+    with pytest.raises(ValueError, match="invalid bridge token"):
+        bridge_token_for_account("privat")
+
+
 def test_revoke_bridge_token_forces_new_token_after_account_readd(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 

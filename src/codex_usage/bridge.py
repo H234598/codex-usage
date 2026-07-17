@@ -756,7 +756,9 @@ def _read_existing_bridge_token(path: Path) -> str | None:
     )
     if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
         raise ValueError("bridge token path permissions are too broad")
-    return _validate_bridge_token(text.strip())
+    if not text.endswith("\n"):
+        raise ValueError("invalid bridge token file")
+    return _validate_bridge_token(text[:-1])
 
 
 def _validate_bridge_token(token: str) -> str:
