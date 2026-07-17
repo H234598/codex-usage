@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import default_state_dir
+from .identity import MAX_BACKEND_ID_CHARS
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import (
@@ -194,6 +195,8 @@ def evaluate_routing(
         }
     base["spark_health"] = spark_health
     spark = usage.model_pool(SPARK_MODEL)
+    spark_has_usage_evidence = _pool_has_usage_evidence(spark)
+    spark_has_non_usage_source = _pool_has_non_usage_source(spark)
     spark_health_state = spark_health.get("state")
     spark_state = (
         _pool_usage_state(spark, now=checked_at)
@@ -204,6 +207,7 @@ def evaluate_routing(
     if (
         spark is not None
         and spark.available
+        and spark_has_usage_evidence
         and not spark.exhausted
         and spark_state == "known"
         and spark_health_fresh
@@ -219,7 +223,9 @@ def evaluate_routing(
 
     spark_reason = "spark_unavailable_or_exhausted"
     if spark is not None and spark.available:
-        if spark_state == "invalid":
+        if spark_has_non_usage_source:
+            spark_reason = "spark_usage_unknown"
+        elif spark_state == "invalid":
             spark_reason = "spark_usage_invalid"
         elif spark_state != "known":
             spark_reason = "spark_usage_unknown"
@@ -273,6 +279,7 @@ def _main_state(
     if (
         pool is None
         or not _pool_flags_are_valid(pool)
+        or pool.key != "main"
         or not pool.available
         or not isinstance(pool.windows, tuple)
         or not pool.windows
@@ -312,6 +319,8 @@ def _invalid_usage_reason(
         or max_age_seconds < 60
     ):
         raise ValueError("max_age_seconds must be a finite integer of at least 60")
+    if not isinstance(usage.stale, bool) or not isinstance(usage.cache_invalidated, bool):
+        return "usage_metadata_invalid"
     if usage.cache_invalidated:
         return "cache_invalidated"
     if usage.stale:
@@ -320,10 +329,14 @@ def _invalid_usage_reason(
         return "usage_status_invalid"
     if usage.status not in (AccountStatus.OK, AccountStatus.PARTIAL):
         return f"usage_status_{usage.status.value}"
+    if usage.status == AccountStatus.OK and usage.error is not None:
+        return "usage_error"
     if not isinstance(usage.backend_configured, str) or not backend_provenance_matches_configured(
         usage, usage.backend_configured
     ):
         return "backend_provenance_invalid"
+    if not _backend_identity_is_valid(usage):
+        return "backend_identity_invalid"
     captured_at = (
         usage.values_captured_at
         if usage.values_captured_at is not None
@@ -398,6 +411,45 @@ def _pool_flags_are_valid(pool: UsagePool) -> bool:
             or isinstance(pool.limit_reached, bool)
         )
     )
+
+
+def _pool_has_usage_evidence(pool: UsagePool | None) -> bool:
+    if pool is None or not isinstance(pool.availability_sources, tuple):
+        return False
+    return (
+        "usage" in pool.availability_sources
+        and all(
+            isinstance(source, str) and bool(source.strip())
+            for source in pool.availability_sources
+        )
+    )
+
+
+def _pool_has_non_usage_source(pool: UsagePool | None) -> bool:
+    if pool is None or not isinstance(pool.availability_sources, tuple):
+        return True
+    return bool(pool.availability_sources) and "usage" not in pool.availability_sources
+
+
+def _backend_identity_is_valid(usage: AccountUsage) -> bool:
+    identities = (usage.backend_user_id, usage.backend_account_id)
+    if any(
+        value is not None
+        and (
+            not isinstance(value, str)
+            or len(value) > MAX_BACKEND_ID_CHARS
+            or not value.strip()
+            or any(
+                char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+                for char in value
+            )
+        )
+        for value in identities
+    ):
+        return False
+    if usage.backend_used in {"direct", "app-server"}:
+        return any(value is not None for value in identities)
+    return True
 
 
 def _window_reset_is_current(window: Any, *, now: datetime) -> bool:

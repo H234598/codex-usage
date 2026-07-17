@@ -381,6 +381,17 @@ def test_watch_subtracts_successful_cycle_duration_from_interval(monkeypatch):
     assert delays == [47.5]
 
 
+@pytest.mark.parametrize("interval_seconds", (-1, 0, 59, 60.0, True))
+def test_watch_rejects_invalid_interval(interval_seconds):
+    with pytest.raises(ValueError, match="interval_seconds"):
+        watch(
+            AppConfig(accounts=()),
+            (),
+            output="table",
+            interval_seconds=interval_seconds,
+        )
+
+
 def test_watch_marks_unusable_usage_as_cycle_error(monkeypatch, capsys):
     delays: list[int] = []
     health_events: list[tuple[str, str]] = []
@@ -1784,6 +1795,76 @@ def test_authenticated_stabilization_rejects_a_different_window_duration():
             percent=99,
             reset_at=datetime(2026, 7, 17, 0, 0, tzinfo=timezone),
             raw='{"limit_window_seconds": 18000}',
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.remaining == 99
+    assert result.stale is False
+
+
+def test_authenticated_stabilization_rejects_unknown_window_duration():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="",
+            remaining=95,
+            reset_at=datetime(2026, 7, 12, 5, 0, tzinfo=timezone),
+            raw='{"limit_window_seconds": 2592000}',
+        ),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=replace(
+            previous.five_hour,
+            remaining=99,
+            reset_at=datetime(2026, 7, 13, 5, 0, tzinfo=timezone),
+        ),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+    assert result.five_hour is not None
+    assert result.five_hour.remaining == 99
+    assert result.stale is False
+
+
+def test_authenticated_stabilization_rejects_implausibly_future_reset():
+    timezone = ZoneInfo("Europe/Berlin")
+    captured_at = datetime(2026, 7, 12, 0, 0, tzinfo=timezone)
+    previous = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=captured_at,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=95,
+            reset_at=captured_at + timedelta(hours=5),
+        ),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-direct",
+        backend_account_id="account-direct",
+    )
+    current = replace(
+        previous,
+        captured_at=captured_at + timedelta(minutes=1),
+        five_hour=replace(
+            previous.five_hour,
+            remaining=99,
+            reset_at=captured_at + timedelta(days=10),
         ),
     )
 

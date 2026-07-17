@@ -216,7 +216,7 @@ def test_policy_commands_are_machine_readable_and_use_saved_usage(
                         ),
                     ),
                     available=True,
-                    availability_sources=("model_catalog",),
+                    availability_sources=("usage", "model_catalog"),
                 ),
             ),
             backend_account_id="backend-private",

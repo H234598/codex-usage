@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import default_state_dir
+from .identity import MAX_BACKEND_ID_CHARS
 from .json_utils import loads_strict
 from .private_io import (
     assert_no_symlink_ancestors,
@@ -22,7 +23,9 @@ SPARK_HEALTH_MAX_BYTES = 128 * 1024
 SPARK_HEALTH_MAX_RECORDS = 256
 SPARK_HEALTH_MAX_AGE_SECONDS = 3600
 SPARK_HEALTH_STATES = ("healthy", "failed")
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.:@+/-]{1,512}$")
+_IDENTIFIER_RE = re.compile(
+    rf"^[A-Za-z0-9_.:@+/-]{{1,{MAX_BACKEND_ID_CHARS}}}$"
+)
 
 
 def default_spark_health_path() -> Path:

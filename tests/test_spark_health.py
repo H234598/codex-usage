@@ -19,6 +19,24 @@ def test_spark_health_defaults_to_unknown(tmp_path):
     assert result["reason"] == "no_successful_spark_turn"
 
 
+def test_spark_health_rejects_overlong_backend_id(tmp_path):
+    with pytest.raises(ValueError, match="backend_account_id is invalid"):
+        set_spark_health(
+            "u" * 257,
+            "healthy",
+            path=tmp_path / "health.json",
+            now=NOW,
+        )
+
+    result = spark_health_status(
+        "u" * 257,
+        path=tmp_path / "health.json",
+        now=NOW,
+    )
+    assert result["state"] == "unknown"
+    assert result["reason"] == "missing_backend_account_id"
+
+
 def test_spark_health_ignores_deeply_nested_json(tmp_path):
     nested_json = "[" * 2_000 + "]" * 2_000
     path = tmp_path / "health.json"

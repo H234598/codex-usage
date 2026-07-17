@@ -47,6 +47,7 @@ from .usage_limits import MAX_WINDOW_SECONDS
 
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
+RESET_FUTURE_SKEW_SECONDS = 5 * 60
 DIRECT_RESET_DISCONTINUITY_SECONDS = 30
 WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
 RAW_NUMBER_PATTERN = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -461,6 +462,16 @@ def _has_unexpired_window_reset_discontinuity(
     try:
         if previous.reset_at <= reference_at or current.reset_at <= reference_at:
             return False
+        for window in (previous, current):
+            duration = _window_duration_seconds(window)
+            if duration is None:
+                duration = WINDOW_DURATIONS.get(_window_kind(window) or "")
+            if duration is None:
+                return False
+            if window.reset_at > reference_at + timedelta(
+                seconds=duration + RESET_FUTURE_SKEW_SECONDS
+            ):
+                return False
         if _uses_absolute_reset_time(current) or _uses_absolute_reset_time(previous):
             return False
         if _has_relative_reset_metadata(current) or _has_relative_reset_metadata(previous):
@@ -548,6 +559,14 @@ def _window_duration_matches(current: Any, previous: Any) -> bool:
     previous_kind = _window_kind(previous)
     current_duration = _window_duration_seconds(current)
     previous_duration = _window_duration_seconds(previous)
+    if not current_kind and not previous_kind:
+        # Raw duration alone may identify a supported legacy window. An
+        # unknown duration must never authorize reuse of an older value.
+        return (
+            current_duration in WINDOW_DURATIONS.values()
+            and previous_duration in WINDOW_DURATIONS.values()
+            and current_duration == previous_duration
+        )
     if (
         (current_kind is None and current_duration is None)
         or (previous_kind is None and previous_duration is None)
@@ -839,7 +858,13 @@ def watch(
     auth_json_path: Path | None = None,
     interval_seconds: int | None = None,
 ) -> None:
-    interval = interval_seconds or config.interval_seconds
+    interval = config.interval_seconds if interval_seconds is None else interval_seconds
+    if (
+        isinstance(interval, bool)
+        or not isinstance(interval, int)
+        or interval < 60
+    ):
+        raise ValueError("interval_seconds must be a finite integer of at least 60")
     account_list = list(accounts)
     stop_event = Event()
     previous_handlers: dict[int, object] = {}

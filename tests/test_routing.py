@@ -82,6 +82,54 @@ def test_routing_prefers_spark_with_weekly_only_limit():
     assert result["usage_state"] == "known"
 
 
+def test_routing_fails_closed_for_error_with_ok_status():
+    usage = replace(
+        _usage(main_windows=(_window("weekly", 80, 604800),)),
+        error="backend warning",
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "usage_error"
+    assert result["usage_state"] == "unknown"
+
+
+def test_routing_keeps_valid_spark_for_partial_main_usage():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+        availability_sources=("usage",),
+    )
+    usage = replace(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        status=AccountStatus.PARTIAL,
+        error="5h limit unavailable",
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "test",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "spark"
+
+
 def test_routing_does_not_select_catalog_only_spark_without_usage():
     spark = UsagePool(
         key=SPARK_MODEL,
@@ -106,6 +154,32 @@ def test_routing_does_not_select_catalog_only_spark_without_usage():
     assert result["decision"] == "main"
     assert result["reason"] == "spark_usage_unknown"
     assert result["usage_state"] == "known"
+
+
+def test_routing_does_not_select_catalog_only_spark_with_lookalike_windows():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+        availability_sources=("model_catalog",),
+    )
+
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        role="explorierin",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "test",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_usage_unknown"
 
 
 @pytest.mark.parametrize("timestamp_field", ["captured_at", "values_captured_at"])
@@ -140,6 +214,25 @@ def test_routing_fails_closed_for_non_enum_usage_status():
 
     assert result["decision"] == "blocked"
     assert result["reason"] == "usage_status_invalid"
+    assert result["model"] is None
+
+
+@pytest.mark.parametrize("field", ["stale", "cache_invalidated"])
+def test_routing_fails_closed_for_non_boolean_usage_metadata(field):
+    usage = replace(
+        _usage(main_windows=(_window("weekly", 80, 604800),)),
+        **{field: 0},
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "usage_metadata_invalid"
     assert result["model"] is None
 
 
@@ -280,6 +373,21 @@ def test_routing_fails_closed_for_non_tuple_main_windows():
 
     result = evaluate_routing(
         usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
+def test_routing_fails_closed_for_noncanonical_main_pool_key():
+    usage = _usage(main_windows=(_window("weekly", 90, 604800),))
+    malformed_main = replace(usage.main, key=SPARK_MODEL)
+
+    result = evaluate_routing(
+        replace(usage, main=malformed_main),
         role="arbeitsbiene",
         paid_overage_allowed=False,
         now=NOW,
@@ -584,6 +692,54 @@ def test_routing_fails_closed_for_invalid_backend_provenance(
 
     assert result["decision"] == "blocked"
     assert result["reason"] == "backend_provenance_invalid"
+
+
+@pytest.mark.parametrize(
+    ("backend_user_id", "backend_account_id"),
+    [
+        (None, None),
+        (0, "backend-private"),
+        ("backend\nuser", None),
+        (" ", "backend-private"),
+        ("u" * 257, "backend-private"),
+    ],
+)
+def test_routing_fails_closed_for_invalid_authenticated_backend_identity(
+    backend_user_id, backend_account_id
+):
+    usage = replace(
+        _usage(main_windows=(_window("weekly", 80, 604800),)),
+        backend_user_id=backend_user_id,
+        backend_account_id=backend_account_id,
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "backend_identity_invalid"
+
+
+def test_routing_allows_browser_provenance_without_backend_identity():
+    usage = replace(
+        _usage(main_windows=(_window("weekly", 80, 604800),)),
+        backend_configured="browser",
+        backend_used="browser",
+        backend_account_id=None,
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "main"
 
 
 @pytest.mark.parametrize("flag", ["allowed", "limit_reached", "available"])
