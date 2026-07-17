@@ -2375,6 +2375,8 @@ def test_watchdog_uses_dst_aware_local_timezone(monkeypatch):
         label="Account",
         captured_at=now,
         status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=99),
+        weekly=LimitWindow(name="weekly", remaining=95),
     )
 
     class Clock:
@@ -2871,6 +2873,8 @@ def test_watchdog_override_auth_identity_releases_old_block(tmp_path, monkeypatc
         label="Blocked",
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=99),
+        weekly=LimitWindow(name="weekly", remaining=95),
         backend_account_id="account-new",
     )
     seen_fetch_accounts: list[str] = []
@@ -3234,6 +3238,32 @@ def test_watchdog_blocks_unavailable_pool_even_with_remaining_usage():
 
     assert blocked.status == AccountStatus.BLOCKED
     assert blocked.blocked_until == reset_at
+
+
+@pytest.mark.parametrize(
+    "main",
+    [None, UsagePool(key="main", display_name="Codex", windows=())],
+)
+def test_watchdog_rejects_ok_usage_without_core_limits(main):
+    usage = AccountUsage(
+        account_id="missing",
+        label="Missing",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        main=main,
+    )
+
+    rejected = _apply_watchdog_block(
+        usage,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert rejected.status == AccountStatus.PARTIAL
+    assert rejected.error == "missing usage limits; refresh required"
+    assert rejected.five_hour is None
+    assert rejected.weekly is None
+    assert rejected.main is None
+    assert rejected.cache_invalidated is True
+    assert rejected.stale is True
 
 
 @pytest.mark.parametrize("available, expected", [(True, True), (False, False)])

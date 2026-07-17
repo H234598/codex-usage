@@ -1237,15 +1237,28 @@ def _blocked_snapshot_matches_account(
 
 def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage:
     blocked_until, blocked_reason = _block_state(usage, now=now)
-    if blocked_until is None and blocked_reason is None:
-        return usage
-    return replace(
-        usage,
-        status=AccountStatus.BLOCKED,
-        error=blocked_reason,
-        blocked_until=blocked_until,
-        blocked_reason=blocked_reason,
-    )
+    if blocked_until is not None or blocked_reason is not None:
+        return replace(
+            usage,
+            status=AccountStatus.BLOCKED,
+            error=blocked_reason,
+            blocked_until=blocked_until,
+            blocked_reason=blocked_reason,
+        )
+    if usage.status == AccountStatus.OK and not _has_usable_core_usage(usage):
+        return replace(
+            usage,
+            five_hour=None,
+            weekly=None,
+            main=None,
+            models=(),
+            status=AccountStatus.PARTIAL,
+            error="missing usage limits; refresh required",
+            values_captured_at=None,
+            stale=True,
+            cache_invalidated=True,
+        )
+    return usage
 
 
 def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None, str | None]:
