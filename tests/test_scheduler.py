@@ -462,6 +462,40 @@ def test_fetch_all_contains_state_generation_failure_per_account(monkeypatch):
     assert result[1].status == AccountStatus.OK
 
 
+def test_fetch_all_invalidates_usage_when_state_changes_during_fetch(monkeypatch):
+    account = Account(id="race", label="Race", profile_dir="/tmp/race")
+    generations = iter((0, 1))
+    usage = AccountUsage(
+        account_id="race",
+        label="Race",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_state_generation",
+        lambda _account_id: next(generations),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_direct",
+        lambda selected, *, auth_json_path=None: usage,
+    )
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        direct=True,
+    )
+
+    assert result[0].status == AccountStatus.ERROR
+    assert result[0].error == "account state changed during fetch"
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+    assert result[0].cache_invalidated is True
+    assert result[0].stale is True
+
+
 def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):
     delays: list[int] = []
     health_events: list[tuple[str, str]] = []

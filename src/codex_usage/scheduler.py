@@ -114,6 +114,18 @@ def fetch_all(
             global_lock_held=serial_fetch_required,
             reject_ambiguous_backend_identity=account.id in ambiguous_direct_accounts,
         )
+        try:
+            current_state_generation = load_state_generation(account.id)
+        except Exception as exc:
+            return _usage_after_state_generation_failure(
+                usage,
+                error=f"state generation failed after fetch: {type(exc).__name__}",
+            )
+        if current_state_generation != state_generation:
+            return _usage_after_state_generation_failure(
+                usage,
+                error="account state changed during fetch",
+            )
         if usage.backend_used == "direct" and (
             account.id in shared_direct_auth_accounts
             or account.id in unattributed_direct_accounts
@@ -279,6 +291,27 @@ def _shared_direct_auth_accounts(
         for source_accounts in sources.values()
         if len(source_accounts) > 1
         for account_id in source_accounts
+    )
+
+
+def _usage_after_state_generation_failure(
+    usage: AccountUsage,
+    *,
+    error: str,
+) -> AccountUsage:
+    if usage.error:
+        error = f"{error}; {usage.error}"
+    return replace(
+        usage,
+        five_hour=None,
+        weekly=None,
+        main=None,
+        models=(),
+        status=AccountStatus.ERROR,
+        error=error,
+        values_captured_at=None,
+        stale=True,
+        cache_invalidated=True,
     )
 
 
