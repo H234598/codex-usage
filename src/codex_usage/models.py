@@ -262,6 +262,13 @@ class UsagePool:
             return True
 
     def window_for_duration(self, duration_seconds: int) -> LimitWindow | None:
+        if (
+            not isinstance(self.windows, tuple)
+            or not self.windows
+            or any(not isinstance(window, LimitWindow) for window in self.windows)
+            or not _has_unique_window_identities(self.windows)
+        ):
+            return None
         matches = tuple(
             window
             for window in self.windows

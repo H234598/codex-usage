@@ -186,6 +186,19 @@ def test_usage_pool_rejects_duplicate_window_identity_aliases():
     assert pool.window_for_duration(604800) is None
 
 
+def test_usage_pool_lookup_rejects_malformed_window_container():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=[
+            LimitWindow(name="weekly", remaining=90, duration_seconds=604800),
+        ],
+    )
+
+    assert pool.has_valid_usage is False
+    assert pool.window_for_duration(604800) is None
+
+
 def test_usage_pool_accepts_canonical_dynamic_window_identity():
     pool = UsagePool(
         key=SPARK_MODEL,
