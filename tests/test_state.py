@@ -1491,6 +1491,43 @@ def test_load_usage_snapshot_marks_malformed_main_pool_stale():
 
 
 @pytest.mark.parametrize(
+    "windows",
+    [
+        [{"name": "unknown", "remaining": 90}],
+        [
+            {"name": "weekly", "remaining": 90},
+            {"name": "w", "remaining": 80},
+        ],
+    ],
+)
+def test_usage_state_disables_pool_with_invalid_window_identity(windows):
+    loaded = usage_from_dict(
+        {
+            "account": "invalid-window-identity",
+            "label": "Invalid window identity",
+            "captured_at": "2026-07-16T04:20:00+02:00",
+            "status": "partial",
+            "stale": False,
+            "cache_invalidated": False,
+            "five_hour": {"name": "5h", "remaining": 97},
+            "weekly": {"name": "weekly", "remaining": 55},
+            "main": {
+                "key": "main",
+                "available": True,
+                "windows": windows,
+                "exhausted": True,
+                "availability_sources": ["usage"],
+            },
+        }
+    )
+
+    assert loaded.main is not None
+    assert loaded.main.available is False
+    assert loaded.five_hour is not None
+    assert loaded.weekly is not None
+
+
+@pytest.mark.parametrize(
     "malformed_models",
     ([], None, {"gpt-5.3-codex-spark": []}),
 )
@@ -3406,6 +3443,106 @@ def test_save_usage_snapshot_preserves_reset_when_usage_arrives_without_reset(tm
     assert loaded.five_hour is not None
     assert loaded.five_hour.remaining == 80
     assert loaded.five_hour.reset_at == previous_reset
+    assert loaded.stale is True
+
+
+def test_save_usage_snapshot_preserves_dynamic_pool_resets(tmp_path):
+    timezone = ZoneInfo("Europe/Berlin")
+    snapshot_dir = tmp_path / "snapshots"
+    previous_capture = datetime(2026, 7, 17, 4, 20, tzinfo=timezone)
+    main_reset = datetime(2026, 8, 16, 4, 20, tzinfo=timezone)
+    spark_reset = datetime(2026, 7, 24, 4, 20, tzinfo=timezone)
+    identity = {
+        "backend_configured": "direct",
+        "backend_used": "direct",
+        "backend_user_id": "user-dynamic",
+        "backend_account_id": "account-dynamic",
+    }
+
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="dynamic",
+            label="Dynamic",
+            captured_at=previous_capture,
+            status=AccountStatus.OK,
+            main=UsagePool(
+                key="main",
+                display_name="Codex",
+                windows=(
+                    LimitWindow(
+                        name="30d",
+                        duration_seconds=2_592_000,
+                        remaining=80,
+                        reset_at=main_reset,
+                    ),
+                ),
+                availability_sources=("usage",),
+            ),
+            models=(
+                UsagePool(
+                    key="gpt-5.3-codex-spark",
+                    display_name="Spark",
+                    windows=(
+                        LimitWindow(
+                            name="weekly",
+                            duration_seconds=604800,
+                            remaining=70,
+                            reset_at=spark_reset,
+                        ),
+                    ),
+                    availability_sources=("usage",),
+                ),
+            ),
+            **identity,
+        ),
+        snapshot_dir,
+    )
+
+    save_usage_snapshot(
+        AccountUsage(
+            account_id="dynamic",
+            label="Dynamic",
+            captured_at=previous_capture + timedelta(minutes=5),
+            status=AccountStatus.OK,
+            main=UsagePool(
+                key="main",
+                display_name="Codex",
+                windows=(
+                    LimitWindow(
+                        name="30d",
+                        duration_seconds=2_592_000,
+                        remaining=75,
+                    ),
+                ),
+                availability_sources=("usage",),
+            ),
+            models=(
+                UsagePool(
+                    key="gpt-5.3-codex-spark",
+                    display_name="Spark",
+                    windows=(
+                        LimitWindow(
+                            name="weekly",
+                            duration_seconds=604800,
+                            remaining=65,
+                        ),
+                    ),
+                    availability_sources=("usage",),
+                ),
+            ),
+            **identity,
+        ),
+        snapshot_dir,
+    )
+
+    loaded = load_usage_snapshot("dynamic", snapshot_dir)
+
+    assert loaded is not None
+    assert loaded.main is not None
+    assert loaded.main.windows[0].remaining == 75
+    assert loaded.main.windows[0].reset_at == main_reset
+    assert loaded.models[0].windows[0].remaining == 65
+    assert loaded.models[0].windows[0].reset_at == spark_reset
     assert loaded.stale is True
 
 

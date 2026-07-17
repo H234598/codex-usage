@@ -890,12 +890,35 @@ def merge_current_with_last_success(
         expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
-    if five_hour is current.five_hour and weekly is current.weekly:
+    main = _merge_pool_windows_with_last_success(
+        current.main,
+        last_success.main,
+        reference_at=current.captured_at,
+        current_captured_at=current_values_captured_at,
+        last_success_captured_at=last_success_values_captured_at,
+        preserve_missing_value=preserve_missing_window_values,
+    )
+    models = _merge_model_pools_with_last_success(
+        current.models,
+        last_success.models,
+        reference_at=current.captured_at,
+        current_captured_at=current_values_captured_at,
+        last_success_captured_at=last_success_values_captured_at,
+        preserve_missing_value=preserve_missing_window_values,
+    )
+    if (
+        five_hour is current.five_hour
+        and weekly is current.weekly
+        and main is current.main
+        and models is current.models
+    ):
         return current
     return replace(
         current,
         five_hour=five_hour,
         weekly=weekly,
+        main=main,
+        models=models,
         values_captured_at=last_success.values_captured_at or last_success.captured_at,
         stale=True,
     )
@@ -937,12 +960,35 @@ def _merge_newer_partial_usage(
         expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
-    if five_hour is newer.five_hour and weekly is newer.weekly:
+    main = _merge_pool_windows_with_last_success(
+        newer.main,
+        older.main,
+        reference_at=newer.captured_at,
+        current_captured_at=newer_values_captured_at,
+        last_success_captured_at=older_values_captured_at,
+        preserve_missing_value=preserve_missing_window_values,
+    )
+    models = _merge_model_pools_with_last_success(
+        newer.models,
+        older.models,
+        reference_at=newer.captured_at,
+        current_captured_at=newer_values_captured_at,
+        last_success_captured_at=older_values_captured_at,
+        preserve_missing_value=preserve_missing_window_values,
+    )
+    if (
+        five_hour is newer.five_hour
+        and weekly is newer.weekly
+        and main is newer.main
+        and models is newer.models
+    ):
         return newer
     return replace(
         newer,
         five_hour=five_hour,
         weekly=weekly,
+        main=main,
+        models=models,
         values_captured_at=older.values_captured_at or older.captured_at,
         stale=True,
     )
@@ -976,6 +1022,11 @@ def _authoritative_empty_limits(usage: AccountUsage) -> bool:
         return (
             usage.five_hour is None
             and usage.weekly is None
+            and not _has_valid_core_usage(
+                usage.five_hour,
+                usage.weekly,
+                usage.main,
+            )
             and usage.backend_used in {"direct", "app-server"}
         )
     return (
@@ -985,6 +1036,84 @@ def _authoritative_empty_limits(usage: AccountUsage) -> bool:
         and usage.weekly is None
         and usage.backend_used in {"direct", "app-server"}
     )
+
+
+def _merge_pool_windows_with_last_success(
+    current: UsagePool | None,
+    last_success: UsagePool | None,
+    *,
+    reference_at: datetime,
+    current_captured_at: datetime | None,
+    last_success_captured_at: datetime | None,
+    preserve_missing_value: bool,
+) -> UsagePool | None:
+    if (
+        current is None
+        or last_success is None
+        or not isinstance(current.windows, tuple)
+        or not isinstance(last_success.windows, tuple)
+        or not current.windows
+        or not last_success.windows
+    ):
+        return current
+    previous_by_identity = _window_identity_map(last_success.windows)
+    if (
+        _window_identity_map(current.windows) is None
+        or previous_by_identity is None
+    ):
+        return current
+    merged_windows = list(current.windows)
+    changed = False
+    for index, window in enumerate(current.windows):
+        identity = _window_identity_key(window)
+        if identity is None or identity not in previous_by_identity:
+            continue
+        merged = _merge_window_with_last_success(
+            window,
+            previous_by_identity[identity],
+            reference_at=reference_at,
+            current_captured_at=current_captured_at,
+            last_success_captured_at=last_success_captured_at,
+            preserve_missing_value=preserve_missing_value,
+        )
+        if merged is not window:
+            merged_windows[index] = merged
+            changed = True
+    return replace(current, windows=tuple(merged_windows)) if changed else current
+
+
+def _merge_model_pools_with_last_success(
+    current: tuple[UsagePool, ...],
+    last_success: tuple[UsagePool, ...],
+    *,
+    reference_at: datetime,
+    current_captured_at: datetime | None,
+    last_success_captured_at: datetime | None,
+    preserve_missing_value: bool,
+) -> tuple[UsagePool, ...]:
+    if not isinstance(current, tuple) or not isinstance(last_success, tuple):
+        return current
+    previous_by_key: dict[str, UsagePool] = {}
+    for pool in last_success:
+        if not isinstance(pool, UsagePool) or pool.key in previous_by_key:
+            return current
+        previous_by_key[pool.key] = pool
+    merged_pools: list[UsagePool] = []
+    changed = False
+    for pool in current:
+        if not isinstance(pool, UsagePool):
+            return current
+        merged = _merge_pool_windows_with_last_success(
+            pool,
+            previous_by_key.get(pool.key),
+            reference_at=reference_at,
+            current_captured_at=current_captured_at,
+            last_success_captured_at=last_success_captured_at,
+            preserve_missing_value=preserve_missing_value,
+        )
+        merged_pools.append(merged)
+        changed = changed or merged is not pool
+    return tuple(merged_pools) if changed else current
 
 
 def _merge_window_with_last_success(
@@ -1076,6 +1205,35 @@ def _window_matches_expected_kind(
         or duration is None
         or duration == expected_duration
     )
+
+
+def _window_identity_key(window: LimitWindow | None) -> int | None:
+    if not isinstance(window, LimitWindow) or not window.has_known_identity:
+        return None
+    kind = _window_kind(window)
+    duration = _window_duration_seconds(window)
+    if kind is not None:
+        expected_duration = WINDOW_DURATIONS.get(kind)
+        if expected_duration is None or (
+            duration is not None and duration != expected_duration
+        ):
+            return None
+        return expected_duration
+    if duration is None or duration > MAX_WINDOW_SECONDS:
+        return None
+    return duration
+
+
+def _window_identity_map(
+    windows: tuple[LimitWindow, ...],
+) -> dict[int, LimitWindow] | None:
+    identities: dict[int, LimitWindow] = {}
+    for window in windows:
+        identity = _window_identity_key(window)
+        if identity is None or identity in identities:
+            return None
+        identities[identity] = window
+    return identities
 
 
 def _window_duration_matches(
@@ -1422,6 +1580,8 @@ def _pool_from_dict(
         ),
         availability_sources=tuple(dict.fromkeys(sources)),
     )
+    if windows and _window_identity_map(tuple(windows)) is None:
+        pool = replace(pool, available=False)
     if isinstance(raw_exhausted, bool) and raw_exhausted != pool.exhausted:
         # The derived flag may not contradict the actual limit fields.
         pool = replace(pool, available=False)

@@ -26,9 +26,7 @@ def test_live_auth_json_fetches_usage_limits():
 
     assert usage.status == AccountStatus.OK
     assert usage.error is None
-    assert usage.five_hour is not None
-    assert usage.five_hour.remaining is not None
-    assert usage.five_hour.reset_at is not None
-    assert usage.weekly is not None
-    assert usage.weekly.remaining is not None
-    assert usage.weekly.reset_at is not None
+    assert usage.main is not None
+    assert usage.main.has_valid_usage
+    assert usage.main.windows
+    assert all(window.reset_at is not None for window in usage.main.windows)
