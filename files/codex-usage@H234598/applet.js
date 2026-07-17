@@ -2707,6 +2707,18 @@ CodexUsageApplet.prototype = {
                 error = error || "usage freshness metadata missing";
                 stale = true;
             }
+            if (status === "login_required") {
+                if (hasPayloadUsageValue || fiveHour || weekly || main ||
+                    Object.keys(models).length) {
+                    error = error || "terminal usage status cannot carry limit values";
+                }
+                fiveHour = null;
+                weekly = null;
+                main = null;
+                models = Object.create(null);
+                stale = true;
+                cacheInvalidated = true;
+            }
             if (
                 status === "ok" &&
                 !this._hasPayloadUsageValue(fiveHour, weekly, main, models) &&

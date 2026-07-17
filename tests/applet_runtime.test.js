@@ -735,6 +735,30 @@ test("invalid usage status clears values before rendering", () => {
   }
 });
 
+test("login-required status clears limit values before rendering", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    captured_at: new Date().toISOString(),
+    backend_configured: "direct",
+    backend_used: "direct",
+    five_hour: { name: "5h", remaining: 80 },
+    weekly: { name: "weekly", remaining: 60 },
+    status: "login_required",
+    stale: false,
+    cache_invalidated: false,
+  }]);
+
+  assert.equal(usage.status, "login_required");
+  assert.equal(usage.error, "terminal usage status cannot carry limit values");
+  assert.equal(usage.stale, true);
+  assert.equal(usage.cache_invalidated, true);
+  assert.equal(usage.five_hour, null);
+  assert.equal(usage.weekly, null);
+  assert.equal(usage.main, null);
+  assert.deepEqual(Object.keys(usage.models), []);
+});
+
 test("invalid capture metadata clears usage values", () => {
   for (const metadata of [
     { captured_at: "invalid-capture" },
@@ -2978,6 +3002,7 @@ test("payload validation keeps window provenance metadata for safe merges", () =
   const applet = makeApplet();
   const validated = applet._validatePayload([{
     account: "alpha",
+    status: "partial",
     five_hour: {
       name: "5h",
       raw: '{"limit_window_seconds":18000}',

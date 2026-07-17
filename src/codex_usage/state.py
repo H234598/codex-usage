@@ -752,6 +752,23 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         values_captured_at = None
         if status == AccountStatus.OK:
             status = AccountStatus.PARTIAL
+    if status == AccountStatus.LOGIN_REQUIRED:
+        # An expired login must never retain values that could be mistaken for
+        # a current, attributable limit observation. Transient backend errors
+        # intentionally keep stale values when cache invalidation is false.
+        if any(
+            value is not None
+            for value in (five_hour, weekly, main)
+        ) or model_pools:
+            terminal_error = "terminal usage status cannot carry limit values"
+            error = f"{error}; {terminal_error}" if error else terminal_error
+        five_hour = None
+        weekly = None
+        main = None
+        model_pools = ()
+        values_captured_at = None
+        cache_invalidated = True
+        forced_stale = True
     if status == AccountStatus.OK and not _has_valid_core_usage(
         five_hour,
         weekly,
@@ -819,6 +836,17 @@ def merge_current_with_last_success(
 ) -> AccountUsage:
     if last_success is None:
         return current
+    if current.status == AccountStatus.LOGIN_REQUIRED:
+        return replace(
+            current,
+            five_hour=None,
+            weekly=None,
+            main=None,
+            models=(),
+            values_captured_at=None,
+            stale=True,
+            cache_invalidated=True,
+        )
     if _authoritative_empty_limits(current):
         return current
     if not backend_identity_matches(current, last_success):

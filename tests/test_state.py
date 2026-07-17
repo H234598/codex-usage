@@ -184,6 +184,30 @@ def test_usage_state_invalid_invalidation_flag_discards_values():
     assert loaded.five_hour is None
 
 
+def test_usage_state_login_required_discards_limit_values():
+    status = "login_required"
+    loaded = usage_from_dict(
+        {
+            "account": "terminal-status",
+            "label": "Terminal status",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "status": status,
+            "stale": False,
+            "cache_invalidated": False,
+            "five_hour": {"name": "5h", "remaining": 90},
+            "weekly": {"name": "weekly", "remaining": 55},
+        }
+    )
+
+    assert loaded.status.value == status
+    assert loaded.cache_invalidated is True
+    assert loaded.stale is True
+    assert loaded.five_hour is None
+    assert loaded.weekly is None
+    assert loaded.error is not None
+    assert "terminal usage status cannot carry limit values" in loaded.error
+
+
 @pytest.mark.parametrize("field", ["backend_user_id", "backend_account_id"])
 def test_usage_state_rejects_normalized_backend_identity(field):
     loaded = usage_from_dict(
@@ -2137,7 +2161,7 @@ def test_load_legacy_snapshot_localizes_naive_datetimes(tmp_path):
     assert loaded.auth_last_refresh.tzinfo is not None
 
 
-def test_current_status_keeps_last_success_values_separate(tmp_path):
+def test_login_required_status_does_not_restore_last_success_values(tmp_path):
     captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
     current_dir = tmp_path / "current"
     current = AccountUsage(
@@ -2169,9 +2193,11 @@ def test_current_status_keeps_last_success_values_separate(tmp_path):
     merged = merge_current_with_last_success(loaded, last_success)
 
     assert merged.status == AccountStatus.LOGIN_REQUIRED
-    assert merged.five_hour == last_success.five_hour
-    assert merged.values_captured_at == captured
+    assert merged.five_hour is None
+    assert merged.weekly is None
+    assert merged.values_captured_at is None
     assert merged.stale is True
+    assert merged.cache_invalidated is True
     assert merged.backend_used == "app-server"
 
 
