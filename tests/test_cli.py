@@ -1381,6 +1381,49 @@ def test_account_overview_json_shows_live_values(tmp_path, monkeypatch, capsys):
     assert account["usage"]["five_hour"]["reset_at"] == "2026-06-08T06:50:00+02:00"
 
 
+def test_account_overview_json_hides_login_required_values(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    def fake_fetch_all(config, accounts, **kwargs):
+        account = next(iter(accounts))
+        return [
+            AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=datetime(2026, 6, 8, 3, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+                backend_configured="direct",
+                backend_used="direct",
+                status=AccountStatus.LOGIN_REQUIRED,
+                five_hour=LimitWindow(name="5h", remaining=97),
+                weekly=LimitWindow(name="weekly", remaining=55),
+            )
+        ]
+
+    monkeypatch.setattr("codex_usage.cli.fetch_all", fake_fetch_all)
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "privat",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(
+        ["--config", str(config_path), "account", "overview", "--format", "json"]
+    ) == 2
+
+    usage = json.loads(capsys.readouterr().out)["accounts"][0]["usage"]
+    assert usage["status"] == "login_required"
+    assert usage["five_hour"] is None
+    assert usage["weekly"] is None
+
+
 def test_values_shows_compact_live_values_for_all_accounts(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / "config.toml"
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))

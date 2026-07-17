@@ -41,7 +41,13 @@ from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
 from .private_io import read_private_text
 from .reactivate import REACTIVATION_BROWSERS, ReactivationError, reactivate_account
-from .render import render_account_overview, render_account_values, render_json, render_table
+from .render import (
+    _safe_usage_for_display,
+    render_account_overview,
+    render_account_values,
+    render_json,
+    render_table,
+)
 from .routing import (
     DEFAULT_MAX_USAGE_AGE_SECONDS,
     effective_paid_overage,
@@ -514,7 +520,10 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
                     "fallback_reason": usages_by_account.get(account.id).fallback_reason
                     if usages_by_account.get(account.id)
                     else None,
-                    "usage": _overview_usage_json(usages_by_account.get(account.id)),
+                    "usage": _overview_usage_json(
+                        usages_by_account.get(account.id),
+                        expected_backend=account.backend,
+                    ),
                 }
                 for account in config.accounts
             ]
@@ -1188,14 +1197,19 @@ def _load_overview_usages(config, accounts=None):
     return {usage.account_id: usage for usage in fetched}
 
 
-def _overview_usage_json(usage: AccountUsage | None) -> dict | None:
+def _overview_usage_json(
+    usage: AccountUsage | None,
+    *,
+    expected_backend: str | None = None,
+) -> dict | None:
     if usage is None:
         return None
+    usage = _safe_usage_for_display(usage, expected_backend=expected_backend)
     serialized = usage.as_dict()
     return {
         "captured_at": usage.captured_at.isoformat(),
-        "five_hour": _overview_window_json(usage.five_hour),
-        "weekly": _overview_window_json(usage.weekly),
+        "five_hour": _overview_window_json(serialized["five_hour"]),
+        "weekly": _overview_window_json(serialized["weekly"]),
         "main": serialized["main"],
         "models": serialized["models"],
         "status": usage.status.value,
@@ -1204,15 +1218,15 @@ def _overview_usage_json(usage: AccountUsage | None) -> dict | None:
     }
 
 
-def _overview_window_json(window) -> dict | None:
+def _overview_window_json(window: dict[str, Any] | None) -> dict | None:
     if window is None:
         return None
     return {
-        "used": window.used,
-        "limit": window.limit,
-        "remaining": window.remaining,
-        "percent": window.percent,
-        "reset_at": window.reset_at.isoformat() if window.reset_at else None,
+        "used": window["used"],
+        "limit": window["limit"],
+        "remaining": window["remaining"],
+        "percent": window["percent"],
+        "reset_at": window["reset_at"],
     }
 
 
