@@ -3111,10 +3111,20 @@ test("arbitrary fallback text cannot authorize cross-backend provenance", () => 
   assert.equal(applet._backendProvenanceMatches(direct, appServer), false);
   assert.equal(
     applet._backendProvenanceMatches(
-      { ...direct, fallback_reason: "app-server unavailable: timeout" },
+      {
+        ...direct,
+        fallback_reason: "app-server unavailable: installed Codex does not support rate-limit RPC",
+      },
       appServer,
     ),
     true,
+  );
+  assert.equal(
+    applet._backendProvenanceMatches(
+      { ...direct, fallback_reason: "app-server unavailable: timeout" },
+      appServer,
+    ),
+    false,
   );
 });
 

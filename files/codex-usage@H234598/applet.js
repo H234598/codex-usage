@@ -3371,10 +3371,17 @@ CodexUsageApplet.prototype = {
             return true;
         }
         let fallbackPrefix = "app-server unavailable: ";
+        let knownUnavailableDetails = [
+            "codex command was not found",
+            "codex command is not executable",
+            "could not start codex app server",
+            "codex app server exited unexpectedly",
+            "installed Codex does not support rate-limit RPC"
+        ];
         return backendUsed === "direct" &&
             this._safeBackend(usage && usage.backend_configured) === "app-server" &&
             reason.indexOf(fallbackPrefix) === 0 &&
-            reason.length > fallbackPrefix.length;
+            knownUnavailableDetails.indexOf(reason.slice(fallbackPrefix.length)) !== -1;
     },
 
     _authoritativeEmptyLimits: function(item) {
