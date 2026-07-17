@@ -2527,6 +2527,67 @@ def test_watchdog_contains_state_generation_failure_for_blocked_snapshot(monkeyp
     assert [usage.status for usage in result] == [AccountStatus.OK, AccountStatus.OK]
 
 
+def test_watchdog_refetches_block_when_state_generation_changes(monkeypatch):
+    account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
+    now = datetime.now().astimezone()
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="browser",
+        blocked_until=now + timedelta(hours=2),
+    )
+    fresh = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=97),
+    )
+    seen_fetch_accounts: list[str] = []
+    generations = iter((0, 1))
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        selected = tuple(fetch_accounts)
+        seen_fetch_accounts.extend(account.id for account in selected)
+        return [fresh] if selected else []
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_current_usage", lambda *args: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_state_generation",
+        lambda account_id: next(generations),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+    )
+
+    assert seen_fetch_accounts == ["blocked"]
+    assert result == [fresh]
+
+
 def test_watchdog_contains_unexpected_fetch_failure_per_account(monkeypatch):
     accounts = (
         Account(id="broken", label="Broken", profile_dir="/tmp/broken"),

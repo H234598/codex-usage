@@ -1187,6 +1187,22 @@ def watchdog(
         for account in expired_blocked_accounts:
             blocked_snapshots.pop(account.id, None)
         evaluation_now = datetime.now(tz=LOCAL_TZ)
+    changed_blocked_accounts = [
+        account
+        for account in account_list
+        if account.id in blocked_snapshots
+        and not _blocked_snapshot_generation_is_current(
+            blocked_snapshots[account.id],
+            account.id,
+        )
+    ]
+    if changed_blocked_accounts:
+        fetched.extend(
+            fetch_watchdog_accounts(changed_blocked_accounts)
+        )
+        for account in changed_blocked_accounts:
+            blocked_snapshots.pop(account.id, None)
+        evaluation_now = datetime.now(tz=LOCAL_TZ)
     fetched_accounts = tuple(
         account for account in account_list if account.id not in blocked_snapshots
     )
@@ -1286,6 +1302,19 @@ def _blocked_snapshot_is_consistent(usage: AccountUsage, *, now: datetime) -> bo
         blocked_until, _reason = _block_state(usage, now=now)
         return blocked_until is not None and blocked_until == usage.blocked_until
     except (AttributeError, OverflowError, TypeError, ValueError):
+        return False
+
+
+def _blocked_snapshot_generation_is_current(
+    usage: AccountUsage,
+    account_id: str,
+) -> bool:
+    try:
+        return (
+            usage.state_generation is not None
+            and load_state_generation(account_id) == usage.state_generation
+        )
+    except (AttributeError, OSError, TypeError, ValueError):
         return False
 
 
