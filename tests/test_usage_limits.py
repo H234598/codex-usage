@@ -97,6 +97,30 @@ def test_usage_pool_treats_invalid_window_as_unusable():
     assert pool.exhausted is True
 
 
+def test_usage_pool_exhaustion_fails_closed_for_usage_reset_only_window():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(LimitWindow(name="weekly", reset_at=NOW),),
+        availability_sources=("usage",),
+    )
+
+    assert pool.has_valid_usage is False
+    assert pool.exhausted is True
+
+
+def test_usage_pool_exhaustion_fails_closed_for_usage_window_missing_verified_usage():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(LimitWindow(name="weekly"),),
+        availability_sources=("usage",),
+    )
+
+    assert pool.has_valid_usage is False
+    assert pool.exhausted is True
+
+
 @pytest.mark.parametrize("field", ["available", "allowed", "limit_reached"])
 def test_usage_pool_treats_invalid_control_flag_as_unusable(field):
     values = {field: "false"}
@@ -213,6 +237,19 @@ def test_empty_catalog_pool_is_unknown_not_exhausted():
     pool = UsagePool(
         key=SPARK_MODEL,
         display_name="Spark",
+        available=True,
+        availability_sources=("model_catalog",),
+    )
+
+    assert pool.has_valid_usage is False
+    assert pool.exhausted is False
+
+
+def test_catalog_only_pool_without_verified_usage_remains_unknown_not_exhausted():
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(LimitWindow(name="weekly", reset_at=NOW),),
         available=True,
         availability_sources=("model_catalog",),
     )

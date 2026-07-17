@@ -61,6 +61,10 @@ def _has_unique_window_identities(windows: tuple[LimitWindow, ...]) -> bool:
         return False
 
 
+def _pool_has_usage_source(pool: UsagePool) -> bool:
+    return isinstance(pool.availability_sources, tuple) and "usage" in pool.availability_sources
+
+
 class AccountStatus(StrEnum):
     OK = "ok"
     LOGIN_REQUIRED = "login_required"
@@ -226,6 +230,14 @@ class UsagePool:
     @property
     def exhausted(self) -> bool:
         if not isinstance(self.windows, tuple):
+            return True
+        if _pool_has_usage_source(self) and (
+            not self.windows
+            or any(
+                not isinstance(window, LimitWindow) or not window.has_usage_value
+                for window in self.windows
+            )
+        ):
             return True
         if not self.windows:
             return (
