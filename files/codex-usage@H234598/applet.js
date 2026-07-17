@@ -2987,19 +2987,21 @@ CodexUsageApplet.prototype = {
     },
 
     _hasPayloadUsageValue: function(fiveHour, weekly, main, models) {
-        if (main) {
-                return main.available === true &&
-                Array.isArray(main.windows) &&
-                main.windows.length > 0 &&
-                main.windows.every(Lang.bind(this, function(window) {
-                    return this._windowHasUsageValue(window) &&
-                        this._windowIdentityIsKnown(window);
-                }));
-        }
-        return [fiveHour, weekly].some(Lang.bind(this, function(window) {
+        let hasMainValue = Boolean(
+            main &&
+            main.available === true &&
+            Array.isArray(main.windows) &&
+            main.windows.length > 0 &&
+            main.windows.every(Lang.bind(this, function(window) {
+                return this._windowHasUsageValue(window) &&
+                    this._windowIdentityIsKnown(window);
+            }))
+        );
+        let hasLegacyValue = [fiveHour, weekly].some(Lang.bind(this, function(window) {
             return this._windowHasUsageValue(window) &&
                 this._windowIdentityIsKnown(window);
         }));
+        return hasMainValue || hasLegacyValue;
     },
 
     _hasModelPayloadUsageValue: function(models) {
@@ -3303,6 +3305,14 @@ CodexUsageApplet.prototype = {
                     usedCachedWindow = usedCachedWindow || mergedWeekly !== item.weekly;
                     item.weekly = mergedWeekly;
                 }
+                if (this._mergeMissingPoolResets(
+                    item,
+                    old,
+                    item.captured_at,
+                    oldValuesCapturedAt
+                )) {
+                    usedCachedWindow = true;
+                }
                 if (usedCachedWindow) {
                     item.values_captured_at = item.values_captured_at ||
                         old.values_captured_at || old.captured_at;
@@ -3328,6 +3338,93 @@ CodexUsageApplet.prototype = {
             merged.push(this._markUsageStale(old));
         }
         return merged;
+    },
+
+    _mergeMissingPoolResets: function(fresh, cached, referenceAt, cachedCapturedAt) {
+        let usedCachedWindow = false;
+        let pairs = [{
+            fresh: fresh && fresh.main,
+            cached: cached && cached.main
+        }];
+        let freshModels = fresh && fresh.models && typeof fresh.models === "object"
+            ? fresh.models
+            : {};
+        let cachedModels = cached && cached.models && typeof cached.models === "object"
+            ? cached.models
+            : {};
+        let modelKeys = Object.keys(freshModels);
+        for (let i = 0; i < modelKeys.length; i++) {
+            let key = modelKeys[i];
+            pairs.push({ fresh: freshModels[key], cached: cachedModels[key] });
+        }
+        for (let j = 0; j < pairs.length; j++) {
+            if (this._mergeMissingPoolResetsForPool(
+                pairs[j].fresh,
+                pairs[j].cached,
+                referenceAt,
+                cachedCapturedAt
+            )) {
+                usedCachedWindow = true;
+            }
+        }
+        return usedCachedWindow;
+    },
+
+    _mergeMissingPoolResetsForPool: function(freshPool, cachedPool, referenceAt, cachedCapturedAt) {
+        if (
+            !freshPool ||
+            !cachedPool ||
+            freshPool.available !== true ||
+            cachedPool.available !== true ||
+            !Array.isArray(freshPool.windows) ||
+            !Array.isArray(cachedPool.windows) ||
+            !this._hasUniqueWindowIdentities(freshPool.windows) ||
+            !this._hasUniqueWindowIdentities(cachedPool.windows)
+        ) {
+            return false;
+        }
+        let cachedByIdentity = Object.create(null);
+        let duplicateCachedIdentity = Object.create(null);
+        for (let i = 0; i < cachedPool.windows.length; i++) {
+            let identity = this._windowIdentityKey(cachedPool.windows[i]);
+            if (identity === null) {
+                continue;
+            }
+            if (Object.prototype.hasOwnProperty.call(cachedByIdentity, identity)) {
+                duplicateCachedIdentity[identity] = true;
+            } else {
+                cachedByIdentity[identity] = cachedPool.windows[i];
+            }
+        }
+        let mergedWindows = freshPool.windows.slice();
+        let usedCachedWindow = false;
+        for (let j = 0; j < freshPool.windows.length; j++) {
+            let freshWindow = freshPool.windows[j];
+            let identity = this._windowIdentityKey(freshWindow);
+            if (
+                identity === null ||
+                duplicateCachedIdentity[identity] ||
+                !Object.prototype.hasOwnProperty.call(cachedByIdentity, identity) ||
+                !this._windowHasUsageValue(freshWindow) ||
+                freshWindow.reset_at
+            ) {
+                continue;
+            }
+            let mergedWindow = this._mergeMissingReset(
+                freshWindow,
+                cachedByIdentity[identity],
+                referenceAt,
+                cachedCapturedAt
+            );
+            if (mergedWindow !== freshWindow) {
+                mergedWindows[j] = mergedWindow;
+                usedCachedWindow = true;
+            }
+        }
+        if (usedCachedWindow) {
+            freshPool.windows = mergedWindows;
+        }
+        return usedCachedWindow;
     },
 
     _markUsageStale: function(usage) {
@@ -3545,6 +3642,9 @@ CodexUsageApplet.prototype = {
         }
         if (["w", "week", "weekly"].indexOf(name) !== -1) {
             return "weekly";
+        }
+        if (["30d", "30_day", "month", "monthly"].indexOf(name) !== -1) {
+            return "thirty_day";
         }
         return "";
     },
@@ -3784,7 +3884,8 @@ CodexUsageApplet.prototype = {
         }
         let expected = {
             five_hour: 18000,
-            weekly: 604800
+            weekly: 604800,
+            thirty_day: 2592000
         }[expectedKind || currentKind || cachedKind] || null;
         if (expected !== null &&
             ((currentDuration !== null && currentDuration !== expected) ||
@@ -3810,7 +3911,8 @@ CodexUsageApplet.prototype = {
             if (duration === null) {
                 duration = {
                     five_hour: 18000,
-                    weekly: 604800
+                    weekly: 604800,
+                    thirty_day: 2592000
                 }[this._windowKind(window)] || null;
             }
             if (resetMs === null || referenceMs === null || capturedMs === null) {
@@ -3829,7 +3931,8 @@ CodexUsageApplet.prototype = {
         if (duration === null) {
             duration = {
                 five_hour: 18000,
-                weekly: 604800
+                weekly: 604800,
+                thirty_day: 2592000
             }[this._windowKind(window)] || null;
         }
         let capturedMs = this._dateMillis(capturedAt);

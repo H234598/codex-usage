@@ -13,8 +13,8 @@ from codex_usage.state import (
     _is_inferred_inactive_five_hour,
     _localize_datetime,
     _snapshot_datetime,
-    _window_duration_seconds,
     _window_duration_matches,
+    _window_duration_seconds,
     _window_matches_expected_kind,
     backend_provenance_matches,
     backend_provenance_matches_configured,
@@ -871,6 +871,29 @@ def test_expire_reset_windows_handles_dynamic_core_and_model_pools():
     assert "30d" in (expired.error or "")
 
 
+def test_expire_reset_windows_keeps_named_dynamic_window_without_duration():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    window = LimitWindow(
+        name="30d",
+        remaining=80,
+        reset_at=reference_at + timedelta(days=10),
+    )
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=reference_at,
+        status=AccountStatus.OK,
+        main=UsagePool(key="main", display_name="Codex", windows=(window,)),
+    )
+
+    evaluated = expire_reset_windows(
+        usage,
+        reference_at=reference_at + timedelta(days=1),
+    )
+
+    assert evaluated is usage
+
+
 def test_expire_reset_windows_rejects_dynamic_reset_without_identity():
     captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
@@ -1210,6 +1233,23 @@ def test_expire_reset_windows_localizes_naive_reset_timestamp():
     assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
+def test_expire_reset_windows_drops_invalid_reset_timestamp():
+    captured_at = datetime(2026, 7, 12, 10, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=38, reset_at="invalid"),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=captured_at)
+
+    assert expired.five_hour is None
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
 def test_expire_reset_windows_clears_expired_blocked_state():
     reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
@@ -1266,6 +1306,23 @@ def test_expire_reset_windows_clears_blocked_state_with_naive_blocked_until():
     assert expired.blocked_until is None
     assert expired.blocked_reason is None
     assert expired.weekly is None
+
+
+def test_expire_reset_windows_keeps_invalid_blocked_state_fail_closed():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=reference_at,
+        status=AccountStatus.BLOCKED,
+        blocked_until="invalid",
+        blocked_reason="usage limit reached",
+    )
+
+    evaluated = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert evaluated is usage
+    assert evaluated.status == AccountStatus.BLOCKED
 
 
 def test_load_usage_snapshot_ignores_invalid_json(tmp_path):

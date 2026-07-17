@@ -357,7 +357,7 @@ def _usage_value(window: LimitWindow | None) -> str:
     remaining_percent = _remaining_percent(window)
     if remaining_percent is not None:
         parts.append(f"{_fmt_number(remaining_percent)}% verbleibend")
-    if not parts and window.raw:
+    if not parts and isinstance(window.raw, str) and window.raw:
         return _shorten(window.raw, 28)
     return "  ".join(parts) if parts else "-"
 

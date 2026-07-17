@@ -451,6 +451,35 @@ test("dynamic pools survive validation and drive Spark panel slots", () => {
   assert.equal(applet._panelWindowForSource(usage, 6).name, "5h");
 });
 
+test("valid legacy values survive an unusable main pool", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
+    captured_at: "2026-07-16T10:00:00+00:00",
+    stale: false,
+    cache_invalidated: false,
+    five_hour: { name: "5h", remaining: 97 },
+    weekly: { name: "weekly", remaining: 55 },
+    main: {
+      key: "main",
+      windows: [{ name: "30d", reset_at: "2026-08-15T15:20:23.000Z" }],
+      available: true,
+      allowed: true,
+      limit_reached: false,
+      exhausted: true,
+      availability_sources: ["usage"],
+    },
+    status: "ok",
+  }]);
+
+  assert.equal(usage.status, "ok");
+  assert.equal(usage.five_hour.remaining, 97);
+  assert.equal(usage.weekly.remaining, 55);
+  assert.equal(usage.main.available, true);
+});
+
 test("known exhausted main pool keeps its zero usage value", () => {
   const applet = makeApplet();
   const [usage] = applet._validatePayload([{
@@ -658,6 +687,88 @@ test("window name proves duration when serialized duration is absent", () => {
 
   assert.equal(applet._poolWindowForDuration(pool, 604800).remaining, 90);
   assert.equal(applet._windowDisplayLabel(pool.windows[0]), "Woche");
+});
+
+test("named thirty-day window remains identifiable without serialized duration", () => {
+  const applet = makeApplet();
+  const window = {
+    name: "30d",
+    remaining: 68,
+    reset_at: "2026-08-15T15:20:23.000Z"
+  };
+
+  assert.equal(applet._windowKind(window), "thirty_day");
+  assert.equal(applet._windowDurationMatches(window, { name: "30d" }, null), true);
+  assert.equal(
+    applet._windowCacheExpired(
+      window,
+      "2026-07-17T15:20:23.000Z",
+      "2026-07-18T15:20:23.000Z"
+    ),
+    false
+  );
+});
+
+test("fresh dynamic pools preserve cached resets when response omits them", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
+    captured_at: "2026-07-17T10:00:00.000Z",
+    main: {
+      available: true,
+      windows: [{
+        name: "30d",
+        duration_seconds: 2592000,
+        remaining: 80,
+        reset_at: "2026-08-15T10:00:00.000Z"
+      }]
+    },
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: true,
+        windows: [{
+          name: "weekly",
+          duration_seconds: 604800,
+          remaining: 70,
+          reset_at: "2026-07-24T10:00:00.000Z"
+        }]
+      }
+    }
+  }];
+
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    backend_configured: "direct",
+    backend_used: "direct",
+    status: "ok",
+    captured_at: "2026-07-17T10:05:00.000Z",
+    main: {
+      available: true,
+      windows: [{ name: "30d", duration_seconds: 2592000, remaining: 75 }]
+    },
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: true,
+        windows: [{ name: "weekly", duration_seconds: 604800, remaining: 65 }]
+      }
+    },
+    stale: false
+  }]);
+
+  assert.equal(merged[0].main.windows[0].remaining, 75);
+  assert.equal(merged[0].main.windows[0].reset_at, "2026-08-15T10:00:00.000Z");
+  assert.equal(
+    merged[0].models["gpt-5.3-codex-spark"].windows[0].remaining,
+    65,
+  );
+  assert.equal(
+    merged[0].models["gpt-5.3-codex-spark"].windows[0].reset_at,
+    "2026-07-24T10:00:00.000Z",
+  );
+  assert.equal(merged[0].stale, true);
+  assert.equal(merged[0].values_captured_at, "2026-07-17T10:00:00.000Z");
 });
 
 test("unusable Spark pools cannot drive panel sources", () => {

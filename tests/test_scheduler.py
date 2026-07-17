@@ -4,6 +4,7 @@ import signal
 from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -20,6 +21,7 @@ from codex_usage.scheduler import (
     _remaining_percent,
     _stabilize_authenticated_usage,
     _usage_map_for_accounts,
+    _watch_core_resets_current,
     _watch_cycle_is_healthy,
     _window_duration_seconds,
     _window_is_exhausted,
@@ -269,6 +271,48 @@ def test_fetch_all_keeps_ambiguity_guard_for_selected_account(monkeypatch):
     fetch_all(AppConfig(accounts=accounts), (accounts[0],))
 
     assert flags == {"privat": True}
+
+
+def test_fetch_all_allows_single_account_auth_override(monkeypatch):
+    accounts = (
+        Account(id="privat", label="Privat", profile_dir="/tmp/privat"),
+        Account(id="work", label="Work", profile_dir="/tmp/work"),
+    )
+    override = Path("/tmp/override-auth.json")
+    seen: dict[str, object] = {}
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _account_id: 0)
+
+    def fake_fetch_direct(
+        account,
+        *,
+        auth_json_path=None,
+        reject_ambiguous_backend_identity=False,
+    ):
+        seen["account"] = account.id
+        seen["auth_json_path"] = auth_json_path
+        seen["reject_ambiguous_backend_identity"] = reject_ambiguous_backend_identity
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+            main=_usable_main(LimitWindow(name="5h", remaining=97)),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+
+    result = fetch_all(
+        AppConfig(accounts=accounts),
+        (accounts[0],),
+        direct=True,
+        auth_json_path=override,
+    )
+
+    assert result[0].status == AccountStatus.OK
+    assert seen == {
+        "account": "privat",
+        "auth_json_path": override,
+        "reject_ambiguous_backend_identity": False,
+    }
 
 
 def test_fetch_all_marks_unidentified_auth_accounts_ambiguous(monkeypatch):
@@ -2251,6 +2295,25 @@ def test_scheduler_ignores_oversized_finite_raw_window_duration():
     )
 
     assert _window_duration_seconds(window) is None
+
+
+def test_scheduler_accepts_named_dynamic_reset_without_duration():
+    captured_at = datetime.now().astimezone()
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(
+                name="30d",
+                remaining=80,
+                reset_at=captured_at + timedelta(days=10),
+            )
+        ),
+    )
+
+    assert _watch_core_resets_current(usage) is True
 
 
 @pytest.mark.parametrize(

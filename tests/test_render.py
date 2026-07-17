@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.render import (
     _auth_value,
@@ -355,6 +357,13 @@ def test_render_fails_closed_for_invalid_remaining_percent_values():
     ):
         assert _remaining_percent(window) is None
         assert _is_remaining_percent_window(window) is False
+
+
+@pytest.mark.parametrize("raw", [True, 42, object()])
+def test_render_fails_closed_for_non_string_raw_value(raw):
+    window = LimitWindow(name="5h", raw=raw)
+
+    assert _usage_value(window) == "-"
 
 
 def test_render_hides_percent_when_another_usage_field_is_invalid():

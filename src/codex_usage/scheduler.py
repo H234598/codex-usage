@@ -51,7 +51,12 @@ AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
 RESET_FUTURE_SKEW_SECONDS = 5 * 60
 DIRECT_RESET_DISCONTINUITY_SECONDS = 30
-WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
+WINDOW_DURATIONS = {
+    "five_hour": 18_000,
+    "weekly": 604_800,
+    "thirty_day": 2_592_000,
+}
+LEGACY_WINDOW_DURATIONS = frozenset((18_000, 604_800))
 RAW_NUMBER_PATTERN = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
 LEGACY_DIRECT_RESET_FALLBACK_REASON = "previous direct limits retained after reset transition"
 AUTHENTICATED_RESET_FALLBACK_REASON = (
@@ -76,13 +81,18 @@ def fetch_all(
     # A single-account command must not bypass ambiguity detection by selecting
     # only one row from a configuration that contains a shared user identity.
     configured_accounts = list(config.accounts)
+    identity_scope = account_list if auth_json_path is not None else configured_accounts
     ambiguous_direct_accounts = _ambiguous_direct_accounts(
-        configured_accounts,
+        identity_scope,
         auth_json_path=auth_json_path,
     )
-    unattributed_direct_accounts = _unattributed_direct_accounts(configured_accounts)
+    unattributed_direct_accounts = (
+        _unattributed_direct_accounts(identity_scope)
+        if auth_json_path is None
+        else frozenset()
+    )
     shared_direct_auth_accounts = _shared_direct_auth_accounts(
-        configured_accounts,
+        identity_scope,
         auth_json_path=auth_json_path,
     )
     serial_fetch_required = _serial_fetch_required(
@@ -691,8 +701,8 @@ def _window_duration_matches(current: Any, previous: Any) -> bool:
         # Raw duration alone may identify a supported legacy window. An
         # unknown duration must never authorize reuse of an older value.
         return (
-            current_duration in WINDOW_DURATIONS.values()
-            and previous_duration in WINDOW_DURATIONS.values()
+            current_duration in LEGACY_WINDOW_DURATIONS
+            and previous_duration in LEGACY_WINDOW_DURATIONS
             and current_duration == previous_duration
         )
     if (
@@ -726,6 +736,8 @@ def _window_kind(window: Any) -> str | None:
         return "five_hour"
     if normalized in {"w", "week", "weekly"}:
         return "weekly"
+    if normalized in {"30d", "30_day", "month", "monthly"}:
+        return "thirty_day"
     return None
 
 

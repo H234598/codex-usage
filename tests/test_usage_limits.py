@@ -9,6 +9,7 @@ from codex_usage.models import AccountUsage, LimitWindow, UsagePool
 from codex_usage.usage_limits import (
     SPARK_METERED_FEATURE,
     SPARK_MODEL,
+    _window_identities_are_unique,
     legacy_windows,
     merge_model_catalog,
     parse_app_server_usage_pools,
@@ -16,6 +17,19 @@ from codex_usage.usage_limits import (
 )
 
 NOW = datetime(2026, 7, 16, 4, 0, tzinfo=LOCAL_TZ)
+
+
+@pytest.mark.parametrize("payload", [None, [], "invalid", 42, True])
+def test_usage_pool_parsers_fail_closed_for_non_object_payload(payload):
+    assert parse_wham_usage_pools(
+        payload,
+        captured_at=NOW,
+        source="test",
+    ) == (None, ())
+    assert parse_app_server_usage_pools(
+        payload,
+        captured_at=NOW,
+    ) == (None, ())
 
 
 @pytest.mark.parametrize(
@@ -179,6 +193,49 @@ def test_usage_pool_duration_proves_window_identity_without_name():
     )
 
     assert pool.has_valid_usage is True
+
+
+def test_usage_pool_rejects_unknown_window_identity_as_unavailable():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(LimitWindow(name="unknown", remaining=97),),
+        availability_sources=("usage",),
+    )
+
+    assert pool.has_valid_usage is False
+    assert pool.exhausted is True
+
+
+def test_usage_pool_rejects_name_and_duration_alias_collision():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(
+            LimitWindow(name="weekly", remaining=97),
+            LimitWindow(name="", duration_seconds=604800, remaining=90),
+        ),
+        availability_sources=("usage",),
+    )
+
+    assert _window_identities_are_unique(pool.windows) is False
+    assert pool.has_valid_usage is False
+
+
+def test_wham_marks_missing_window_duration_unavailable():
+    main, _ = parse_wham_usage_pools(
+        {
+            "rate_limit": {
+                "primary_window": {"used_percent": 10},
+            }
+        },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.has_valid_usage is False
 
 
 @pytest.mark.parametrize(

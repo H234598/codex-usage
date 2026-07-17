@@ -22,6 +22,8 @@ def parse_wham_usage_pools(
     captured_at: datetime,
     source: str,
 ) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
+    if not isinstance(payload, dict):
+        return None, ()
     main = _wham_pool(
         key=MAIN_POOL_KEY,
         display_name="Codex",
@@ -77,6 +79,8 @@ def parse_app_server_usage_pools(
     model_ids: Iterable[str] = (),
     source: str = "app-server",
 ) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
+    if not isinstance(payload, dict):
+        return None, ()
     raw_by_id = payload.get("rateLimitsByLimitId")
     malformed_by_id = raw_by_id is not None and not isinstance(raw_by_id, dict)
     by_id = raw_by_id if isinstance(raw_by_id, dict) else {}
@@ -466,16 +470,30 @@ def _window_name(duration: int | None) -> str:
 
 
 def _window_identities_are_unique(windows: tuple[LimitWindow, ...]) -> bool:
-    identities: list[tuple[str, Any]] = []
+    identities: list[int] = []
     for window in windows:
-        if not isinstance(window, LimitWindow):
+        if not isinstance(window, LimitWindow) or not window.has_known_identity:
             return False
         if window.duration_seconds is not None:
-            identities.append(("duration", window.duration_seconds))
-        elif isinstance(window.name, str):
-            identities.append(("name", window.name.strip().casefold()))
-        else:
+            identities.append(window.duration_seconds)
+            continue
+        if not isinstance(window.name, str):
             return False
+        duration = {
+            "5h": FIVE_HOUR_SECONDS,
+            "5_hour": FIVE_HOUR_SECONDS,
+            "five_hour": FIVE_HOUR_SECONDS,
+            "w": WEEKLY_SECONDS,
+            "week": WEEKLY_SECONDS,
+            "weekly": WEEKLY_SECONDS,
+            "30d": 2_592_000,
+            "30_day": 2_592_000,
+            "month": 2_592_000,
+            "monthly": 2_592_000,
+        }.get(window.name.strip().casefold())
+        if duration is None:
+            return False
+        identities.append(duration)
     return len(identities) == len(set(identities))
 
 

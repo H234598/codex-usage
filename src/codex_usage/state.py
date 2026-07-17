@@ -30,7 +30,11 @@ MAX_SNAPSHOT_URLS = 20
 MAX_STATE_GENERATION_BYTES = 4096
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 KNOWN_BACKENDS = AUTHENTICATED_BACKENDS | frozenset(("browser",))
-WINDOW_DURATIONS = {"five_hour": 18_000, "weekly": 604_800}
+WINDOW_DURATIONS = {
+    "five_hour": 18_000,
+    "weekly": 604_800,
+    "thirty_day": 2_592_000,
+}
 MAX_MODEL_POOLS = 20
 MAX_POOL_WINDOWS = 8
 MAX_RESET_FUTURE_SKEW_SECONDS = 5 * 60
@@ -497,7 +501,7 @@ def expire_reset_windows(
             and usage.blocked_until is not None
             and _localize_datetime(usage.blocked_until) <= _localize_datetime(reference_at)
         )
-    except (OverflowError, TypeError, ValueError):
+    except (AttributeError, OverflowError, TypeError, ValueError):
         blocked_until_expired = False
     clear_expired_block = (
         usage.status == AccountStatus.BLOCKED
@@ -1114,6 +1118,10 @@ def _window_kind(window: LimitWindow | None) -> str | None:
         if not window.has_known_identity:
             return None
         return "weekly"
+    if normalized in {"30d", "30_day", "month", "monthly"}:
+        if not window.has_known_identity:
+            return None
+        return "thirty_day"
     duration = _window_duration_seconds(window)
     if normalized and not window.has_known_identity:
         return None
@@ -1164,7 +1172,7 @@ def _window_reset_expired(window: LimitWindow | None, reference_at: datetime) ->
         return False
     try:
         return _localize_datetime(window.reset_at) <= _localize_datetime(reference_at)
-    except (OverflowError, TypeError, ValueError):
+    except (AttributeError, OverflowError, TypeError, ValueError):
         return True
 
 
