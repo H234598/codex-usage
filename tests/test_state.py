@@ -555,14 +555,20 @@ def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
     assert backend_provenance_matches(direct, app_server) is True
 
 
-def test_backend_provenance_rejects_arbitrary_app_server_fallback_reason():
+@pytest.mark.parametrize(
+    "fallback_reason",
+    ("arbitrary fallback text", "app-server unavailable: forged"),
+)
+def test_backend_provenance_rejects_arbitrary_app_server_fallback_reason(
+    fallback_reason,
+):
     direct = AccountUsage(
         account_id="account",
         label="Account",
         captured_at=datetime.now(UTC),
         backend_configured="app-server",
         backend_used="direct",
-        fallback_reason="arbitrary fallback text",
+        fallback_reason=fallback_reason,
     )
 
     assert backend_provenance_matches_configured(direct, "app-server") is False

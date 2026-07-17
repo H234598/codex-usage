@@ -35,6 +35,15 @@ MAX_MODEL_POOLS = 20
 MAX_POOL_WINDOWS = 8
 MAX_RESET_FUTURE_SKEW_SECONDS = 5 * 60
 APP_SERVER_FALLBACK_REASON_PREFIX = "app-server unavailable: "
+KNOWN_APP_SERVER_UNAVAILABLE_DETAILS = frozenset(
+    (
+        "codex command was not found",
+        "codex command is not executable",
+        "could not start codex app server",
+        "codex app server exited unexpectedly",
+        "installed Codex does not support rate-limit RPC",
+    )
+)
 KNOWN_FALLBACK_REASONS = frozenset(
     (
         "previous direct limits retained after reset transition",
@@ -131,7 +140,8 @@ def _has_backend_fallback_proof(usage: AccountUsage) -> bool:
     return bool(
         isinstance(usage.fallback_reason, str)
         and usage.fallback_reason.startswith(APP_SERVER_FALLBACK_REASON_PREFIX)
-        and len(usage.fallback_reason) > len(APP_SERVER_FALLBACK_REASON_PREFIX)
+        and usage.fallback_reason[len(APP_SERVER_FALLBACK_REASON_PREFIX) :]
+        in KNOWN_APP_SERVER_UNAVAILABLE_DETAILS
     )
 
 
