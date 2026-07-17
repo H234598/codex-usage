@@ -1090,7 +1090,10 @@ def _select_accounts(config, account_ids: list[str] | None):
         raise ValueError("no accounts configured; run `codex-usage account add <id>` first")
     if not account_ids:
         return config.accounts
-    return tuple(resolve_account(config, account_ref) for account_ref in account_ids)
+    selected = tuple(resolve_account(config, account_ref) for account_ref in account_ids)
+    if len({account.id for account in selected}) != len(selected):
+        raise ValueError("duplicate account selection")
+    return selected
 
 
 def _validate_direct_auth_mapping(accounts, auth_json_path: Path | None) -> None:
