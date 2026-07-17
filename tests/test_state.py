@@ -81,6 +81,38 @@ def test_usage_state_round_trips_dynamic_main_and_spark_pools():
     assert loaded.weekly == weekly
 
 
+def test_usage_state_invalidates_model_pool_without_exhausted_flag():
+    usage = AccountUsage(
+        account_id="missing-exhausted",
+        label="Missing exhausted",
+        captured_at=datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="weekly", remaining=80, duration_seconds=604800),),
+        ),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                windows=(LimitWindow(name="weekly", remaining=90, duration_seconds=604800),),
+            ),
+        ),
+    )
+    payload = usage.as_dict()
+    del payload["models"]["gpt-5.3-codex-spark"]["exhausted"]
+
+    loaded = usage_from_dict(payload)
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.cache_invalidated is True
+    assert loaded.stale is True
+    assert loaded.main is None
+    assert loaded.models == ()
+    assert "invalid cached model pools" in (loaded.error or "")
+
+
 def test_login_required_serialization_hides_embedded_values():
     usage = AccountUsage(
         account_id="login-required",
@@ -1694,6 +1726,7 @@ def test_load_usage_snapshot_disables_pool_with_invalid_control_flag(tmp_path, f
                 "duration_seconds": 604800,
             }
         ],
+        "exhausted": False,
         field: "false",
     }
     payload = {

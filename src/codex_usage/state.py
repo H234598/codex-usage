@@ -1409,6 +1409,11 @@ def _model_pools_from_dict(payload: Any) -> tuple[UsagePool, ...] | None:
         key = _optional_snapshot_identity(raw_key, limit=120)
         if not key:
             return None
+        if (
+            not isinstance(raw_pool, dict)
+            or "exhausted" not in raw_pool
+        ):
+            return None
         pool = _pool_from_dict(raw_pool, expected_key=key)
         if pool is None:
             return None
