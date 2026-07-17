@@ -3754,20 +3754,17 @@ test("payload validation rejects duplicate account identities", () => {
 
 test("payload validation rejects unknown backend provenance", () => {
   const applet = makeApplet();
-  assert.throws(
-    () => applet._validatePayload([{
-      account: "alpha",
-      backend_configured: "browser",
-    }]),
-    /invalid backend provenance/
-  );
-  assert.throws(
-    () => applet._validatePayload([{
-      account: "alpha",
-      backend_used: "mystery",
-    }]),
-    /invalid backend provenance/
-  );
+  for (const provenance of [
+    { backend_configured: "browser" },
+    { backend_used: "mystery" },
+    { backend_configured: " direct" },
+    { backend_used: "app-server " },
+  ]) {
+    assert.throws(
+      () => applet._validatePayload([{ account: "alpha", ...provenance }]),
+      /invalid backend provenance/
+    );
+  }
 });
 
 test("payload usage without complete backend provenance fails closed", () => {
@@ -3918,6 +3915,46 @@ test("backend overview rejects invalid rows without replacing state", () => {
   assert.deepEqual(applet.accountBackends, [
     { account: "alpha", label: "Alpha", backend: 0 },
   ]);
+});
+
+test("backend overview rejects normalized account and backend identities", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };
+  applet._backendRowsReady = true;
+  applet.accountBackends = [{ account: "alpha", label: "Alpha", backend: 0 }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() { throw new Error("must not write"); } };
+  applet._syncAccountSettings = () => { throw new Error("must not sync"); };
+  applet._syncStyleRows = () => { throw new Error("must not sync"); };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: " alpha", label: "Alpha", backend: "direct" }],
+  }, null);
+
+  assert.doesNotThrow(() => applet._loadAccountBackends());
+  assert.deepEqual(applet._backendAccounts, {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  });
+
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: " direct" }],
+  }, null);
+  assert.doesNotThrow(() => applet._loadAccountBackends());
+  assert.deepEqual(applet._backendAccounts, {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  });
+});
+
+test("backend setting rejects normalized account identity", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };
+  applet.accountBackends = [{ account: " alpha", backend: 0 }];
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+
+  applet._onAccountBackendsChanged();
+
+  assert.equal(reloads, 1);
 });
 
 test("backend synchronization clears its guard after a settings exception", () => {

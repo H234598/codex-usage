@@ -1209,10 +1209,18 @@ CodexUsageApplet.prototype = {
                     global.log("[" + UUID + "] invalid account in backend overview");
                     return;
                 }
-                let account = this._safeText(item.id, 64);
+                let account;
+                let backend;
+                try {
+                    account = this._strictText(item.id, 64);
+                    backend = this._strictText(item.backend, 32);
+                } catch (e) {
+                    global.log("[" + UUID + "] invalid account in backend overview");
+                    return;
+                }
                 let label = this._safeText(item.label, 120);
-                let backend = this._safeBackend(item.backend);
-                if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) || !backend) {
+                if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) ||
+                    ["direct", "app-server"].indexOf(backend) === -1) {
                     global.log("[" + UUID + "] invalid account in backend overview");
                     return;
                 }
@@ -2398,7 +2406,13 @@ CodexUsageApplet.prototype = {
                 this._loadAccountBackends();
                 return;
             }
-            let account = this._safeText(row.account, 64);
+            let account;
+            try {
+                account = this._strictText(row.account, 64);
+            } catch (e) {
+                this._loadAccountBackends();
+                return;
+            }
             let canonical = this._backendAccounts[account];
             if (!account || seen[account] || !canonical || this._safeText(row.label, 120) !== canonical.label) {
                 this._loadAccountBackends();
@@ -2940,12 +2954,22 @@ CodexUsageApplet.prototype = {
     },
 
     _validatedBackend: function(value, allowBrowser) {
-        if (value === null || value === undefined ||
-            (typeof value === "string" && !value.trim())) {
+        if (value === null || value === undefined || value === "") {
             return "";
         }
-        let backend = this._safeBackend(value, allowBrowser);
+        let backend;
+        try {
+            backend = this._strictText(value, 32);
+        } catch (e) {
+            throw new Error("invalid backend provenance");
+        }
+        let allowed = allowBrowser
+            ? ["direct", "app-server", "browser"]
+            : ["direct", "app-server"];
         if (!backend) {
+            throw new Error("invalid backend provenance");
+        }
+        if (allowed.indexOf(backend) === -1) {
             throw new Error("invalid backend provenance");
         }
         return backend;
