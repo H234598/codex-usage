@@ -2632,7 +2632,7 @@ CodexUsageApplet.prototype = {
                 throw new Error("invalid account entry");
             }
             let account = this._strictText(item.account, 64);
-            if (!account) {
+            if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account)) {
                 throw new Error("account id missing");
             }
             if (seenAccounts[account]) {

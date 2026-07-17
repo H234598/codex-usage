@@ -3838,6 +3838,10 @@ test("payload validation rejects duplicate account identities", () => {
   const applet = makeApplet();
   assert.equal(applet._validatePayload([{ account: "constructor" }])[0].account, "constructor");
   assert.throws(
+    () => applet._validatePayload([{ account: "alpha/other" }]),
+    /account id missing/
+  );
+  assert.throws(
     () => applet._validatePayload([{ account: "constructor" }, { account: "constructor" }]),
     /duplicate account id/
   );
