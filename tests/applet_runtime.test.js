@@ -771,6 +771,31 @@ test("login-required status clears limit values before rendering", () => {
   assert.deepEqual(Object.keys(usage.models), []);
 });
 
+test("error status clears limit values before rendering", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    captured_at: new Date().toISOString(),
+    backend_configured: "direct",
+    backend_used: "direct",
+    five_hour: { name: "5h", remaining: 80 },
+    weekly: { name: "weekly", remaining: 60 },
+    status: "error",
+    error: "backend failed",
+    stale: false,
+    cache_invalidated: false,
+  }]);
+
+  assert.equal(usage.status, "error");
+  assert.equal(usage.error, "backend failed");
+  assert.equal(usage.stale, true);
+  assert.equal(usage.cache_invalidated, true);
+  assert.equal(usage.five_hour, null);
+  assert.equal(usage.weekly, null);
+  assert.equal(usage.main, null);
+  assert.deepEqual(Object.keys(usage.models), []);
+});
+
 test("invalid capture metadata clears usage values", () => {
   for (const metadata of [
     { captured_at: "invalid-capture" },

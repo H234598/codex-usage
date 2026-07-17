@@ -2734,6 +2734,18 @@ CodexUsageApplet.prototype = {
                 stale = true;
                 cacheInvalidated = true;
             }
+            if (status === "error") {
+                if (hasPayloadUsageValue || fiveHour || weekly || main ||
+                    Object.keys(models).length) {
+                    error = error || "error status cannot carry limit values";
+                }
+                fiveHour = null;
+                weekly = null;
+                main = null;
+                models = Object.create(null);
+                stale = true;
+                cacheInvalidated = true;
+            }
             if (
                 status === "ok" &&
                 !this._hasPayloadUsageValue(fiveHour, weekly, main, models) &&
