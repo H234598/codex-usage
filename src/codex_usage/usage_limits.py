@@ -83,13 +83,20 @@ def parse_app_server_usage_pools(
     raw_main_payload = by_id.get("codex")
     malformed_main_bucket = "codex" in by_id and not isinstance(raw_main_payload, dict)
     main_payload = by_id.get("codex")
+    malformed_main_window = False
     if isinstance(main_payload, dict):
         top_level_payload = payload.get("rateLimits")
         if isinstance(top_level_payload, dict):
             merged_payload = dict(top_level_payload)
             for key, value in main_payload.items():
-                if key in {"primary", "secondary"} and value is None:
-                    continue
+                if key in {"primary", "secondary"}:
+                    if value is None:
+                        continue
+                    if not isinstance(value, dict) or _app_server_window(
+                        value, captured_at=captured_at, source=source
+                    ) is None:
+                        malformed_main_window = True
+                        continue
                 merged_payload[key] = value
             main_payload = merged_payload
     if not isinstance(main_payload, dict):
@@ -110,6 +117,16 @@ def parse_app_server_usage_pools(
             captured_at=captured_at,
             source=source,
         )
+    if malformed_main_window:
+        if main is None:
+            main = UsagePool(
+                key=MAIN_POOL_KEY,
+                display_name="Codex",
+                available=False,
+                availability_sources=("usage",),
+            )
+        else:
+            main = replace(main, available=False)
 
     spark_payloads: list[dict[str, Any]] = []
     invalid_spark_entry = False

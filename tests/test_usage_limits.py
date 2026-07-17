@@ -675,6 +675,31 @@ def test_app_server_merges_partial_codex_bucket_with_top_level_windows(
     assert main.has_valid_usage is True
 
 
+def test_app_server_retains_top_level_windows_when_nested_codex_primary_is_malformed():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 9, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 40, "windowDurationMins": 10080},
+            },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": "malformed",
+                    "secondary": None,
+                }
+            },
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert [window.name for window in main.windows] == ["5h", "weekly"]
+    assert [window.remaining for window in main.windows] == [91, 60]
+    assert main.available is False
+    assert main.has_valid_usage is False
+    assert main.exhausted is True
+
+
 def test_app_server_disables_main_when_codex_bucket_has_wrong_shape():
     main, _ = parse_app_server_usage_pools(
         {
