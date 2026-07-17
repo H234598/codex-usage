@@ -1051,6 +1051,34 @@ test("routing status rejects normalized trusted identities", () => {
   });
 });
 
+test("routing status rejects incomplete synchronized account decisions", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = { alpha: {}, beta: {} };
+
+  assert.throws(() => applet._validateRoutingState({
+    schema_version: 1,
+    policy: {
+      schema_version: 1,
+      global: false,
+      account: {},
+      group: {},
+      agent: {},
+      job: {},
+    },
+    decisions: {
+      alpha: {
+        decision: "blocked",
+        model: null,
+        reason: "main_limit_unknown",
+        paid_overage_allowed: false,
+        policy_source: "global",
+        usage_state: "unknown",
+      },
+    },
+  }), /incomplete routing decisions/);
+});
+
 test("routing status errors clear old decisions", () => {
   const applet = makeApplet();
   applet._routingPolicy = { schema_version: 1, global: true };

@@ -1364,12 +1364,27 @@ CodexUsageApplet.prototype = {
         if (keys.length > MAX_ACCOUNTS) {
             throw new Error("too many routing decisions");
         }
+        if (this._backendRowsReady) {
+            let configuredAccounts = Object.keys(this._backendAccounts || {});
+            if (keys.length !== configuredAccounts.length) {
+                throw new Error("incomplete routing decisions");
+            }
+            for (let configuredIndex = 0; configuredIndex < configuredAccounts.length; configuredIndex++) {
+                let configuredAccount = configuredAccounts[configuredIndex];
+                if (!Object.prototype.hasOwnProperty.call(payload.decisions, configuredAccount)) {
+                    throw new Error("incomplete routing decisions");
+                }
+            }
+        }
         for (let i = 0; i < keys.length; i++) {
             let account = this._strictText(keys[i], 64);
             let value = payload.decisions[keys[i]];
             if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) ||
                 !value || typeof value !== "object" || Array.isArray(value)) {
                 throw new Error("invalid routing decision");
+            }
+            if (this._backendRowsReady && !this._backendAccounts[account]) {
+                throw new Error("unknown routing decision account");
             }
             let decision = this._strictText(value.decision, 32);
             if (["spark", "main", "credits", "blocked", "unchanged"].indexOf(decision) === -1) {
