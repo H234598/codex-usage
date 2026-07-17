@@ -11,7 +11,12 @@ import pytest
 
 from codex_usage import __version__
 from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_latest_usages
-from codex_usage.cli import _is_successful_usage, _select_accounts, main
+from codex_usage.cli import (
+    _all_usage_results_valid,
+    _is_successful_usage,
+    _select_accounts,
+    main,
+)
 from codex_usage.config import AppConfig, load_config
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.spark_health import set_spark_health
@@ -522,6 +527,23 @@ def test_select_accounts_rejects_duplicate_refs():
 
     with pytest.raises(ValueError, match="duplicate account selection"):
         _select_accounts(config, ["privat", "Privat"])
+
+
+def test_all_usage_results_rejects_duplicate_ids():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+    )
+
+    assert not _all_usage_results_valid(
+        [usage, usage],
+        ["privat", "privat"],
+        predicate=lambda _: True,
+    )
 
 
 def test_account_add_prints_login_id_hint(tmp_path, capsys):

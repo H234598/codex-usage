@@ -1295,9 +1295,14 @@ def _all_usage_results_valid(
     if len(results) != len(expected):
         return False
     try:
-        if {usage.account_id for usage in results} != set(expected):
+        result_ids = tuple(usage.account_id for usage in results)
+        if len(set(result_ids)) != len(result_ids):
             return False
-    except AttributeError:
+        if len(set(expected)) != len(expected):
+            return False
+        if set(result_ids) != set(expected):
+            return False
+    except (AttributeError, TypeError):
         return False
     return all(predicate(usage) for usage in results)
 
