@@ -1552,6 +1552,31 @@ CodexUsageApplet.prototype = {
         return commands;
     },
 
+    _routingPolicyCommandApplied: function(policy, command) {
+        if (!policy || !Array.isArray(command) || command.length < 2) {
+            return false;
+        }
+        let scope = command[0];
+        let action = command[1];
+        let identifier = command[2];
+        if (scope === "global") {
+            if (action !== "allow" && action !== "deny" && action !== "inherit") {
+                return false;
+            }
+            return policy.global === (action === "allow");
+        }
+        if (["account", "group", "agent", "job"].indexOf(scope) === -1 || !identifier) {
+            return false;
+        }
+        if (action === "inherit") {
+            return !Object.prototype.hasOwnProperty.call(policy[scope], identifier);
+        }
+        if (action !== "allow" && action !== "deny") {
+            return false;
+        }
+        return policy[scope][identifier] === (action === "allow");
+    },
+
     _applyRoutingPolicyCommands: function(commands, index) {
         if (this._removed || this._safeMode) {
             this._routingPolicyApplying = false;
@@ -1575,9 +1600,21 @@ CodexUsageApplet.prototype = {
         }
         argv.push("--format", "json");
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
-            if (error) {
+            let applied = false;
+            if (!error) {
+                try {
+                    let policy = this._validateRoutingPolicy(payload);
+                    applied = this._routingPolicyCommandApplied(policy, commands[index]);
+                } catch (e) {
+                    global.log("[" + UUID + "] invalid routing policy write result: " + this._shortText(e, 180));
+                }
+            }
+            if (error || !applied) {
                 this._routingPolicyApplying = false;
-                this._showCommandError(_("Routing-Richtlinie konnte nicht gespeichert werden: ") + error);
+                this._showCommandError(
+                    _("Routing-Richtlinie konnte nicht gespeichert werden: ") +
+                    (error || _("ungültige Antwort"))
+                );
                 this._loadRoutingState();
                 return;
             }

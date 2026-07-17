@@ -1033,6 +1033,50 @@ test("routing status errors clear old decisions", () => {
   assert.equal(refreshes, 1);
 });
 
+test("routing policy writes reject incomplete results", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  let calls = 0;
+  applet._spawnAuxJson = (_argv, callback) => {
+    calls += 1;
+    callback({}, null);
+  };
+  let shown = 0;
+  let reloads = 0;
+  applet._showCommandError = () => { shown += 1; };
+  applet._loadRoutingState = () => { reloads += 1; };
+
+  applet._applyRoutingPolicyCommands([["global", "allow"], ["account", "allow", "alpha"]], 0);
+
+  assert.equal(applet._routingPolicyApplying, false);
+  assert.equal(shown, 1);
+  assert.equal(reloads, 1);
+  assert.equal(calls, 1);
+});
+
+test("routing policy writes reject results without requested mutation", () => {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    schema_version: 1,
+    global: false,
+    account: {},
+    group: {},
+    agent: {},
+    job: {},
+  }, null);
+  let shown = 0;
+  let reloads = 0;
+  applet._showCommandError = () => { shown += 1; };
+  applet._loadRoutingState = () => { reloads += 1; };
+
+  applet._applyRoutingPolicyCommands([["global", "allow"], ["account", "allow", "alpha"]], 0);
+
+  assert.equal(applet._routingPolicyApplying, false);
+  assert.equal(shown, 1);
+  assert.equal(reloads, 1);
+});
+
 test("browser values do not merge with unknown provenance", () => {
   const applet = makeApplet();
   const browser = { backend_used: "browser", backend_configured: "direct" };
