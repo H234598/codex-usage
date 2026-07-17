@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.render import (
     _auth_value,
+    _extra_main_value,
     _fmt_number,
     _is_finite_number,
     _is_remaining_percent_window,
@@ -446,6 +447,26 @@ def test_render_table_includes_dynamic_main_and_spark_limits():
     assert "30d 95% verbleibend" in rendered
     assert "Spark" in rendered
     assert "weekly 100% verbleibend bis 23.07.2026 04:00" in rendered
+
+
+def test_extra_main_value_uses_name_only_core_window_identity():
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(name="weekly", remaining=80, percent=80),
+                LimitWindow(name="30d", remaining=95, percent=95, duration_seconds=2592000),
+            ),
+        ),
+    )
+
+    assert _extra_main_value(usage) == "30d 95% verbleibend"
 
 
 def test_render_table_hides_unavailable_dynamic_pools():

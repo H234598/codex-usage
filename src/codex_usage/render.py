@@ -294,10 +294,18 @@ def _extra_main_value(usage: AccountUsage) -> str:
         or not usage.main.has_valid_usage
     ):
         return "-"
+    core_windows = {
+        id(window)
+        for window in (
+            usage.main.window_for_duration(18_000),
+            usage.main.window_for_duration(604_800),
+        )
+        if window is not None
+    }
     values = [
         f"{window.name} {_usage_value(window)}"
         for window in usage.main.windows
-        if window.duration_seconds not in (18_000, 604_800)
+        if id(window) not in core_windows
     ]
     return "; ".join(values) if values else "-"
 
