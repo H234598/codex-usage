@@ -627,6 +627,22 @@ test("duplicate window identity disables pool usage", () => {
   assert.equal(applet._poolWindowForDuration(pool, 604800), null);
 });
 
+test("window name proves duration when serialized duration is absent", () => {
+  const applet = makeApplet();
+  const pool = applet._safePool({
+    key: "gpt-5.3-codex-spark",
+    windows: [{ name: "weekly", remaining: 90 }],
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    availability_sources: ["rate_limits"]
+  }, "gpt-5.3-codex-spark");
+
+  assert.equal(applet._poolWindowForDuration(pool, 604800).remaining, 90);
+  assert.equal(applet._windowDisplayLabel(pool.windows[0]), "Woche");
+});
+
 test("unusable Spark pools cannot drive panel sources", () => {
   const applet = makeApplet();
   for (const control of [

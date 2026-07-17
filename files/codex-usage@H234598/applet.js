@@ -3706,7 +3706,7 @@ CodexUsageApplet.prototype = {
         }
         let matches = [];
         for (let i = 0; i < pool.windows.length; i++) {
-            if (this._windowDurationSeconds(pool.windows[i]) === durationSeconds) {
+            if (this._windowIdentityKey(pool.windows[i]) === durationSeconds) {
                 matches.push(pool.windows[i]);
             }
         }
@@ -3727,7 +3727,7 @@ CodexUsageApplet.prototype = {
         let selectedValue = null;
         for (let i = 0; i < pool.windows.length; i++) {
             let window = pool.windows[i];
-            if ([18000, 604800].indexOf(this._windowDurationSeconds(window)) !== -1) {
+            if ([18000, 604800].indexOf(this._windowIdentityKey(window)) !== -1) {
                 continue;
             }
             let value = this._remainingPercent(window);
@@ -3740,7 +3740,7 @@ CodexUsageApplet.prototype = {
     },
 
     _windowDisplayLabel: function(window) {
-        let duration = this._windowDurationSeconds(window);
+        let duration = this._windowIdentityKey(window);
         if (duration === 18000) {
             return "5h";
         }
@@ -4142,7 +4142,7 @@ CodexUsageApplet.prototype = {
             return { plain: unavailable, markup: this._escapeMarkup(unavailable) };
         }
         let windows = rawWindows.filter(Lang.bind(this, function(window) {
-            return excluded.indexOf(this._windowDurationSeconds(window)) === -1 &&
+            return excluded.indexOf(this._windowIdentityKey(window)) === -1 &&
                 this._windowIdentityIsKnown(window);
         }));
         if (!windows.length) {
@@ -4864,7 +4864,7 @@ CodexUsageApplet.prototype = {
                     if (!this._windowIdentityIsKnown(sparkWindow)) {
                         continue;
                     }
-                    let duration = this._windowDurationSeconds(sparkWindow);
+                    let duration = this._windowIdentityKey(sparkWindow);
                     windows.push([
                         "Spark " + this._windowDisplayLabel(sparkWindow),
                         sparkWindow,
