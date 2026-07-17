@@ -14,6 +14,7 @@ from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_
 from codex_usage.cli import (
     _all_usage_results_valid,
     _is_successful_usage,
+    _load_overview_usages,
     _select_accounts,
     main,
 )
@@ -544,6 +545,24 @@ def test_all_usage_results_rejects_duplicate_ids():
         ["privat", "privat"],
         predicate=lambda _: True,
     )
+
+
+def test_load_overview_rejects_duplicate_usage_ids(monkeypatch):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
+    config = AppConfig(accounts=(account,))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.ERROR,
+    )
+    monkeypatch.setattr(
+        "codex_usage.cli.fetch_all",
+        lambda *_args, **_kwargs: [usage, usage],
+    )
+
+    with pytest.raises(ValueError, match="usage result identity mismatch"):
+        _load_overview_usages(config)
 
 
 def test_account_add_prints_login_id_hint(tmp_path, capsys):

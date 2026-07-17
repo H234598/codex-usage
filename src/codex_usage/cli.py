@@ -1196,7 +1196,20 @@ def _validate_min_interval(interval_seconds: int) -> None:
 
 def _load_overview_usages(config, accounts=None):
     selected = tuple(accounts or config.accounts)
-    fetched = fetch_all(config, selected, save_snapshots=True)
+    fetched = tuple(fetch_all(config, selected, save_snapshots=True))
+    expected_ids = tuple(account.id for account in selected)
+    try:
+        result_ids = tuple(usage.account_id for usage in fetched)
+        identities_match = (
+            len(result_ids) == len(expected_ids)
+            and len(set(result_ids)) == len(result_ids)
+            and len(set(expected_ids)) == len(expected_ids)
+            and set(result_ids) == set(expected_ids)
+        )
+    except (AttributeError, TypeError, ValueError):
+        identities_match = False
+    if not identities_match:
+        raise ValueError("usage result identity mismatch")
     return {usage.account_id: usage for usage in fetched}
 
 

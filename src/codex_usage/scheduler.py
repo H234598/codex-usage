@@ -710,7 +710,12 @@ def _watch_cycle_is_healthy(
     if len(results) != len(expected):
         return False
     try:
-        if {usage.account_id for usage in results} != set(expected):
+        result_ids = tuple(usage.account_id for usage in results)
+        if len(set(result_ids)) != len(result_ids):
+            return False
+        if len(set(expected)) != len(expected):
+            return False
+        if set(result_ids) != set(expected):
             return False
         accounts_by_id = {account.id: account for account in account_list}
         for usage in results:

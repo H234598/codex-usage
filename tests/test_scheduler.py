@@ -2918,6 +2918,21 @@ def test_watch_cycle_health_rejects_expired_core_reset():
     assert _watch_cycle_is_healthy([usage], [account]) is False
 
 
+def test_watch_cycle_health_rejects_duplicate_usage_ids():
+    account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
+    usage = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=80),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+
+    assert _watch_cycle_is_healthy([usage, usage], [account, account]) is False
+
+
 def test_watchdog_blocks_exhausted_dynamic_main_window():
     reset_at = datetime(2099, 6, 10, 5, 5, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
