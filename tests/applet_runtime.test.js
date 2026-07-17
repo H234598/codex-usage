@@ -2000,6 +2000,21 @@ test("malformed numeric settings are rejected instead of coerced", () => {
   }, "alpha"), null);
 });
 
+test("account setting identities are not normalized", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._configuredAccountId("alpha"), "alpha");
+  assert.equal(applet._configuredAccountId(" alpha"), "");
+  assert.equal(applet._configuredAccountId("alpha "), "");
+  assert.equal(applet._configuredAccountId("alpha\u0000"), "");
+
+  const rows = applet._mergedPanelRows(
+    [{ account: "alpha" }],
+    [{ account: " alpha", tag: "forged", order: 1, muted: false, slot1: 1, slot2: 0 }]
+  );
+  assert.equal(rows[0].tag, "");
+});
+
 test("alert setting changes refresh the panel immediately", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

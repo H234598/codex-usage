@@ -1740,7 +1740,7 @@ CodexUsageApplet.prototype = {
         let current = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
-                let account = this._safeText(currentRows[i] && currentRows[i].account, 64);
+                let account = this._configuredAccountId(currentRows[i] && currentRows[i].account);
                 if (!account || current[account] || !this._backendAccounts[account]) {
                     continue;
                 }
@@ -1802,7 +1802,7 @@ CodexUsageApplet.prototype = {
         let current = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
-                let account = this._safeText(currentRows[i] && currentRows[i].account, 64);
+                let account = this._configuredAccountId(currentRows[i] && currentRows[i].account);
                 if (!account || current[account] || !this._backendAccounts[account]) {
                     continue;
                 }
@@ -1893,7 +1893,9 @@ CodexUsageApplet.prototype = {
         let normalized = [];
         let seen = Object.create(null);
         for (let i = 0; i < this.accountPanelSettings.length; i++) {
-            let account = this._safeText(this.accountPanelSettings[i] && this.accountPanelSettings[i].account, 64);
+            let account = this._configuredAccountId(
+                this.accountPanelSettings[i] && this.accountPanelSettings[i].account
+            );
             let row = this._normalizePanelRow(this.accountPanelSettings[i], account);
             if (!row || seen[account] || !this._backendAccounts[account]) {
                 this._loadAccountBackends();
@@ -1919,7 +1921,9 @@ CodexUsageApplet.prototype = {
         let normalized = [];
         let seen = Object.create(null);
         for (let i = 0; i < this.accountAlertSettings.length; i++) {
-            let account = this._safeText(this.accountAlertSettings[i] && this.accountAlertSettings[i].account, 64);
+            let account = this._configuredAccountId(
+                this.accountAlertSettings[i] && this.accountAlertSettings[i].account
+            );
             let row = this._normalizeAlertRow(this.accountAlertSettings[i], account);
             if (!row || seen[account] || !this._backendAccounts[account]) {
                 this._loadAccountBackends();
@@ -2003,9 +2007,8 @@ CodexUsageApplet.prototype = {
         let current = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
-                let account = this._safeText(
-                    currentRows[i] && currentRows[i].account,
-                    64
+                let account = this._configuredAccountId(
+                    currentRows[i] && currentRows[i].account
                 );
                 if (!account || current[account] || !this._backendAccounts[account]) {
                     continue;
@@ -2172,7 +2175,7 @@ CodexUsageApplet.prototype = {
         let current = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
-                let account = this._safeText(currentRows[i] && currentRows[i].account, 64);
+                let account = this._configuredAccountId(currentRows[i] && currentRows[i].account);
                 let element = this._strictIntegerSetting(
                     currentRows[i] && currentRows[i].element
                 );
@@ -2269,7 +2272,7 @@ CodexUsageApplet.prototype = {
         let normalized = [];
         let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
-            let account = this._safeText(rows[i] && rows[i].account, 64);
+            let account = this._configuredAccountId(rows[i] && rows[i].account);
             if (!account || seen[account] || !this._backendAccounts[account]) {
                 this._loadAccountBackends();
                 return;
@@ -2307,7 +2310,7 @@ CodexUsageApplet.prototype = {
         let normalized = [];
         let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
-            let account = this._safeText(rows[i] && rows[i].account, 64);
+            let account = this._configuredAccountId(rows[i] && rows[i].account);
             let item = this._normalizeTargetRow(rows[i], account);
             let key = item ? account + ":" + item.element : "";
             if (!item || seen[key] || !this._backendAccounts[account]) {
@@ -3038,6 +3041,16 @@ CodexUsageApplet.prototype = {
             throw new Error("text value exceeds strict limit");
         }
         return value;
+    },
+
+    _configuredAccountId: function(value) {
+        let account;
+        try {
+            account = this._strictText(value, 64);
+        } catch (e) {
+            return "";
+        }
+        return /^[A-Za-z0-9_.-]{1,64}$/.test(account) ? account : "";
     },
 
     _applyPayload: function(payload, fresh) {
