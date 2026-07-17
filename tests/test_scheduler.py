@@ -303,6 +303,123 @@ def test_fetch_all_marks_unidentified_auth_accounts_ambiguous(monkeypatch):
     assert flags == {"privat": True, "work": True}
 
 
+def test_ambiguous_direct_accounts_rejects_shared_default_auth_source():
+    accounts = [
+        Account(id="privat", label="Privat", profile_dir="/tmp/privat"),
+        Account(id="work", label="Work", profile_dir="/tmp/work"),
+    ]
+
+    assert _ambiguous_direct_accounts(accounts) == frozenset({"privat", "work"})
+
+
+def test_fetch_all_rejects_shared_default_auth_source(monkeypatch):
+    accounts = (
+        Account(id="privat", label="Privat", profile_dir="/tmp/privat"),
+        Account(id="work", label="Work", profile_dir="/tmp/work"),
+    )
+    flags: dict[str, bool] = {}
+
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _account_id: 0)
+
+    def fake_fetch_direct(
+        account,
+        *,
+        auth_json_path=None,
+        reject_ambiguous_backend_identity=False,
+    ):
+        flags[account.id] = reject_ambiguous_backend_identity
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=97),
+            weekly=LimitWindow(name="weekly", remaining=55),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+
+    result = fetch_all(AppConfig(accounts=accounts), accounts, direct=True)
+
+    assert flags == {"privat": True, "work": True}
+    assert [usage.status for usage in result] == [AccountStatus.ERROR, AccountStatus.ERROR]
+    assert all(usage.five_hour is None for usage in result)
+    assert all(usage.weekly is None for usage in result)
+    assert all(usage.cache_invalidated for usage in result)
+    assert all(
+        usage.error == "direct auth source cannot be attributed to one account"
+        for usage in result
+    )
+
+
+def test_fetch_all_allows_single_default_auth_source(monkeypatch):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
+    flags: list[bool] = []
+
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _account_id: 0)
+
+    def fake_fetch_direct(
+        selected,
+        *,
+        auth_json_path=None,
+        reject_ambiguous_backend_identity=False,
+    ):
+        flags.append(reject_ambiguous_backend_identity)
+        return AccountUsage(
+            account_id=selected.id,
+            label=selected.label,
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=97),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,), direct=True)
+
+    assert flags == [False]
+    assert result[0].status == AccountStatus.OK
+    assert result[0].five_hour is not None
+
+
+def test_fetch_all_rejects_only_unattributed_account_in_mixed_direct_config(
+    tmp_path,
+    monkeypatch,
+):
+    accounts = (
+        Account(id="default", label="Default", profile_dir="/tmp/default"),
+        Account(
+            id="explicit",
+            label="Explicit",
+            profile_dir="/tmp/explicit",
+            auth_json_path=str(tmp_path / "explicit-auth.json"),
+        ),
+    )
+
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _account_id: 0)
+
+    def fake_fetch_direct(
+        account,
+        *,
+        auth_json_path=None,
+        reject_ambiguous_backend_identity=False,
+    ):
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=97),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+
+    result = fetch_all(AppConfig(accounts=accounts), accounts, direct=True)
+    by_id = {usage.account_id: usage for usage in result}
+
+    assert by_id["default"].status == AccountStatus.ERROR
+    assert by_id["default"].five_hour is None
+    assert by_id["explicit"].status == AccountStatus.OK
+    assert by_id["explicit"].five_hour is not None
+
+
 def test_fetch_all_contains_state_generation_failure_per_account(monkeypatch):
     accounts = (
         Account(id="broken", label="Broken", profile_dir="/tmp/broken"),

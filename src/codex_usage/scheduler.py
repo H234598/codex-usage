@@ -24,6 +24,7 @@ from .direct import (
     auth_identity_for_account,
     auth_identity_from_file,
     auth_plan_type_for_account,
+    default_auth_json_path,
     fetch_account_usage_direct,
 )
 from .extractor import LOCAL_TZ
@@ -73,7 +74,16 @@ def fetch_all(
     account_list = list(accounts)
     # A single-account command must not bypass ambiguity detection by selecting
     # only one row from a configuration that contains a shared user identity.
-    ambiguous_direct_accounts = _ambiguous_direct_accounts(list(config.accounts))
+    configured_accounts = list(config.accounts)
+    ambiguous_direct_accounts = _ambiguous_direct_accounts(
+        configured_accounts,
+        auth_json_path=auth_json_path,
+    )
+    unattributed_direct_accounts = _unattributed_direct_accounts(configured_accounts)
+    shared_direct_auth_accounts = _shared_direct_auth_accounts(
+        configured_accounts,
+        auth_json_path=auth_json_path,
+    )
     serial_fetch_required = _serial_fetch_required(
         account_list,
         headed=headed,
@@ -104,6 +114,11 @@ def fetch_all(
             global_lock_held=serial_fetch_required,
             reject_ambiguous_backend_identity=account.id in ambiguous_direct_accounts,
         )
+        if usage.backend_used == "direct" and (
+            account.id in shared_direct_auth_accounts
+            or account.id in unattributed_direct_accounts
+        ):
+            usage = _reject_unattributed_direct_usage(usage)
         usage = replace(usage, state_generation=state_generation)
         # A successful transport response can still contain a reset timestamp
         # that was already expired when captured. Such values are not usage.
@@ -171,7 +186,16 @@ def _serial_fetch_required(
     return len(accounts) > 1
 
 
-def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
+def _ambiguous_direct_accounts(
+    accounts: list[Account],
+    *,
+    auth_json_path: Path | None = None,
+) -> frozenset[str]:
+    ambiguous = set(_shared_direct_auth_accounts(accounts, auth_json_path=auth_json_path))
+    if auth_json_path is None and _unattributed_direct_accounts(accounts):
+        # A default auth.json has no local account binding. Keep direct
+        # responses guarded when another configured account exists.
+        ambiguous.update(_unattributed_direct_accounts(accounts))
     configured_auth_account_ids = {
         account.id for account in accounts if account.auth_json_path
     }
@@ -192,7 +216,6 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
         except DirectAuthError:
             plan_type = None
         identities.append((account.id, user_id, account_id, plan_type))
-    ambiguous: set[str] = set()
     identity_account_ids = {account_id for account_id, *_ in identities}
     unidentified_account_ids = (
         configured_auth_account_ids - identity_account_ids - identity_lookup_failed
@@ -224,6 +247,57 @@ def _ambiguous_direct_accounts(accounts: list[Account]) -> frozenset[str]:
                 continue
             ambiguous.update((local_id, other_local_id))
     return frozenset(ambiguous)
+
+
+def _unattributed_direct_accounts(accounts: list[Account]) -> frozenset[str]:
+    if len(accounts) <= 1:
+        return frozenset()
+    return frozenset(account.id for account in accounts if not account.auth_json_path)
+
+
+def _shared_direct_auth_accounts(
+    accounts: list[Account],
+    *,
+    auth_json_path: Path | None = None,
+) -> frozenset[str]:
+    sources: dict[str, list[str]] = {}
+    for account in accounts:
+        path = (
+            auth_json_path
+            if auth_json_path is not None
+            else Path(account.auth_json_path).expanduser()
+            if account.auth_json_path
+            else default_auth_json_path()
+        )
+        try:
+            source_key = str(path.expanduser().resolve(strict=False))
+        except (OSError, RuntimeError, TypeError, ValueError):
+            source_key = str(path.expanduser())
+        sources.setdefault(source_key, []).append(account.id)
+    return frozenset(
+        account_id
+        for source_accounts in sources.values()
+        if len(source_accounts) > 1
+        for account_id in source_accounts
+    )
+
+
+def _reject_unattributed_direct_usage(usage: AccountUsage) -> AccountUsage:
+    error = "direct auth source cannot be attributed to one account"
+    if usage.error:
+        error = f"{error}; {usage.error}"
+    return replace(
+        usage,
+        five_hour=None,
+        weekly=None,
+        main=None,
+        models=(),
+        status=AccountStatus.ERROR,
+        error=error,
+        values_captured_at=None,
+        stale=True,
+        cache_invalidated=True,
+    )
 
 
 def _plan_types_distinguish(left: str | None, right: str | None) -> bool:
