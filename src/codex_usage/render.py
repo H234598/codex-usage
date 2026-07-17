@@ -314,12 +314,16 @@ def _spark_value(usage: AccountUsage) -> str:
     if usage.cache_invalidated:
         return "nicht verfügbar"
     pool = usage.model_pool("gpt-5.3-codex-spark")
-    if pool is None or pool.available is not True or not pool.has_valid_usage:
+    if pool is None or pool.available is not True:
+        return "nicht verfügbar"
+    if not isinstance(pool.windows, tuple):
+        return "nicht verfügbar"
+    if not pool.windows:
+        return "erschöpft" if pool.exhausted else "verfügbar; Limit unbekannt"
+    if not pool.has_valid_usage:
         return "nicht verfügbar"
     if pool.exhausted:
         return "erschöpft"
-    if not pool.windows:
-        return "verfügbar; Limit unbekannt"
     values = []
     for window in pool.windows:
         value = f"{window.name} {_usage_value(window)}"
@@ -434,14 +438,22 @@ def _remaining_percent(window: LimitWindow) -> float | None:
 def _reset_value(window: LimitWindow | None) -> str:
     if window is None or window.reset_at is None:
         return "-"
-    return window.reset_at.strftime("%d.%m.%Y %H:%M")
+    try:
+        return window.reset_at.strftime("%d.%m.%Y %H:%M")
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        return "-"
 
 
 def _status_value(usage: AccountUsage) -> str:
     if usage.status == AccountStatus.BLOCKED:
         parts = ["blocked"]
         if usage.blocked_until is not None:
-            parts.append(f"bis {usage.blocked_until.strftime('%d.%m.%Y %H:%M')}")
+            try:
+                blocked_until = usage.blocked_until.strftime("%d.%m.%Y %H:%M")
+            except (AttributeError, OverflowError, TypeError, ValueError):
+                blocked_until = None
+            if blocked_until is not None:
+                parts.append(f"bis {blocked_until}")
         if usage.blocked_reason:
             parts.append(f": {_shorten(usage.blocked_reason, 30)}")
         status = " ".join(parts)
@@ -457,15 +469,20 @@ def _status_value(usage: AccountUsage) -> str:
 def _auth_value(usage: AccountUsage | None) -> str:
     if usage is None:
         return "-"
-    expiry = usage.auth_access_expires_at
-    if expiry is None:
-        if usage.auth_last_refresh is None:
-            return "-"
-        return f"refresh {usage.auth_last_refresh.strftime('%d.%m.%Y %H:%M')}"
-    stamp = expiry.strftime("%d.%m.%Y %H:%M")
-    if expiry <= datetime.now(tz=LOCAL_TZ):
-        return f"abgelaufen {stamp}"
-    return f"bis {stamp}"
+    try:
+        expiry = usage.auth_access_expires_at
+        if expiry is None:
+            if usage.auth_last_refresh is None:
+                return "-"
+            return f"refresh {usage.auth_last_refresh.strftime('%d.%m.%Y %H:%M')}"
+        if expiry.tzinfo is None or expiry.utcoffset() is None:
+            expiry = expiry.replace(tzinfo=LOCAL_TZ)
+        stamp = expiry.strftime("%d.%m.%Y %H:%M")
+        if expiry <= datetime.now(tz=LOCAL_TZ):
+            return f"abgelaufen {stamp}"
+        return f"bis {stamp}"
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        return "-"
 
 
 def _fmt_number(value: float) -> str:

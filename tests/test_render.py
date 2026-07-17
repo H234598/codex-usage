@@ -196,6 +196,17 @@ def test_render_uses_dst_aware_local_timezone(monkeypatch):
     assert calls == [berlin, berlin, berlin]
 
 
+def test_render_auth_value_localizes_naive_expiry():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 1, 15, tzinfo=ZoneInfo("Europe/Berlin")),
+        auth_access_expires_at=datetime(2099, 1, 1, 12, 0),
+    )
+
+    assert _auth_value(usage) == "bis 01.01.2099 12:00"
+
+
 def test_render_table_labels_remaining_percent_windows():
     usage = AccountUsage(
         account_id="privat",
@@ -466,6 +477,29 @@ def test_render_table_includes_dynamic_main_and_spark_limits():
     assert "weekly 100% verbleibend bis 23.07.2026 04:00" in rendered
 
 
+def test_render_table_shows_available_spark_without_known_limit():
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=90),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                available=True,
+                availability_sources=("model_catalog",),
+            ),
+        ),
+    )
+
+    rendered = render_table([usage])
+
+    assert "verfügbar; Limit unbekannt" in rendered
+
+
 def test_extra_main_value_uses_name_only_core_window_identity():
     usage = AccountUsage(
         account_id="private",
@@ -572,6 +606,37 @@ def test_render_table_shows_blocked_state():
 
     assert "blocked bis 08.06.2026 06:50" in rendered
     assert "usage limit reached" in rendered
+
+
+def test_render_table_ignores_invalid_blocked_until():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.BLOCKED,
+        blocked_until="invalid",
+        blocked_reason="usage limit reached",
+    )
+
+    rendered = render_table([usage])
+
+    assert "blocked : usage limit reached" in rendered
+
+
+def test_render_table_ignores_invalid_reset_at():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=50, reset_at="invalid"),
+    )
+
+    rendered = render_table([usage])
+
+    assert "50% verbleibend" in rendered
+    assert "invalid" not in rendered
 
 
 def test_render_table_marks_stale_values_as_saved():

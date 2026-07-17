@@ -1190,7 +1190,8 @@ def _cached_window_expired(
         if duration is None:
             duration = WINDOW_DURATIONS.get(_window_kind(window) or "")
         if duration is None:
-            return False
+            # A reset without a trusted duration cannot prove cache freshness.
+            return True
         if not isinstance(captured_at, datetime) or not isinstance(window.reset_at, datetime):
             return True
         try:

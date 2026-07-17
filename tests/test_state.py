@@ -871,6 +871,39 @@ def test_expire_reset_windows_handles_dynamic_core_and_model_pools():
     assert "30d" in (expired.error or "")
 
 
+def test_expire_reset_windows_rejects_dynamic_reset_without_identity():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="unknown-window",
+        label="Unknown Window",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="future",
+                    remaining=90,
+                    reset_at=captured_at + timedelta(days=365),
+                ),
+            ),
+        ),
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=captured_at + timedelta(minutes=1),
+    )
+
+    assert expired.main is not None
+    assert expired.main.windows == ()
+    assert expired.main.available is False
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert "future" in (expired.error or "")
+
+
 def test_expire_reset_windows_does_not_stale_core_for_expired_spark_only():
     reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(

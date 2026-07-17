@@ -647,6 +647,71 @@ def test_app_server_parses_dynamic_main_and_spark_buckets():
     assert models[0].windows[0].reset_at is not None
 
 
+def test_app_server_main_slots_infer_missing_window_durations():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 2},
+                "secondary": {"usedPercent": 51},
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert [window.name for window in main.windows] == ["5h", "weekly"]
+    assert [window.remaining for window in main.windows] == [98, 49]
+    assert main.has_valid_usage is True
+
+
+def test_app_server_keeps_explicit_weekly_only_bucket_without_duplicate_inference():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 12, "windowDurationMins": 10080},
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert [window.name for window in main.windows] == ["weekly"]
+    assert main.has_valid_usage is True
+
+
+def test_app_server_ignores_unclassified_duplicate_bucket():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 12},
+                "secondary": {"usedPercent": 20, "windowDurationMins": 300},
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert [window.name for window in main.windows] == ["5h"]
+    assert main.has_valid_usage is True
+
+
+def test_app_server_does_not_infer_missing_duration_for_spark_bucket():
+    _, models = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                SPARK_METERED_FEATURE: {
+                    "primary": {"usedPercent": 2},
+                }
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].windows[0].name == "unknown"
+    assert models[0].has_valid_usage is False
+
+
 @pytest.mark.parametrize(
     ("codex_bucket", "expected_primary"),
     [
@@ -672,6 +737,29 @@ def test_app_server_merges_partial_codex_bucket_with_top_level_windows(
     assert main is not None
     assert [window.name for window in main.windows] == ["5h", "weekly"]
     assert [window.remaining for window in main.windows] == [expected_primary, 60]
+    assert main.has_valid_usage is True
+
+
+def test_app_server_does_not_infer_nested_window_over_unsupported_top_level():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 90, "windowDurationMins": 43200},
+                "secondary": {"usedPercent": 40, "windowDurationMins": 10080},
+            },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {"usedPercent": 1},
+                    "secondary": {"usedPercent": 2, "windowDurationMins": 10080},
+                }
+            },
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert [window.name for window in main.windows] == ["30d", "weekly"]
+    assert [window.remaining for window in main.windows] == [10, 98]
     assert main.has_valid_usage is True
 
 

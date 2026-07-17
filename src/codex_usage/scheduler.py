@@ -944,6 +944,18 @@ def _watch_core_resets_current(usage: AccountUsage) -> bool:
         try:
             if reset_at <= now:
                 return False
+            duration = getattr(window, "duration_seconds", None)
+            if (
+                not isinstance(duration, int)
+                or isinstance(duration, bool)
+                or duration <= 0
+                or duration > MAX_WINDOW_SECONDS
+            ):
+                duration = WINDOW_DURATIONS.get(_window_kind(window) or "")
+            if duration is None or reset_at > now + timedelta(
+                seconds=duration + RESET_FUTURE_SKEW_SECONDS
+            ):
+                return False
         except (OverflowError, TypeError, ValueError):
             return False
     return True

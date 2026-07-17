@@ -92,6 +92,25 @@ def parse_app_server_usage_pools(
                 if key in {"primary", "secondary"}:
                     if value is None:
                         continue
+                    if (
+                        isinstance(value, dict)
+                        and value.get("windowDurationMins") is None
+                    ):
+                        top_level_window = top_level_payload.get(key)
+                        top_level_minutes = (
+                            _strict_int(top_level_window.get("windowDurationMins"))
+                            if isinstance(top_level_window, dict)
+                            else None
+                        )
+                        if (
+                            isinstance(top_level_window, dict)
+                            and top_level_window.get("windowDurationMins") is not None
+                            and top_level_minutes
+                            not in {FIVE_HOUR_SECONDS // 60, WEEKLY_SECONDS // 60}
+                        ):
+                            # A duration-less nested bucket cannot reclassify
+                            # an explicit unsupported top-level window.
+                            continue
                     if not isinstance(value, dict) or _app_server_window(
                         value, captured_at=captured_at, source=source
                     ) is None:
@@ -290,16 +309,54 @@ def _app_server_pool(
     if not isinstance(snapshot, dict):
         return None
     raw_windows = tuple(snapshot.get(slot) for slot in ("primary", "secondary"))
+    fallback_durations = (
+        (FIVE_HOUR_SECONDS, WEEKLY_SECONDS)
+        if key == MAIN_POOL_KEY
+        else (None, None)
+    )
+    if key == MAIN_POOL_KEY:
+        fallback_durations = list(fallback_durations)
+        ignored_missing_duration = [False, False]
+        for index, fallback_duration in enumerate(fallback_durations):
+            current = raw_windows[index]
+            other = raw_windows[1 - index]
+            if not isinstance(current, dict) or current.get("windowDurationMins") is not None:
+                continue
+            if not isinstance(other, dict) or other.get("windowDurationMins") is None:
+                continue
+            other_minutes = _strict_int(other.get("windowDurationMins"))
+            other_duration = (
+                other_minutes * 60 if other_minutes is not None else None
+            )
+            if other_duration not in {FIVE_HOUR_SECONDS, WEEKLY_SECONDS}:
+                fallback_durations[index] = None
+            elif other_duration == fallback_duration:
+                # The explicit bucket already identifies this slot's window;
+                # inferring the same duration would create a duplicate identity.
+                fallback_durations[index] = None
+            if fallback_durations[index] is None:
+                ignored_missing_duration[index] = True
+    else:
+        ignored_missing_duration = [False, False]
     parsed_windows = tuple(
-        _app_server_window(raw, captured_at=captured_at, source=source)
-        if raw is not None
+        _app_server_window(
+            raw,
+            captured_at=captured_at,
+            source=source,
+            fallback_duration_seconds=fallback_duration,
+        )
+        if raw is not None and not ignored_missing_duration[index]
         else None
-        for raw in raw_windows
+        for index, (raw, fallback_duration) in enumerate(zip(
+            raw_windows,
+            fallback_durations,
+            strict=True,
+        ))
     )
     windows = tuple(window for window in parsed_windows if window is not None)
     window_shape_valid = all(
-        raw is None or window is not None
-        for raw, window in zip(raw_windows, parsed_windows, strict=True)
+        raw is None or window is not None or ignored_missing_duration[index]
+        for index, (raw, window) in enumerate(zip(raw_windows, parsed_windows, strict=True))
     )
     window_identity_valid = bool(windows) and _window_identities_are_unique(windows)
     raw_limit_reached = snapshot.get("rateLimitReachedType")
@@ -346,18 +403,27 @@ def _wham_window(
 
 
 def _app_server_window(
-    value: Any, *, captured_at: datetime, source: str
+    value: Any,
+    *,
+    captured_at: datetime,
+    source: str,
+    fallback_duration_seconds: int | None = None,
 ) -> LimitWindow | None:
     if not isinstance(value, dict):
         return None
-    duration_minutes = _strict_int(value.get("windowDurationMins"))
-    if "windowDurationMins" in value and (
+    raw_duration_minutes = value.get("windowDurationMins")
+    duration_minutes = _strict_int(raw_duration_minutes)
+    if raw_duration_minutes is not None and (
         duration_minutes is None
         or duration_minutes <= 0
         or duration_minutes * 60 > MAX_WINDOW_SECONDS
     ):
         return None
-    duration = duration_minutes * 60 if duration_minutes is not None else None
+    duration = (
+        duration_minutes * 60
+        if duration_minutes is not None
+        else fallback_duration_seconds
+    )
     used = _percent(value.get("usedPercent"))
     reset_at = _reset_at(value.get("resetsAt"), None, captured_at=captured_at)
     if duration is None and used is None and reset_at is None:

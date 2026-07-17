@@ -2799,12 +2799,12 @@ CodexUsageApplet.prototype = {
         let percent = this._safeNumber(value.percent);
         let percentInvalid = percent !== null && (percent < 0 || percent > 100);
         if (percentInvalid) {
-            // Explicit percentages outside the display domain are invalid;
-            // do not let _remainingPercent clamp them into a false value.
+            // Any invalid usage field invalidates this window; do not let a
+            // valid absolute pair hide contradictory percentage metadata.
+            used = null;
+            limit = null;
             percent = null;
-            if (!(used !== null && limit !== null && limit > 0)) {
-                remaining = null;
-            }
+            remaining = null;
         }
         if (used !== null && used < 0) {
             // A remaining counter from the same invalid absolute pair is not

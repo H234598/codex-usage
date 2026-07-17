@@ -1073,6 +1073,34 @@ def test_app_server_accepts_missing_five_hour_compatibility_window(
     assert usage.main is not None
 
 
+def test_app_server_accepts_weekly_only_bucket_without_duration(tmp_path, monkeypatch):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+        backend="app-server",
+    )
+    auth_context = (tmp_path / "auth.json", {}, "user-test", "account-test", "pro", None)
+    monkeypatch.setattr(
+        "codex_usage.app_server._auth_context",
+        lambda _account: auth_context,
+    )
+    monkeypatch.setattr(
+        "codex_usage.app_server._read_rate_limits",
+        lambda *_args, **_kwargs: {
+            "rateLimits": {"secondary": {"usedPercent": 47}},
+        },
+    )
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is None
+    assert usage.weekly is not None and usage.weekly.remaining == 53
+    assert usage.main is not None and usage.main.has_valid_usage is True
+
+
 def test_app_server_marks_malformed_main_slot_partial(tmp_path, monkeypatch):
     account = Account(
         id="work",

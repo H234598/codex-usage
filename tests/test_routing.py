@@ -1080,6 +1080,25 @@ def test_routing_allows_credits_only_for_known_low_main_limit():
     assert unknown["reason"] == "main_limit_unknown"
 
 
+def test_routing_blocks_credits_for_partial_usage():
+    usage = replace(
+        _usage(main_windows=(_window("weekly", 5, 604800),)),
+        status=AccountStatus.PARTIAL,
+        error="5h limit unavailable",
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "usage_incomplete"
+    assert result["model"] is None
+
+
 def test_routing_fails_closed_for_stale_usage_and_exempts_teamleitung():
     usage = _usage(
         main_windows=(_window("weekly", 90, 604800),),

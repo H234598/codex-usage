@@ -251,6 +251,8 @@ def evaluate_routing(
             "resets": _pool_resets(usage.main),
         }
     if main_state == "low" and paid_overage_allowed:
+        if usage.status is not AccountStatus.OK:
+            return _blocked(base, "usage_incomplete", usage_state="unknown")
         return {
             **base,
             "decision": "credits",

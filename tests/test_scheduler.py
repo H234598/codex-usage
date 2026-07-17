@@ -3837,6 +3837,33 @@ def test_watch_cycle_health_rejects_expired_core_reset():
     assert _watch_cycle_is_healthy([usage], [account]) is False
 
 
+def test_watch_cycle_health_rejects_implausibly_future_core_reset():
+    account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
+    captured_at = datetime.now(ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="weekly",
+                    remaining=80,
+                    reset_at=captured_at + timedelta(days=8),
+                ),
+            ),
+            availability_sources=("usage",),
+        ),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+
+    assert _watch_cycle_is_healthy([usage], [account]) is False
+
+
 def test_watch_cycle_health_rejects_duplicate_usage_ids():
     account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
     usage = AccountUsage(
