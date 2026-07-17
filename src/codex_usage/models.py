@@ -345,11 +345,18 @@ class AccountUsage:
         }
 
     def model_pool(self, model: str) -> UsagePool | None:
+        if not isinstance(model, str):
+            return None
         normalized = model.strip().casefold()
-        return next(
-            (pool for pool in self.models if pool.key.casefold() == normalized),
-            None,
-        )
+        if not normalized or not isinstance(self.models, tuple):
+            return None
+        matches: list[UsagePool] = []
+        for pool in self.models:
+            if not isinstance(pool, UsagePool) or not isinstance(pool.key, str):
+                return None
+            if pool.key.casefold() == normalized:
+                matches.append(pool)
+        return matches[0] if len(matches) == 1 else None
 
 
 def _window_to_dict(window: LimitWindow | None) -> dict[str, Any] | None:

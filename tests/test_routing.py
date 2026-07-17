@@ -585,6 +585,34 @@ def test_routing_does_not_select_spark_for_invalid_percent():
     assert result["reason"] == "spark_usage_invalid"
 
 
+def test_routing_does_not_select_ambiguous_spark_pool():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+    )
+    duplicate = replace(spark, key=SPARK_MODEL.upper())
+
+    result = evaluate_routing(
+        replace(
+            _usage(main_windows=(_window("weekly", 80, 604800),)),
+            models=(spark, duplicate),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "successful_spark_turn",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+
+
 def test_policy_rejects_truthy_non_boolean_rule(tmp_path):
     with pytest.raises(ValueError, match="policy value must be a boolean or None"):
         set_policy_rule("global", None, "false", path=tmp_path / "routing-policy.json")
