@@ -836,6 +836,23 @@ def test_routing_rejects_duplicate_main_window_identity():
     assert result["reason"] == "main_limit_unknown"
 
 
+def test_routing_rejects_colliding_main_window_names():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(
+                _window("", 5, 18000),
+                _window("", 90, 604800),
+            ),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
 def test_routing_does_not_select_noncanonical_spark_pool():
     spark = UsagePool(
         key=SPARK_MODEL.upper(),

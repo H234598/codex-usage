@@ -302,6 +302,8 @@ def _main_state(
             return "unknown", {}
         if not _valid_remaining_percent(value):
             return "unknown", {}
+        if window.name in remaining:
+            return "unknown", {}
         remaining[window.name] = value
     if pool.allowed is False or pool.limit_reached is True:
         return "low", remaining
