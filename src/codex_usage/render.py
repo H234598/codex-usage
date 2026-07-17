@@ -213,6 +213,19 @@ def _safe_usage_for_display(
     *,
     expected_backend: str | None = None,
 ) -> AccountUsage:
+    if not isinstance(usage.status, AccountStatus):
+        return replace(
+            usage,
+            five_hour=None,
+            weekly=None,
+            main=None,
+            models=(),
+            error="invalid account status",
+            status=AccountStatus.ERROR,
+            values_captured_at=None,
+            stale=True,
+            cache_invalidated=True,
+        )
     if usage.status == AccountStatus.LOGIN_REQUIRED:
         error = usage.error or "login required"
         return replace(

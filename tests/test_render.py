@@ -115,6 +115,34 @@ def test_render_clears_login_required_values():
     assert payload["cache_invalidated"] is True
 
 
+def test_render_clears_values_for_invalid_status():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        status="ok",
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    safe = _safe_usage_for_display(usage)
+    table = render_table([usage])
+    payload = json.loads(render_json([usage]))[0]
+
+    assert safe.status == AccountStatus.ERROR
+    assert safe.five_hour is None
+    assert safe.weekly is None
+    assert safe.stale is True
+    assert safe.cache_invalidated is True
+    assert "97% verbleibend" not in table
+    assert "55% verbleibend" not in table
+    assert payload["five_hour"] is None
+    assert payload["weekly"] is None
+    assert payload["status"] == "error"
+
+
 def test_render_uses_dst_aware_local_timezone(monkeypatch):
     berlin = ZoneInfo("Europe/Berlin")
     now = datetime(2026, 1, 15, 0, 15, tzinfo=berlin)
