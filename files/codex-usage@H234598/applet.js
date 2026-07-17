@@ -2926,6 +2926,7 @@ CodexUsageApplet.prototype = {
             throw new Error("too many model usage pools");
         }
         let result = Object.create(null);
+        let normalizedKeys = Object.create(null);
         for (let i = 0; i < keys.length; i++) {
             let key = "";
             try {
@@ -2933,9 +2934,12 @@ CodexUsageApplet.prototype = {
             } catch (e) {
                 throw new Error("invalid model usage pool key");
             }
-            if (!key || Object.prototype.hasOwnProperty.call(result, key)) {
+            let normalizedKey = key.toLowerCase();
+            if (!key || Object.prototype.hasOwnProperty.call(result, key) ||
+                Object.prototype.hasOwnProperty.call(normalizedKeys, normalizedKey)) {
                 throw new Error("invalid model usage pool key");
             }
+            normalizedKeys[normalizedKey] = true;
             result[key] = this._safePool(value[keys[i]], key);
         }
         return result;
