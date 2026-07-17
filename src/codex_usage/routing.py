@@ -310,6 +310,8 @@ def _invalid_usage_reason(
         return "cache_invalidated"
     if usage.stale:
         return "usage_stale"
+    if not isinstance(usage.status, AccountStatus):
+        return "usage_status_invalid"
     if usage.status not in (AccountStatus.OK, AccountStatus.PARTIAL):
         return f"usage_status_{usage.status.value}"
     if not isinstance(usage.backend_configured, str) or not backend_provenance_matches_configured(

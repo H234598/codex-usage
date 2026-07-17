@@ -125,6 +125,24 @@ def test_routing_fails_closed_for_naive_usage_timestamps(timestamp_field):
     assert result["model"] is None
 
 
+def test_routing_fails_closed_for_non_enum_usage_status():
+    usage = replace(
+        _usage(main_windows=(_window("weekly", 80, 604800),)),
+        status="ok",
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "usage_status_invalid"
+    assert result["model"] is None
+
+
 def test_routing_does_not_select_spark_when_usage_window_has_no_value():
     spark = UsagePool(
         key=SPARK_MODEL,
