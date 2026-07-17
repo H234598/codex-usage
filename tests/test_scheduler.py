@@ -29,6 +29,15 @@ from codex_usage.scheduler import (
 )
 
 
+def _usable_main(*windows, availability_sources=("usage",)):
+    return UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=tuple(windows),
+        availability_sources=availability_sources,
+    )
+
+
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(
     monkeypatch,
 ):
@@ -332,6 +341,10 @@ def test_fetch_all_rejects_shared_default_auth_source(monkeypatch):
             account_id=account.id,
             label=account.label,
             captured_at=datetime.now().astimezone(),
+            main=_usable_main(
+                LimitWindow(name="5h", remaining=97),
+                LimitWindow(name="weekly", remaining=55),
+            ),
             five_hour=LimitWindow(name="5h", remaining=97),
             weekly=LimitWindow(name="weekly", remaining=55),
         )
@@ -368,6 +381,7 @@ def test_fetch_all_allows_single_default_auth_source(monkeypatch):
             account_id=selected.id,
             label=selected.label,
             captured_at=datetime.now().astimezone(),
+            main=_usable_main(LimitWindow(name="5h", remaining=97)),
             five_hour=LimitWindow(name="5h", remaining=97),
         )
 
@@ -406,6 +420,7 @@ def test_fetch_all_rejects_only_unattributed_account_in_mixed_direct_config(
             account_id=account.id,
             label=account.label,
             captured_at=datetime.now().astimezone(),
+            main=_usable_main(LimitWindow(name="5h", remaining=97)),
             five_hour=LimitWindow(name="5h", remaining=97),
         )
 
@@ -438,6 +453,7 @@ def test_fetch_all_contains_state_generation_failure_per_account(monkeypatch):
             account_id=account.id,
             label=account.label,
             captured_at=datetime.now().astimezone(),
+            main=_usable_main(LimitWindow(name="5h", remaining=80)),
             backend_configured="browser",
             backend_used="browser",
             five_hour=LimitWindow(name="5h", remaining=80),
@@ -469,6 +485,10 @@ def test_fetch_all_invalidates_usage_when_state_changes_during_fetch(monkeypatch
         account_id="race",
         label="Race",
         captured_at=datetime.now().astimezone(),
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=97),
+            LimitWindow(name="weekly", remaining=55),
+        ),
         five_hour=LimitWindow(name="5h", remaining=97),
         weekly=LimitWindow(name="weekly", remaining=55),
     )
@@ -1405,6 +1425,10 @@ def test_watchdog_does_not_persist_explicit_backend_override(monkeypatch):
         backend_used="app-server",
         backend_user_id="user-account",
         backend_account_id="account-id",
+        main=_usable_main(
+            LimitWindow(name="five_hour", remaining=11),
+            LimitWindow(name="weekly", remaining=22),
+        ),
         five_hour=LimitWindow(name="five_hour", remaining=11),
         weekly=LimitWindow(name="weekly", remaining=22),
     )
@@ -2285,6 +2309,10 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
         captured_at=now,
         backend_configured="direct",
         backend_used="direct",
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=97, reset_at=now),
+            LimitWindow(name="weekly", remaining=55, reset_at=now),
+        ),
         five_hour=LimitWindow(name="5h", remaining=97, reset_at=now),
         weekly=LimitWindow(name="weekly", remaining=55, reset_at=now),
     )
@@ -2353,6 +2381,7 @@ def test_watchdog_direct_refetches_browser_block_without_account_auth(monkeypatc
         status=AccountStatus.OK,
         backend_configured="direct",
         backend_used="direct",
+        main=_usable_main(LimitWindow(name="5h", remaining=97)),
         five_hour=LimitWindow(name="5h", remaining=97),
     )
     fetched_accounts: list[str] = []
@@ -2414,6 +2443,7 @@ def test_watchdog_direct_rechecks_default_auth_identity_for_block(
         backend_used="direct",
         backend_user_id="user-new",
         backend_account_id="account-new",
+        main=_usable_main(LimitWindow(name="5h", remaining=97)),
         five_hour=LimitWindow(name="5h", remaining=97),
     )
     fetched_accounts: list[str] = []
@@ -2477,6 +2507,7 @@ def test_watchdog_contains_state_generation_failure_for_blocked_snapshot(monkeyp
             captured_at=now,
             backend_configured="direct",
             backend_used="direct",
+            main=_usable_main(LimitWindow(name="5h", remaining=80)),
             five_hour=LimitWindow(name="5h", remaining=80),
         )
         for account in accounts
@@ -2546,6 +2577,7 @@ def test_watchdog_refetches_block_when_state_generation_changes(monkeypatch):
         status=AccountStatus.OK,
         backend_configured="direct",
         backend_used="browser",
+        main=_usable_main(LimitWindow(name="5h", remaining=97)),
         five_hour=LimitWindow(name="5h", remaining=97),
     )
     seen_fetch_accounts: list[str] = []
@@ -2643,6 +2675,10 @@ def test_watchdog_refetches_block_with_inconsistent_limit_windows(monkeypatch):
         label="Blocked",
         captured_at=now,
         status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=98),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=98),
     )
@@ -2713,6 +2749,10 @@ def test_watchdog_uses_dst_aware_local_timezone(monkeypatch):
         label="Account",
         captured_at=now,
         status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=95),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=95),
     )
@@ -2754,6 +2794,10 @@ def test_watchdog_refetches_far_future_blocked_snapshot(monkeypatch):
         label="Blocked",
         captured_at=now,
         status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=98),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=98),
         backend_used="browser",
@@ -2824,6 +2868,10 @@ def test_watchdog_refetches_browser_block_for_authenticated_direct_account(
         backend_used="direct",
         backend_user_id="shared-user",
         backend_account_id="private-account",
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=97),
+            LimitWindow(name="weekly", remaining=55),
+        ),
         five_hour=LimitWindow(name="5h", remaining=97),
         weekly=LimitWindow(name="weekly", remaining=55),
     )
@@ -2881,6 +2929,10 @@ def test_watchdog_refetches_when_newer_current_supersedes_blocked_snapshot(monke
         status=AccountStatus.OK,
         backend_configured="direct",
         backend_used="direct",
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=98),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=98),
     )
@@ -2958,6 +3010,10 @@ def test_watchdog_refetches_blocked_snapshot_after_backend_change(
         label="Blocked",
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=95),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=95),
         backend_configured="app-server",
@@ -3019,6 +3075,10 @@ def test_watchdog_refetches_block_after_auth_identity_changes(tmp_path, monkeypa
         label="Blocked",
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=95),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=95),
         backend_user_id="user-new",
@@ -3083,6 +3143,10 @@ def test_watchdog_refetches_block_when_shared_account_user_changes(tmp_path, mon
         label="Blocked",
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=95),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=95),
         backend_user_id="user-new",
@@ -3149,6 +3213,10 @@ def test_watchdog_refetches_legacy_block_without_account_identity(
         label="Blocked",
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=95),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=95),
         backend_user_id="shared-user",
@@ -3211,6 +3279,10 @@ def test_watchdog_override_auth_identity_releases_old_block(tmp_path, monkeypatc
         label="Blocked",
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=95),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=95),
         backend_account_id="account-new",
@@ -3326,6 +3398,14 @@ def test_watchdog_does_not_block_when_reset_expires_during_fetch(monkeypatch):
         account_id="free",
         label="Free",
         captured_at=after_fetch,
+        main=_usable_main(
+            LimitWindow(
+                name="5h",
+                remaining=0,
+                reset_at=datetime(2026, 6, 8, 4, 20, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+            ),
+            LimitWindow(name="weekly", remaining=99),
+        ),
         five_hour=LimitWindow(
             name="5h",
             remaining=0,
@@ -3383,6 +3463,10 @@ def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetc
         account_id="blocked",
         label="Blocked",
         captured_at=datetime(2026, 6, 8, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99),
+            LimitWindow(name="weekly", remaining=98),
+        ),
         five_hour=LimitWindow(name="5h", remaining=99),
         weekly=LimitWindow(name="weekly", remaining=98),
     )
@@ -3588,6 +3672,36 @@ def test_watchdog_rejects_ok_usage_without_core_limits(main):
         label="Missing",
         captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
         main=main,
+    )
+
+    rejected = _apply_watchdog_block(
+        usage,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert rejected.status == AccountStatus.PARTIAL
+    assert rejected.error == "missing usage limits; refresh required"
+    assert rejected.five_hour is None
+    assert rejected.weekly is None
+    assert rejected.main is None
+    assert rejected.cache_invalidated is True
+    assert rejected.stale is True
+
+
+@pytest.mark.parametrize("availability_sources", [("model_catalog",), ("legacy_fields",), (), None])
+def test_watchdog_rejects_ok_main_usage_without_usable_usage_provenance(
+    availability_sources,
+):
+    usage = AccountUsage(
+        account_id="missing",
+        label="Missing",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="weekly", remaining=80),),
+            availability_sources=availability_sources,
+        ),
     )
 
     rejected = _apply_watchdog_block(

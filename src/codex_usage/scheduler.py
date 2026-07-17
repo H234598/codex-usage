@@ -917,7 +917,7 @@ def _usage_map_for_accounts(
 
 def _has_usable_core_usage(usage: AccountUsage) -> bool:
     if usage.main is not None:
-        return usage.main.has_valid_usage
+        return usage.main.has_valid_usage and _pool_has_usage_evidence(usage.main)
     return any(
         window is not None and window.has_usage_value
         for window in (usage.five_hour, usage.weekly)
