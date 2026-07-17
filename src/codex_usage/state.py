@@ -1405,10 +1405,15 @@ def _model_pools_from_dict(payload: Any) -> tuple[UsagePool, ...] | None:
     if not isinstance(payload, dict) or len(payload) > MAX_MODEL_POOLS:
         return None
     pools: list[UsagePool] = []
+    normalized_keys: set[str] = set()
     for raw_key, raw_pool in payload.items():
         key = _optional_snapshot_identity(raw_key, limit=120)
         if not key:
             return None
+        normalized_key = key.casefold()
+        if normalized_key in normalized_keys:
+            return None
+        normalized_keys.add(normalized_key)
         if (
             not isinstance(raw_pool, dict)
             or "exhausted" not in raw_pool

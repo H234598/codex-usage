@@ -1395,6 +1395,48 @@ def test_load_usage_snapshot_invalidates_malformed_model_pools(malformed_models)
     assert loaded.error == "invalid cached model pools: models"
 
 
+def test_load_usage_snapshot_rejects_case_ambiguous_model_pools():
+    pool = {
+        "key": "gpt-5.3-codex-spark",
+        "display_name": "Spark",
+        "available": True,
+        "windows": [{"name": "weekly", "remaining": 90, "duration_seconds": 604800}],
+        "exhausted": False,
+    }
+    loaded = usage_from_dict(
+        {
+            "account": "ambiguous-models",
+            "label": "Ambiguous models",
+            "captured_at": "2026-06-08T04:20:00+02:00",
+            "status": "ok",
+            "stale": False,
+            "cache_invalidated": False,
+            "main": {
+                "key": "main",
+                "display_name": "Codex",
+                "available": True,
+                "windows": [
+                    {"name": "weekly", "remaining": 80, "duration_seconds": 604800}
+                ],
+            },
+            "models": {
+                "gpt-5.3-codex-spark": pool,
+                "GPT-5.3-CODEX-SPARK": {
+                    **pool,
+                    "key": "GPT-5.3-CODEX-SPARK",
+                },
+            },
+        }
+    )
+
+    assert loaded.status == AccountStatus.PARTIAL
+    assert loaded.stale is True
+    assert loaded.cache_invalidated is True
+    assert loaded.main is None
+    assert loaded.models == ()
+    assert loaded.error == "invalid cached model pools: models"
+
+
 def test_load_usage_snapshot_drops_window_stored_in_wrong_slot(tmp_path):
     payload = {
         "account": "wrong-slot",
