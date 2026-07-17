@@ -2250,6 +2250,40 @@ def test_watchdog_contains_state_generation_failure_for_blocked_snapshot(monkeyp
     assert [usage.status for usage in result] == [AccountStatus.OK, AccountStatus.OK]
 
 
+def test_watchdog_contains_unexpected_fetch_failure_per_account(monkeypatch):
+    accounts = (
+        Account(id="broken", label="Broken", profile_dir="/tmp/broken"),
+        Account(id="healthy", label="Healthy", profile_dir="/tmp/healthy"),
+    )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: None,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_current_usage", lambda *args: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_all",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("backend crashed")),
+    )
+
+    result = watchdog(
+        AppConfig(accounts=accounts),
+        accounts,
+        output="json",
+    )
+
+    assert [usage.account_id for usage in result] == ["broken", "healthy"]
+    assert [usage.status for usage in result] == [
+        AccountStatus.ERROR,
+        AccountStatus.ERROR,
+    ]
+    assert [usage.error for usage in result] == [
+        "watchdog fetch failed: RuntimeError",
+        "watchdog fetch failed: RuntimeError",
+    ]
+    assert all(usage.cache_invalidated for usage in result)
+
+
 def test_watchdog_refetches_block_with_inconsistent_limit_windows(monkeypatch):
     account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
     now = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))

@@ -1002,6 +1002,26 @@ def watchdog(
         effective_backend = backend_override
     blocked_snapshots: dict[str, AccountUsage] = {}
     fetch_accounts: list[Account] = []
+
+    def fetch_watchdog_accounts(selected_accounts: Iterable[Account]) -> list[AccountUsage]:
+        selected = tuple(selected_accounts)
+        try:
+            return fetch_all(
+                config,
+                selected,
+                headed=headed,
+                direct=direct,
+                backend_override=backend_override,
+                auth_json_path=auth_json_path,
+                save_snapshots=False,
+            )
+        except Exception as exc:
+            return _watch_failure_usages(
+                selected,
+                None,
+                error=f"watchdog fetch failed: {type(exc).__name__}",
+            )
+
     for account in account_list:
         snapshot = load_usage_snapshot(account.id)
         if (
@@ -1038,15 +1058,7 @@ def watchdog(
             continue
         fetch_accounts.append(account)
 
-    fetched = fetch_all(
-        config,
-        fetch_accounts,
-        headed=headed,
-        direct=direct,
-        backend_override=backend_override,
-        auth_json_path=auth_json_path,
-        save_snapshots=False,
-    )
+    fetched = fetch_watchdog_accounts(fetch_accounts)
     evaluation_now = datetime.now(tz=LOCAL_TZ)
     expired_blocked_accounts = [
         account
@@ -1056,15 +1068,7 @@ def watchdog(
     ]
     if expired_blocked_accounts:
         fetched.extend(
-            fetch_all(
-                config,
-                expired_blocked_accounts,
-                headed=headed,
-                direct=direct,
-                backend_override=backend_override,
-                auth_json_path=auth_json_path,
-                save_snapshots=False,
-            )
+            fetch_watchdog_accounts(expired_blocked_accounts)
         )
         for account in expired_blocked_accounts:
             blocked_snapshots.pop(account.id, None)
