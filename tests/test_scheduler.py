@@ -2177,6 +2177,79 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
     assert saved == ["ok"]
 
 
+def test_watchdog_contains_state_generation_failure_for_blocked_snapshot(monkeypatch):
+    accounts = (
+        Account(id="broken", label="Broken", profile_dir="/tmp/broken"),
+        Account(id="healthy", label="Healthy", profile_dir="/tmp/healthy"),
+    )
+    now = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    blocked_snapshot = AccountUsage(
+        account_id="broken",
+        label="Broken",
+        captured_at=now,
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
+        blocked_until=datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+        blocked_reason="usage limit reached: weekly",
+    )
+    fresh = [
+        AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=now,
+            backend_configured="direct",
+            backend_used="direct",
+            five_hour=LimitWindow(name="5h", remaining=80),
+        )
+        for account in accounts
+    ]
+    seen_fetch_accounts: list[str] = []
+
+    def fake_load_state_generation(account_id):
+        if account_id == "broken":
+            raise ValueError("invalid generation")
+        return 0
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        seen_fetch_accounts.extend(account.id for account in fetch_accounts)
+        return fresh
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: (
+            blocked_snapshot if account_id == "broken" else None
+        ),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_current_usage", lambda *args: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_state_generation",
+        fake_load_state_generation,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=accounts),
+        accounts,
+        output="json",
+        direct=True,
+    )
+
+    assert seen_fetch_accounts == ["broken", "healthy"]
+    assert [usage.status for usage in result] == [AccountStatus.OK, AccountStatus.OK]
+
+
 def test_watchdog_refetches_block_with_inconsistent_limit_windows(monkeypatch):
     account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
     now = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))

@@ -1023,9 +1023,17 @@ def watchdog(
                 configured_backend=effective_backend or account.backend,
             )
         ):
+            try:
+                state_generation = load_state_generation(account.id)
+            except Exception:
+                # A corrupt generation invalidates the cached block. Let the
+                # normal per-account fetch path fail closed if it cannot read
+                # the generation either.
+                fetch_accounts.append(account)
+                continue
             blocked_snapshots[account.id] = replace(
                 snapshot,
-                state_generation=load_state_generation(account.id),
+                state_generation=state_generation,
             )
             continue
         fetch_accounts.append(account)
