@@ -303,6 +303,48 @@ def test_fetch_all_marks_unidentified_auth_accounts_ambiguous(monkeypatch):
     assert flags == {"privat": True, "work": True}
 
 
+def test_fetch_all_contains_state_generation_failure_per_account(monkeypatch):
+    accounts = (
+        Account(id="broken", label="Broken", profile_dir="/tmp/broken"),
+        Account(id="healthy", label="Healthy", profile_dir="/tmp/healthy"),
+    )
+    fetched: list[str] = []
+
+    def fake_load_state_generation(account_id):
+        if account_id == "broken":
+            raise ValueError("invalid generation")
+        return 0
+
+    def fake_fetch_one(config, account, **kwargs):
+        fetched.append(account.id)
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime.now().astimezone(),
+            backend_configured="browser",
+            backend_used="browser",
+            five_hour=LimitWindow(name="5h", remaining=80),
+        )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_state_generation",
+        fake_load_state_generation,
+    )
+    monkeypatch.setattr("codex_usage.scheduler._fetch_one", fake_fetch_one)
+
+    result = fetch_all(
+        AppConfig(accounts=accounts),
+        accounts,
+        headed=True,
+    )
+
+    assert fetched == ["healthy"]
+    assert result[0].status == AccountStatus.ERROR
+    assert result[0].error == "state generation failed: ValueError"
+    assert result[0].cache_invalidated is True
+    assert result[1].status == AccountStatus.OK
+
+
 def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):
     delays: list[int] = []
     health_events: list[tuple[str, str]] = []

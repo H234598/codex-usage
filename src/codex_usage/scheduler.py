@@ -82,7 +82,18 @@ def fetch_all(
     )
 
     def fetch(account: Account) -> AccountUsage:
-        state_generation = load_state_generation(account.id)
+        try:
+            state_generation = load_state_generation(account.id)
+        except Exception as exc:
+            return AccountUsage(
+                account_id=account.id,
+                label=account.label,
+                captured_at=datetime.now(tz=LOCAL_TZ),
+                status=AccountStatus.ERROR,
+                error=f"state generation failed: {type(exc).__name__}",
+                backend_configured=account.backend,
+                cache_invalidated=True,
+            )
         usage = _fetch_one(
             config,
             account,
