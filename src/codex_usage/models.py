@@ -304,17 +304,19 @@ class AccountUsage:
         )
 
     def as_dict(self) -> dict[str, Any]:
+        login_required = self.status == AccountStatus.LOGIN_REQUIRED
+        values_hidden = self.cache_invalidated or login_required
         return {
             "account": self.account_id,
             "label": self.label,
             "captured_at": self.captured_at.isoformat(),
             "five_hour": None
-            if self.cache_invalidated
+            if values_hidden
             else _window_to_dict(self.five_hour),
-            "weekly": None if self.cache_invalidated else _window_to_dict(self.weekly),
-            "main": None if self.cache_invalidated else _pool_to_dict(self.main),
+            "weekly": None if values_hidden else _window_to_dict(self.weekly),
+            "main": None if values_hidden else _pool_to_dict(self.main),
             "models": {}
-            if self.cache_invalidated
+            if values_hidden
             else {pool.key: _pool_to_dict(pool) for pool in self.models},
             "status": self.status.value,
             "error": self.error,
@@ -336,10 +338,10 @@ class AccountUsage:
             "backend_account_id": self.backend_account_id,
             "fallback_reason": self.fallback_reason,
             "values_captured_at": self.values_captured_at.isoformat()
-            if self.values_captured_at and not self.cache_invalidated
+            if self.values_captured_at and not values_hidden
             else None,
-            "stale": self.stale,
-            "cache_invalidated": self.cache_invalidated,
+            "stale": self.stale or login_required,
+            "cache_invalidated": self.cache_invalidated or login_required,
         }
 
     def model_pool(self, model: str) -> UsagePool | None:

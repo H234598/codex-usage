@@ -81,6 +81,35 @@ def test_usage_state_round_trips_dynamic_main_and_spark_pools():
     assert loaded.weekly == weekly
 
 
+def test_login_required_serialization_hides_embedded_values():
+    usage = AccountUsage(
+        account_id="login-required",
+        label="Login required",
+        captured_at=datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+        status=AccountStatus.LOGIN_REQUIRED,
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="GPT-5.3-Codex-Spark",
+                windows=(LimitWindow(name="weekly", remaining=80),),
+            ),
+        ),
+        values_captured_at=datetime(2026, 7, 16, 3, 59, tzinfo=UTC),
+    )
+
+    payload = usage.as_dict()
+
+    assert payload["five_hour"] is None
+    assert payload["weekly"] is None
+    assert payload["main"] is None
+    assert payload["models"] == {}
+    assert payload["values_captured_at"] is None
+    assert payload["stale"] is True
+    assert payload["cache_invalidated"] is True
+
+
 def test_usage_state_round_trips_exhausted_dynamic_limit():
     captured_at = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
     reset_at = datetime(2026, 7, 17, 4, 0, tzinfo=UTC)
