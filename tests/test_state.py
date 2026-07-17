@@ -15,6 +15,7 @@ from codex_usage.state import (
     _snapshot_datetime,
     _window_duration_seconds,
     _window_duration_matches,
+    _window_matches_expected_kind,
     backend_provenance_matches,
     backend_provenance_matches_configured,
     expire_reset_windows,
@@ -222,6 +223,16 @@ def test_state_merge_matches_canonical_weekly_window_identity():
     previous = LimitWindow(name="weekly", remaining=55)
 
     assert _window_duration_matches(current, previous) is True
+
+
+def test_state_accepts_raw_duration_for_empty_window_name():
+    window = LimitWindow(
+        name="",
+        remaining=90,
+        raw='{"limit_window_seconds": 604800}',
+    )
+
+    assert _window_matches_expected_kind(window, "weekly") is True
 
 
 def test_usage_state_missing_control_metadata_is_stale():

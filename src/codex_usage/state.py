@@ -1052,8 +1052,6 @@ def _window_matches_expected_kind(
 ) -> bool:
     if window is None or expected_kind is None:
         return True
-    if not window.has_known_identity:
-        return False
     kind = _window_kind(window)
     if kind is not None and kind != expected_kind:
         return False
@@ -1061,7 +1059,11 @@ def _window_matches_expected_kind(
     name = getattr(window, "name", None)
     if kind is None and isinstance(name, str) and name.strip():
         expected_duration = WINDOW_DURATIONS.get(expected_kind)
-        return expected_duration is not None and duration == expected_duration
+        return (
+            window.has_known_identity
+            and expected_duration is not None
+            and duration == expected_duration
+        )
     if kind is None and duration is None:
         return False
     expected_duration = WINDOW_DURATIONS.get(expected_kind)
@@ -1098,17 +1100,23 @@ def _window_duration_matches(
 
 
 def _window_kind(window: LimitWindow | None) -> str | None:
-    if window is None or not window.has_known_identity:
+    if window is None:
         return None
     name = getattr(window, "name", None)
     if not isinstance(name, str):
         return None
     normalized = re.sub(r"[-\s]+", "_", name.strip().casefold())
     if normalized in {"5h", "5_hour", "five_hour"}:
+        if not window.has_known_identity:
+            return None
         return "five_hour"
     if normalized in {"w", "week", "weekly"}:
+        if not window.has_known_identity:
+            return None
         return "weekly"
     duration = _window_duration_seconds(window)
+    if normalized and not window.has_known_identity:
+        return None
     if duration == WINDOW_DURATIONS["five_hour"]:
         return "five_hour"
     if duration == WINDOW_DURATIONS["weekly"]:
