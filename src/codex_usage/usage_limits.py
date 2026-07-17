@@ -83,6 +83,15 @@ def parse_app_server_usage_pools(
     raw_main_payload = by_id.get("codex")
     malformed_main_bucket = "codex" in by_id and not isinstance(raw_main_payload, dict)
     main_payload = by_id.get("codex")
+    if isinstance(main_payload, dict):
+        top_level_payload = payload.get("rateLimits")
+        if isinstance(top_level_payload, dict):
+            merged_payload = dict(top_level_payload)
+            for key, value in main_payload.items():
+                if key in {"primary", "secondary"} and value is None:
+                    continue
+                merged_payload[key] = value
+            main_payload = merged_payload
     if not isinstance(main_payload, dict):
         main_payload = payload.get("rateLimits")
     if malformed_by_id or malformed_main_bucket:

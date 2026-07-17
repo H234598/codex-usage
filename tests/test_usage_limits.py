@@ -509,6 +509,34 @@ def test_app_server_parses_dynamic_main_and_spark_buckets():
     assert models[0].windows[0].reset_at is not None
 
 
+@pytest.mark.parametrize(
+    ("codex_bucket", "expected_primary"),
+    [
+        ({"primary": {"usedPercent": 1, "windowDurationMins": 300}}, 99),
+        ({}, 91),
+        ({"primary": None}, 91),
+    ],
+)
+def test_app_server_merges_partial_codex_bucket_with_top_level_windows(
+    codex_bucket, expected_primary
+):
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 9, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 40, "windowDurationMins": 10080},
+            },
+            "rateLimitsByLimitId": {"codex": codex_bucket},
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert [window.name for window in main.windows] == ["5h", "weekly"]
+    assert [window.remaining for window in main.windows] == [expected_primary, 60]
+    assert main.has_valid_usage is True
+
+
 def test_app_server_disables_main_when_codex_bucket_has_wrong_shape():
     main, _ = parse_app_server_usage_pools(
         {
