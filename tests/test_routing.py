@@ -470,6 +470,17 @@ def test_routing_accepts_weekly_or_30_day_main_without_five_hour_window():
         assert result["decision"] == "main"
 
 
+def test_routing_accepts_canonical_weekly_window_name():
+    result = evaluate_routing(
+        _usage(main_windows=(_window("7d", 90, 604800),)),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "main"
+
+
 def test_routing_blocks_main_when_window_identity_is_unknown():
     result = evaluate_routing(
         _usage(

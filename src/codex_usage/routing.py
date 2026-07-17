@@ -492,7 +492,7 @@ def _window_identity_is_known(window: Any) -> bool:
         return duration in SUPPORTED_WINDOW_SECONDS
     expected_duration = WINDOW_NAME_DURATIONS.get(name.strip().casefold())
     if expected_duration is None:
-        return False
+        return name.strip().casefold() == _canonical_window_name(duration)
     return duration is None or duration == expected_duration
 
 
@@ -506,6 +506,16 @@ def _window_identity_key(window: Any) -> int | None:
     if not isinstance(name, str):
         return None
     return WINDOW_NAME_DURATIONS.get(name.strip().casefold())
+
+
+def _canonical_window_name(duration: int | None) -> str:
+    if duration is None:
+        return ""
+    if duration % 86_400 == 0:
+        return f"{duration // 86_400}d"
+    if duration % 3_600 == 0:
+        return f"{duration // 3_600}h"
+    return f"{duration}s"
 
 
 def _valid_remaining_percent(value: Any) -> bool:
