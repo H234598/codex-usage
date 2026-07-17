@@ -394,6 +394,15 @@ def _remaining_percent(window: LimitWindow) -> float | None:
     if window.limit is not None and float(window.limit) <= 0:
         return None
     if (
+        window.limit is None
+        and _is_finite_number(window.remaining)
+        and _is_finite_number(window.percent)
+    ):
+        remaining_value = float(window.remaining)
+        percent_value = float(window.percent)
+        if 0 <= remaining_value <= 100 and abs(remaining_value - percent_value) >= 0.01:
+            return None
+    if (
         _is_finite_number(window.used)
         and _is_finite_number(window.limit)
     ):

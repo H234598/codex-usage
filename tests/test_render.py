@@ -302,6 +302,23 @@ def test_render_prefers_percent_when_remaining_has_no_absolute_limit():
     assert "690% verbleibend" not in rendered
 
 
+def test_render_fails_closed_for_conflicting_remaining_and_percent_without_limit():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=55, percent=97),
+    )
+
+    rendered = render_table([usage])
+
+    assert _remaining_percent(usage.five_hour) is None
+    assert "97% verbleibend" not in rendered
+    assert "55% verbleibend" not in rendered
+
+
 def test_render_rejects_denominatorless_absolute_remaining():
     usage = AccountUsage(
         account_id="privat",
