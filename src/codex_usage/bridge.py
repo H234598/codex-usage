@@ -34,7 +34,7 @@ from .identity import (
     select_identity_consistent_candidates,
 )
 from .json_utils import loads_strict
-from .models import Account, AccountStatus, AccountUsage
+from .models import Account, AccountStatus, AccountUsage, UsagePool
 from .private_io import (
     assert_no_symlink_ancestors,
     private_path_lock,
@@ -211,6 +211,21 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         window is not None and window.has_usage_value
         for window in (five_hour, weekly)
     )
+    bridge_windows = tuple(
+        window
+        for window in (five_hour, weekly)
+        if window is not None
+    )
+    main = (
+        UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=bridge_windows,
+            availability_sources=("usage", "browser"),
+        )
+        if bridge_windows
+        else None
+    )
     source_urls = {_redact_url(payload.get("url"))}
     source_urls.update(_redact_url(candidate.url) for candidate in identity_candidates)
     source_urls.discard("")
@@ -220,6 +235,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         captured_at=captured_at,
         five_hour=five_hour,
         weekly=weekly,
+        main=main,
         status=status,
         error=error,
         source_urls=tuple(sorted(source_urls)),

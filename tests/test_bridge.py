@@ -35,6 +35,7 @@ from codex_usage.bridge import (
 )
 from codex_usage.config import AppConfig, add_or_update_account, save_config
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
+from codex_usage.routing import evaluate_routing
 from codex_usage.state import (
     load_current_usage,
     load_state_generation,
@@ -264,6 +265,15 @@ def test_usage_from_ingest_payload_extracts_visible_values():
     assert usage.five_hour.used == 42
     assert usage.weekly is not None
     assert usage.weekly.limit == 1000
+    assert usage.main is not None
+    assert usage.main.availability_sources == ("usage", "browser")
+    decision = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=datetime(2026, 6, 8, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+    assert decision["decision"] == "main"
 
 
 def test_usage_from_ingest_payload_reports_empty_text_context():
