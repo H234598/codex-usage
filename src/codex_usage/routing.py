@@ -281,6 +281,7 @@ def _main_state(
         or not _pool_flags_are_valid(pool)
         or pool.key != "main"
         or not pool.available
+        or not _pool_has_usage_evidence(pool)
         or not isinstance(pool.windows, tuple)
         or not pool.windows
         or any(not isinstance(window, LimitWindow) for window in pool.windows)

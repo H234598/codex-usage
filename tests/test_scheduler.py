@@ -3604,8 +3604,21 @@ def test_watchdog_rejects_ok_usage_without_core_limits(main):
     assert rejected.stale is True
 
 
-@pytest.mark.parametrize("available, expected", [(True, True), (False, False)])
-def test_watch_cycle_health_validates_dynamic_main_pool(available, expected):
+@pytest.mark.parametrize(
+    "available, availability_sources, expected",
+    [
+        (True, ("usage",), True),
+        (True, ("usage", "model_catalog"), True),
+        (True, ("model_catalog",), False),
+        (True, (), False),
+        (False, ("usage",), False),
+    ],
+)
+def test_watch_cycle_health_requires_usage_provenance_for_main_pool(
+    available,
+    availability_sources,
+    expected,
+):
     account = Account(id="dynamic", label="Dynamic", profile_dir="/tmp/dynamic")
     usage = AccountUsage(
         account_id="dynamic",
@@ -3619,6 +3632,7 @@ def test_watch_cycle_health_validates_dynamic_main_pool(available, expected):
             display_name="Codex",
             available=available,
             windows=(LimitWindow(name="weekly", remaining=80),),
+            availability_sources=availability_sources,
         ),
     )
 
@@ -3638,6 +3652,7 @@ def test_watch_cycle_health_accepts_explicit_backend_override():
             key="main",
             display_name="Codex",
             windows=(LimitWindow(name="weekly", remaining=80),),
+            availability_sources=("usage",),
         ),
     )
 

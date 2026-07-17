@@ -7,6 +7,7 @@ import pytest
 
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.routing import (
+    MAIN_MODEL,
     effective_paid_overage,
     evaluate_routing,
     load_policy,
@@ -29,6 +30,7 @@ def _window(name: str, remaining: float, duration: int) -> LimitWindow:
 def _usage(
     *,
     main_windows: tuple[LimitWindow, ...] = (),
+    main_sources: tuple[str, ...] = ("usage",),
     spark: UsagePool | None = None,
     captured_at: datetime = NOW,
     stale: bool = False,
@@ -43,7 +45,7 @@ def _usage(
             key="main",
             display_name="Codex",
             windows=main_windows,
-            availability_sources=("usage",),
+            availability_sources=main_sources,
         )
         if main_windows
         else None,
@@ -128,6 +130,38 @@ def test_routing_keeps_valid_spark_for_partial_main_usage():
     )
 
     assert result["decision"] == "spark"
+
+
+@pytest.mark.parametrize(
+    "availability_sources, expected_decision",
+    [
+        (("usage",), "main"),
+        (("usage", "model_catalog"), "main"),
+        (("model_catalog",), "blocked"),
+        ((), "blocked"),
+    ],
+)
+def test_routing_requires_usage_provenance_for_main_pool(
+    availability_sources: tuple[str, ...],
+    expected_decision: str,
+):
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("weekly", 80, 604800),),
+            main_sources=availability_sources,
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == expected_decision
+    if expected_decision == "blocked":
+        assert result["reason"] == "main_limit_unknown"
+        assert result["usage_state"] == "unknown"
+    else:
+        assert result["model"] == MAIN_MODEL
+        assert result["usage_state"] == "known"
 
 
 def test_routing_does_not_select_catalog_only_spark_without_usage():

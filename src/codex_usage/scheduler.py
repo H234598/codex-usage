@@ -31,6 +31,7 @@ from .extractor import LOCAL_TZ
 from .health import record_health_event
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
+from .routing import _pool_has_usage_evidence
 from .state import (
     APP_SERVER_FALLBACK_REASON_PREFIX,
     _backend_provenance_is_complete,
@@ -882,6 +883,8 @@ def _watch_cycle_is_healthy(
                     usage, configured_backend
                 )
             ):
+                return False
+            if usage.main is not None and not _pool_has_usage_evidence(usage.main):
                 return False
             if not _has_usable_core_usage(usage) or not _watch_core_resets_current(
                 usage
