@@ -3046,6 +3046,12 @@ def test_window_exhaustion_prefers_absolute_usage_over_conflicting_remaining():
     ) is True
 
 
+def test_window_exhaustion_interprets_remaining_against_absolute_limit():
+    assert _window_is_exhausted(
+        LimitWindow(name="weekly", limit=1000, remaining=101)
+    ) is False
+
+
 def test_window_exhaustion_treats_missing_usage_as_exhausted():
     assert _window_is_exhausted(LimitWindow(name="5h")) is True
 

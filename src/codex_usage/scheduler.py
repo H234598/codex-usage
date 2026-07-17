@@ -1346,6 +1346,10 @@ def _window_is_exhausted(window: Any) -> bool:
     if remaining is not None:
         if remaining < 0:
             return True
+        if limit is not None and limit > 0:
+            # A positive limit makes remaining an absolute counter, even when
+            # its value is greater than 100.
+            return remaining > limit or remaining <= 0
         if remaining <= 100:
             return remaining <= 0
         if percent is not None and 0 <= percent <= 100:
