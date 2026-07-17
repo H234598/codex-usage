@@ -11,7 +11,7 @@ from typing import Any
 
 from .config import default_state_dir
 from .json_utils import loads_strict
-from .models import AccountStatus, AccountUsage, UsagePool
+from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import (
     assert_no_symlink_ancestors,
     private_path_lock,
@@ -274,7 +274,9 @@ def _main_state(
         pool is None
         or not _pool_flags_are_valid(pool)
         or not pool.available
+        or not isinstance(pool.windows, tuple)
         or not pool.windows
+        or any(not isinstance(window, LimitWindow) for window in pool.windows)
     ):
         return "unknown", {}
     remaining: dict[str, float] = {}
@@ -359,7 +361,9 @@ def _spark_health_is_fresh(payload: dict[str, Any], *, now: datetime) -> bool:
 def _pool_usage_state(pool: UsagePool, *, now: datetime) -> str:
     if not _pool_flags_are_valid(pool):
         return "invalid"
-    if not pool.windows:
+    if not isinstance(pool.windows, tuple) or not pool.windows:
+        return "unknown"
+    if any(not isinstance(window, LimitWindow) for window in pool.windows):
         return "unknown"
     identities: set[int] = set()
     for window in pool.windows:

@@ -272,6 +272,23 @@ def test_routing_fails_closed_for_reset_too_far_in_future():
     assert result["reason"] == "main_limit_unknown"
 
 
+def test_routing_fails_closed_for_non_tuple_main_windows():
+    window = _window("weekly", 90, 604800)
+    usage = _usage(main_windows=(window,))
+    malformed_main = replace(usage.main, windows=[window])
+    usage = replace(usage, main=malformed_main)
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
 @pytest.mark.parametrize(
     "spark_health",
     [
