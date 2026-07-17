@@ -1016,8 +1016,7 @@ CodexUsageApplet.prototype = {
                 typeof payload.installed === "boolean" &&
                 typeof payload.enabled === "boolean" &&
                 typeof payload.active === "boolean" &&
-                (payload.service_result === undefined ||
-                    typeof payload.service_result === "string");
+                typeof payload.service_result === "string";
             this._serviceChecked = true;
             if (validStatus) {
                 this._serviceStatus = payload;
@@ -1072,10 +1071,7 @@ CodexUsageApplet.prototype = {
         ) {
             return false;
         }
-        if (
-            payload.service_result !== undefined &&
-            payload.service_result !== "success"
-        ) {
+        if (payload.service_result !== "success") {
             return false;
         }
         return Boolean(payload.installed && payload.enabled && payload.active);

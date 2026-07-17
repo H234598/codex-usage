@@ -1518,7 +1518,7 @@ test("service status recovery stops when timer setup enters safe mode", () => {
   });
   applet._baseCommandArgv = () => ["codex-usage"];
   applet._spawnAuxJson = (_argv, callback) => callback(
-    { installed: true, enabled: true, active: true },
+    { installed: true, enabled: true, active: true, service_result: "success" },
     null
   );
   let continuations = 0;
@@ -1535,7 +1535,7 @@ test("service enable does not invoke its continuation after timer setup fails", 
   });
   applet._baseCommandArgv = () => ["codex-usage"];
   applet._spawnAuxJson = (_argv, callback) => callback(
-    { installed: true, enabled: true, active: true },
+    { installed: true, enabled: true, active: true, service_result: "success" },
     null
   );
   let continuations = 0;
@@ -4304,10 +4304,10 @@ test("automatic service activation finishes before the next auxiliary request", 
   applet._spawnAuxJson = (argv, callback) => {
     calls.push(argv.slice(1).join(" "));
     if (argv.includes("status")) {
-      callback({ installed: true, enabled: false, active: false }, null);
+      callback({ installed: true, enabled: false, active: false, service_result: "success" }, null);
       return;
     }
-    callback({ installed: true, enabled: true, active: true }, null);
+    callback({ installed: true, enabled: true, active: true, service_result: "success" }, null);
   };
   applet._checkServiceStatus(() => calls.push("account overview"));
   assert.deepEqual(calls, [
@@ -4387,7 +4387,7 @@ test("a valid inactive service status retries after a previous activation", () =
   applet._spawnAuxJson = (argv, callback) => {
     calls.push(argv.slice(1).join(" "));
     if (argv.includes("status")) {
-      callback({ installed: true, enabled: false, active: false }, null);
+      callback({ installed: true, enabled: false, active: false, service_result: "success" }, null);
     }
   };
 
@@ -4436,7 +4436,7 @@ test("an active unmanaged timer is not treated as the poll owner", () => {
   applet._spawnAuxJson = (argv, callback) => {
     calls.push(argv.slice(1).join(" "));
     if (argv.includes("status")) {
-      callback({ installed: false, enabled: true, active: true }, null);
+      callback({ installed: false, enabled: true, active: true, service_result: "success" }, null);
     }
   };
 
@@ -4472,6 +4472,16 @@ test("malformed service status values do not become the poll owner", () => {
     "service status --format json",
     "service enable --format json",
   ]);
+});
+
+test("service status without successful result stays fail-closed", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._serviceStatusIsHealthy({
+    installed: true,
+    enabled: true,
+    active: true,
+  }), false);
 });
 
 test("service enable requires strict ownership booleans", () => {
@@ -4536,7 +4546,7 @@ test("stale service repair finishes before the auxiliary continuation", () => {
   applet._spawnAuxJson = (argv, callback) => {
     calls.push(argv.slice(1).join(" "));
     if (argv.includes("status")) {
-      callback({ installed: true, enabled: true, active: true }, null);
+      callback({ installed: true, enabled: true, active: true, service_result: "success" }, null);
     } else if (argv.includes("enable")) {
       enableCallback = callback;
     }
@@ -4549,7 +4559,7 @@ test("stale service repair finishes before the auxiliary continuation", () => {
   ]);
   assert.equal(enableCallback !== null, true);
 
-  enableCallback({ installed: true, enabled: true, active: true }, null);
+  enableCallback({ installed: true, enabled: true, active: true, service_result: "success" }, null);
   assert.deepEqual(calls, [
     "service status --format json",
     "service enable --format json",
