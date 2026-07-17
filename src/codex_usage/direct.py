@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import errno
-import json
 import math
 import os
 import stat
@@ -1442,14 +1441,10 @@ def _jwt_claims(token: Any) -> dict[str, Any] | None:
     payload = parts[1] + "=" * (-len(parts[1]) % 4)
     try:
         decoded = base64.urlsafe_b64decode(payload.encode("ascii"))
-        claims = json.loads(decoded, parse_constant=_reject_json_constant)
-    except (ValueError, OSError, json.JSONDecodeError, UnicodeError):
+        claims = loads_strict(decoded)
+    except (ValueError, OSError, UnicodeError):
         return None
     return claims if isinstance(claims, dict) else None
-
-
-def _reject_json_constant(value: str) -> None:
-    raise ValueError(f"invalid JSON constant: {value}")
 
 
 def _is_access_token_expired(expiry: datetime | None, *, now: datetime) -> bool:

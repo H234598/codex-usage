@@ -43,6 +43,12 @@ def _jwt_with_claims(claims: dict) -> str:
     return f"{header}.{payload}.signature"
 
 
+def _jwt_with_raw_payload(payload: bytes) -> str:
+    header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
+    encoded_payload = base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+    return f"{header}.{encoded_payload}.signature"
+
+
 @pytest.mark.parametrize(
     "value",
     (
@@ -118,6 +124,12 @@ def test_jwt_claims_reject_extra_segments():
 def test_jwt_claims_reject_nonstandard_json_constants():
     payload = base64.urlsafe_b64encode(b'{"sub":NaN}').rstrip(b"=").decode("ascii")
     token = f"e30.{payload}.signature"
+
+    assert _current_jwt_claims(token) is None
+
+
+def test_jwt_claims_reject_duplicate_keys():
+    token = _jwt_with_raw_payload(b'{"sub":"first","sub":"second"}')
 
     assert _current_jwt_claims(token) is None
 
