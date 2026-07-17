@@ -171,6 +171,21 @@ def test_usage_pool_rejects_conflicting_window_identity(name, duration):
     assert pool.has_valid_usage is False
 
 
+def test_usage_pool_rejects_duplicate_window_identity_aliases():
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(
+            LimitWindow(name="weekly", remaining=97),
+            LimitWindow(name="w", remaining=90),
+        ),
+    )
+
+    assert pool.has_valid_usage is False
+    assert pool.exhausted is True
+    assert pool.window_for_duration(604800) is None
+
+
 def test_usage_pool_accepts_canonical_dynamic_window_identity():
     pool = UsagePool(
         key=SPARK_MODEL,

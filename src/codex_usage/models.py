@@ -42,6 +42,25 @@ def _canonical_window_name(duration: int) -> str:
     return f"{duration}s"
 
 
+def _window_identity_key(window: "LimitWindow") -> int | None:
+    if not isinstance(window, LimitWindow) or not window.has_known_identity:
+        return None
+    if window.duration_seconds is not None:
+        return window.duration_seconds
+    return _WINDOW_NAME_DURATIONS.get(window.name.strip().casefold())
+
+
+def _has_unique_window_identities(windows: tuple["LimitWindow", ...]) -> bool:
+    try:
+        identities = tuple(_window_identity_key(window) for window in windows)
+        return (
+            None not in identities
+            and len(set(identities)) == len(identities)
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 class AccountStatus(StrEnum):
     OK = "ok"
     LOGIN_REQUIRED = "login_required"
@@ -199,6 +218,7 @@ class UsagePool:
                     and window.has_usage_value
                     for window in self.windows
                 )
+                and _has_unique_window_identities(self.windows)
             )
         except (AttributeError, TypeError, ValueError):
             return False
@@ -229,6 +249,8 @@ class UsagePool:
             or self.limit_reached is True
         ):
             return True
+        if not _has_unique_window_identities(self.windows):
+            return True
         try:
             return any(
                 not isinstance(window, LimitWindow)
@@ -240,14 +262,12 @@ class UsagePool:
             return True
 
     def window_for_duration(self, duration_seconds: int) -> LimitWindow | None:
-        return next(
-            (
-                window
-                for window in self.windows
-                if window.duration_seconds == duration_seconds
-            ),
-            None,
+        matches = tuple(
+            window
+            for window in self.windows
+            if _window_identity_key(window) == duration_seconds
         )
+        return matches[0] if len(matches) == 1 else None
 
 
 @dataclass(frozen=True)

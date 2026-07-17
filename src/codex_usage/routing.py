@@ -220,10 +220,10 @@ def evaluate_routing(
     if spark is not None and spark.available:
         if spark_state == "invalid":
             spark_reason = "spark_usage_invalid"
+        elif spark_state != "known":
+            spark_reason = "spark_usage_unknown"
         elif not spark.exhausted:
-            if spark_state != "known":
-                spark_reason = "spark_usage_unknown"
-            elif spark_health_state == "failed":
+            if spark_health_state == "failed":
                 spark_reason = "spark_health_failed"
             elif (
                 spark_health_state == "healthy"
@@ -277,9 +277,12 @@ def _main_state(
     ):
         return "unknown", {}
     remaining: dict[str, float] = {}
+    identities: set[int] = set()
     for window in pool.windows:
-        if not _window_identity_is_known(window):
+        identity = _window_identity_key(window)
+        if identity is None or identity in identities:
             return "unknown", {}
+        identities.add(identity)
         if not _window_reset_is_current(window, now=now):
             return "unknown", {}
         if window.has_invalid_usage_value:
@@ -357,6 +360,12 @@ def _pool_usage_state(pool: UsagePool, *, now: datetime) -> str:
         return "invalid"
     if not pool.windows:
         return "unknown"
+    identities: set[int] = set()
+    for window in pool.windows:
+        identity = _window_identity_key(window)
+        if identity is None or identity in identities:
+            return "unknown"
+        identities.add(identity)
     if any(not _window_identity_is_known(window) for window in pool.windows):
         return "unknown"
     if any(not _window_reset_is_current(window, now=now) for window in pool.windows):
@@ -413,6 +422,18 @@ def _window_identity_is_known(window: Any) -> bool:
     if expected_duration is None:
         return False
     return duration is None or duration == expected_duration
+
+
+def _window_identity_key(window: Any) -> int | None:
+    if not _window_identity_is_known(window):
+        return None
+    duration = getattr(window, "duration_seconds", None)
+    if duration is not None:
+        return duration
+    name = getattr(window, "name", None)
+    if not isinstance(name, str):
+        return None
+    return WINDOW_NAME_DURATIONS.get(name.strip().casefold())
 
 
 def _valid_remaining_percent(value: Any) -> bool:

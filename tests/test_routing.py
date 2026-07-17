@@ -631,6 +631,21 @@ def test_routing_does_not_select_ambiguous_spark_pool():
     assert result["decision"] == "main"
 
 
+def test_routing_rejects_duplicate_main_window_identity():
+    low = _window("weekly", 5, 604800)
+    high = _window("w", 90, 604800)
+
+    result = evaluate_routing(
+        _usage(main_windows=(low, high)),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
 def test_routing_does_not_select_noncanonical_spark_pool():
     spark = UsagePool(
         key=SPARK_MODEL.upper(),
