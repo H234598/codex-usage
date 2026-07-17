@@ -261,6 +261,44 @@ def test_policy_commands_are_machine_readable_and_use_saved_usage(
     assert status["decisions"]["private"]["decision"] == "spark"
 
 
+def test_policy_evaluate_returns_failure_for_blocked_decision(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "private"]) == 0
+    capsys.readouterr()
+    save_current_usage(
+        AccountUsage(
+            account_id="private",
+            label="Private",
+            captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+            status=AccountStatus.OK,
+            main=UsagePool(
+                key="main",
+                display_name="Codex",
+                windows=(LimitWindow(name="weekly", remaining=5),),
+            ),
+            backend_configured="direct",
+            backend_used="direct",
+        )
+    )
+
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "policy",
+            "evaluate",
+            "private",
+            "--role",
+            "arbeitsbiene",
+        ]
+    ) == 2
+    decision = json.loads(capsys.readouterr().out)
+    assert decision["decision"] == "blocked"
+
+
 def test_policy_fails_closed_for_cached_backend_mismatch(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     config_path = tmp_path / "config.toml"
@@ -294,7 +332,7 @@ def test_policy_fails_closed_for_cached_backend_mismatch(tmp_path, monkeypatch, 
                 "arbeitsbiene",
             ]
         )
-        == 0
+        == 2
     )
     decision = json.loads(capsys.readouterr().out)
     assert decision["decision"] == "blocked"
@@ -333,7 +371,7 @@ def test_policy_fails_closed_for_invalid_cached_percent_with_remaining(
                 "arbeitsbiene",
             ]
         )
-        == 0
+        == 2
     )
     decision = json.loads(capsys.readouterr().out)
     assert decision["decision"] == "blocked"
@@ -395,7 +433,7 @@ def test_policy_does_not_relabel_identity_free_auth_cache(
                 "arbeitsbiene",
             ]
         )
-        == 0
+        == 2
     )
     decision = json.loads(capsys.readouterr().out)
     assert decision["decision"] == "blocked"

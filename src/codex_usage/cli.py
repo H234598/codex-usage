@@ -7,6 +7,7 @@ import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .bridge import (
@@ -702,7 +703,7 @@ def _cmd_policy_evaluate(args: argparse.Namespace) -> int:
         max_age_seconds=args.max_age,
     )
     print(json.dumps(result, ensure_ascii=True, sort_keys=True))
-    return 0
+    return _policy_decision_exit_code(result)
 
 
 def _cmd_policy_set(args: argparse.Namespace) -> int:
@@ -752,7 +753,19 @@ def _cmd_policy_status(args: argparse.Namespace) -> int:
             sort_keys=True,
         )
     )
-    return 0
+    return 0 if all(
+        _policy_decision_exit_code(decision) == 0
+        for decision in decisions.values()
+    ) else 2
+
+
+def _policy_decision_exit_code(result: dict[str, Any]) -> int:
+    return 0 if result.get("decision") in {
+        "spark",
+        "main",
+        "credits",
+        "unchanged",
+    } else 2
 
 
 def _cmd_spark_health(args: argparse.Namespace) -> int:
