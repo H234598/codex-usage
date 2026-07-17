@@ -1196,6 +1196,56 @@ def test_fetch_all_does_not_persist_explicit_backend_override(monkeypatch):
     assert saved_snapshots == []
 
 
+def test_watchdog_does_not_persist_explicit_backend_override(monkeypatch):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        backend="direct",
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        backend_configured="app-server",
+        backend_used="app-server",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+        five_hour=LimitWindow(name="five_hour", remaining=11),
+        weekly=LimitWindow(name="weekly", remaining=22),
+    )
+    saved_current = []
+    saved_snapshots = []
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_all",
+        lambda *args, **kwargs: [usage],
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_current_usage",
+        lambda selected: saved_current.append(selected.account_id),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_usage_snapshot",
+        lambda selected: saved_snapshots.append(selected.account_id),
+    )
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        backend_override="app-server",
+    )
+
+    assert result == [usage]
+    assert saved_current == []
+    assert saved_snapshots == []
+
+
 def test_authenticated_reset_fallback_is_applied_per_window():
     timezone = ZoneInfo("Europe/Berlin")
     previous = AccountUsage(
@@ -2038,6 +2088,8 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
         account_id="ok",
         label="OK",
         captured_at=now,
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(name="5h", remaining=97, reset_at=now),
         weekly=LimitWindow(name="weekly", remaining=55, reset_at=now),
     )
@@ -2718,6 +2770,8 @@ def test_watchdog_blocks_exhausted_usage_and_persists_state(monkeypatch):
         account_id="blocked",
         label="Blocked",
         captured_at=now,
+        backend_configured="direct",
+        backend_used="direct",
         five_hour=LimitWindow(
             name="5h",
             used=100,

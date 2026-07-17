@@ -1068,6 +1068,9 @@ def watchdog(
                 continue
             if account.id not in blocked_snapshots:
                 usage = _apply_watchdog_block(usage, now=evaluation_now)
+                if not backend_provenance_matches_configured(usage, account.backend):
+                    usages.append(usage)
+                    continue
                 try:
                     save_current_usage(usage)
                     if _should_persist_snapshot(usage):
