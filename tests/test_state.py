@@ -190,6 +190,28 @@ def test_usage_state_migrates_legacy_windows_to_main_pool():
     assert loaded.main.availability_sources == ("legacy_fields",)
 
 
+def test_usage_state_accepts_canonical_weekly_window_name():
+    loaded = usage_from_dict(
+        {
+            "account": "canonical-weekly",
+            "label": "Canonical weekly",
+            "captured_at": "2026-07-16T04:00:00+00:00",
+            "weekly": {
+                "name": "7d",
+                "duration_seconds": 604800,
+                "remaining": 90,
+            },
+            "status": "partial",
+            "stale": False,
+            "cache_invalidated": False,
+        }
+    )
+
+    assert loaded.weekly is not None
+    assert loaded.weekly.name == "7d"
+    assert loaded.weekly.remaining_percent == 90
+
+
 def test_usage_state_missing_control_metadata_is_stale():
     loaded = usage_from_dict(
         {

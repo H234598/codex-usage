@@ -1052,13 +1052,16 @@ def _window_matches_expected_kind(
 ) -> bool:
     if window is None or expected_kind is None:
         return True
+    if not window.has_known_identity:
+        return False
     kind = _window_kind(window)
     if kind is not None and kind != expected_kind:
         return False
     duration = _window_duration_seconds(window)
     name = getattr(window, "name", None)
     if kind is None and isinstance(name, str) and name.strip():
-        return False
+        expected_duration = WINDOW_DURATIONS.get(expected_kind)
+        return expected_duration is not None and duration == expected_duration
     if kind is None and duration is None:
         return False
     expected_duration = WINDOW_DURATIONS.get(expected_kind)
