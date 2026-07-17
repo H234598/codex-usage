@@ -304,8 +304,11 @@ class AccountUsage:
         )
 
     def as_dict(self) -> dict[str, Any]:
-        login_required = self.status == AccountStatus.LOGIN_REQUIRED
-        values_hidden = self.cache_invalidated or login_required
+        terminal_status = self.status in {
+            AccountStatus.ERROR,
+            AccountStatus.LOGIN_REQUIRED,
+        }
+        values_hidden = self.cache_invalidated or terminal_status
         return {
             "account": self.account_id,
             "label": self.label,
@@ -340,8 +343,8 @@ class AccountUsage:
             "values_captured_at": self.values_captured_at.isoformat()
             if self.values_captured_at and not values_hidden
             else None,
-            "stale": self.stale or login_required,
-            "cache_invalidated": self.cache_invalidated or login_required,
+            "stale": self.stale or terminal_status,
+            "cache_invalidated": self.cache_invalidated or terminal_status,
         }
 
     def model_pool(self, model: str) -> UsagePool | None:

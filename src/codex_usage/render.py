@@ -226,8 +226,12 @@ def _safe_usage_for_display(
             stale=True,
             cache_invalidated=True,
         )
-    if usage.status == AccountStatus.LOGIN_REQUIRED:
-        error = usage.error or "login required"
+    if usage.status in {AccountStatus.ERROR, AccountStatus.LOGIN_REQUIRED}:
+        error = usage.error or (
+            "login required"
+            if usage.status == AccountStatus.LOGIN_REQUIRED
+            else "usage error"
+        )
         return replace(
             usage,
             five_hour=None,
