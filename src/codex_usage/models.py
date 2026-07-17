@@ -42,7 +42,7 @@ def _canonical_window_name(duration: int) -> str:
     return f"{duration}s"
 
 
-def _window_identity_key(window: "LimitWindow") -> int | None:
+def _window_identity_key(window: LimitWindow) -> int | None:
     if not isinstance(window, LimitWindow) or not window.has_known_identity:
         return None
     if window.duration_seconds is not None:
@@ -50,7 +50,7 @@ def _window_identity_key(window: "LimitWindow") -> int | None:
     return _WINDOW_NAME_DURATIONS.get(window.name.strip().casefold())
 
 
-def _has_unique_window_identities(windows: tuple["LimitWindow", ...]) -> bool:
+def _has_unique_window_identities(windows: tuple[LimitWindow, ...]) -> bool:
     try:
         identities = tuple(_window_identity_key(window) for window in windows)
         return (
