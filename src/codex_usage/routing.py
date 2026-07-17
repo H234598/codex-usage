@@ -381,11 +381,15 @@ def _pool_usage_state(pool: UsagePool, *, now: datetime) -> str:
     if any(not isinstance(window, LimitWindow) for window in pool.windows):
         return "unknown"
     identities: set[int] = set()
+    names: set[str] = set()
     for window in pool.windows:
         identity = _window_identity_key(window)
         if identity is None or identity in identities:
             return "unknown"
         identities.add(identity)
+        if window.name in names:
+            return "unknown"
+        names.add(window.name)
     if any(not _window_identity_is_known(window) for window in pool.windows):
         return "unknown"
     if any(not _window_reset_is_current(window, now=now) for window in pool.windows):

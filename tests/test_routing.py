@@ -564,6 +564,36 @@ def test_routing_does_not_select_spark_for_unsupported_window_duration():
     assert result["reason"] == "spark_usage_unknown"
 
 
+def test_routing_does_not_select_spark_when_window_names_collide():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("weekly", 80, 604800),),
+            spark=UsagePool(
+                key=SPARK_MODEL,
+                display_name="Spark",
+                windows=(
+                    _window("", 99, 18000),
+                    _window("", 88, 604800),
+                ),
+                available=True,
+                availability_sources=("usage",),
+            ),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "test",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_usage_unknown"
+
+
 def test_routing_blocks_at_exact_threshold_without_paid_override():
     result = evaluate_routing(
         _usage(
