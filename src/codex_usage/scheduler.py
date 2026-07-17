@@ -1283,7 +1283,8 @@ def _pool_forces_watchdog_block(pool: Any) -> bool:
         return False
     try:
         return bool(
-            pool.allowed is False
+            pool.available is not True
+            or pool.allowed is False
             or pool.limit_reached is True
             or (
                 pool.allowed is not None
