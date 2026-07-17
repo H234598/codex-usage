@@ -3069,6 +3069,32 @@ def test_watchdog_blocks_exhausted_window_without_usable_reset_time():
     assert blocked.blocked_reason == "usage limit reached: 5h; reset time unknown"
 
 
+@pytest.mark.parametrize("window_name", [None, 1, ""])
+def test_watchdog_malformed_window_name_fails_closed(window_name):
+    reset_at = datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="malformed",
+        label="Malformed",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name=window_name, remaining=0, reset_at=reset_at),),
+        ),
+    )
+
+    blocked = _apply_watchdog_block(
+        usage,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert blocked.status == AccountStatus.BLOCKED
+    assert blocked.blocked_until == reset_at
+    assert blocked.blocked_reason == (
+        "usage limit reached: unknown; release at 2099-06-08T06:50:00+02:00"
+    )
+
+
 @pytest.mark.parametrize("available, expected", [(True, True), (False, False)])
 def test_watch_cycle_health_validates_dynamic_main_pool(available, expected):
     account = Account(id="dynamic", label="Dynamic", profile_dir="/tmp/dynamic")

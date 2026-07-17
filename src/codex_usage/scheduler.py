@@ -1251,10 +1251,13 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
         except (AttributeError, OverflowError, TypeError, ValueError):
             reset_timezone = None
             reset_offset = None
+        window_name = getattr(window, "name", None)
+        if not isinstance(window_name, str) or not window_name.strip():
+            window_name = "unknown"
         if reset_timezone is None or reset_offset is None:
-            unknown_reset_names.append(window.name)
+            unknown_reset_names.append(window_name)
             continue
-        saturated_windows.append((reset_at, window.name))
+        saturated_windows.append((reset_at, window_name))
     if unknown_reset_names:
         names = ", ".join(unknown_reset_names)
         return None, f"usage limit reached: {names}; reset time unknown"
