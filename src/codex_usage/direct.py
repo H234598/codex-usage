@@ -986,7 +986,7 @@ def _spark_limit_signature(payload: dict[str, Any]) -> tuple | None:
     additional = payload.get("additional_rate_limits")
     if not isinstance(additional, list):
         return None
-    for item in additional[:100]:
+    for item in additional:
         if not isinstance(item, dict) or not _is_spark_limit_response(
             item.get("limit_name"), item.get("metered_feature")
         ):

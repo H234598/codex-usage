@@ -299,6 +299,45 @@ def test_wham_keeps_main_and_spark_weekly_limits_separate():
     assert models[0].exhausted is False
 
 
+@pytest.mark.parametrize("spark_index", [100, 101])
+def test_wham_recognizes_spark_entries_past_first_hundred_items(spark_index):
+    additional_rate_limits = [
+        {
+            "limit_name": "not-spark",
+            "metered_feature": "other-feature",
+            "rate_limit": {"primary_window": {"used_percent": 1}},
+        }
+        for _ in range(spark_index)
+    ]
+    additional_rate_limits.append(
+        {
+            "limit_name": "GPT-5.3-Codex-Spark",
+            "metered_feature": "codex_bengalfox",
+            "rate_limit": {
+                "allowed": True,
+                "limit_reached": False,
+                "primary_window": {
+                    "used_percent": 1,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 900,
+                },
+            },
+        }
+    )
+
+    main, models = parse_wham_usage_pools(
+        {"additional_rate_limits": additional_rate_limits},
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert main is None
+    assert len(models) == 1
+    assert models[0].key == SPARK_MODEL
+    assert models[0].windows[0].remaining == 99
+    assert models[0].allowed is True
+
+
 def test_wham_supports_30_day_main_window_without_inventing_5h_or_weekly():
     main, models = parse_wham_usage_pools(
         {

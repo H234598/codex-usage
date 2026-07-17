@@ -35,7 +35,7 @@ def parse_wham_usage_pools(
     invalid_spark_entry = False
     additional = payload.get("additional_rate_limits")
     if isinstance(additional, list):
-        for item in additional[:100]:
+        for item in additional:
             if not isinstance(item, dict) or not _is_spark_limit(
                 item.get("limit_name"), item.get("metered_feature")
             ):
