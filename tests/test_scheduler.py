@@ -3030,6 +3030,11 @@ def test_scheduler_remaining_percent_prefers_percent_without_denominator():
     assert _remaining_percent(LimitWindow(name="5h", remaining=690)) is None
 
 
+def test_scheduler_remaining_percent_rejects_conflicting_denominatorless_values():
+    assert _remaining_percent(LimitWindow(name="5h", remaining=50, percent=50)) == 50
+    assert _remaining_percent(LimitWindow(name="5h", remaining=50, percent=90)) is None
+
+
 def test_window_exhaustion_prefers_remaining_over_usage_percent():
     from codex_usage.scheduler import _window_is_exhausted
 

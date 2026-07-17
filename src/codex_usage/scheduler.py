@@ -712,6 +712,8 @@ def _remaining_percent(window) -> float | None:
             remaining = remaining_value * 100 / limit
             return _valid_percent(remaining)
         if percent is not None:
+            if 0 <= remaining_value <= 100 and abs(remaining_value - percent) >= 0.01:
+                return None
             return _valid_percent(percent)
         if not 0 <= remaining_value <= 100:
             return None
