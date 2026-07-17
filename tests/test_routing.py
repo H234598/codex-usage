@@ -382,6 +382,52 @@ def test_routing_fails_closed_for_expired_limit_reset():
     assert result["reason"] == "main_limit_unknown"
 
 
+def test_routing_fails_closed_for_resetless_window_after_duration():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("5h", 80, 18000),),
+            captured_at=NOW - timedelta(hours=6),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        max_age_seconds=86_400,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "usage_stale"
+
+
+def test_routing_fails_closed_for_expired_resetless_spark_window():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("5h", 99, 18000),),
+        available=True,
+        availability_sources=("usage",),
+    )
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("30d", 80, 2_592_000),),
+            spark=spark,
+            captured_at=NOW - timedelta(hours=6),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        max_age_seconds=86_400,
+        spark_health={
+            "state": "healthy",
+            "reason": "test",
+            "checked_at": NOW.isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "usage_stale"
+
+
 def test_routing_fails_closed_for_reset_too_far_in_future():
     future = replace(
         _window("weekly", 99, 604800),

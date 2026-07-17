@@ -355,7 +355,48 @@ def _invalid_usage_reason(
         return "usage_timestamp_in_future"
     if age > max_age_seconds:
         return "usage_too_old"
+    if _has_expired_resetless_usage_window(
+        usage,
+        captured_at=captured_at,
+        now=now,
+    ):
+        return "usage_stale"
     return None
+
+
+def _has_expired_resetless_usage_window(
+    usage: AccountUsage,
+    *,
+    captured_at: datetime,
+    now: datetime,
+) -> bool:
+    try:
+        elapsed = (
+            now.astimezone(UTC) - captured_at.astimezone(UTC)
+        ).total_seconds()
+        pools = [usage.main]
+        if isinstance(usage.models, tuple):
+            pools.extend(usage.models)
+        for pool in pools:
+            if not isinstance(pool, UsagePool) or not isinstance(pool.windows, tuple):
+                continue
+            for window in pool.windows:
+                if (
+                    not isinstance(window, LimitWindow)
+                    or window.reset_at is not None
+                    or window.source
+                    in {
+                        "inferred:inactive-five-hour:direct",
+                        "inferred:inactive-five-hour:app-server",
+                    }
+                ):
+                    continue
+                duration = _window_identity_key(window)
+                if duration is not None and elapsed >= duration:
+                    return True
+    except (AttributeError, OverflowError, TypeError, ValueError):
+        return False
+    return False
 
 
 def _spark_health_is_fresh(payload: dict[str, Any], *, now: datetime) -> bool:
