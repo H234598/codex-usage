@@ -480,13 +480,15 @@ def _window_reset_is_current(window: Any, *, now: datetime) -> bool:
 def _window_identity_is_known(window: Any) -> bool:
     duration = getattr(window, "duration_seconds", None)
     name = getattr(window, "name", None)
+    if not isinstance(name, str):
+        return False
     if duration is not None and (
         not isinstance(duration, int)
         or isinstance(duration, bool)
         or duration not in SUPPORTED_WINDOW_SECONDS
     ):
         return False
-    if not isinstance(name, str) or not name.strip():
+    if not name.strip():
         return duration in SUPPORTED_WINDOW_SECONDS
     expected_duration = WINDOW_NAME_DURATIONS.get(name.strip().casefold())
     if expected_duration is None:

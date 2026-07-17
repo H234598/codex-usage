@@ -883,6 +883,26 @@ def test_routing_rejects_colliding_main_window_names():
     assert result["reason"] == "main_limit_unknown"
 
 
+def test_routing_rejects_non_string_window_name_with_duration():
+    result = evaluate_routing(
+        _usage(
+            main_windows=(
+                LimitWindow(
+                    name=None,
+                    remaining=90,
+                    duration_seconds=604800,
+                ),
+            ),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
 def test_routing_does_not_select_noncanonical_spark_pool():
     spark = UsagePool(
         key=SPARK_MODEL.upper(),
