@@ -277,7 +277,7 @@ def _main_state(
     now: datetime,
 ) -> tuple[str, dict[str, float]]:
     if (
-        pool is None
+        not isinstance(pool, UsagePool)
         or not _pool_flags_are_valid(pool)
         or pool.key != "main"
         or not pool.available
@@ -374,7 +374,7 @@ def _spark_health_is_fresh(payload: dict[str, Any], *, now: datetime) -> bool:
 
 
 def _pool_usage_state(pool: UsagePool, *, now: datetime) -> str:
-    if not _pool_flags_are_valid(pool):
+    if not isinstance(pool, UsagePool) or not _pool_flags_are_valid(pool):
         return "invalid"
     if not isinstance(pool.windows, tuple) or not pool.windows:
         return "unknown"

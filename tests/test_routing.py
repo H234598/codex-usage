@@ -382,6 +382,21 @@ def test_routing_fails_closed_for_non_tuple_main_windows():
     assert result["reason"] == "main_limit_unknown"
 
 
+def test_routing_fails_closed_for_malformed_main_pool():
+    result = evaluate_routing(
+        replace(
+            _usage(main_windows=(_window("weekly", 90, 604800),)),
+            main=object(),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "main_limit_unknown"
+
+
 def test_routing_fails_closed_for_noncanonical_main_pool_key():
     usage = _usage(main_windows=(_window("weekly", 90, 604800),))
     malformed_main = replace(usage.main, key=SPARK_MODEL)
