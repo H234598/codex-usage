@@ -1098,6 +1098,8 @@ def _window_duration_matches(
 
 
 def _window_kind(window: LimitWindow | None) -> str | None:
+    if window is None or not window.has_known_identity:
+        return None
     name = getattr(window, "name", None)
     if not isinstance(name, str):
         return None
@@ -1105,6 +1107,11 @@ def _window_kind(window: LimitWindow | None) -> str | None:
     if normalized in {"5h", "5_hour", "five_hour"}:
         return "five_hour"
     if normalized in {"w", "week", "weekly"}:
+        return "weekly"
+    duration = _window_duration_seconds(window)
+    if duration == WINDOW_DURATIONS["five_hour"]:
+        return "five_hour"
+    if duration == WINDOW_DURATIONS["weekly"]:
         return "weekly"
     return None
 

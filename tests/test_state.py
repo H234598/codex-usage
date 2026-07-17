@@ -14,6 +14,7 @@ from codex_usage.state import (
     _localize_datetime,
     _snapshot_datetime,
     _window_duration_seconds,
+    _window_duration_matches,
     backend_provenance_matches,
     backend_provenance_matches_configured,
     expire_reset_windows,
@@ -210,6 +211,17 @@ def test_usage_state_accepts_canonical_weekly_window_name():
     assert loaded.weekly is not None
     assert loaded.weekly.name == "7d"
     assert loaded.weekly.remaining_percent == 90
+
+
+def test_state_merge_matches_canonical_weekly_window_identity():
+    current = LimitWindow(
+        name="7d",
+        duration_seconds=604800,
+        reset_at=datetime(2026, 7, 17, 4, 0, tzinfo=UTC),
+    )
+    previous = LimitWindow(name="weekly", remaining=55)
+
+    assert _window_duration_matches(current, previous) is True
 
 
 def test_usage_state_missing_control_metadata_is_stale():
