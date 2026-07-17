@@ -262,6 +262,12 @@ def _read_rate_limits(
             if expected_plan_type and server_plan_type is not None:
                 if (
                     not isinstance(server_plan_type, str)
+                    or not server_plan_type
+                    or len(server_plan_type) > 64
+                    or any(
+                        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+                        for char in server_plan_type
+                    )
                     or _normalized_plan_type(server_plan_type)
                     != _normalized_plan_type(expected_plan_type)
                 ):
@@ -272,7 +278,7 @@ def _read_rate_limits(
             if expected_email and server_email is not None:
                 if (
                     not isinstance(server_email, str)
-                    or server_email.strip().casefold() != expected_email.strip().casefold()
+                    or server_email.casefold() != expected_email.casefold()
                 ):
                     raise AppServerAuthError(
                         "Codex app server email differs from auth.json"
@@ -325,7 +331,7 @@ def _read_rate_limits(
 def _auth_email_changed(before: str | None, after: str | None) -> bool:
     if before is None or after is None:
         return before != after
-    return before.strip().casefold() != after.strip().casefold()
+    return before.casefold() != after.casefold()
 
 
 def _request_rate_limits(

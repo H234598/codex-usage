@@ -1007,16 +1007,23 @@ def _spark_limit_signature(payload: dict[str, Any]) -> tuple | None:
 
 
 def _is_spark_limit_response(name: Any, metered_feature: Any) -> bool:
-    normalized_name = name.strip().casefold() if isinstance(name, str) else ""
-    normalized_feature = (
-        metered_feature.strip().casefold()
-        if isinstance(metered_feature, str)
-        else ""
-    )
+    normalized_name = _normalized_response_identifier(name)
+    normalized_feature = _normalized_response_identifier(metered_feature)
     return (
         normalized_name == SPARK_MODEL.casefold()
         or normalized_feature == SPARK_METERED_FEATURE.casefold()
     )
+
+
+def _normalized_response_identifier(value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+    if any(
+        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in value
+    ):
+        return ""
+    return value.casefold()
 
 
 def _signature_flag(value: Any) -> bool | None | tuple[str, str, str]:

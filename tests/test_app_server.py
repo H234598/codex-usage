@@ -423,7 +423,8 @@ def test_app_server_rejects_nonstandard_auth_json_filename(tmp_path):
     assert usage.error == "app-server requires auth_json_path filename auth.json"
 
 
-def test_app_server_rejects_server_plan_mismatch(tmp_path):
+@pytest.mark.parametrize("account_plan_type", ["enterprise", " free "])
+def test_app_server_rejects_server_plan_mismatch(tmp_path, account_plan_type):
     auth_home = tmp_path / "codex-home"
     auth_home.mkdir()
     auth_path = auth_home / "auth.json"
@@ -431,7 +432,7 @@ def test_app_server_rejects_server_plan_mismatch(tmp_path):
     command = _fake_codex(
         tmp_path / "codex",
         tmp_path / "requests.json",
-        account_plan_type="enterprise",
+        account_plan_type=account_plan_type,
     )
     account = Account(
         id="work",
@@ -447,7 +448,8 @@ def test_app_server_rejects_server_plan_mismatch(tmp_path):
     assert usage.error == "Codex app server plan type differs from auth.json"
 
 
-def test_app_server_rejects_server_email_mismatch(tmp_path):
+@pytest.mark.parametrize("account_email", ["other@example.com", " expected@example.com"])
+def test_app_server_rejects_server_email_mismatch(tmp_path, account_email):
     auth_home = tmp_path / "codex-home"
     auth_home.mkdir()
     auth_path = auth_home / "auth.json"
@@ -459,7 +461,7 @@ def test_app_server_rejects_server_email_mismatch(tmp_path):
     command = _fake_codex(
         tmp_path / "codex",
         tmp_path / "requests.json",
-        account_email="other@example.com",
+        account_email=account_email,
     )
     account = Account(
         id="work",
@@ -1168,6 +1170,8 @@ def test_refresh_window_is_fifteen_minutes():
         ("user@example.test", None, True),
         (None, "user@example.test", True),
         ("user@example.test", "user@example.test", False),
+        ("user@example.test", " user@example.test", True),
+        ("user@example.test", "user@example.test ", True),
         ("user@example.test", "other@example.test", True),
     ],
 )

@@ -16,6 +16,7 @@ from codex_usage.direct import (
     _fetch_stable_wham_usage,
     _fetch_wham_usage,
     _is_identity_attribution_error,
+    _is_spark_limit_response,
     _jwt_expiry,
     _select_stable_wham_usage,
     _signature_number,
@@ -749,6 +750,25 @@ def test_select_stable_wham_ignores_non_string_spark_identifiers(field, value):
     selected = _select_stable_wham_usage([response, response, response])
 
     assert selected["additional_rate_limits"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("limit_name", " GPT-5.3-Codex-Spark"),
+        ("metered_feature", "codex_bengalfox "),
+    ],
+)
+def test_spark_response_identifier_is_not_normalized(field, value):
+    values = {
+        "limit_name": "unrelated",
+        "metered_feature": "unrelated",
+    }
+    values[field] = value
+
+    assert _is_spark_limit_response(
+        values["limit_name"], values["metered_feature"]
+    ) is False
 
 
 @pytest.mark.parametrize("field", ["allowed", "limit_reached"])
