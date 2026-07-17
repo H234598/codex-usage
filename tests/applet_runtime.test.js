@@ -491,6 +491,28 @@ test("malformed pool source invalidates whole pool", () => {
   }, "main"), /invalid availability sources/);
 });
 
+test("window sources are not normalized into trusted provenance", () => {
+  const applet = makeApplet();
+
+  assert.throws(() => applet._safeWindow({
+    name: "5h",
+    remaining: 100,
+    source: " inferred:inactive-five-hour:direct",
+  }));
+  assert.equal(
+    applet._isInferredInactiveFiveHour({
+      source: "inferred:inactive-five-hour:unknown",
+    }),
+    false
+  );
+  assert.equal(
+    applet._isInferredInactiveFiveHour({
+      source: "inferred:inactive-five-hour:direct:extra",
+    }),
+    false
+  );
+});
+
 test("pool identities are not normalized into trusted keys", () => {
   const applet = makeApplet();
 

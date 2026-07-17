@@ -2770,7 +2770,7 @@ CodexUsageApplet.prototype = {
             percent: percent,
             reset_at: this._strictText(value.reset_at, 80),
             raw: this._safeText(value.raw, 500),
-            source: this._safeText(value.source, 120)
+            source: this._strictText(value.source, 120)
         };
     },
 
@@ -2808,7 +2808,11 @@ CodexUsageApplet.prototype = {
         let sources = value.availability_sources;
         if (!Array.isArray(sources) || sources.length > MAX_POOL_WINDOWS ||
             sources.some(Lang.bind(this, function(source) {
-                return typeof source !== "string" || !this._safeText(source, 120);
+                try {
+                    return !this._strictText(source, 120);
+                } catch (e) {
+                    return true;
+                }
             }))) {
             throw new Error("invalid availability sources");
         }
@@ -2854,7 +2858,7 @@ CodexUsageApplet.prototype = {
             limit_reached: limitReached,
             metered_feature: this._safeText(value.metered_feature, 120),
             availability_sources: sources.map(Lang.bind(this, function(source) {
-                return this._safeText(source, 120);
+                return this._strictText(source, 120);
             })).filter(function(source) { return Boolean(source); }),
             exhausted: exhaustedValid && typeof value.exhausted === "boolean"
                 ? value.exhausted
@@ -3449,8 +3453,11 @@ CodexUsageApplet.prototype = {
     },
 
     _isInferredInactiveFiveHour: function(window) {
-        let source = this._safeText(window && window.source, 120);
-        return source.indexOf("inferred:inactive-five-hour") === 0;
+        let source = this._strictText(window && window.source, 120);
+        return [
+            "inferred:inactive-five-hour:direct",
+            "inferred:inactive-five-hour:app-server"
+        ].indexOf(source) !== -1;
     },
 
     _windowDurationSeconds: function(window) {

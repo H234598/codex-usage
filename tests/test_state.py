@@ -10,6 +10,7 @@ import pytest
 
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.state import (
+    _is_inferred_inactive_five_hour,
     _localize_datetime,
     _snapshot_datetime,
     _window_duration_seconds,
@@ -1765,6 +1766,37 @@ def test_load_usage_snapshot_rejects_non_string_reset_timestamp(tmp_path, value)
     _write_trusted_snapshot(tmp_path / "invalid-reset-type.json", payload)
 
     assert load_usage_snapshot("invalid-reset-type", tmp_path) is None
+
+
+def test_load_usage_snapshot_rejects_normalized_window_source(tmp_path):
+    payload = {
+        "account": "invalid-window-source",
+        "label": "Invalid window source",
+        "captured_at": "2026-07-13T18:00:00+02:00",
+        "status": "ok",
+        "stale": False,
+        "cache_invalidated": False,
+        "backend_configured": "direct",
+        "backend_used": "direct",
+        "five_hour": {
+            "name": "5h",
+            "remaining": 100,
+            "source": " inferred:inactive-five-hour:direct",
+        },
+    }
+    _write_trusted_snapshot(tmp_path / "invalid-window-source.json", payload)
+
+    assert load_usage_snapshot("invalid-window-source", tmp_path) is None
+
+
+def test_inferred_inactive_five_hour_marker_requires_known_backend():
+    window = LimitWindow(
+        name="5h",
+        remaining=100,
+        source="inferred:inactive-five-hour:unknown",
+    )
+
+    assert _is_inferred_inactive_five_hour(window) is False
 
 
 @pytest.mark.parametrize(

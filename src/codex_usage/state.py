@@ -42,6 +42,12 @@ KNOWN_FALLBACK_REASONS = frozenset(
     )
 )
 INFERRED_INACTIVE_FIVE_HOUR_SOURCE = "inferred:inactive-five-hour"
+KNOWN_INFERRED_INACTIVE_FIVE_HOUR_SOURCES = frozenset(
+    (
+        f"{INFERRED_INACTIVE_FIVE_HOUR_SOURCE}:direct",
+        f"{INFERRED_INACTIVE_FIVE_HOUR_SOURCE}:app-server",
+    )
+)
 
 
 def backend_provenance_matches_configured(
@@ -1066,7 +1072,7 @@ def _is_inferred_inactive_five_hour(window: LimitWindow | None) -> bool:
     return bool(
         window is not None
         and isinstance(window.source, str)
-        and window.source.startswith(INFERRED_INACTIVE_FIVE_HOUR_SOURCE)
+        and window.source in KNOWN_INFERRED_INACTIVE_FIVE_HOUR_SOURCES
     )
 
 
@@ -1224,6 +1230,13 @@ def _window_from_dict(
         if raw_reset_at is None or raw_reset_at == ""
         else _snapshot_datetime(raw_reset_at)
     )
+    raw_source = payload.get("source")
+    if raw_source is None or raw_source == "":
+        source = "unknown"
+    else:
+        source = _optional_snapshot_identity(raw_source, limit=120)
+        if source is None:
+            raise ValueError("snapshot window source is invalid")
     window = LimitWindow(
         name=_snapshot_window_name(payload.get("name")),
         used=_optional_float(payload.get("used")),
@@ -1232,9 +1245,7 @@ def _window_from_dict(
         percent=_optional_float(payload.get("percent")),
         reset_at=reset_at,
         raw=_optional_snapshot_text(payload.get("raw"), limit=MAX_SNAPSHOT_TEXT),
-        source=_snapshot_text_or_default(
-            payload.get("source"), "unknown", limit=120
-        ),
+        source=source,
         duration_seconds=_snapshot_window_duration(raw_duration),
     )
     if any(
