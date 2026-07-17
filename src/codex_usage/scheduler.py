@@ -705,18 +705,11 @@ def _watch_cycle_is_healthy(
     results = list(usages)
     account_list = list(accounts)
     expected = tuple(account.id for account in account_list)
+    if _usage_map_for_accounts(results, account_list) is None:
+        return False
     if not expected:
         return True
-    if len(results) != len(expected):
-        return False
     try:
-        result_ids = tuple(usage.account_id for usage in results)
-        if len(set(result_ids)) != len(result_ids):
-            return False
-        if len(set(expected)) != len(expected):
-            return False
-        if set(result_ids) != set(expected):
-            return False
         accounts_by_id = {account.id: account for account in account_list}
         for usage in results:
             if (
@@ -741,6 +734,26 @@ def _watch_cycle_is_healthy(
     except (AttributeError, TypeError, ValueError):
         return False
     return True
+
+
+def _usage_map_for_accounts(
+    usages: Iterable[AccountUsage], accounts: Iterable[Account]
+) -> dict[str, AccountUsage] | None:
+    results = list(usages)
+    expected = tuple(account.id for account in accounts)
+    if len(results) != len(expected):
+        return None
+    try:
+        if not all(isinstance(usage, AccountUsage) for usage in results):
+            return None
+        result_ids = tuple(usage.account_id for usage in results)
+        if len(set(result_ids)) != len(result_ids):
+            return None
+        if len(set(expected)) != len(expected) or set(result_ids) != set(expected):
+            return None
+        return {usage.account_id: usage for usage in results}
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def _has_usable_core_usage(usage: AccountUsage) -> bool:
@@ -988,7 +1001,17 @@ def watchdog(
         for account in expired_blocked_accounts:
             blocked_snapshots.pop(account.id, None)
         evaluation_now = datetime.now(tz=LOCAL_TZ)
-    fetched_by_id = {usage.account_id: usage for usage in fetched}
+    fetched_accounts = tuple(
+        account for account in account_list if account.id not in blocked_snapshots
+    )
+    fetched_by_id = _usage_map_for_accounts(fetched, fetched_accounts)
+    if fetched_by_id is None:
+        failures = _watch_failure_usages(
+            fetched_accounts,
+            fetched,
+            error="watchdog fetch result identity mismatch",
+        )
+        fetched_by_id = {usage.account_id: usage for usage in failures}
 
     usages: list[AccountUsage] = []
     with account_lock("__all_accounts__"):

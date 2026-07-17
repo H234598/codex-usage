@@ -20,6 +20,7 @@ from codex_usage.scheduler import (
     _remaining_percent,
     _stabilize_authenticated_usage,
     _watch_cycle_is_healthy,
+    _usage_map_for_accounts,
     _window_duration_seconds,
     _window_is_exhausted,
     fetch_all,
@@ -2056,6 +2057,30 @@ def test_watchdog_refetches_block_with_inconsistent_limit_windows(monkeypatch):
     assert result == [fresh]
 
 
+def test_watchdog_replaces_identity_mismatch_with_fail_closed_error(monkeypatch):
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+    )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_all",
+        lambda *_args, **_kwargs: [usage, usage],
+    )
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda *_args: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda *_args: None)
+
+    result = watchdog(AppConfig(accounts=(account,)), (account,), output="json")
+
+    assert len(result) == 1
+    assert result[0].status is AccountStatus.ERROR
+    assert result[0].cache_invalidated is True
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+
+
 def test_watchdog_uses_dst_aware_local_timezone(monkeypatch):
     account = Account(id="account", label="Account", profile_dir="/tmp/account")
     local_tz = ZoneInfo("Europe/Berlin")
@@ -2931,6 +2956,18 @@ def test_watch_cycle_health_rejects_duplicate_usage_ids():
     )
 
     assert _watch_cycle_is_healthy([usage, usage], [account, account]) is False
+
+
+def test_usage_map_rejects_missing_or_duplicate_results():
+    account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
+    usage = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+    )
+
+    assert _usage_map_for_accounts([], [account]) is None
+    assert _usage_map_for_accounts([usage, usage], [account, account]) is None
 
 
 def test_watchdog_blocks_exhausted_dynamic_main_window():
