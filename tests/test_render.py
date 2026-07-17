@@ -11,6 +11,7 @@ from codex_usage.render import (
     _is_finite_number,
     _is_remaining_percent_window,
     _remaining_percent,
+    _safe_usage_for_display,
     _usage_value,
     render_account_values,
     render_json,
@@ -69,6 +70,23 @@ def test_render_hides_values_without_backend_provenance():
     assert "97% verbleibend" not in rendered
     assert "55% verbleibend" not in rendered
     assert "incomplete usage backend prov" in rendered
+
+
+def test_render_hides_values_for_invalid_expected_backend():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=97),
+    )
+
+    safe = _safe_usage_for_display(usage, expected_backend="")
+
+    assert safe.five_hour is None
+    assert safe.cache_invalidated is True
+    assert safe.stale is True
 
 
 def test_render_clears_login_required_values():

@@ -256,7 +256,11 @@ def _usage_provenance_is_displayable(
 ) -> bool:
     if usage.cache_invalidated:
         return False
-    configured_backend = expected_backend or usage.backend_configured
+    configured_backend = (
+        expected_backend
+        if expected_backend is not None
+        else usage.backend_configured
+    )
     if not isinstance(configured_backend, str) or not configured_backend:
         return False
     try:
