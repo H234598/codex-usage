@@ -983,9 +983,15 @@ def _main_limit_signature(payload: dict[str, Any]) -> tuple:
 
 
 def _spark_limit_signature(payload: dict[str, Any]) -> tuple | None:
-    additional = payload.get("additional_rate_limits")
+    if "additional_rate_limits" not in payload:
+        return ("missing",)
+    additional = payload["additional_rate_limits"]
+    if additional is None:
+        return ("null",)
     if not isinstance(additional, list):
         return None
+    if not additional:
+        return ("empty",)
     for item in additional:
         if not isinstance(item, dict) or not _is_spark_limit_response(
             item.get("limit_name"), item.get("metered_feature")
@@ -1002,7 +1008,7 @@ def _spark_limit_signature(payload: dict[str, Any]) -> tuple | None:
                 for key in ("primary_window", "secondary_window")
             ),
         )
-    return None
+    return ("present-no-spark",)
 
 
 def _is_spark_limit_response(name: Any, metered_feature: Any) -> bool:
