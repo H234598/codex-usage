@@ -5,7 +5,7 @@ import math
 import os
 import re
 import stat
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,7 @@ DECISION_SCHEMA_VERSION = 1
 MAIN_MODEL = "gpt-5.4-mini"
 MAIN_MINIMUM_REMAINING_PERCENT = 10.0
 DEFAULT_MAX_USAGE_AGE_SECONDS = 600
+MAX_RESET_FUTURE_SKEW_SECONDS = 5 * 60
 THIRTY_DAY_SECONDS = 30 * 24 * 60 * 60
 WINDOW_NAME_DURATIONS = {
     "5h": FIVE_HOUR_SECONDS,
@@ -402,7 +403,14 @@ def _window_reset_is_current(window: Any, *, now: datetime) -> bool:
     if not _aware_datetime(reset_at) or not _aware_datetime(now):
         return False
     try:
-        return reset_at.astimezone(UTC) > now.astimezone(UTC)
+        reset_utc = reset_at.astimezone(UTC)
+        now_utc = now.astimezone(UTC)
+        duration = _window_identity_key(window)
+        if duration is None:
+            return False
+        return now_utc < reset_utc <= now_utc + timedelta(
+            seconds=duration + MAX_RESET_FUTURE_SKEW_SECONDS
+        )
     except (AttributeError, OverflowError, TypeError, ValueError):
         return False
 
