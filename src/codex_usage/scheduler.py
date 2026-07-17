@@ -234,11 +234,15 @@ def _fetch_one(
 ) -> AccountUsage:
     backend: object = None
     try:
-        backend = "direct" if direct else (
+        effective_backend = "direct" if direct else (
             backend_override if backend_override is not None else account.backend
         )
-        if not isinstance(backend, str) or backend not in AUTHENTICATED_BACKENDS:
+        if (
+            not isinstance(effective_backend, str)
+            or effective_backend not in AUTHENTICATED_BACKENDS
+        ):
             raise ValueError("invalid backend selection")
+        backend = effective_backend
         use_auth_backend = (
             direct
             or backend == "app-server"
@@ -249,7 +253,12 @@ def _fetch_one(
             def fetch_authenticated() -> AccountUsage:
                 if backend == "app-server":
                     try:
-                        return fetch_account_usage_app_server(account)
+                        usage = fetch_account_usage_app_server(account)
+                        return replace(
+                            usage,
+                            backend_configured=effective_backend,
+                            backend_used="app-server",
+                        )
                     except AppServerUnavailableError as exc:
                         direct_kwargs = {"auth_json_path": auth_json_path}
                         if reject_ambiguous_backend_identity:
@@ -258,7 +267,7 @@ def _fetch_one(
                         fallback_detail = " ".join(str(exc).split())
                         return replace(
                             usage,
-                            backend_configured=account.backend,
+                            backend_configured=effective_backend,
                             backend_used="direct",
                             fallback_reason=(
                                 f"{APP_SERVER_FALLBACK_REASON_PREFIX}{fallback_detail}"
@@ -270,7 +279,7 @@ def _fetch_one(
                 usage = fetch_account_usage_direct(account, **direct_kwargs)
                 return replace(
                     usage,
-                    backend_configured=account.backend,
+                    backend_configured=effective_backend,
                     backend_used="direct",
                 )
             def fetch_with_account_lock() -> AccountUsage:
@@ -285,7 +294,7 @@ def _fetch_one(
             usage = fetch_account_usage(account, config, headed=headed)
             return replace(
                 usage,
-                backend_configured=account.backend,
+                backend_configured=effective_backend,
                 backend_used="browser",
             )
 
@@ -720,6 +729,9 @@ def _valid_percent(value: float | None) -> float | None:
 def _watch_cycle_is_healthy(
     usages: Iterable[AccountUsage],
     accounts: Iterable[Account],
+    *,
+    direct: bool = False,
+    backend_override: str | None = None,
 ) -> bool:
     results = list(usages)
     account_list = list(accounts)
@@ -740,10 +752,15 @@ def _watch_cycle_is_healthy(
             ):
                 return False
             account = accounts_by_id.get(usage.account_id)
+            configured_backend = "direct" if direct else backend_override
+            if configured_backend is None and account is not None:
+                configured_backend = account.backend
             if account is None or not (
-                usage.backend_configured == account.backend
+                usage.backend_configured == configured_backend
                 and usage.backend_used in AUTHENTICATED_BACKENDS | {"browser"}
-                and backend_provenance_matches_configured(usage, account.backend)
+                and backend_provenance_matches_configured(
+                    usage, configured_backend
+                )
             ):
                 return False
             if not _has_usable_core_usage(usage) or not _watch_core_resets_current(
@@ -894,7 +911,12 @@ def watch(
                     auth_json_path=auth_json_path,
                     save_snapshots=True,
                 )
-                if not _watch_cycle_is_healthy(usages, account_list):
+                if not _watch_cycle_is_healthy(
+                    usages,
+                    account_list,
+                    direct=direct,
+                    backend_override=backend_override,
+                ):
                     raise RuntimeError("watch cycle returned unusable usage")
                 if output == "json":
                     print(render_json(usages), flush=True)

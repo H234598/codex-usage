@@ -801,6 +801,7 @@ def test_configured_app_server_without_auth_does_not_silently_use_browser(monkey
         label=account.label,
         captured_at=datetime(2026, 6, 8, 4, 30, tzinfo=ZoneInfo("Europe/Berlin")),
         status=AccountStatus.LOGIN_REQUIRED,
+        backend_configured="app-server",
         backend_used="app-server",
     )
 
@@ -1190,6 +1191,7 @@ def test_fetch_all_does_not_persist_explicit_backend_override(monkeypatch):
     )
 
     assert result[0].backend_used == "app-server"
+    assert result[0].backend_configured == "app-server"
     assert saved_current == []
     assert saved_snapshots == []
 
@@ -2990,6 +2992,32 @@ def test_watch_cycle_health_validates_dynamic_main_pool(available, expected):
     )
 
     assert _watch_cycle_is_healthy([usage], [account]) is expected
+
+
+def test_watch_cycle_health_accepts_explicit_backend_override():
+    account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
+    usage = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        backend_configured="app-server",
+        backend_used="app-server",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="weekly", remaining=80),),
+        ),
+    )
+
+    assert (
+        _watch_cycle_is_healthy(
+            [usage],
+            [account],
+            backend_override="app-server",
+        )
+        is True
+    )
 
 
 def test_watch_cycle_health_rejects_missing_backend_provenance():
