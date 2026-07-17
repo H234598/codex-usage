@@ -3780,6 +3780,31 @@ def test_watch_cycle_health_accepts_explicit_backend_override():
     )
 
 
+def test_watch_cycle_health_accepts_browser_usage_pool():
+    account = Account(id="browser", label="Browser", profile_dir="/tmp/browser", backend="browser")
+    usage = AccountUsage(
+        account_id="browser",
+        label="Browser",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="user-1",
+        backend_account_id="account-1",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(name="5h", remaining=97),
+                LimitWindow(name="weekly", remaining=55),
+            ),
+            availability_sources=("usage", "browser"),
+        ),
+    )
+
+    assert _watch_cycle_is_healthy([usage], [account]) is True
+
+
 def test_watch_cycle_health_rejects_missing_backend_provenance():
     account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
     usage = AccountUsage(

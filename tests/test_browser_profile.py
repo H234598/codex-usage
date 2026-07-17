@@ -626,6 +626,8 @@ def test_fetch_fills_missing_window_from_confirmed_dom_usage(tmp_path, monkeypat
     assert usage.status == "ok"
     assert usage.five_hour is not None and usage.five_hour.remaining == 97
     assert usage.weekly is not None and usage.weekly.remaining == 55
+    assert usage.main is not None
+    assert usage.main.availability_sources == ("usage", "browser")
 
 
 def test_fetch_reads_rendered_html_progress_bars(tmp_path, monkeypatch):

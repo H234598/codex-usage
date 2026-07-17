@@ -33,7 +33,7 @@ from .identity import (
     select_identity_consistent_candidates,
 )
 from .json_utils import loads_strict
-from .models import Account, AccountStatus, AccountUsage, LimitWindow
+from .models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import (
     assert_no_symlink_ancestors,
 )
@@ -315,12 +315,28 @@ def fetch_account_usage(
         if cache_invalidated:
             five_hour = None
             weekly = None
+        browser_windows = tuple(
+            window
+            for window in (five_hour, weekly)
+            if window is not None
+        )
+        main = (
+            UsagePool(
+                key="main",
+                display_name="Codex",
+                windows=browser_windows,
+                availability_sources=("usage", "browser"),
+            )
+            if browser_windows
+            else None
+        )
         return AccountUsage(
             account_id=account.id,
             label=account.label,
             captured_at=captured_at,
             five_hour=five_hour,
             weekly=weekly,
+            main=main,
             status=status,
             error=error,
             source_urls=tuple(sorted(source_urls)),
