@@ -324,6 +324,41 @@ def test_wham_disables_pool_when_one_present_window_is_malformed():
     assert main.exhausted is True
 
 
+def test_wham_disables_pool_with_duplicate_window_identity():
+    main, _ = parse_wham_usage_pools(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 10,
+                    "limit_window_seconds": 604800,
+                },
+                "secondary_window": {
+                    "used_percent": 20,
+                    "limit_window_seconds": 604800,
+                },
+            }
+        },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.exhausted is True
+
+
+def test_wham_disables_control_only_pool():
+    main, _ = parse_wham_usage_pools(
+        {"rate_limit": {"allowed": True, "limit_reached": False}},
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.exhausted is True
+
+
 def test_wham_ignores_unrelated_additional_rate_limit():
     _, models = parse_wham_usage_pools(
         {
@@ -449,6 +484,20 @@ def test_model_catalog_cannot_reenable_disabled_usage_pool():
 def test_model_catalog_does_not_normalize_spark_identity():
     assert merge_model_catalog((), (f"{SPARK_MODEL} ",)) == ()
     assert merge_model_catalog((), (SPARK_MODEL.upper(),)) == ()
+
+
+@pytest.mark.parametrize(
+    "model_ids",
+    [None, 42.0, {SPARK_MODEL: True}, [SPARK_MODEL, 42]],
+)
+def test_app_server_ignores_malformed_model_catalog(model_ids):
+    _, models = parse_app_server_usage_pools(
+        {"rateLimits": {}},
+        captured_at=NOW,
+        model_ids=model_ids,
+    )
+
+    assert models == ()
 
 
 @pytest.mark.parametrize(
@@ -601,6 +650,37 @@ def test_app_server_disables_pool_when_one_present_window_is_malformed():
     assert main is not None
     assert main.available is False
     assert main.windows[0].name == "weekly"
+    assert main.exhausted is True
+
+
+def test_app_server_disables_pool_with_duplicate_window_identity():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 10, "windowDurationMins": 10080},
+                "secondary": {"usedPercent": 20, "windowDurationMins": 10080},
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.exhausted is True
+
+
+def test_app_server_disables_control_only_pool():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex": {"rateLimitReachedType": False},
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.available is False
     assert main.exhausted is True
 
 

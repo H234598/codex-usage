@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -164,7 +164,16 @@ def merge_model_catalog(
     pools: Iterable[UsagePool], model_ids: Iterable[str]
 ) -> tuple[UsagePool, ...]:
     result = list(pools)
-    spark_in_catalog = any(value == SPARK_MODEL for value in model_ids)
+    if isinstance(model_ids, (str, bytes, bytearray, Mapping)):
+        model_id_values: tuple[Any, ...] = ()
+    else:
+        try:
+            model_id_values = tuple(model_ids)
+        except (TypeError, ValueError):
+            model_id_values = ()
+    if any(not isinstance(value, str) for value in model_id_values):
+        model_id_values = ()
+    spark_in_catalog = SPARK_MODEL in model_id_values
     spark_index = next(
         (index for index, pool in enumerate(result) if pool.key == SPARK_MODEL),
         None,
@@ -225,6 +234,7 @@ def _wham_pool(
         raw is None or window is not None
         for raw, window in zip(raw_windows, parsed_windows, strict=True)
     )
+    window_identity_valid = bool(windows) and _window_identities_are_unique(windows)
     raw_allowed = rate_limit.get("allowed")
     raw_limit_reached = rate_limit.get("limit_reached")
     allowed = _optional_bool(raw_allowed)
@@ -243,7 +253,7 @@ def _wham_pool(
         key=key,
         display_name=display_name,
         windows=windows,
-        available=control_flags_valid and window_shape_valid,
+        available=control_flags_valid and window_shape_valid and window_identity_valid,
         allowed=allowed,
         limit_reached=limit_reached,
         metered_feature=metered_feature,
@@ -274,6 +284,7 @@ def _app_server_pool(
         raw is None or window is not None
         for raw, window in zip(raw_windows, parsed_windows, strict=True)
     )
+    window_identity_valid = bool(windows) and _window_identities_are_unique(windows)
     raw_limit_reached = snapshot.get("rateLimitReachedType")
     limit_reached = (
         raw_limit_reached
@@ -291,7 +302,7 @@ def _app_server_pool(
         key=key,
         display_name=display_name,
         windows=windows,
-        available=control_flag_valid and window_shape_valid,
+        available=control_flag_valid and window_shape_valid and window_identity_valid,
         limit_reached=limit_reached,
         metered_feature=metered_feature,
         availability_sources=("usage",),
@@ -369,6 +380,20 @@ def _window_name(duration: int | None) -> str:
     if duration % 3_600 == 0:
         return f"{duration // 3_600}h"
     return f"{duration}s"
+
+
+def _window_identities_are_unique(windows: tuple[LimitWindow, ...]) -> bool:
+    identities: list[tuple[str, Any]] = []
+    for window in windows:
+        if not isinstance(window, LimitWindow):
+            return False
+        if window.duration_seconds is not None:
+            identities.append(("duration", window.duration_seconds))
+        elif isinstance(window.name, str):
+            identities.append(("name", window.name.strip().casefold()))
+        else:
+            return False
+    return len(identities) == len(set(identities))
 
 
 def _reset_at(
