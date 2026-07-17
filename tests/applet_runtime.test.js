@@ -607,6 +607,26 @@ test("Spark pools with unknown window names cannot drive panel sources", () => {
   assert.equal(applet._poolIsUsable(conflicting), false);
 });
 
+test("duplicate window identity disables pool usage", () => {
+  const applet = makeApplet();
+  const pool = applet._safePool({
+    key: "gpt-5.3-codex-spark",
+    windows: [
+      { name: "weekly", remaining: 5 },
+      { name: "w", remaining: 90 }
+    ],
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    availability_sources: ["rate_limits"]
+  }, "gpt-5.3-codex-spark");
+
+  assert.equal(pool.available, false);
+  assert.equal(applet._poolIsUsable(pool), false);
+  assert.equal(applet._poolWindowForDuration(pool, 604800), null);
+});
+
 test("unusable Spark pools cannot drive panel sources", () => {
   const applet = makeApplet();
   for (const control of [

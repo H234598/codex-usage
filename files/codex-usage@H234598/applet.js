@@ -2900,6 +2900,7 @@ CodexUsageApplet.prototype = {
         let windows = value.windows.map(Lang.bind(this, function(window) {
             return this._safeWindow(window);
         }));
+        let duplicateWindowIdentities = this._hasDuplicateWindowIdentities(windows);
         if (typeof value.available !== "boolean") {
             throw new Error("invalid usage pool availability");
         }
@@ -2909,7 +2910,7 @@ CodexUsageApplet.prototype = {
         let limitReached = limitReachedValid && typeof value.limit_reached === "boolean"
             ? value.limit_reached
             : null;
-        let available = value.available && allowedValid && limitReachedValid &&
+        let available = value.available && !duplicateWindowIdentities && allowedValid && limitReachedValid &&
             exhaustedValid && typeof value.exhausted === "boolean";
         if (
             exhaustedValid &&
@@ -3584,6 +3585,7 @@ CodexUsageApplet.prototype = {
             return false;
         }
         if (!Array.isArray(pool.windows) || !pool.windows.length ||
+            !this._hasUniqueWindowIdentities(pool.windows) ||
             !pool.windows.every(Lang.bind(this, function(window) {
                 let value = this._remainingPercent(window);
                 return value !== null && value > 0 && this._windowIdentityIsKnown(window);
@@ -3639,16 +3641,76 @@ CodexUsageApplet.prototype = {
         ].indexOf(name) !== -1;
     },
 
+    _windowIdentityKey: function(window) {
+        if (!this._windowIdentityIsKnown(window)) {
+            return null;
+        }
+        let duration = this._windowDurationSeconds(window);
+        if (duration !== null) {
+            return duration;
+        }
+        let name = this._strictText(window && window.name, 40).toLowerCase();
+        let namedDuration = {
+            "5h": 18000,
+            "5_hour": 18000,
+            "five_hour": 18000,
+            "w": 604800,
+            "week": 604800,
+            "weekly": 604800,
+            "30d": 2592000,
+            "30_day": 2592000,
+            "month": 2592000,
+            "monthly": 2592000
+        };
+        return Object.prototype.hasOwnProperty.call(namedDuration, name)
+            ? namedDuration[name]
+            : null;
+    },
+
+    _hasUniqueWindowIdentities: function(windows) {
+        if (!Array.isArray(windows)) {
+            return false;
+        }
+        let seen = Object.create(null);
+        for (let i = 0; i < windows.length; i++) {
+            let identity = this._windowIdentityKey(windows[i]);
+            if (identity === null || Object.prototype.hasOwnProperty.call(seen, identity)) {
+                return false;
+            }
+            seen[identity] = true;
+        }
+        return true;
+    },
+
+    _hasDuplicateWindowIdentities: function(windows) {
+        if (!Array.isArray(windows)) {
+            return true;
+        }
+        let seen = Object.create(null);
+        for (let i = 0; i < windows.length; i++) {
+            let identity = this._windowIdentityKey(windows[i]);
+            if (identity === null) {
+                continue;
+            }
+            if (Object.prototype.hasOwnProperty.call(seen, identity)) {
+                return true;
+            }
+            seen[identity] = true;
+        }
+        return false;
+    },
+
     _poolWindowForDuration: function(pool, durationSeconds) {
         if (!pool || !Array.isArray(pool.windows)) {
             return null;
         }
+        let matches = [];
         for (let i = 0; i < pool.windows.length; i++) {
             if (this._windowDurationSeconds(pool.windows[i]) === durationSeconds) {
-                return pool.windows[i];
+                matches.push(pool.windows[i]);
             }
         }
-        return null;
+        return matches.length === 1 ? matches[0] : null;
     },
 
     _poolAverage: function(pool) {
