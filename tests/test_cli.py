@@ -299,6 +299,15 @@ def test_policy_evaluate_returns_failure_for_blocked_decision(
     assert decision["decision"] == "blocked"
 
 
+def test_policy_status_returns_failure_without_accounts(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+
+    assert main(["--config", str(config_path), "policy", "status"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["decisions"] == {}
+
+
 def test_policy_fails_closed_for_cached_backend_mismatch(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     config_path = tmp_path / "config.toml"

@@ -753,7 +753,7 @@ def _cmd_policy_status(args: argparse.Namespace) -> int:
             sort_keys=True,
         )
     )
-    return 0 if all(
+    return 0 if decisions and all(
         _policy_decision_exit_code(decision) == 0
         for decision in decisions.values()
     ) else 2
