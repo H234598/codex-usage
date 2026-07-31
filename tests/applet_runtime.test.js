@@ -329,6 +329,31 @@ function makeApplet(onReady) {
   return applet;
 }
 
+function makeMenuApplet(onReady) {
+  const applet = makeApplet(onReady);
+  applet.menu = new PopupMenuHarness();
+  applet.settings = { setValue() {}, finalize() {} };
+  applet.refreshOnOpen = true;
+  applet.autoRefresh = true;
+  applet.pollOwner = "applet";
+  applet.showReactivationActions = true;
+  applet.reactivationBrowser = "auto";
+  applet.notifyErrors = false;
+  applet.notifyWarnings = false;
+  applet._refreshing = false;
+  applet._commandError = "";
+  applet._lastRefreshError = "";
+  applet._serviceChecked = false;
+  applet._systemdActive = false;
+  applet._menuRootReady = false;
+  applet._menuStructureDirty = true;
+  applet._menuContentDirty = true;
+  applet._accountRows = Object.create(null);
+  applet._menuActions = Object.create(null);
+  applet._loadingMessage = "";
+  return applet;
+}
+
 test("panel slots honor ordering, mute and duplicate-source normalization", () => {
   const applet = makeApplet();
   const items = applet._panelItems();
@@ -2138,16 +2163,45 @@ test("command error handling survives menu failures", () => {
   assert.doesNotThrow(() => applet._showCommandError("backend failed"));
 });
 
-test("command errors invalidate usage menu without rebuilding the root", () => {
-  const applet = makeApplet();
-  let menuBuilds = 0;
-  applet._menuNeedsRebuild = false;
-  applet._buildUsageMenu = () => { menuBuilds += 1; };
+test("loading errors and recovery update persistent status actors", () => {
+  const applet = makeMenuApplet();
+  const recoveredUsage = applet._usages[0];
+  applet._usages = [];
+  applet._buildLoadingMenu("Lade gespeicherte Werte …");
+  applet.menu.isOpen = true;
+
+  const rootItems = applet.menu.items.slice();
+  const primaryActor = applet._menuStatusPrimary.actor;
+  const errorActor = applet._menuStatusError.actor;
+  const refreshActor = applet._menuActions.refresh.actor;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+  assert.equal(applet._menuStatusPrimary.label.text, "Lade gespeicherte Werte …");
 
   applet._showCommandError("backend failed");
 
-  assert.equal(menuBuilds, 0);
-  assert.equal(applet._menuNeedsRebuild, true);
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._menuStatusPrimary.actor, primaryActor);
+  assert.equal(applet._menuStatusError.actor, errorActor);
+  assert.equal(applet._menuActions.refresh.actor, refreshActor);
+  assert.equal(applet._menuStatusPrimary.label.text, "Codex Usage konnte nicht geladen werden");
+  assert.equal(applet._menuStatusError.label.text, "backend failed");
+  assert.equal(applet._menuStatusError.actor.visible, true);
+
+  applet._recordRefreshSuccess();
+  applet._mergeFreshPayload = () => [recoveredUsage];
+  applet._backendRowsReady = false;
+  applet._updatePanel = () => {};
+  applet._notifyForPayload = () => {};
+  applet._applyPayload([], true);
+
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._menuStatusPrimary.actor, primaryActor);
+  assert.equal(applet._menuStatusError.actor, errorActor);
+  assert.equal(applet._menuActions.refresh.actor, refreshActor);
+  assert.equal(applet._menuStatusError.actor.visible, false);
+  assert.ok(applet._accountRows.alpha);
 });
 
 test("command errors remain visible when the display timer redraws the panel", () => {
@@ -2473,8 +2527,12 @@ test("alert setting changes refresh the panel immediately", () => {
   assert.equal(refreshed, 1);
 });
 
-test("account alert toggles rebuild an open menu immediately", () => {
-  const applet = makeApplet();
+test("account switches update settings without replacing the open submenu", () => {
+  const applet = makeMenuApplet();
+  applet.accountPanelSettings = [
+    { account: "alpha", tag: "A", order: 1, muted: false, slot1: 1, slot2: 2 },
+    { account: "beta", tag: "B", order: 2, muted: true, slot1: 3, slot2: 0 },
+  ];
   applet.accountAlertSettings = [
     {
       account: "alpha",
@@ -2491,13 +2549,32 @@ test("account alert toggles rebuild an open menu immediately", () => {
       errors: true,
     },
   ];
-  applet.settings = { setValue() {} };
-  applet.menu = { isOpen: true };
-  let rebuilds = 0;
-  applet._buildUsageMenu = () => { rebuilds += 1; };
-  applet._updateAccountAlertSetting("alpha", { warnings: false });
-  assert.equal(rebuilds, 1);
+  applet._updatePanel = () => {};
+  applet._buildUsageMenu();
+  applet.menu.isOpen = true;
+  const rootItems = applet.menu.items.slice();
+  const row = applet._accountRows.alpha;
+  const controlsActor = row.controls.actor;
+  const visibleActor = row.visible.actor;
+  const warningActor = row.warnings.actor;
+  const warningSignals = row.warnings.signalCount;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+  row.controls.menu.isOpen = true;
+
+  row.visible.toggle();
+  row.warnings.toggle();
+
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._accountRows.alpha.controls.actor, controlsActor);
+  assert.equal(applet._accountRows.alpha.visible.actor, visibleActor);
+  assert.equal(applet._accountRows.alpha.warnings.actor, warningActor);
+  assert.equal(applet._accountRows.alpha.warnings.signalCount, warningSignals);
+  assert.equal(applet._accountRows.alpha.controls.menu.isOpen, true);
+  assert.equal(applet._panelSettings.alpha.muted, true);
   assert.equal(applet._alertSettings.alpha.warnings, false);
+  assert.equal(applet._accountRows.alpha.visible.state, false);
+  assert.equal(applet._accountRows.alpha.warnings.state, false);
 });
 
 test("account controls preserve changes before backend settings synchronize", () => {
@@ -2781,96 +2858,379 @@ test("account severity honors the threshold belonging to each limit", () => {
 });
 
 test("refresh-on-open does not refresh when the menu is closed", () => {
-  const applet = makeApplet();
+  const applet = makeMenuApplet();
   applet.refreshOnOpen = true;
   applet._usesAppletPolling = () => true;
   let refreshes = 0;
   applet._refreshFresh = () => { refreshes += 1; };
-  applet.menu = {
-    isOpen: false,
-    toggle() { this.isOpen = !this.isOpen; },
-  };
+  applet._buildUsageMenu();
   applet.on_applet_clicked();
   assert.equal(refreshes, 1);
   applet.on_applet_clicked();
   assert.equal(refreshes, 1);
 });
 
-test("payload refresh invalidates the menu without rebuilding the root", () => {
-  const applet = makeApplet();
-  let menuBuilds = 0;
-  applet._buildUsageMenu = () => { menuBuilds += 1; };
+test("open payload updates preserve root account and submenu actors", () => {
+  const applet = makeMenuApplet();
+  applet.refreshOnOpen = false;
+  applet._buildUsageMenu();
+
+  assert.ok(applet._accountRows.alpha, "persistent account row is registered");
+  const rootItems = applet.menu.items.slice();
+  const row = applet._accountRows.alpha;
+  const summaryActor = row.summary.actor;
+  const submenuActor = row.controls.actor;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+  row.controls.menu.isOpen = true;
+
+  const updated = {
+    ...applet._usages[0],
+    captured_at: new Date().toISOString(),
+    five_hour: { ...applet._usages[0].five_hour, remaining: 25 },
+  };
+  applet._mergeCachedPayload = () => [updated, applet._usages[1]];
+  applet._backendRowsReady = false;
   applet._updatePanel = () => {};
   applet._notifyForPayload = () => {};
-  applet._mergeCachedPayload = () => [];
-  applet._backendRowsReady = false;
-  applet._menuNeedsRebuild = false;
+  applet.menu.isOpen = true;
 
   applet._applyPayload([], false);
 
-  assert.equal(menuBuilds, 0);
-  assert.equal(applet._menuNeedsRebuild, true);
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._accountRows.alpha.summary.actor, summaryActor);
+  assert.equal(applet._accountRows.alpha.controls.actor, submenuActor);
+  assert.equal(applet._accountRows.alpha.controls.menu.isOpen, true);
+  assert.match(applet._accountRows.alpha.summary.label.text, /25%/);
 });
 
-test("opening a dirty menu rebuilds once before toggling", () => {
-  const applet = makeApplet();
-  const calls = [];
+test("refresh-on-open updates persistent action and row content while open", () => {
+  const applet = makeMenuApplet();
+  applet._buildUsageMenu();
+
+  assert.ok(applet._menuActions.refresh, "persistent refresh action is registered");
+  const refreshActor = applet._menuActions.refresh.actor;
+  const summaryActor = applet._accountRows.alpha.summary.actor;
+  let complete = null;
+  applet._usesAppletPolling = () => true;
+  applet._spawnUsageCommand = (_subcommand, callback) => { complete = callback; };
+  applet._updatePanel = () => {};
+  applet._notifyForPayload = () => {};
+  applet._mergeFreshPayload = () => [{
+    ...applet._usages[0],
+    captured_at: new Date().toISOString(),
+    five_hour: { ...applet._usages[0].five_hour, remaining: 15 },
+  }, applet._usages[1]];
+
+  applet.on_applet_clicked();
+
+  assert.equal(applet.menu.isOpen, true);
+  assert.equal(applet._menuActions.refresh.actor, refreshActor);
+  assert.equal(applet._menuActions.refresh.label.text, "Aktualisierung läuft …");
+  assert.equal(applet._menuActions.refresh.sensitive, false);
+
+  complete([], null);
+
+  assert.equal(applet.menu.isOpen, true);
+  assert.equal(applet._menuActions.refresh.actor, refreshActor);
+  assert.equal(applet._menuActions.refresh.label.text, "Jetzt aktualisieren");
+  assert.equal(applet._menuActions.refresh.sensitive, true);
+  assert.equal(applet._accountRows.alpha.summary.actor, summaryActor);
+  assert.match(applet._accountRows.alpha.summary.label.text, /15%/);
+});
+
+test("opening a dirty menu refreshes content without replacing its actors", () => {
+  const applet = makeMenuApplet();
   applet.refreshOnOpen = false;
-  applet._menuNeedsRebuild = true;
-  applet._buildUsageMenu = () => {
-    calls.push("build");
-    applet._menuNeedsRebuild = false;
+  applet._buildUsageMenu();
+  const summaryActor = applet._accountRows.alpha.summary.actor;
+  const rootItems = applet.menu.items.slice();
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+  const render = applet._renderUsageMenu.bind(applet);
+  let renders = 0;
+  applet._renderUsageMenu = () => {
+    renders += 1;
+    return render();
   };
-  applet.menu = {
-    isOpen: false,
-    toggle() {
-      calls.push("toggle");
-      this.isOpen = !this.isOpen;
-    },
-  };
+  applet._usages[0].five_hour.remaining = 33;
+  applet._menuContentDirty = true;
 
   applet.on_applet_clicked();
   applet.on_applet_clicked();
 
-  assert.deepEqual(calls, ["build", "toggle", "toggle"]);
+  assert.equal(renders, 1);
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._accountRows.alpha.summary.actor, summaryActor);
+  assert.match(applet._accountRows.alpha.summary.label.text, /33%/);
 });
 
-test("display timer invalidates an open menu without rebuilding the root", () => {
+test("display timer updates reset text without replacing open row actors", () => {
   let displayCallback = null;
-  const applet = makeApplet((runtime) => {
+  const applet = makeMenuApplet((runtime) => {
     runtime.timeoutAddSeconds = (seconds, callback) => {
       displayCallback = callback;
       return 31;
     };
   });
-  let menuBuilds = 0;
+  const now = Date.now();
+  applet._usages[0].five_hour.reset_at = new Date(now + 120 * 60000).toISOString();
+  applet._usages[0].weekly.reset_at = new Date(now + 180 * 60000).toISOString();
+  applet._buildUsageMenu();
+  applet.menu.isOpen = true;
+  applet._accountRows.alpha.controls.menu.isOpen = true;
+  const rootItems = applet.menu.items.slice();
+  const row = applet._accountRows.alpha;
+  const resetActor = row.reset.actor;
+  const controlsActor = row.controls.actor;
+  const initialResetText = row.reset.label.text;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
   let panelUpdates = 0;
-  applet._menuNeedsRebuild = false;
   applet._systemdActive = false;
-  applet.menu = { isOpen: true };
-  applet._buildUsageMenu = () => { menuBuilds += 1; };
   applet._updatePanel = () => { panelUpdates += 1; };
 
   assert.equal(applet._scheduleDisplayTimer(), true);
+  applet._usages[0].five_hour.reset_at = new Date(now + 30 * 60000).toISOString();
   assert.equal(displayCallback(), true);
 
-  assert.equal(menuBuilds, 0);
   assert.equal(panelUpdates, 1);
-  assert.equal(applet._menuNeedsRebuild, true);
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._accountRows.alpha.reset.actor, resetActor);
+  assert.equal(applet._accountRows.alpha.controls.actor, controlsActor);
+  assert.equal(applet._accountRows.alpha.controls.menu.isOpen, true);
+  assert.notEqual(applet._accountRows.alpha.reset.label.text, initialResetText);
 });
 
-test("starting a periodic refresh does not rebuild the root menu", () => {
-  const applet = makeApplet();
-  let menuBuilds = 0;
-  applet._menuNeedsRebuild = false;
-  applet._buildUsageMenu = () => { menuBuilds += 1; };
+test("starting a periodic refresh updates the persistent refresh action", () => {
+  const applet = makeMenuApplet();
+  applet._buildUsageMenu();
+  applet.menu.isOpen = true;
+  const rootItems = applet.menu.items.slice();
+  const refreshActor = applet._menuActions.refresh.actor;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
   applet._updatePanel = () => {};
   applet._spawnUsageCommand = () => {};
 
   applet._refreshFresh(false);
 
-  assert.equal(menuBuilds, 0);
-  assert.equal(applet._menuNeedsRebuild, true);
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._menuActions.refresh.actor, refreshActor);
+  assert.equal(applet._menuActions.refresh.label.text, "Aktualisierung läuft …");
+  assert.equal(applet._menuActions.refresh.sensitive, false);
+});
+
+test("account removal destroys only the removed row and retains other submenu state", () => {
+  const applet = makeMenuApplet();
+  applet._buildUsageMenu();
+  applet.menu.isOpen = true;
+  const rootItems = applet.menu.items.slice();
+  const removed = applet._accountRows.alpha;
+  const retained = applet._accountRows.beta;
+  const retainedSummaryActor = retained.summary.actor;
+  const retainedControlsActor = retained.controls.actor;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+  retained.controls.menu.isOpen = true;
+  applet._mergeCachedPayload = () => [{
+    ...applet._usages[1],
+    five_hour: { ...applet._usages[1].five_hour, remaining: 55 },
+  }];
+  applet._backendRowsReady = false;
+  applet._updatePanel = () => {};
+  applet._notifyForPayload = () => {};
+
+  applet._applyPayload([], false);
+
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._accountRows.alpha, undefined);
+  assert.equal(removed.section.destroyed, true);
+  assert.equal(removed.visible.destroyed, true);
+  assert.equal(removed.warnings.destroyed, true);
+  assert.equal(removed.errors.destroyed, true);
+  assert.equal(removed.visible.signalCount, 0);
+  assert.equal(removed.warnings.signalCount, 0);
+  assert.equal(removed.errors.signalCount, 0);
+  assert.equal(applet._accountRows.beta, retained);
+  assert.equal(applet._accountRows.beta.summary.actor, retainedSummaryActor);
+  assert.equal(applet._accountRows.beta.controls.actor, retainedControlsActor);
+  assert.equal(applet._accountRows.beta.controls.menu.isOpen, true);
+  assert.match(applet._accountRows.beta.summary.label.text, /55%/);
+  assert.doesNotThrow(() => applet._destroyAccountRow("alpha"));
+});
+
+test("backend account reconciliation marks structural menu changes", () => {
+  const applet = makeMenuApplet();
+  applet._buildUsageMenu();
+  applet.menu.isOpen = true;
+  const removed = applet._accountRows.alpha;
+  const retained = applet._accountRows.beta;
+  retained.controls.menu.isOpen = true;
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    beta: { account: "beta", label: "Beta", backend: 0 },
+  };
+  applet._updatePanel = () => {};
+
+  assert.equal(applet._ensureBackendUsageRows(), true);
+  applet._refreshFormattedSurfaces();
+
+  assert.equal(applet._accountRows.alpha, undefined);
+  assert.equal(removed.section.destroyed, true);
+  assert.equal(applet._accountRows.beta, retained);
+  assert.equal(applet._accountRows.beta.controls.menu.isOpen, true);
+});
+
+test("safe mode swaps persistent status and action slots in place", () => {
+  const applet = makeMenuApplet();
+  applet._buildUsageMenu();
+  applet.menu.isOpen = true;
+  const rootItems = applet.menu.items.slice();
+  const primaryActor = applet._menuStatusPrimary.actor;
+  const refreshActor = applet._menuActions.refresh.actor;
+  const retryActor = applet._menuActions.retry.actor;
+  const healthActor = applet._menuActions.health.actor;
+  const accountsActor = applet._menuAccountsSection.actor;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+
+  applet._safeMode = true;
+  applet._safeModeReason = "display timer failed";
+  applet._buildSafeMenu();
+
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._menuStatusPrimary.actor, primaryActor);
+  assert.equal(applet._menuActions.refresh.actor, refreshActor);
+  assert.equal(applet._menuActions.retry.actor, retryActor);
+  assert.equal(applet._menuActions.health.actor, healthActor);
+  assert.equal(applet._menuAccountsSection.actor, accountsActor);
+  assert.equal(applet._menuStatusPrimary.label.text, "Safe-Modus: letzte gültige Werte");
+  assert.equal(applet._menuStatusSecondary.label.text, "display timer failed");
+  assert.equal(applet._menuAccountsSection.actor.visible, false);
+  assert.equal(applet._menuActions.refresh.actor.visible, false);
+  assert.equal(applet._menuActions.retry.actor.visible, true);
+  assert.equal(applet._menuActions.health.actor.visible, true);
+});
+
+test("safe-mode health results update the persistent detail slot", () => {
+  const applet = makeMenuApplet();
+  applet._safeMode = true;
+  applet._safeModeReason = "health test";
+  applet._buildSafeMenu();
+  applet.menu.isOpen = true;
+  const rootItems = applet.menu.items.slice();
+  const detailActor = applet._menuHealthDetail.actor;
+  const healthActor = applet._menuActions.health.actor;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+  applet._recordInternalFailure = () => {};
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (argv, callback) => {
+    assert.deepEqual(Array.from(argv), ["codex-usage", "health", "--format", "json"]);
+    callback({ status: "ok", failures: 0 }, null);
+  };
+
+  applet._menuActions.health.emit("activate");
+
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._menuActions.health.actor, healthActor);
+  assert.equal(applet._menuHealthDetail.actor, detailActor);
+  assert.equal(applet._menuHealthDetail.actor.visible, true);
+  assert.match(applet._menuHealthDetail.label.text, /"status":"ok"/);
+});
+
+test("successful service activation hides its persistent action in place", () => {
+  const applet = makeMenuApplet();
+  applet.pollOwner = "systemd";
+  applet._serviceChecked = true;
+  applet._systemdActive = false;
+  applet._buildUsageMenu();
+  applet.menu.isOpen = true;
+  const rootItems = applet.menu.items.slice();
+  const serviceActor = applet._menuActions.service.actor;
+  const summaryActor = applet._accountRows.alpha.summary.actor;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+  applet._accountRows.alpha.controls.menu.isOpen = true;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._scheduleTimer = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    assert.deepEqual(Array.from(argv), [
+      "codex-usage", "service", "enable", "--format", "json",
+    ]);
+    callback({
+      installed: true,
+      enabled: true,
+      active: true,
+      service_result: "success",
+    }, null);
+  };
+
+  applet._enableBackgroundService();
+
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._menuActions.service.actor, serviceActor);
+  assert.equal(applet._menuActions.service.actor.visible, false);
+  assert.equal(applet._accountRows.alpha.summary.actor, summaryActor);
+  assert.equal(applet._accountRows.alpha.controls.menu.isOpen, true);
+});
+
+test("reactivation progress and failure reuse the account action slots", () => {
+  let finishRead = null;
+  const process = { force_exit() {} };
+  const applet = makeMenuApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() { return process; },
+    });
+  });
+  applet._usages = [{
+    ...applet._usages[0],
+    status: "login_required",
+    error: "token expired",
+  }];
+  applet._buildUsageMenu();
+  applet.menu.isOpen = true;
+  const rootItems = applet.menu.items.slice();
+  const row = applet._accountRows.alpha;
+  const sectionActor = row.section.actor;
+  const controlsActor = row.controls.actor;
+  const actionActor = row.reactivationAction.actor;
+  const runningActor = row.reactivationRunning.actor;
+  const errorActor = row.reactivationError.actor;
+  const initialRemoveAllCount = applet.menu.removeAllCount;
+  row.controls.menu.isOpen = true;
+  applet._readBoundedProcessOutput = (_process, callback) => { finishRead = callback; };
+
+  applet._spawnReactivation(
+    applet._usages[0],
+    ["codex-usage", "reactivate", "alpha"]
+  );
+
+  assert.equal(applet._accountRows.alpha.section.actor, sectionActor);
+  assert.equal(applet._accountRows.alpha.controls.actor, controlsActor);
+  assert.equal(applet._accountRows.alpha.reactivationAction.actor, actionActor);
+  assert.equal(applet._accountRows.alpha.reactivationRunning.actor, runningActor);
+  assert.equal(applet._accountRows.alpha.reactivationError.actor, errorActor);
+  assert.equal(applet._accountRows.alpha.controls.menu.isOpen, true);
+  assert.equal(applet._accountRows.alpha.reactivationAction.actor.visible, false);
+  assert.equal(applet._accountRows.alpha.reactivationRunning.actor.visible, true);
+
+  finishRead("", "login failed", null);
+
+  assert.deepEqual(applet.menu.items, rootItems);
+  assert.equal(applet.menu.removeAllCount, initialRemoveAllCount);
+  assert.equal(applet._accountRows.alpha.section.actor, sectionActor);
+  assert.equal(applet._accountRows.alpha.controls.actor, controlsActor);
+  assert.equal(applet._accountRows.alpha.reactivationAction.actor, actionActor);
+  assert.equal(applet._accountRows.alpha.reactivationRunning.actor, runningActor);
+  assert.equal(applet._accountRows.alpha.reactivationError.actor, errorActor);
+  assert.equal(applet._accountRows.alpha.controls.menu.isOpen, true);
+  assert.equal(applet._accountRows.alpha.reactivationAction.actor.visible, true);
+  assert.equal(applet._accountRows.alpha.reactivationRunning.actor.visible, false);
+  assert.equal(applet._accountRows.alpha.reactivationError.actor.visible, true);
+  assert.match(applet._accountRows.alpha.reactivationError.label.text, /login failed/);
 });
 
 test("enabling automatic refresh rechecks the automatic poll owner", () => {
@@ -3063,7 +3423,7 @@ test("stale service repair does not schedule after safe mode starts", () => {
 
 test("reactivation setup failure does not leave a phantom running account", () => {
   const applet = makeApplet();
-  applet._buildUsageMenu = () => { throw new Error("menu unavailable"); };
+  applet._invalidateUsageMenu = () => { throw new Error("menu unavailable"); };
   applet._spawnReactivation(
     { account: "alpha", label: "Alpha" },
     ["codex-usage", "reactivate", "alpha"]

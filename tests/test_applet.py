@@ -273,8 +273,9 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "communicate_utf8_async" not in source
     assert "CIRCUIT_BREAKER_MS" in source
     assert "_buildSafeMenu" in source
-    assert "_addHealthAction" in source
-    assert 'this._runSafely("health action"' in source
+    assert "_requestHealthDetail" in source
+    assert "_addPersistentMenuAction" in source
+    assert '"health action"' in source
     assert "Settings konnten nicht initialisiert werden" in source
     assert "this.menu = null" in source
     assert "_cacheIsStale" in source
