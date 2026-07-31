@@ -1301,6 +1301,14 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
     config_path = tmp_path / "config.toml"
     auth_path = tmp_path / "auth.json"
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    now = datetime(2026, 7, 10, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    class Clock:
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz is not None else now
+
+    monkeypatch.setattr("codex_usage.render.datetime", Clock)
 
     def fake_fetch_all(config, accounts, **kwargs):
         account = next(iter(accounts))
