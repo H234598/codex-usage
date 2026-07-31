@@ -5581,11 +5581,16 @@ test("cleanup is idempotent across 100 applet removals", () => {
 });
 
 test("cleanup releases menu manager and settings references", () => {
-  const applet = makeApplet();
+  const applet = makeMenuApplet();
   let removedMenus = 0;
   let destroyed = 0;
   let finalized = 0;
-  applet.menu = { destroy() { destroyed += 1; } };
+  const menu = applet.menu;
+  const originalDestroy = menu.destroy.bind(menu);
+  menu.destroy = () => {
+    destroyed += 1;
+    originalDestroy();
+  };
   applet.menuManager = {
     removeMenu(menu) {
       if (menu === applet.menu) {
@@ -5603,4 +5608,16 @@ test("cleanup releases menu manager and settings references", () => {
   assert.equal(applet.menu, null);
   assert.equal(applet.menuManager, null);
   assert.equal(applet.settings, null);
+  assert.equal(applet._menuRootReady, false);
+  assert.deepEqual(Object.keys(applet._accountRows), []);
+  assert.deepEqual(Object.keys(applet._menuActions), []);
+  assert.equal(applet._menuStatusSection, null);
+  assert.equal(applet._menuAccountsSection, null);
+  assert.equal(applet._menuActionsSection, null);
+  assert.equal(applet._menuStatusPrimary, null);
+  assert.equal(applet._menuStatusSecondary, null);
+  assert.equal(applet._menuStatusError, null);
+  assert.equal(applet._menuHealthDetail, null);
+  assert.equal(applet._menuStatusSeparator, null);
+  assert.equal(applet._menuActionsSeparator, null);
 });

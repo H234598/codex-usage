@@ -5993,6 +5993,18 @@ CodexUsageApplet.prototype = {
             this.menu = null;
         }
         this.menuManager = null;
+        this._menuRootReady = false;
+        this._accountRows = Object.create(null);
+        this._menuActions = Object.create(null);
+        this._menuStatusSection = null;
+        this._menuAccountsSection = null;
+        this._menuActionsSection = null;
+        this._menuStatusPrimary = null;
+        this._menuStatusSecondary = null;
+        this._menuStatusError = null;
+        this._menuHealthDetail = null;
+        this._menuStatusSeparator = null;
+        this._menuActionsSeparator = null;
     }
 };
 
