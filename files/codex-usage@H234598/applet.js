@@ -142,6 +142,7 @@ CodexUsageApplet.prototype = {
         this._staleCheckId = 0;
         this._staleCheckGeneration = 0;
         this._lastCacheSyncAt = 0;
+        this._menuNeedsRebuild = true;
 
         this.set_applet_icon_symbolic_name("view-statistics-symbolic");
         this.set_applet_label("--");
@@ -415,6 +416,7 @@ CodexUsageApplet.prototype = {
             this.menu.addAction(_("Einstellungen"), Lang.bind(this, function() {
                 this._runSafely("safe settings action", Lang.bind(this, this._openSettings));
             }));
+            this._menuNeedsRebuild = false;
         } catch (e) {
             global.log("[" + UUID + "] safe menu failed: " + this._shortText(e, 180));
         }
@@ -539,6 +541,10 @@ CodexUsageApplet.prototype = {
         this._buildUsageMenu();
     },
 
+    _invalidateUsageMenu: function() {
+        this._menuNeedsRebuild = true;
+    },
+
     _scheduleTimer: function() {
         let generation = (this._timerGeneration || 0) + 1;
         this._timerGeneration = generation;
@@ -610,9 +616,7 @@ CodexUsageApplet.prototype = {
                         this._loadCached(false, false);
                     }
                     this._updatePanel();
-                    if (this.menu && this.menu.isOpen) {
-                        this._buildUsageMenu();
-                    }
+                    this._invalidateUsageMenu();
                 }));
                 return true;
             }));
@@ -689,11 +693,7 @@ CodexUsageApplet.prototype = {
         this._refreshing = true;
         try {
             this._updatePanel();
-            if (this._usages.length) {
-                this._buildUsageMenu();
-            } else {
-                this._buildLoadingMenu(_("Aktualisiere Accounts …"));
-            }
+            this._invalidateUsageMenu();
             this._spawnUsageCommand("once", Lang.bind(this, function(payload, error) {
                 this._refreshing = false;
                 let refreshAfterReactivation = this._reactivationRefreshPending;
@@ -2344,7 +2344,7 @@ CodexUsageApplet.prototype = {
             this._buildSafeMenu();
             return;
         }
-        this._buildUsageMenu();
+        this._invalidateUsageMenu();
         this._updatePanel();
     },
 
@@ -2524,7 +2524,7 @@ CodexUsageApplet.prototype = {
             this._systemdActive = true;
             this._serviceStatus = payload;
             this._scheduleTimer();
-            this._buildUsageMenu();
+            this._invalidateUsageMenu();
             continueAfter();
         }));
     },
@@ -3114,7 +3114,7 @@ CodexUsageApplet.prototype = {
                 this._captureIsTooFarInFuture(this._usages[i].captured_at, nowMs) ||
                 nowMs - capturedMs > staleAfterMs;
         }
-        this._buildUsageMenu();
+        this._invalidateUsageMenu();
         this._updatePanel();
         this._notifyForPayload();
     },
@@ -4008,6 +4008,7 @@ CodexUsageApplet.prototype = {
         this._addDisabled(this.menu, message || _("Lade …"), "codex-usage-stale");
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._addActions();
+        this._menuNeedsRebuild = false;
     },
 
     _buildUsageMenu: function() {
@@ -4038,6 +4039,7 @@ CodexUsageApplet.prototype = {
         }
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._addActions();
+        this._menuNeedsRebuild = false;
     },
 
     _addAccount: function(usage) {
@@ -4998,15 +5000,7 @@ CodexUsageApplet.prototype = {
         let text = this._shortText(message || _("Unbekannter Fehler"), 240);
         this._commandError = text;
         try {
-            if (Array.isArray(this._usages) && this._usages.length) {
-                this._buildUsageMenu();
-            } else {
-                this.menu.removeAll();
-                this._addDisabled(this.menu, _("Codex Usage konnte nicht geladen werden"), "codex-usage-error");
-                this._addDisabled(this.menu, text, "codex-usage-error");
-                this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-                this._addActions();
-            }
+            this._invalidateUsageMenu();
         } catch (e) {
             global.log("[" + UUID + "] command error display failed: " + this._shortText(e, 180));
         }
@@ -5632,6 +5626,15 @@ CodexUsageApplet.prototype = {
                 return;
             }
             let wasOpen = this.menu.isOpen;
+            if (!wasOpen && this._menuNeedsRebuild) {
+                if (this._safeMode) {
+                    this._buildSafeMenu();
+                } else if (this._refreshing && !this._usages.length) {
+                    this._buildLoadingMenu(_("Aktualisiere Accounts …"));
+                } else {
+                    this._buildUsageMenu();
+                }
+            }
             this.menu.toggle();
             if (this.refreshOnOpen && !wasOpen) {
                 if (this._usesAppletPolling()) {
@@ -5668,7 +5671,15 @@ CodexUsageApplet.prototype = {
                 global.log("[" + UUID + "] settings finalize failed: " + this._shortText(e, 180));
             }
         }
+        this.settings = null;
         if (this.menu) {
+            if (this.menuManager && this.menuManager.removeMenu) {
+                try {
+                    this.menuManager.removeMenu(this.menu);
+                } catch (e) {
+                    global.log("[" + UUID + "] menu manager cleanup failed: " + this._shortText(e, 180));
+                }
+            }
             try {
                 this.menu.destroy();
             } catch (e) {
@@ -5676,6 +5687,7 @@ CodexUsageApplet.prototype = {
             }
             this.menu = null;
         }
+        this.menuManager = null;
     }
 };
 

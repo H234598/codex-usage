@@ -1971,6 +1971,18 @@ test("command error handling survives menu failures", () => {
   assert.doesNotThrow(() => applet._showCommandError("backend failed"));
 });
 
+test("command errors invalidate usage menu without rebuilding the root", () => {
+  const applet = makeApplet();
+  let menuBuilds = 0;
+  applet._menuNeedsRebuild = false;
+  applet._buildUsageMenu = () => { menuBuilds += 1; };
+
+  applet._showCommandError("backend failed");
+
+  assert.equal(menuBuilds, 0);
+  assert.equal(applet._menuNeedsRebuild, true);
+});
+
 test("command errors remain visible when the display timer redraws the panel", () => {
   const applet = makeApplet();
   const classes = [];
@@ -2615,6 +2627,83 @@ test("refresh-on-open does not refresh when the menu is closed", () => {
   assert.equal(refreshes, 1);
   applet.on_applet_clicked();
   assert.equal(refreshes, 1);
+});
+
+test("payload refresh invalidates the menu without rebuilding the root", () => {
+  const applet = makeApplet();
+  let menuBuilds = 0;
+  applet._buildUsageMenu = () => { menuBuilds += 1; };
+  applet._updatePanel = () => {};
+  applet._notifyForPayload = () => {};
+  applet._mergeCachedPayload = () => [];
+  applet._backendRowsReady = false;
+  applet._menuNeedsRebuild = false;
+
+  applet._applyPayload([], false);
+
+  assert.equal(menuBuilds, 0);
+  assert.equal(applet._menuNeedsRebuild, true);
+});
+
+test("opening a dirty menu rebuilds once before toggling", () => {
+  const applet = makeApplet();
+  const calls = [];
+  applet.refreshOnOpen = false;
+  applet._menuNeedsRebuild = true;
+  applet._buildUsageMenu = () => {
+    calls.push("build");
+    applet._menuNeedsRebuild = false;
+  };
+  applet.menu = {
+    isOpen: false,
+    toggle() {
+      calls.push("toggle");
+      this.isOpen = !this.isOpen;
+    },
+  };
+
+  applet.on_applet_clicked();
+  applet.on_applet_clicked();
+
+  assert.deepEqual(calls, ["build", "toggle", "toggle"]);
+});
+
+test("display timer invalidates an open menu without rebuilding the root", () => {
+  let displayCallback = null;
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = (seconds, callback) => {
+      displayCallback = callback;
+      return 31;
+    };
+  });
+  let menuBuilds = 0;
+  let panelUpdates = 0;
+  applet._menuNeedsRebuild = false;
+  applet._systemdActive = false;
+  applet.menu = { isOpen: true };
+  applet._buildUsageMenu = () => { menuBuilds += 1; };
+  applet._updatePanel = () => { panelUpdates += 1; };
+
+  assert.equal(applet._scheduleDisplayTimer(), true);
+  assert.equal(displayCallback(), true);
+
+  assert.equal(menuBuilds, 0);
+  assert.equal(panelUpdates, 1);
+  assert.equal(applet._menuNeedsRebuild, true);
+});
+
+test("starting a periodic refresh does not rebuild the root menu", () => {
+  const applet = makeApplet();
+  let menuBuilds = 0;
+  applet._menuNeedsRebuild = false;
+  applet._buildUsageMenu = () => { menuBuilds += 1; };
+  applet._updatePanel = () => {};
+  applet._spawnUsageCommand = () => {};
+
+  applet._refreshFresh(false);
+
+  assert.equal(menuBuilds, 0);
+  assert.equal(applet._menuNeedsRebuild, true);
 });
 
 test("enabling automatic refresh rechecks the automatic poll owner", () => {
@@ -4962,4 +5051,29 @@ test("cleanup is idempotent across 100 applet removals", () => {
     assert.equal(JSON.stringify(applet._backendAuxQueue), "[]");
     assert.equal(applet.menu, null);
   }
+});
+
+test("cleanup releases menu manager and settings references", () => {
+  const applet = makeApplet();
+  let removedMenus = 0;
+  let destroyed = 0;
+  let finalized = 0;
+  applet.menu = { destroy() { destroyed += 1; } };
+  applet.menuManager = {
+    removeMenu(menu) {
+      if (menu === applet.menu) {
+        removedMenus += 1;
+      }
+    },
+  };
+  applet.settings = { finalize() { finalized += 1; } };
+
+  applet.on_applet_removed_from_panel();
+
+  assert.equal(removedMenus, 1);
+  assert.equal(destroyed, 1);
+  assert.equal(finalized, 1);
+  assert.equal(applet.menu, null);
+  assert.equal(applet.menuManager, null);
+  assert.equal(applet.settings, null);
 });
