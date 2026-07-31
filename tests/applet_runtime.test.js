@@ -9,6 +9,177 @@ const source = fs.readFileSync(
   "utf8"
 );
 
+let nextActorId = 1;
+
+class FakeActor {
+  constructor() {
+    this.id = nextActorId;
+    nextActorId += 1;
+    this.visible = true;
+    this.destroyed = false;
+    this.style = "";
+    this.styleClasses = new Set();
+  }
+
+  add_style_class_name(name) { this.styleClasses.add(name); }
+  remove_style_class_name(name) { this.styleClasses.delete(name); }
+  show() { this.visible = true; }
+  hide() { this.visible = false; }
+  destroy() { this.destroyed = true; }
+}
+
+class FakeLabel {
+  constructor(text = "") {
+    this.text = String(text);
+    this.markup = "";
+    this.clutter_text = this;
+  }
+
+  set_text(text) { this.text = String(text); }
+  get_text() { return this.text; }
+  set_markup(markup) { this.markup = String(markup); }
+  get_clutter_text() { return this; }
+}
+
+class SignalEmitter {
+  constructor() {
+    this._nextSignalId = 1;
+    this._signalHandlers = new Map();
+  }
+
+  connect(name, callback) {
+    const id = this._nextSignalId;
+    this._nextSignalId += 1;
+    this._signalHandlers.set(id, { name, callback });
+    return id;
+  }
+
+  emit(name, ...args) {
+    for (const handler of Array.from(this._signalHandlers.values())) {
+      if (handler.name === name) {
+        handler.callback(this, ...args);
+      }
+    }
+  }
+
+  disconnect(id) { this._signalHandlers.delete(id); }
+  disconnectAll() { this._signalHandlers.clear(); }
+  get signalCount() { return this._signalHandlers.size; }
+}
+
+class PopupItem extends SignalEmitter {
+  constructor(text = "", params = {}) {
+    super();
+    this.actor = new FakeActor();
+    this.label = new FakeLabel(text);
+    this.reactive = params.reactive !== false;
+    this.sensitive = this.reactive;
+    this.destroyed = false;
+    this._parentSection = null;
+  }
+
+  setLabel(text) { this.label.set_text(text); }
+  setSensitive(sensitive) { this.sensitive = Boolean(sensitive); }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.disconnectAll();
+    this.actor.destroy();
+    if (this._parentSection) {
+      this._parentSection.forget(this);
+      this._parentSection = null;
+    }
+  }
+}
+
+class PopupSwitchItem extends PopupItem {
+  constructor(text, state) {
+    super(text);
+    this.state = Boolean(state);
+  }
+
+  setToggleState(state) { this.state = Boolean(state); }
+  toggle() {
+    this.state = !this.state;
+    this.emit("toggled", this.state);
+  }
+}
+
+class PopupSection extends SignalEmitter {
+  constructor() {
+    super();
+    this.actor = new FakeActor();
+    this.box = this.actor;
+    this.items = [];
+    this.isOpen = true;
+    this.destroyed = false;
+    this.removeAllCount = 0;
+    this._parentSection = null;
+  }
+
+  addMenuItem(item, position) {
+    item._parentSection = this;
+    if (position === undefined || position >= this.items.length) {
+      this.items.push(item);
+    } else {
+      this.items.splice(position, 0, item);
+    }
+    return item;
+  }
+
+  addAction(text, callback) {
+    const item = this.addMenuItem(new PopupItem(text));
+    item.connect("activate", () => callback());
+    return item;
+  }
+
+  forget(item) {
+    const index = this.items.indexOf(item);
+    if (index !== -1) this.items.splice(index, 1);
+  }
+
+  removeAll() {
+    this.removeAllCount += 1;
+    for (const item of this.items.slice()) item.destroy();
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.removeAll();
+    this.disconnectAll();
+    this.actor.destroy();
+    if (this._parentSection) {
+      this._parentSection.forget(this);
+      this._parentSection = null;
+    }
+  }
+}
+
+class PopupSubMenuItem extends PopupItem {
+  constructor(text) {
+    super(text);
+    this.menu = new PopupSection();
+    this.menu.isOpen = false;
+  }
+
+  destroy() {
+    if (this.destroyed) return;
+    this.menu.destroy();
+    super.destroy();
+  }
+}
+
+class PopupMenuHarness extends PopupSection {
+  constructor() {
+    super();
+    this.isOpen = false;
+  }
+
+  toggle() { this.isOpen = !this.isOpen; }
+}
+
 function loadPrototype(onReady) {
   const runtime = {
     idleAdd: () => 1,
@@ -28,16 +199,10 @@ function loadPrototype(onReady) {
       new: (...args) => runtime.launcherFactory(...args),
     },
   };
-  class PopupItem {
-    constructor() {
-      this.actor = { add_style_class_name() {} };
-      this.label = { clutter_text: { set_markup() {} } };
-    }
-  }
   const sandbox = {
     imports: {
       byteArray: { toString: (value) => Buffer.from(value).toString("utf8") },
-      gi: { Gio: gio, GLib: {}, St: {} },
+      gi: { Gio: gio, GLib: {}, St: { IconType: { SYMBOLIC: 1 } } },
       lang: { bind: (object, callback) => callback.bind(object) },
       mainloop,
       ui: {
@@ -46,8 +211,10 @@ function loadPrototype(onReady) {
         popupMenu: {
           PopupMenuItem: PopupItem,
           PopupSeparatorMenuItem: PopupItem,
-          PopupSwitchMenuItem: PopupItem,
-          PopupSubMenuMenuItem: PopupItem,
+          PopupSwitchMenuItem: PopupSwitchItem,
+          PopupSubMenuMenuItem: PopupSubMenuItem,
+          PopupIconMenuItem: PopupItem,
+          PopupMenuSection: PopupSection,
         },
         settings: {},
       },
