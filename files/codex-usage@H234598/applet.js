@@ -142,6 +142,13 @@ CodexUsageApplet.prototype = {
         this._staleCheckId = 0;
         this._staleCheckGeneration = 0;
         this._lastCacheSyncAt = 0;
+        this._menuRootReady = false;
+        this._menuStructureDirty = true;
+        this._menuContentDirty = true;
+        this._accountRows = Object.create(null);
+        this._menuActions = Object.create(null);
+        this._loadingMessage = "";
+        this._healthDetail = "";
 
         this.set_applet_icon_symbolic_name("view-statistics-symbolic");
         this.set_applet_label("--");
@@ -397,24 +404,8 @@ CodexUsageApplet.prototype = {
             return;
         }
         try {
-            this.menu.removeAll();
-            this._addDisabled(this.menu, _("Safe-Modus: letzte gültige Werte"), "codex-usage-error");
-            if (this._safeModeReason) {
-                this._addDisabled(this.menu, this._safeModeReason, "codex-usage-detail");
-            }
-            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-            this.menu.addAction(_("Erneut versuchen"), Lang.bind(this, function() {
-                this._runSafely("safe retry", Lang.bind(this, function() {
-                    this._leaveSafeModeAndRetry();
-                }));
-            }));
-            this._addHealthAction(this.menu);
-            this.menu.addAction(_("Codex Analytics öffnen"), Lang.bind(this, function() {
-                this._runSafely("safe analytics action", Lang.bind(this, this._openAnalytics));
-            }));
-            this.menu.addAction(_("Einstellungen"), Lang.bind(this, function() {
-                this._runSafely("safe settings action", Lang.bind(this, this._openSettings));
-            }));
+            this._menuContentDirty = true;
+            this._renderUsageMenu();
         } catch (e) {
             global.log("[" + UUID + "] safe menu failed: " + this._shortText(e, 180));
         }
@@ -536,7 +527,17 @@ CodexUsageApplet.prototype = {
     },
 
     _rebuildMenu: function() {
-        this._buildUsageMenu();
+        this._invalidateUsageMenu(true);
+    },
+
+    _invalidateUsageMenu: function(structureChanged) {
+        if (structureChanged) {
+            this._menuStructureDirty = true;
+        }
+        this._menuContentDirty = true;
+        if (this.menu && this.menu.isOpen) {
+            this._renderUsageMenu();
+        }
     },
 
     _scheduleTimer: function() {
@@ -610,9 +611,7 @@ CodexUsageApplet.prototype = {
                         this._loadCached(false, false);
                     }
                     this._updatePanel();
-                    if (this.menu && this.menu.isOpen) {
-                        this._buildUsageMenu();
-                    }
+                    this._invalidateUsageMenu();
                 }));
                 return true;
             }));
@@ -689,11 +688,7 @@ CodexUsageApplet.prototype = {
         this._refreshing = true;
         try {
             this._updatePanel();
-            if (this._usages.length) {
-                this._buildUsageMenu();
-            } else {
-                this._buildLoadingMenu(_("Aktualisiere Accounts …"));
-            }
+            this._invalidateUsageMenu();
             this._spawnUsageCommand("once", Lang.bind(this, function(payload, error) {
                 this._refreshing = false;
                 let refreshAfterReactivation = this._reactivationRefreshPending;
@@ -1641,6 +1636,7 @@ CodexUsageApplet.prototype = {
         if (!this._backendRowsReady) {
             return false;
         }
+        let previousUsages = this._usages;
         resetAccounts = resetAccounts || Object.create(null);
         let known = Object.create(null);
         let filtered = [];
@@ -1675,6 +1671,9 @@ CodexUsageApplet.prototype = {
         }
         if (changed) {
             this._usages = filtered;
+            if (this._usageAccountsChanged(previousUsages, filtered)) {
+                this._menuStructureDirty = true;
+            }
         }
         return changed;
     },
@@ -2344,7 +2343,7 @@ CodexUsageApplet.prototype = {
             this._buildSafeMenu();
             return;
         }
-        this._buildUsageMenu();
+        this._invalidateUsageMenu();
         this._updatePanel();
     },
 
@@ -2524,7 +2523,7 @@ CodexUsageApplet.prototype = {
             this._systemdActive = true;
             this._serviceStatus = payload;
             this._scheduleTimer();
-            this._buildUsageMenu();
+            this._invalidateUsageMenu();
             continueAfter();
         }));
     },
@@ -3101,6 +3100,7 @@ CodexUsageApplet.prototype = {
 
     _applyPayload: function(payload, fresh) {
         let usages = fresh ? this._mergeFreshPayload(payload) : this._mergeCachedPayload(payload);
+        let previousUsages = this._usages;
         this._usages = usages;
         if (this._backendRowsReady) {
             this._ensureBackendUsageRows();
@@ -3114,9 +3114,37 @@ CodexUsageApplet.prototype = {
                 this._captureIsTooFarInFuture(this._usages[i].captured_at, nowMs) ||
                 nowMs - capturedMs > staleAfterMs;
         }
-        this._buildUsageMenu();
+        this._loadingMessage = "";
+        this._invalidateUsageMenu(this._usageAccountsChanged(previousUsages, this._usages));
         this._updatePanel();
         this._notifyForPayload();
+    },
+
+    _usageAccountsChanged: function(previousUsages, nextUsages) {
+        let previous = Object.create(null);
+        let next = Object.create(null);
+        let previousRows = Array.isArray(previousUsages) ? previousUsages : [];
+        let nextRows = Array.isArray(nextUsages) ? nextUsages : [];
+        for (let previousIndex = 0; previousIndex < previousRows.length; previousIndex++) {
+            if (previousRows[previousIndex] && previousRows[previousIndex].account) {
+                previous[previousRows[previousIndex].account] = true;
+            }
+        }
+        for (let nextIndex = 0; nextIndex < nextRows.length; nextIndex++) {
+            if (nextRows[nextIndex] && nextRows[nextIndex].account) {
+                next[nextRows[nextIndex].account] = true;
+            }
+        }
+        let previousKeys = Object.keys(previous);
+        if (previousKeys.length !== Object.keys(next).length) {
+            return true;
+        }
+        for (let accountIndex = 0; accountIndex < previousKeys.length; accountIndex++) {
+            if (!next[previousKeys[accountIndex]]) {
+                return true;
+            }
+        }
+        return false;
     },
 
     _mergeCachedPayload: function(cached) {
@@ -4004,58 +4032,445 @@ CodexUsageApplet.prototype = {
     },
 
     _buildLoadingMenu: function(message) {
-        this.menu.removeAll();
-        this._addDisabled(this.menu, message || _("Lade …"), "codex-usage-stale");
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this._addActions();
+        this._loadingMessage = message || _("Lade …");
+        this._menuContentDirty = true;
+        this._renderUsageMenu();
     },
 
     _buildUsageMenu: function() {
-        if (this._safeMode) {
-            this._buildSafeMenu();
+        this._loadingMessage = "";
+        this._menuContentDirty = true;
+        this._renderUsageMenu();
+    },
+
+    _ensureMenuRoot: function() {
+        if (this._menuRootReady) {
+            return true;
+        }
+        if (this._removed || !this.menu) {
+            return false;
+        }
+        this._accountRows = this._accountRows || Object.create(null);
+        this._menuActions = this._menuActions || Object.create(null);
+        this.menu.removeAll();
+        this._menuStatusSection = new PopupMenu.PopupMenuSection();
+        this._menuAccountsSection = new PopupMenu.PopupMenuSection();
+        this._menuActionsSection = new PopupMenu.PopupMenuSection();
+        this._menuStatusPrimary = this._addDisabled(this._menuStatusSection, "", "");
+        this._menuStatusSecondary = this._addDisabled(this._menuStatusSection, "", "");
+        this._menuStatusError = this._addDisabled(this._menuStatusSection, "", "");
+        this._menuHealthDetail = this._addDisabled(this._menuStatusSection, "", "");
+        this.menu.addMenuItem(this._menuStatusSection);
+        this._menuStatusSeparator = new PopupMenu.PopupSeparatorMenuItem();
+        this.menu.addMenuItem(this._menuStatusSeparator);
+        this.menu.addMenuItem(this._menuAccountsSection);
+        this._menuActionsSeparator = new PopupMenu.PopupSeparatorMenuItem();
+        this.menu.addMenuItem(this._menuActionsSeparator);
+        this.menu.addMenuItem(this._menuActionsSection);
+        this._menuActions.refresh = this._addPersistentMenuAction(
+            _("Jetzt aktualisieren"),
+            "manual refresh action",
+            function() { this._refreshFresh(false); }
+        );
+        this._menuActions.service = this._addPersistentMenuAction(
+            _("Hintergrunddienst aktivieren"),
+            "service activation action",
+            function() { this._enableBackgroundService(); }
+        );
+        this._menuActions.retry = this._addPersistentMenuAction(
+            _("Erneut versuchen"),
+            "safe retry",
+            function() { this._leaveSafeModeAndRetry(); }
+        );
+        this._menuActions.health = this._addPersistentMenuAction(
+            _("Health anzeigen"),
+            "health action",
+            function() { this._requestHealthDetail(); }
+        );
+        this._menuActions.analytics = this._addPersistentMenuAction(
+            _("Codex Analytics öffnen"),
+            "analytics action",
+            this._openAnalytics
+        );
+        this._menuActions.settings = this._addPersistentMenuAction(
+            _("Einstellungen"),
+            "settings action",
+            this._openSettings
+        );
+        this._menuRootReady = true;
+        this._menuStructureDirty = true;
+        this._menuContentDirty = true;
+        return true;
+    },
+
+    _addPersistentMenuAction: function(label, context, callback) {
+        let item = new PopupMenu.PopupMenuItem(label);
+        item.connect("activate", Lang.bind(this, function() {
+            this._runSafely(context, Lang.bind(this, function() {
+                callback.call(this);
+            }));
+        }));
+        this._menuActionsSection.addMenuItem(item);
+        return item;
+    },
+
+    _setMenuActorVisible: function(value, visible) {
+        let actor = value && value.actor ? value.actor : value;
+        if (!actor) {
             return;
         }
-        this.menu.removeAll();
-        if (!this._usages.length) {
-            this._addDisabled(this.menu, _("Keine Accounts oder Snapshots vorhanden"), "codex-usage-stale");
+        if (visible && actor.show) {
+            actor.show();
+        } else if (!visible && actor.hide) {
+            actor.hide();
         } else {
-            let newest = this._newestCapture();
-            this._addDisabled(
-                this.menu,
-                _("Codex-Nutzung · Stand ") + (newest ? this._formatDate(newest) : "–"),
-                "codex-usage-detail"
-            );
-            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-            for (let i = 0; i < this._usages.length; i++) {
-                this._addAccount(this._usages[i]);
-                if (i < this._usages.length - 1) {
-                    this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+            actor.visible = Boolean(visible);
+        }
+    },
+
+    _setMenuItem: function(item, label, styleClasses, visible, markup) {
+        if (!item) {
+            return;
+        }
+        let text = this._shortText(label || "", 240);
+        if (item.setLabel) {
+            item.setLabel(text);
+        } else if (item.label && item.label.set_text) {
+            item.label.set_text(text);
+        } else if (item.label) {
+            item.label.text = text;
+        }
+        let previous = item._codexUsageStyleClasses || [];
+        for (let previousIndex = 0; previousIndex < previous.length; previousIndex++) {
+            try {
+                item.actor.remove_style_class_name(previous[previousIndex]);
+            } catch (e) {
+                global.log("[" + UUID + "] style class cleanup failed: " + String(e));
+            }
+        }
+        let next = String(styleClasses || "").split(/\s+/).filter(function(value) {
+            return Boolean(value);
+        });
+        for (let nextIndex = 0; nextIndex < next.length; nextIndex++) {
+            try {
+                item.actor.add_style_class_name(next[nextIndex]);
+            } catch (e) {
+                global.log("[" + UUID + "] style class failed: " + String(e));
+            }
+        }
+        item._codexUsageStyleClasses = next;
+        if (markup) {
+            this._setItemMarkup(item, markup);
+        }
+        this._setMenuActorVisible(item, visible !== false);
+    },
+
+    _renderUsageMenu: function() {
+        if (!this._ensureMenuRoot()) {
+            return;
+        }
+        if (this._menuStructureDirty) {
+            this._reconcileAccountRows();
+        }
+        this._renderMenuStatus();
+        if (!this._safeMode) {
+            for (let usageIndex = 0; usageIndex < this._usages.length; usageIndex++) {
+                let usage = this._usages[usageIndex];
+                let row = this._accountRows[usage.account];
+                if (row) {
+                    this._renderAccountRow(row, usage);
                 }
             }
         }
-        if (this._commandError) {
-            this._addDisabled(this.menu, this._commandError, "codex-usage-error");
-        }
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this._addActions();
+        this._renderMenuActions();
+        this._menuStructureDirty = false;
+        this._menuContentDirty = false;
     },
 
-    _addAccount: function(usage) {
+    _reconcileAccountRows: function() {
+        let desired = Object.create(null);
+        for (let usageIndex = 0; usageIndex < this._usages.length; usageIndex++) {
+            desired[this._usages[usageIndex].account] = true;
+        }
+        let existing = Object.keys(this._accountRows || {});
+        for (let existingIndex = 0; existingIndex < existing.length; existingIndex++) {
+            if (!desired[existing[existingIndex]]) {
+                this._destroyAccountRow(existing[existingIndex]);
+            }
+        }
+        for (let createIndex = 0; createIndex < this._usages.length; createIndex++) {
+            let usage = this._usages[createIndex];
+            if (!this._accountRows[usage.account]) {
+                this._accountRows[usage.account] = this._createAccountRow(usage.account);
+            }
+        }
+    },
+
+    _destroyAccountRow: function(account) {
+        let row = this._accountRows && this._accountRows[account];
+        if (!row) {
+            return;
+        }
+        delete this._accountRows[account];
+        if (row.destroyed) {
+            return;
+        }
+        row.destroyed = true;
+        if (row.section && row.section.destroy) {
+            row.section.destroy();
+        }
+    },
+
+    _createAccountRow: function(account) {
+        let section = new PopupMenu.PopupMenuSection();
+        let separator = new PopupMenu.PopupSeparatorMenuItem();
+        section.addMenuItem(separator);
+        let summary = this._addDisabled(section, "", "");
+        let reset = this._addDisabled(section, "", "");
+        let main = this._addDisabled(section, "", "");
+        let spark = this._addDisabled(section, "", "");
+        let routing = this._addDisabled(section, "", "");
+        let controls = new PopupMenu.PopupSubMenuMenuItem(account + " steuern");
+        let visible = new PopupMenu.PopupSwitchMenuItem("Statusleiste anzeigen", true);
+        visible.connect("toggled", Lang.bind(this, function() {
+            this._runSafely("panel visibility toggle", Lang.bind(this, function() {
+                this._updateAccountPanelSetting(account, { muted: !visible.state });
+            }));
+        }));
+        controls.menu.addMenuItem(visible);
+        let warnings = new PopupMenu.PopupSwitchMenuItem("Warnungen", true);
+        warnings.connect("toggled", Lang.bind(this, function() {
+            this._runSafely("warning toggle", Lang.bind(this, function() {
+                this._updateAccountAlertSetting(account, { warnings: warnings.state });
+            }));
+        }));
+        controls.menu.addMenuItem(warnings);
+        let errors = new PopupMenu.PopupSwitchMenuItem("Fehler", true);
+        errors.connect("toggled", Lang.bind(this, function() {
+            this._runSafely("error toggle", Lang.bind(this, function() {
+                this._updateAccountAlertSetting(account, { errors: errors.state });
+            }));
+        }));
+        controls.menu.addMenuItem(errors);
+        section.addMenuItem(controls);
+        let status = this._addDisabled(section, "", "");
+        let reactivationRunning = this._addDisabled(section, "", "");
+        let reactivationAction = new PopupMenu.PopupIconMenuItem(
+            "",
+            "system-log-in-symbolic",
+            St.IconType.SYMBOLIC
+        );
+        reactivationAction.connect("activate", Lang.bind(this, function() {
+            this._runSafely("reactivation action", Lang.bind(this, function() {
+                let usage = this._usageForAccount(account);
+                if (usage) {
+                    this._reactivateAccount(usage);
+                }
+            }));
+        }));
+        section.addMenuItem(reactivationAction);
+        let reactivationError = this._addDisabled(section, "", "");
+        this._menuAccountsSection.addMenuItem(section);
+        return {
+            account: account,
+            section: section,
+            separator: separator,
+            summary: summary,
+            reset: reset,
+            main: main,
+            spark: spark,
+            routing: routing,
+            controls: controls,
+            visible: visible,
+            warnings: warnings,
+            errors: errors,
+            status: status,
+            reactivationRunning: reactivationRunning,
+            reactivationAction: reactivationAction,
+            reactivationError: reactivationError,
+            destroyed: false
+        };
+    },
+
+    _usageForAccount: function(account) {
+        for (let usageIndex = 0; usageIndex < this._usages.length; usageIndex++) {
+            if (this._usages[usageIndex].account === account) {
+                return this._usages[usageIndex];
+            }
+        }
+        return null;
+    },
+
+    _renderMenuStatus: function() {
+        let hasUsage = Boolean(this._usages.length);
+        if (this._safeMode) {
+            this._setMenuItem(
+                this._menuStatusPrimary,
+                _("Safe-Modus: letzte gültige Werte"),
+                "codex-usage-error",
+                true
+            );
+            this._setMenuItem(
+                this._menuStatusSecondary,
+                this._safeModeReason,
+                "codex-usage-detail",
+                Boolean(this._safeModeReason)
+            );
+            this._setMenuItem(this._menuStatusError, "", "", false);
+        } else if (!hasUsage && this._commandError) {
+            this._setMenuItem(
+                this._menuStatusPrimary,
+                _("Codex Usage konnte nicht geladen werden"),
+                "codex-usage-error",
+                true
+            );
+            this._setMenuItem(this._menuStatusSecondary, "", "", false);
+            this._setMenuItem(
+                this._menuStatusError,
+                this._commandError,
+                "codex-usage-error",
+                true
+            );
+        } else if (!hasUsage && (this._refreshing || this._loadingMessage)) {
+            this._setMenuItem(
+                this._menuStatusPrimary,
+                this._refreshing ? _("Aktualisiere Accounts …") : this._loadingMessage,
+                "codex-usage-stale",
+                true
+            );
+            this._setMenuItem(this._menuStatusSecondary, "", "", false);
+            this._setMenuItem(this._menuStatusError, "", "", false);
+        } else if (!hasUsage) {
+            this._setMenuItem(
+                this._menuStatusPrimary,
+                _("Keine Accounts oder Snapshots vorhanden"),
+                "codex-usage-stale",
+                true
+            );
+            this._setMenuItem(this._menuStatusSecondary, "", "", false);
+            this._setMenuItem(this._menuStatusError, "", "", false);
+        } else {
+            let newest = this._newestCapture();
+            this._setMenuItem(
+                this._menuStatusPrimary,
+                _("Codex-Nutzung · Stand ") + (newest ? this._formatDate(newest) : "–"),
+                "codex-usage-detail",
+                true
+            );
+            this._setMenuItem(this._menuStatusSecondary, "", "", false);
+            this._setMenuItem(
+                this._menuStatusError,
+                this._commandError,
+                "codex-usage-error",
+                Boolean(this._commandError)
+            );
+        }
+        this._setMenuItem(
+            this._menuHealthDetail,
+            this._healthDetail,
+            "codex-usage-detail",
+            Boolean(this._safeMode && this._healthDetail)
+        );
+        this._setMenuActorVisible(this._menuAccountsSection, !this._safeMode && hasUsage);
+    },
+
+    _renderMenuActions: function() {
+        let normal = !this._safeMode;
+        this._setMenuItem(
+            this._menuActions.refresh,
+            this._refreshing ? _("Aktualisierung läuft …") : _("Jetzt aktualisieren"),
+            "",
+            normal
+        );
+        if (this._menuActions.refresh && this._menuActions.refresh.setSensitive) {
+            this._menuActions.refresh.setSensitive(!this._refreshing);
+        }
+        this._setMenuItem(
+            this._menuActions.service,
+            _("Hintergrunddienst aktivieren"),
+            "",
+            normal && this.pollOwner === "systemd" &&
+                this._serviceChecked && !this._systemdActive
+        );
+        this._setMenuItem(this._menuActions.retry, _("Erneut versuchen"), "", !normal);
+        this._setMenuItem(this._menuActions.health, _("Health anzeigen"), "", !normal);
+        this._setMenuItem(
+            this._menuActions.analytics,
+            _("Codex Analytics öffnen"),
+            "",
+            true
+        );
+        this._setMenuItem(this._menuActions.settings, _("Einstellungen"), "", true);
+    },
+
+    _renderAccountRow: function(row, usage) {
         let five = this._percentParts(usage.five_hour, usage.account, "click");
         let week = this._percentParts(usage.weekly, usage.account, "click");
         let severity = this._usageSeverity(usage);
         let summary = usage.label + "     5h " + five.plain + "     Woche " + week.plain;
         let summaryMarkup = this._escapeMarkup(usage.label + "     5h ") + five.markup +
             this._escapeMarkup("     Woche ") + week.markup;
-        let summaryItem = this._addDisabled(
-            this.menu,
+        this._setMenuItem(
+            row.summary,
             summary,
-            "codex-usage-account " + severity
+            "codex-usage-account " + severity,
+            true,
+            summaryMarkup
         );
-        this._setItemMarkup(summaryItem, summaryMarkup);
-        this._addResetDetail(usage);
-        this._addDynamicLimitDetails(usage);
-        this._addAccountControls(usage);
+        let resetFive = this._windowResetParts(usage.five_hour, usage.account, "click", true);
+        let resetWeek = this._windowResetParts(usage.weekly, usage.account, "click", true);
+        let backend = this._backendSummary(usage);
+        let resetPlain = "5h Reset " + resetFive.plain +
+            "     Woche Reset " + resetWeek.plain +
+            "     Abruf " + backend;
+        let resetMarkup = this._escapeMarkup("5h Reset ") + resetFive.markup +
+            this._escapeMarkup("     Woche Reset ") + resetWeek.markup +
+            this._escapeMarkup("     Abruf " + backend);
+        this._setMenuItem(row.reset, resetPlain, "codex-usage-detail", true, resetMarkup);
+        let main = this._poolDetailParts(
+            usage.main,
+            usage.account,
+            "click",
+            "Weitere Limits",
+            [18000, 604800]
+        );
+        let spark = this._poolDetailParts(
+            this._modelPool(usage, "gpt-5.3-codex-spark"),
+            usage.account,
+            "click",
+            "Spark",
+            []
+        );
+        let routing = this._routingDecisionParts(usage);
+        this._setMenuItem(
+            row.main,
+            main ? main.plain : "",
+            "codex-usage-detail",
+            Boolean(main),
+            main ? main.markup : ""
+        );
+        this._setMenuItem(
+            row.spark,
+            spark ? spark.plain : "",
+            "codex-usage-detail",
+            Boolean(spark),
+            spark ? spark.markup : ""
+        );
+        this._setMenuItem(
+            row.routing,
+            routing ? routing.plain : "",
+            "codex-usage-detail",
+            Boolean(routing),
+            routing ? routing.markup : ""
+        );
+        let panel = this._panelSettings[usage.account] || this._defaultPanelRow(usage.account, 1);
+        let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
+        this._setMenuItem(row.controls, usage.label + " steuern", "", true);
+        if (row.visible.setToggleState) {
+            row.visible.setToggleState(!panel.muted);
+            row.warnings.setToggleState(alert.warnings);
+            row.errors.setToggleState(alert.errors);
+        }
         let status = this._statusLabel(usage.status);
         if (usage.stale) {
             status += " · gespeichert vom " + this._formatDate(
@@ -4068,44 +4483,33 @@ CodexUsageApplet.prototype = {
         if (detail) {
             status += " · " + this._shortText(detail, 100);
         }
-        if (usage.status !== "ok" || usage.stale) {
-            this._addDisabled(
-                this.menu,
-                status,
-                usage.status === "ok" ? "codex-usage-stale" : "codex-usage-error"
-            );
-        }
-        if (usage.status === "login_required" && this.showReactivationActions) {
-            this._addReactivationAction(usage);
-        }
-    },
-
-    _addAccountControls: function(usage) {
-        let panel = this._panelSettings[usage.account] || this._defaultPanelRow(usage.account, 1);
-        let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
-        let submenu = new PopupMenu.PopupSubMenuMenuItem(usage.label + " steuern");
-        let visible = new PopupMenu.PopupSwitchMenuItem("Statusleiste anzeigen", !panel.muted);
-        visible.connect("toggled", Lang.bind(this, function() {
-            this._runSafely("panel visibility toggle", Lang.bind(this, function() {
-                this._updateAccountPanelSetting(usage.account, { muted: !visible.state });
-            }));
-        }));
-        submenu.menu.addMenuItem(visible);
-        let warnings = new PopupMenu.PopupSwitchMenuItem("Warnungen", alert.warnings);
-        warnings.connect("toggled", Lang.bind(this, function() {
-            this._runSafely("warning toggle", Lang.bind(this, function() {
-                this._updateAccountAlertSetting(usage.account, { warnings: warnings.state });
-            }));
-        }));
-        submenu.menu.addMenuItem(warnings);
-        let errors = new PopupMenu.PopupSwitchMenuItem("Fehler", alert.errors);
-        errors.connect("toggled", Lang.bind(this, function() {
-            this._runSafely("error toggle", Lang.bind(this, function() {
-                this._updateAccountAlertSetting(usage.account, { errors: errors.state });
-            }));
-        }));
-        submenu.menu.addMenuItem(errors);
-        this.menu.addMenuItem(submenu);
+        this._setMenuItem(
+            row.status,
+            status,
+            usage.status === "ok" ? "codex-usage-stale" : "codex-usage-error",
+            usage.status !== "ok" || usage.stale
+        );
+        let canReactivate = usage.status === "login_required" && this.showReactivationActions;
+        let running = canReactivate && Boolean(this._reactivations[usage.account]);
+        this._setMenuItem(
+            row.reactivationRunning,
+            usage.label + ": Login läuft im isolierten Browser …",
+            "codex-usage-warning",
+            running
+        );
+        this._setMenuItem(
+            row.reactivationAction,
+            usage.label + " reaktivieren",
+            "",
+            canReactivate && !running
+        );
+        this._setMenuItem(
+            row.reactivationError,
+            this._reactivationErrors[usage.account] || "",
+            "codex-usage-error",
+            canReactivate && !running && Boolean(this._reactivationErrors[usage.account])
+        );
+        this._setMenuActorVisible(row.section, true);
     },
 
     _updateAccountPanelSetting: function(account, changes) {
@@ -4172,48 +4576,7 @@ CodexUsageApplet.prototype = {
             global.log("[" + UUID + "] alert account setting failed: " + String(e));
         }
         this._updatePanel();
-        if (this.menu && this.menu.isOpen) {
-            this._buildUsageMenu();
-        }
-    },
-
-    _addResetDetail: function(usage) {
-        let five = this._windowResetParts(usage.five_hour, usage.account, "click", true);
-        let week = this._windowResetParts(usage.weekly, usage.account, "click", true);
-        let backend = this._backendSummary(usage);
-        let plain = "5h Reset " + five.plain +
-            "     Woche Reset " + week.plain +
-            "     Abruf " + backend;
-        let markup = this._escapeMarkup("5h Reset ") + five.markup +
-            this._escapeMarkup("     Woche Reset ") + week.markup +
-            this._escapeMarkup("     Abruf " + backend);
-        let item = this._addDisabled(this.menu, plain, "codex-usage-detail");
-        this._setItemMarkup(item, markup);
-    },
-
-    _addDynamicLimitDetails: function(usage) {
-        let main = this._poolDetailParts(
-            usage.main,
-            usage.account,
-            "click",
-            "Weitere Limits",
-            [18000, 604800]
-        );
-        let spark = this._poolDetailParts(
-            this._modelPool(usage, "gpt-5.3-codex-spark"),
-            usage.account,
-            "click",
-            "Spark",
-            []
-        );
-        let routing = this._routingDecisionParts(usage);
-        [main, spark, routing].forEach(Lang.bind(this, function(parts) {
-            if (!parts) {
-                return;
-            }
-            let item = this._addDisabled(this.menu, parts.plain, "codex-usage-detail");
-            this._setItemMarkup(item, parts.markup);
-        }));
+        this._invalidateUsageMenu();
     },
 
     _poolDetailParts: function(pool, account, surface, prefix, excludedDurations) {
@@ -4321,36 +4684,6 @@ CodexUsageApplet.prototype = {
         return text;
     },
 
-    _addReactivationAction: function(usage) {
-        let running = Boolean(this._reactivations[usage.account]);
-        if (running) {
-            this._addDisabled(
-                this.menu,
-                usage.label + ": Login läuft im isolierten Browser …",
-                "codex-usage-warning"
-            );
-            return;
-        }
-        let item = new PopupMenu.PopupIconMenuItem(
-            usage.label + " reaktivieren",
-            "system-log-in-symbolic",
-            St.IconType.SYMBOLIC
-        );
-        item.connect("activate", Lang.bind(this, function() {
-            this._runSafely("reactivation action", Lang.bind(this, function() {
-                this._reactivateAccount(usage);
-            }));
-        }));
-        this.menu.addMenuItem(item);
-        if (this._reactivationErrors[usage.account]) {
-            this._addDisabled(
-                this.menu,
-                this._shortText(this._reactivationErrors[usage.account], 140),
-                "codex-usage-error"
-            );
-        }
-    },
-
     _reactivateAccount: function(usage) {
         if (this._reactivations[usage.account] || this._removed) {
             return;
@@ -4360,7 +4693,7 @@ CodexUsageApplet.prototype = {
             executable = this._resolveCommand();
         } catch (e) {
             this._reactivationErrors[usage.account] = String(e);
-            this._buildUsageMenu();
+            this._invalidateUsageMenu();
             return;
         }
         let argv = [executable];
@@ -4368,7 +4701,7 @@ CodexUsageApplet.prototype = {
         if (config) {
             if (config.length > 1024 || config.indexOf("\u0000") !== -1) {
                 this._reactivationErrors[usage.account] = _("Ungültiger Config-Pfad");
-                this._buildUsageMenu();
+                this._invalidateUsageMenu();
                 return;
             }
             argv.push("--config", config);
@@ -4389,7 +4722,7 @@ CodexUsageApplet.prototype = {
         this._reactivations[usage.account] = record;
         delete this._reactivationErrors[usage.account];
         try {
-            this._buildUsageMenu();
+            this._invalidateUsageMenu();
         } catch (e) {
             record.done = true;
             delete this._reactivations[usage.account];
@@ -4424,7 +4757,7 @@ CodexUsageApplet.prototype = {
                     error || (payload && payload.error) || _("Reaktivierung fehlgeschlagen"),
                     240
                 );
-                this._buildUsageMenu();
+                this._invalidateUsageMenu();
                 return;
             }
             delete this._reactivationErrors[usage.account];
@@ -4481,51 +4814,27 @@ CodexUsageApplet.prototype = {
         }
     },
 
-    _addActions: function() {
-        let refreshLabel = this._refreshing ? _("Aktualisierung läuft …") : _("Jetzt aktualisieren");
-        let refreshItem = this.menu.addAction(refreshLabel, Lang.bind(this, function() {
-            this._runSafely("manual refresh action", Lang.bind(this, function() {
-                this._refreshFresh(false);
-            }));
-        }));
-        if (this._refreshing && refreshItem && refreshItem.setSensitive) {
-            refreshItem.setSensitive(false);
+    _requestHealthDetail: function() {
+        if (this._removed) {
+            return;
         }
-        if (this.pollOwner === "systemd" && this._serviceChecked && !this._systemdActive) {
-            this.menu.addAction(
-                _("Hintergrunddienst aktivieren"),
-                Lang.bind(this, function() {
-                    this._runSafely("service activation action", Lang.bind(this, this._enableBackgroundService));
-                })
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._healthDetail = this._shortText(String(e), 240);
+            this._invalidateUsageMenu();
+            return;
+        }
+        argv.push("health", "--format", "json");
+        this._healthDetail = _("Health wird gelesen …");
+        this._invalidateUsageMenu();
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            this._healthDetail = this._shortText(
+                error || (payload ? JSON.stringify(payload) : _("Health konnte nicht gelesen werden")),
+                240
             );
-        }
-        this.menu.addAction(_("Codex Analytics öffnen"), Lang.bind(this, function() {
-            this._runSafely("analytics action", Lang.bind(this, this._openAnalytics));
-        }));
-        this.menu.addAction(_("Einstellungen"), Lang.bind(this, function() {
-            this._runSafely("settings action", Lang.bind(this, this._openSettings));
-        }));
-    },
-
-    _addHealthAction: function(menu) {
-        menu.addAction(_("Health anzeigen"), Lang.bind(this, function() {
-            this._runSafely("health action", Lang.bind(this, function() {
-                let argv;
-                try {
-                    argv = this._baseCommandArgv();
-                } catch (e) {
-                    this._showCommandError(String(e));
-                    return;
-                }
-                argv.push("health", "--format", "json");
-                this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
-                    if (error || !payload) {
-                        this._showCommandError(error || _("Health konnte nicht gelesen werden"));
-                        return;
-                    }
-                    this._addDisabled(this.menu, this._shortText(JSON.stringify(payload), 240), "codex-usage-detail");
-                }));
-            }));
+            this._invalidateUsageMenu();
         }));
     },
 
@@ -4998,15 +5307,7 @@ CodexUsageApplet.prototype = {
         let text = this._shortText(message || _("Unbekannter Fehler"), 240);
         this._commandError = text;
         try {
-            if (Array.isArray(this._usages) && this._usages.length) {
-                this._buildUsageMenu();
-            } else {
-                this.menu.removeAll();
-                this._addDisabled(this.menu, _("Codex Usage konnte nicht geladen werden"), "codex-usage-error");
-                this._addDisabled(this.menu, text, "codex-usage-error");
-                this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-                this._addActions();
-            }
+            this._invalidateUsageMenu();
         } catch (e) {
             global.log("[" + UUID + "] command error display failed: " + this._shortText(e, 180));
         }
@@ -5632,6 +5933,13 @@ CodexUsageApplet.prototype = {
                 return;
             }
             let wasOpen = this.menu.isOpen;
+            if (!wasOpen && (
+                !this._menuRootReady ||
+                this._menuStructureDirty ||
+                this._menuContentDirty
+            )) {
+                this._renderUsageMenu();
+            }
             this.menu.toggle();
             if (this.refreshOnOpen && !wasOpen) {
                 if (this._usesAppletPolling()) {
@@ -5668,7 +5976,15 @@ CodexUsageApplet.prototype = {
                 global.log("[" + UUID + "] settings finalize failed: " + this._shortText(e, 180));
             }
         }
+        this.settings = null;
         if (this.menu) {
+            if (this.menuManager && this.menuManager.removeMenu) {
+                try {
+                    this.menuManager.removeMenu(this.menu);
+                } catch (e) {
+                    global.log("[" + UUID + "] menu manager cleanup failed: " + this._shortText(e, 180));
+                }
+            }
             try {
                 this.menu.destroy();
             } catch (e) {
@@ -5676,6 +5992,19 @@ CodexUsageApplet.prototype = {
             }
             this.menu = null;
         }
+        this.menuManager = null;
+        this._menuRootReady = false;
+        this._accountRows = Object.create(null);
+        this._menuActions = Object.create(null);
+        this._menuStatusSection = null;
+        this._menuAccountsSection = null;
+        this._menuActionsSection = null;
+        this._menuStatusPrimary = null;
+        this._menuStatusSecondary = null;
+        this._menuStatusError = null;
+        this._menuHealthDetail = null;
+        this._menuStatusSeparator = null;
+        this._menuActionsSeparator = null;
     }
 };
 
