@@ -176,6 +176,27 @@ def test_reactivate_rejects_same_account_id_with_different_user_id(tmp_path):
         )
 
 
+def test_reactivate_rejects_missing_account_id_even_when_user_matches(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": _jwt_with_user_id("user-old"),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    with pytest.raises(ReactivationError, match="different account"):
+        _validate_refreshed_identity(
+            auth_path,
+            ("user-old", "account-old"),
+        )
+
+
 def test_reactivate_login_failure_restores_auth_json(tmp_path, monkeypatch):
     auth_home = tmp_path / "agent-home"
     auth_home.mkdir()

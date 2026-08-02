@@ -16,6 +16,7 @@ from codex_usage.state import (
     _window_duration_matches,
     _window_duration_seconds,
     _window_matches_expected_kind,
+    backend_identity_matches,
     backend_provenance_matches,
     backend_provenance_matches_configured,
     expire_reset_windows,
@@ -765,6 +766,40 @@ def test_merge_rejects_missing_backend_provenance():
     assert merged.weekly is None
 
 
+def test_merge_rejects_stale_restore_when_account_ids_missing():
+    captured = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-id",
+        five_hour=None,
+        weekly=None,
+    )
+    last_success = replace(
+        current,
+        captured_at=captured - timedelta(minutes=5),
+        backend_account_id="missing",
+        five_hour=LimitWindow(name="5h", remaining=80),
+        weekly=LimitWindow(name="weekly", remaining=60),
+    )
+    current = replace(
+        current,
+        backend_account_id=None,
+        five_hour=None,
+        weekly=None,
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+    assert merged.five_hour is None
+    assert merged.weekly is None
+
+
 def test_merge_prefers_newer_complete_dynamic_main_snapshot():
     timezone = ZoneInfo("Europe/Berlin")
     current = AccountUsage(
@@ -1323,6 +1358,39 @@ def test_expire_reset_windows_keeps_invalid_blocked_state_fail_closed():
 
     assert evaluated is usage
     assert evaluated.status == AccountStatus.BLOCKED
+
+
+def test_expire_reset_windows_keeps_blocked_state_with_valid_model_window():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=reference_at - timedelta(minutes=1),
+        status=AccountStatus.BLOCKED,
+        error="usage limit reached: weekly",
+        blocked_until=reference_at - timedelta(seconds=1),
+        blocked_reason="usage limit reached: weekly",
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                windows=(
+                    LimitWindow(
+                        name="weekly",
+                        remaining=90,
+                        reset_at=reference_at + timedelta(hours=1),
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.status == AccountStatus.BLOCKED
+    assert expired.blocked_until == usage.blocked_until
+    assert expired.blocked_reason == usage.blocked_reason
+    assert expired.models[0].windows == usage.models[0].windows
 
 
 def test_load_usage_snapshot_ignores_invalid_json(tmp_path):
@@ -2578,6 +2646,8 @@ def test_merge_current_with_last_success_fills_missing_window():
         status=AccountStatus.PARTIAL,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(
             name="5h",
             remaining=97,
@@ -2590,6 +2660,8 @@ def test_merge_current_with_last_success_fills_missing_window():
         captured_at=captured,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         weekly=LimitWindow(name="weekly", remaining=55),
     )
 
@@ -2643,6 +2715,8 @@ def test_browser_merge_does_not_expire_fresh_resetful_window_with_old_counterpar
         status=AccountStatus.PARTIAL,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(
             name="5h",
             remaining=80,
@@ -2656,6 +2730,8 @@ def test_browser_merge_does_not_expire_fresh_resetful_window_with_old_counterpar
         status=AccountStatus.OK,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         weekly=LimitWindow(
             name="weekly",
             remaining=55,
@@ -2719,6 +2795,8 @@ def test_merge_drops_cached_windows_after_their_reset():
         status=AccountStatus.PARTIAL,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
     )
     last_success = AccountUsage(
         account_id="privat",
@@ -2726,6 +2804,8 @@ def test_merge_drops_cached_windows_after_their_reset():
         captured_at=datetime(2026, 6, 8, 15, 0, tzinfo=timezone),
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(
             name="5h",
             remaining=97,
@@ -2757,6 +2837,8 @@ def test_merge_drops_window_without_reset_after_window_duration():
         status=AccountStatus.PARTIAL,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
     )
     last_success = AccountUsage(
         account_id="privat",
@@ -2764,6 +2846,8 @@ def test_merge_drops_window_without_reset_after_window_duration():
         captured_at=datetime(2026, 6, 8, 10, 0, tzinfo=timezone),
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(name="5h", remaining=97),
         weekly=LimitWindow(name="weekly", remaining=55),
     )
@@ -2929,6 +3013,112 @@ def test_merge_rejects_authenticated_snapshots_without_identity_proof():
     assert merged == current
 
 
+def test_backend_identity_rejects_browser_identityless_snapshots():
+    account_a = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=80),
+    )
+    account_b = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=70),
+    )
+
+    assert backend_identity_matches(account_a, account_b) is False
+
+
+def test_backend_identity_rejects_browser_user_only_against_account_bound_snapshot():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    user_only = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="shared-user",
+        backend_account_id=None,
+    )
+    account_bound = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="shared-user",
+        backend_account_id="other-account",
+    )
+
+    assert backend_identity_matches(user_only, account_bound) is False
+
+
+def test_merge_rejects_browser_identityless_cache_restore():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_configured="browser",
+        backend_used="browser",
+        five_hour=LimitWindow(name="5h", remaining=60),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+    assert merged.weekly is None
+
+
+def test_merge_rejects_browser_auth_mixed_identityless_restore():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id=None,
+        backend_account_id=None,
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+    assert merged.weekly is None
+
+
 def test_merge_rejects_different_identified_backend_account():
     captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
     current = AccountUsage(
@@ -3020,6 +3210,8 @@ def test_merge_current_with_last_success_preserves_usage_under_reset_only_window
         status=AccountStatus.PARTIAL,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(
             name="5h",
             reset_at=datetime(2026, 6, 8, 8, 0, tzinfo=timezone),
@@ -3031,6 +3223,8 @@ def test_merge_current_with_last_success_preserves_usage_under_reset_only_window
         captured_at=captured,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(
             name="5h",
             remaining=97,
@@ -3280,6 +3474,8 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
             captured_at=previous_capture,
             backend_configured="browser",
             backend_used="browser",
+            backend_user_id="user-privat",
+            backend_account_id="account-privat",
             five_hour=LimitWindow(
                 name="5h",
                 remaining=97,
@@ -3302,6 +3498,8 @@ def test_save_usage_snapshot_preserves_values_when_partial_snapshot_arrives(tmp_
             status=AccountStatus.PARTIAL,
             backend_configured="browser",
             backend_used="browser",
+            backend_user_id="user-privat",
+            backend_account_id="account-privat",
             five_hour=LimitWindow(
                 name="5h",
                 reset_at=datetime(2026, 6, 8, 8, 5, tzinfo=timezone),
@@ -3418,6 +3616,8 @@ def test_save_usage_snapshot_preserves_reset_when_usage_arrives_without_reset(tm
             captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=timezone),
             backend_configured="browser",
             backend_used="browser",
+            backend_user_id="user-privat",
+            backend_account_id="account-privat",
             five_hour=LimitWindow(name="5h", remaining=97, reset_at=previous_reset),
         ),
         snapshot_dir,
@@ -3431,6 +3631,8 @@ def test_save_usage_snapshot_preserves_reset_when_usage_arrives_without_reset(tm
             status=AccountStatus.PARTIAL,
             backend_configured="browser",
             backend_used="browser",
+            backend_user_id="user-privat",
+            backend_account_id="account-privat",
             five_hour=LimitWindow(name="5h", remaining=80),
             error="reset time missing",
         ),
@@ -3555,6 +3757,8 @@ def test_merge_current_with_newer_success_prefers_success_snapshot():
         status=AccountStatus.PARTIAL,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(name="5h", remaining=1),
         weekly=LimitWindow(name="weekly", remaining=2),
     )
@@ -3565,6 +3769,8 @@ def test_merge_current_with_newer_success_prefers_success_snapshot():
         status=AccountStatus.OK,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(name="5h", remaining=97),
         weekly=LimitWindow(name="weekly", remaining=55),
     )
@@ -3583,6 +3789,8 @@ def test_merge_current_with_newer_partial_snapshot_drops_older_resetless_counter
         status=AccountStatus.PARTIAL,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         five_hour=LimitWindow(name="5h", remaining=42),
     )
     last_success = AccountUsage(
@@ -3592,6 +3800,8 @@ def test_merge_current_with_newer_partial_snapshot_drops_older_resetless_counter
         status=AccountStatus.PARTIAL,
         backend_configured="direct",
         backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
         weekly=LimitWindow(name="weekly", remaining=61),
     )
 

@@ -4,6 +4,7 @@ import base64
 import errno
 import math
 import os
+import re
 import stat
 import time
 from datetime import UTC, datetime
@@ -35,6 +36,7 @@ MAX_RESPONSE_BYTES = 2_000_000
 MAX_AUTH_JSON_BYTES = 1_000_000
 MAX_ACCESS_TOKEN_CHARS = 16_384
 MAX_AUTH_ID_CHARS = 256
+PROC_SELF_FD_RE = re.compile(r"^/proc/self/fd/([0-9]+)$")
 PLAN_TYPE_ALIASES = {"pro": "plus"}
 SUPPORTED_WINDOW_SECONDS = frozenset((18_000, 604_800))
 IDENTITY_CACHE_INVALIDATION_ERRORS = frozenset(
@@ -46,6 +48,7 @@ IDENTITY_CACHE_INVALIDATION_ERRORS = frozenset(
         "backend response does not identify one account",
     )
 )
+_DIRECT_AUTH_ERROR_CODE_RE = re.compile(r"^direct auth failed:\s*HTTP\s+(\d{3})\b")
 
 
 def default_auth_json_path() -> Path:
@@ -313,10 +316,10 @@ def _missing_usage_limits_error(
 
 
 def _is_retryable_direct_auth_error(error: DirectAuthError) -> bool:
-    return str(error) in {
-        "direct auth failed: HTTP 401",
-        "direct auth failed: HTTP 403",
-    }
+    match = _DIRECT_AUTH_ERROR_CODE_RE.match(str(error))
+    if match is None:
+        return False
+    return match.group(1) in {"401", "403"}
 
 
 def _is_identity_attribution_error(error: str) -> bool:
@@ -724,7 +727,30 @@ def _validate_access_token_expiry(token: str, *, path: Path) -> None:
         raise DirectAuthError(f"auth.json access_token expiry is invalid: {path}") from None
 
 
-def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
+def _proc_self_fd(path: Path) -> int | None:
+    match = PROC_SELF_FD_RE.fullmatch(path.as_posix())
+    if match is None:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _open_auth_json_fd(path: Path) -> int:
+    inherited_fd = _proc_self_fd(path)
+    if inherited_fd is not None:
+        fd = -1
+        try:
+            fd = os.dup(inherited_fd)
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                os.lseek(fd, 0, os.SEEK_SET)
+            return fd
+        except OSError as exc:
+            if fd >= 0:
+                os.close(fd)
+            raise DirectAuthError(f"cannot read auth.json: {path}") from exc
+
     if path.is_symlink():
         raise DirectAuthError(f"auth.json is not a regular file: {path}")
     flags = os.O_RDONLY
@@ -740,6 +766,11 @@ def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
         if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
             raise DirectAuthError(f"auth.json is not a regular file: {path}") from exc
         raise DirectAuthError(f"cannot read auth.json: {path}") from exc
+    return fd
+
+
+def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
+    fd = _open_auth_json_fd(path)
 
     try:
         file_stat = os.fstat(fd)
@@ -762,12 +793,13 @@ def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
 
 
 def validate_auth_json_file(path: Path):
-    if path.is_symlink():
-        raise DirectAuthError(f"auth.json is not a regular file: {path}")
+    fd = _open_auth_json_fd(path)
     try:
-        file_stat = path.stat()
+        file_stat = os.fstat(fd)
     except OSError as exc:
         raise DirectAuthError(f"cannot read auth.json: {path}") from exc
+    finally:
+        os.close(fd)
     _validate_auth_json_stat(path, file_stat)
     return file_stat
 

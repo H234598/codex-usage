@@ -1314,7 +1314,7 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
                     2026, 7, 9, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")
                 ),
                 auth_access_expires_at=datetime(
-                    2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")
+                    2099, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")
                 ),
                 backend_configured="direct",
                 backend_used="direct",
@@ -1364,7 +1364,7 @@ def test_account_overview_shows_live_direct_values(tmp_path, monkeypatch, capsys
     assert "55% verbleibend" in output
     assert "08.06.2026 06:50" in output
     assert "10.06.2026 05:05" in output
-    assert "bis 19.07.2026 23:17" in output
+    assert "bis 19.07.2099 23:17" in output
     assert "ok" in output
 
 

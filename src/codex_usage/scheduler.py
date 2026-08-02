@@ -47,6 +47,7 @@ from .state import (
 )
 from .usage_limits import MAX_WINDOW_SECONDS
 
+DATETIME_TYPE = datetime
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
 RESET_FUTURE_SKEW_SECONDS = 5 * 60
@@ -121,7 +122,7 @@ def fetch_all(
             headed=headed,
             direct=direct,
             backend_override=backend_override,
-            auth_json_path=auth_json_path if (direct or auth_json_path is not None) else None,
+            auth_json_path=auth_json_path,
             global_lock_held=serial_fetch_required,
             reject_ambiguous_backend_identity=account.id in ambiguous_direct_accounts,
         )
@@ -174,9 +175,21 @@ def fetch_all(
             accounts_by_id = {account.id: account for account in account_list}
             for index, usage in enumerate(usages):
                 account = accounts_by_id.get(usage.account_id)
+                effective_backend = _fetch_effective_backend(
+                    account,
+                    direct=direct,
+                    backend_override=backend_override,
+                    auth_json_path=auth_json_path,
+                )
                 if (
                     account is None
-                    or not backend_provenance_matches_configured(usage, account.backend)
+                    or (
+                        backend_override is not None
+                        and backend_override != account.backend
+                    )
+                    or not backend_provenance_matches_configured(
+                        usage, effective_backend
+                    )
                 ):
                     continue
                 try:
@@ -363,7 +376,7 @@ def _fetch_one(
 ) -> AccountUsage:
     backend: object = None
     try:
-        effective_backend = "direct" if direct else (
+        effective_backend = "direct" if (direct or auth_json_path is not None) else (
             backend_override if backend_override is not None else account.backend
         )
         if (
@@ -374,6 +387,7 @@ def _fetch_one(
         backend = effective_backend
         use_auth_backend = (
             direct
+            or auth_json_path is not None
             or backend == "app-server"
             or backend_override is not None
             or account.auth_json_path is not None
@@ -865,6 +879,7 @@ def _watch_cycle_is_healthy(
     *,
     direct: bool = False,
     backend_override: str | None = None,
+    auth_json_path: Path | None = None,
 ) -> bool:
     results = list(usages)
     account_list = list(accounts)
@@ -885,9 +900,12 @@ def _watch_cycle_is_healthy(
             ):
                 return False
             account = accounts_by_id.get(usage.account_id)
-            configured_backend = "direct" if direct else backend_override
-            if configured_backend is None and account is not None:
-                configured_backend = account.backend
+            configured_backend = _fetch_effective_backend(
+                account,
+                direct=direct,
+                backend_override=backend_override,
+                auth_json_path=auth_json_path,
+            )
             if account is None or not (
                 usage.backend_configured == configured_backend
                 and usage.backend_used in AUTHENTICATED_BACKENDS | {"browser"}
@@ -936,8 +954,13 @@ def _has_usable_core_usage(usage: AccountUsage) -> bool:
     )
 
 
-def _watch_core_resets_current(usage: AccountUsage) -> bool:
-    now = datetime.now(tz=LOCAL_TZ)
+def _watch_core_resets_current(
+    usage: AccountUsage,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if now is None:
+        now = datetime.now(tz=LOCAL_TZ)
     windows = (
         usage.main.windows
         if usage.main is not None
@@ -950,8 +973,8 @@ def _watch_core_resets_current(usage: AccountUsage) -> bool:
     for window in windows:
         reset_at = window.reset_at
         if reset_at is None:
-            continue
-        if not isinstance(reset_at, datetime) or reset_at.tzinfo is None:
+            return False
+        if not isinstance(reset_at, DATETIME_TYPE) or reset_at.tzinfo is None:
             return False
         try:
             if reset_at <= now:
@@ -1063,6 +1086,7 @@ def watch(
                     account_list,
                     direct=direct,
                     backend_override=backend_override,
+                    auth_json_path=auth_json_path,
                 ):
                     raise RuntimeError("watch cycle returned unusable usage")
                 if output == "json":
@@ -1131,7 +1155,7 @@ def watchdog(
 ) -> list[AccountUsage]:
     now = datetime.now(tz=LOCAL_TZ)
     account_list = list(accounts)
-    effective_backend = "direct" if direct else None
+    effective_backend = "direct" if (direct or auth_json_path is not None) else None
     if effective_backend is None:
         effective_backend = backend_override
     blocked_snapshots: dict[str, AccountUsage] = {}
@@ -1162,6 +1186,7 @@ def watchdog(
             account,
             direct=direct,
             backend_override=backend_override,
+            auth_json_path=auth_json_path,
         )
         if (
             snapshot is not None
@@ -1250,7 +1275,18 @@ def watchdog(
                 continue
             if account.id not in blocked_snapshots:
                 usage = _apply_watchdog_block(usage, now=evaluation_now)
-                if not backend_provenance_matches_configured(usage, account.backend):
+                effective_backend = _fetch_effective_backend(
+                    account,
+                    direct=direct,
+                    backend_override=backend_override,
+                    auth_json_path=auth_json_path,
+                )
+                if (
+                    backend_override is not None
+                    and backend_override != account.backend
+                ) or not backend_provenance_matches_configured(
+                    usage, effective_backend
+                ):
                     usages.append(usage)
                     continue
                 try:
@@ -1295,6 +1331,8 @@ def _current_supersedes_blocked_snapshot(
     authenticated_fetch: bool,
 ) -> bool:
     if current is None or current.status == AccountStatus.BLOCKED:
+        return False
+    if current.stale:
         return False
     if not _blocked_snapshot_matches_account(
         account,
@@ -1367,11 +1405,15 @@ def _blocked_snapshot_matches_account(
 ) -> bool:
     if not backend_provenance_matches_configured(snapshot, configured_backend):
         return False
-    if snapshot.backend_used == "browser" and authenticated_fetch:
-        # A browser block belongs to whichever account the browser cookies had
-        # active. It is not safe to attribute it to an authenticated account,
-        # especially when multiple accounts share a user ID.
-        return False
+    if snapshot.backend_used == "browser" and configured_backend in AUTHENTICATED_BACKENDS:
+        # Browser blocks are only reusable for authenticated backends when the
+        # account identity can be resolved and verified.
+        if (
+            auth_json_path is None
+            and not account.auth_json_path
+            and not authenticated_fetch
+        ):
+            return False
     try:
         if auth_json_path is not None:
             auth_user_id, auth_account_id = auth_identity_from_file(auth_json_path)
@@ -1398,8 +1440,14 @@ def _blocked_snapshot_matches_account(
         return snapshot.backend_account_id in {auth_account_id, auth_user_id}
     if snapshot.backend_user_id:
         # A user ID alone cannot distinguish two accounts sharing that user.
-        # Reuse is safe only when the current auth has no account ID either.
-        return auth_account_id is None and snapshot.backend_user_id == auth_user_id
+        # A current account ID cannot bind a snapshot that has no account ID;
+        # another account under the same user could have produced it.
+        if snapshot.backend_used == "browser" and configured_backend in AUTHENTICATED_BACKENDS:
+            return False
+        return (
+            auth_account_id is None
+            and snapshot.backend_user_id == auth_user_id
+        )
     return False
 
 
@@ -1408,13 +1456,29 @@ def _watchdog_uses_authenticated_fetch(
     *,
     direct: bool,
     backend_override: str | None,
+    auth_json_path: Path | None,
 ) -> bool:
     return bool(
         direct
+        or auth_json_path is not None
         or backend_override is not None
         or account.backend == "app-server"
         or account.auth_json_path
     )
+
+
+def _fetch_effective_backend(
+    account: Account | None,
+    *,
+    direct: bool,
+    backend_override: str | None,
+    auth_json_path: Path | None,
+) -> str | None:
+    if direct or auth_json_path is not None:
+        return "direct"
+    if account is None:
+        return None
+    return backend_override if backend_override is not None else account.backend
 
 
 def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage:
@@ -1427,7 +1491,10 @@ def _apply_watchdog_block(usage: AccountUsage, *, now: datetime) -> AccountUsage
             blocked_until=blocked_until,
             blocked_reason=blocked_reason,
         )
-    if usage.status == AccountStatus.OK and not _has_usable_core_usage(usage):
+    if usage.status == AccountStatus.OK and (
+        not _has_usable_core_usage(usage)
+        or not _watch_core_resets_current(usage, now=now)
+    ):
         return replace(
             usage,
             five_hour=None,

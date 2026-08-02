@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.531 - 2026-08-02
+### Fixed
+- Der systemd-User-Timer nutzt `OnActiveSec` statt `OnBootSec`, damit eine
+  Installation oder Reparatur lange nach dem Boot einen ersten Lauf plant und
+  anschließend im konfigurierten Intervall weiterläuft.
+- Striktes JSON begrenzt die Verschachtelung unabhängig vom Verhalten des
+  Python-3.14-Decoders und verhindert CPU-/Speicherverbrauch durch extrem tiefe
+  Eingaben.
+
+## 0.6.530 - 2026-07-18
+### Fixed
+- Browser-Identitätsmerger lehnt Snapshots ab, wenn nur eine Seite an
+  `backend_account_id` gebunden ist; gemeinsame Nutzer-IDs reichen nicht als
+  Kontobindung.
+
+## 0.6.529 - 2026-07-18
+### Fixed
+- Watchdog verwendet Block-Snapshots mit reiner Nutzer-ID nicht mehr für
+  Auth-Accounts mit vorhandener Account-ID; dadurch keine Cross-Account-
+  Wiederverwendung unter geteilter Nutzeridentität.
+
+## 0.6.528 - 2026-07-18
+### Fixed
+- App-Server-Limitstatus akzeptiert jetzt die aktuellen offiziellen
+  `rateLimitReachedType`-Enumwerte und verwirft unbekannte Werte fail-closed;
+  Legacy-Fensterwerte bleiben kompatibel.
+
 ## 0.6.449 - 2026-07-16
 ### Added
 - Spark-Routing ist fail-closed: Ohne frischen erfolgreichen Live-Turn wird

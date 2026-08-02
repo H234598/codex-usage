@@ -184,7 +184,9 @@ def _validate_refreshed_identity(
             "login completed without a verifiable account identity"
         ) from exc
 
-    if expected_user_id and actual_user_id and actual_user_id != expected_user_id:
+    if expected_account_id and not actual_account_id:
+        matches = False
+    elif expected_user_id and actual_user_id and actual_user_id != expected_user_id:
         matches = False
     elif expected_account_id and actual_account_id:
         accepted_account_ids = {expected_account_id}

@@ -495,6 +495,10 @@ def expire_reset_windows(
         models_changed = models_changed or pool_expired
         model_pools += (updated_pool,)
     core_expired = five_hour_expired or weekly_expired or main_expired
+    model_windows_remaining = any(
+        isinstance(pool, UsagePool) and bool(pool.windows)
+        for pool in model_pools
+    )
     try:
         blocked_until_expired = (
             usage.status == AccountStatus.BLOCKED
@@ -508,6 +512,7 @@ def expire_reset_windows(
         and not five_hour
         and not weekly
         and not (main and main.windows)
+        and not model_windows_remaining
         and (usage.blocked_until is None or blocked_until_expired)
     )
 
@@ -1423,10 +1428,23 @@ def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
         # An explicit authenticated backend without identity proof must not
         # restore values captured before a possible account switch.
         return False
+    if (
+        left.backend_used in AUTHENTICATED_BACKENDS
+        and right.backend_used in AUTHENTICATED_BACKENDS
+        and not (left.backend_account_id and right.backend_account_id)
+    ):
+        return False
+    if left.backend_used == "browser" and right.backend_used == "browser":
+        if not (left.backend_user_id or left.backend_account_id):
+            return False
+        if not (right.backend_user_id or right.backend_account_id):
+            return False
+        if bool(left.backend_account_id) != bool(right.backend_account_id):
+            # A shared browser user ID cannot bind an account-bound snapshot
+            # to a user-only snapshot when multiple accounts may share it.
+            return False
     left_account_id = left.backend_account_id
     right_account_id = right.backend_account_id
-    if bool(left_account_id) != bool(right_account_id):
-        return False
     if left_account_id:
         if left_account_id != right_account_id:
             return False

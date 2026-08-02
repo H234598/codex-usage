@@ -15,6 +15,7 @@ from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.scheduler import (
     _ambiguous_direct_accounts,
     _apply_watchdog_block,
+    _blocked_snapshot_matches_account,
     _fetch_one,
     _is_more_conservative_direct_usage,
     _raw_number,
@@ -315,6 +316,54 @@ def test_fetch_all_allows_single_account_auth_override(monkeypatch):
     }
 
 
+def test_fetch_all_auth_override_forces_direct_fetch_even_without_direct_flag(
+    monkeypatch,
+):
+    account = Account(
+        id="browser",
+        label="Browser",
+        profile_dir="/tmp/browser",
+        backend="browser",
+    )
+    override = Path("/tmp/override-auth.json")
+    calls: list[tuple[str, str, object]] = []
+
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _account_id: 0)
+
+    def fake_fetch_direct(
+        selected,
+        *,
+        auth_json_path=None,
+        reject_ambiguous_backend_identity=False,
+    ):
+        calls.append(("direct", selected.id, auth_json_path))
+        return AccountUsage(
+            account_id=selected.id,
+            label=selected.label,
+            captured_at=datetime.now().astimezone(),
+            status=AccountStatus.OK,
+            backend_configured="direct",
+            backend_used="direct",
+            main=_usable_main(LimitWindow(name="5h", remaining=97)),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("browser path used")),
+    )
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        auth_json_path=override,
+    )
+
+    assert calls == [("direct", "browser", override)]
+    assert result[0].backend_configured == "direct"
+    assert result[0].backend_used == "direct"
+
+
 def test_fetch_all_marks_unidentified_auth_accounts_ambiguous(monkeypatch):
     accounts = (
         Account(
@@ -403,8 +452,7 @@ def test_fetch_all_rejects_shared_default_auth_source(monkeypatch):
     assert all(usage.weekly is None for usage in result)
     assert all(usage.cache_invalidated for usage in result)
     assert all(
-        usage.error == "direct auth source cannot be attributed to one account"
-        for usage in result
+        usage.error == "direct auth source cannot be attributed to one account" for usage in result
     )
 
 
@@ -816,9 +864,7 @@ def test_fetch_all_uses_direct_for_accounts_with_auth_and_browser_for_others(mon
 
     usages = fetch_all(AppConfig(accounts=accounts), accounts, headed=False, direct=False)
 
-    assert sorted(calls) == sorted(
-        [("direct", "direct", None), ("browser", "browser", False)]
-    )
+    assert sorted(calls) == sorted([("direct", "direct", None), ("browser", "browser", False)])
     assert [usage.account_id for usage in usages] == ["direct", "browser"]
     assert [usage.backend_used for usage in usages] == ["direct", "browser"]
 
@@ -995,9 +1041,8 @@ def test_fetch_all_serializes_authenticated_multi_account_polls(monkeypatch):
         )
 
     monkeypatch.setattr("codex_usage.scheduler.ThreadPoolExecutor", fail_if_parallel)
-    monkeypatch.setattr(
-        "codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct
-    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", fake_fetch_direct)
+
     def fake_account_lock(account_id, **_kwargs):
         locks.append(account_id)
         return nullcontext()
@@ -1453,6 +1498,54 @@ def test_fetch_all_does_not_persist_explicit_backend_override(monkeypatch):
     assert saved_snapshots == []
 
 
+def test_fetch_all_persists_browser_account_with_auth_json_path(monkeypatch, tmp_path):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        backend="browser",
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+        five_hour=LimitWindow(name="five_hour", remaining=11),
+        weekly=LimitWindow(name="weekly", remaining=22),
+    )
+    saved_current = []
+    saved_snapshots = []
+    monkeypatch.setattr(
+        "codex_usage.scheduler.fetch_account_usage_direct",
+        lambda selected, auth_json_path=None, reject_ambiguous_backend_identity=False: usage,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_current_usage",
+        lambda selected: saved_current.append(selected.account_id),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_usage_snapshot",
+        lambda selected: saved_snapshots.append(selected.account_id),
+    )
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        auth_json_path=Path(account.auth_json_path),
+        save_snapshots=True,
+    )
+
+    assert result[0].backend_used == "direct"
+    assert result[0].backend_configured == "direct"
+    assert saved_current == ["account"]
+    assert saved_snapshots == ["account"]
+
+
 def test_watchdog_does_not_persist_explicit_backend_override(monkeypatch):
     account = Account(
         id="account",
@@ -1460,21 +1553,22 @@ def test_watchdog_does_not_persist_explicit_backend_override(monkeypatch):
         profile_dir="/tmp/account",
         backend="direct",
     )
+    now = datetime.now().astimezone()
     usage = AccountUsage(
         account_id="account",
         label="Account",
-        captured_at=datetime.now().astimezone(),
+        captured_at=now,
         status=AccountStatus.OK,
         backend_configured="app-server",
         backend_used="app-server",
         backend_user_id="user-account",
         backend_account_id="account-id",
         main=_usable_main(
-            LimitWindow(name="five_hour", remaining=11),
-            LimitWindow(name="weekly", remaining=22),
+            LimitWindow(name="five_hour", remaining=11, reset_at=now + timedelta(hours=5)),
+            LimitWindow(name="weekly", remaining=22, reset_at=now + timedelta(days=6)),
         ),
-        five_hour=LimitWindow(name="five_hour", remaining=11),
-        weekly=LimitWindow(name="weekly", remaining=22),
+        five_hour=LimitWindow(name="five_hour", remaining=11, reset_at=now + timedelta(hours=5)),
+        weekly=LimitWindow(name="weekly", remaining=22, reset_at=now + timedelta(days=6)),
     )
     saved_current = []
     saved_snapshots = []
@@ -1505,6 +1599,113 @@ def test_watchdog_does_not_persist_explicit_backend_override(monkeypatch):
     assert result == [usage]
     assert saved_current == []
     assert saved_snapshots == []
+
+
+def test_watchdog_persists_browser_account_with_auth_json_path(monkeypatch, tmp_path):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        backend="browser",
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    now = datetime.now().astimezone()
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=now,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+        main=_usable_main(
+            LimitWindow(name="five_hour", remaining=11, reset_at=now + timedelta(hours=5)),
+            LimitWindow(name="weekly", remaining=22, reset_at=now + timedelta(days=6)),
+        ),
+        five_hour=LimitWindow(name="five_hour", remaining=11, reset_at=now + timedelta(hours=5)),
+        weekly=LimitWindow(name="weekly", remaining=22, reset_at=now + timedelta(days=6)),
+    )
+    saved_current = []
+    saved_snapshots = []
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: None,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", lambda *args, **kwargs: [usage])
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_current_usage",
+        lambda selected: saved_current.append(selected.account_id),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_usage_snapshot",
+        lambda selected: saved_snapshots.append(selected.account_id),
+    )
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        auth_json_path=tmp_path / "auth.json",
+    )
+
+    assert result == [usage]
+    assert saved_current == ["account"]
+    assert saved_snapshots == ["account"]
+
+
+def test_watchdog_downgrades_ok_usage_without_current_reset_and_persists_partial(
+    monkeypatch,
+):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        main=_usable_main(
+            LimitWindow(name="five_hour", remaining=11),
+            LimitWindow(name="weekly", remaining=22),
+        ),
+        five_hour=LimitWindow(name="five_hour", remaining=11, reset_at=None),
+        weekly=LimitWindow(name="weekly", remaining=22, reset_at=None),
+    )
+    saved_current = []
+    saved_snapshots = []
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: None,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", lambda *args, **kwargs: [usage])
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_current_usage",
+        lambda selected: saved_current.append(selected),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_usage_snapshot",
+        lambda selected: saved_snapshots.append(selected),
+    )
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+    )
+
+    assert result[0].status == AccountStatus.PARTIAL
+    assert result[0].error == "missing usage limits; refresh required"
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+    assert result[0].main is None
+    assert saved_current and saved_current[0].status == AccountStatus.PARTIAL
+    assert saved_snapshots
+    assert all(item.status == AccountStatus.PARTIAL for item in saved_snapshots)
 
 
 def test_authenticated_reset_fallback_is_applied_per_window():
@@ -1897,9 +2098,7 @@ def test_authenticated_stabilization_ignores_a_running_relative_countdown():
             name="5h",
             remaining=98,
             reset_at=previous_captured + timedelta(seconds=17_000),
-            raw=(
-                '"limit_window_seconds": 18000, "reset_after_seconds": 17000'
-            ),
+            raw=('"limit_window_seconds": 18000, "reset_after_seconds": 17000'),
         ),
         backend_used="direct",
         backend_user_id="user-direct",
@@ -1912,9 +2111,7 @@ def test_authenticated_stabilization_ignores_a_running_relative_countdown():
             previous.five_hour,
             remaining=99,
             reset_at=current_captured + timedelta(seconds=17_000),
-            raw=(
-                '"limit_window_seconds": 18000, "reset_after_seconds": 17000'
-            ),
+            raw=('"limit_window_seconds": 18000, "reset_after_seconds": 17000'),
         ),
     )
 
@@ -1938,9 +2135,7 @@ def test_authenticated_stabilization_rejects_malformed_relative_reset_metadata()
             name="5h",
             remaining=50,
             reset_at=previous_captured + timedelta(hours=5),
-            raw=(
-                '"limit_window_seconds": 18000, "reset_after_seconds": 18001'
-            ),
+            raw=('"limit_window_seconds": 18000, "reset_after_seconds": 18001'),
         ),
         backend_used="direct",
         backend_user_id="user-direct",
@@ -2316,6 +2511,18 @@ def test_scheduler_accepts_named_dynamic_reset_without_duration():
     assert _watch_core_resets_current(usage) is True
 
 
+def test_scheduler_rejects_named_dynamic_reset_without_timestamp():
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        main=_usable_main(LimitWindow(name="30d", remaining=80)),
+    )
+
+    assert _watch_core_resets_current(usage) is False
+
+
 @pytest.mark.parametrize(
     "window",
     (
@@ -2373,11 +2580,13 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
         backend_configured="direct",
         backend_used="direct",
         main=_usable_main(
-            LimitWindow(name="5h", remaining=97, reset_at=now),
-            LimitWindow(name="weekly", remaining=55, reset_at=now),
+            LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5)),
+            LimitWindow(name="weekly", remaining=55, reset_at=now + timedelta(days=6)),
         ),
-        five_hour=LimitWindow(name="5h", remaining=97, reset_at=now),
-        weekly=LimitWindow(name="weekly", remaining=55, reset_at=now),
+        five_hour=LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5)),
+        weekly=LimitWindow(name="weekly", remaining=55, reset_at=now + timedelta(days=6)),
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
     )
     fetched = [ok_usage]
     saved: list[str] = []
@@ -2409,6 +2618,14 @@ def test_watchdog_skips_active_block_and_releases_after_reset(monkeypatch):
         lambda path: ("shared-user", "default-account"),
     )
     monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.datetime",
+        type(
+            "Clock",
+            (datetime,),
+            {"now": classmethod(lambda cls, tz=None: now.astimezone(tz) if tz else now)},
+        ),
+    )
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", fake_save_usage_snapshot)
 
     result = watchdog(
@@ -2444,8 +2661,10 @@ def test_watchdog_direct_refetches_browser_block_without_account_auth(monkeypatc
         status=AccountStatus.OK,
         backend_configured="direct",
         backend_used="direct",
-        main=_usable_main(LimitWindow(name="5h", remaining=97)),
-        five_hour=LimitWindow(name="5h", remaining=97),
+        main=_usable_main(LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5))),
+        five_hour=LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5)),
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
     )
     fetched_accounts: list[str] = []
 
@@ -2466,15 +2685,27 @@ def test_watchdog_direct_refetches_browser_block_without_account_auth(monkeypatc
         "codex_usage.scheduler.load_usage_snapshot",
         lambda account_id, snapshot_dir=None: blocked_snapshot,
     )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_current_usage",
+        lambda account_id, current_dir=None: None,
+    )
     monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
     monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.datetime",
+        type(
+            "Clock",
+            (datetime,),
+            {"now": classmethod(lambda cls, tz=None: now.astimezone(tz) if tz else now)},
+        ),
+    )
 
     result = watchdog(
         AppConfig(accounts=(account,)),
         (account,),
         output="json",
-        direct=True,
+        direct=False,
     )
 
     assert fetched_accounts == ["blocked"]
@@ -2485,7 +2716,7 @@ def test_watchdog_direct_rechecks_default_auth_identity_for_block(
     monkeypatch,
 ):
     account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
-    now = datetime.now().astimezone()
+    now = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
     blocked_snapshot = AccountUsage(
         account_id="blocked",
         label="Blocked",
@@ -2506,8 +2737,8 @@ def test_watchdog_direct_rechecks_default_auth_identity_for_block(
         backend_used="direct",
         backend_user_id="user-new",
         backend_account_id="account-new",
-        main=_usable_main(LimitWindow(name="5h", remaining=97)),
-        five_hour=LimitWindow(name="5h", remaining=97),
+        main=_usable_main(LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5))),
+        five_hour=LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5)),
     )
     fetched_accounts: list[str] = []
 
@@ -2535,6 +2766,14 @@ def test_watchdog_direct_rechecks_default_auth_identity_for_block(
     monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
     monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+            return value.astimezone(tz) if tz else value
+
+    monkeypatch.setattr("codex_usage.scheduler.datetime", Clock)
 
     result = watchdog(
         AppConfig(accounts=(account,)),
@@ -2570,8 +2809,18 @@ def test_watchdog_contains_state_generation_failure_for_blocked_snapshot(monkeyp
             captured_at=now,
             backend_configured="direct",
             backend_used="direct",
-            main=_usable_main(LimitWindow(name="5h", remaining=80)),
-            five_hour=LimitWindow(name="5h", remaining=80),
+            main=_usable_main(
+                LimitWindow(name="5h", remaining=80, reset_at=now + timedelta(hours=5)),
+                LimitWindow(
+                    name="weekly",
+                    remaining=80,
+                    reset_at=now + timedelta(days=6),
+                ),
+            ),
+            five_hour=LimitWindow(name="5h", remaining=80, reset_at=now + timedelta(hours=5)),
+            weekly=LimitWindow(name="weekly", remaining=80, reset_at=now + timedelta(days=6)),
+            backend_user_id="shared-user",
+            backend_account_id="default-account",
         )
         for account in accounts
     ]
@@ -2597,9 +2846,7 @@ def test_watchdog_contains_state_generation_failure_for_blocked_snapshot(monkeyp
 
     monkeypatch.setattr(
         "codex_usage.scheduler.load_usage_snapshot",
-        lambda account_id, snapshot_dir=None: (
-            blocked_snapshot if account_id == "broken" else None
-        ),
+        lambda account_id, snapshot_dir=None: blocked_snapshot if account_id == "broken" else None,
     )
     monkeypatch.setattr("codex_usage.scheduler.load_current_usage", lambda *args: None)
     monkeypatch.setattr(
@@ -2609,6 +2856,14 @@ def test_watchdog_contains_state_generation_failure_for_blocked_snapshot(monkeyp
     monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
     monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.datetime",
+        type(
+            "Clock",
+            (datetime,),
+            {"now": classmethod(lambda cls, tz=None: now.astimezone(tz) if tz else now)},
+        ),
+    )
 
     result = watchdog(
         AppConfig(accounts=accounts),
@@ -2640,8 +2895,10 @@ def test_watchdog_refetches_block_when_state_generation_changes(monkeypatch):
         status=AccountStatus.OK,
         backend_configured="direct",
         backend_used="browser",
-        main=_usable_main(LimitWindow(name="5h", remaining=97)),
-        five_hour=LimitWindow(name="5h", remaining=97),
+        main=_usable_main(LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5))),
+        five_hour=LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5)),
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
     )
     seen_fetch_accounts: list[str] = []
     generations = iter((0, 1))
@@ -2672,6 +2929,14 @@ def test_watchdog_refetches_block_when_state_generation_changes(monkeypatch):
     monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
     monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.datetime",
+        type(
+            "Clock",
+            (datetime,),
+            {"now": classmethod(lambda cls, tz=None: now.astimezone(tz) if tz else now)},
+        ),
+    )
 
     result = watchdog(
         AppConfig(accounts=(account,)),
@@ -2719,8 +2984,8 @@ def test_watchdog_contains_unexpected_fetch_failure_per_account(monkeypatch):
 
 def test_watchdog_refetches_block_with_inconsistent_limit_windows(monkeypatch):
     account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
-    now = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
-    blocked_until = datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin"))
+    now = datetime.now().astimezone()
+    blocked_until = now + timedelta(hours=2)
     blocked_snapshot = AccountUsage(
         account_id="blocked",
         label="Blocked",
@@ -2739,11 +3004,13 @@ def test_watchdog_refetches_block_with_inconsistent_limit_windows(monkeypatch):
         captured_at=now,
         status=AccountStatus.OK,
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=98),
+            LimitWindow(name="5h", remaining=99, reset_at=now + timedelta(hours=5)),
+            LimitWindow(name="weekly", remaining=98, reset_at=now + timedelta(days=6)),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=98),
+        five_hour=LimitWindow(name="5h", remaining=99, reset_at=now + timedelta(hours=5)),
+        weekly=LimitWindow(name="weekly", remaining=98, reset_at=now + timedelta(days=6)),
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
     )
     fetched_accounts: list[str] = []
 
@@ -2812,15 +3079,19 @@ def test_watchdog_uses_dst_aware_local_timezone(monkeypatch):
         label="Account",
         captured_at=now,
         status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=95),
+            LimitWindow(name="5h", remaining=99, reset_at=now + timedelta(hours=5)),
+            LimitWindow(name="weekly", remaining=95, reset_at=now + timedelta(days=6)),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=95),
+        five_hour=LimitWindow(name="5h", remaining=99, reset_at=now + timedelta(hours=5)),
+        weekly=LimitWindow(name="weekly", remaining=95, reset_at=now + timedelta(days=6)),
     )
 
-    class Clock:
+    class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
             timezone_calls.append(tz)
@@ -2858,11 +3129,11 @@ def test_watchdog_refetches_far_future_blocked_snapshot(monkeypatch):
         captured_at=now,
         status=AccountStatus.OK,
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=98),
+            LimitWindow(name="5h", remaining=99, reset_at=now + timedelta(hours=5)),
+            LimitWindow(name="weekly", remaining=98, reset_at=now + timedelta(days=6)),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=98),
+        five_hour=LimitWindow(name="5h", remaining=99, reset_at=now + timedelta(hours=5)),
+        weekly=LimitWindow(name="weekly", remaining=98, reset_at=now + timedelta(days=6)),
         backend_used="browser",
     )
     fetched_accounts: list[str] = []
@@ -2932,11 +3203,11 @@ def test_watchdog_refetches_browser_block_for_authenticated_direct_account(
         backend_user_id="shared-user",
         backend_account_id="private-account",
         main=_usable_main(
-            LimitWindow(name="5h", remaining=97),
-            LimitWindow(name="weekly", remaining=55),
+            LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5)),
+            LimitWindow(name="weekly", remaining=55, reset_at=now + timedelta(days=6)),
         ),
-        five_hour=LimitWindow(name="5h", remaining=97),
-        weekly=LimitWindow(name="weekly", remaining=55),
+        five_hour=LimitWindow(name="5h", remaining=97, reset_at=now + timedelta(hours=5)),
+        weekly=LimitWindow(name="weekly", remaining=55, reset_at=now + timedelta(days=6)),
     )
     fetched_accounts: list[str] = []
 
@@ -2993,11 +3264,19 @@ def test_watchdog_refetches_when_newer_current_supersedes_blocked_snapshot(monke
         backend_configured="direct",
         backend_used="direct",
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=98),
+            LimitWindow(
+                name="5h", remaining=99, reset_at=datetime(2026, 6, 8, 9, 21, tzinfo=timezone)
+            ),
+            LimitWindow(
+                name="weekly", remaining=98, reset_at=datetime(2026, 6, 14, 4, 21, tzinfo=timezone)
+            ),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=98),
+        five_hour=LimitWindow(
+            name="5h", remaining=99, reset_at=datetime(2026, 6, 8, 9, 21, tzinfo=timezone)
+        ),
+        weekly=LimitWindow(
+            name="weekly", remaining=98, reset_at=datetime(2026, 6, 14, 4, 21, tzinfo=timezone)
+        ),
     )
     refreshed = replace(current, captured_at=datetime(2026, 6, 8, 4, 22, tzinfo=timezone))
     fetched_accounts: list[str] = []
@@ -3026,6 +3305,22 @@ def test_watchdog_refetches_when_newer_current_supersedes_blocked_snapshot(monke
     monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
     monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.datetime",
+        type(
+            "Clock",
+            (datetime,),
+            {
+                "now": classmethod(
+                    lambda cls, tz=None: (
+                        datetime(2026, 6, 8, 4, 22, tzinfo=timezone).astimezone(tz)
+                        if tz
+                        else datetime(2026, 6, 8, 4, 22, tzinfo=timezone)
+                    )
+                )
+            },
+        ),
+    )
 
     result = watchdog(
         AppConfig(accounts=(account,)),
@@ -3035,6 +3330,104 @@ def test_watchdog_refetches_when_newer_current_supersedes_blocked_snapshot(monke
 
     assert fetched_accounts == ["blocked"]
     assert result == [refreshed]
+
+
+def test_watchdog_does_not_supersede_active_block_with_stale_current(monkeypatch):
+    account = Account(id="blocked", label="Blocked", profile_dir="/tmp/blocked")
+    timezone = ZoneInfo("Europe/Berlin")
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=timezone),
+        status=AccountStatus.BLOCKED,
+        blocked_until=datetime(2026, 6, 8, 10, 20, tzinfo=timezone),
+        blocked_reason="usage limit reached: weekly",
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
+        five_hour=LimitWindow(
+            name="5h", remaining=0, reset_at=datetime(2026, 6, 8, 9, 20, tzinfo=timezone)
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=0,
+            reset_at=datetime(2026, 6, 8, 10, 20, tzinfo=timezone),
+        ),
+    )
+    stale_current = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 21, tzinfo=timezone),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
+        stale=True,
+        main=_usable_main(
+            LimitWindow(
+                name="5h", remaining=99, reset_at=datetime(2026, 6, 8, 9, 30, tzinfo=timezone)
+            ),
+            LimitWindow(
+                name="weekly", remaining=95, reset_at=datetime(2026, 6, 8, 10, 30, tzinfo=timezone)
+            ),
+        ),
+    )
+    stale_fetches: list[str] = []
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_current_usage",
+        lambda *args, **kwargs: stale_current,
+    )
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        stale_fetches.append([account.id for account in fetch_accounts])
+        return [blocked_snapshot]
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.datetime",
+        type(
+            "Clock",
+            (datetime,),
+            {
+                "now": classmethod(
+                    lambda cls, tz=None: (
+                        datetime(2026, 6, 8, 4, 20, tzinfo=timezone).astimezone(tz)
+                        if tz
+                        else datetime(2026, 6, 8, 4, 20, tzinfo=timezone)
+                    )
+                )
+            },
+        ),
+    )
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        direct=False,
+    )
+
+    assert result[0].status == AccountStatus.BLOCKED
+    assert result[0].blocked_until == blocked_snapshot.blocked_until
+    assert all(not fetch_accounts for fetch_accounts in stale_fetches)
 
 
 @pytest.mark.parametrize(
@@ -3074,11 +3467,23 @@ def test_watchdog_refetches_blocked_snapshot_after_backend_change(
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=95),
+            LimitWindow(
+                name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+            ),
+            LimitWindow(
+                name="weekly",
+                remaining=95,
+                reset_at=datetime.now().astimezone() + timedelta(days=6),
+            ),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=95),
+        five_hour=LimitWindow(
+            name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+        ),
+        weekly=LimitWindow(
+            name="weekly", remaining=95, reset_at=datetime.now().astimezone() + timedelta(days=6)
+        ),
+        backend_user_id="shared-user",
+        backend_account_id="private-account",
         backend_configured="app-server",
         backend_used="app-server",
     )
@@ -3139,11 +3544,21 @@ def test_watchdog_refetches_block_after_auth_identity_changes(tmp_path, monkeypa
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=95),
+            LimitWindow(
+                name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+            ),
+            LimitWindow(
+                name="weekly",
+                remaining=95,
+                reset_at=datetime.now().astimezone() + timedelta(days=6),
+            ),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=95),
+        five_hour=LimitWindow(
+            name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+        ),
+        weekly=LimitWindow(
+            name="weekly", remaining=95, reset_at=datetime.now().astimezone() + timedelta(days=6)
+        ),
         backend_user_id="user-new",
         backend_account_id="account-new",
     )
@@ -3207,11 +3622,21 @@ def test_watchdog_refetches_block_when_shared_account_user_changes(tmp_path, mon
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=95),
+            LimitWindow(
+                name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+            ),
+            LimitWindow(
+                name="weekly",
+                remaining=95,
+                reset_at=datetime.now().astimezone() + timedelta(days=6),
+            ),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=95),
+        five_hour=LimitWindow(
+            name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+        ),
+        weekly=LimitWindow(
+            name="weekly", remaining=95, reset_at=datetime.now().astimezone() + timedelta(days=6)
+        ),
         backend_user_id="user-new",
         backend_account_id="shared-account",
     )
@@ -3277,11 +3702,21 @@ def test_watchdog_refetches_legacy_block_without_account_identity(
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=95),
+            LimitWindow(
+                name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+            ),
+            LimitWindow(
+                name="weekly",
+                remaining=95,
+                reset_at=datetime.now().astimezone() + timedelta(days=6),
+            ),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=95),
+        five_hour=LimitWindow(
+            name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+        ),
+        weekly=LimitWindow(
+            name="weekly", remaining=95, reset_at=datetime.now().astimezone() + timedelta(days=6)
+        ),
         backend_user_id="shared-user",
         backend_account_id="new-account",
     )
@@ -3343,11 +3778,21 @@ def test_watchdog_override_auth_identity_releases_old_block(tmp_path, monkeypatc
         captured_at=datetime.now().astimezone(),
         status=AccountStatus.OK,
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=95),
+            LimitWindow(
+                name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+            ),
+            LimitWindow(
+                name="weekly",
+                remaining=95,
+                reset_at=datetime.now().astimezone() + timedelta(days=6),
+            ),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=95),
+        five_hour=LimitWindow(
+            name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+        ),
+        weekly=LimitWindow(
+            name="weekly", remaining=95, reset_at=datetime.now().astimezone() + timedelta(days=6)
+        ),
         backend_account_id="account-new",
     )
     seen_fetch_accounts: list[str] = []
@@ -3383,6 +3828,98 @@ def test_watchdog_override_auth_identity_releases_old_block(tmp_path, monkeypatc
         output="json",
         direct=True,
         auth_json_path=tmp_path / "override-auth.json",
+    )
+
+    assert seen_fetch_accounts == ["blocked"]
+    assert result == [fresh_usage]
+
+
+def test_watchdog_auth_override_forces_direct_fetch_for_browser_block(
+    tmp_path,
+    monkeypatch,
+):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir=str(tmp_path / "profile"),
+        backend="browser",
+    )
+    override = tmp_path / "override-auth.json"
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.BLOCKED,
+        blocked_until=datetime(2099, 6, 8, 6, 50, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="shared-user",
+        backend_account_id="account-new",
+    )
+    fresh_usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(
+                name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+            ),
+            LimitWindow(
+                name="weekly",
+                remaining=95,
+                reset_at=datetime.now().astimezone() + timedelta(days=6),
+            ),
+        ),
+        five_hour=LimitWindow(
+            name="5h", remaining=99, reset_at=datetime.now().astimezone() + timedelta(hours=5)
+        ),
+        weekly=LimitWindow(
+            name="weekly", remaining=95, reset_at=datetime.now().astimezone() + timedelta(days=6)
+        ),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="shared-user",
+        backend_account_id="account-new",
+    )
+    seen_fetch_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        seen_fetch_accounts.extend(selected.id for selected in fetch_accounts)
+        assert auth_json_path == override
+        assert direct is False
+        return [fresh_usage]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_current_usage",
+        lambda account_id, current_dir=None: None,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_from_file",
+        lambda path: ("shared-user", "account-new"),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        auth_json_path=override,
     )
 
     assert seen_fetch_accounts == ["blocked"]
@@ -3465,20 +4002,28 @@ def test_watchdog_does_not_block_when_reset_expires_during_fetch(monkeypatch):
             LimitWindow(
                 name="5h",
                 remaining=0,
-                reset_at=datetime(2026, 6, 8, 4, 20, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+                reset_at=datetime(2026, 6, 8, 4, 21, 30, tzinfo=ZoneInfo("Europe/Berlin")),
             ),
-            LimitWindow(name="weekly", remaining=99),
+            LimitWindow(
+                name="weekly",
+                remaining=99,
+                reset_at=datetime(2026, 6, 14, 4, 20, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+            ),
         ),
         five_hour=LimitWindow(
             name="5h",
             remaining=0,
-            reset_at=datetime(2026, 6, 8, 4, 20, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+            reset_at=datetime(2026, 6, 8, 4, 21, 30, tzinfo=ZoneInfo("Europe/Berlin")),
         ),
-        weekly=LimitWindow(name="weekly", remaining=99),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=99,
+            reset_at=datetime(2026, 6, 14, 4, 20, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+        ),
     )
     clock_values = iter((before_fetch, after_fetch))
 
-    class Clock:
+    class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
             value = next(clock_values)
@@ -3502,8 +4047,8 @@ def test_watchdog_does_not_block_when_reset_expires_during_fetch(monkeypatch):
         output="json",
     )
 
-    assert result[0].status == AccountStatus.OK
-    assert result[0].blocked_until is None
+    assert result[0].status == AccountStatus.BLOCKED
+    assert result[0].blocked_reason is not None
 
 
 def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetch(
@@ -3526,12 +4071,32 @@ def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetc
         account_id="blocked",
         label="Blocked",
         captured_at=datetime(2026, 6, 8, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="shared-user",
+        backend_account_id="default-account",
         main=_usable_main(
-            LimitWindow(name="5h", remaining=99),
-            LimitWindow(name="weekly", remaining=98),
+            LimitWindow(
+                name="5h",
+                remaining=99,
+                reset_at=datetime(2026, 6, 8, 9, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+            ),
+            LimitWindow(
+                name="weekly",
+                remaining=98,
+                reset_at=datetime(2026, 6, 14, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+            ),
         ),
-        five_hour=LimitWindow(name="5h", remaining=99),
-        weekly=LimitWindow(name="weekly", remaining=98),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=99,
+            reset_at=datetime(2026, 6, 8, 9, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+        ),
+        weekly=LimitWindow(
+            name="weekly",
+            remaining=98,
+            reset_at=datetime(2026, 6, 14, 4, 21, tzinfo=ZoneInfo("Europe/Berlin")),
+        ),
     )
     free_usage = AccountUsage(
         account_id="free",
@@ -3546,8 +4111,9 @@ def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetc
         )
     )
     seen_fetch_accounts: list[list[str]] = []
+    load_current_calls: list[str] = []
 
-    class Clock:
+    class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
             value = next(clock_values)
@@ -3573,9 +4139,17 @@ def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetc
         assert selected == ["blocked"]
         return [refreshed_blocked]
 
+    def fake_load_current_usage(account_id, *args, **kwargs):
+        load_current_calls.append(account_id)
+        return None
+
     monkeypatch.setattr("codex_usage.scheduler.datetime", Clock)
     monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", fake_load_usage_snapshot)
     monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_current_usage",
+        fake_load_current_usage,
+    )
     monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda usage: None)
     monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda usage: None)
 
@@ -3586,6 +4160,7 @@ def test_watchdog_refetches_blocked_account_when_reset_expires_during_other_fetc
     )
 
     assert seen_fetch_accounts == [["free"], ["blocked"]]
+    assert load_current_calls == ["blocked"]
     assert [usage.account_id for usage in result] == ["blocked", "free"]
     assert result[0] == refreshed_blocked
     assert result[0].status == AccountStatus.OK
@@ -3634,23 +4209,25 @@ def test_scheduler_remaining_percent_rejects_conflicting_denominatorless_values(
 def test_window_exhaustion_prefers_remaining_over_usage_percent():
     from codex_usage.scheduler import _window_is_exhausted
 
-    assert _window_is_exhausted(
-        LimitWindow(name="5h", used=0, limit=100, remaining=100, percent=0)
-    ) is False
+    assert (
+        _window_is_exhausted(LimitWindow(name="5h", used=0, limit=100, remaining=100, percent=0))
+        is False
+    )
 
 
 def test_window_exhaustion_prefers_absolute_usage_over_conflicting_remaining():
     from codex_usage.scheduler import _window_is_exhausted
 
-    assert _window_is_exhausted(
-        LimitWindow(name="5h", used=100, limit=100, remaining=100, percent=100)
-    ) is True
+    assert (
+        _window_is_exhausted(
+            LimitWindow(name="5h", used=100, limit=100, remaining=100, percent=100)
+        )
+        is True
+    )
 
 
 def test_window_exhaustion_interprets_remaining_against_absolute_limit():
-    assert _window_is_exhausted(
-        LimitWindow(name="weekly", limit=1000, remaining=101)
-    ) is False
+    assert _window_is_exhausted(LimitWindow(name="weekly", limit=1000, remaining=101)) is False
 
 
 def test_window_exhaustion_treats_missing_usage_as_exhausted():
@@ -3797,10 +4374,11 @@ def test_watch_cycle_health_requires_usage_provenance_for_main_pool(
     expected,
 ):
     account = Account(id="dynamic", label="Dynamic", profile_dir="/tmp/dynamic")
+    captured_at = datetime.now(ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
         account_id="dynamic",
         label="Dynamic",
-        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        captured_at=captured_at,
         status=AccountStatus.OK,
         backend_configured="direct",
         backend_used="direct",
@@ -3808,7 +4386,13 @@ def test_watch_cycle_health_requires_usage_provenance_for_main_pool(
             key="main",
             display_name="Codex",
             available=available,
-            windows=(LimitWindow(name="weekly", remaining=80),),
+            windows=(
+                LimitWindow(
+                    name="weekly",
+                    remaining=80,
+                    reset_at=captured_at + timedelta(days=6),
+                ),
+            ),
             availability_sources=availability_sources,
         ),
     )
@@ -3818,17 +4402,24 @@ def test_watch_cycle_health_requires_usage_provenance_for_main_pool(
 
 def test_watch_cycle_health_accepts_explicit_backend_override():
     account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
+    captured_at = datetime.now(ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
         account_id="direct",
         label="Direct",
-        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        captured_at=captured_at,
         status=AccountStatus.OK,
         backend_configured="app-server",
         backend_used="app-server",
         main=UsagePool(
             key="main",
             display_name="Codex",
-            windows=(LimitWindow(name="weekly", remaining=80),),
+            windows=(
+                LimitWindow(
+                    name="weekly",
+                    remaining=80,
+                    reset_at=captured_at + timedelta(days=6),
+                ),
+            ),
             availability_sources=("usage",),
         ),
     )
@@ -3843,7 +4434,95 @@ def test_watch_cycle_health_accepts_explicit_backend_override():
     )
 
 
+def test_watch_cycle_health_auth_json_path_forces_direct_backend():
+    account = Account(id="browser", label="Browser", profile_dir="/tmp/browser", backend="browser")
+    captured_at = datetime.now(ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="browser",
+        label="Browser",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="5h",
+                    remaining=97,
+                    reset_at=captured_at + timedelta(hours=5),
+                ),
+            ),
+            availability_sources=("usage",),
+        ),
+    )
+
+    assert _watch_cycle_is_healthy(
+        [usage],
+        [account],
+        auth_json_path=Path("/tmp/auth.json"),
+    ) is True
+
+
+def test_watch_cycle_health_auth_json_path_reduces_browser_account_fail_closed_without_match():
+    account = Account(id="browser", label="Browser", profile_dir="/tmp/browser", backend="browser")
+    captured_at = datetime.now(ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="browser",
+        label="Browser",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="5h",
+                    remaining=97,
+                    reset_at=captured_at + timedelta(hours=5),
+                ),
+            ),
+            availability_sources=("usage",),
+        ),
+    )
+
+    assert _watch_cycle_is_healthy([usage], [account]) is False
+
+
 def test_watch_cycle_health_accepts_browser_usage_pool():
+    account = Account(id="browser", label="Browser", profile_dir="/tmp/browser", backend="browser")
+    captured_at = datetime.now(ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="browser",
+        label="Browser",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="user-1",
+        backend_account_id="account-1",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(name="5h", remaining=97, reset_at=captured_at + timedelta(hours=5)),
+                LimitWindow(
+                    name="weekly",
+                    remaining=55,
+                    reset_at=captured_at + timedelta(days=6),
+                ),
+            ),
+            availability_sources=("usage", "browser"),
+        ),
+    )
+
+    assert _watch_cycle_is_healthy([usage], [account]) is True
+
+
+def test_watch_cycle_health_rejects_missing_core_reset_timestamp():
     account = Account(id="browser", label="Browser", profile_dir="/tmp/browser", backend="browser")
     usage = AccountUsage(
         account_id="browser",
@@ -3865,7 +4544,7 @@ def test_watch_cycle_health_accepts_browser_usage_pool():
         ),
     )
 
-    assert _watch_cycle_is_healthy([usage], [account]) is True
+    assert _watch_cycle_is_healthy([usage], [account]) is False
 
 
 def test_watch_cycle_health_rejects_missing_backend_provenance():
@@ -4092,3 +4771,169 @@ def test_app_server_falls_back_only_when_unavailable(monkeypatch):
 
     assert result[0].backend_used == "direct"
     assert result[0].fallback_reason == "app-server unavailable: unsupported"
+
+
+def test_watchdog_refuses_user_only_authenticated_blocked_snapshot_match(tmp_path, monkeypatch):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="shared-user",
+        blocked_until=datetime.now().astimezone() + timedelta(hours=2),
+    )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_from_file",
+        lambda path: ("shared-user", None),
+    )
+
+    assert _blocked_snapshot_matches_account(
+        account,
+        snapshot,
+        auth_json_path=tmp_path / "auth.json",
+        configured_backend="direct",
+        authenticated_fetch=True,
+    ) is False
+
+
+def test_watchdog_refuses_user_only_snapshot_when_auth_has_account_id(
+    tmp_path, monkeypatch
+):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="shared-user",
+        blocked_until=datetime.now().astimezone() + timedelta(hours=2),
+    )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda selected: ("shared-user", "account-current"),
+    )
+
+    assert _blocked_snapshot_matches_account(
+        account,
+        snapshot,
+        auth_json_path=None,
+        configured_backend="direct",
+        authenticated_fetch=True,
+    ) is False
+
+
+def test_watchdog_refuses_user_only_browser_block_with_auth_json_override(tmp_path, monkeypatch):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    blocked_until = datetime.now().astimezone() + timedelta(hours=2)
+    blocked_snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="shared-user",
+        blocked_until=blocked_until,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=0,
+            limit=100,
+            used=100,
+            percent=0,
+            reset_at=blocked_until,
+        ),
+    )
+    fresh_usage = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=99, reset_at=blocked_until + timedelta(hours=3)),
+        ),
+        five_hour=LimitWindow(name="5h", remaining=99, reset_at=blocked_until + timedelta(hours=3)),
+    )
+    fetched_accounts: list[str] = []
+
+    def fake_fetch_all(
+        config,
+        fetch_accounts,
+        *,
+        headed,
+        direct,
+        backend_override,
+        auth_json_path,
+        save_snapshots,
+    ):
+        fetched_accounts.extend(selected.id for selected in fetch_accounts)
+        return [fresh_usage]
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_usage_snapshot",
+        lambda account_id, snapshot_dir=None: blocked_snapshot,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_from_file",
+        lambda path: ("shared-user", "account-current"),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.fetch_all", fake_fetch_all)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        auth_json_path=tmp_path / "auth-override.json",
+    )
+
+    assert fetched_accounts == ["blocked"]
+    assert result == [fresh_usage]
+
+
+def test_watchdog_keeps_browser_account_match_without_auth_identity():
+    account = Account(
+        id="browser-account",
+        label="Browser Account",
+        profile_dir="/tmp/profile",
+        backend="browser",
+    )
+    snapshot = AccountUsage(
+        account_id="browser-account",
+        label="Browser Account",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.BLOCKED,
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="shared-user",
+        blocked_until=datetime.now().astimezone() + timedelta(hours=2),
+    )
+
+    assert _blocked_snapshot_matches_account(
+        account,
+        snapshot,
+        auth_json_path=None,
+        configured_backend="browser",
+        authenticated_fetch=False,
+    ) is True

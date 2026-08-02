@@ -30,7 +30,7 @@ def test_render_table_contains_values():
         backend_configured="direct",
         backend_used="direct",
         auth_last_refresh=datetime(2026, 7, 9, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
-        auth_access_expires_at=datetime(2026, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
+        auth_access_expires_at=datetime(2099, 7, 19, 23, 17, tzinfo=ZoneInfo("Europe/Berlin")),
         five_hour=LimitWindow(
             name="5h",
             used=42,
@@ -56,7 +56,7 @@ def test_render_table_contains_values():
     assert "58% verbleibend" in rendered
     assert "69% verbleibend" in rendered
     assert "Auth" in rendered
-    assert "bis 19.07.2026 23:17" in rendered
+    assert "bis 19.07.2099 23:17" in rendered
 
 
 def test_render_hides_values_without_backend_provenance():

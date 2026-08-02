@@ -203,6 +203,10 @@ def evaluate_routing(
         if spark is not None
         else "unknown"
     )
+    spark_health_checked_at_age = _spark_health_age_seconds(
+        spark_health,
+        now=checked_at,
+    )
     spark_health_fresh = _spark_health_is_fresh(spark_health, now=checked_at)
     if (
         spark is not None
@@ -231,7 +235,12 @@ def evaluate_routing(
             spark_reason = "spark_usage_unknown"
         elif not spark.exhausted:
             if spark_health_state == "failed":
-                spark_reason = "spark_health_failed"
+                spark_reason = (
+                    "spark_health_failed"
+                    if spark_health.get("stale") is False
+                    and spark_health_checked_at_age is not None
+                    else "spark_health_unverified"
+                )
             elif (
                 spark_health_state == "healthy"
                 and spark_health.get("stale") is True
@@ -404,17 +413,23 @@ def _has_expired_resetless_usage_window(
 def _spark_health_is_fresh(payload: dict[str, Any], *, now: datetime) -> bool:
     if payload.get("state") != "healthy" or payload.get("stale") is not False:
         return False
+    age = _spark_health_age_seconds(payload, now=now)
+    if age is None:
+        return False
+    return 0 <= age <= SPARK_HEALTH_MAX_AGE_SECONDS
+
+
+def _spark_health_age_seconds(payload: dict[str, Any], *, now: datetime) -> float | None:
     checked_at = payload.get("checked_at")
     if not isinstance(checked_at, str):
-        return False
+        return None
     try:
         timestamp = datetime.fromisoformat(checked_at)
         if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-            return False
-        age = (now.astimezone(UTC) - timestamp.astimezone(UTC)).total_seconds()
+            return None
+        return (now.astimezone(UTC) - timestamp.astimezone(UTC)).total_seconds()
     except (TypeError, ValueError, OverflowError):
-        return False
-    return -300 <= age <= SPARK_HEALTH_MAX_AGE_SECONDS
+        return None
 
 
 def _pool_usage_state(pool: UsagePool, *, now: datetime) -> str:

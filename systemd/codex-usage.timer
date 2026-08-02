@@ -3,7 +3,7 @@ Description=Run ChatGPT Codex usage analytics poll every five minutes
 Documentation=man:systemd.timer(5)
 
 [Timer]
-OnBootSec=1min
+OnActiveSec=1min
 OnUnitActiveSec=5min
 AccuracySec=30s
 Persistent=true

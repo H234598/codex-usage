@@ -76,11 +76,32 @@ def service_status() -> dict[str, Any]:
     installed = _is_managed_unit(service_path) and _is_managed_unit(timer_path)
     if installed:
         enabled = _systemctl_state("is-enabled", TIMER_NAME) == "enabled"
-        active = _systemctl_state("is-active", TIMER_NAME) == "active"
+        timer_active = _systemctl_state("is-active", TIMER_NAME) == "active"
         service_active = _systemctl_state("is-active", SERVICE_NAME) in {
             "active",
             "activating",
         }
+        timer_details = _systemctl_show(
+            TIMER_NAME,
+            (
+                "SubState",
+                "NextElapseUSecMonotonic",
+                "NextElapseUSecRealtime",
+            ),
+        )
+        timer_substate = timer_details.get("SubState", "unknown").strip().lower()
+        timer_next_elapse = (
+            timer_details.get("NextElapseUSecMonotonic")
+            or timer_details.get("NextElapseUSecRealtime")
+            or ""
+        ).strip().lower()
+        timer_scheduled = timer_substate == "waiting" and timer_next_elapse not in {
+            "",
+            "0",
+            "infinity",
+            "n/a",
+        }
+        active = timer_active and (service_active or timer_scheduled)
         details = _systemctl_show(
             SERVICE_NAME,
             (
@@ -95,12 +116,16 @@ def service_status() -> dict[str, Any]:
         enabled = False
         active = False
         service_active = False
+        timer_scheduled = False
+        timer_substate = "unknown"
         details = {}
     return {
         "installed": installed,
         "enabled": enabled,
         "active": active,
         "service_active": service_active,
+        "timer_scheduled": timer_scheduled,
+        "timer_substate": timer_substate,
         "service_result": details.get("Result", "unknown"),
         "service_exit_status": details.get("ExecMainStatus", "unknown"),
         "service_exit_code": _normalize_exec_main_code(details.get("ExecMainCode")),
@@ -207,7 +232,7 @@ Documentation=https://github.com/H234598/codex-usage
 {MANAGED_MARKER}
 
 [Timer]
-OnBootSec=1min
+OnActiveSec=1min
 OnUnitActiveSec={interval_seconds}s
 AccuracySec=30s
 Persistent=true

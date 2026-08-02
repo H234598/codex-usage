@@ -1020,7 +1020,17 @@ def test_app_server_rejects_explicit_window_duration_above_maximum():
 
 @pytest.mark.parametrize(
     ("reached_type", "expected"),
-    [(True, True), (False, False), ("primary_window", True)],
+    [
+        (True, True),
+        (False, False),
+        ("rate_limit_reached", True),
+        ("workspace_owner_credits_depleted", True),
+        ("workspace_member_credits_depleted", True),
+        ("workspace_owner_usage_limit_reached", True),
+        ("workspace_member_usage_limit_reached", True),
+        ("primary_window", True),
+        ("secondary_window", True),
+    ],
 )
 def test_app_server_preserves_limit_reached_flag(reached_type, expected):
     _, models = parse_app_server_usage_pools(
@@ -1041,6 +1051,28 @@ def test_app_server_preserves_limit_reached_flag(reached_type, expected):
     assert len(models) == 1
     assert models[0].limit_reached is expected
     assert models[0].exhausted is expected
+
+
+def test_app_server_rejects_unknown_limit_reached_type():
+    _, models = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex_bengalfox": {
+                    "primary": {
+                        "usedPercent": 1,
+                        "windowDurationMins": 10080,
+                    },
+                    "rateLimitReachedType": "not_a_backend_enum",
+                }
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].available is False
+    assert models[0].limit_reached is None
+    assert models[0].exhausted is True
 
 
 def test_app_server_disables_pool_with_invalid_limit_reached_flag():

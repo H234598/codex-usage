@@ -8,6 +8,7 @@ import pytest
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.routing import (
     MAIN_MODEL,
+    SPARK_HEALTH_MAX_AGE_SECONDS,
     effective_paid_overage,
     evaluate_routing,
     load_policy,
@@ -316,7 +317,58 @@ def test_routing_fails_closed_when_spark_health_is_unknown():
     assert result["spark_health"]["state"] == "unknown"
 
 
-def test_routing_fails_closed_after_spark_health_failure():
+def test_routing_blocks_spark_after_expired_spark_health_failure():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+    )
+
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "failed",
+            "reason": "spark_turn_timeout",
+            "checked_at": (NOW - timedelta(seconds=SPARK_HEALTH_MAX_AGE_SECONDS + 1)).isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_health_failed"
+    assert result["model"] == MAIN_MODEL
+
+
+def test_routing_treats_failed_spark_health_with_invalid_checked_at_as_unverified():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+    )
+
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "failed",
+            "reason": "spark_turn_timeout",
+            "checked_at": "not-a-timestamp",
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_health_unverified"
+
+
+def test_routing_treats_failed_spark_health_with_non_boolean_stale_as_unverified():
     spark = UsagePool(
         key=SPARK_MODEL,
         display_name="Spark",
@@ -333,12 +385,41 @@ def test_routing_fails_closed_after_spark_health_failure():
             "state": "failed",
             "reason": "spark_turn_timeout",
             "checked_at": NOW.isoformat(),
-            "stale": False,
+            "stale": "false",
         },
     )
 
     assert result["decision"] == "main"
-    assert result["reason"] == "spark_health_failed"
+    assert result["reason"] == "spark_health_unverified"
+
+
+def test_spark_health_failure_aging_does_not_invalidate_failed_state():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+    )
+
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("weekly", 5, 604800),),
+            spark=spark,
+            captured_at=NOW - timedelta(minutes=1),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=True,
+        now=NOW,
+        spark_health={
+            "state": "failed",
+            "reason": "spark_turn_timeout",
+            "checked_at": (NOW - timedelta(days=30)).isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "credits"
+    assert result["reason"] == "paid_overage_explicitly_allowed"
 
 
 def test_routing_fails_closed_for_stale_spark_health():
@@ -364,6 +445,32 @@ def test_routing_fails_closed_for_stale_spark_health():
 
     assert result["decision"] == "main"
     assert result["reason"] == "spark_health_stale"
+
+
+def test_routing_blocks_spark_for_future_spark_health_timestamp():
+    spark = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        windows=(_window("weekly", 99, 604800),),
+        available=True,
+        availability_sources=("usage",),
+    )
+
+    result = evaluate_routing(
+        _usage(main_windows=(_window("weekly", 80, 604800),), spark=spark),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={
+            "state": "healthy",
+            "reason": "successful_spark_turn",
+            "checked_at": (NOW + timedelta(seconds=299)).isoformat(),
+            "stale": False,
+        },
+    )
+
+    assert result["decision"] == "main"
+    assert result["reason"] == "spark_health_unverified"
 
 
 def test_routing_fails_closed_for_expired_limit_reset():

@@ -14,6 +14,18 @@ SPARK_METERED_FEATURE = "codex_bengalfox"
 FIVE_HOUR_SECONDS = 18_000
 WEEKLY_SECONDS = 604_800
 MAX_WINDOW_SECONDS = 10 * 365 * 24 * 60 * 60
+APP_SERVER_LIMIT_REACHED_TYPES = frozenset(
+    {
+        "rate_limit_reached",
+        "workspace_owner_credits_depleted",
+        "workspace_member_credits_depleted",
+        "workspace_owner_usage_limit_reached",
+        "workspace_member_usage_limit_reached",
+        # Older app-server builds exposed the reached window instead.
+        "primary_window",
+        "secondary_window",
+    }
+)
 
 
 def parse_wham_usage_pools(
@@ -364,16 +376,15 @@ def _app_server_pool(
     )
     window_identity_valid = bool(windows) and _window_identities_are_unique(windows)
     raw_limit_reached = snapshot.get("rateLimitReachedType")
-    limit_reached = (
-        raw_limit_reached
-        if isinstance(raw_limit_reached, bool)
-        else True
-        if isinstance(raw_limit_reached, str) and raw_limit_reached.strip()
-        else None
-    )
-    control_flag_valid = raw_limit_reached is None or isinstance(raw_limit_reached, bool) or (
-        isinstance(raw_limit_reached, str) and bool(raw_limit_reached.strip())
-    )
+    if isinstance(raw_limit_reached, bool):
+        limit_reached = raw_limit_reached
+        control_flag_valid = True
+    elif isinstance(raw_limit_reached, str):
+        control_flag_valid = raw_limit_reached in APP_SERVER_LIMIT_REACHED_TYPES
+        limit_reached = True if control_flag_valid else None
+    else:
+        limit_reached = None
+        control_flag_valid = raw_limit_reached is None
     if not windows and raw_limit_reached is None:
         return None
     return UsagePool(

@@ -47,7 +47,13 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
             stdout = "enabled\n"
         if args[0] == "is-active" and args[1].endswith("timer"):
             stdout = "active\n"
-        if args[0] == "show":
+        if args[0] == "show" and args[1].endswith("timer"):
+            stdout = (
+                "SubState=waiting\n"
+                "NextElapseUSecMonotonic=15h\n"
+                "NextElapseUSecRealtime=\n"
+            )
+        elif args[0] == "show":
             stdout = (
                 "Result=success\n"
                 "ExecMainStatus=0\n"
@@ -81,6 +87,8 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     assert "Restart=no" in service
     assert f'ReadWritePaths="{profile_dir}"' in service
     assert f'ReadWritePaths="{auth_home}"' in service
+    assert "OnActiveSec=1min" in timer
+    assert "OnBootSec=" not in timer
     assert "OnUnitActiveSec=420s" in timer
     assert oct(service_path.stat().st_mode & 0o777) == "0o600"
     assert ("enable", "codex-usage.timer") in calls
@@ -88,6 +96,8 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     assert result["installed"] is True
     assert result["enabled"] is True
     assert result["active"] is True
+    assert result["timer_scheduled"] is True
+    assert result["timer_substate"] == "waiting"
     assert result["service_result"] == "success"
     assert result["service_exit_status"] == "0"
     assert result["service_exit_code"] == "exited"
@@ -124,7 +134,13 @@ def test_service_units_escape_percent_specifiers_and_restore_config_path(tmp_pat
             stdout = "enabled\n"
         if args[0] == "is-active" and args[1].endswith("timer"):
             stdout = "active\n"
-        if args[0] == "show":
+        if args[0] == "show" and args[1].endswith("timer"):
+            stdout = (
+                "SubState=waiting\n"
+                "NextElapseUSecMonotonic=15h\n"
+                "NextElapseUSecRealtime=\n"
+            )
+        elif args[0] == "show":
             stdout = "Result=success\nExecMainStatus=0\nExecMainCode=1\n"
         return subprocess.CompletedProcess(args, 0, stdout, "")
 
@@ -198,6 +214,46 @@ def test_service_status_hides_foreign_state_without_managed_units(tmp_path, monk
     assert result["active"] is False
     assert result["service_active"] is False
     assert calls == []
+
+
+def test_service_status_rejects_elapsed_timer_without_next_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    for name in ("codex-usage.service", "codex-usage.timer"):
+        (unit_dir / name).write_text(
+            "[Unit]\nX-Codex-Usage-Managed=true\n",
+            encoding="utf-8",
+        )
+
+    def fake_systemctl(*args, check=True):
+        if args[0] == "is-enabled":
+            return subprocess.CompletedProcess(args, 0, "enabled\n", "")
+        if args[0] == "is-active" and args[1].endswith("timer"):
+            return subprocess.CompletedProcess(args, 0, "active\n", "")
+        if args[0] == "is-active":
+            return subprocess.CompletedProcess(args, 0, "inactive\n", "")
+        if args[0] == "show" and args[1].endswith("timer"):
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                "SubState=elapsed\nNextElapseUSecMonotonic=infinity\nNextElapseUSecRealtime=\n",
+                "",
+            )
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            "Result=success\nExecMainStatus=0\nExecMainCode=1\n",
+            "",
+        )
+
+    monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
+
+    result = service_status()
+
+    assert result["active"] is False
+    assert result["timer_scheduled"] is False
+    assert result["timer_substate"] == "elapsed"
 
 
 def test_service_disable_refuses_unmanaged_unit_without_stopping_it(tmp_path, monkeypatch):

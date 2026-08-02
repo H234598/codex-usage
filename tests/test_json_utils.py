@@ -12,6 +12,12 @@ def test_loads_strict_rejects_deeply_nested_json_as_value_error():
         loads_strict(nested_json)
 
 
+def test_loads_strict_ignores_structural_characters_inside_strings():
+    assert loads_strict('{"value": "[[[{\\\"still a string}]]]"}') == {
+        "value": '[[[{"still a string}]]]'
+    }
+
+
 def test_loads_strict_rejects_duplicate_object_keys():
     with pytest.raises(ValueError, match="duplicate JSON key: usage"):
         loads_strict('{"usage": 97, "usage": 55}')

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -25,6 +27,8 @@ from codex_usage.direct import (
     auth_plan_type_from_payload,
     canonical_backend_identity,
     fetch_account_usage_direct,
+    read_auth_json_file,
+    validate_auth_json_file,
 )
 from codex_usage.models import Account, AccountStatus
 
@@ -279,6 +283,12 @@ def test_auth_identity_rejects_changed_user_with_same_account():
         before_account_id="shared-account",
         after_user_id=None,
         after_account_id="shared-account",
+    ) is True
+    assert auth_identity_changed(
+        before_user_id="old-user",
+        before_account_id=None,
+        after_user_id="new-user",
+        after_account_id=None,
     ) is True
 
 
@@ -1731,6 +1741,54 @@ def test_fetch_account_usage_direct_rejects_auth_identity_changed_during_request
     assert usage.backend_account_id is None
 
 
+def test_fetch_account_usage_direct_rejects_auth_identity_disappearing_user_after_401(
+    tmp_path, monkeypatch
+):
+    auth_path = tmp_path / "auth.json"
+    old_token = "old-access-token"
+    new_token = "new-access-token"
+
+    def write_auth(token: str, *, include_user: bool) -> None:
+        payload = {
+            "tokens": {
+                "access_token": token,
+                "id_token": _jwt_with_claims(
+                    {
+                        "https://api.openai.com/auth": {
+                            "chatgpt_user_id": "user-a" if include_user else "",
+                            "chatgpt_plan_type": "pro",
+                        }
+                    }
+                ),
+                "account_id": "account-a",
+            }
+        }
+        if not include_user:
+            payload["tokens"].pop("id_token")
+        auth_path.write_text(json.dumps(payload), encoding="utf-8")
+        auth_path.chmod(0o600)
+
+    def fake_fetch(token: str, **_kwargs):
+        if token == old_token:
+            write_auth(new_token, include_user=False)
+            raise DirectAuthError("direct auth failed: HTTP 401")
+        raise AssertionError("usage fetch should not happen after failed identity checks")
+
+    write_auth(old_token, include_user=True)
+    monkeypatch.setattr("codex_usage.direct._fetch_stable_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "auth.json identity changed during usage request"
+
+
 def test_fetch_account_usage_direct_retries_after_rotated_auth_token(
     tmp_path,
     monkeypatch,
@@ -1764,6 +1822,64 @@ def test_fetch_account_usage_direct_retries_after_rotated_auth_token(
         if token == old_token:
             write_auth(new_token)
             raise DirectAuthError("direct auth failed: HTTP 401")
+        return {
+            "rate_limit": {
+                "primary_window": {"used_percent": 3, "limit_window_seconds": 18000},
+                "secondary_window": {"used_percent": 45, "limit_window_seconds": 604800},
+            },
+            "user_id": "user-a",
+            "account_id": "account-a",
+        }
+
+    monkeypatch.setattr("codex_usage.direct._fetch_stable_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert calls == [old_token, new_token]
+    assert usage.status == AccountStatus.OK
+    assert usage.five_hour is not None and usage.five_hour.remaining == 97
+    assert usage.weekly is not None and usage.weekly.remaining == 55
+
+
+def test_fetch_account_usage_direct_retries_after_rotated_auth_token_with_suffix_error_message(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    old_token = "old-access-token"
+    new_token = "new-access-token"
+
+    def write_auth(token: str) -> None:
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": token,
+                        "id_token": _jwt_with_claims(
+                            {"https://api.openai.com/auth": {"chatgpt_user_id": "user-a"}}
+                        ),
+                        "account_id": "account-a",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        auth_path.chmod(0o600)
+
+    write_auth(old_token)
+    calls: list[str] = []
+
+    def fake_fetch(token: str, **_kwargs):
+        calls.append(token)
+        if token == old_token:
+            write_auth(new_token)
+            raise DirectAuthError("direct auth failed: HTTP 401 (token expired)")
         return {
             "rate_limit": {
                 "primary_window": {"used_percent": 3, "limit_window_seconds": 18000},
@@ -2600,6 +2716,37 @@ def test_fetch_account_usage_direct_rejects_symlink_auth_json(tmp_path, monkeypa
     assert usage.error is not None
     assert "auth.json is not a regular file" in usage.error
     assert "secret-access-token" not in usage.error
+
+
+def test_auth_json_helpers_accept_inherited_regular_fd(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text('{"tokens": {"access_token": "token"}}', encoding="utf-8")
+    auth_path.chmod(0o600)
+    fd = os.open(auth_path, os.O_RDONLY)
+    try:
+        proc_path = Path(f"/proc/self/fd/{fd}")
+        raw, file_stat = read_auth_json_file(proc_path)
+        raw_again, _ = read_auth_json_file(proc_path)
+        validated = validate_auth_json_file(proc_path)
+    finally:
+        os.close(fd)
+
+    assert raw == '{"tokens": {"access_token": "token"}}'
+    assert raw_again == raw
+    assert file_stat.st_ino == validated.st_ino
+
+
+def test_auth_json_helpers_reject_inherited_non_regular_fd():
+    read_fd, write_fd = os.pipe()
+    try:
+        proc_path = Path(f"/proc/self/fd/{read_fd}")
+        with pytest.raises(DirectAuthError, match=r"auth\.json is not a regular file"):
+            read_auth_json_file(proc_path)
+        with pytest.raises(DirectAuthError, match=r"auth\.json is not a regular file"):
+            validate_auth_json_file(proc_path)
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
 
 
 def test_fetch_account_usage_direct_rejects_oversized_auth_json(tmp_path, monkeypatch):
