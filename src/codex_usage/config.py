@@ -17,6 +17,7 @@ from .private_io import (
 
 APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
+SUPPORTED_REACTIVATION_BROWSERS = ("auto", "vivaldi", "chromium", "firefox")
 SUPPORTED_BACKENDS = ("direct", "app-server")
 MAX_CONFIG_BYTES = 1_000_000
 MAX_CONFIG_ACCOUNTS = 100
@@ -130,6 +131,8 @@ def add_or_update_account(
     browser: str | None = None,
     auth_json_path: str | None = None,
     backend: str | None = None,
+    reactivation_browser: str | None = None,
+    clear_auth_json: bool = False,
     path: Path | None = None,
 ) -> tuple[AppConfig, Account]:
     _validate_account_id(account_id)
@@ -137,6 +140,10 @@ def add_or_update_account(
         _validate_browser(browser)
     if backend is not None:
         _validate_backend(backend)
+    if reactivation_browser is not None:
+        _validate_reactivation_browser(reactivation_browser)
+    if clear_auth_json and auth_json_path is not None:
+        raise ValueError("clear_auth_json cannot be combined with auth_json_path")
     config_path = path or default_config_path()
     _prepare_config_directory(config_path.parent)
     with private_path_lock(config_path, label="config lock"):
@@ -148,10 +155,16 @@ def add_or_update_account(
             profile_dir=profile_dir
             or (existing.profile_dir if existing else str(_default_profile_root(account_id))),
             browser=browser or (existing.browser if existing else "firefox"),
-            auth_json_path=auth_json_path
-            if auth_json_path is not None
-            else (existing.auth_json_path if existing else None),
+            auth_json_path=(
+                None
+                if clear_auth_json
+                else auth_json_path
+                if auth_json_path is not None
+                else (existing.auth_json_path if existing else None)
+            ),
             backend=backend or (existing.backend if existing else "direct"),
+            reactivation_browser=reactivation_browser
+            or (existing.reactivation_browser if existing else "auto"),
         )
 
         accounts = [item for item in config.accounts if item.id != account_id]
@@ -259,6 +272,14 @@ def _account_from_data(item: object) -> Account:
     else:
         backend = raw_backend
     _validate_backend(backend)
+    raw_reactivation_browser = item.get("reactivation_browser")
+    if raw_reactivation_browser in (None, ""):
+        reactivation_browser = "auto"
+    elif not isinstance(raw_reactivation_browser, str):
+        raise ValueError("reactivation_browser must be a string")
+    else:
+        reactivation_browser = raw_reactivation_browser
+    _validate_reactivation_browser(reactivation_browser)
     return Account(
         id=account_id,
         label=label,
@@ -266,6 +287,7 @@ def _account_from_data(item: object) -> Account:
         browser=browser,
         auth_json_path=auth_json_path,
         backend=backend,
+        reactivation_browser=reactivation_browser,
     )
 
 
@@ -388,6 +410,7 @@ def _validate_account(account: object) -> None:
         raise ValueError("profile_dir must be an absolute path")
     _validate_browser(account.browser)
     _validate_backend(account.backend)
+    _validate_reactivation_browser(account.reactivation_browser)
     if account.auth_json_path is not None:
         _validate_text_field(
             account.auth_json_path,
@@ -439,6 +462,12 @@ def _validate_backend(backend: str) -> None:
         raise ValueError(f"backend must be one of: {choices}")
 
 
+def _validate_reactivation_browser(browser: str) -> None:
+    if browser not in SUPPORTED_REACTIVATION_BROWSERS:
+        choices = ", ".join(SUPPORTED_REACTIVATION_BROWSERS)
+        raise ValueError(f"reactivation browser must be one of: {choices}")
+
+
 def _strict_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{name} must be an integer")
@@ -467,6 +496,7 @@ def _to_toml(config: AppConfig) -> str:
                 f"profile_dir = {_quote(account.profile_dir)}",
                 f"browser = {_quote(account.browser)}",
                 f"backend = {_quote(account.backend)}",
+                f"reactivation_browser = {_quote(account.reactivation_browser)}",
                 *(
                     [f"auth_json_path = {_quote(account.auth_json_path)}"]
                     if account.auth_json_path

@@ -81,6 +81,7 @@ class Account:
     browser: str = "firefox"
     auth_json_path: str | None = None
     backend: str = "direct"
+    reactivation_browser: str = "auto"
 
 
 @dataclass(frozen=True)

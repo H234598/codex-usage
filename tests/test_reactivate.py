@@ -45,6 +45,24 @@ def _executable(path: Path) -> str:
     return str(path)
 
 
+def test_reactivate_uses_account_browser_when_override_is_missing(monkeypatch, tmp_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        reactivation_browser="vivaldi",
+    )
+    captured = {}
+    monkeypatch.setattr(
+        "codex_usage.reactivate._reactivate_account_unlocked",
+        lambda _account, **kwargs: captured.update(kwargs) or {},
+    )
+
+    reactivate_account(account, browser=None)
+
+    assert captured["browser"] == "vivaldi"
+
+
 def test_reactivate_account_uses_isolated_codex_home(tmp_path, monkeypatch):
     auth_home = tmp_path / "agent-home"
     auth_home.mkdir()

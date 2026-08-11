@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .account_lock import AccountLockError, account_lock
+from .config import SUPPORTED_REACTIVATION_BROWSERS
 from .direct import (
     DirectAuthError,
     _extract_auth_details,
@@ -21,7 +22,7 @@ from .json_utils import loads_strict
 from .models import Account
 from .private_io import write_private_text
 
-REACTIVATION_BROWSERS = ("auto", "vivaldi", "chromium", "firefox")
+REACTIVATION_BROWSERS = SUPPORTED_REACTIVATION_BROWSERS
 REACTIVATION_TIMEOUT_SECONDS = 600
 OAUTH_PROFILE_MARKER = ".codex-usage-oauth-profile"
 BROWSER_COMMANDS = {
@@ -38,16 +39,19 @@ class ReactivationError(Exception):
 def reactivate_account(
     account: Account,
     *,
-    browser: str = "auto",
+    browser: str | None = None,
     timeout_seconds: int = REACTIVATION_TIMEOUT_SECONDS,
     codex_command: str | None = None,
     browser_helper: str | None = None,
 ) -> dict[str, Any]:
+    requested_browser = (
+        account.reactivation_browser if browser is None else browser
+    )
     try:
         with account_lock(account.id):
             return _reactivate_account_unlocked(
                 account,
-                browser=browser,
+                browser=requested_browser,
                 timeout_seconds=timeout_seconds,
                 codex_command=codex_command,
                 browser_helper=browser_helper,

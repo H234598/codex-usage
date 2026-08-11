@@ -82,6 +82,37 @@ def test_config_round_trip_backend_and_legacy_default(tmp_path):
     assert load_config(legacy).accounts[0].backend == "direct"
 
 
+def test_config_round_trip_reactivation_browser(tmp_path):
+    config_path = tmp_path / "config.toml"
+    _, account = add_or_update_account(
+        "privat",
+        reactivation_browser="vivaldi",
+        path=config_path,
+    )
+
+    loaded = load_config(config_path)
+
+    assert account.reactivation_browser == "vivaldi"
+    assert loaded.accounts[0].reactivation_browser == "vivaldi"
+    assert 'reactivation_browser = "vivaldi"' in config_path.read_text(encoding="utf-8")
+
+
+def test_config_defaults_reactivation_browser_for_legacy_account(tmp_path):
+    config_path = tmp_path / "legacy.toml"
+    config_path.write_text('[[accounts]]\nid = "legacy"\n', encoding="utf-8")
+
+    assert load_config(config_path).accounts[0].reactivation_browser == "auto"
+
+
+def test_config_rejects_unknown_reactivation_browser(tmp_path):
+    with pytest.raises(ValueError, match="reactivation browser must be one of"):
+        add_or_update_account(
+            "privat",
+            reactivation_browser="netscape",
+            path=tmp_path / "config.toml",
+        )
+
+
 def test_config_rejects_unknown_backend(tmp_path):
     with pytest.raises(ValueError, match="backend must be one of"):
         add_or_update_account(
