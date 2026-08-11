@@ -86,6 +86,8 @@ function makeApplet(onReady) {
   applet._reactivationRefreshPending = false;
   applet._backendChangeQueue = [];
   applet._backendChangeCurrent = null;
+  applet._accountChangeQueue = [];
+  applet._accountChangeCurrent = null;
   applet._backendAuxQueue = [];
   applet._generation = 0;
   applet._process = null;
@@ -161,6 +163,143 @@ function makeApplet(onReady) {
   applet._backendAccounts = { alpha: {}, beta: {} };
   return applet;
 }
+
+function makeAccountSettingsApplet() {
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() {} };
+  applet._cancelRemovedReactivations = () => {};
+  applet._ensureBackendUsageRows = () => false;
+  applet._syncAccountSettings = () => {};
+  applet._syncStyleRows = () => {};
+  applet._loadRoutingState = () => {};
+  applet._refreshFormattedSurfaces = () => {};
+  applet._refreshFresh = () => {};
+  applet._accountChangeQueue = [];
+  applet._accountChangeCurrent = null;
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: {
+      account: "alpha",
+      label: "Alpha",
+      "auth-json": "",
+      "profile-dir": "/tmp/alpha",
+      browser: 0,
+      "reactivation-browser": 0,
+      backend: 0,
+    },
+  };
+  return applet;
+}
+
+test("account overview rows expose editable account settings", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._spawnAuxJson = (argv, callback) => {
+    assert.deepEqual(
+      argv.slice(-4),
+      ["overview", "--format", "json", "--config-only"]
+    );
+    callback({
+      accounts: [{
+        id: "alpha",
+        label: "Alpha",
+        profile_dir: "/tmp/alpha",
+        auth_json_path: null,
+        browser: "chromium",
+        reactivation_browser: "vivaldi",
+        backend: "app-server",
+      }],
+    }, null);
+  };
+
+  applet._loadAccountBackends();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet.accountBackends[0])), {
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "",
+    "profile-dir": "/tmp/alpha",
+    browser: 1,
+    "reactivation-browser": 1,
+    backend: 1,
+  });
+});
+
+test("legacy account overview rows receive editable defaults", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }],
+  }, null);
+
+  applet._loadAccountBackends();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet.accountBackends[0])), {
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "",
+    "profile-dir": "",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  });
+});
+
+test("legacy global reactivation browser migrates to account rows once", () => {
+  const applet = makeAccountSettingsApplet();
+  applet.reactivationBrowser = "vivaldi";
+  const writes = [];
+  applet.settings = { setValue: (key, value) => writes.push([key, value]) };
+  const commands = [];
+  applet._spawnAuxJson = (argv, callback) => {
+    commands.push(argv.slice());
+    if (argv.includes("add")) {
+      callback({ ok: true, account: "alpha" }, null);
+      return;
+    }
+    callback({
+      accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }],
+    }, null);
+  };
+
+  applet._loadAccountBackends();
+
+  assert.equal(commands.some((argv) => (
+    argv.includes("add") &&
+    argv.includes("--reactivation-browser") &&
+    argv[argv.indexOf("--reactivation-browser") + 1] === "vivaldi"
+  )), true);
+  assert.deepEqual(writes.find(([key]) => key === "reactivation-browser-migrated"), [
+    "reactivation-browser-migrated",
+    true,
+  ]);
+});
+
+test("account table changes produce complete account add data", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  applet._reconcileAccountChanges = (rows) => calls.push(rows);
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Renamed",
+    "auth-json": "",
+    "profile-dir": "/tmp/alpha",
+    browser: 1,
+    "reactivation-browser": 2,
+    backend: 0,
+  }];
+
+  applet._onAccountBackendsChanged();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[{
+    account: "alpha",
+    label: "Renamed",
+    "auth-json": "",
+    "profile-dir": "/tmp/alpha",
+    browser: 1,
+    "reactivation-browser": 2,
+    backend: 0,
+  }]]);
+});
 
 test("panel slots honor ordering, mute and duplicate-source normalization", () => {
   const applet = makeApplet();
@@ -2814,6 +2953,23 @@ test("reactivation setup failure does not leave a phantom running account", () =
   );
   assert.equal(applet._reactivations.alpha, undefined);
   assert.match(applet._reactivationErrors.alpha, /nicht angezeigt/);
+});
+
+test("reactivation uses browser configured for account", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {
+    alpha: { account: "alpha", "reactivation-browser": 1 },
+  };
+  applet._resolveCommand = () => "codex-usage";
+  let command = null;
+  applet._spawnReactivation = (_usage, argv) => { command = argv; };
+
+  applet._reactivateAccount({ account: "alpha" });
+
+  assert.equal(
+    command[command.indexOf("--browser") + 1],
+    "vivaldi"
+  );
 });
 
 test("startup failures and missing timeout sources terminate every spawned child process", () => {

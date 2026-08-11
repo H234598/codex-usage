@@ -63,6 +63,7 @@ CodexUsageApplet.prototype = {
         this.notifyErrors = false;
         this.showReactivationActions = true;
         this.reactivationBrowser = "auto";
+        this.reactivationBrowserMigrated = false;
         this.accountBackends = [];
         this.accountPanelSettings = [];
         this.accountAlertSettings = [];
@@ -118,6 +119,10 @@ CodexUsageApplet.prototype = {
         this._backendAccounts = Object.create(null);
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
+        this._accountChangeQueue = [];
+        this._accountChangeCurrent = null;
+        this._legacyReactivationMigrationPending = 0;
+        this._legacyReactivationMigrationStarted = false;
         this._backendAuxQueue = [];
         this._syncingAccountSettings = false;
         this._panelSettings = Object.create(null);
@@ -205,6 +210,7 @@ CodexUsageApplet.prototype = {
             this._rebuildMenu
         );
         bind("reactivation-browser", "reactivationBrowser", null);
+        bind("reactivation-browser-migrated", "reactivationBrowserMigrated", null);
         bind("account-backends", "accountBackends", this._onAccountBackendsChanged);
         bind("account-panel-settings", "accountPanelSettings", this._onPanelSettingsChanged);
         bind("account-alert-settings", "accountAlertSettings", this._onAlertSettingsChanged);
@@ -1179,7 +1185,11 @@ CodexUsageApplet.prototype = {
     },
 
     _loadAccountBackends: function() {
-        if (this._removed || this._safeMode || this._backendChangeCurrent || this._backendChangeQueue.length) {
+        if (
+            this._removed || this._safeMode || this._backendChangeCurrent ||
+            this._backendChangeQueue.length || this._accountChangeCurrent ||
+            this._accountChangeQueue.length
+        ) {
             return;
         }
         let argv;
@@ -1207,16 +1217,36 @@ CodexUsageApplet.prototype = {
                 }
                 let account;
                 let backend;
+                let browser;
+                let reactivationBrowser;
+                let profileDir;
+                let authJsonPath;
                 try {
                     account = this._strictText(item.id, 64);
                     backend = this._strictText(item.backend, 32);
+                    browser = item.browser === undefined || item.browser === null
+                        ? "firefox"
+                        : this._strictText(item.browser, 32);
+                    reactivationBrowser = item.reactivation_browser === undefined ||
+                        item.reactivation_browser === null
+                        ? "auto"
+                        : this._strictText(item.reactivation_browser, 32);
+                    profileDir = item.profile_dir === undefined || item.profile_dir === null
+                        ? ""
+                        : this._strictText(item.profile_dir, 4096);
+                    authJsonPath = item.auth_json_path === null || item.auth_json_path === undefined
+                        ? ""
+                        : this._strictText(item.auth_json_path, 4096);
                 } catch (e) {
                     global.log("[" + UUID + "] invalid account in backend overview");
                     return;
                 }
                 let label = this._safeText(item.label, 120);
                 if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) ||
-                    ["direct", "app-server"].indexOf(backend) === -1) {
+                    ["direct", "app-server"].indexOf(backend) === -1 ||
+                    ["firefox", "chromium"].indexOf(browser) === -1 ||
+                    ["auto", "vivaldi", "chromium", "firefox"].indexOf(reactivationBrowser) === -1 ||
+                    profileDir.length > 4096) {
                     global.log("[" + UUID + "] invalid account in backend overview");
                     return;
                 }
@@ -1227,6 +1257,15 @@ CodexUsageApplet.prototype = {
                 let row = {
                     account: account,
                     label: label || account,
+                    "auth-json": authJsonPath,
+                    "profile-dir": profileDir,
+                    browser: browser === "chromium" ? 1 : 0,
+                    "reactivation-browser": {
+                        auto: 0,
+                        vivaldi: 1,
+                        chromium: 2,
+                        firefox: 3
+                    }[reactivationBrowser],
                     backend: backend === "app-server" ? 1 : 0
                 };
                 rows.push(row);
@@ -1301,6 +1340,7 @@ CodexUsageApplet.prototype = {
                 }
             }
             this._loadRoutingState();
+            this._migrateLegacyReactivationBrowser(rows);
         }));
     },
 
@@ -2348,6 +2388,153 @@ CodexUsageApplet.prototype = {
         this._updatePanel();
     },
 
+    _accountRowsEqual: function(left, right) {
+        return Boolean(
+            left && right &&
+            left.account === right.account &&
+            left.label === right.label &&
+            left["auth-json"] === right["auth-json"] &&
+            left["profile-dir"] === right["profile-dir"] &&
+            left.browser === right.browser &&
+            left["reactivation-browser"] === right["reactivation-browser"] &&
+            left.backend === right.backend
+        );
+    },
+
+    _markLegacyReactivationBrowserMigrated: function() {
+        this._legacyReactivationMigrationStarted = true;
+        this.reactivationBrowserMigrated = true;
+        try {
+            this.settings.setValue("reactivation-browser-migrated", true);
+        } catch (e) {
+            global.log("[" + UUID + "] reactivation migration marker failed: " + this._shortText(e, 180));
+        }
+    },
+
+    _migrateLegacyReactivationBrowser: function(rows) {
+        if (
+            this.reactivationBrowserMigrated ||
+            this._legacyReactivationMigrationStarted ||
+            !Array.isArray(rows)
+        ) {
+            return;
+        }
+        let browser = this.reactivationBrowser;
+        let browserIndex = ["auto", "vivaldi", "chromium", "firefox"].indexOf(browser);
+        if (browserIndex <= 0) {
+            this._markLegacyReactivationBrowserMigrated();
+            return;
+        }
+        let migratedRows = [];
+        let changed = 0;
+        for (let i = 0; i < rows.length; i++) {
+            let row = rows[i];
+            let migrated = {
+                account: row.account,
+                label: row.label,
+                "auth-json": row["auth-json"],
+                "profile-dir": row["profile-dir"],
+                browser: row.browser,
+                "reactivation-browser": row["reactivation-browser"],
+                backend: row.backend
+            };
+            if (migrated["reactivation-browser"] === 0) {
+                migrated["reactivation-browser"] = browserIndex;
+                changed += 1;
+            }
+            migratedRows.push(migrated);
+        }
+        if (!changed) {
+            this._markLegacyReactivationBrowserMigrated();
+            return;
+        }
+        this._markLegacyReactivationBrowserMigrated();
+        this._legacyReactivationMigrationPending = changed;
+        this._reconcileAccountChanges(migratedRows);
+    },
+
+    _reconcileAccountChanges: function(rows) {
+        let queue = [];
+        for (let i = 0; i < rows.length; i++) {
+            let row = rows[i];
+            let canonical = this._backendAccounts[row.account];
+            if (!canonical || !this._accountRowsEqual(row, canonical)) {
+                queue.push(row);
+            }
+        }
+        this._accountChangeQueue = queue;
+        this._drainAccountChanges();
+    },
+
+    _drainAccountChanges: function() {
+        if (
+            this._removed || this._safeMode || this._accountChangeCurrent ||
+            this._backendChangeCurrent || this._backendChangeQueue.length ||
+            this._auxProcess || !this._accountChangeQueue.length
+        ) {
+            return;
+        }
+        let changed = this._accountChangeQueue.shift();
+        this._accountChangeCurrent = changed;
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._accountChangeCurrent = null;
+            this._accountChangeQueue = [];
+            this._loadAccountBackends();
+            return;
+        }
+        argv.push("account", "add", changed.account);
+        if (changed.label) {
+            argv.push("--label", changed.label);
+        }
+        if (changed["profile-dir"]) {
+            argv.push("--profile-dir", changed["profile-dir"]);
+        }
+        argv.push(
+            "--browser",
+            changed.browser === 1 ? "chromium" : "firefox",
+            "--reactivation-browser",
+            ["auto", "vivaldi", "chromium", "firefox"][changed["reactivation-browser"]],
+            "--backend",
+            changed.backend === 1 ? "app-server" : "direct"
+        );
+        let canonical = this._backendAccounts[changed.account];
+        if (changed["auth-json"]) {
+            argv.push("--auth-json", changed["auth-json"]);
+        } else if (canonical && canonical["auth-json"]) {
+            argv.push("--clear-auth-json");
+        }
+        argv.push("--format", "json");
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            try {
+                if (
+                    error || !payload || payload.ok !== true ||
+                    !payload.account || payload.account.id !== changed.account
+                ) {
+                    this._legacyReactivationMigrationPending = 0;
+                    this._showCommandError(error || _("Account konnte nicht gespeichert werden"));
+                } else {
+                    if (this._legacyReactivationMigrationPending > 0) {
+                        this._legacyReactivationMigrationPending -= 1;
+                        if (this._legacyReactivationMigrationPending === 0) {
+                            this._markLegacyReactivationBrowserMigrated();
+                        }
+                    }
+                    this._refreshFresh(false);
+                }
+            } finally {
+                this._accountChangeCurrent = null;
+                if (this._accountChangeQueue.length) {
+                    this._drainAccountChanges();
+                } else {
+                    this._loadAccountBackends();
+                }
+            }
+        }), true);
+    },
+
     _reconcileBackendChanges: function(rows) {
         let desired = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
@@ -2423,7 +2610,8 @@ CodexUsageApplet.prototype = {
     _drainDeferredAuxRequests: function() {
         if (
             this._removed || this._safeMode || this._backendChangeCurrent ||
-            this._backendChangeQueue.length || this._auxProcess ||
+            this._backendChangeQueue.length || this._accountChangeCurrent ||
+            this._accountChangeQueue.length || this._auxProcess ||
             !this._backendAuxQueue.length
         ) {
             return;
@@ -2441,16 +2629,24 @@ CodexUsageApplet.prototype = {
     },
 
     _onAccountBackendsChanged: function() {
-        if (!this._backendRowsReady || this._syncingBackendRows || this._removed || this._safeMode) {
+        if (
+            !this._backendRowsReady || this._syncingBackendRows || this._removed ||
+            this._safeMode || this._accountChangeCurrent
+        ) {
             return;
         }
         let rows = this.accountBackends;
-        if (!Array.isArray(rows) || rows.length !== Object.keys(this._backendAccounts).length) {
+        if (
+            !Array.isArray(rows) ||
+            rows.length < Object.keys(this._backendAccounts).length ||
+            rows.length > MAX_ACCOUNTS
+        ) {
             this._loadAccountBackends();
             return;
         }
         let desiredRows = [];
         let seen = Object.create(null);
+        let legacyBackendOnly = true;
         for (let i = 0; i < rows.length; i++) {
             let row = rows[i];
             if (!row || typeof row !== "object" || Array.isArray(row)) {
@@ -2465,19 +2661,64 @@ CodexUsageApplet.prototype = {
                 return;
             }
             let canonical = this._backendAccounts[account];
-            if (!account || seen[account] || !canonical || this._safeText(row.label, 120) !== canonical.label) {
+            let hasEditableFields = Object.prototype.hasOwnProperty.call(row, "auth-json") ||
+                Object.prototype.hasOwnProperty.call(row, "profile-dir") ||
+                Object.prototype.hasOwnProperty.call(row, "browser") ||
+                Object.prototype.hasOwnProperty.call(row, "reactivation-browser");
+            legacyBackendOnly = legacyBackendOnly && !hasEditableFields;
+            let label = row.label === undefined
+                ? this._safeText(canonical && canonical.label, 120)
+                : this._safeText(row.label, 120);
+            let authJson = row["auth-json"] === undefined
+                ? this._safeText(canonical && canonical["auth-json"], 4096)
+                : this._safeText(row["auth-json"], 4096);
+            let profileDir = row["profile-dir"] === undefined
+                ? this._safeText(canonical && canonical["profile-dir"], 4096)
+                : this._safeText(row["profile-dir"], 4096);
+            let browser = row.browser === undefined
+                ? (canonical && canonical.browser === 1 ? 1 : 0)
+                : this._strictIntegerSetting(row.browser);
+            let reactivationBrowser = row["reactivation-browser"] === undefined
+                ? (canonical && Number.isInteger(canonical["reactivation-browser"])
+                    ? canonical["reactivation-browser"] : 0)
+                : this._strictIntegerSetting(row["reactivation-browser"]);
+            let backendValue = row.backend === undefined
+                ? (canonical && canonical.backend === 1 ? 1 : 0)
+                : this._strictIntegerSetting(row.backend);
+            if (
+                !account || seen[account] ||
+                (!canonical && !/^[A-Za-z0-9_.-]{1,64}$/.test(account)) ||
+                (browser !== 0 && browser !== 1) ||
+                !Number.isInteger(reactivationBrowser) ||
+                (reactivationBrowser < 0 || reactivationBrowser > 3) ||
+                (backendValue !== 0 && backendValue !== 1)
+            ) {
                 this._loadAccountBackends();
                 return;
             }
             seen[account] = true;
-            let backendValue = this._strictIntegerSetting(row.backend);
-            if (backendValue !== 0 && backendValue !== 1) {
+            desiredRows.push({
+                account: account,
+                label: label,
+                "auth-json": authJson,
+                "profile-dir": profileDir,
+                browser: browser,
+                "reactivation-browser": reactivationBrowser,
+                backend: backendValue
+            });
+        }
+        let configuredAccounts = Object.keys(this._backendAccounts);
+        for (let i = 0; i < configuredAccounts.length; i++) {
+            if (!seen[configuredAccounts[i]]) {
                 this._loadAccountBackends();
                 return;
             }
-            desiredRows.push({ account: account, backend: backendValue });
         }
-        this._reconcileBackendChanges(desiredRows);
+        if (legacyBackendOnly) {
+            this._reconcileBackendChanges(desiredRows);
+            return;
+        }
+        this._reconcileAccountChanges(desiredRows);
     },
 
     _enableBackgroundService: function(after) {
@@ -2532,7 +2773,10 @@ CodexUsageApplet.prototype = {
     _spawnAuxJson: function(argv, callback, backendRequest) {
         if (
             !backendRequest &&
-            (this._backendChangeCurrent || this._backendChangeQueue.length)
+            (
+                this._backendChangeCurrent || this._backendChangeQueue.length ||
+                this._accountChangeCurrent || this._accountChangeQueue.length
+            )
         ) {
             let key = this._auxRequestKey(argv);
             for (let i = 0; i < this._backendAuxQueue.length; i++) {
@@ -2579,6 +2823,7 @@ CodexUsageApplet.prototype = {
                 callback(payload, error);
             }));
             this._drainBackendChanges();
+            this._drainAccountChanges();
             this._drainDeferredAuxRequests();
         });
         try {
@@ -4373,11 +4618,23 @@ CodexUsageApplet.prototype = {
             }
             argv.push("--config", config);
         }
+        let configured = this._backendAccounts && this._backendAccounts[usage.account];
+        let reactivationBrowser = this.reactivationBrowser || "auto";
+        if (
+            configured &&
+            Number.isInteger(configured["reactivation-browser"]) &&
+            configured["reactivation-browser"] >= 0 &&
+            configured["reactivation-browser"] <= 3
+        ) {
+            reactivationBrowser = ["auto", "vivaldi", "chromium", "firefox"][
+                configured["reactivation-browser"]
+            ];
+        }
         argv.push(
             "reactivate",
             usage.account,
             "--browser",
-            this.reactivationBrowser || "auto",
+            reactivationBrowser,
             "--format",
             "json"
         );

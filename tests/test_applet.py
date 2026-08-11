@@ -80,10 +80,38 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "auto",
         "systemd",
     }
+
+
+def test_account_table_contains_all_editable_fields() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+    table = settings["account-backends"]
+
+    assert settings["layout"]["backend-section"]["title"] == "Abrufwege und Accounts"
+    assert [column["id"] for column in table["columns"]] == [
+        "account",
+        "label",
+        "auth-json",
+        "profile-dir",
+        "browser",
+        "reactivation-browser",
+        "backend",
+    ]
+    assert table["show-buttons"] is True
+    assert set(table["hidden-buttons"]) == {"-", "up", "down"}
+    assert "automatisch angelegt" in table["description"]
+
+
+def test_applet_metadata_and_settings_remainder() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+
+    assert "login-page" not in settings["layout"]["pages"]
+    assert "show-reactivation-actions" in settings["layout"]["reactivation-options-section"]["keys"]
+    assert "reactivation-browser" not in settings["layout"]["reactivation-options-section"]["keys"]
     backend_table = settings["account-backends"]
     assert backend_table["type"] == "list"
-    assert backend_table["show-buttons"] is False
-    assert backend_table["columns"][2]["options"] == {
+    assert backend_table["show-buttons"] is True
+    assert set(backend_table["hidden-buttons"]) == {"-", "up", "down"}
+    assert backend_table["columns"][-1]["options"] == {
         "Bisheriger Direktabruf": 0,
         "Codex App Server": 1,
     }
@@ -220,7 +248,19 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         page = layout[page_name]
         for section_name in page["sections"]:
             referenced_keys.update(layout[section_name]["keys"])
-    assert referenced_keys == set(settings) - {"layout"}
+    assert referenced_keys == set(settings) - {
+        "layout",
+        "reactivation-browser",
+        "reactivation-browser-migrated",
+    }
+
+
+def test_reactivation_page_is_removed_and_switch_is_on_codex_usage() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+
+    assert "login-page" not in settings["layout"]["pages"]
+    assert "show-reactivation-actions" in settings["layout"]["reactivation-options-section"]["keys"]
+    assert "reactivation-browser" not in settings["layout"]["reactivation-options-section"]["keys"]
 
 
 def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
