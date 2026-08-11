@@ -464,6 +464,43 @@ test("unknown Spark data preserves numeric threshold", () => {
   assert.equal(normalized["spark-threshold"], "45");
 });
 
+test("legacy alert rows receive Spark state without changing other thresholds", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = { alpha: { account: "alpha" } };
+  applet._usages = [usageWithoutSparkLimit("alpha")];
+
+  const rows = applet._mergedAlertRows([applet._backendAccounts.alpha], [{
+    account: "alpha",
+    "five-threshold": 12,
+    "weekly-threshold": 34,
+    warnings: true,
+    errors: false,
+  }]);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(rows[0])), {
+    account: "alpha",
+    "five-threshold": 12,
+    "weekly-threshold": 34,
+    "spark-threshold": "no Spark",
+    warnings: true,
+    errors: false,
+  });
+});
+
+test("legacy panel tag is removed from stored panel row after display migration", () => {
+  const applet = makeApplet();
+  const rows = applet._mergedPanelRows([applet._backendAccounts.alpha], [{
+    account: "alpha",
+    tag: "AA",
+    order: 1,
+    muted: false,
+    slot1: 3,
+    slot2: 0,
+  }]);
+
+  assert.equal(Object.prototype.hasOwnProperty.call(rows[0], "tag"), false);
+});
+
 test("panel slots honor ordering, mute and duplicate-source normalization", () => {
   const applet = makeApplet();
   const items = applet._panelItems();
