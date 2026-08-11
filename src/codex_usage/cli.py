@@ -23,6 +23,7 @@ from .browser import diagnose_account, login_account, probe_account
 from .config import (
     SUPPORTED_BACKENDS,
     SUPPORTED_BROWSERS,
+    SUPPORTED_REACTIVATION_BROWSERS,
     add_or_update_account,
     default_config_path,
     default_state_dir,
@@ -83,7 +84,8 @@ Globale Optionen:
 Accounts:
   codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
                                    [--browser BROWSER] [--auth-json PATH]
-                                   [--backend direct|app-server]
+                                   [--reactivation-browser BROWSER]
+                                   [--backend direct|app-server] [--format table|json]
   codex-usage account backend ACCOUNT direct|app-server [--format table|json]
   codex-usage account overview [--format table|json] [--config-only]
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
@@ -223,7 +225,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Browser fuer Login und Polling, Standard: firefox",
     )
     add.add_argument("--auth-json", type=Path, help="Codex auth.json fuer direkten Abruf")
+    add.add_argument(
+        "--clear-auth-json",
+        action="store_true",
+        help="Gespeicherten auth.json-Pfad entfernen",
+    )
+    add.add_argument(
+        "--reactivation-browser",
+        choices=SUPPORTED_REACTIVATION_BROWSERS,
+        help="Isolierter OAuth-Browser fuer Reaktivierung",
+    )
     add.add_argument("--backend", choices=SUPPORTED_BACKENDS)
+    add.add_argument("--format", choices=("table", "json"), default="table")
     add.set_defaults(func=_cmd_account_add)
     overview = account_sub.add_parser(
         "overview",
@@ -489,9 +502,21 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
         browser=args.browser,
         auth_json_path=str(args.auth_json) if args.auth_json else None,
         backend=args.backend,
+        reactivation_browser=args.reactivation_browser,
+        clear_auth_json=args.clear_auth_json,
         path=args.config,
     )
     _sync_managed_service(updated, args.config)
+    if args.format == "json":
+        print(
+            json.dumps(
+                {"ok": True, "account": _account_json(account)},
+                ensure_ascii=False,
+                indent=2,
+                allow_nan=False,
+            )
+        )
+        return 0
     print(f"Account gespeichert: {account.id} ({account.label})")
     print(f"Profil: {account.profile_dir}")
     print(f"Browser: {account.browser}")
@@ -500,6 +525,18 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
         print(f"Auth JSON: {account.auth_json_path}")
     print(f"Login: codex-usage login {account.id}")
     return 0
+
+
+def _account_json(account: Any) -> dict[str, str | None]:
+    return {
+        "id": account.id,
+        "label": account.label,
+        "profile_dir": account.profile_dir,
+        "auth_json_path": account.auth_json_path,
+        "browser": account.browser,
+        "reactivation_browser": account.reactivation_browser,
+        "backend": account.backend,
+    }
 
 
 def _cmd_account_overview(args: argparse.Namespace) -> int:
@@ -512,7 +549,10 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
                 {
                     "id": account.id,
                     "label": account.label,
+                    "profile_dir": account.profile_dir,
+                    "auth_json_path": account.auth_json_path,
                     "browser": account.browser,
+                    "reactivation_browser": account.reactivation_browser,
                     "backend": account.backend,
                     "backend_used": usages_by_account.get(account.id).backend_used
                     if usages_by_account.get(account.id)

@@ -100,6 +100,109 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage watchdog" in output
 
 
+def test_account_add_json_returns_all_editable_fields(tmp_path, capsys):
+    assert main(
+        [
+            "--config",
+            str(tmp_path / "config.toml"),
+            "account",
+            "add",
+            "privat",
+            "--label",
+            "Privat",
+            "--profile-dir",
+            str(tmp_path / "profile"),
+            "--browser",
+            "chromium",
+            "--reactivation-browser",
+            "firefox",
+            "--backend",
+            "app-server",
+            "--format",
+            "json",
+        ]
+    ) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["account"]["label"] == "Privat"
+    assert payload["account"]["browser"] == "chromium"
+    assert payload["account"]["reactivation_browser"] == "firefox"
+    assert payload["account"]["backend"] == "app-server"
+    assert payload["account"]["auth_json_path"] is None
+
+
+def test_account_overview_json_exposes_paths_and_reactivation_browser(
+    tmp_path, capsys
+):
+    config_path = tmp_path / "config.toml"
+    auth_path = tmp_path / "auth.json"
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "privat",
+            "--profile-dir",
+            str(tmp_path / "profile"),
+            "--auth-json",
+            str(auth_path),
+            "--reactivation-browser",
+            "vivaldi",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "overview",
+            "--format",
+            "json",
+            "--config-only",
+        ]
+    ) == 0
+
+    item = json.loads(capsys.readouterr().out)["accounts"][0]
+    assert item["profile_dir"] == str(tmp_path / "profile")
+    assert item["auth_json_path"] == str(auth_path)
+    assert item["reactivation_browser"] == "vivaldi"
+
+
+def test_account_add_clear_auth_json(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "privat",
+            "--auth-json",
+            str(tmp_path / "auth.json"),
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "privat",
+            "--clear-auth-json",
+            "--format",
+            "json",
+        ]
+    ) == 0
+
+    assert json.loads(capsys.readouterr().out)["account"]["auth_json_path"] is None
+
+
 @pytest.mark.parametrize("available, expected", [(True, True), (False, False)])
 def test_successful_usage_validates_dynamic_main_pool(available, expected):
     usage = AccountUsage(
