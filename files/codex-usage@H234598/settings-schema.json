@@ -1189,6 +1189,13 @@
         "default": 20
       },
       {
+        "id": "spark-threshold",
+        "title": "Spark %",
+        "tooltip": "Spark-Schwelle; bei fehlendem Limit steht no Spark.",
+        "type": "string",
+        "default": "20"
+      },
+      {
         "id": "warnings",
         "title": "Warnungen",
         "type": "boolean",
@@ -1202,7 +1209,8 @@
       }
     ],
     "height": 220,
-    "show-buttons": false,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "notify-warnings": {

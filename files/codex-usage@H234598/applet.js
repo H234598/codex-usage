@@ -1881,9 +1881,64 @@ CodexUsageApplet.prototype = {
             account: account,
             "five-threshold": threshold,
             "weekly-threshold": threshold,
+            "spark-threshold": String(threshold),
             warnings: true,
             errors: true
         };
+    },
+
+    _usageForAccount: function(account) {
+        if (!Array.isArray(this._usages)) {
+            return null;
+        }
+        for (let i = 0; i < this._usages.length; i++) {
+            if (this._usages[i] && this._usages[i].account === account) {
+                return this._usages[i];
+            }
+        }
+        return null;
+    },
+
+    _sparkLimitState: function(usage) {
+        if (!usage || usage.status !== "ok" || usage.stale === true) {
+            return "unknown";
+        }
+        if (!usage.models || typeof usage.models !== "object" || Array.isArray(usage.models)) {
+            return "unknown";
+        }
+        let key = "gpt-5.3-codex-spark";
+        if (!Object.prototype.hasOwnProperty.call(usage.models, key)) {
+            return "none";
+        }
+        let pool = usage.models[key];
+        if (
+            !pool || typeof pool !== "object" || Array.isArray(pool) ||
+            pool.available !== true || !Array.isArray(pool.windows) ||
+            !pool.windows.length || !this._hasUniqueWindowIdentities(pool.windows) ||
+            !pool.windows.every(Lang.bind(this, function(window) {
+                return this._remainingPercent(window) !== null;
+            }))
+        ) {
+            return "unknown";
+        }
+        return "present";
+    },
+
+    _normalizeSparkThreshold: function(value, state) {
+        let defaultValue = String(this._boundedInteger(this.warningThreshold, 0, 100, 20));
+        if (state === "none") {
+            return "no Spark";
+        }
+        if (typeof value === "number" && Number.isInteger(value)) {
+            return value >= 0 && value <= 100 ? String(value) : defaultValue;
+        }
+        if (typeof value !== "string" || value.trim() !== value || !value) {
+            return defaultValue;
+        }
+        let parsed = Number(value);
+        return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100
+            ? value
+            : defaultValue;
     },
 
     _normalizeAlertRow: function(row, account) {
@@ -1892,6 +1947,10 @@ CodexUsageApplet.prototype = {
         }
         let five = this._strictIntegerSetting(row["five-threshold"]);
         let weekly = this._strictIntegerSetting(row["weekly-threshold"]);
+        let spark = this._normalizeSparkThreshold(
+            row["spark-threshold"],
+            this._sparkLimitState(this._usageForAccount(account))
+        );
         if (
             !Number.isInteger(five) || five < 0 || five > 100 ||
             !Number.isInteger(weekly) || weekly < 0 || weekly > 100 ||
@@ -1903,6 +1962,7 @@ CodexUsageApplet.prototype = {
             account: account,
             "five-threshold": five,
             "weekly-threshold": weekly,
+            "spark-threshold": spark,
             warnings: row.warnings,
             errors: row.errors
         };
@@ -5181,10 +5241,14 @@ CodexUsageApplet.prototype = {
         let alert = this._alertSettings[item.usage.account] || this._defaultAlertRow(item.usage.account);
         let five = Number(alert["five-threshold"]);
         let weekly = Number(alert["weekly-threshold"]);
-        if (source === 1 || source === 4) {
+        if (source >= 4 && source <= 7) {
+            let spark = Number(alert["spark-threshold"]);
+            return Number.isFinite(spark) ? spark : 100;
+        }
+        if (source === 1) {
             return five;
         }
-        if (source === 2 || source === 5 || source === 7) {
+        if (source === 2) {
             return weekly;
         }
         let values = [];
@@ -5359,16 +5423,21 @@ CodexUsageApplet.prototype = {
                     if (!this._windowIdentityIsKnown(sparkWindow)) {
                         continue;
                     }
-                    let duration = this._windowIdentityKey(sparkWindow);
                     windows.push([
                         "Spark " + this._windowDisplayLabel(sparkWindow),
                         sparkWindow,
-                        duration === 18000 ? "five-threshold" : "weekly-threshold"
+                        "spark-threshold"
                     ]);
                 }
             }
             for (let j = 0; j < windows.length; j++) {
                 let remaining = this._remainingPercent(windows[j][1]);
+                if (
+                    windows[j][2] === "spark-threshold" &&
+                    alert["spark-threshold"] === "no Spark"
+                ) {
+                    continue;
+                }
                 let threshold = Number(alert[windows[j][2]]);
                 if (remaining !== null && remaining <= threshold) {
                     let warningKey = usage.account + ":" + windows[j][0];

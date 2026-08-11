@@ -200,6 +200,34 @@ function makeAccountSettingsApplet() {
   return applet;
 }
 
+function usageWithoutSparkLimit(account) {
+  return {
+    account,
+    label: account,
+    status: "ok",
+    main: { available: true, windows: [] },
+    models: {},
+  };
+}
+
+function usageWithSparkWindows(account, values) {
+  return {
+    account,
+    label: account,
+    status: "ok",
+    main: { available: true, windows: [] },
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: true,
+        windows: [
+          { name: "5h", duration_seconds: 18000, remaining: values.five },
+          { name: "weekly", duration_seconds: 604800, remaining: values.weekly },
+        ],
+      },
+    },
+  };
+}
+
 test("account overview rows expose editable account settings", () => {
   const applet = makeAccountSettingsApplet();
   applet._spawnAuxJson = (argv, callback) => {
@@ -362,6 +390,78 @@ test("display targets resolve account id, label and tag per surface", () => {
   assert.equal(applet._accountDisplayText(item, "panel"), "alpha");
   assert.equal(applet._accountDisplayText(item, "hover"), "Priv");
   assert.equal(applet._accountDisplayText(item, "click"), "alpha");
+});
+
+test("accounts without a Spark limit show no Spark and ignore edits", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._usages = [usageWithoutSparkLimit("alpha")];
+
+  const normalized = applet._normalizeAlertRow({
+    account: "alpha",
+    "five-threshold": 20,
+    "weekly-threshold": 30,
+    "spark-threshold": "45",
+    warnings: true,
+    errors: true,
+  }, "alpha");
+
+  assert.equal(normalized["spark-threshold"], "no Spark");
+});
+
+test("Spark notification uses dedicated Spark threshold", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._alertSettings = { alpha: {
+    account: "alpha",
+    "five-threshold": 20,
+    "weekly-threshold": 20,
+    "spark-threshold": "40",
+    warnings: true,
+    errors: true,
+  } };
+  applet._usages = [usageWithSparkWindows("alpha", { five: 35, weekly: 90 })];
+  applet.notifyWarnings = false;
+
+  applet._notifyForPayload();
+
+  assert.equal(applet._warningState["alpha:Spark 5h"], true);
+});
+
+test("Spark panel sources use dedicated threshold", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._alertSettings = { alpha: {
+    account: "alpha",
+    "five-threshold": 10,
+    "weekly-threshold": 15,
+    "spark-threshold": "40",
+    warnings: true,
+    errors: true,
+  } };
+  const usage = usageWithSparkWindows("alpha", { five: 35, weekly: 90 });
+
+  assert.equal(applet._panelThreshold({ usage }, 4), 40);
+  assert.equal(applet._panelThreshold({ usage }, 6), 40);
+});
+
+test("unknown Spark data preserves numeric threshold", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._usages = [{
+    account: "alpha",
+    status: "partial",
+    models: {
+      "gpt-5.3-codex-spark": { available: false, windows: [] },
+    },
+  }];
+
+  const normalized = applet._normalizeAlertRow({
+    account: "alpha",
+    "five-threshold": 20,
+    "weekly-threshold": 30,
+    "spark-threshold": "45",
+    warnings: true,
+    errors: true,
+  }, "alpha");
+
+  assert.equal(normalized["spark-threshold"], "45");
 });
 
 test("panel slots honor ordering, mute and duplicate-source normalization", () => {

@@ -149,6 +149,18 @@ def test_style_tables_group_threshold_fields() -> None:
         )
 
 
+def test_alert_table_has_editable_spark_column() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+    table = settings["account-alert-settings"]
+    assert [column["id"] for column in table["columns"]] == [
+        "account", "five-threshold", "weekly-threshold", "spark-threshold",
+        "warnings", "errors",
+    ]
+    assert table["columns"][3]["title"] == "Spark %"
+    assert table["show-buttons"] is True
+    assert set(table["hidden-buttons"]) == {"+", "-", "up", "down"}
+
+
 def test_applet_metadata_and_settings_remainder() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
 
@@ -182,13 +194,13 @@ def test_applet_metadata_and_settings_remainder() -> None:
             "account",
             "format",
             "mode",
-            "threshold",
             "font",
             "size",
             "bold",
             "italic",
             "color",
             "background",
+            "threshold",
             "below-font",
             "below-size",
             "below-bold",
@@ -196,21 +208,22 @@ def test_applet_metadata_and_settings_remainder() -> None:
             "below-color",
             "below-background",
         ]
-        assert set(table["columns"][2]["options"].values()) == set(range(4))
-        assert table["columns"][2]["default"] == 0
-        assert table["columns"][3]["default"] == 20
-        assert table["columns"][3]["min"] == 0
-        assert table["columns"][3]["max"] == 100
-        assert table["columns"][5]["max"] == 48
-        assert table["columns"][6]["type"] == "boolean"
-        assert table["columns"][7]["type"] == "boolean"
-        assert set(table["columns"][8]["options"].values()) == set(range(8))
-        assert set(table["columns"][9]["options"].values()) == set(range(7))
-        assert table["columns"][11]["max"] == 48
-        assert table["columns"][12]["default"] is True
-        assert table["columns"][13]["type"] == "boolean"
-        assert set(table["columns"][14]["options"].values()) == set(range(8))
-        assert set(table["columns"][15]["options"].values()) == set(range(7))
+        columns = {column["id"]: column for column in table["columns"]}
+        assert set(columns["mode"]["options"].values()) == set(range(4))
+        assert columns["mode"]["default"] == 0
+        assert columns["threshold"]["default"] == 20
+        assert columns["threshold"]["min"] == 0
+        assert columns["threshold"]["max"] == 100
+        assert columns["size"]["max"] == 48
+        assert columns["bold"]["type"] == "boolean"
+        assert columns["italic"]["type"] == "boolean"
+        assert set(columns["color"]["options"].values()) == set(range(8))
+        assert set(columns["background"]["options"].values()) == set(range(7))
+        assert columns["below-size"]["max"] == 48
+        assert columns["below-bold"]["default"] is True
+        assert columns["below-italic"]["type"] == "boolean"
+        assert set(columns["below-color"]["options"].values()) == set(range(8))
+        assert set(columns["below-background"]["options"].values()) == set(range(7))
     assert set(date_table["columns"][1]["options"].values()) == set(range(4))
     assert set(time_table["columns"][1]["options"].values()) == set(range(3))
     duration_table = settings["account-duration-styles"]
@@ -220,13 +233,13 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "account",
         "format",
         "mode",
-        "threshold",
         "font",
         "size",
         "bold",
         "italic",
         "color",
         "background",
+        "threshold",
         "below-font",
         "below-size",
         "below-bold",
@@ -236,23 +249,24 @@ def test_applet_metadata_and_settings_remainder() -> None:
     ]
     assert set(duration_table["columns"][1]["options"].values()) == set(range(4))
     assert set(duration_table["columns"][2]["options"].values()) == set(range(4))
-    assert duration_table["columns"][3]["default"] == 120
-    assert duration_table["columns"][3]["max"] == 10080
-    assert set(duration_table["columns"][8]["options"].values()) == set(range(8))
-    assert set(duration_table["columns"][9]["options"].values()) == set(range(7))
-    assert set(duration_table["columns"][14]["options"].values()) == set(range(8))
-    assert set(duration_table["columns"][15]["options"].values()) == set(range(7))
+    duration_columns = {column["id"]: column for column in duration_table["columns"]}
+    assert duration_columns["threshold"]["default"] == 120
+    assert duration_columns["threshold"]["max"] == 10080
+    assert set(duration_columns["color"]["options"].values()) == set(range(8))
+    assert set(duration_columns["background"]["options"].values()) == set(range(7))
+    assert set(duration_columns["below-color"]["options"].values()) == set(range(8))
+    assert set(duration_columns["below-background"]["options"].values()) == set(range(7))
     percent_table = settings["account-percent-styles"]
     assert [column["id"] for column in percent_table["columns"]] == [
         "account",
         "mode",
-        "threshold",
         "font",
         "size",
         "bold",
         "italic",
         "color",
         "background",
+        "threshold",
         "below-font",
         "below-size",
         "below-bold",
@@ -261,24 +275,27 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "below-background",
     ]
     assert set(percent_table["columns"][1]["options"].values()) == set(range(4))
-    assert percent_table["columns"][1]["default"] == 0
-    assert percent_table["columns"][2]["default"] == 20
-    assert set(percent_table["columns"][7]["options"].values()) == set(range(8))
-    assert set(percent_table["columns"][8]["options"].values()) == set(range(7))
-    assert set(percent_table["columns"][13]["options"].values()) == set(range(8))
-    assert set(percent_table["columns"][14]["options"].values()) == set(range(7))
+    percent_columns = {column["id"]: column for column in percent_table["columns"]}
+    assert percent_columns["mode"]["default"] == 0
+    assert percent_columns["threshold"]["default"] == 20
+    assert set(percent_columns["color"]["options"].values()) == set(range(8))
+    assert set(percent_columns["background"]["options"].values()) == set(range(7))
+    assert set(percent_columns["below-color"]["options"].values()) == set(range(8))
+    assert set(percent_columns["below-background"]["options"].values()) == set(range(7))
     alert_table = settings["account-alert-settings"]
     assert [column["id"] for column in alert_table["columns"]] == [
         "account",
         "five-threshold",
         "weekly-threshold",
+        "spark-threshold",
         "warnings",
         "errors",
     ]
     assert alert_table["columns"][1]["default"] == 20
     assert alert_table["columns"][2]["default"] == 20
-    assert alert_table["columns"][3]["default"] is True
+    assert alert_table["columns"][3]["default"] == "20"
     assert alert_table["columns"][4]["default"] is True
+    assert alert_table["columns"][5]["default"] is True
     targets = settings["account-style-targets"]
     assert [column["id"] for column in targets["columns"]] == [
         "account",
