@@ -257,16 +257,8 @@
         "default": 0
       },
       {
-        "id": "threshold",
-        "title": "Schwelle %",
-        "type": "integer",
-        "min": 0,
-        "max": 100,
-        "default": 20
-      },
-      {
         "id": "font",
-        "title": "Schriftart",
+        "title": "Über der Schwelle Schriftart",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -277,7 +269,7 @@
       },
       {
         "id": "size",
-        "title": "Größe",
+        "title": "Über der Schwelle Größe",
         "tooltip": "0 übernimmt die Schriftgröße des Cinnamon-Themes.",
         "type": "integer",
         "min": 0,
@@ -286,19 +278,19 @@
       },
       {
         "id": "bold",
-        "title": "Fett",
+        "title": "Über der Schwelle Fett",
         "type": "boolean",
         "default": false
       },
       {
         "id": "italic",
-        "title": "Kursiv",
+        "title": "Über der Schwelle Kursiv",
         "type": "boolean",
         "default": false
       },
       {
         "id": "color",
-        "title": "Schriftfarbe",
+        "title": "Über der Schwelle Schriftfarbe",
         "tooltip": "Theme übernimmt die Standardfarbe. Eine gewählte Farbe gilt unabhängig vom Hintergrund.",
         "type": "integer",
         "options": {
@@ -315,7 +307,7 @@
       },
       {
         "id": "background",
-        "title": "Hintergrund",
+        "title": "Über der Schwelle Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -328,8 +320,16 @@
         }
       },
       {
+        "id": "threshold",
+        "title": "Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
+      },
+      {
         "id": "below-font",
-        "title": "Unter Schwelle Schriftart",
+        "title": "Unter der Schwelle Schriftart",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -341,7 +341,7 @@
       },
       {
         "id": "below-size",
-        "title": "Unter Schwelle Größe",
+        "title": "Unter der Schwelle Größe",
         "type": "integer",
         "min": 0,
         "max": 48,
@@ -349,19 +349,19 @@
       },
       {
         "id": "below-bold",
-        "title": "Unter Schwelle Fett",
+        "title": "Unter der Schwelle Fett",
         "type": "boolean",
         "default": true
       },
       {
         "id": "below-italic",
-        "title": "Unter Schwelle Kursiv",
+        "title": "Unter der Schwelle Kursiv",
         "type": "boolean",
         "default": false
       },
       {
         "id": "below-color",
-        "title": "Unter Schwelle Schriftfarbe",
+        "title": "Unter der Schwelle Schriftfarbe",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -377,7 +377,7 @@
       },
       {
         "id": "below-background",
-        "title": "Unter Schwelle Hintergrund",
+        "title": "Unter der Schwelle Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -429,16 +429,8 @@
         "default": 0
       },
       {
-        "id": "threshold",
-        "title": "Schwelle %",
-        "type": "integer",
-        "min": 0,
-        "max": 100,
-        "default": 20
-      },
-      {
         "id": "font",
-        "title": "Schriftart",
+        "title": "Über der Schwelle Schriftart",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -449,7 +441,7 @@
       },
       {
         "id": "size",
-        "title": "Größe",
+        "title": "Über der Schwelle Größe",
         "tooltip": "0 übernimmt die Schriftgröße des Cinnamon-Themes.",
         "type": "integer",
         "min": 0,
@@ -458,19 +450,19 @@
       },
       {
         "id": "bold",
-        "title": "Fett",
+        "title": "Über der Schwelle Fett",
         "type": "boolean",
         "default": false
       },
       {
         "id": "italic",
-        "title": "Kursiv",
+        "title": "Über der Schwelle Kursiv",
         "type": "boolean",
         "default": false
       },
       {
         "id": "color",
-        "title": "Schriftfarbe",
+        "title": "Über der Schwelle Schriftfarbe",
         "tooltip": "Theme übernimmt die Standardfarbe. Eine gewählte Farbe gilt unabhängig vom Hintergrund.",
         "type": "integer",
         "options": {
@@ -487,7 +479,7 @@
       },
       {
         "id": "background",
-        "title": "Hintergrund",
+        "title": "Über der Schwelle Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -500,8 +492,16 @@
         }
       },
       {
+        "id": "threshold",
+        "title": "Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
+      },
+      {
         "id": "below-font",
-        "title": "Unter Schwelle Schriftart",
+        "title": "Unter der Schwelle Schriftart",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -513,7 +513,7 @@
       },
       {
         "id": "below-size",
-        "title": "Unter Schwelle Größe",
+        "title": "Unter der Schwelle Größe",
         "type": "integer",
         "min": 0,
         "max": 48,
@@ -521,19 +521,19 @@
       },
       {
         "id": "below-bold",
-        "title": "Unter Schwelle Fett",
+        "title": "Unter der Schwelle Fett",
         "type": "boolean",
         "default": true
       },
       {
         "id": "below-italic",
-        "title": "Unter Schwelle Kursiv",
+        "title": "Unter der Schwelle Kursiv",
         "type": "boolean",
         "default": false
       },
       {
         "id": "below-color",
-        "title": "Unter Schwelle Schriftfarbe",
+        "title": "Unter der Schwelle Schriftfarbe",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -549,7 +549,7 @@
       },
       {
         "id": "below-background",
-        "title": "Unter Schwelle Hintergrund",
+        "title": "Unter der Schwelle Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -600,16 +600,8 @@
         "default": 0
       },
       {
-        "id": "threshold",
-        "title": "Schwelle %",
-        "type": "integer",
-        "min": 0,
-        "max": 100,
-        "default": 20
-      },
-      {
         "id": "font",
-        "title": "Schriftart",
+        "title": "Über der Schwelle Schriftart",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -620,7 +612,7 @@
       },
       {
         "id": "size",
-        "title": "Größe",
+        "title": "Über der Schwelle Größe",
         "tooltip": "0 übernimmt die Schriftgröße des Cinnamon-Themes.",
         "type": "integer",
         "min": 0,
@@ -629,19 +621,19 @@
       },
       {
         "id": "bold",
-        "title": "Fett",
+        "title": "Über der Schwelle Fett",
         "type": "boolean",
         "default": false
       },
       {
         "id": "italic",
-        "title": "Kursiv",
+        "title": "Über der Schwelle Kursiv",
         "type": "boolean",
         "default": false
       },
       {
         "id": "color",
-        "title": "Schriftfarbe",
+        "title": "Über der Schwelle Schriftfarbe",
         "tooltip": "Theme übernimmt die Standardfarbe. Eine gewählte Farbe gilt unabhängig vom Hintergrund.",
         "type": "integer",
         "options": {
@@ -658,7 +650,7 @@
       },
       {
         "id": "background",
-        "title": "Hintergrund",
+        "title": "Über der Schwelle Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -671,8 +663,16 @@
         }
       },
       {
+        "id": "threshold",
+        "title": "Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
+      },
+      {
         "id": "below-font",
-        "title": "Unter Schwelle Schriftart",
+        "title": "Unter der Schwelle Schriftart",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -684,7 +684,7 @@
       },
       {
         "id": "below-size",
-        "title": "Unter Schwelle Größe",
+        "title": "Unter der Schwelle Größe",
         "type": "integer",
         "min": 0,
         "max": 48,
@@ -692,19 +692,19 @@
       },
       {
         "id": "below-bold",
-        "title": "Unter Schwelle Fett",
+        "title": "Unter der Schwelle Fett",
         "type": "boolean",
         "default": true
       },
       {
         "id": "below-italic",
-        "title": "Unter Schwelle Kursiv",
+        "title": "Unter der Schwelle Kursiv",
         "type": "boolean",
         "default": false
       },
       {
         "id": "below-color",
-        "title": "Unter Schwelle Schriftfarbe",
+        "title": "Unter der Schwelle Schriftfarbe",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -720,7 +720,7 @@
       },
       {
         "id": "below-background",
-        "title": "Unter Schwelle Hintergrund",
+        "title": "Unter der Schwelle Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -773,16 +773,8 @@
         "default": 0
       },
       {
-        "id": "threshold",
-        "title": "Schwelle Minuten",
-        "type": "integer",
-        "min": 0,
-        "max": 10080,
-        "default": 120
-      },
-      {
         "id": "font",
-        "title": "Schriftart",
+        "title": "Über der Schwelle Schriftart",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -793,7 +785,7 @@
       },
       {
         "id": "size",
-        "title": "Größe",
+        "title": "Über der Schwelle Größe",
         "tooltip": "0 übernimmt die Schriftgröße des Cinnamon-Themes.",
         "type": "integer",
         "min": 0,
@@ -802,19 +794,19 @@
       },
       {
         "id": "bold",
-        "title": "Fett",
+        "title": "Über der Schwelle Fett",
         "type": "boolean",
         "default": false
       },
       {
         "id": "italic",
-        "title": "Kursiv",
+        "title": "Über der Schwelle Kursiv",
         "type": "boolean",
         "default": false
       },
       {
         "id": "color",
-        "title": "Schriftfarbe",
+        "title": "Über der Schwelle Schriftfarbe",
         "tooltip": "Theme übernimmt die Standardfarbe. Eine gewählte Farbe gilt unabhängig vom Hintergrund.",
         "type": "integer",
         "options": {
@@ -831,7 +823,7 @@
       },
       {
         "id": "background",
-        "title": "Hintergrund",
+        "title": "Über der Schwelle Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -844,8 +836,16 @@
         }
       },
       {
+        "id": "threshold",
+        "title": "Schwelle Minuten",
+        "type": "integer",
+        "min": 0,
+        "max": 10080,
+        "default": 120
+      },
+      {
         "id": "below-font",
-        "title": "Unter Schwelle Schriftart",
+        "title": "Unter der Schwelle Schriftart",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -857,7 +857,7 @@
       },
       {
         "id": "below-size",
-        "title": "Unter Schwelle Größe",
+        "title": "Unter der Schwelle Größe",
         "type": "integer",
         "min": 0,
         "max": 48,
@@ -865,19 +865,19 @@
       },
       {
         "id": "below-bold",
-        "title": "Unter Schwelle Fett",
+        "title": "Unter der Schwelle Fett",
         "type": "boolean",
         "default": true
       },
       {
         "id": "below-italic",
-        "title": "Unter Schwelle Kursiv",
+        "title": "Unter der Schwelle Kursiv",
         "type": "boolean",
         "default": false
       },
       {
         "id": "below-color",
-        "title": "Unter Schwelle Schriftfarbe",
+        "title": "Unter der Schwelle Schriftfarbe",
         "type": "integer",
         "options": {
           "Theme": 0,
@@ -893,7 +893,7 @@
       },
       {
         "id": "below-background",
-        "title": "Unter Schwelle Hintergrund",
+        "title": "Unter der Schwelle Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,

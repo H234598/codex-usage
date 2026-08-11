@@ -114,6 +114,41 @@ def test_display_table_replaces_panel_tag_column() -> None:
         assert set(column["options"].values()) == {0, 1, 2}
 
 
+def test_style_tables_group_threshold_fields() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+    expected = {
+        "account-percent-styles": [
+            "account", "mode", "font", "size", "bold", "italic",
+            "color", "background", "threshold", "below-font", "below-size",
+            "below-bold", "below-italic", "below-color", "below-background",
+        ],
+        "account-date-styles": [
+            "account", "format", "mode", "font", "size", "bold", "italic",
+            "color", "background", "threshold", "below-font", "below-size",
+            "below-bold", "below-italic", "below-color", "below-background",
+        ],
+        "account-time-styles": [
+            "account", "format", "mode", "font", "size", "bold", "italic",
+            "color", "background", "threshold", "below-font", "below-size",
+            "below-bold", "below-italic", "below-color", "below-background",
+        ],
+        "account-duration-styles": [
+            "account", "format", "mode", "font", "size", "bold", "italic",
+            "color", "background", "threshold", "below-font", "below-size",
+            "below-bold", "below-italic", "below-color", "below-background",
+        ],
+    }
+    for name, ids in expected.items():
+        columns = settings[name]["columns"]
+        assert [column["id"] for column in columns] == ids
+        by_id = {column["id"]: column for column in columns}
+        assert by_id["font"]["title"].startswith("Über der Schwelle")
+        assert by_id["below-font"]["title"].startswith("Unter der Schwelle")
+        assert by_id["threshold"]["title"] == (
+            "Schwelle Minuten" if name == "account-duration-styles" else "Schwelle %"
+        )
+
+
 def test_applet_metadata_and_settings_remainder() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
 
