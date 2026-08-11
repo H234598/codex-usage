@@ -116,6 +116,7 @@
       "type": "section",
       "title": "Formatierungsorte",
       "keys": [
+        "account-display-settings",
         "account-style-targets"
       ]
     },
@@ -1022,12 +1023,6 @@
         "type": "string"
       },
       {
-        "id": "tag",
-        "title": "Kürzel",
-        "tooltip": "Leer lassen für ein automatisch erzeugtes Kürzel; maximal 8 Zeichen.",
-        "type": "string"
-      },
-      {
         "id": "order",
         "title": "Reihenfolge",
         "type": "integer",
@@ -1074,6 +1069,62 @@
     ],
     "height": 220,
     "show-buttons": false,
+    "default": []
+  },
+  "account-display-settings": {
+    "type": "list",
+    "description": "Account-ID, Label und Kürzel je Oberfläche",
+    "tooltip": "Leiste, Hover und Klick-Menü können Account-ID, Label oder Kürzel anzeigen. Kürzel maximal 8 Zeichen.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "tag",
+        "title": "Kürzel",
+        "tooltip": "Leer lassen für automatisch erzeugtes Kürzel; maximal 8 Zeichen.",
+        "type": "string",
+        "max": 8
+      },
+      {
+        "id": "panel",
+        "title": "Leiste",
+        "type": "integer",
+        "options": {
+          "Account-ID": 0,
+          "Label": 1,
+          "Kürzel": 2
+        },
+        "default": 2
+      },
+      {
+        "id": "hover",
+        "title": "Hover",
+        "type": "integer",
+        "options": {
+          "Account-ID": 0,
+          "Label": 1,
+          "Kürzel": 2
+        },
+        "default": 1
+      },
+      {
+        "id": "click",
+        "title": "Klick-Menü",
+        "type": "integer",
+        "options": {
+          "Account-ID": 0,
+          "Label": 1,
+          "Kürzel": 2
+        },
+        "default": 1
+      }
+    ],
+    "height": 260,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "panel-account-separator": {

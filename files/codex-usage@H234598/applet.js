@@ -71,6 +71,7 @@ CodexUsageApplet.prototype = {
         this.accountDateStyles = [];
         this.accountTimeStyles = [];
         this.accountDurationStyles = [];
+        this.accountDisplaySettings = [];
         this.accountStyleTargets = [];
         this.routingGlobalPaidCredits = false;
         this.routingCreditOverrides = [];
@@ -132,6 +133,7 @@ CodexUsageApplet.prototype = {
         this._dateStyles = Object.create(null);
         this._timeStyles = Object.create(null);
         this._durationStyles = Object.create(null);
+        this._displaySettings = Object.create(null);
         this._styleTargets = Object.create(null);
         this._routingPolicy = null;
         this._routingDecisions = Object.create(null);
@@ -218,6 +220,7 @@ CodexUsageApplet.prototype = {
         bind("account-date-styles", "accountDateStyles", this._onDateStylesChanged);
         bind("account-time-styles", "accountTimeStyles", this._onTimeStylesChanged);
         bind("account-duration-styles", "accountDurationStyles", this._onDurationStylesChanged);
+        bind("account-display-settings", "accountDisplaySettings", this._onDisplaySettingsChanged);
         bind("account-style-targets", "accountStyleTargets", this._onStyleTargetsChanged);
         bind(
             "routing-global-paid-credits",
@@ -1321,8 +1324,8 @@ CodexUsageApplet.prototype = {
                 } catch (e) {
                     global.log("[" + UUID + "] backend settings sync failed: " + String(e));
                 }
-                this._syncAccountSettings(rows);
                 this._syncStyleRows(rows);
+                this._syncAccountSettings(rows);
                 if (this._usages.length || usageRowsChanged) {
                     this._refreshFormattedSurfaces();
                 }
@@ -1816,7 +1819,6 @@ CodexUsageApplet.prototype = {
     _defaultPanelRow: function(account, order) {
         return {
             account: account,
-            tag: "",
             order: order,
             muted: false,
             slot1: this._panelSourceValue(this.panelPercentSource),
@@ -1828,7 +1830,6 @@ CodexUsageApplet.prototype = {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
-        let tag = this._safeText(row.tag, 8);
         let order = this._strictIntegerSetting(row.order);
         let slot1 = this._strictIntegerSetting(row.slot1);
         let slot2 = this._strictIntegerSetting(row.slot2);
@@ -1845,7 +1846,6 @@ CodexUsageApplet.prototype = {
         }
         return {
             account: account,
-            tag: tag,
             order: order,
             muted: row.muted,
             slot1: slot1,
@@ -2009,22 +2009,26 @@ CodexUsageApplet.prototype = {
         let dateRows = this._mergedStyleRows(accounts, this.accountDateStyles, "date");
         let timeRows = this._mergedStyleRows(accounts, this.accountTimeStyles, "time");
         let durationRows = this._mergedStyleRows(accounts, this.accountDurationStyles, "duration");
+        let displayRows = this._mergedDisplayRows(accounts, this.accountDisplaySettings);
         let targetRows = this._mergedTargetRows(accounts, this.accountStyleTargets);
         let percentChanged = !this._styleRowsEqual(this.accountPercentStyles, percentRows);
         let dateChanged = !this._styleRowsEqual(this.accountDateStyles, dateRows);
         let timeChanged = !this._styleRowsEqual(this.accountTimeStyles, timeRows);
         let durationChanged = !this._styleRowsEqual(this.accountDurationStyles, durationRows);
+        let displayChanged = !this._styleRowsEqual(this.accountDisplaySettings, displayRows);
         let targetsChanged = !this._styleRowsEqual(this.accountStyleTargets, targetRows);
         this._percentStyles = this._styleMap(percentRows);
         this._dateStyles = this._styleMap(dateRows);
         this._timeStyles = this._styleMap(timeRows);
         this._durationStyles = this._styleMap(durationRows);
+        this._displaySettings = this._displaySettingsMap(displayRows);
         this._styleTargets = this._targetMap(targetRows);
         this._syncingStyleRows = true;
         this.accountPercentStyles = percentRows;
         this.accountDateStyles = dateRows;
         this.accountTimeStyles = timeRows;
         this.accountDurationStyles = durationRows;
+        this.accountDisplaySettings = displayRows;
         this.accountStyleTargets = targetRows;
         try {
             if (percentChanged) {
@@ -2039,6 +2043,9 @@ CodexUsageApplet.prototype = {
             if (durationChanged) {
                 this.settings.setValue("account-duration-styles", durationRows);
             }
+            if (displayChanged) {
+                this.settings.setValue("account-display-settings", displayRows);
+            }
             if (targetsChanged) {
                 this.settings.setValue("account-style-targets", targetRows);
             }
@@ -2049,6 +2056,86 @@ CodexUsageApplet.prototype = {
             "_syncingStyleRows",
             "formatting settings guard cleanup"
         );
+    },
+
+    _defaultDisplayRow: function(account) {
+        return {
+            account: account,
+            tag: "",
+            panel: 2,
+            hover: 1,
+            click: 1
+        };
+    },
+
+    _normalizeDisplayRow: function(row, account) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+            return null;
+        }
+        let tag = this._safeText(row.tag, 8);
+        let panel = this._strictIntegerSetting(row.panel);
+        let hover = this._strictIntegerSetting(row.hover);
+        let click = this._strictIntegerSetting(row.click);
+        if (
+            !Number.isInteger(panel) || panel < 0 || panel > 2 ||
+            !Number.isInteger(hover) || hover < 0 || hover > 2 ||
+            !Number.isInteger(click) || click < 0 || click > 2
+        ) {
+            return null;
+        }
+        return {
+            account: account,
+            tag: tag,
+            panel: panel,
+            hover: hover,
+            click: click
+        };
+    },
+
+    _mergedDisplayRows: function(accounts, currentRows) {
+        let current = Object.create(null);
+        if (Array.isArray(currentRows)) {
+            for (let i = 0; i < currentRows.length; i++) {
+                let account = this._configuredAccountId(
+                    currentRows[i] && currentRows[i].account
+                );
+                if (!account || current[account] || !this._backendAccounts[account]) {
+                    continue;
+                }
+                let normalized = this._normalizeDisplayRow(currentRows[i], account);
+                if (normalized) {
+                    current[account] = normalized;
+                }
+            }
+        }
+        let legacyTags = Object.create(null);
+        if (Array.isArray(this.accountPanelSettings)) {
+            for (let i = 0; i < this.accountPanelSettings.length; i++) {
+                let row = this.accountPanelSettings[i];
+                let account = this._configuredAccountId(row && row.account);
+                if (account && !Object.prototype.hasOwnProperty.call(legacyTags, account)) {
+                    legacyTags[account] = this._safeText(row && row.tag, 8);
+                }
+            }
+        }
+        let rows = [];
+        for (let i = 0; i < accounts.length; i++) {
+            let account = accounts[i].account;
+            let row = current[account] || this._defaultDisplayRow(account);
+            if (!current[account] && legacyTags[account]) {
+                row.tag = legacyTags[account];
+            }
+            rows.push(row);
+        }
+        return rows;
+    },
+
+    _displaySettingsMap: function(rows) {
+        let result = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            result[rows[i].account] = rows[i];
+        }
+        return result;
     },
 
     _styleRowsEqual: function(left, right) {
@@ -2349,6 +2436,33 @@ CodexUsageApplet.prototype = {
         } else {
             this._durationStyles = this._styleMap(normalized);
         }
+        this._refreshFormattedSurfaces();
+    },
+
+    _onDisplaySettingsChanged: function() {
+        if (!this._backendRowsReady || this._syncingStyleRows || this._removed || this._safeMode) {
+            return;
+        }
+        let rows = this.accountDisplaySettings;
+        let expected = Object.keys(this._backendAccounts).length;
+        if (!Array.isArray(rows) || rows.length !== expected) {
+            this._loadAccountBackends();
+            return;
+        }
+        let normalized = [];
+        let seen = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            let account = this._configuredAccountId(rows[i] && rows[i].account);
+            let item = this._normalizeDisplayRow(rows[i], account);
+            if (!item || seen[account] || !this._backendAccounts[account]) {
+                this._loadAccountBackends();
+                return;
+            }
+            seen[account] = true;
+            normalized.push(item);
+        }
+        this._displaySettings = this._displaySettingsMap(normalized);
+        this.accountDisplaySettings = normalized;
         this._refreshFormattedSurfaces();
     },
 
@@ -4289,8 +4403,9 @@ CodexUsageApplet.prototype = {
         let five = this._percentParts(usage.five_hour, usage.account, "click");
         let week = this._percentParts(usage.weekly, usage.account, "click");
         let severity = this._usageSeverity(usage);
-        let summary = usage.label + "     5h " + five.plain + "     Woche " + week.plain;
-        let summaryMarkup = this._escapeMarkup(usage.label + "     5h ") + five.markup +
+        let display = this._accountDisplayText({ usage: usage }, "click");
+        let summary = display + "     5h " + five.plain + "     Woche " + week.plain;
+        let summaryMarkup = this._escapeMarkup(display + "     5h ") + five.markup +
             this._escapeMarkup("     Woche ") + week.markup;
         let summaryItem = this._addDisabled(
             this.menu,
@@ -4328,7 +4443,9 @@ CodexUsageApplet.prototype = {
     _addAccountControls: function(usage) {
         let panel = this._panelSettings[usage.account] || this._defaultPanelRow(usage.account, 1);
         let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
-        let submenu = new PopupMenu.PopupSubMenuMenuItem(usage.label + " steuern");
+        let submenu = new PopupMenu.PopupSubMenuMenuItem(
+            this._accountDisplayText({ usage: usage }, "click") + " steuern"
+        );
         let visible = new PopupMenu.PopupSwitchMenuItem("Statusleiste anzeigen", !panel.muted);
         visible.connect("toggled", Lang.bind(this, function() {
             this._runSafely("panel visibility toggle", Lang.bind(this, function() {
@@ -4968,8 +5085,7 @@ CodexUsageApplet.prototype = {
     },
 
     _panelTag: function(item) {
-        let custom = this._safeText(item.settings.tag, 8);
-        return custom || this._accountTag(item.usage.label);
+        return this._accountDisplayText(item, "panel");
     },
 
     _panelSeparator: function() {
@@ -5109,6 +5225,24 @@ CodexUsageApplet.prototype = {
         return word.slice(0, Math.min(2, word.length));
     },
 
+    _accountDisplayText: function(item, surface) {
+        let usage = item && item.usage ? item.usage : item;
+        let account = this._safeText(usage && usage.account, 64) || "?";
+        let label = this._safeText(usage && usage.label, 120) || account;
+        let display = this._displaySettings && this._displaySettings[account];
+        if (!display) {
+            display = this._defaultDisplayRow(account);
+        }
+        let selection = display[surface];
+        if (selection === 0) {
+            return account;
+        }
+        if (selection === 2) {
+            return this._safeText(display.tag, 8) || this._accountTag(label);
+        }
+        return label;
+    },
+
     _clearPanelClasses: function() {
         for (let i = 0; i < PANEL_CLASSES.length; i++) {
             try {
@@ -5127,11 +5261,12 @@ CodexUsageApplet.prototype = {
             let five = this._percentParts(usage.five_hour, usage.account, "hover");
             let week = this._percentParts(usage.weekly, usage.account, "hover");
             let stale = usage.stale ? " (gespeichert)" : "";
+            let display = this._accountDisplayText({ usage: usage }, "hover");
             plainLines.push(
-                usage.label + ": 5h " + five.plain + ", Woche " + week.plain + stale
+                display + ": 5h " + five.plain + ", Woche " + week.plain + stale
             );
             markupLines.push(
-                this._escapeMarkup(usage.label + ": 5h ") + five.markup +
+                this._escapeMarkup(display + ": 5h ") + five.markup +
                     this._escapeMarkup(", Woche ") + week.markup +
                     this._escapeMarkup(stale)
             );

@@ -160,6 +160,14 @@ function makeApplet(onReady) {
     alpha: { account: "alpha", tag: "A", order: 2, muted: false, slot1: 1, slot2: 2 },
     beta: { account: "beta", tag: "B", order: 1, muted: true, slot1: 3, slot2: 3 },
   };
+  applet._displaySettings = {
+    alpha: { account: "alpha", tag: "A", panel: 2, hover: 1, click: 1 },
+    beta: { account: "beta", tag: "B", panel: 2, hover: 1, click: 1 },
+  };
+  applet.accountDisplaySettings = [
+    applet._displaySettings.alpha,
+    applet._displaySettings.beta,
+  ];
   applet._backendAccounts = { alpha: {}, beta: {} };
   return applet;
 }
@@ -299,6 +307,61 @@ test("account table changes produce complete account add data", () => {
     "reactivation-browser": 2,
     backend: 0,
   }]]);
+});
+
+test("legacy panel tags migrate to central display settings", () => {
+  const applet = makeAccountSettingsApplet();
+  delete applet._syncStyleRows;
+  delete applet._syncAccountSettings;
+  applet.accountPanelSettings = [{
+    account: "alpha",
+    tag: "A",
+    order: 1,
+    muted: false,
+    slot1: 3,
+    slot2: 0,
+  }];
+  applet.accountDisplaySettings = [];
+  const writes = [];
+  applet.settings = { setValue: (key, value) => writes.push([key, value]) };
+
+  applet._syncStyleRows([applet._backendAccounts.alpha]);
+  applet._syncAccountSettings([applet._backendAccounts.alpha]);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet.accountDisplaySettings[0])), {
+    account: "alpha",
+    tag: "A",
+    panel: 2,
+    hover: 1,
+    click: 1,
+  });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(
+      writes.find(([key]) => key === "account-panel-settings")[1][0],
+      "tag"
+    ),
+    false
+  );
+});
+
+test("display targets resolve account id, label and tag per surface", () => {
+  const applet = makeApplet();
+  const item = { usage: { account: "alpha", label: "Private Account" } };
+
+  assert.equal(applet._accountDisplayText(item, "panel"), "A");
+  assert.equal(applet._accountDisplayText(item, "hover"), "Private Account");
+  assert.equal(applet._accountDisplayText(item, "click"), "Private Account");
+
+  applet._displaySettings.alpha = {
+    account: "alpha",
+    tag: "Priv",
+    panel: 0,
+    hover: 2,
+    click: 0,
+  };
+  assert.equal(applet._accountDisplayText(item, "panel"), "alpha");
+  assert.equal(applet._accountDisplayText(item, "hover"), "Priv");
+  assert.equal(applet._accountDisplayText(item, "click"), "alpha");
 });
 
 test("panel slots honor ordering, mute and duplicate-source normalization", () => {
@@ -2404,7 +2467,7 @@ test("account setting identities are not normalized", () => {
     [{ account: "alpha" }],
     [{ account: " alpha", tag: "forged", order: 1, muted: false, slot1: 1, slot2: 0 }]
   );
-  assert.equal(rows[0].tag, "");
+  assert.equal(Object.prototype.hasOwnProperty.call(rows[0], "tag"), false);
 });
 
 test("alert setting changes refresh the panel immediately", () => {

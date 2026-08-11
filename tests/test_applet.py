@@ -49,16 +49,15 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     panel_table = settings["account-panel-settings"]
     assert [column["id"] for column in panel_table["columns"]] == [
         "account",
-        "tag",
         "order",
         "muted",
         "slot1",
         "slot2",
     ]
-    assert panel_table["columns"][2]["min"] == 1
-    assert panel_table["columns"][2]["max"] == 100
-    assert set(panel_table["columns"][4]["options"].values()) == set(range(8))
-    assert panel_table["columns"][3]["default"] is False
+    assert panel_table["columns"][1]["min"] == 1
+    assert panel_table["columns"][1]["max"] == 100
+    assert set(panel_table["columns"][3]["options"].values()) == set(range(8))
+    assert panel_table["columns"][2]["default"] is False
     assert settings["panel-account-separator"]["default"] == "bar"
     assert set(settings["panel-account-separator"]["options"].values()) == {
         "bar",
@@ -99,6 +98,20 @@ def test_account_table_contains_all_editable_fields() -> None:
     assert table["show-buttons"] is True
     assert set(table["hidden-buttons"]) == {"-", "up", "down"}
     assert "automatisch angelegt" in table["description"]
+
+
+def test_display_table_replaces_panel_tag_column() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+
+    assert [column["id"] for column in settings["account-panel-settings"]["columns"]] == [
+        "account", "order", "muted", "slot1", "slot2",
+    ]
+    table = settings["account-display-settings"]
+    assert [column["id"] for column in table["columns"]] == [
+        "account", "tag", "panel", "hover", "click",
+    ]
+    for column in table["columns"][2:]:
+        assert set(column["options"].values()) == {0, 1, 2}
 
 
 def test_applet_metadata_and_settings_remainder() -> None:
