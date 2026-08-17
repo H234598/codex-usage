@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from codex_usage.config import MAX_CONFIG_ACCOUNTS
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.render import (
     _auth_value,
@@ -441,6 +442,21 @@ def test_render_account_values_is_compact_and_includes_missing_accounts():
     assert "Stand:" not in rendered
 
 
+def test_render_account_values_rejects_account_iterators_over_account_cap():
+    with pytest.raises(ValueError, match="too many account records"):
+        render_account_values(
+            (
+                Account(
+                    id=f"account-{index}",
+                    label="Account",
+                    profile_dir=f"/tmp/account-{index}",
+                )
+                for index in range(MAX_CONFIG_ACCOUNTS + 1)
+            ),
+            {},
+        )
+
+
 def test_render_table_includes_dynamic_main_and_spark_limits():
     reset = datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
@@ -599,6 +615,18 @@ def test_render_json_is_machine_readable():
 
     assert '"account": "privat"' in rendered
     assert '"status": "ok"' in rendered
+
+
+def test_render_rejects_usage_iterators_over_account_cap():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+    with pytest.raises(ValueError, match="too many usage records"):
+        render_table(usage for _ in range(MAX_CONFIG_ACCOUNTS + 1))
+    with pytest.raises(ValueError, match="too many usage records"):
+        render_json(usage for _ in range(MAX_CONFIG_ACCOUNTS + 1))
 
 
 def test_render_table_shows_blocked_state():

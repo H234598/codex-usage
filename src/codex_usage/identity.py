@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from itertools import islice
 from typing import Any
 from urllib.parse import urlsplit
 
-from .extractor import JsonCandidate
+from .extractor import MAX_JSON_CANDIDATES, JsonCandidate
 
 MAX_BACKEND_ID_CHARS = 256
 MAX_BACKEND_PLAN_TYPE_CHARS = 64
@@ -28,11 +29,7 @@ def select_identity_consistent_candidates(
     auth_account_id: str | None,
 ) -> list[JsonCandidate]:
     """Keep structured responses from one backend account together."""
-    candidate_list = [
-        candidate
-        for candidate in candidates
-        if _candidate_is_usable(candidate)
-    ]
+    candidate_list = _usable_candidates(candidates)
     account_ids_by_user: dict[str, set[str]] = {}
     user_ids_by_account: dict[str, set[str]] = {}
     known_account_ids: set[str] = set()
@@ -189,11 +186,11 @@ def backend_plan_type_from_payload(payload: Any) -> str | None:
 def backend_identity_from_candidates(
     candidates: Iterable[JsonCandidate],
 ) -> tuple[str | None, str | None]:
+    candidate_list = _usable_candidates(candidates)
     ordered_candidates = sorted(
         (
             (index, candidate)
-            for index, candidate in enumerate(candidates)
-            if _candidate_is_usable(candidate)
+            for index, candidate in enumerate(candidate_list)
         ),
         key=lambda item: (_candidate_priority(item[1]), -item[0]),
     )
@@ -208,11 +205,11 @@ def backend_identity_from_candidates(
 def backend_plan_type_from_candidates(
     candidates: Iterable[JsonCandidate],
 ) -> str | None:
+    candidate_list = _usable_candidates(candidates)
     ordered_candidates = sorted(
         (
             (index, candidate)
-            for index, candidate in enumerate(candidates)
-            if _candidate_is_usable(candidate)
+            for index, candidate in enumerate(candidate_list)
         ),
         key=lambda item: (_candidate_priority(item[1]), -item[0]),
     )
@@ -243,6 +240,13 @@ def _candidate_is_usable(candidate: Any) -> bool:
         and isinstance(candidate.url, str)
         and bool(candidate.url.strip())
     )
+
+
+def _usable_candidates(candidates: Iterable[JsonCandidate]) -> list[JsonCandidate]:
+    bounded = list(islice(candidates, MAX_JSON_CANDIDATES + 1))
+    if len(bounded) > MAX_JSON_CANDIDATES:
+        return []
+    return [candidate for candidate in bounded if _candidate_is_usable(candidate)]
 
 
 def _identity_value(value: Any, *, field: str) -> str | None:

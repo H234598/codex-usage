@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 from datetime import datetime
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .account_lock import AccountLockError, account_lock
+from .browser import _profile_lock
 from .config import SUPPORTED_REACTIVATION_BROWSERS
 from .direct import (
     DirectAuthError,
@@ -20,7 +22,7 @@ from .direct import (
 from .extractor import LOCAL_TZ
 from .json_utils import loads_strict
 from .models import Account
-from .private_io import write_private_text
+from .private_io import ensure_private_directory, write_private_text
 
 REACTIVATION_BROWSERS = SUPPORTED_REACTIVATION_BROWSERS
 REACTIVATION_TIMEOUT_SECONDS = 600
@@ -29,6 +31,36 @@ BROWSER_COMMANDS = {
     "vivaldi": ("vivaldi-stable", "vivaldi"),
     "chromium": ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"),
     "firefox": ("firefox",),
+}
+REACTIVATION_ENV_NAMES = {
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DESKTOP_SESSION",
+    "DISPLAY",
+    "HOME",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "LANG",
+    "NO_PROXY",
+    "PATH",
+    "SHELL",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "TMPDIR",
+    "USER",
+    "LOGNAME",
+    "TERM",
+    "TZ",
+    "CODEX_CA_CERTIFICATE",
+    "WAYLAND_DISPLAY",
+    "XAUTHORITY",
+    "XDG_CONFIG_HOME",
+    "XDG_CURRENT_DESKTOP",
+    "XDG_DATA_DIRS",
+    "XDG_RUNTIME_DIR",
+    "XDG_SESSION_TYPE",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
 }
 
 
@@ -44,6 +76,12 @@ def reactivate_account(
     codex_command: str | None = None,
     browser_helper: str | None = None,
 ) -> dict[str, Any]:
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, int)
+        or not 1 <= timeout_seconds <= 3600
+    ):
+        raise ReactivationError("reactivation timeout is invalid")
     requested_browser = (
         account.reactivation_browser if browser is None else browser
     )
@@ -77,10 +115,39 @@ def _reactivate_account_unlocked(
         "codex-usage-browser",
         label="browser helper",
     )
+    try:
+        with _profile_lock(profile_dir):
+            return _run_reactivation(
+                account,
+                auth_path=auth_path,
+                browser_kind=browser_kind,
+                browser_executable=browser_executable,
+                profile_dir=profile_dir,
+                codex=codex,
+                helper=helper,
+                timeout_seconds=timeout_seconds,
+            )
+    except (RuntimeError, ValueError) as exc:
+        raise ReactivationError(str(exc)) from exc
 
-    env = os.environ.copy()
-    for name in ("CODEX_ACCESS_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY"):
-        env.pop(name, None)
+
+def _run_reactivation(
+    account: Account,
+    *,
+    auth_path: Path,
+    browser_kind: str,
+    browser_executable: str,
+    profile_dir: Path,
+    codex: str,
+    helper: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in REACTIVATION_ENV_NAMES or key.startswith("LC_")
+    }
     env.update(
         {
             "CODEX_HOME": str(auth_path.parent),
@@ -96,26 +163,29 @@ def _reactivate_account_unlocked(
 
     try:
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 [codex, "login"],
-                check=False,
-                capture_output=True,
-                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
-                timeout=timeout_seconds,
+                start_new_session=True,
                 env=env,
             )
-        except subprocess.TimeoutExpired as exc:
-            raise ReactivationError(
-                "login timed out; close the login browser and try again"
-            ) from exc
+            try:
+                returncode = process.wait(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired as exc:
+                _kill_login_process_group(process)
+                raise ReactivationError(
+                    "login timed out; close the login browser and try again"
+                ) from exc
+            except OSError as exc:
+                _kill_login_process_group(process)
+                raise ReactivationError("could not wait for codex login") from exc
         except OSError as exc:
             raise ReactivationError("could not start codex login") from exc
 
-        if completed.returncode != 0:
-            raise ReactivationError(
-                f"codex login failed with exit code {completed.returncode}"
-            )
+        if returncode != 0:
+            raise ReactivationError(f"codex login failed with exit code {returncode}")
 
         metadata = _validate_refreshed_auth(auth_path)
         _validate_refreshed_identity(auth_path, expected_identity)
@@ -138,6 +208,26 @@ def _reactivate_account_unlocked(
         if metadata["auth_access_expires_at"]
         else None,
     }
+
+
+def _kill_login_process_group(process: subprocess.Popen[bytes]) -> None:
+    pid = getattr(process, "pid", None)
+    signaled_group = False
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            signaled_group = True
+        except (OSError, ValueError):
+            pass
+    if not signaled_group:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def _capture_auth_backup(path: Path) -> tuple[str, int] | None:
@@ -188,15 +278,15 @@ def _validate_refreshed_identity(
             "login completed without a verifiable account identity"
         ) from exc
 
-    if expected_account_id and not actual_account_id:
-        matches = False
-    elif expected_user_id and actual_user_id and actual_user_id != expected_user_id:
+    if expected_user_id and actual_user_id != expected_user_id:
         matches = False
     elif expected_account_id and actual_account_id:
         accepted_account_ids = {expected_account_id}
         if expected_user_id:
             accepted_account_ids.add(expected_user_id)
         matches = actual_account_id in accepted_account_ids
+    elif expected_account_id:
+        matches = False
     else:
         matches = bool(expected_user_id and actual_user_id == expected_user_id)
     if not matches:
@@ -272,21 +362,23 @@ def _prepare_real_private_directory(path: Path, *, label: str) -> None:
     if path.is_symlink():
         raise ReactivationError(f"{label} must not be a symlink")
     try:
-        path.mkdir(parents=True, mode=0o700, exist_ok=True)
+        ensure_private_directory(path, label=label)
     except OSError as exc:
         raise ReactivationError(f"could not create {label}") from exc
-    if path.is_symlink() or not path.is_dir():
-        raise ReactivationError(f"{label} must be a real directory")
-    try:
-        path.chmod(0o700)
-    except OSError as exc:
-        raise ReactivationError(f"could not secure {label}") from exc
+    except ValueError as exc:
+        raise ReactivationError(str(exc)) from exc
 
 
 def _assert_no_symlink_ancestors(path: Path, *, label: str) -> None:
-    absolute = Path(os.path.abspath(path))
+    raw_path = Path(path)
+    absolute = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
     current = Path(absolute.anchor)
     for part in absolute.parts[1:]:
+        if part == ".":
+            continue
+        if part == "..":
+            current = current.parent
+            continue
         current /= part
         if current.is_symlink():
             raise ReactivationError(f"{label} must not contain symlinks")

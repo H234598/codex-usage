@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from codex_usage.account_lock import account_lock
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.state import (
     _is_inferred_inactive_five_hour,
     _localize_datetime,
+    _remove_state_transaction_dir,
     _snapshot_datetime,
+    _snapshot_text,
     _window_duration_matches,
     _window_duration_seconds,
     _window_matches_expected_kind,
@@ -29,12 +34,14 @@ from codex_usage.state import (
     save_usage_snapshot,
     usage_from_dict,
 )
+from codex_usage.usage_resets import UsageResetState
 
 
 def _write_trusted_snapshot(path, payload):
     payload.setdefault("backend_configured", "direct")
     payload.setdefault("backend_used", "direct")
     path.write_text(json.dumps(payload), encoding="utf-8")
+    path.chmod(0o600)
 
 
 def test_naive_state_times_use_dst_aware_local_zone(monkeypatch):
@@ -44,6 +51,11 @@ def test_naive_state_times_use_dst_aware_local_zone(monkeypatch):
 
     assert _snapshot_datetime("2026-10-26T00:15:00") == expected
     assert _localize_datetime(datetime(2026, 10, 26, 0, 15)) == expected
+
+
+def test_snapshot_text_normalizes_and_bounds_whitespace():
+    assert _snapshot_text("\n  alpha\t beta  ", limit=10) == "alpha beta"
+    assert _snapshot_text("alpha\n beta gamma", limit=11) == "alpha be..."
 
 
 def test_usage_state_round_trips_dynamic_main_and_spark_pools():
@@ -75,6 +87,7 @@ def test_usage_state_round_trips_dynamic_main_and_spark_pools():
                 availability_sources=("model_catalog",),
             ),
         ),
+        usage_resets=UsageResetState(2, True, True),
     )
 
     loaded = usage_from_dict(usage.as_dict())
@@ -82,6 +95,7 @@ def test_usage_state_round_trips_dynamic_main_and_spark_pools():
     assert loaded.main == usage.main
     assert loaded.models == usage.models
     assert loaded.weekly == weekly
+    assert loaded.usage_resets == usage.usage_resets
 
 
 def test_usage_state_invalidates_model_pool_without_exhausted_flag():
@@ -291,6 +305,33 @@ def test_usage_state_invalid_invalidation_flag_discards_values():
     assert loaded.five_hour is None
 
 
+@pytest.mark.parametrize(
+    ("status", "cache_invalidated"),
+    [("error", False), ("login_required", False), ("ok", True)],
+)
+def test_usage_state_hides_reset_values_for_terminal_or_invalid_cache(
+    status, cache_invalidated
+):
+    loaded = usage_from_dict(
+        {
+            "account": "reset-state",
+            "label": "Reset state",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "status": status,
+            "stale": cache_invalidated,
+            "cache_invalidated": cache_invalidated,
+            "usage_resets": {
+                "available": 2,
+                "known": True,
+                "redeem_capability": True,
+            },
+            "five_hour": {"name": "5h", "remaining": 90},
+        }
+    )
+
+    assert loaded.usage_resets == UsageResetState(None, False, False)
+
+
 def test_usage_state_login_required_discards_limit_values():
     status = "login_required"
     loaded = usage_from_dict(
@@ -470,6 +511,7 @@ def test_load_usage_snapshot_invalidates_untrusted_backend_provenance(
     }
     path = tmp_path / "untrusted-provenance.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
+    path.chmod(0o600)
 
     loaded = load_usage_snapshot("untrusted-provenance", tmp_path)
 
@@ -904,6 +946,45 @@ def test_expire_reset_windows_handles_dynamic_core_and_model_pools():
     assert expired.status == AccountStatus.PARTIAL
     assert expired.stale is True
     assert "30d" in (expired.error or "")
+
+
+def test_expire_reset_windows_rejects_overlong_model_catalog(monkeypatch):
+    import codex_usage.state as state_module
+
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    main = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(
+            LimitWindow(
+                name="5h",
+                duration_seconds=18_000,
+                remaining=80,
+                reset_at=reference_at + timedelta(hours=1),
+            ),
+        ),
+    )
+    usage = AccountUsage(
+        account_id="overlong-models",
+        label="Overlong models",
+        captured_at=reference_at,
+        status=AccountStatus.OK,
+        main=main,
+        models=tuple(
+            UsagePool(key=f"model-{index}", display_name="Model")
+            for index in range(3)
+        ),
+    )
+    monkeypatch.setattr(state_module, "MAX_MODEL_POOLS", 2)
+
+    evaluated = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert evaluated.main is main
+    assert evaluated.models == ()
+    assert evaluated.status == AccountStatus.PARTIAL
+    assert evaluated.stale is True
+    assert evaluated.cache_invalidated is True
+    assert evaluated.error == "model pool catalog invalid"
 
 
 def test_expire_reset_windows_keeps_named_dynamic_window_without_duration():
@@ -1399,6 +1480,49 @@ def test_load_usage_snapshot_ignores_invalid_json(tmp_path):
     assert load_usage_snapshot("privat", tmp_path) is None
 
 
+def test_load_usage_snapshot_ignores_group_readable_file(tmp_path):
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=90),
+    )
+    save_usage_snapshot(usage, tmp_path)
+    path = tmp_path / "private.json"
+    path.chmod(0o640)
+
+    assert load_usage_snapshot("private", tmp_path) is None
+
+
+def test_load_usage_snapshot_ignores_hard_linked_file(tmp_path):
+    usage = AccountUsage(
+        account_id="linked",
+        label="Linked",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=90),
+    )
+    save_usage_snapshot(usage, tmp_path)
+    path = tmp_path / "linked.json"
+    os.link(path, tmp_path / "linked-copy.json")
+
+    assert path.stat().st_nlink == 2
+    assert load_usage_snapshot("linked", tmp_path) is None
+
+
+def test_load_state_generation_rejects_hard_link(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    remove_account_state("generation")
+    path = tmp_path / "data" / "codex-usage" / "generations" / "generation.json"
+    os.link(path, path.with_name("generation-copy.json"))
+
+    with pytest.raises(ValueError, match="state generation"):
+        load_state_generation("generation")
+
+
 def test_load_usage_snapshot_ignores_deeply_nested_json(tmp_path):
     nested_json = "[" * 2_000 + "]" * 2_000
     (tmp_path / "privat.json").write_text(nested_json, encoding="utf-8")
@@ -1428,6 +1552,246 @@ def test_remove_account_state_deletes_current_snapshot_and_debug(tmp_path, monke
     assert not (debug_dir / "privat-last-ingest.json").exists()
 
 
+def test_state_transaction_cleanup_rejects_unexpected_directory(tmp_path):
+    transaction = tmp_path / "transaction"
+    transaction.mkdir(mode=0o700)
+    nested = transaction / "unexpected"
+    nested.mkdir(mode=0o700)
+    sentinel = nested / "sentinel"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unexpected state transaction entry"):
+        _remove_state_transaction_dir(transaction)
+
+    assert sentinel.exists()
+
+
+def test_state_transaction_cleanup_validates_before_deleting_backups(tmp_path, monkeypatch):
+    transaction = tmp_path / "transaction"
+    transaction.mkdir(mode=0o700)
+    backup = transaction / "00-privat.json"
+    backup.write_text("backup", encoding="utf-8")
+    unexpected = transaction / "unexpected"
+    unexpected.mkdir(mode=0o700)
+    sentinel = unexpected / "sentinel"
+    sentinel.write_text("keep", encoding="utf-8")
+    original_iterdir = Path.iterdir
+
+    def ordered_iterdir(path):
+        if path == transaction:
+            return iter((backup, unexpected))
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", ordered_iterdir)
+
+    with pytest.raises(ValueError, match="unexpected state transaction entry"):
+        _remove_state_transaction_dir(transaction)
+
+    assert backup.exists()
+    assert sentinel.exists()
+
+
+def test_state_transaction_cleanup_rejects_too_many_entries(tmp_path, monkeypatch):
+    transaction = tmp_path / "transaction"
+    transaction.mkdir(mode=0o700)
+    files = []
+    for index in range(3):
+        path = transaction / f"{index:02d}-backup"
+        path.write_text("backup", encoding="utf-8")
+        files.append(path)
+    monkeypatch.setattr("codex_usage.state.MAX_STATE_TRANSACTION_ENTRIES", 2)
+
+    with pytest.raises(ValueError, match="too many state transaction entries"):
+        _remove_state_transaction_dir(transaction)
+
+    assert all(path.exists() for path in files)
+
+
+def test_remove_account_state_reuses_held_account_lock(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+    )
+    save_current_usage(usage)
+    assert load_current_usage("privat") is not None
+
+    with account_lock("privat"):
+        remove_account_state("privat", lock_held=True)
+
+    assert load_current_usage("privat") is None
+
+
+def test_remove_account_state_deferred_transaction_can_rollback(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+    )
+    save_current_usage(usage)
+    state_path = tmp_path / "data" / "codex-usage" / "current" / "privat.json"
+    before = state_path.read_bytes()
+
+    with account_lock("privat"):
+        transaction = remove_account_state(
+            "privat",
+            lock_held=True,
+            defer_commit=True,
+        )
+        assert transaction is not None
+        assert not state_path.exists()
+        transaction.rollback()
+
+    assert state_path.read_bytes() == before
+
+
+def test_state_rollback_preserves_backup_when_restore_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+    )
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+
+    with account_lock("privat"):
+        transaction = remove_account_state(
+            "privat",
+            lock_held=True,
+            defer_commit=True,
+        )
+        assert transaction is not None
+        failed_path, failed_backup = transaction.moved[0]
+        restored_path, _ = transaction.moved[1]
+        transaction_dir = transaction.transaction_dir
+        original_rename = Path.rename
+
+        def fail_one_restore(path, target):
+            if path == failed_backup:
+                raise OSError("backup restore failed")
+            return original_rename(path, target)
+
+        monkeypatch.setattr(Path, "rename", fail_one_restore)
+
+        with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed"):
+            transaction.rollback()
+
+    assert transaction_dir is not None
+    assert transaction_dir.is_dir()
+    assert failed_backup.is_file()
+    assert not failed_path.exists()
+    assert restored_path.is_file()
+
+
+def test_state_early_rollback_preserves_backup_when_restore_fails(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+    )
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+    original_rename = Path.rename
+    failed_backups: list[Path] = []
+
+    def fail_one_restore(path, target):
+        if ".privat.state-delete-" in path.parent.name and not failed_backups:
+            failed_backups.append(path)
+            raise OSError("early backup restore failed")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", fail_one_restore)
+    monkeypatch.setattr(
+        "codex_usage.state._increment_state_generation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("generation write failed")
+        ),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed"):
+        remove_account_state("privat")
+
+    assert len(failed_backups) == 1
+    failed_backup = failed_backups[0]
+    assert failed_backup.parent.is_dir()
+    assert failed_backup.is_file()
+
+
+def test_remove_account_state_deferred_transaction_can_commit(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime.now(UTC),
+            five_hour=LimitWindow(name="5h", remaining=12),
+        )
+    )
+
+    with account_lock("privat"):
+        transaction = remove_account_state(
+            "privat",
+            lock_held=True,
+            defer_commit=True,
+        )
+        assert transaction is not None
+        transaction.commit()
+
+    assert load_current_usage("privat") is None
+
+
+def test_remove_account_state_rolls_back_when_later_file_removal_fails(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+        weekly=LimitWindow(name="weekly", remaining=34),
+    )
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+    state_root = tmp_path / "data" / "codex-usage"
+    debug_dir = state_root / "debug"
+    debug_dir.mkdir(parents=True, mode=0o700)
+    (debug_dir / "privat-last-ingest.json").write_text("{}", encoding="utf-8")
+    current_path = state_root / "current" / "privat.json"
+    snapshot_path = state_root / "snapshots" / "privat.json"
+    debug_path = debug_dir / "privat-last-ingest.json"
+    originals = {
+        path: path.read_bytes() for path in (current_path, snapshot_path, debug_path)
+    }
+    generation = load_state_generation("privat")
+    original_rename = Path.rename
+
+    def fail_current_rename(path, target):
+        if path == current_path:
+            raise OSError("current removal staging failed")
+        return original_rename(path, target)
+
+    monkeypatch.setattr(Path, "rename", fail_current_rename)
+
+    with pytest.raises(OSError, match="current removal staging failed"):
+        remove_account_state("privat")
+
+    assert {path: path.read_bytes() for path in originals} == originals
+    assert load_state_generation("privat") == generation
+
+
 def test_remove_account_state_keeps_files_when_generation_invalidation_fails(
     tmp_path, monkeypatch
 ):
@@ -1447,6 +1811,35 @@ def test_remove_account_state_keeps_files_when_generation_invalidation_fails(
     monkeypatch.setattr("codex_usage.state._increment_state_generation", fail_generation)
 
     with pytest.raises(OSError, match="generation write failed"):
+        remove_account_state("privat")
+
+    assert (tmp_path / "data" / "codex-usage" / "current" / "privat.json").exists()
+    assert (tmp_path / "data" / "codex-usage" / "snapshots" / "privat.json").exists()
+
+
+def test_remove_account_state_fails_closed_when_generation_directory_cannot_be_secured(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+    )
+    save_current_usage(usage)
+    save_usage_snapshot(usage)
+    generation_dir = tmp_path / "data" / "codex-usage" / "generations"
+    original_chmod = Path.chmod
+
+    def fail_generation_chmod(path, mode):
+        if path == generation_dir:
+            raise OSError("simulated generation chmod failure")
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", fail_generation_chmod)
+
+    with pytest.raises(ValueError, match="secure state generation directory"):
         remove_account_state("privat")
 
     assert (tmp_path / "data" / "codex-usage" / "current" / "privat.json").exists()
@@ -2490,6 +2883,7 @@ def test_load_legacy_snapshot_localizes_naive_datetimes(tmp_path):
         "auth_last_refresh": "2099-06-07T23:17:00",
     }
     (tmp_path / "legacy.json").write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / "legacy.json").chmod(0o600)
 
     loaded = load_usage_snapshot("legacy", tmp_path)
 
@@ -3951,3 +4345,24 @@ def test_concurrent_current_writes_keep_the_newest_capture(tmp_path):
     loaded = load_current_usage("privat", current_dir)
     assert loaded is not None
     assert loaded.captured_at == max(captures)
+
+
+def test_save_current_usage_fails_when_directory_chmod_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    current_dir = tmp_path / "current"
+    original_chmod = Path.chmod
+
+    def fail_target_chmod(path, mode):
+        if path == current_dir:
+            raise PermissionError("state directory chmod blocked")
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", fail_target_chmod)
+
+    with pytest.raises(PermissionError, match="state directory chmod blocked"):
+        save_current_usage(
+            AccountUsage(account_id="privat", label="Privat", captured_at=datetime.now(UTC)),
+            current_dir,
+        )
+
+    assert not (current_dir / "privat.json").exists()

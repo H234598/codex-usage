@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import math
 import re
+import tempfile
 from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import replace
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -17,17 +18,20 @@ from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import (
     assert_no_symlink_ancestors,
+    ensure_private_directory,
     private_path_lock,
     read_private_text,
     write_private_text,
 )
 from .usage_limits import MAX_WINDOW_SECONDS
+from .usage_resets import UsageResetState, parse_usage_resets
 
 MAX_SNAPSHOT_BYTES = 1_000_000
 SNAPSHOT_ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 MAX_SNAPSHOT_TEXT = 500
 MAX_SNAPSHOT_URLS = 20
 MAX_STATE_GENERATION_BYTES = 4096
+MAX_STATE_TRANSACTION_ENTRIES = 8
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
 KNOWN_BACKENDS = AUTHENTICATED_BACKENDS | frozenset(("browser",))
 WINDOW_DURATIONS = {
@@ -212,13 +216,7 @@ def _save_usage(
     assert_no_symlink_ancestors(directory, label="snapshot directory")
     if directory.is_symlink():
         raise ValueError(f"snapshot directory must not be a symlink: {directory}")
-    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if directory.is_symlink() or not directory.is_dir():
-        raise ValueError(f"snapshot directory is not a real directory: {directory}")
-    try:
-        directory.chmod(0o700)
-    except OSError:
-        pass
+    ensure_private_directory(directory, label="snapshot directory")
     path = directory / f"{usage.account_id}.json"
     current_generation = _read_state_generation(
         _state_generation_path(usage.account_id, directory),
@@ -292,20 +290,106 @@ def load_current_usage(account_id: str, current_dir: Path | None = None) -> Acco
     return _load_usage(account_id, current_dir or default_current_dir())
 
 
-def remove_account_state(account_id: str) -> None:
+@dataclass
+class _StateDeleteTransaction:
+    transaction_dir: Path | None
+    moved: list[tuple[Path, Path]]
+    generation_path: Path
+    generation_before: tuple[str, int] | None
+    locks: ExitStack
+    closed: bool = False
+
+    def commit(self) -> None:
+        if self.closed:
+            return
+        try:
+            if self.transaction_dir is not None:
+                _remove_state_transaction_dir(self.transaction_dir)
+                self.transaction_dir = None
+        except BaseException as primary_error:
+            try:
+                self.rollback()
+            except BaseException as rollback_error:
+                raise BaseExceptionGroup(
+                    "state deletion rollback failed",
+                    [primary_error, rollback_error],
+                ) from None
+            raise
+        self.locks.close()
+        self.closed = True
+
+    def rollback(self) -> None:
+        if self.closed:
+            return
+        rollback_errors: list[BaseException] = []
+        try:
+            _restore_generation_state(self.generation_path, self.generation_before)
+        except BaseException as rollback_error:
+            rollback_errors.append(rollback_error)
+        backup_restore_failed = False
+        for path, backup in reversed(self.moved):
+            try:
+                if path.exists() or path.is_symlink():
+                    raise ValueError(f"state path appeared during rollback: {path}")
+                backup.rename(path)
+            except BaseException as rollback_error:
+                backup_restore_failed = True
+                rollback_errors.append(rollback_error)
+        if self.transaction_dir is not None and not backup_restore_failed:
+            try:
+                _remove_state_transaction_dir(self.transaction_dir)
+                self.transaction_dir = None
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        self.locks.close()
+        self.closed = True
+        if rollback_errors:
+            raise BaseExceptionGroup("state deletion rollback failed", rollback_errors)
+
+
+def remove_account_state(
+    account_id: str,
+    *,
+    lock_held: bool = False,
+    defer_commit: bool = False,
+) -> _StateDeleteTransaction | None:
     _validate_snapshot_account_id(account_id)
+    if defer_commit and not lock_held:
+        raise ValueError("deferred state deletion requires held account lock")
+    if lock_held:
+        return _remove_account_state_unlocked(account_id, defer_commit=defer_commit)
     with account_state_lock(account_id):
-        # Invalidate first so an interrupted cleanup cannot leave the old
-        # generation valid for an in-flight writer.
-        _increment_state_generation(account_id, default_state_dir())
-        targets = (
-            (default_snapshot_dir(), f"{account_id}.json", "snapshot path"),
-            (default_current_dir(), f"{account_id}.json", "current path"),
-            (
-                default_state_dir() / "debug",
-                f"{account_id}-last-ingest.json",
-                "debug path",
-            ),
+        transaction = _remove_account_state_unlocked(account_id, defer_commit=False)
+        if transaction is not None:
+            transaction.commit()
+    return None
+
+
+def _remove_account_state_unlocked(
+    account_id: str,
+    *,
+    defer_commit: bool = False,
+) -> _StateDeleteTransaction | None:
+    state_root = default_state_dir()
+    targets = (
+        (default_snapshot_dir(), f"{account_id}.json", "snapshot path"),
+        (default_current_dir(), f"{account_id}.json", "current path"),
+        (
+            default_state_dir() / "debug",
+            f"{account_id}-last-ingest.json",
+            "debug path",
+        ),
+    )
+    generation_path = _state_generation_path(account_id, default_snapshot_dir())
+    generation_before = _capture_generation_state(generation_path, account_id)
+    transaction_dir: Path | None = None
+    moved: list[tuple[Path, Path]] = []
+    locks = ExitStack()
+    transaction: _StateDeleteTransaction | None = None
+    try:
+        ensure_private_directory(state_root, label="state directory")
+        transaction_dir = Path(
+            tempfile.mkdtemp(prefix=f".{account_id}.state-delete-", dir=state_root)
         )
         for directory, filename, label in targets:
             assert_no_symlink_ancestors(directory, label=f"{label} directory")
@@ -314,11 +398,114 @@ def remove_account_state(account_id: str) -> None:
             if directory.is_symlink() or not directory.is_dir():
                 raise ValueError(f"{label} directory must be a real directory: {directory}")
             path = directory / filename
-            with private_path_lock(path, label=f"{label} lock"):
-                if path.is_dir() and not path.is_symlink():
-                    raise ValueError(f"{label} must be a regular file: {path}")
+            locks.enter_context(private_path_lock(path, label=f"{label} lock"))
+            if path.is_dir() and not path.is_symlink():
+                raise ValueError(f"{label} must be a regular file: {path}")
+            if path.exists() or path.is_symlink():
+                backup = transaction_dir / f"{len(moved):02d}-{filename}"
+                path.rename(backup)
+                moved.append((path, backup))
+
+        # Invalidate only after all target paths are staged. Rollback restores
+        # previous generation if generation write or commit fails.
+        _increment_state_generation(account_id, state_root)
+        transaction = _StateDeleteTransaction(
+            transaction_dir=transaction_dir,
+            moved=moved,
+            generation_path=generation_path,
+            generation_before=generation_before,
+            locks=locks,
+        )
+        if defer_commit:
+            return transaction
+        transaction.commit()
+        transaction = None
+    except BaseException as primary_error:
+        if transaction is not None:
+            try:
+                transaction.rollback()
+            except BaseException as rollback_error:
+                raise BaseExceptionGroup(
+                    "state cleanup rollback failed",
+                    [primary_error, rollback_error],
+                ) from None
+            raise
+        rollback_errors: list[BaseException] = []
+        try:
+            _restore_generation_state(generation_path, generation_before)
+        except BaseException as rollback_error:
+            rollback_errors.append(rollback_error)
+        backup_restore_failed = False
+        for path, backup in reversed(moved):
+            try:
                 if path.exists() or path.is_symlink():
-                    path.unlink()
+                    raise ValueError(f"state path appeared during rollback: {path}")
+                backup.rename(path)
+            except BaseException as rollback_error:
+                backup_restore_failed = True
+                rollback_errors.append(rollback_error)
+        if transaction_dir is not None and not backup_restore_failed:
+            try:
+                _remove_state_transaction_dir(transaction_dir)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if rollback_errors:
+            raise BaseExceptionGroup(
+                "state cleanup rollback failed",
+                [primary_error, *rollback_errors],
+            ) from None
+        raise
+    finally:
+        if transaction is None:
+            locks.close()
+    return None
+
+
+def _remove_state_transaction_dir(path: Path) -> None:
+    children: list[Path] = []
+    for child in path.iterdir():
+        if len(children) >= MAX_STATE_TRANSACTION_ENTRIES:
+            raise ValueError("too many state transaction entries")
+        if child.is_symlink() or not child.is_file():
+            raise ValueError(f"unexpected state transaction entry: {child}")
+        children.append(child)
+    for child in children:
+        child.unlink()
+    path.rmdir()
+
+
+def _capture_generation_state(
+    path: Path,
+    account_id: str,
+) -> tuple[str, int] | None:
+    _read_state_generation(path, account_id)
+    if not path.exists():
+        return None
+    text, file_stat = read_private_text(
+        path,
+        regular_label="state generation",
+        read_label="state generation",
+        max_bytes=MAX_STATE_GENERATION_BYTES,
+    )
+    return text, file_stat.st_mode & 0o777
+
+
+def _restore_generation_state(
+    path: Path,
+    previous: tuple[str, int] | None,
+) -> None:
+    if previous is None:
+        if path.is_dir() and not path.is_symlink():
+            raise ValueError(f"state generation must be a regular file: {path}")
+        if path.exists() or path.is_symlink():
+            path.unlink()
+        return
+    write_private_text(
+        path,
+        previous[0],
+        label="state generation rollback",
+        mode=previous[1],
+    )
 
 
 def _state_generation_path(account_id: str, directory: Path) -> Path:
@@ -331,7 +518,7 @@ def _read_state_generation(path: Path, account_id: str) -> int:
         if path.is_symlink():
             raise ValueError(f"state generation must be a regular file: {path}")
         return 0
-    text, _ = read_private_text(
+    text, file_stat = read_private_text(
         path,
         regular_label="state generation",
         read_label="state generation",
@@ -339,6 +526,8 @@ def _read_state_generation(path: Path, account_id: str) -> int:
         too_large_label="state generation",
         invalid_utf8_label="state generation",
     )
+    if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+        raise ValueError(f"state generation must be a private regular file: {path}")
     payload = loads_strict(text)
     if not isinstance(payload, dict) or payload.get("account") != account_id:
         raise ValueError(f"state generation account mismatch: {path}")
@@ -353,13 +542,10 @@ def _increment_state_generation(account_id: str, state_dir: Path) -> int:
     assert_no_symlink_ancestors(directory, label="state generation directory")
     if directory.is_symlink():
         raise ValueError(f"state generation directory must not be a symlink: {directory}")
-    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if directory.is_symlink() or not directory.is_dir():
-        raise ValueError(f"state generation directory must be a real directory: {directory}")
     try:
-        directory.chmod(0o700)
-    except OSError:
-        pass
+        ensure_private_directory(directory, label="state generation directory")
+    except OSError as exc:
+        raise ValueError("could not secure state generation directory") from exc
     path = directory / f"{account_id}.json"
     generation = _read_state_generation(path, account_id) + 1
     text = json.dumps(
@@ -381,7 +567,7 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
     if not path.exists():
         return None
     try:
-        text, _ = read_private_text(
+        text, file_stat = read_private_text(
             path,
             regular_label="snapshot path",
             read_label="snapshot file",
@@ -389,6 +575,8 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
             too_large_label="snapshot file",
             invalid_utf8_label="snapshot file",
         )
+        if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+            return None
         payload = loads_strict(text)
         if not isinstance(payload, dict):
             return None
@@ -450,6 +638,20 @@ def expire_reset_windows(
     *,
     reference_at: datetime,
 ) -> AccountUsage:
+    if not isinstance(usage.models, tuple) or len(usage.models) > MAX_MODEL_POOLS:
+        return replace(
+            usage,
+            models=(),
+            status=(
+                AccountStatus.PARTIAL
+                if usage.status == AccountStatus.OK
+                else usage.status
+            ),
+            error="model pool catalog invalid",
+            values_captured_at=None,
+            stale=True,
+            cache_invalidated=True,
+        )
     expired_names: list[str] = []
     five_hour = usage.five_hour
     weekly = usage.weekly
@@ -796,6 +998,12 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
             for pool in model_pools
         )
         values_captured_at = None
+    usage_resets = parse_usage_resets(payload)
+    if cache_invalidated or status in {
+        AccountStatus.ERROR,
+        AccountStatus.LOGIN_REQUIRED,
+    }:
+        usage_resets = UsageResetState(None, False, False)
     return AccountUsage(
         account_id=_snapshot_text(payload["account"], limit=64),
         label=_snapshot_text_or_default(
@@ -806,6 +1014,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         weekly=weekly,
         main=main,
         models=model_pools,
+        usage_resets=usage_resets,
         status=status,
         error=error,
         blocked_until=_optional_datetime(payload.get("blocked_until")),
@@ -1751,7 +1960,7 @@ def _saved_datetime(value: Any) -> datetime:
 def _snapshot_text(value: Any, *, limit: int) -> str:
     if not isinstance(value, str):
         raise ValueError("snapshot text must be a string")
-    text = " ".join(value.split())
+    text = re.sub(r"\s+", " ", value).strip()
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."

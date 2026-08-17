@@ -19,11 +19,13 @@ from .extractor import LOCAL_TZ, JsonCandidate, extract_windows
 from .identity import backend_identity_from_payload, backend_plan_type_from_payload
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
+from .private_io import assert_no_symlink_ancestors
 from .usage_limits import (
     SPARK_METERED_FEATURE,
     SPARK_MODEL,
     parse_wham_usage_pools,
 )
+from .usage_resets import parse_usage_resets
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DIRECT_RESPONSE_SAMPLE_COUNT = 3
@@ -60,7 +62,7 @@ def fetch_account_usage_direct(
     *,
     auth_json_path: Path | None = None,
     reject_ambiguous_backend_identity: bool = False,
-    timeout_seconds: int = 20,
+    timeout_seconds: int | float = 20,
 ) -> AccountUsage:
     captured_at = datetime.now(tz=LOCAL_TZ)
     path = _resolve_auth_json_path(account, auth_json_path)
@@ -69,6 +71,7 @@ def fetch_account_usage_direct(
     auth_account_id: str | None = None
     auth_plan_type: str | None = None
     try:
+        deadline = _direct_deadline(timeout_seconds)
         (
             token,
             auth_metadata,
@@ -95,6 +98,7 @@ def fetch_account_usage_direct(
                 token,
                 account_id=auth_account_id,
                 timeout_seconds=timeout_seconds,
+                deadline=deadline,
             )
         except DirectAuthError as exc:
             if not _is_retryable_direct_auth_error(exc):
@@ -136,6 +140,7 @@ def fetch_account_usage_direct(
                 token,
                 account_id=auth_account_id,
                 timeout_seconds=timeout_seconds,
+                deadline=deadline,
             )
         (
             _,
@@ -217,6 +222,7 @@ def fetch_account_usage_direct(
             weekly=weekly,
             main=main,
             models=model_pools,
+            usage_resets=parse_usage_resets(payload),
             status=status,
             error=error,
             auth_last_refresh=auth_metadata.get("auth_last_refresh"),
@@ -262,6 +268,30 @@ class DirectAuthError(Exception):
 
 class DirectFetchError(Exception):
     pass
+
+
+def _direct_deadline(timeout_seconds: int | float) -> float:
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise DirectFetchError("direct timeout must be a positive finite number")
+    try:
+        seconds = float(timeout_seconds)
+    except (OverflowError, TypeError, ValueError):
+        raise DirectFetchError(
+            "direct timeout must be a positive finite number"
+        ) from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise DirectFetchError("direct timeout must be a positive finite number")
+    deadline = time.monotonic() + seconds
+    if not math.isfinite(deadline):
+        raise DirectFetchError("direct timeout must be a positive finite number")
+    return deadline
+
+
+def _remaining_direct_timeout(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if not math.isfinite(remaining) or remaining <= 0:
+        raise DirectFetchError("direct fetch timed out")
+    return remaining
 
 
 def _missing_usage_limits_error(
@@ -751,6 +781,10 @@ def _open_auth_json_fd(path: Path) -> int:
                 os.close(fd)
             raise DirectAuthError(f"cannot read auth.json: {path}") from exc
 
+    try:
+        assert_no_symlink_ancestors(path.parent, label="auth.json parent")
+    except ValueError as exc:
+        raise DirectAuthError(str(exc)) from exc
     if path.is_symlink():
         raise DirectAuthError(f"auth.json is not a regular file: {path}")
     flags = os.O_RDONLY
@@ -807,6 +841,8 @@ def validate_auth_json_file(path: Path):
 def _validate_auth_json_stat(path: Path, file_stat: os.stat_result) -> None:
     if not stat.S_ISREG(file_stat.st_mode):
         raise DirectAuthError(f"auth.json is not a regular file: {path}")
+    if file_stat.st_nlink != 1:
+        raise DirectAuthError(f"auth.json must not be hard-linked: {path}")
     if file_stat.st_size > MAX_AUTH_JSON_BYTES:
         raise DirectAuthError(f"auth.json too large; max {MAX_AUTH_JSON_BYTES} bytes")
     if file_stat.st_mode & 0o077:
@@ -817,7 +853,7 @@ def _fetch_wham_usage(
     token: str,
     *,
     account_id: str | None,
-    timeout_seconds: int,
+    timeout_seconds: int | float,
 ) -> dict[str, Any]:
     headers = {
         "Accept": "application/json",
@@ -829,10 +865,22 @@ def _fetch_wham_usage(
         headers["ChatGPT-Account-Id"] = account_id
     request = Request(
         WHAM_USAGE_URL,
-        headers=headers,
+        headers={
+            key: value
+            for key, value in headers.items()
+            if key not in {"Authorization", "ChatGPT-Account-Id"}
+        },
     )
+    # urllib copies normal headers to redirected requests. Keep credentials
+    # unredirected so a provider-side redirect cannot send them elsewhere.
+    request.add_unredirected_header("Authorization", headers["Authorization"])
+    if account_id:
+        request.add_unredirected_header("ChatGPT-Account-Id", account_id)
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
+            response_url = _response_final_url(response, request.full_url)
+            if not _is_trusted_wham_response_url(response_url):
+                raise DirectFetchError("direct response URL is untrusted")
             status = getattr(response, "status", None)
             if (
                 status is None
@@ -866,29 +914,69 @@ def _fetch_wham_usage(
     return payload
 
 
+def _response_final_url(response: Any, fallback: str) -> str:
+    geturl = getattr(response, "geturl", None)
+    if callable(geturl):
+        try:
+            value = geturl()
+        except (OSError, TypeError, ValueError):
+            return ""
+        return value if isinstance(value, str) else ""
+    value = getattr(response, "url", fallback)
+    return value if isinstance(value, str) else ""
+
+
+def _is_trusted_wham_response_url(value: str) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parts = urlsplit(value)
+        port = parts.port
+    except (TypeError, ValueError):
+        return False
+    hostname = (parts.hostname or "").lower()
+    return (
+        parts.scheme.lower() == "https"
+        and hostname == "chatgpt.com"
+        and parts.username is None
+        and parts.password is None
+        and port in (None, 443)
+    )
+
+
 def _fetch_stable_wham_usage(
     token: str,
     *,
     account_id: str | None,
-    timeout_seconds: int,
+    timeout_seconds: int | float,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
+    effective_deadline = (
+        _direct_deadline(timeout_seconds) if deadline is None else deadline
+    )
     last_error: DirectFetchError | None = None
     for attempt in range(DIRECT_STABILITY_ATTEMPTS):
         try:
-            payloads = [
-                _fetch_wham_usage(
-                    token,
-                    account_id=account_id,
-                    timeout_seconds=timeout_seconds,
+            payloads = []
+            for _ in range(DIRECT_RESPONSE_SAMPLE_COUNT):
+                payloads.append(
+                    _fetch_wham_usage(
+                        token,
+                        account_id=account_id,
+                        timeout_seconds=_remaining_direct_timeout(effective_deadline),
+                    )
                 )
-                for _ in range(DIRECT_RESPONSE_SAMPLE_COUNT)
-            ]
             return _select_stable_wham_usage(payloads)
         except DirectFetchError as exc:
             last_error = exc
             if attempt + 1 >= DIRECT_STABILITY_ATTEMPTS:
                 raise
-            time.sleep(DIRECT_STABILITY_RETRY_DELAY_SECONDS)
+            time.sleep(
+                min(
+                    DIRECT_STABILITY_RETRY_DELAY_SECONDS,
+                    _remaining_direct_timeout(effective_deadline),
+                )
+            )
         except ValueError as exc:
             raise DirectFetchError(str(exc)) from exc
         except StopIteration:
@@ -1426,8 +1514,18 @@ def _response_content_type(response: Any) -> str:
 
 
 def _redact_url(url: str) -> str:
-    parts = urlsplit(url)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except (TypeError, ValueError):
+        return ""
+    hostname = parts.hostname
+    if not hostname:
+        return ""
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    netloc = hostname if port is None else f"{hostname}:{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:

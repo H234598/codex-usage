@@ -6,11 +6,16 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from codex_usage.extractor import (
+    MAX_PROGRESS_PARSER_ENTRIES,
+    MAX_TEXT_LABEL_OFFSETS,
     JsonCandidate,
     _coerce_number,
     _extract_progress_width_percent,
+    _is_hidden_progress_element,
+    _next_label_offset,
     _parse_datetime,
     _parse_time_today_or_next,
+    _ProgressWidthParser,
     _relative_reset_at,
     extract_windows,
     load_json_candidate,
@@ -38,6 +43,60 @@ def test_extract_windows_skips_candidate_with_invalid_url():
     candidate = JsonCandidate(url=7, payload={"rate_limit": {}})
 
     assert extract_windows(body_text="", json_candidates=[candidate]) == (None, None)
+
+
+def test_extract_windows_bounds_arbitrary_candidate_iterators():
+    def overlong_candidates():
+        for _ in range(51):
+            yield JsonCandidate(url="https://example.test", payload={})
+        raise AssertionError("candidate iterator was consumed past its cap")
+
+    assert extract_windows(body_text="", json_candidates=overlong_candidates()) == (None, None)
+
+
+def test_extract_windows_rejects_too_many_json_window_matches(monkeypatch):
+    monkeypatch.setattr("codex_usage.extractor.MAX_JSON_WINDOW_MATCHES", 2)
+    payload = [
+        {"five_hour": {"used": 1, "limit": 100, "limit_window_seconds": 18_000}}
+        for _ in range(3)
+    ]
+
+    assert extract_windows(
+        body_text="",
+        json_candidates=[JsonCandidate("https://example.test/usage", payload)],
+    ) == (None, None)
+
+
+def test_extract_windows_rejects_oversized_repeated_text_labels():
+    body_text = " ".join(
+        "5-hour limit 10% remaining"
+        for _ in range(MAX_TEXT_LABEL_OFFSETS + 1)
+    )
+
+    assert extract_windows(body_text=body_text) == (None, None)
+
+
+def test_next_label_offset_returns_earliest_stop_label():
+    text = "5-hour limit 10% remaining weekly limit 20% remaining"
+
+    assert _next_label_offset(
+        text,
+        1,
+        ("weekly limit", "remaining"),
+    ) == text.index("remaining")
+
+
+@pytest.mark.parametrize(
+    ("classes", "expected"),
+    [
+        ("rounded-full hidden", True),
+        ("rounded-full\tinvisible", True),
+        ("sr-only", True),
+        ("not-hidden hiddenish", False),
+    ],
+)
+def test_hidden_progress_class_matching_uses_complete_tokens(classes, expected):
+    assert _is_hidden_progress_element({}, classes) is expected
 
 
 def test_extract_windows_from_german_dom_text():
@@ -451,9 +510,60 @@ def test_progress_bar_parser_rejects_conflicting_equal_rank_values():
     assert _extract_progress_width_percent(html) is None
 
 
+def test_progress_bar_parser_handles_deep_visible_nesting_before_hidden_bar():
+    html = (
+        "<div>" * 3000
+        + '<div hidden style="width: 97%;"></div>'
+        + "</div>" * 3000
+    )
+
+    assert _extract_progress_width_percent(html) is None
+
+
+def test_progress_bar_parser_handles_repeated_unknown_endtags():
+    html = (
+        "<div>" * 500
+        + "</unknown>" * 500
+        + '<div class="progress" style="width: 97%;"></div>'
+        + "</div>" * 500
+    )
+
+    assert _extract_progress_width_percent(html) == 97
+
+
+def test_progress_bar_parser_rejects_oversized_structure():
+    html = (
+        "<div>" * (MAX_PROGRESS_PARSER_ENTRIES + 1)
+        + '<div class="progress" style="width: 97%;"></div>'
+        + "</div>" * (MAX_PROGRESS_PARSER_ENTRIES + 1)
+    )
+
+    assert _extract_progress_width_percent(html) is None
+
+
+def test_progress_bar_parser_preserves_absolute_positions_across_many_lines():
+    prefix = "<p></p>\n" * 3000
+    source = prefix + '<div hidden style="width: 97%;"></div>'
+    parser = _ProgressWidthParser(source)
+
+    parser.feed(source)
+    parser.close()
+    parser.finish(len(source))
+
+    assert parser.hidden_ranges == [(len(prefix), source.index("</div>", len(prefix)))]
+
+
 def test_progress_bar_fragment_rejects_ambiguous_width_values():
     assert _extract_progress_width_percent("width: 42%; width: 97%;") is None
     assert _extract_progress_width_percent("width: 101%; width: 97%;") is None
+
+
+def test_progress_width_fallback_rejects_too_many_matches(monkeypatch):
+    from codex_usage import extractor
+
+    monkeypatch.setattr(extractor, "MAX_PROGRESS_PARSER_ENTRIES", 2)
+
+    assert _extract_progress_width_percent("width: 42%; " * 3) is None
 
 
 def test_extract_windows_prefers_html_progress_over_hidden_text_clone():

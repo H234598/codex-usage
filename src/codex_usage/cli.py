@@ -5,11 +5,17 @@ import ipaddress
 import json
 import shutil
 import sys
-from datetime import UTC, datetime
+import tempfile
+import time
+from contextlib import ExitStack
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import __version__
+from .account_lock import account_lock
 from .bridge import (
     MAX_INGEST_BYTES,
     ingest_and_save,
@@ -19,7 +25,13 @@ from .bridge import (
     run_bridge_server,
     write_bridge_extension,
 )
-from .browser import diagnose_account, login_account, probe_account
+from .browser import (
+    _profile_browser_dir,
+    _profile_lock,
+    diagnose_account,
+    login_account,
+    probe_account,
+)
 from .config import (
     SUPPORTED_BACKENDS,
     SUPPORTED_BROWSERS,
@@ -30,6 +42,12 @@ from .config import (
     load_config,
     remove_account,
     resolve_account,
+    restore_account,
+)
+from .consumption import (
+    ConsumptionWindow,
+    calculate_consumption,
+    consumption_lookback_seconds,
 )
 from .direct import (
     DirectAuthError,
@@ -38,9 +56,34 @@ from .direct import (
     auth_identity_from_file,
 )
 from .health import clear_health, load_health, record_health_event
+from .history import HistoryStore
+from .integration_snapshot import (
+    build_schema1_document,
+    publish_schema1_cache,
+    read_current_usage_records,
+    serialize_schema1_document,
+)
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
-from .private_io import read_private_text
+from .private_io import (
+    assert_no_symlink_ancestors,
+    ensure_private_directory,
+    read_private_text,
+)
+from .profile_jobs import (
+    cancel_profile_job,
+    create_profile_job,
+    list_profile_jobs,
+    profile_job_creation_lock,
+    profile_job_status,
+)
+from .profile_layout import ensure_profile_layout
+from .profile_login import DeviceLoginError, run_device_login
+from .profile_migration import (
+    apply_auth_migration,
+    plan_auth_migration,
+    rollback_auth_migration,
+)
 from .reactivate import REACTIVATION_BROWSERS, ReactivationError, reactivate_account
 from .render import (
     _safe_usage_for_display,
@@ -74,6 +117,10 @@ from .state import (
     remove_account_state,
 )
 
+# `auto` selects a browser; it does not create an OAuth profile. Keep a little
+# room for stale profiles while bounding hostile directory enumeration.
+MAX_PROFILE_OAUTH_ENTRIES = len(SUPPORTED_REACTIVATION_BROWSERS) * 2
+
 COMMAND_OVERVIEW = """\
 Komplette Command-Line-Usage:
 
@@ -89,6 +136,7 @@ Accounts:
   codex-usage account backend ACCOUNT direct|app-server [--format table|json]
   codex-usage account overview [--format table|json] [--config-only]
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
+                                      [--format table|json]
 
 Login und Reaktivierung:
   codex-usage login ACCOUNT
@@ -127,13 +175,38 @@ Gespeicherte Werte und manuelle Aufnahme:
   codex-usage latest [--format table|json]
   codex-usage values [--account ACCOUNT]
 
+Historie und Limitverbrauch:
+  codex-usage history status [--path PATH] [--format table|json]
+  codex-usage history query --account ACCOUNT --window-seconds SECONDS
+                            [--path PATH] [--format table|json]
+  codex-usage history prune [--before ISO|--days N] (--dry-run|--apply)
+  codex-usage consumption --account ACCOUNT --amount N --unit minutes|hours|days
+                          [--limit-window short|weekly|all] [--format table|json]
+  codex-usage integration-snapshot --schema 1 --format json
+
+Profile und Auth-Migration:
+  codex-usage profile layout --account ACCOUNT [--format json]
+  codex-usage profile migrate-auth (--dry-run|--apply [--search-root DIR])
+                                   | --rollback MANIFEST
+  codex-usage profile create --account-id ID --label LABEL --browser BROWSER
+                             --backend BACKEND --profile-dir PATH
+                             [--reactivation-browser BROWSER]
+                             [--expected-backend-account-id ID] [--json-events]
+  codex-usage profile jobs [--account ACCOUNT] [--json]
+  codex-usage profile job-status JOB_ID [--json]
+  codex-usage profile cancel JOB_ID [--json]
+  codex-usage profile device-login --account ACCOUNT [--codex-bin PATH]
+                                   [--timeout SEKUNDEN] [--format table|json]
+
 Stabilität und Diagnose:
   codex-usage health [--format table|json] [--clear]
 
 Browser-Bridge:
-  codex-usage bridge-snippet ACCOUNT [--port PORT] [--interval SEKUNDEN]
-  codex-usage bridge-extension ACCOUNT [--output DIR] [--port PORT] [--interval SEKUNDEN]
+  codex-usage bridge-snippet ACCOUNT [--endpoint URL] [--port PORT] [--interval SEKUNDEN]
+  codex-usage bridge-extension ACCOUNT [--output DIR] [--endpoint URL]
+                              [--port PORT] [--interval SEKUNDEN]
   codex-usage bridge-server [--host HOST] [--port PORT] [--allow-remote]
+                            [--tls-cert PATH --tls-key PATH]
 
 Sonstiges:
   codex-usage service install|enable|disable|status|uninstall [--format table|json]
@@ -162,6 +235,8 @@ Hinweis:
   bridge-server lauscht ohne --allow-remote nur auf Loopback/localhost.
 """
 
+ACCOUNT_DELETE_PROFILE_JOB_TIMEOUT_SECONDS = 30
+
 KNOWN_COMMANDS = {
     "account",
     "login",
@@ -176,6 +251,10 @@ KNOWN_COMMANDS = {
     "ingest",
     "latest",
     "values",
+    "history",
+    "consumption",
+    "integration-snapshot",
+    "profile",
     "health",
     "bridge-snippet",
     "bridge-extension",
@@ -266,6 +345,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Profilordner auch ausserhalb des Standardprofils loeschen",
     )
+    delete.add_argument("--format", choices=("table", "json"), default="table")
     delete.set_defaults(func=_cmd_account_delete)
 
     login = sub.add_parser("login", help="Sichtbaren Browser fuer einen Account oeffnen")
@@ -442,6 +522,106 @@ def _build_parser() -> argparse.ArgumentParser:
     values.add_argument("--account", action="append", dest="account_ids")
     values.set_defaults(func=_cmd_values)
 
+    history = sub.add_parser("history", help="Private Usage-Historie verwalten")
+    history_sub = history.add_subparsers(dest="history_command", required=True)
+    history_status = history_sub.add_parser("status", help="Historienstatus anzeigen")
+    history_status.add_argument("--path", type=Path)
+    history_status.add_argument("--format", choices=("table", "json"), default="table")
+    history_status.add_argument("--json", dest="format", action="store_const", const="json")
+    history_status.set_defaults(func=_cmd_history_status)
+    history_query = history_sub.add_parser("query", help="Historienwerte abfragen")
+    history_query.add_argument("--account", required=True)
+    history_query.add_argument("--pool", default="main")
+    history_query.add_argument("--window-seconds", type=int, required=True)
+    history_query.add_argument("--since")
+    history_query.add_argument("--until")
+    history_query.add_argument("--path", type=Path)
+    history_query.add_argument("--format", choices=("table", "json"), default="table")
+    history_query.add_argument("--json", dest="format", action="store_const", const="json")
+    history_query.set_defaults(func=_cmd_history_query)
+    history_prune = history_sub.add_parser("prune", help="Alte Historienwerte entfernen")
+    history_prune.add_argument("--before")
+    history_prune.add_argument("--days", type=int, default=30)
+    history_prune.add_argument("--dry-run", action="store_true")
+    history_prune.add_argument("--apply", action="store_true")
+    history_prune.add_argument("--path", type=Path)
+    history_prune.add_argument("--format", choices=("table", "json"), default="table")
+    history_prune.add_argument("--json", dest="format", action="store_const", const="json")
+    history_prune.set_defaults(func=_cmd_history_prune)
+
+    consumption = sub.add_parser("consumption", help="Limitverbrauch in Prozentpunkten berechnen")
+    consumption.add_argument("--account", required=True)
+    consumption.add_argument("--amount", type=int, required=True)
+    consumption.add_argument("--unit", choices=("minutes", "hours", "days"), required=True)
+    consumption.add_argument("--pool", default="main")
+    consumption.add_argument("--limit-window", choices=("short", "weekly", "all"), default="short")
+    consumption.add_argument("--path", type=Path)
+    consumption.add_argument("--now")
+    consumption.add_argument("--format", choices=("table", "json"), default="table")
+    consumption.add_argument("--json", dest="format", action="store_const", const="json")
+    consumption.set_defaults(func=_cmd_consumption)
+
+    snapshot = sub.add_parser(
+        "integration-snapshot", help="Sanitisiertes account-usage-v1 erzeugen"
+    )
+    snapshot.add_argument("--schema", type=int, choices=(1,), default=1)
+    snapshot.add_argument("--format", choices=("json",), default="json")
+    snapshot.add_argument("--current-dir", type=Path)
+    snapshot.add_argument("--cache-path", type=Path)
+    snapshot.set_defaults(func=_cmd_integration_snapshot)
+
+    profile = sub.add_parser("profile", help="Kanonische Accountprofile verwalten")
+    profile_sub = profile.add_subparsers(dest="profile_command", required=True)
+    profile_layout = profile_sub.add_parser("layout", help="Kanonische Profilpfade anzeigen")
+    profile_layout.add_argument("--account", required=True)
+    profile_layout.add_argument("--format", choices=("table", "json"), default="json")
+    profile_layout.set_defaults(func=_cmd_profile_layout)
+    profile_migrate = profile_sub.add_parser("migrate-auth", help="Legacy-auth.json migrieren")
+    migrate_mode = profile_migrate.add_mutually_exclusive_group(required=True)
+    migrate_mode.add_argument("--dry-run", action="store_true")
+    migrate_mode.add_argument("--apply", action="store_true")
+    migrate_mode.add_argument("--rollback", type=Path)
+    profile_migrate.add_argument("--search-root", type=Path, action="append", default=[])
+    profile_migrate.add_argument("--manifest", type=Path)
+    profile_migrate.add_argument("--format", choices=("table", "json"), default="json")
+    profile_migrate.set_defaults(func=_cmd_profile_migrate)
+    profile_create = profile_sub.add_parser(
+        "create", help="Neues Accountprofil als Device-Login-Job anlegen"
+    )
+    profile_create.add_argument("--account-id", required=True)
+    profile_create.add_argument("--label", required=True)
+    profile_create.add_argument("--browser", choices=SUPPORTED_BROWSERS, required=True)
+    profile_create.add_argument("--backend", choices=SUPPORTED_BACKENDS, required=True)
+    profile_create.add_argument("--profile-dir", required=True)
+    profile_create.add_argument(
+        "--reactivation-browser",
+        choices=SUPPORTED_REACTIVATION_BROWSERS,
+        default="auto",
+    )
+    profile_create.add_argument("--expected-backend-account-id")
+    profile_create.add_argument("--json-events", action="store_true")
+    profile_create.set_defaults(func=_cmd_profile_create)
+    profile_jobs = profile_sub.add_parser("jobs", help="Aktive Profiljobs anzeigen")
+    profile_jobs.add_argument("--account")
+    profile_jobs.add_argument("--json", action="store_true")
+    profile_jobs.set_defaults(func=_cmd_profile_jobs)
+    profile_status = profile_sub.add_parser("job-status", help="Profiljobstatus anzeigen")
+    profile_status.add_argument("job_id")
+    profile_status.add_argument("--json", action="store_true")
+    profile_status.set_defaults(func=_cmd_profile_job_status)
+    profile_cancel = profile_sub.add_parser("cancel", help="Profiljob abbrechen")
+    profile_cancel.add_argument("job_id")
+    profile_cancel.add_argument("--json", action="store_true")
+    profile_cancel.set_defaults(func=_cmd_profile_job_cancel)
+    profile_login = profile_sub.add_parser(
+        "device-login", help="Neues Codex-Profil ueber Device-Login authentifizieren"
+    )
+    profile_login.add_argument("--account", required=True)
+    profile_login.add_argument("--codex-bin", default="codex")
+    profile_login.add_argument("--timeout", type=int, default=900)
+    profile_login.add_argument("--format", choices=("table", "json"), default="json")
+    profile_login.set_defaults(func=_cmd_profile_device_login)
+
     health = sub.add_parser("health", help="Begrenztes Health-Protokoll anzeigen oder löschen")
     health.add_argument("--format", choices=("table", "json"), default="table")
     health.add_argument("--clear", action="store_true", help="Health-Protokoll löschen")
@@ -457,6 +637,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Browser-Snippet fuer normalen Browser ausgeben",
     )
     snippet.add_argument("account", help="Account-ID oder eindeutiges Label")
+    snippet.add_argument("--endpoint", help="Absolute HTTP(S)-Ingest-URL")
     snippet.add_argument("--port", type=int, default=8765)
     snippet.add_argument("--interval", type=int, default=300)
     snippet.set_defaults(func=_cmd_bridge_snippet)
@@ -467,6 +648,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     extension.add_argument("account", help="Account-ID oder eindeutiges Label")
     extension.add_argument("--output", type=Path)
+    extension.add_argument("--endpoint", help="Absolute HTTP(S)-Ingest-URL")
     extension.add_argument("--port", type=int, default=8765)
     extension.add_argument("--interval", type=int, default=300)
     extension.set_defaults(func=_cmd_bridge_extension)
@@ -479,6 +661,8 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Nicht-Loopback-Hostbindung explizit erlauben",
     )
+    bridge.add_argument("--tls-cert", type=Path, help="TLS-Zertifikat fuer Bridge-Server")
+    bridge.add_argument("--tls-key", type=Path, help="Privater TLS-Schluessel fuer Bridge-Server")
     bridge.set_defaults(func=_cmd_bridge_server)
 
     service = sub.add_parser("service", help="systemd-User-Timer verwalten")
@@ -495,7 +679,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_account_add(args: argparse.Namespace) -> int:
-    updated, account = add_or_update_account(
+    _, account = add_or_update_account(
         args.account_id,
         label=args.label,
         profile_dir=args.profile_dir,
@@ -505,8 +689,17 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
         reactivation_browser=args.reactivation_browser,
         clear_auth_json=args.clear_auth_json,
         path=args.config,
+        before_state_cleanup=lambda config: _sync_managed_service(
+            config,
+            args.config,
+            strict=True,
+        ),
+        rollback_callback=lambda config: _sync_managed_service(
+            config,
+            args.config,
+            strict=True,
+        ),
     )
-    _sync_managed_service(updated, args.config)
     if args.format == "json":
         print(
             json.dumps(
@@ -609,26 +802,453 @@ def _cmd_account_backend(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cancel_account_profile_jobs(account_id: str) -> None:
+    terminal_statuses = {"completed", "failed", "cancelled"}
+    pending = set()
+    for job in list_profile_jobs(account_id):
+        job_id = job.get("job_id")
+        if not isinstance(job_id, str):
+            raise ValueError("profile job id is invalid")
+        if job.get("status") not in terminal_statuses:
+            pending.add(job_id)
+    for job_id in pending:
+        cancel_profile_job(job_id)
+
+    deadline = time.monotonic() + ACCOUNT_DELETE_PROFILE_JOB_TIMEOUT_SECONDS
+    while pending:
+        for job_id in tuple(pending):
+            current = profile_job_status(job_id)
+            if current.get("status") in terminal_statuses:
+                pending.remove(job_id)
+        if not pending:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("profile jobs did not stop before account deletion")
+        time.sleep(min(0.05, remaining))
+
+
 def _cmd_account_delete(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     account = resolve_account(config, args.account)
+    account_index = config.accounts.index(account)
     profile_path = Path(account.profile_dir).expanduser()
     profile_state = None
-    if args.delete_profile:
-        _validate_profile_delete_target(profile_path, force=args.force_delete_profile)
 
-    remove_account_state(account.id)
-    revoke_bridge_token(account.id)
-    updated, _ = remove_account(account.id, path=args.config)
-    _sync_managed_service(updated, args.config)
-    if args.delete_profile:
-        profile_state = _delete_profile_dir(profile_path, force=args.force_delete_profile)
-    print(f"Account geloescht: {account.id} ({account.label})")
-    if args.delete_profile:
-        print(f"Profil: {profile_state} {profile_path}")
+    def cleanup_account() -> str | None:
+        profile_transaction = None
+        state_transaction = None
+        if args.delete_profile:
+            profile_result = _delete_profile_dir(
+                profile_path,
+                browser=account.browser,
+                force=args.force_delete_profile,
+                defer_commit=True,
+            )
+            if isinstance(profile_result, _ProfileDeleteTransaction):
+                profile_transaction = profile_result
+                profile_state = profile_result.profile_state
+            else:
+                profile_state = profile_result
+        else:
+            profile_state = None
+        cleanup_error = None
+        try:
+            state_transaction = remove_account_state(
+                account.id,
+                lock_held=True,
+                defer_commit=True,
+            )
+        except BaseException as exc:
+            cleanup_error = exc
+        try:
+            revoke_bridge_token(account.id)
+        except BaseException as revoke_error:
+            if state_transaction is not None:
+                try:
+                    state_transaction.rollback()
+                except Exception as rollback_error:
+                    raise ExceptionGroup(
+                        "state deletion rollback failed",
+                        [revoke_error, rollback_error],
+                    ) from None
+            if profile_transaction is not None:
+                try:
+                    profile_transaction.rollback()
+                except Exception as rollback_error:
+                    raise ExceptionGroup(
+                        "profile deletion rollback failed",
+                        [revoke_error, rollback_error],
+                    ) from None
+            if cleanup_error is not None:
+                raise cleanup_error from revoke_error
+            raise
+        if cleanup_error is not None:
+            if state_transaction is not None:
+                try:
+                    state_transaction.rollback()
+                except Exception as rollback_error:
+                    raise ExceptionGroup(
+                        "state deletion rollback failed",
+                        [cleanup_error, rollback_error],
+                    ) from None
+            if profile_transaction is not None:
+                try:
+                    profile_transaction.rollback()
+                except Exception as rollback_error:
+                    raise ExceptionGroup(
+                        "profile deletion rollback failed",
+                        [cleanup_error, rollback_error],
+                    ) from None
+            raise cleanup_error
+        if state_transaction is not None:
+            try:
+                state_transaction.commit()
+            except Exception as primary_error:
+                if profile_transaction is not None:
+                    try:
+                        profile_transaction.rollback()
+                    except Exception as rollback_error:
+                        raise ExceptionGroup(
+                            "profile deletion rollback failed",
+                            [primary_error, rollback_error],
+                        ) from None
+                raise
+        if profile_transaction is not None:
+            try:
+                return profile_transaction.commit()
+            except Exception as primary_error:
+                try:
+                    profile_transaction.rollback()
+                except Exception as rollback_error:
+                    raise ExceptionGroup(
+                        "profile deletion rollback failed",
+                        [primary_error, rollback_error],
+                    ) from None
+                raise
+        return profile_state
+
+    def delete_transaction() -> None:
+        nonlocal profile_state
+        service_sync_required = _managed_service_sync_required(args.config)
+        updated, _ = remove_account(
+            account.id,
+            path=args.config,
+            expected=account,
+        )
+        try:
+            _sync_managed_service(updated, args.config, strict=True)
+        except Exception:
+            try:
+                restore_account(account, path=args.config, index=account_index)
+            except Exception as rollback_error:
+                raise ValueError(
+                    "could not restore account config after service sync failure"
+                ) from rollback_error
+            raise
+        try:
+            profile_state = cleanup_account()
+        except Exception as cleanup_error:
+            try:
+                restore_account(account, path=args.config, index=account_index)
+                if service_sync_required:
+                    _sync_managed_service(config, args.config, strict=True)
+            except Exception as rollback_error:
+                raise ValueError(
+                    "could not restore account config after cleanup failure"
+                ) from rollback_error
+            raise cleanup_error
+
+    with account_lock("__all_accounts__"):
+        with profile_job_creation_lock():
+            _cancel_account_profile_jobs(account.id)
+            with account_lock(account.id):
+                if args.delete_profile:
+                    _validate_profile_delete_target(
+                        profile_path,
+                        force=args.force_delete_profile,
+                    )
+                delete_transaction()
+    if args.format == "json":
+        print(json.dumps({
+            "ok": True,
+            "account": account.id,
+            "label": account.label,
+            "profile_deleted": bool(args.delete_profile),
+        }, ensure_ascii=False, indent=2, allow_nan=False))
     else:
-        print(f"Profil behalten: {profile_path}")
+        print(f"Account geloescht: {account.id} ({account.label})")
+        if args.delete_profile:
+            print(f"Profil: {profile_state} {profile_path}")
+        else:
+            print(f"Profil behalten: {profile_path}")
     return 0
+
+
+def _cmd_history_status(args: argparse.Namespace) -> int:
+    with HistoryStore(args.path) as store:
+        result = store.status()
+    if args.format == "json":
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        print(f"Historie: {result['path']}")
+        print(f"Samples: {result['sample_count']}")
+    return 0
+
+
+def _cmd_history_query(args: argparse.Namespace) -> int:
+    start = _parse_history_datetime(args.since, "since") if args.since else None
+    end = _parse_history_datetime(args.until, "until") if args.until else None
+    with HistoryStore(args.path) as store:
+        samples = store.samples(
+            args.account,
+            pool=args.pool,
+            window_seconds=args.window_seconds,
+            start=start,
+            end=end,
+        )
+    result = {
+        "account_id": args.account,
+        "pool": args.pool,
+        "window_seconds": args.window_seconds,
+        "samples": [_history_sample_json(sample) for sample in samples],
+    }
+    if args.format == "json":
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        for sample in result["samples"]:
+            print(
+                f"{sample['captured_at']} {sample['used_percent']:.3f}%"
+                f" generation={sample['reset_generation'] or '-'}"
+            )
+    return 0
+
+
+def _cmd_history_prune(args: argparse.Namespace) -> int:
+    if args.dry_run == args.apply:
+        raise ValueError("exactly one of --dry-run or --apply is required")
+    if isinstance(args.days, bool) or not isinstance(args.days, int) or not 1 <= args.days <= 3650:
+        raise ValueError("days must be between 1 and 3650")
+    before = (
+        _parse_history_datetime(args.before, "before")
+        if args.before
+        else datetime.now(UTC) - timedelta(days=args.days)
+    )
+    with HistoryStore(args.path) as store:
+        count = store.prune(before, dry_run=args.dry_run)
+    result = {"ok": True, "dry_run": args.dry_run, "removed": count, "before": before.isoformat()}
+    if args.format == "json":
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        action = "würden entfernt" if args.dry_run else "entfernt"
+        print(f"{count} Samples {action}.")
+    return 0
+
+
+def _cmd_consumption(args: argparse.Namespace) -> int:
+    now = _parse_history_datetime(args.now, "now") if args.now else datetime.now(UTC)
+    durations = {
+        "short": (18_000,),
+        "weekly": (604_800,),
+        "all": (18_000, 604_800),
+    }[args.limit_window]
+    windows: list[ConsumptionWindow] = []
+    start = now - timedelta(seconds=consumption_lookback_seconds(args.amount, args.unit))
+    with HistoryStore(args.path) as store:
+        for duration in durations:
+            samples = store.samples_for_consumption(
+                args.account,
+                pool=args.pool,
+                window_seconds=duration,
+                start=start,
+                end=now,
+            )
+            result = calculate_consumption(
+                samples,
+                amount=args.amount,
+                unit=args.unit,
+                now=now,
+            )
+            if result.limit_window_seconds == 0:
+                result = ConsumptionWindow(
+                    lookback_seconds=result.lookback_seconds,
+                    pool=args.pool,
+                    limit_window_seconds=duration,
+                    consumed_percentage_points=result.consumed_percentage_points,
+                    coverage=result.coverage,
+                    sample_count=result.sample_count,
+                    estimated_seconds_to_exhaustion=result.estimated_seconds_to_exhaustion,
+                )
+            windows.append(result)
+    payload = {"account_id": args.account, "windows": [window.as_dict() for window in windows]}
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        for window in windows:
+            print(
+                f"{window.pool}/{window.limit_window_seconds}s: "
+                f"{window.consumed_percentage_points:.3f} %-Pkt. ({window.coverage})"
+            )
+    return 0
+
+
+def _cmd_integration_snapshot(args: argparse.Namespace) -> int:
+    current_dir = args.current_dir or (default_state_dir() / "current")
+    cache_path = args.cache_path or (default_state_dir() / "integration" / "account-usage-v1.json")
+    ensure_private_directory(cache_path.parent, label="integration cache directory")
+    usages = read_current_usage_records(current_dir)
+    document = build_schema1_document(usages, generated_at=datetime.now(UTC))
+    payload = serialize_schema1_document(document)
+    publish_schema1_cache(payload, cache_path=cache_path)
+    sys.stdout.buffer.write(payload + b"\n")
+    return 0
+
+
+def _cmd_profile_layout(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
+    layout = ensure_profile_layout(account)
+    payload = {
+        "account_id": layout.account_id,
+        "profile_dir": str(layout.profile_dir),
+        "codex_home": str(layout.codex_home),
+        "auth_json": str(layout.auth_json),
+        "metadata": str(layout.metadata),
+        "jobs": str(layout.jobs),
+        "migration": str(layout.migration),
+    }
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        for key, value in payload.items():
+            print(f"{key}: {value}")
+    return 0
+
+
+def _cmd_profile_migrate(args: argparse.Namespace) -> int:
+    if args.rollback is not None:
+        rollback_auth_migration(args.rollback)
+        result = {"ok": True, "status": "rolled_back", "manifest": str(args.rollback)}
+    else:
+        config = load_config(args.config)
+        plan = plan_auth_migration(config.accounts, search_roots=tuple(args.search_root))
+        if args.dry_run:
+            result = {
+                "ok": True,
+                "status": "dry_run",
+                "migration_id": plan.migration_id,
+                "items": [
+                    {
+                        "account_id": item.account_id,
+                        "source": str(item.source) if item.source else None,
+                        "target": str(item.target),
+                        "status": item.status,
+                        "reason": item.reason,
+                    }
+                    for item in plan.items
+                ],
+            }
+        else:
+            manifest = args.manifest or (
+                default_state_dir() / "migrations" / f"{plan.migration_id}.json"
+            )
+            result = apply_auth_migration(plan, manifest)
+            result["ok"] = True
+            result["manifest"] = str(manifest)
+    if args.format == "json":
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        print(result["status"])
+    return 0
+
+
+def _cmd_profile_device_login(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
+    try:
+        result = run_device_login(
+            account,
+            args.config or default_config_path(),
+            codex_bin=args.codex_bin,
+            timeout_seconds=args.timeout,
+        )
+    except DeviceLoginError as exc:
+        result = {"ok": False, "account": account.id, "events": [], "error": str(exc)}
+    payload = result.as_dict() if hasattr(result, "as_dict") else result
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
+    else:
+        message = payload.get("error") or (
+            "Device-Login abgeschlossen"
+            if payload.get("ok")
+            else "Device-Login fehlgeschlagen"
+        )
+        print(message)
+    return 0 if payload.get("ok") is True else 2
+
+
+def _cmd_profile_create(args: argparse.Namespace) -> int:
+    with account_lock("__all_accounts__"):
+        result = create_profile_job(
+            account_id=args.account_id,
+            label=args.label,
+            browser=args.browser,
+            backend=args.backend,
+            profile_dir=args.profile_dir,
+            reactivation_browser=args.reactivation_browser,
+            expected_backend_account_id=args.expected_backend_account_id,
+            config_path=args.config,
+            json_events=args.json_events,
+        )
+    print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    return 0 if result.get("ok") is True else 2
+
+
+def _cmd_profile_jobs(args: argparse.Namespace) -> int:
+    result = {"ok": True, "jobs": list_profile_jobs(args.account)}
+    print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    return 0
+
+
+def _cmd_profile_job_status(args: argparse.Namespace) -> int:
+    result = profile_job_status(args.job_id)
+    print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    return 0 if result.get("ok") is not False else 2
+
+
+def _cmd_profile_job_cancel(args: argparse.Namespace) -> int:
+    result = cancel_profile_job(args.job_id)
+    print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    return 0 if result.get("ok") is not False else 2
+
+
+def _history_sample_json(sample) -> dict[str, object]:
+    return {
+        "account_id": sample.account_id,
+        "pool": sample.pool,
+        "window_seconds": sample.window_seconds,
+        "captured_at": sample.captured_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "used_percent": sample.used_percent,
+        "reset_at": (
+            sample.reset_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+            if sample.reset_at
+            else None
+        ),
+        "reset_generation": sample.reset_generation,
+        "source": sample.source,
+    }
+
+
+def _parse_history_datetime(value: str, label: str) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be an ISO timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an ISO timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{label} must include a timezone")
+    return parsed.astimezone(UTC)
 
 
 def _cmd_login(args: argparse.Namespace) -> int:
@@ -1016,7 +1636,7 @@ def _cmd_bridge_snippet(args: argparse.Namespace) -> int:
     _validate_min_interval(args.interval)
     config = load_config(args.config)
     account = resolve_account(config, args.account)
-    endpoint = f"http://127.0.0.1:{args.port}/ingest"
+    endpoint = _bridge_endpoint(args.endpoint, args.port)
     print(render_bridge_snippet(account.id, endpoint=endpoint, interval_seconds=args.interval))
     return 0
 
@@ -1026,7 +1646,7 @@ def _cmd_bridge_extension(args: argparse.Namespace) -> int:
     _validate_min_interval(args.interval)
     config = load_config(args.config)
     account = resolve_account(config, args.account)
-    endpoint = f"http://127.0.0.1:{args.port}/ingest"
+    endpoint = _bridge_endpoint(args.endpoint, args.port)
     output = args.output or default_state_dir() / "extensions" / account.id
     path = write_bridge_extension(
         account.id,
@@ -1043,11 +1663,17 @@ def _cmd_bridge_server(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     _validate_port(args.port)
     _validate_bridge_host(args.host, allow_remote=args.allow_remote)
+    if (args.tls_cert is None) != (args.tls_key is None):
+        raise ValueError("TLS requires both --tls-cert and --tls-key")
+    if args.allow_remote and args.tls_cert is None:
+        raise ValueError("remote bridge requires --tls-cert and --tls-key")
     run_bridge_server(
         config,
         host=args.host,
         port=args.port,
         config_path=args.config or default_config_path(),
+        tls_cert=args.tls_cert,
+        tls_key=args.tls_key,
     )
     return 0
 
@@ -1082,7 +1708,19 @@ def _cmd_paths(args: argparse.Namespace) -> int:
     return 0
 
 
-def _sync_managed_service(config, config_path: Path | None) -> None:
+def _managed_service_sync_required(config_path: Path | None) -> bool:
+    try:
+        if not service_status().get("installed"):
+            return False
+        requested = (config_path or default_config_path()).expanduser().absolute()
+        return managed_service_config_path() == requested
+    except Exception:
+        # Unknown service state must be treated conservatively: a later strict
+        # sync may fail, so destructive cleanup must not run first.
+        return True
+
+
+def _sync_managed_service(config, config_path: Path | None, *, strict: bool = False) -> None:
     try:
         if not service_status().get("installed"):
             return
@@ -1091,6 +1729,8 @@ def _sync_managed_service(config, config_path: Path | None) -> None:
             return
         service_install(config, config_path)
     except Exception as exc:
+        if strict:
+            raise
         print(
             f"Warnung: systemd-Konfiguration nicht aktualisiert: {type(exc).__name__}",
             file=sys.stderr,
@@ -1158,12 +1798,20 @@ def _validate_single_account_auth_override(account, auth_json_path: Path) -> Non
         return
     try:
         expected_user_id, expected_account_id = auth_identity_for_account(account)
+    except (DirectAuthError, OSError, ValueError) as exc:
+        raise ValueError(
+            "configured auth.json identity unavailable; cannot use --auth-json override"
+        ) from exc
+    if not (expected_user_id or expected_account_id):
+        raise ValueError(
+            "configured auth.json has no canonical identity; "
+            "cannot use --auth-json override"
+        )
+    try:
         override_user_id, override_account_id = auth_identity_from_file(auth_json_path)
     except DirectAuthError:
         # Keep detailed auth-file errors in the fetch result instead of hiding
         # them behind a preflight validation failure.
-        return
-    if not (expected_user_id or expected_account_id):
         return
     if auth_identity_changed(
         before_user_id=expected_user_id,
@@ -1214,6 +1862,30 @@ def _validate_bridge_host(host: str, *, allow_remote: bool) -> None:
         raise ValueError(
             "bridge-server host must be loopback/localhost unless --allow-remote is set"
         )
+
+
+def _bridge_endpoint(endpoint: str | None, port: int) -> str:
+    if endpoint is None:
+        return f"http://127.0.0.1:{port}/ingest"
+    try:
+        parsed = urlsplit(endpoint)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("--endpoint must be an absolute HTTP(S) URL") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or (port is not None and not 1 <= port <= 65535)
+        or not parsed.path.startswith("/")
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("--endpoint must be an absolute HTTP(S) URL without credentials/query")
+    return endpoint
 
 
 def _validate_port(port: int) -> None:
@@ -1360,7 +2032,8 @@ def _all_usage_results_valid(
     return all(predicate(usage) for usage in results)
 
 
-def _validate_profile_delete_target(path: Path, *, force: bool) -> None:
+def _validate_profile_delete_target(path: Path, *, force: bool) -> Path:
+    assert_no_symlink_ancestors(path, label="profile path")
     if path.is_symlink():
         raise ValueError(f"profile path must not be a symlink: {path}")
     resolved = path.resolve()
@@ -1375,7 +2048,7 @@ def _validate_profile_delete_target(path: Path, *, force: bool) -> None:
     if resolved in forbidden:
         raise ValueError(f"refusing to delete unsafe profile path: {resolved}")
     if not path.exists():
-        return
+        return resolved
     if not path.is_dir():
         raise ValueError(f"profile path is not a directory: {path}")
 
@@ -1390,14 +2063,107 @@ def _validate_profile_delete_target(path: Path, *, force: bool) -> None:
             "refusing to delete profile outside the default profile root without "
             "--force-delete-profile"
         )
+    return resolved
 
 
-def _delete_profile_dir(path: Path, *, force: bool) -> str:
-    _validate_profile_delete_target(path, force=force)
+@dataclass
+class _ProfileDeleteTransaction:
+    path: Path
+    quarantine: Path | None
+    profile_state: str
+    locks: ExitStack
+    rollbackable: bool = True
+
+    def commit(self) -> str:
+        if self.quarantine is not None:
+            def mark_nonrollbackable(_function, _path, exception_info):
+                self.rollbackable = False
+                raise exception_info[1]
+
+            shutil.rmtree(self.quarantine, onerror=mark_nonrollbackable)
+        self.locks.close()
+        return self.profile_state
+
+    def rollback(self) -> None:
+        try:
+            if self.quarantine is not None:
+                if not self.rollbackable:
+                    raise OSError(
+                        "profile deletion cannot be rolled back after partial cleanup"
+                    )
+                if self.path.exists() or self.path.is_symlink():
+                    raise OSError(f"profile path appeared during rollback: {self.path}")
+                self.quarantine.rename(self.path)
+        finally:
+            self.locks.close()
+
+
+def _delete_profile_dir(
+    path: Path,
+    *,
+    browser: str,
+    force: bool,
+    defer_commit: bool = False,
+) -> str | _ProfileDeleteTransaction:
+    path = _validate_profile_delete_target(path, force=force)
     if not path.exists():
         return "fehlt"
-    shutil.rmtree(path)
-    return "geloescht"
+    locks = ExitStack()
+    try:
+        for target in _profile_delete_lock_targets(path, browser=browser):
+            locks.enter_context(_profile_lock(target, lock_root=path))
+        quarantine = Path(tempfile.mkdtemp(prefix=f".{path.name}.delete-", dir=path.parent))
+        quarantine.rmdir()
+        path.rename(quarantine)
+    except BaseException:
+        locks.close()
+        raise
+
+    transaction = _ProfileDeleteTransaction(path, quarantine, "geloescht", locks)
+    if defer_commit:
+        return transaction
+    try:
+        return transaction.commit()
+    except BaseException as primary_error:
+        try:
+            transaction.rollback()
+        except BaseException as rollback_error:
+            raise ExceptionGroup(
+                "profile deletion rollback failed",
+                [primary_error, rollback_error],
+            ) from None
+        raise
+
+
+def _profile_delete_lock_targets(path: Path, *, browser: str) -> tuple[Path, ...]:
+    targets: list[Path] = []
+    browser_profile = path / _profile_browser_dir(browser)
+    if browser_profile.is_symlink():
+        raise ValueError(f"browser profile path must not be a symlink: {browser_profile}")
+    if browser_profile.exists():
+        if not browser_profile.is_dir():
+            raise ValueError(f"browser profile path must be a directory: {browser_profile}")
+    targets.append(browser_profile)
+
+    oauth_root = path / "oauth"
+    if oauth_root.is_symlink():
+        raise ValueError(f"OAuth profile root must not be a symlink: {oauth_root}")
+    if oauth_root.exists():
+        if not oauth_root.is_dir():
+            raise ValueError(f"OAuth profile root must be a directory: {oauth_root}")
+        for index, candidate in enumerate(oauth_root.iterdir(), start=1):
+            if index > MAX_PROFILE_OAUTH_ENTRIES:
+                raise ValueError(
+                    "too many OAuth browser profiles: "
+                    f"max {MAX_PROFILE_OAUTH_ENTRIES}"
+                )
+            if candidate.is_symlink():
+                raise ValueError(f"OAuth browser profile must not be a symlink: {candidate}")
+            if candidate.is_dir():
+                targets.append(candidate)
+            elif candidate.exists():
+                raise ValueError(f"OAuth browser profile must be a directory: {candidate}")
+    return tuple(sorted(set(targets), key=str))
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

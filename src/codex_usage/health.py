@@ -9,7 +9,7 @@ from typing import Any
 from .config import default_state_dir
 from .json_utils import loads_strict
 from .private_io import (
-    assert_no_symlink_ancestors,
+    ensure_private_directory,
     private_path_lock,
     read_private_text,
     write_private_text,
@@ -86,23 +86,14 @@ def clear_health(path: Path | None = None) -> None:
 
 
 def _prepare_health_directory(directory: Path) -> None:
-    assert_no_symlink_ancestors(directory, label="health directory")
-    if directory.is_symlink():
-        raise ValueError(f"health directory must not be a symlink: {directory}")
-    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if directory.is_symlink() or not directory.is_dir():
-        raise ValueError(f"health directory must be a real directory: {directory}")
-    try:
-        directory.chmod(0o700)
-    except OSError:
-        pass
+    ensure_private_directory(directory, label="health directory")
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
-        text, _ = read_private_text(
+        text, file_stat = read_private_text(
             path,
             regular_label="health path",
             read_label="health file",
@@ -110,13 +101,22 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
             too_large_label="health file",
             invalid_utf8_label="health file",
         )
+        if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+            return []
         payload = loads_strict(text)
         if not isinstance(payload, dict) or payload.get("version") != HEALTH_VERSION:
             return []
         raw_events = payload.get("events")
         if not isinstance(raw_events, list):
             return []
-        return [event for event in raw_events if _valid_event(event)][-MAX_HEALTH_EVENTS:]
+        events: list[dict[str, Any]] = []
+        for event in reversed(raw_events):
+            if _valid_event(event):
+                events.append(event)
+                if len(events) == MAX_HEALTH_EVENTS:
+                    break
+        events.reverse()
+        return events
     except (OSError, UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError):
         return []
 

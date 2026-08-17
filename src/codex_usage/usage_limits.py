@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from itertools import islice
 from typing import Any
 
 from .extractor import LOCAL_TZ
@@ -14,6 +15,7 @@ SPARK_METERED_FEATURE = "codex_bengalfox"
 FIVE_HOUR_SECONDS = 18_000
 WEEKLY_SECONDS = 604_800
 MAX_WINDOW_SECONDS = 10 * 365 * 24 * 60 * 60
+MAX_MODEL_CATALOG_IDS = 100
 APP_SERVER_LIMIT_REACHED_TYPES = frozenset(
     {
         "rate_limit_reached",
@@ -45,8 +47,9 @@ def parse_wham_usage_pools(
         source=source,
     )
     models: list[UsagePool] = []
-    spark_pools: list[UsagePool] = []
+    spark_pool: UsagePool | None = None
     invalid_spark_entry = False
+    conflicting_spark_entry = False
     additional = payload.get("additional_rate_limits")
     if isinstance(additional, list):
         for item in additional:
@@ -65,12 +68,14 @@ def parse_wham_usage_pools(
             if pool is None:
                 invalid_spark_entry = True
                 continue
-            spark_pools.append(pool)
-    if spark_pools:
-        spark = spark_pools[0]
-        if invalid_spark_entry or any(pool != spark for pool in spark_pools[1:]):
-            spark = replace(spark, available=False)
-        models.append(spark)
+            if spark_pool is None:
+                spark_pool = pool
+            elif pool != spark_pool:
+                conflicting_spark_entry = True
+    if spark_pool is not None:
+        if invalid_spark_entry or conflicting_spark_entry:
+            spark_pool = replace(spark_pool, available=False)
+        models.append(spark_pool)
     elif invalid_spark_entry:
         models.append(
             UsagePool(
@@ -163,23 +168,12 @@ def parse_app_server_usage_pools(
         else:
             main = replace(main, available=False)
 
-    spark_payloads: list[dict[str, Any]] = []
     invalid_spark_entry = False
-    exact_spark_payload = by_id.get(SPARK_METERED_FEATURE)
-    if SPARK_METERED_FEATURE in by_id and not isinstance(exact_spark_payload, dict):
-        invalid_spark_entry = True
-    elif isinstance(exact_spark_payload, dict):
-        spark_payloads.append(exact_spark_payload)
-    for value in by_id.values():
-        if (
-            isinstance(value, dict)
-            and value is not exact_spark_payload
-            and _is_spark_limit(value.get("limitName"), value.get("limitId"))
-        ):
-            spark_payloads.append(value)
+    spark_pool: UsagePool | None = None
+    conflicting_spark_entry = False
 
-    spark_pools: list[UsagePool] = []
-    for spark_payload in spark_payloads:
+    def remember_spark_payload(spark_payload: dict[str, Any]) -> None:
+        nonlocal conflicting_spark_entry, invalid_spark_entry, spark_pool
         spark = _app_server_pool(
             key=SPARK_MODEL,
             display_name="GPT-5.3-Codex-Spark",
@@ -190,15 +184,29 @@ def parse_app_server_usage_pools(
         )
         if spark is None:
             invalid_spark_entry = True
-        else:
-            spark_pools.append(spark)
+        elif spark_pool is None:
+            spark_pool = spark
+        elif spark != spark_pool:
+            conflicting_spark_entry = True
+
+    exact_spark_payload = by_id.get(SPARK_METERED_FEATURE)
+    if SPARK_METERED_FEATURE in by_id and not isinstance(exact_spark_payload, dict):
+        invalid_spark_entry = True
+    elif isinstance(exact_spark_payload, dict):
+        remember_spark_payload(exact_spark_payload)
+    for value in by_id.values():
+        if (
+            isinstance(value, dict)
+            and value is not exact_spark_payload
+            and _is_spark_limit(value.get("limitName"), value.get("limitId"))
+        ):
+            remember_spark_payload(value)
 
     models: tuple[UsagePool, ...] = ()
-    if spark_pools:
-        spark = spark_pools[0]
-        if invalid_spark_entry or any(pool != spark for pool in spark_pools[1:]):
-            spark = replace(spark, available=False)
-        models = (spark,)
+    if spark_pool is not None:
+        if invalid_spark_entry or conflicting_spark_entry:
+            spark_pool = replace(spark_pool, available=False)
+        models = (spark_pool,)
     elif invalid_spark_entry:
         models = (
             UsagePool(
@@ -215,13 +223,20 @@ def parse_app_server_usage_pools(
 def merge_model_catalog(
     pools: Iterable[UsagePool], model_ids: Iterable[str]
 ) -> tuple[UsagePool, ...]:
-    result = list(pools)
+    pool_values = tuple(islice(pools, MAX_MODEL_CATALOG_IDS + 1))
+    if len(pool_values) > MAX_MODEL_CATALOG_IDS or any(
+        not isinstance(pool, UsagePool) for pool in pool_values
+    ):
+        return ()
+    result = list(pool_values)
     if isinstance(model_ids, (str, bytes, bytearray, Mapping)):
         model_id_values: tuple[Any, ...] = ()
     else:
         try:
-            model_id_values = tuple(model_ids)
+            model_id_values = tuple(islice(model_ids, MAX_MODEL_CATALOG_IDS + 1))
         except (TypeError, ValueError):
+            model_id_values = ()
+        if len(model_id_values) > MAX_MODEL_CATALOG_IDS:
             model_id_values = ()
     if any(not isinstance(value, str) for value in model_id_values):
         model_id_values = ()

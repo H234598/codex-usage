@@ -1,23 +1,463 @@
 from __future__ import annotations
 
+import json
 from contextlib import nullcontext
 from datetime import datetime
+from pathlib import Path
 from typing import ClassVar
 from zoneinfo import ZoneInfo
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 
+import codex_usage.browser as browser_module
 from codex_usage.browser import (
+    _capture_diagnostic_response,
+    _capture_json_response,
     _detect_page_state,
     _format_datetime,
     _prepare_profile,
     _profile_lock,
+    _safe_page_text_sources,
+    _save_probe_payloads,
     diagnose_account,
     fetch_account_usage,
 )
 from codex_usage.config import AppConfig
+from codex_usage.extractor import JsonCandidate
 from codex_usage.models import Account, LimitWindow
+
+
+@pytest.mark.parametrize("entrypoint", ("fetch", "diagnose"))
+@pytest.mark.parametrize(
+    "timeout_ms",
+    (
+        pytest.param(True, id="bool"),
+        pytest.param(0, id="zero"),
+        pytest.param(-1, id="negative"),
+        pytest.param(3_600_001, id="above-maximum"),
+        pytest.param(1.0, id="float"),
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="infinity"),
+        pytest.param(float("-inf"), id="negative-infinity"),
+        pytest.param("1000", id="string"),
+        pytest.param(10**10_000, id="huge-int"),
+    ),
+)
+def test_browser_entrypoints_reject_invalid_timeout_before_profile_creation(
+    tmp_path, monkeypatch, entrypoint, timeout_ms
+):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    config = AppConfig(accounts=(account,))
+
+    def fail_prepare(_account):
+        pytest.fail("browser profile must not be prepared")
+
+    monkeypatch.setattr(browser_module, "_prepare_profile", fail_prepare)
+
+    with pytest.raises(ValueError, match="browser timeout is invalid"):
+        if entrypoint == "fetch":
+            fetch_account_usage(account, config, timeout_ms=timeout_ms)
+        else:
+            diagnose_account(account, config, timeout_ms=timeout_ms)
+
+
+def test_combined_page_text_sources_uses_one_html_evaluation() -> None:
+    selectors = []
+    evaluations = []
+
+    class FakeLocator:
+        def evaluate(self, expression):
+            evaluations.append(expression)
+            return {"bodyText": "body text", "htmlText": "<html>html</html>"}
+
+    class FakePage:
+        def locator(self, selector):
+            selectors.append(selector)
+            return FakeLocator()
+
+    body_text, sources = _safe_page_text_sources(FakePage())
+
+    assert body_text == "body text"
+    assert sources == (
+        ("bodyText", "body text"),
+        ("htmlText", "<html>html</html>"),
+    )
+    assert selectors == ["html"]
+    assert len(evaluations) == 1
+    assert "maxNodes = 1000000" in evaluations[0]
+    assert "innerHTML" not in evaluations[0]
+    assert "Array.from(node.childNodes" not in evaluations[0]
+    assert "Array.from(node.attributes" not in evaluations[0]
+    assert "Array.from(document.querySelectorAll" not in evaluations[0]
+
+
+def test_combined_page_text_sources_caps_and_falls_back_safely() -> None:
+    class FakeHtmlLocator:
+        def evaluate(self, _expression):
+            return {"bodyText": "bad", "htmlText": None}
+
+    class FakeBodyLocator:
+        def inner_text(self, *, timeout):
+            assert timeout == 10_000
+            return "fallback body"
+
+    class FakePage:
+        def locator(self, selector):
+            return FakeBodyLocator() if selector == "body" else FakeHtmlLocator()
+
+    body_text, sources = _safe_page_text_sources(FakePage())
+
+    assert body_text == "fallback body"
+    assert sources == (("bodyText", "fallback body"),)
+
+
+def test_combined_page_text_sources_caps_each_output() -> None:
+    class FakeLocator:
+        def evaluate(self, _expression):
+            size = browser_module.BROWSER_TEXT_MAX_CHARS + 100
+            return {"bodyText": "ä" * size, "htmlText": "ß" * size}
+
+    class FakePage:
+        def locator(self, _selector):
+            return FakeLocator()
+
+    body_text, sources = _safe_page_text_sources(FakePage())
+
+    assert len(body_text) == browser_module.BROWSER_TEXT_MAX_CHARS
+    assert sources == (
+        ("bodyText", body_text),
+        ("htmlText", "ß" * browser_module.BROWSER_TEXT_MAX_CHARS),
+    )
+
+
+@pytest.mark.parametrize("content_length", ["unknown", "-1", " ", 123])
+def test_capture_json_response_rejects_unbounded_body_size(
+    content_length: object,
+) -> None:
+    candidates = []
+    read = False
+
+    class FakeResponse:
+        url = "https://chatgpt.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, object]] = {"content-type": "application/json"}
+
+        def finished(self):
+            return None
+
+        def text(self):
+            nonlocal read
+            read = True
+            return "{}"
+
+    response = FakeResponse()
+    if content_length is not None:
+        response.headers["content-length"] = content_length
+    _capture_json_response(response, candidates)
+
+    assert read is False
+    assert candidates == []
+
+
+@pytest.mark.parametrize("content_length", [None, ""])
+def test_capture_json_response_accepts_missing_or_empty_body_size(
+    content_length: str | None,
+) -> None:
+    candidates = []
+
+    class FakeResponse:
+        url = "https://chatgpt.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return "{}"
+
+    response = FakeResponse()
+    if content_length is not None:
+        response.headers["content-length"] = content_length
+    _capture_json_response(response, candidates)
+
+    assert len(candidates) == 1
+
+
+def test_capture_json_response_keeps_known_small_body() -> None:
+    candidates = []
+
+    class FakeResponse:
+        url = "https://chatgpt.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "application/json",
+            "content-length": "2",
+        }
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return "{}"
+
+    _capture_json_response(FakeResponse(), candidates)
+
+    assert len(candidates) == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evilchatgpt.com/backend-api/wham/usage",
+        "https://chatgpt.com.evil.example/backend-api/wham/usage",
+        "https://notopenai.com/backend-api/wham/usage",
+        "https://chatgpt.com@evil.example/backend-api/wham/usage",
+        "http://chatgpt.com/backend-api/wham/usage",
+        "https://chatgpt.com:8443/backend-api/wham/usage",
+    ],
+)
+def test_capture_json_response_rejects_untrusted_url(url: str) -> None:
+    candidates = []
+    read = False
+
+    class FakeResponse:
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "application/json",
+            "content-length": "2",
+        }
+
+        def finished(self):
+            return None
+
+        def text(self):
+            nonlocal read
+            read = True
+            return "{}"
+
+    response = FakeResponse()
+    response.url = url
+    _capture_json_response(response, candidates)
+
+    assert read is False
+    assert candidates == []
+
+
+def test_capture_json_response_accepts_openai_subdomain() -> None:
+    candidates = []
+
+    class FakeResponse:
+        url = "https://api.openai.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "application/json",
+            "content-length": "2",
+        }
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return "{}"
+
+    _capture_json_response(FakeResponse(), candidates)
+
+    assert len(candidates) == 1
+
+
+def test_capture_json_response_enforces_aggregate_candidate_budget() -> None:
+    candidates = []
+    body = json.dumps({"value": "x" * 1_100_000})
+
+    class FakeResponse:
+        headers: dict[str, str]
+
+        def __init__(self, index: int) -> None:
+            self.url = f"https://chatgpt.com/backend-api/wham/usage/{index}"
+            self.headers = {
+                "content-type": "application/json",
+                "content-length": str(len(body.encode("utf-8"))),
+            }
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return body
+
+    for index in range(4):
+        _capture_json_response(FakeResponse(index), candidates)
+
+    assert len(candidates) == 3
+
+
+def test_capture_json_response_updates_external_candidate_byte_budget() -> None:
+    candidates = []
+    candidate_bytes = [0]
+    body = json.dumps({"value": "x" * 100})
+
+    class FakeResponse:
+        url = "https://chatgpt.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "application/json",
+            "content-length": str(len(body.encode("utf-8"))),
+        }
+
+        def finished(self):
+            return None
+
+        def text(self):
+            return body
+
+    _capture_json_response(FakeResponse(), candidates, candidate_bytes)
+
+    assert candidate_bytes == [len(json.dumps({"value": "x" * 100}).encode("utf-8"))]
+
+
+def test_save_probe_payloads_stages_on_save_directory_filesystem(tmp_path, monkeypatch):
+    save_dir = tmp_path / "probe"
+    save_dir.mkdir()
+    seen = {}
+    original_temporary_directory = browser_module.tempfile.TemporaryDirectory
+
+    def temporary_directory(*args, **kwargs):
+        seen["dir"] = kwargs["dir"]
+        return original_temporary_directory(*args, **kwargs)
+
+    monkeypatch.setattr(
+        browser_module.tempfile,
+        "TemporaryDirectory",
+        temporary_directory,
+    )
+
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    _save_probe_payloads(save_dir, account, [], "visible body")
+
+    assert seen["dir"] == str(save_dir)
+
+
+def test_save_probe_payloads_serializes_output_transaction(tmp_path, monkeypatch):
+    save_dir = tmp_path / "probe"
+    lock_events = []
+
+    class FakeLock:
+        def __enter__(self):
+            lock_events.append("enter")
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            lock_events.append("exit")
+
+    def fake_lock(path, **kwargs):
+        assert path == save_dir / ".codex-usage-probe-write"
+        assert kwargs["label"] == "probe output lock"
+        return FakeLock()
+
+    original_write = browser_module._write_bounded_private_text
+
+    def observe_stage_write(path, text, *, label):
+        assert lock_events == ["enter"]
+        return original_write(path, text, label=label)
+
+    monkeypatch.setattr(browser_module, "private_path_lock", fake_lock)
+    monkeypatch.setattr(
+        browser_module,
+        "_write_bounded_private_text",
+        observe_stage_write,
+    )
+
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    _save_probe_payloads(save_dir, account, [], "visible body")
+
+    assert lock_events == ["enter", "exit"]
+
+
+def test_save_probe_payloads_rolls_back_when_staging_fails(tmp_path, monkeypatch):
+    save_dir = tmp_path / "probe"
+    save_dir.mkdir()
+    old_files = {
+        "privat-01.json": "old one",
+        "privat-02.json": "old two",
+        "privat-body.txt": "old body",
+    }
+    for filename, content in old_files.items():
+        (save_dir / filename).write_text(content, encoding="utf-8")
+    keep = save_dir / "keep.txt"
+    keep.write_text("keep", encoding="utf-8")
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    original_write = browser_module._write_private_text
+
+    def fail_second(path, text, *, label):
+        if path.name == "privat-02.json":
+            raise OSError("simulated probe staging failure")
+        return original_write(path, text, label=label)
+
+    monkeypatch.setattr(browser_module, "_write_private_text", fail_second)
+
+    candidates = [
+        JsonCandidate(url="https://chatgpt.com/one", payload={"value": 1}),
+        JsonCandidate(url="https://chatgpt.com/two", payload={"value": 2}),
+    ]
+    with pytest.raises(OSError, match="simulated probe staging failure"):
+        _save_probe_payloads(save_dir, account, candidates, "new body")
+
+    for filename, content in old_files.items():
+        assert (save_dir / filename).read_text(encoding="utf-8") == content
+    assert keep.read_text(encoding="utf-8") == "keep"
+
+
+def test_save_probe_payloads_rolls_back_when_commit_fails(tmp_path, monkeypatch):
+    save_dir = tmp_path / "probe"
+    save_dir.mkdir()
+    old_files = {
+        "privat-01.json": "old one",
+        "privat-body.txt": "old body",
+    }
+    for filename, content in old_files.items():
+        (save_dir / filename).write_text(content, encoding="utf-8")
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    original_replace = Path.replace
+
+    def fail_body_commit(source, target):
+        if source.parent.name == "stage" and target.name == "privat-body.txt":
+            raise OSError("simulated probe commit failure")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail_body_commit)
+
+    candidates = [
+        JsonCandidate(url="https://chatgpt.com/one", payload={"value": 1}),
+    ]
+    with pytest.raises(OSError, match="simulated probe commit failure"):
+        _save_probe_payloads(save_dir, account, candidates, "new body")
+
+    for filename, content in old_files.items():
+        assert (save_dir / filename).read_text(encoding="utf-8") == content
+
+
+def test_capture_diagnostic_response_bounds_response_count() -> None:
+    responses = []
+
+    class FakeResponse:
+        status = 200
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def __init__(self, index: int) -> None:
+            self.url = f"https://chatgpt.com/backend-api/wham/usage/{index}"
+
+    for index in range(101):
+        _capture_diagnostic_response(FakeResponse(index), responses)
+
+    assert len(responses) == 100
 
 
 def test_browser_diagnostic_datetime_uses_dst_aware_local_timezone(monkeypatch):
@@ -131,6 +571,21 @@ def test_profile_lock_rejects_symlink_lock_without_overwriting_target(tmp_path):
             pass
 
     assert target.read_text(encoding="utf-8") == "keep"
+
+
+def test_profile_lock_names_do_not_collide_on_component_periods(tmp_path):
+    lock_root = tmp_path / "profiles"
+    first = lock_root / "a.b"
+    second = lock_root / "a" / "b"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+
+    with _profile_lock(first, lock_root=lock_root):
+        pass
+    with _profile_lock(second, lock_root=lock_root):
+        pass
+
+    assert len(list(lock_root.parent.glob(".*.codex-usage.lock"))) == 2
 
 
 def test_fetch_closes_context_when_navigation_fails(tmp_path, monkeypatch):
@@ -400,7 +855,10 @@ def test_fetch_rejects_shared_user_id_account_alias(tmp_path, monkeypatch):
 
     class FakeResponse:
         url = "https://chatgpt.com/backend-api/wham/usage"
-        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "application/json",
+            "content-length": "1000",
+        }
 
         def finished(self):
             return None
@@ -479,7 +937,10 @@ def test_fetch_rejects_limit_values_without_backend_account_id(tmp_path, monkeyp
 
     class FakeResponse:
         url = "https://chatgpt.com/backend-api/wham/usage"
-        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "application/json",
+            "content-length": "1000",
+        }
 
         def finished(self):
             return None
@@ -559,7 +1020,10 @@ def test_fetch_fills_missing_window_from_confirmed_dom_usage(tmp_path, monkeypat
     class FakeResponse:
         def __init__(self):
             self.url = "https://chatgpt.com/backend-api/wham/usage"
-            self.headers = {"content-type": "application/json"}
+            self.headers = {
+                "content-type": "application/json",
+                "content-length": "1000",
+            }
 
         def finished(self):
             return None
@@ -722,7 +1186,10 @@ def test_fetch_reports_missing_paid_five_hour_window_from_json(tmp_path, monkeyp
 
     class FakeResponse:
         url = "https://chatgpt.com/backend-api/wham/usage"
-        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "application/json",
+            "content-length": "1000",
+        }
 
         def finished(self):
             return None

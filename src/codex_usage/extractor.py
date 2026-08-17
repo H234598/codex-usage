@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
+from itertools import islice
 from typing import Any
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -42,6 +43,10 @@ LOCAL_TZ = _system_local_timezone()
 MAX_JSON_WALK_DEPTH = 24
 MAX_JSON_WALK_ITEMS = 1000
 MAX_JSON_FLATTEN_FIELDS = 2000
+MAX_JSON_WINDOW_MATCHES = 2000
+MAX_JSON_CANDIDATES = 50
+MAX_TEXT_LABEL_OFFSETS = 256
+MAX_PROGRESS_PARSER_ENTRIES = 1000
 PERCENT_COMPLEMENT_TOLERANCE = 0.01
 RELATIVE_RESET_HINTS = (
     "reset_after_seconds",
@@ -105,7 +110,9 @@ def extract_windows(
     now: datetime | None = None,
 ) -> tuple[LimitWindow | None, LimitWindow | None]:
     captured_at = now or datetime.now(tz=LOCAL_TZ)
-    candidates = list(json_candidates)
+    candidates = list(islice(json_candidates, MAX_JSON_CANDIDATES + 1))
+    if len(candidates) > MAX_JSON_CANDIDATES:
+        candidates = []
     sources = (
         (("dom-text", body_text),)
         if text_sources is None
@@ -431,6 +438,8 @@ def _extract_json_window(
                 word in haystack for word in ("limit", "usage", "nutzung", "reset")
             )
             if has_usage_context or has_target_scope:
+                if len(matches) >= MAX_JSON_WINDOW_MATCHES:
+                    return None
                 matches.append((candidate.url, path, obj, haystack, candidate_index))
 
     if any(
@@ -1236,6 +1245,8 @@ def _extract_text_window(
     label_offsets = _label_offsets(lower, labels)
     if source == "htmlText":
         hidden_ranges = _extract_hidden_html_ranges(text)
+        if hidden_ranges is None:
+            return None
         label_offsets = [
             start
             for start in label_offsets
@@ -1376,20 +1387,22 @@ def _extract_text_window(
 def _label_offsets(text: str, labels: tuple[str, ...]) -> list[int]:
     offsets: set[int] = set()
     for label in labels:
-        offsets.update(
-            match.start()
-            for match in re.finditer(_label_pattern(label), text)
-        )
+        for match in re.finditer(_label_pattern(label), text):
+            offsets.add(match.start())
+            if len(offsets) > MAX_TEXT_LABEL_OFFSETS:
+                return []
     return sorted(offsets)
 
 
 def _next_label_offset(text: str, start: int, labels: tuple[str, ...]) -> int | None:
-    offsets = [
-        match.start()
-        for label in labels
-        for match in re.compile(_label_pattern(label)).finditer(text, start)
-    ]
-    return min(offsets) if offsets else None
+    next_offset: int | None = None
+    for label in labels:
+        match = re.compile(_label_pattern(label)).search(text, start)
+        if match is not None and (
+            next_offset is None or match.start() < next_offset
+        ):
+            next_offset = match.start()
+    return next_offset
 
 
 def _label_pattern(label: str) -> str:
@@ -1436,6 +1449,8 @@ def _extract_progress_width_percent(text: str) -> float | None:
         parser.close()
     except (AssertionError, RuntimeError, ValueError):
         pass
+    if parser.overflowed:
+        return None
     if parser.visible_candidates:
         best_rank = min(item[0] for item in parser.visible_candidates)
         best = [
@@ -1451,12 +1466,17 @@ def _extract_progress_width_percent(text: str) -> float | None:
     # Keep single-value compatibility for captures that contain a style
     # fragment but no parseable start tag. Multiple values lack provenance.
     matches = list(
-        re.finditer(
-            r"\bwidth\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
-            text,
-            flags=re.IGNORECASE,
+        islice(
+            re.finditer(
+                r"\bwidth\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
+                text,
+                flags=re.IGNORECASE,
+            ),
+            MAX_PROGRESS_PARSER_ENTRIES + 1,
         )
     )
+    if len(matches) > MAX_PROGRESS_PARSER_ENTRIES:
+        return None
     if matches:
         values: list[float] = []
         for match in matches:
@@ -1468,7 +1488,9 @@ def _extract_progress_width_percent(text: str) -> float | None:
     return None
 
 
-def _extract_hidden_html_ranges(text: str) -> tuple[tuple[int, int], ...]:
+def _extract_hidden_html_ranges(
+    text: str,
+) -> tuple[tuple[int, int], ...] | None:
     parser = _ProgressWidthParser(text)
     try:
         parser.feed(text)
@@ -1476,6 +1498,8 @@ def _extract_hidden_html_ranges(text: str) -> tuple[tuple[int, int], ...]:
         parser.finish(len(text))
     except (AssertionError, RuntimeError, ValueError):
         pass
+    if parser.overflowed:
+        return None
     return tuple(parser.hidden_ranges)
 
 
@@ -1486,52 +1510,97 @@ class _ProgressWidthParser(HTMLParser):
         self.visible_candidates: list[tuple[int, int, float]] = []
         self.hidden_ranges: list[tuple[int, int]] = []
         self._hidden_stack: list[tuple[str, bool, int]] = []
-        self._line_starts = [0]
-        self._line_starts.extend(
-            index + 1 for index, char in enumerate(source_text) if char == "\n"
-        )
+        self._open_tag_indices: dict[str, list[int]] = {}
+        self._hidden_ancestor_count = 0
+        self.overflowed = False
+        self._source_text = source_text
+        self._line_number = 1
+        self._line_start = 0
+        self._line_scan_offset = 0
 
     def _absolute_position(self) -> int:
         line, column = self.getpos()
-        if 1 <= line <= len(self._line_starts):
-            return self._line_starts[line - 1] + column
+        while self._line_number < line:
+            newline = self._source_text.find("\n", self._line_scan_offset)
+            if newline < 0:
+                break
+            self._line_number += 1
+            self._line_start = newline + 1
+            self._line_scan_offset = self._line_start
+        if line == self._line_number:
+            return self._line_start + column
         return column
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.overflowed:
+            return
         values = {name.casefold(): value or "" for name, value in attrs}
         own_hidden = _is_hidden_progress_element(values, values.get("class", "").casefold())
-        inherited_hidden = any(item_hidden for _, item_hidden, _ in self._hidden_stack)
+        inherited_hidden = self._hidden_ancestor_count > 0
         self._record_width(attrs, hidden=inherited_hidden or own_hidden)
         if tag.casefold() not in {
             "area", "base", "br", "col", "embed", "hr", "img", "input",
             "link", "meta", "param", "source", "track", "wbr",
         }:
-            self._hidden_stack.append((tag.casefold(), own_hidden, self._absolute_position()))
+            if len(self._hidden_stack) >= MAX_PROGRESS_PARSER_ENTRIES:
+                self.overflowed = True
+                return
+            normalized = tag.casefold()
+            stack_index = len(self._hidden_stack)
+            self._hidden_stack.append((normalized, own_hidden, self._absolute_position()))
+            self._open_tag_indices.setdefault(normalized, []).append(stack_index)
+            if own_hidden:
+                self._hidden_ancestor_count += 1
 
     def handle_endtag(self, tag: str) -> None:
+        if self.overflowed:
+            return
         normalized = tag.casefold()
-        for index in range(len(self._hidden_stack) - 1, -1, -1):
-            if self._hidden_stack[index][0] == normalized:
-                end = self._absolute_position()
-                for _tag, own_hidden, start in self._hidden_stack[index:]:
-                    if own_hidden:
-                        self.hidden_ranges.append((start, end))
-                del self._hidden_stack[index:]
-                return
+        indices = self._open_tag_indices.get(normalized)
+        if not indices:
+            return
+        index = indices[-1]
+        end = self._absolute_position()
+        for stack_index in range(len(self._hidden_stack) - 1, index - 1, -1):
+            open_tag = self._hidden_stack[stack_index][0]
+            open_indices = self._open_tag_indices[open_tag]
+            open_indices.pop()
+            if not open_indices:
+                del self._open_tag_indices[open_tag]
+        for _tag, own_hidden, start in self._hidden_stack[index:]:
+            if own_hidden:
+                if len(self.hidden_ranges) >= MAX_PROGRESS_PARSER_ENTRIES:
+                    self.overflowed = True
+                    continue
+                self.hidden_ranges.append((start, end))
+                self._hidden_ancestor_count -= 1
+        del self._hidden_stack[index:]
 
     def finish(self, end: int) -> None:
+        if self.overflowed:
+            self._hidden_stack.clear()
+            self._open_tag_indices.clear()
+            self._hidden_ancestor_count = 0
+            return
         for _tag, own_hidden, start in self._hidden_stack:
             if own_hidden:
+                if len(self.hidden_ranges) >= MAX_PROGRESS_PARSER_ENTRIES:
+                    self.overflowed = True
+                    break
                 self.hidden_ranges.append((start, end))
         self._hidden_stack.clear()
+        self._open_tag_indices.clear()
+        self._hidden_ancestor_count = 0
 
     def handle_startendtag(
         self,
         _tag: str,
         attrs: list[tuple[str, str | None]],
     ) -> None:
+        if self.overflowed:
+            return
         values = {name.casefold(): value or "" for name, value in attrs}
-        hidden = any(item_hidden for _, item_hidden, _ in self._hidden_stack)
+        hidden = self._hidden_ancestor_count > 0
         hidden = hidden or _is_hidden_progress_element(
             values,
             values.get("class", "").casefold(),
@@ -1544,6 +1613,9 @@ class _ProgressWidthParser(HTMLParser):
         *,
         hidden: bool = False,
     ) -> None:
+        if len(self.candidates) >= MAX_PROGRESS_PARSER_ENTRIES:
+            self.overflowed = True
+            return
         values = {name.casefold(): value or "" for name, value in attrs}
         match = re.search(
             r"(?:^|;)\s*width\s*:\s*(?P<percent>\d+(?:[.,]\d+)?)\s*%",
@@ -1590,8 +1662,12 @@ def _is_hidden_progress_element(
         flags=re.IGNORECASE,
     ):
         return True
-    class_names = set(classes.split())
-    return bool(class_names.intersection({"hidden", "invisible", "sr-only"}))
+    return bool(
+        re.search(
+            r"(?:^|\s)(?:hidden|invisible|sr-only)(?:$|\s)",
+            classes,
+        )
+    )
 
 
 def _extract_remaining(text: str) -> float | None:

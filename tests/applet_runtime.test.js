@@ -15,6 +15,7 @@ function loadPrototype(onReady) {
     timeoutAdd: () => 2,
     timeoutAddSeconds: () => 3,
     launcherFactory: () => { throw new Error("launcher not configured"); },
+    fileUriCalls: 0,
   };
   const mainloop = {
     idle_add: (...args) => runtime.idleAdd(...args),
@@ -24,6 +25,22 @@ function loadPrototype(onReady) {
   };
   const gio = {
     SubprocessFlags: { STDOUT_PIPE: 1, STDERR_PIPE: 2 },
+    file_new_for_path: (localPath) => ({
+      get_uri: () => `file://${encodeURI(localPath)}`,
+    }),
+    file_new_for_uri: (uri) => {
+      runtime.fileUriCalls += 1;
+      return {
+        get_path: () => {
+          const raw = uri.replace(/^file:\/\//i, "");
+          if (raw.startsWith("/")) {
+            return decodeURIComponent(raw);
+          }
+          const separator = raw.indexOf("/");
+          return separator > 0 ? decodeURIComponent(raw.slice(separator)) : null;
+        },
+      };
+    },
     SubprocessLauncher: {
       new: (...args) => runtime.launcherFactory(...args),
     },
@@ -34,18 +51,37 @@ function loadPrototype(onReady) {
       this.label = { clutter_text: { set_markup() {} } };
     }
   }
+  class PopupSeparatorItem extends PopupItem {
+    constructor() {
+      super();
+      this.isSeparator = true;
+    }
+  }
   const sandbox = {
     imports: {
       byteArray: { toString: (value) => Buffer.from(value).toString("utf8") },
-      gi: { Gio: gio, GLib: {}, St: {} },
+    gi: {
+      Gio: gio,
+      GLib: {},
+      St: {
+        ClipboardType: { CLIPBOARD: 1 },
+        Clipboard: { get_default: () => runtime.clipboard || null },
+      },
+    },
       lang: { bind: (object, callback) => callback.bind(object) },
       mainloop,
       ui: {
         applet: { TextIconApplet: function TextIconApplet() {} },
-        main: { notify() {} },
+        main: {
+          notify: (...args) => {
+            if (runtime.onNotify) {
+              runtime.onNotify(...args);
+            }
+          },
+        },
         popupMenu: {
           PopupMenuItem: PopupItem,
-          PopupSeparatorMenuItem: PopupItem,
+          PopupSeparatorMenuItem: PopupSeparatorItem,
           PopupSwitchMenuItem: PopupItem,
           PopupSubMenuMenuItem: PopupItem,
         },
@@ -88,6 +124,8 @@ function makeApplet(onReady) {
   applet._backendChangeCurrent = null;
   applet._accountChangeQueue = [];
   applet._accountChangeCurrent = null;
+  applet._accountChangePendingRows = null;
+  applet._accountDeleteWaitingForProfileJob = {};
   applet._backendAuxQueue = [];
   applet._generation = 0;
   applet._process = null;
@@ -99,6 +137,21 @@ function makeApplet(onReady) {
   applet._auxProcess = null;
   applet._auxCommand = "";
   applet._auxGeneration = 0;
+  applet._deviceLoginActive = {};
+  applet._deviceLoginJobs = {};
+  applet._deviceLoginErrors = {};
+  applet._deviceLoginEvents = {};
+  applet._deviceLoginLiveText = {};
+  applet._deviceLoginLiveAccount = "";
+  applet._profileJobResumeQueue = [];
+  applet._profileJobPollingAccount = "";
+  applet._deviceLoginPollId = 0;
+  applet._deviceLoginPollGeneration = 0;
+  applet._profilePendingAccounts = {};
+  applet._warningState = {};
+  applet._errorState = {};
+  applet.errorNotificationState = "{}";
+  applet.settings = { setValue() {} };
   applet._healthProcess = null;
   applet._healthGeneration = 0;
   applet._timeoutId = 0;
@@ -118,6 +171,11 @@ function makeApplet(onReady) {
   applet._safeMode = false;
   applet._safeModeReason = "";
   applet._panelSettings = {};
+  applet._consumptionSettings = {};
+  applet._resetSettings = {};
+  applet._consumptionQueue = [];
+  applet._consumptionCurrent = null;
+  applet._consumptionGeneration = 0;
   applet._alertSettings = {};
   applet._percentStyles = {};
   applet._dateStyles = {};
@@ -228,6 +286,315 @@ function usageWithSparkWindows(account, values) {
   };
 }
 
+test("device login live parser exposes only bounded URL and code events", () => {
+  const applet = makeApplet();
+
+  assert.equal(JSON.stringify(applet._deviceLoginEventsFromText(
+    "Visit https://auth.example/device and enter device code: ABCD-1234. secret=hidden"
+  )), JSON.stringify([
+    { kind: "url", value: "https://auth.example/device" },
+    { kind: "code", value: "ABCD-1234" },
+  ]));
+});
+
+test("device login event copy writes only the ephemeral event value", () => {
+  const copied = [];
+  const applet = makeApplet((runtime) => {
+    runtime.clipboard = {
+      set_text(type, value) {
+        copied.push({ type, value });
+      },
+    };
+  });
+
+  applet._copyDeviceLoginEvent({ kind: "code", value: "ABCD-1234" });
+
+  assert.deepEqual(copied, [{ type: 1, value: "ABCD-1234" }]);
+});
+
+test("device login clears URL and code events after successful finalize", () => {
+  const applet = makeApplet();
+  let callback;
+  let timeoutMs;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._refreshFresh = () => {};
+  applet._deviceLoginEvents.alpha = [{ kind: "code", value: "ABCD-1234" }];
+  applet._spawnAuxJson = (_argv, handler, _backendRequest, selectedTimeout) => {
+    callback = handler;
+    timeoutMs = selectedTimeout;
+  };
+
+  applet._startDeviceLogin({ account: "alpha" });
+  callback({
+    account: "alpha",
+    ok: true,
+    events: [{ kind: "code", value: "ABCD-1234" }],
+  }, null);
+
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+  assert.equal(timeoutMs, 910000);
+});
+
+test("persistent profile job resumes and exposes polled events", () => {
+  const applet = makeApplet();
+  const calls = [];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    if (calls.length === 1) {
+      callback({
+        ok: true,
+        jobs: [{
+          account: "alpha",
+          job_id: "job-1234567890abcdef1234567890abcdef",
+          status: "running",
+        }],
+      }, null);
+      return;
+    }
+    callback({
+      account: "alpha",
+      job_id: "job-1234567890abcdef1234567890abcdef",
+      ok: true,
+      status: "running",
+      events: [{ kind: "code", value: "ABCD-1234" }],
+    }, null);
+  };
+
+  applet._loadProfileJobs();
+
+  assert.deepEqual(calls, [
+    ["codex-usage", "profile", "jobs", "--json"],
+    ["codex-usage", "profile", "job-status", "job-1234567890abcdef1234567890abcdef", "--json"],
+  ]);
+  assert.equal(applet._deviceLoginActive.alpha, true);
+  assert.equal(applet._deviceLoginJobs.alpha, "job-1234567890abcdef1234567890abcdef");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(applet._deviceLoginEvents.alpha)),
+    [{ kind: "code", value: "ABCD-1234" }]
+  );
+});
+
+test("persistent profile job resume drains every active job", () => {
+  const applet = makeApplet();
+  const calls = [];
+  const jobs = [
+    {
+      account: "alpha",
+      job_id: "job-1234567890abcdef1234567890abcdef",
+      status: "running",
+    },
+    {
+      account: "beta",
+      job_id: "job-abcdef1234567890abcdef1234567890",
+      status: "queued",
+    },
+  ];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._refreshFresh = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    if (calls.length === 1) {
+      callback({ ok: true, jobs }, null);
+      return;
+    }
+    const jobId = argv[3];
+    const account = jobId === jobs[0].job_id ? "alpha" : "beta";
+    callback({
+      account,
+      job_id: jobId,
+      ok: true,
+      status: account === "alpha" ? "failed" : "completed",
+      error: account === "alpha" ? "synthetic failure" : undefined,
+    }, null);
+  };
+
+  applet._loadProfileJobs();
+
+  assert.deepEqual(calls, [
+    ["codex-usage", "profile", "jobs", "--json"],
+    ["codex-usage", "profile", "job-status", jobs[0].job_id, "--json"],
+    ["codex-usage", "profile", "job-status", jobs[1].job_id, "--json"],
+  ]);
+  assert.equal(applet._profilePendingAccounts.alpha, undefined);
+  assert.equal(applet._profilePendingAccounts.beta, undefined);
+  assert.equal(applet._deviceLoginJobs.alpha, undefined);
+  assert.equal(applet._deviceLoginJobs.beta, undefined);
+  assert.equal(applet._deviceLoginErrors.alpha, "synthetic failure");
+});
+
+test("persistent profile job cancellation uses job contract", () => {
+  const applet = makeApplet();
+  let command;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    command = argv;
+    callback({
+      account: "alpha",
+      job_id: "job-1234567890abcdef1234567890abcdef",
+      ok: false,
+      status: "cancelled",
+    }, null);
+  };
+  applet._deviceLoginActive.alpha = true;
+  applet._deviceLoginJobs.alpha = "job-1234567890abcdef1234567890abcdef";
+  applet._deviceLoginEvents.alpha = [{ kind: "code", value: "ABCD-1234" }];
+
+  applet._cancelDeviceLogin("alpha");
+
+  assert.deepEqual(command, [
+    "codex-usage", "profile", "cancel", "job-1234567890abcdef1234567890abcdef", "--json",
+  ]);
+  assert.equal(applet._deviceLoginActive.alpha, undefined);
+  assert.equal(applet._deviceLoginJobs.alpha, undefined);
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+  assert.equal(applet._deviceLoginErrors.alpha, "Device-Login abgebrochen");
+});
+
+test("completed persistent profile job clears pending account and refreshes usage", () => {
+  const applet = makeApplet();
+  const jobId = "job-1234567890abcdef1234567890abcdef";
+  let refreshes = 0;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._refreshFresh = () => { refreshes += 1; };
+  applet._deviceLoginJobs.alpha = jobId;
+  applet._deviceLoginActive.alpha = true;
+  applet._profilePendingAccounts.alpha = true;
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    account: "alpha",
+    job_id: jobId,
+    ok: true,
+    status: "completed",
+  }, null);
+
+  applet._pollProfileJob("alpha");
+
+  assert.equal(refreshes, 1);
+  assert.equal(applet._profilePendingAccounts.alpha, undefined);
+  assert.equal(applet._deviceLoginJobs.alpha, undefined);
+});
+
+test("profile job resume starts after account overview completes", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  applet._profileJobsResumeRequested = true;
+  applet._loadProfileJobs = () => calls.push("jobs");
+  applet._spawnAuxJson = (_argv, callback) => {
+    calls.push("accounts");
+    callback({ accounts: [] }, null);
+  };
+
+  applet._loadAccountBackends();
+
+  assert.deepEqual(calls, ["accounts", "jobs"]);
+  assert.equal(applet._profileJobsResumeRequested, false);
+});
+
+test("device login cancel clears active process and drains queued work", () => {
+  const applet = makeApplet();
+  let cancelled = 0;
+  let rebuilt = 0;
+  let drained = 0;
+  applet._deviceLoginActive = { alpha: true };
+  applet._auxCommand = "device-login";
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._cancelAuxProcess = () => { cancelled += 1; };
+  applet._buildUsageMenu = () => { rebuilt += 1; };
+  applet._drainBackendChanges = () => { drained += 1; };
+  applet._drainAccountChanges = () => { drained += 1; };
+  applet._drainDeferredAuxRequests = () => { drained += 1; };
+  applet._drainConsumptionRequests = () => { drained += 1; };
+
+  applet._cancelDeviceLogin("alpha");
+
+  assert.equal(cancelled, 1);
+  assert.equal(applet._deviceLoginActive.alpha, undefined);
+  assert.equal(applet._deviceLoginErrors.alpha, "Device-Login abgebrochen");
+  assert.equal(rebuilt, 1);
+  assert.equal(drained, 4);
+});
+
+test("live device login cleanup preserves persistent profile job state", () => {
+  const applet = makeApplet();
+  applet._deviceLoginActive = { alpha: true, beta: true };
+  applet._deviceLoginJobs = { beta: "job-beta" };
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._auxCommand = "device-login";
+
+  applet._cancelAuxProcess();
+
+  assert.deepEqual(applet._deviceLoginActive, { beta: true });
+  assert.deepEqual(applet._deviceLoginJobs, { beta: "job-beta" });
+  assert.equal(applet._deviceLoginLiveAccount, "");
+});
+
+test("device login cancel clears ephemeral URL and code events", () => {
+  const applet = makeApplet();
+  applet._deviceLoginActive = { alpha: true };
+  applet._deviceLoginEvents.alpha = [{ kind: "code", value: "ABCD-1234" }];
+  applet._auxCommand = "device-login";
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._cancelAuxProcess = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._drainBackendChanges = () => {};
+  applet._drainAccountChanges = () => {};
+  applet._drainDeferredAuxRequests = () => {};
+  applet._drainConsumptionRequests = () => {};
+
+  applet._cancelDeviceLogin("alpha");
+
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+});
+
+test("queued device login cancellation removes only its deferred request", () => {
+  const applet = makeApplet();
+  let cancelled = 0;
+  let drained = 0;
+  applet._deviceLoginActive = { alpha: true };
+  applet._auxCommand = "service-enable";
+  applet._backendAuxQueue = [
+    { argv: ["codex-usage", "profile", "device-login", "--account", "alpha"] },
+    { argv: ["codex-usage", "health"] },
+  ];
+  applet._cancelAuxProcess = () => { cancelled += 1; };
+  applet._buildUsageMenu = () => {};
+  applet._drainBackendChanges = () => { drained += 1; };
+  applet._drainAccountChanges = () => { drained += 1; };
+  applet._drainDeferredAuxRequests = () => { drained += 1; };
+  applet._drainConsumptionRequests = () => { drained += 1; };
+
+  applet._cancelDeviceLogin("alpha");
+
+  assert.equal(cancelled, 0);
+  assert.equal(applet._backendAuxQueue.length, 1);
+  assert.deepEqual(applet._backendAuxQueue[0].argv, ["codex-usage", "health"]);
+  assert.equal(applet._deviceLoginActive.alpha, undefined);
+  assert.equal(applet._deviceLoginErrors.alpha, "Device-Login abgebrochen");
+  assert.equal(drained, 4);
+});
+
+test("device login does not replace another active account login", () => {
+  const applet = makeApplet();
+  let spawned = 0;
+  let rebuilt = 0;
+  applet._deviceLoginActive = { alpha: true };
+  applet._buildUsageMenu = () => { rebuilt += 1; };
+  applet._spawnAuxJson = () => { spawned += 1; };
+
+  applet._startDeviceLogin({ account: "beta" });
+
+  assert.equal(spawned, 0);
+  assert.equal(applet._deviceLoginActive.alpha, true);
+  assert.equal(applet._deviceLoginActive.beta, undefined);
+  assert.equal(applet._deviceLoginErrors.beta, "Es läuft bereits ein Anmelde- oder Profiljob");
+  assert.equal(rebuilt, 1);
+});
+
 test("account overview rows expose editable account settings", () => {
   const applet = makeAccountSettingsApplet();
   applet._spawnAuxJson = (argv, callback) => {
@@ -253,12 +620,143 @@ test("account overview rows expose editable account settings", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(applet.accountBackends[0])), {
     account: "alpha",
     label: "Alpha",
-    "auth-json": "",
-    "profile-dir": "/tmp/alpha",
+    "auth-json": null,
+    "profile-dir": "file:///tmp/alpha",
     browser: 1,
     "reactivation-browser": 1,
     backend: 1,
   });
+  assert.equal(applet._backendAccounts.alpha["profile-dir"], "/tmp/alpha");
+});
+
+test("account overview leaves unset file chooser values unset", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }],
+  }, null);
+
+  applet._loadAccountBackends();
+
+  assert.equal(applet.accountBackends[0]["auth-json"], null);
+  assert.equal(applet.accountBackends[0]["profile-dir"], null);
+});
+
+test("legacy absolute account settings are migrated to file URIs", () => {
+  const applet = makeAccountSettingsApplet();
+  const writes = [];
+  applet.settings = { setValue: (key, value) => writes.push([key, value]) };
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "/tmp/alpha auth.json",
+    "profile-dir": "/tmp/alpha profile",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }, {
+    account: "beta",
+    label: "Beta",
+    "auth-json": null,
+    "profile-dir": "",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }];
+
+  applet._normalizeAccountBackendSettingPaths();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet.accountBackends)), [{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "file:///tmp/alpha%20auth.json",
+    "profile-dir": "file:///tmp/alpha%20profile",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }, {
+    account: "beta",
+    label: "Beta",
+    "auth-json": null,
+    "profile-dir": "",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(writes)), [[
+    "account-backends",
+    [{
+      account: "alpha",
+      label: "Alpha",
+      "auth-json": "file:///tmp/alpha%20auth.json",
+      "profile-dir": "file:///tmp/alpha%20profile",
+      browser: 0,
+      "reactivation-browser": 0,
+      backend: 0,
+    }, {
+      account: "beta",
+      label: "Beta",
+      "auth-json": null,
+      "profile-dir": "",
+      browser: 0,
+      "reactivation-browser": 0,
+      backend: 0,
+    }],
+  ]]);
+});
+
+test("account path columns leave optional values unset for new rows", () => {
+  const schema = JSON.parse(fs.readFileSync(
+    path.join(__dirname, "../files/codex-usage@H234598/settings-schema.json"),
+    "utf8"
+  ));
+  const columns = schema["account-backends"].columns;
+  const auth = columns.find((column) => column.id === "auth-json");
+  const profile = columns.find((column) => column.id === "profile-dir");
+  assert.equal(Object.prototype.hasOwnProperty.call(auth, "default"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(profile, "default"), false);
+});
+
+test("bounded process output decodes UTF-8 split across chunks", () => {
+  const applet = makeApplet();
+  const makeStream = (parts) => ({
+    read_bytes_async(_size, _priority, _cancellable, callback) {
+      callback(this, parts.shift());
+    },
+    read_bytes_finish(result) {
+      return {
+        get_size: () => result.length,
+        get_data: () => result,
+      };
+    },
+  });
+  const encoded = Buffer.from('{"label":"Ä"}\n', "utf8");
+  const split = encoded.indexOf(0xc3) + 1;
+  const stdout = makeStream([
+    encoded.subarray(0, split),
+    encoded.subarray(split),
+    new Uint8Array(0),
+  ]);
+  const stderr = makeStream([new Uint8Array(0)]);
+  const process = {
+    get_stdout_pipe: () => stdout,
+    get_stderr_pipe: () => stderr,
+    force_exit() {},
+  };
+  let result;
+  let liveChunks = [];
+
+  applet._readBoundedProcessOutput(process, (output, _stderr, error) => {
+    result = { output, error };
+  }, (_name, chunk) => {
+    liveChunks.push(chunk);
+  });
+
+  assert.deepEqual(result, {
+    output: '{"label":"Ä"}\n',
+    error: null,
+  });
+  assert.equal(liveChunks.length, 2);
+  assert.equal(liveChunks.join(""), '{"label":"Ä"}\n');
 });
 
 test("legacy account overview rows receive editable defaults", () => {
@@ -272,8 +770,8 @@ test("legacy account overview rows receive editable defaults", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(applet.accountBackends[0])), {
     account: "alpha",
     label: "Alpha",
-    "auth-json": "",
-    "profile-dir": "",
+    "auth-json": null,
+    "profile-dir": null,
     browser: 0,
     "reactivation-browser": 0,
     backend: 0,
@@ -286,14 +784,21 @@ test("legacy global reactivation browser migrates to account rows once", () => {
   const writes = [];
   applet.settings = { setValue: (key, value) => writes.push([key, value]) };
   const commands = [];
+  let migrated = false;
   applet._spawnAuxJson = (argv, callback) => {
     commands.push(argv.slice());
     if (argv.includes("add")) {
+      migrated = true;
       callback({ ok: true, account: "alpha" }, null);
       return;
     }
     callback({
-      accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }],
+      accounts: [{
+        id: "alpha",
+        label: "Alpha",
+        backend: "direct",
+        reactivation_browser: migrated ? "vivaldi" : "auto",
+      }],
     }, null);
   };
 
@@ -308,6 +813,50 @@ test("legacy global reactivation browser migrates to account rows once", () => {
     "reactivation-browser-migrated",
     true,
   ]);
+});
+
+test("legacy reactivation migration stays pending when account update fails", () => {
+  const applet = makeAccountSettingsApplet();
+  applet.reactivationBrowser = "vivaldi";
+  applet._showCommandError = () => {};
+  applet._loadAccountBackends = () => {};
+  const writes = [];
+  applet.settings = { setValue: (key, value) => writes.push([key, value]) };
+  applet._spawnAuxJson = (_argv, callback) => callback(
+    { ok: false, account: { id: "alpha" } },
+    null
+  );
+  applet._reconcileAccountChanges = (rows) => {
+    applet._accountChangeQueue = rows;
+    applet._drainAccountChanges();
+  };
+
+  applet._migrateLegacyReactivationBrowser([{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "",
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }]);
+
+  assert.equal(writes.some(([key, value]) => (
+    key === "reactivation-browser-migrated" && value === true
+  )), false);
+  assert.notEqual(applet.reactivationBrowserMigrated, true);
+});
+
+test("legacy migration marker stays pending when settings write fails", () => {
+  const applet = makeAccountSettingsApplet();
+  applet.settings = {
+    setValue: () => { throw new Error("settings write failed"); },
+  };
+
+  applet._markLegacyReactivationBrowserMigrated();
+
+  assert.notEqual(applet.reactivationBrowserMigrated, true);
+  assert.notEqual(applet._legacyReactivationMigrationStarted, true);
 });
 
 test("account table changes produce complete account add data", () => {
@@ -329,12 +878,411 @@ test("account table changes produce complete account add data", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[{
     account: "alpha",
     label: "Renamed",
-    "auth-json": "",
+    "auth-json": null,
     "profile-dir": "/tmp/alpha",
     browser: 1,
     "reactivation-browser": 2,
     backend: 0,
   }]]);
+});
+
+test("removing account table row queues account delete without profile deletion", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._backendAccounts.alpha["auth-json"] = null;
+  applet._backendAccounts.beta = {
+    account: "beta",
+    label: "Beta",
+    "auth-json": null,
+    "profile-dir": "/tmp/beta",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  };
+  applet._drainAccountChanges = () => {};
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "",
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }];
+
+  applet._onAccountBackendsChanged();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._accountChangeQueue)), [{
+    action: "delete",
+    account: "beta",
+  }]);
+});
+
+test("account delete drains through structured CLI command", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  let reloads = 0;
+  applet._accountChangeQueue = [{ action: "delete", account: "alpha" }];
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    callback({ ok: true, account: "alpha", label: "Alpha", profile_deleted: false }, null);
+  };
+
+  applet._drainAccountChanges();
+
+  assert.deepEqual(calls, [["codex-usage", "account", "delete", "alpha", "--format", "json"]]);
+  assert.equal(reloads, 1);
+});
+
+test("account delete cancels persistent profile job before deleting account", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  const jobId = "job-1234567890abcdef1234567890abcdef";
+  applet._deviceLoginJobs.alpha = jobId;
+  applet._deviceLoginActive.alpha = true;
+  applet._accountChangeQueue = [{ action: "delete", account: "alpha" }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._loadAccountBackends = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    if (argv.includes("cancel")) {
+      callback({
+        account: "alpha",
+        job_id: jobId,
+        ok: false,
+        status: "cancelled",
+      }, null);
+      return;
+    }
+    callback({ ok: true, account: "alpha" }, null);
+  };
+
+  applet._drainAccountChanges();
+
+  assert.deepEqual(calls, [
+    ["codex-usage", "profile", "cancel", jobId, "--json"],
+    ["codex-usage", "account", "delete", "alpha", "--format", "json"],
+  ]);
+  assert.equal(applet._deviceLoginJobs.alpha, undefined);
+  assert.equal(applet._accountDeleteWaitingForProfileJob.alpha, undefined);
+});
+
+test("account delete forces status poll after cancel request", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  const jobId = "job-1234567890abcdef1234567890abcdef";
+  applet._deviceLoginJobs.alpha = jobId;
+  applet._deviceLoginActive.alpha = true;
+  applet._accountChangeQueue = [{ action: "delete", account: "alpha" }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._loadAccountBackends = () => {};
+  applet._spawnAuxJson = (argv, callback, backendRequest) => {
+    calls.push({ argv, backendRequest });
+    if (argv.includes("cancel")) {
+      callback({
+        account: "alpha",
+        job_id: jobId,
+        ok: true,
+        status: "cancel_requested",
+      }, null);
+      return;
+    }
+    if (argv.includes("job-status")) {
+      callback({
+        account: "alpha",
+        job_id: jobId,
+        ok: true,
+        status: "cancelled",
+      }, null);
+      return;
+    }
+    callback({ ok: true, account: "alpha" }, null);
+  };
+
+  applet._drainAccountChanges();
+
+  assert.deepEqual(calls.map((call) => call.argv), [
+    ["codex-usage", "profile", "cancel", jobId, "--json"],
+    ["codex-usage", "profile", "job-status", jobId, "--json"],
+    ["codex-usage", "account", "delete", "alpha", "--format", "json"],
+  ]);
+  assert.equal(calls[1].backendRequest, true);
+  assert.equal(applet._accountDeleteWaitingForProfileJob.alpha, undefined);
+});
+
+test("account delete clears stale profile job wait marker", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  applet._accountDeleteWaitingForProfileJob.alpha = true;
+  applet._accountChangeQueue = [{ action: "delete", account: "alpha" }];
+  applet._loadAccountBackends = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    callback({ ok: true, account: "alpha" }, null);
+  };
+
+  applet._drainAccountChanges();
+
+  assert.deepEqual(calls, [[
+    "codex-usage", "account", "delete", "alpha", "--format", "json",
+  ]]);
+  assert.equal(applet._accountDeleteWaitingForProfileJob.alpha, undefined);
+});
+
+test("account edits during reconcile are retained for the next pass", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._accountChangeCurrent = { account: "alpha" };
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Latest label",
+    "auth-json": "",
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }];
+
+  applet._onAccountBackendsChanged();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._accountChangePendingRows)), [[{
+    account: "alpha",
+    label: "Latest label",
+    "auth-json": null,
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }]][0]);
+});
+
+test("queued account writes drain before pending rows reload", () => {
+  const applet = makeAccountSettingsApplet();
+  const row = (account) => ({
+    account,
+    label: account,
+    "auth-json": "",
+    "profile-dir": "/tmp/" + account,
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  });
+  const processed = [];
+  let reloads = 0;
+  applet._accountChangeQueue = [row("alpha"), row("beta")];
+  applet._accountChangePendingRows = [row("latest")];
+  applet._refreshFresh = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._spawnAuxJson = (argv, callback) => {
+    if (argv.includes("profile") && argv.includes("create")) {
+      callback({
+        ok: true,
+        account: "beta",
+        job_id: "job-1234567890abcdef1234567890abcdef",
+        status: "queued",
+      }, null);
+      return;
+    }
+    if (argv.includes("profile") && argv.includes("job-status")) {
+      callback({
+        ok: true,
+        account: "beta",
+        job_id: "job-1234567890abcdef1234567890abcdef",
+        status: "running",
+        events: [],
+      }, null);
+      return;
+    }
+    const account = argv[argv.indexOf("add") + 1];
+    processed.push(account);
+    callback({ ok: true, account: { id: account } }, null);
+  };
+
+  applet._drainAccountChanges();
+
+  assert.deepEqual(processed, ["alpha", "beta"]);
+  assert.equal(reloads, 1);
+});
+
+test("account add converts file URIs before spawning CLI", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._backendAccounts = {};
+  applet._loadAccountBackends = () => {};
+  applet._accountChangeQueue = [{
+    account: "new-account",
+    label: "New",
+    "auth-json": "file:///tmp/auth%20new.json",
+    "profile-dir": "file:///tmp/profile%20new",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }];
+  applet._spawnAuxJson = (argv, callback) => {
+    assert.equal(argv[argv.indexOf("--auth-json") + 1], "/tmp/auth new.json");
+    assert.equal(argv[argv.indexOf("--profile-dir") + 1], "/tmp/profile new");
+    callback({ ok: true, account: { id: "new-account" } }, null);
+  };
+
+  applet._drainAccountChanges();
+});
+
+test("new account starts persistent profile job after account config", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  const jobId = "job-1234567890abcdef1234567890abcdef";
+  applet._backendAccounts = {};
+  applet._accountChangeQueue = [{
+    account: "new-account",
+    label: "New",
+    "auth-json": null,
+    "profile-dir": "/tmp/profile-new",
+    browser: 1,
+    "reactivation-browser": 2,
+    backend: 1,
+  }];
+  applet._buildUsageMenu = () => {};
+  applet._loadAccountBackends = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    if (argv.includes("account") && argv.includes("add")) {
+      callback({
+        ok: true,
+        account: { id: "new-account", profile_dir: "/tmp/profile-new" },
+      }, null);
+      return;
+    }
+    if (argv.includes("profile") && argv.includes("create")) {
+      callback({
+        ok: true,
+        account: "new-account",
+        job_id: jobId,
+        status: "queued",
+      }, null);
+      return;
+    }
+    callback({
+      ok: true,
+      account: "new-account",
+      job_id: jobId,
+      status: "running",
+      events: [],
+    }, null);
+  };
+
+  applet._drainAccountChanges();
+
+  assert.deepEqual(calls[1], [
+    "codex-usage", "profile", "create",
+    "--account-id", "new-account",
+    "--label", "New",
+    "--browser", "chromium",
+    "--backend", "app-server",
+    "--profile-dir", "/tmp/profile-new",
+    "--reactivation-browser", "chromium",
+    "--json-events",
+  ]);
+  assert.equal(applet._deviceLoginJobs["new-account"], jobId);
+  assert.equal(applet._deviceLoginActive["new-account"], true);
+  assert.equal(applet._profilePendingAccounts["new-account"], true);
+});
+
+test("account file chooser URIs become local paths before account add", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  applet._reconcileAccountChanges = (rows) => calls.push(rows);
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "file:///tmp/alpha%20auth.json",
+    "profile-dir": "file:///tmp/alpha%20profile",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }];
+
+  applet._onAccountBackendsChanged();
+
+  assert.equal(calls[0][0]["auth-json"], "/tmp/alpha auth.json");
+  assert.equal(calls[0][0]["profile-dir"], "/tmp/alpha profile");
+});
+
+test("file URIs without a path are rejected before conversion", () => {
+  let runtime;
+  const applet = makeApplet((currentRuntime) => { runtime = currentRuntime; });
+
+  assert.throws(
+    () => applet._localAccountPath("file://"),
+    /invalid local account path/
+  );
+  assert.throws(
+    () => applet._localAccountPath("file://localhost"),
+    /invalid local account path/
+  );
+  assert.equal(runtime.fileUriCalls, 0);
+});
+
+test("relative account paths are rejected before spawning CLI", () => {
+  const applet = makeAccountSettingsApplet();
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._reconcileAccountChanges = () => {
+    throw new Error("must not spawn account update");
+  };
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": null,
+    "profile-dir": "relative/profile",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }];
+
+  applet._onAccountBackendsChanged();
+
+  assert.equal(reloads, 1);
+});
+
+test("invalid account file URI reloads settings instead of escaping callback", () => {
+  const applet = makeAccountSettingsApplet();
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._reconcileAccountChanges = () => {};
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "file://relative",
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }];
+
+  applet._onAccountBackendsChanged();
+
+  assert.equal(reloads, 1);
+});
+
+test("remote file URI authority is rejected as a non-local account path", () => {
+  const applet = makeAccountSettingsApplet();
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._reconcileAccountChanges = () => {};
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "file://server/tmp/alpha.json",
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    backend: 0,
+  }];
+
+  applet._onAccountBackendsChanged();
+
+  assert.equal(reloads, 1);
 });
 
 test("legacy panel tags migrate to central display settings", () => {
@@ -359,10 +1307,12 @@ test("legacy panel tags migrate to central display settings", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(applet.accountDisplaySettings[0])), {
     account: "alpha",
     tag: "A",
-    panel: 2,
-    hover: 1,
-    click: 1,
-  });
+      panel: 2,
+      hover: 1,
+      click: 1,
+      "hover-separator": false,
+      "click-separator": false,
+    });
   assert.equal(
     Object.prototype.hasOwnProperty.call(
       writes.find(([key]) => key === "account-panel-settings")[1][0],
@@ -392,6 +1342,99 @@ test("display targets resolve account id, label and tag per surface", () => {
   assert.equal(applet._accountDisplayText(item, "click"), "alpha");
 });
 
+test("account identity elements can be disabled per surface", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:8"] = {panel: true, hover: false, click: true};
+
+  assert.equal(applet._accountDisplayText({usage: {
+    account: "alpha",
+    label: "Private Account",
+  }}, "hover"), "");
+  assert.equal(applet._accountDisplayText({usage: {
+    account: "alpha",
+    label: "Private Account",
+  }}, "panel"), "A");
+});
+
+test("percent target hides remaining value per surface", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:0"] = {panel: false, hover: true, click: true};
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._percentParts(
+    {remaining: 80}, "alpha", "panel"
+  ))), {plain: "", markup: ""});
+  assert.equal(applet._percentParts({remaining: 80}, "alpha", "hover").plain, "80%");
+});
+
+test("display rows normalize hover and click separators", () => {
+  const applet = makeApplet();
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(applet._normalizeDisplayRow({
+      account: "alpha",
+      tag: "A",
+      panel: 2,
+      hover: 1,
+      click: 1,
+      "hover-separator": true,
+      "click-separator": true,
+    }, "alpha"))),
+    {
+      account: "alpha",
+      tag: "A",
+      panel: 2,
+      hover: 1,
+      click: 1,
+      "hover-separator": true,
+      "click-separator": true,
+    }
+  );
+});
+
+test("hover separator is inserted before marked account", () => {
+  const applet = makeApplet();
+  applet._displaySettings.beta["hover-separator"] = true;
+
+  assert.match(applet._tooltipContent().plain, /Alpha:[^\n]+\n────────\nBeta:/);
+});
+
+test("click separator is inserted before marked account", () => {
+  const applet = makeApplet();
+  applet.menu = {
+    items: [],
+    removeAll() { this.items = []; },
+    addMenuItem(item) { this.items.push(item); },
+    addAction() {},
+  };
+  applet._addAccount = (usage) => applet.menu.items.push({ account: usage.account });
+  applet._addDisabled = () => ({ });
+
+  applet._displaySettings.beta["click-separator"] = true;
+  applet._buildUsageMenu();
+
+  assert.deepEqual(
+    applet.menu.items.map((item) => item.account || (item.isSeparator ? "separator" : "other")),
+    ["separator", "alpha", "separator", "beta", "separator"]
+  );
+});
+
+test("device login live events survive output buffer truncation", () => {
+  const applet = makeApplet();
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginEvents.alpha = [
+    { kind: "url", value: "https://auth.example/device" },
+  ];
+  applet._deviceLoginLiveText.alpha = "x".repeat(4090);
+
+  applet._recordDeviceLoginChunk("stdout", " device code: ABCD-1234");
+
+  assert.equal(JSON.stringify(applet._deviceLoginEvents.alpha), JSON.stringify([
+    { kind: "url", value: "https://auth.example/device" },
+    { kind: "code", value: "ABCD-1234" },
+  ]));
+});
+
 test("accounts without a Spark limit show no Spark and ignore edits", () => {
   const applet = makeAccountSettingsApplet();
   applet._usages = [usageWithoutSparkLimit("alpha")];
@@ -406,6 +1449,52 @@ test("accounts without a Spark limit show no Spark and ignore edits", () => {
   }, "alpha");
 
   assert.equal(normalized["spark-threshold"], "no Spark");
+});
+
+test("usage refresh re-normalizes Spark threshold after backend overview", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = { alpha: { account: "alpha" } };
+  applet.accountAlertSettings = [{
+    account: "alpha",
+    "five-threshold": 20,
+    "weekly-threshold": 30,
+    "spark-threshold": "45",
+    warnings: true,
+    errors: true,
+  }];
+  applet._mergeFreshPayload = () => [usageWithoutSparkLimit("alpha")];
+  applet._buildUsageMenu = () => {};
+  applet._updatePanel = () => {};
+  applet._refreshConsumption = () => {};
+  applet._notifyForPayload = () => {};
+
+  applet._applyPayload([], true);
+
+  assert.equal(applet.accountAlertSettings[0]["spark-threshold"], "no Spark");
+});
+
+test("usage refresh restores editable Spark threshold when limit returns", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = { alpha: { account: "alpha" } };
+  applet.accountAlertSettings = [{
+    account: "alpha",
+    "five-threshold": 20,
+    "weekly-threshold": 30,
+    "spark-threshold": "no Spark",
+    warnings: true,
+    errors: true,
+  }];
+  applet._mergeFreshPayload = () => [usageWithSparkWindows("alpha", { five: 80, weekly: 70 })];
+  applet._buildUsageMenu = () => {};
+  applet._updatePanel = () => {};
+  applet._refreshConsumption = () => {};
+  applet._notifyForPayload = () => {};
+
+  applet._applyPayload([], true);
+
+  assert.equal(applet.accountAlertSettings[0]["spark-threshold"], "20");
 });
 
 test("Spark notification uses dedicated Spark threshold", () => {
@@ -514,6 +1603,223 @@ test("panel slots honor ordering, mute and duplicate-source normalization", () =
     applet._panelContent(items.filter((item) => item.visible)).plain,
     "A 5h 80% / W 60%"
   );
+});
+
+test("panel identity target keeps account visible when all value slots are off", () => {
+  const applet = makeApplet();
+  applet._panelSettings.alpha = {
+    account: "alpha",
+    tag: "A",
+    order: 1,
+    muted: false,
+    slot1: 0,
+    slot2: 0,
+  };
+  applet._displaySettings.alpha = {
+    account: "alpha",
+    tag: "A",
+    panel: 0,
+    hover: 1,
+    click: 1,
+  };
+  applet._styleTargets["alpha:7"] = {
+    panel: true,
+    hover: false,
+    click: false,
+  };
+
+  const items = applet._panelItems();
+  const alpha = items.find((item) => item.usage.account === "alpha");
+
+  assert.equal(alpha.visible, true);
+  assert.equal(
+    applet._panelContent(items.filter((item) => item.visible)).plain,
+    "alpha"
+  );
+});
+
+test("consumption DTO is validated and rendered with coverage marker", () => {
+  const applet = makeApplet();
+  const [usage] = applet._validatePayload([{
+    account: "alpha",
+    captured_at: new Date().toISOString(),
+    backend_configured: "direct",
+    backend_used: "direct",
+    five_hour: { name: "5h", remaining: 80 },
+    weekly: { name: "weekly", remaining: 60 },
+    status: "ok",
+    stale: false,
+    cache_invalidated: false,
+    cost_windows: [{
+      lookback_seconds: 3600,
+      pool: "main",
+      limit_window_seconds: 18000,
+      consumed_percentage_points: 9.3,
+      coverage: "partial",
+      sample_count: 4,
+    }],
+  }]);
+  applet._consumptionSettings.alpha = {
+    account: "alpha",
+    "show-panel": true,
+    "show-tooltip": true,
+    amount: 1,
+    unit: "hours",
+    "limit-window": "short",
+    format: "compact",
+    "custom-format": "",
+    "hide-when-zero": false,
+    "show-coverage-marker": true,
+  };
+  assert.equal(
+    applet._consumptionParts(usage, "panel").plain,
+    "Δ1 h 9,3pp (mindestens) Zeit bis Tokenende —"
+  );
+  assert.throws(() => applet._safeConsumptionWindows([{
+    lookback_seconds: 3600,
+    pool: "main",
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 10001,
+    coverage: "complete",
+    sample_count: 2,
+  }]), /invalid consumption window/);
+  assert.throws(() => applet._safeConsumptionWindows([{
+    lookback_seconds: 3600,
+    pool: "main",
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 10,
+    estimated_seconds_to_exhaustion: -1,
+    coverage: "complete",
+    sample_count: 2,
+  }]), /invalid consumption window/);
+});
+
+test("consumption forecast is rendered from backend DTO", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha",
+    "show-panel": true,
+    "show-tooltip": true,
+    amount: 1,
+    unit: "hours",
+    "limit-window": "short",
+    format: "compact",
+    "custom-format": "",
+    "hide-when-zero": false,
+    "show-coverage-marker": true,
+  };
+  const usage = applet._usages[0];
+  usage.cost_windows = [{
+    lookback_seconds: 3600,
+    pool: "main",
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 30,
+    estimated_seconds_to_exhaustion: 3000,
+    coverage: "complete",
+    sample_count: 3,
+  }];
+
+  const rendered = applet._consumptionParts(usage, "panel");
+
+  assert.match(rendered.plain, /Zeit bis Tokenende/);
+  assert.match(rendered.plain, /50m/);
+});
+
+test("consumption display asks CLI for configured account query", () => {
+  const applet = makeApplet();
+  applet._usages = [{ account: "alpha", cost_windows: [] }];
+  applet._consumptionSettings = {
+    alpha: {
+      account: "alpha",
+      "show-panel": false,
+      "show-tooltip": true,
+      amount: 2,
+      unit: "days",
+      "limit-window": "all",
+      format: "verbose",
+      "custom-format": "",
+      "hide-when-zero": false,
+      "show-coverage-marker": true,
+    },
+  };
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._updatePanel = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    assert.deepEqual(argv, [
+      "codex-usage", "consumption", "--account", "alpha", "--amount", "2",
+      "--unit", "days", "--limit-window", "all", "--format", "json",
+    ]);
+    callback({
+      account_id: "alpha",
+      windows: [{
+        lookback_seconds: 172800,
+        pool: "main",
+        limit_window_seconds: 18000,
+        consumed_percentage_points: 3,
+        coverage: "complete",
+        sample_count: 8,
+      }],
+    }, null);
+  };
+  applet._refreshConsumption();
+  assert.equal(applet._usages[0].cost_windows[0].consumed_percentage_points, 3);
+});
+
+test("usage reset payloads fail closed and distinguish unknown from zero", () => {
+  const applet = makeApplet();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._safeUsageResets(undefined))), {
+    available: null,
+    known: false,
+    redeem_capability: false,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._safeUsageResets({
+    available: 0,
+    known: true,
+    redeem_capability: false,
+  }))), {
+    available: 0,
+    known: true,
+    redeem_capability: false,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._safeUsageResets({
+    available: true,
+    known: true,
+    redeem_capability: false,
+  }))), {
+    available: null,
+    known: false,
+    redeem_capability: false,
+  });
+});
+
+test("usage reset display respects surface, zero and format settings", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.usage_resets = { available: 2, known: true, redeem_capability: false };
+  applet._resetSettings.alpha = {
+    account: "alpha",
+    "show-panel": false,
+    "show-tooltip": true,
+    "hide-when-zero": true,
+    "show-unknown": false,
+    format: "readable",
+  };
+
+  assert.equal(applet._usageResetParts(usage, "panel"), null);
+  assert.equal(applet._usageResetParts(usage, "hover").plain, "2 Resets");
+
+  usage.usage_resets.available = 0;
+  assert.equal(applet._usageResetParts(usage, "hover"), null);
+  applet._resetSettings.alpha["hide-when-zero"] = false;
+  assert.equal(applet._usageResetParts(usage, "hover").plain, "0 Resets");
+
+  usage.usage_resets = { available: null, known: false, redeem_capability: false };
+  assert.equal(applet._usageResetParts(usage, "hover"), null);
+  applet._resetSettings.alpha["show-unknown"] = true;
+  assert.equal(applet._usageResetParts(usage, "hover").plain, "Resets: —");
 });
 
 test("remaining percentage prefers absolute used and limit values", () => {
@@ -1167,6 +2473,32 @@ test("malformed cache controls fail closed during payload validation", () => {
   const [merged] = applet._mergeFreshPayload([validated]);
   assert.equal(merged.five_hour, null);
   assert.equal(merged.weekly, null);
+});
+
+test("terminal and invalidated payloads hide cached usage resets", () => {
+  for (const [status, cacheInvalidated] of [
+    ["error", false],
+    ["login_required", false],
+    ["ok", true]
+  ]) {
+    const applet = makeApplet();
+    const [usage] = applet._validatePayload([{
+      account: "alpha",
+      captured_at: new Date().toISOString(),
+      five_hour: { name: "5h", remaining: 80 },
+      weekly: { name: "weekly", remaining: 60 },
+      status,
+      stale: cacheInvalidated,
+      cache_invalidated: cacheInvalidated,
+      usage_resets: { available: 2, known: true, redeem_capability: true }
+    }]);
+
+    assert.deepEqual(JSON.parse(JSON.stringify(usage.usage_resets)), {
+      available: null,
+      known: false,
+      redeem_capability: false
+    });
+  }
 });
 
 test("ok payload without usage values fails closed", () => {
@@ -2262,6 +3594,107 @@ test("blocked usage enters the per-account error notification state", () => {
   assert.equal(applet._errorState["alpha:blocked"], true);
 });
 
+test("same error notification is suppressed for 48 hours and survives restart", () => {
+  const notifications = [];
+  let storedState = "{}";
+  let now = 1000000;
+  const applet = makeApplet((runtime) => {
+    runtime.onNotify = (...args) => notifications.push(args);
+  });
+  applet.notifyErrors = true;
+  applet._alertSettings = { alpha: { account: "alpha", errors: true } };
+  applet._errorNotificationNow = () => now;
+  applet.settings = {
+    setValue(key, value) {
+      assert.equal(key, "error-notification-state");
+      storedState = value;
+    },
+  };
+  applet._usages[0].status = "blocked";
+  applet._usages[0].error = "backend failed";
+
+  applet._notifyForPayload();
+  assert.equal(notifications.length, 1);
+  assert.doesNotMatch(storedState, /backend failed/);
+
+  applet._usages[0].status = "ok";
+  applet._notifyForPayload();
+  applet._usages[0].status = "blocked";
+  applet._notifyForPayload();
+  assert.equal(notifications.length, 1);
+
+  const restarted = makeApplet((runtime) => {
+    runtime.onNotify = (...args) => notifications.push(args);
+  });
+  restarted.notifyErrors = true;
+  restarted._alertSettings = { alpha: { account: "alpha", errors: true } };
+  restarted.errorNotificationState = storedState;
+  restarted._errorNotificationNow = () => now;
+  restarted._usages[0].status = "blocked";
+  restarted._usages[0].error = "backend failed";
+  restarted._notifyForPayload();
+  assert.equal(notifications.length, 1);
+
+  now += 48 * 60 * 60 * 1000;
+  restarted._usages[0].status = "ok";
+  restarted._notifyForPayload();
+  restarted._usages[0].status = "blocked";
+  restarted._notifyForPayload();
+  assert.equal(notifications.length, 2);
+});
+
+test("error notification fingerprints distinguish old 32-bit collisions", () => {
+  const applet = makeApplet();
+  const first = applet._errorNotificationFingerprint("collision-1upg");
+  const second = applet._errorNotificationFingerprint("collision-dca1");
+
+  assert.notEqual(first, second);
+  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{8}$/);
+  assert.match(second, /^[0-9a-f]{8}-[0-9a-f]{8}$/);
+});
+
+test("future error notification timestamps do not suppress errors", () => {
+  const applet = makeApplet();
+  const now = 1_000_000;
+  const fingerprint = applet._errorNotificationFingerprint("clock-skew");
+  applet._errorNotificationNow = () => now;
+  applet.errorNotificationState = JSON.stringify({
+    [fingerprint]: now + 48 * 60 * 60 * 1000,
+  });
+
+  assert.equal(applet._shouldNotifyError("clock-skew"), true);
+  assert.equal(
+    JSON.parse(applet.errorNotificationState)[fingerprint],
+    now,
+  );
+});
+
+test("oversized error notification state is rejected before JSON parse", () => {
+  const applet = makeApplet();
+  const oversizedState = {};
+  for (let index = 0; index < 2000; index++) {
+    oversizedState["entry-" + index] = index;
+  }
+  const raw = JSON.stringify(oversizedState);
+  assert.ok(raw.length > 16384);
+  const originalParse = JSON.parse;
+  let parsedOversized = false;
+  JSON.parse = (value) => {
+    if (typeof value === "string" && value.length > 16384) {
+      parsedOversized = true;
+    }
+    return originalParse(value);
+  };
+  try {
+    applet.errorNotificationState = raw;
+    assert.equal(applet._shouldNotifyError("oversized-state"), true);
+  } finally {
+    JSON.parse = originalParse;
+  }
+  assert.equal(parsedOversized, false);
+  assert.ok(applet.errorNotificationState.length < 16384);
+});
+
 test("partial usage enters the per-account warning notification state", () => {
   const applet = makeApplet();
   applet.notifyWarnings = false;
@@ -2335,7 +3768,7 @@ test("restlaufzeit is rendered, styled and uses the per-surface target", () => {
       account: "alpha",
       format: 3,
       mode: 2,
-      threshold: 120,
+      threshold: 20,
       font: 0,
       size: 0,
       bold: true,
@@ -2403,7 +3836,7 @@ test("date, time and restlaufzeit styles honor all modes and font colors", () =>
   for (const kind of kinds) {
     const style = {
       mode: 0,
-      threshold: kind === "duration" ? 120 : 20,
+      threshold: 20,
       format: 0,
       font: 0,
       size: 0,
@@ -2418,8 +3851,8 @@ test("date, time and restlaufzeit styles honor all modes and font colors", () =>
       "below-color": 3,
       "below-background": 0,
     };
-    const high = kind === "duration" ? 180 : 80;
-    const low = kind === "duration" ? 60 : 10;
+    const high = 80;
+    const low = 10;
     assert.match(applet._styleSpan("value", style, high, "panel"), /foreground="#16a34a"/);
     style.mode = 1;
     assert.equal(applet._styleSpan("value", style, high, "panel"), "value");
@@ -2430,6 +3863,59 @@ test("date, time and restlaufzeit styles honor all modes and font colors", () =>
     style.mode = 3;
     assert.equal(applet._styleSpan("value", style, low, "panel"), "value");
   }
+});
+
+test("restlaufzeit threshold uses remaining percentage, not minutes", () => {
+  const applet = makeApplet();
+  applet._durationStyles.alpha = {
+    account: "alpha",
+    format: 0,
+    mode: 1,
+    threshold: 20,
+    font: 0,
+    size: 0,
+    bold: true,
+    italic: false,
+    color: 3,
+    background: 0,
+    "below-font": 0,
+    "below-size": 0,
+    "below-bold": true,
+    "below-italic": false,
+    "below-color": 3,
+    "below-background": 0,
+  };
+  applet._styleTargets["alpha:3"] = {panel: true, hover: true, click: true};
+  const window = {
+    remaining: 80,
+    reset_at: new Date(Date.now() + 5 * 60000).toISOString(),
+  };
+
+  const parts = applet._windowResetParts(window, "alpha", "panel", false);
+
+  assert.equal(parts.plain, "Rest 5m");
+  assert.equal(parts.markup, "Rest 5m");
+});
+
+test("reset targets control date, time and duration in click menu", () => {
+  const applet = makeApplet();
+  applet._styleTargets = {
+    "alpha:1": {panel: false, hover: false, click: false},
+    "alpha:2": {panel: false, hover: false, click: false},
+    "alpha:3": {panel: false, hover: false, click: true},
+  };
+  const window = {
+    remaining: 80,
+    reset_at: new Date(Date.now() + 5 * 60000).toISOString(),
+  };
+
+  const durationOnly = applet._windowResetParts(window, "alpha", "click", false);
+
+  assert.match(durationOnly.plain, /^Rest 5m$/);
+  applet._styleTargets["alpha:3"].click = false;
+  const hidden = applet._windowResetParts(window, "alpha", "click", false);
+  assert.equal(hidden.plain, "");
+  assert.equal(hidden.markup, "");
 });
 
 test("primary cache and fresh requests are queued instead of cancelling each other", () => {
@@ -4622,6 +6108,30 @@ test("backend overview rejects invalid rows without replacing state", () => {
   ]);
 });
 
+test("backend overview rejects relative account paths without throwing", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };
+  applet._backendRowsReady = true;
+  applet.accountBackends = [{ account: "alpha", label: "Alpha", backend: 0 }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() { throw new Error("must not write"); } };
+  applet._syncAccountSettings = () => { throw new Error("must not sync"); };
+  applet._syncStyleRows = () => { throw new Error("must not sync"); };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{
+      id: "alpha",
+      label: "Alpha",
+      profile_dir: "relative/profile",
+      backend: "direct",
+    }],
+  }, null);
+
+  assert.doesNotThrow(() => applet._loadAccountBackends());
+  assert.deepEqual(applet._backendAccounts, {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  });
+});
+
 test("backend overview rejects normalized account and backend identities", () => {
   const applet = makeApplet();
   applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };
@@ -4809,8 +6319,10 @@ test("backend setting changes apply every changed account serially", () => {
   ];
   applet._baseCommandArgv = () => ["codex-usage"];
   const calls = [];
+  const commands = [];
   applet._spawnAuxJson = (argv, callback) => {
     calls.push(argv[3]);
+    commands.push(argv);
     callback({ ok: true, account: argv[3] }, null);
   };
   applet._refreshFresh = () => {};
@@ -4818,6 +6330,10 @@ test("backend setting changes apply every changed account serially", () => {
   applet._loadAccountBackends = () => { reloads += 1; };
   applet._onAccountBackendsChanged();
   assert.deepEqual(calls, ["alpha", "beta"]);
+  assert.deepEqual(commands, [
+    ["codex-usage", "account", "backend", "alpha", "app-server", "--format", "json"],
+    ["codex-usage", "account", "backend", "beta", "app-server", "--format", "json"],
+  ]);
   assert.equal(reloads, 1);
   assert.equal(applet._backendChangeCurrent, null);
   assert.equal(JSON.stringify(applet._backendChangeQueue), "[]");
@@ -4927,7 +6443,9 @@ test("deferred auxiliary requests coalesce and stay bounded", () => {
   for (let index = 0; index < 8; index += 1) {
     applet._spawnAuxJson(
       ["codex-usage", "health", String(index)],
-      () => {}
+      () => {},
+      false,
+      10000
     );
   }
   applet._spawnAuxJson(
@@ -4942,9 +6460,15 @@ test("deferred auxiliary requests coalesce and stay bounded", () => {
   assert.match(overflowError, /wartende Hilfsanfragen/);
 
   const latestCallback = () => {};
-  applet._spawnAuxJson(["codex-usage", "health", "0"], latestCallback);
+  applet._spawnAuxJson(
+    ["codex-usage", "health", "0"],
+    latestCallback,
+    false,
+    910000
+  );
   assert.equal(applet._backendAuxQueue.length, 8);
   assert.equal(applet._backendAuxQueue[0].callback, latestCallback);
+  assert.equal(applet._backendAuxQueue[0].timeoutMs, 910000);
 });
 
 test("old three-surface target rows migrate with a duration row", () => {
@@ -4957,10 +6481,16 @@ test("old three-surface target rows migrate with a duration row", () => {
       { account: "alpha", element: 2, panel: false, hover: false, click: true },
     ]
   );
-  assert.equal(rows.length, 8);
+  assert.equal(rows.length, 20);
   assert.equal(rows[3].element, 3);
   assert.equal(rows[3].click, true);
   assert.equal(rows[3].panel, false);
+  assert.equal(rows[4].element, 4);
+  assert.equal(rows[4].panel, false);
+  assert.equal(rows[4].hover, true);
+  assert.equal(rows[6].element, 6);
+  assert.equal(rows[7].element, 7);
+  assert.equal(rows[9].element, 9);
 });
 
 test("automatic service activation finishes before the next auxiliary request", () => {

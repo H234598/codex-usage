@@ -49,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         _install_atomically(source, target_root, target)
         print("status=installed")
+        print(
+            "settings-cache-migration="
+            + ("updated" if _migrate_cached_settings() else "unchanged")
+        )
         if args.reload_running:
             print(f"reload={_reload_running_applet(expected_version=expected_version)}")
         return 0
@@ -138,6 +142,67 @@ def _install_atomically(source: Path, target_root: Path, target: Path) -> None:
             os.replace(backup, target)
         if staging_root.is_dir() and not staging_root.is_symlink():
             shutil.rmtree(staging_root)
+
+
+def _migrate_cached_settings(path: Path | None = None) -> bool:
+    if path is None:
+        config_root = Path(os.environ.get("XDG_CONFIG_HOME", "")).expanduser()
+        if not config_root.is_absolute():
+            config_root = Path.home() / ".config"
+        path = (
+            config_root
+            / "cinnamon"
+            / "spices"
+            / APPLET_UUID
+            / f"{APPLET_UUID}.json"
+        )
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        original_mode = path.stat().st_mode & 0o777
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict) or not _migrate_enum_types(payload):
+        return False
+
+    serialized = json.dumps(payload, indent=4, ensure_ascii=False) + "\n"
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.migration-",
+        dir=path.parent,
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    descriptor_open = True
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor_open = False
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, original_mode)
+        os.replace(temporary, path)
+    finally:
+        if descriptor_open:
+            os.close(descriptor)
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+    return True
+
+
+def _migrate_enum_types(value: object) -> bool:
+    changed = False
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            if current.get("type") == "enum" and isinstance(current.get("options"), dict):
+                current["type"] = "string"
+                changed = True
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+    return changed
 
 
 def _reload_running_applet(*, expected_version: str | None = None) -> str:

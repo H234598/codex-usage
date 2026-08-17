@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.scheduler as scheduler_module
 from codex_usage.app_server import AppServerUnavailableError
 from codex_usage.config import AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
@@ -231,6 +232,28 @@ def test_fetch_all_passes_ambiguous_identity_guard_to_direct_reader(monkeypatch)
     fetch_all(AppConfig(accounts=accounts), accounts)
 
     assert flags == {"privat": True, "work": True}
+
+
+def test_fetch_all_rejects_account_iterators_over_config_cap(monkeypatch):
+    monkeypatch.setattr(scheduler_module, "MAX_SCHEDULER_ACCOUNTS", 2)
+    accounts = (
+        Account(id=f"account-{index}", label=str(index), profile_dir=f"/tmp/{index}")
+        for index in range(3)
+    )
+
+    with pytest.raises(ValueError, match="too many accounts"):
+        fetch_all(AppConfig(accounts=()), accounts)
+
+
+def test_fetch_all_rejects_oversized_config_account_iterators(monkeypatch):
+    monkeypatch.setattr(scheduler_module, "MAX_SCHEDULER_ACCOUNTS", 2)
+    accounts = (
+        Account(id=f"configured-{index}", label=str(index), profile_dir=f"/tmp/{index}")
+        for index in range(3)
+    )
+
+    with pytest.raises(ValueError, match="too many accounts"):
+        fetch_all(AppConfig(accounts=accounts), ())
 
 
 def test_fetch_all_keeps_ambiguity_guard_for_selected_account(monkeypatch):
@@ -1011,6 +1034,48 @@ def test_fetch_all_clears_values_after_snapshot_save_failure(monkeypatch):
     assert result[0].models == ()
 
 
+def test_fetch_all_records_history_after_current_snapshot(monkeypatch):
+    account = Account(id="alpha", label="Alpha", profile_dir="/tmp/alpha")
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=75),
+        weekly=LimitWindow(name="weekly", remaining=50),
+        backend_used="direct",
+    )
+    events: list[str] = []
+    monkeypatch.setattr("codex_usage.scheduler._fetch_one", lambda *_args, **_kwargs: usage)
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda *_args: 0)
+    monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", lambda *_args: None)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_current_usage",
+        lambda *_args: events.append("current"),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.save_usage_snapshot",
+        lambda *_args: events.append("snapshot"),
+    )
+    monkeypatch.setattr("codex_usage.scheduler.account_lock", lambda _account_id: nullcontext())
+    monkeypatch.setattr(
+        "codex_usage.scheduler.backend_provenance_matches_configured",
+        lambda *_args: True,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.record_usage_samples_batch",
+        lambda values: events.extend("history" for _value in values),
+    )
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        save_snapshots=True,
+    )
+
+    assert result[0].account_id == "alpha"
+    assert events == ["current", "snapshot", "history"]
+
+
 def test_fetch_all_serializes_authenticated_multi_account_polls(monkeypatch):
     accounts = (
         Account(
@@ -1056,7 +1121,7 @@ def test_fetch_all_serializes_authenticated_multi_account_polls(monkeypatch):
     assert locks == ["__all_accounts__", "first", "second"]
 
 
-def test_fetch_all_serializes_visible_browser_multi_account_polls(monkeypatch):
+def test_fetch_all_parallelizes_visible_browser_multi_account_polls(monkeypatch):
     accounts = (
         Account(id="first", label="First", profile_dir="/tmp/first"),
         Account(id="second", label="Second", profile_dir="/tmp/second"),
@@ -1064,8 +1129,20 @@ def test_fetch_all_serializes_visible_browser_multi_account_polls(monkeypatch):
     calls: list[tuple[str, bool]] = []
     locks: list[str] = []
 
-    def fail_if_parallel(**_kwargs):
-        raise AssertionError("visible browser account polls must be serialized")
+    executor_workers: list[int] = []
+
+    class FakeExecutor:
+        def __init__(self, *, max_workers):
+            executor_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def map(self, function, values):
+            return [function(value) for value in values]
 
     def fake_fetch_browser(account, _config, *, headed):
         calls.append((account.id, headed))
@@ -1075,7 +1152,7 @@ def test_fetch_all_serializes_visible_browser_multi_account_polls(monkeypatch):
             captured_at=datetime(2026, 6, 8, 4, 30, tzinfo=ZoneInfo("Europe/Berlin")),
         )
 
-    monkeypatch.setattr("codex_usage.scheduler.ThreadPoolExecutor", fail_if_parallel)
+    monkeypatch.setattr("codex_usage.scheduler.ThreadPoolExecutor", FakeExecutor)
     monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage", fake_fetch_browser)
 
     def fake_account_lock(account_id, **_kwargs):
@@ -1088,7 +1165,55 @@ def test_fetch_all_serializes_visible_browser_multi_account_polls(monkeypatch):
 
     assert [usage.account_id for usage in result] == ["first", "second"]
     assert calls == [("first", True), ("second", True)]
-    assert locks == ["__all_accounts__", "first", "second"]
+    assert executor_workers == [2]
+    assert locks == ["first", "second"]
+
+
+def test_fetch_all_parallelizes_headless_browser_multi_account_polls(monkeypatch):
+    accounts = (
+        Account(id="first", label="First", profile_dir="/tmp/first"),
+        Account(id="second", label="Second", profile_dir="/tmp/second"),
+    )
+    calls: list[tuple[str, bool]] = []
+    locks: list[str] = []
+    executor_workers: list[int] = []
+
+    class FakeExecutor:
+        def __init__(self, *, max_workers):
+            executor_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def map(self, function, values):
+            return [function(value) for value in values]
+
+    def fake_fetch_browser(account, _config, *, headed):
+        calls.append((account.id, headed))
+        return AccountUsage(
+            account_id=account.id,
+            label=account.label,
+            captured_at=datetime(2026, 6, 8, 4, 30, tzinfo=ZoneInfo("Europe/Berlin")),
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.ThreadPoolExecutor", FakeExecutor)
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage", fake_fetch_browser)
+
+    def fake_account_lock(account_id, **_kwargs):
+        locks.append(account_id)
+        return nullcontext()
+
+    monkeypatch.setattr("codex_usage.scheduler.account_lock", fake_account_lock)
+
+    result = fetch_all(AppConfig(accounts=accounts), accounts, headed=False)
+
+    assert [usage.account_id for usage in result] == ["first", "second"]
+    assert calls == [("first", False), ("second", False)]
+    assert executor_workers == [2]
+    assert locks == ["first", "second"]
 
 
 def test_configured_app_server_without_auth_does_not_silently_use_browser(monkeypatch):
@@ -4631,6 +4756,23 @@ def test_usage_map_rejects_missing_or_duplicate_results():
 
     assert _usage_map_for_accounts([], [account]) is None
     assert _usage_map_for_accounts([usage, usage], [account, account]) is None
+
+
+def test_usage_validation_stops_after_expected_count_plus_overflow():
+    account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
+    usage = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+    )
+
+    def overlong_usages():
+        yield usage
+        yield usage
+        raise AssertionError("usage validation consumed beyond overflow point")
+
+    assert _usage_map_for_accounts(overlong_usages(), [account]) is None
+    assert _watch_cycle_is_healthy(overlong_usages(), [account]) is False
 
 
 def test_watchdog_blocks_exhausted_dynamic_main_window():

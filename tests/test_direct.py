@@ -5,6 +5,8 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
+from urllib.request import HTTPRedirectHandler
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -20,6 +22,7 @@ from codex_usage.direct import (
     _is_identity_attribution_error,
     _is_spark_limit_response,
     _jwt_expiry,
+    _redact_url,
     _select_stable_wham_usage,
     _signature_number,
     auth_identity_changed,
@@ -51,6 +54,27 @@ def _jwt_with_raw_payload(payload: bytes) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     encoded_payload = base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
     return f"{header}.{encoded_payload}.signature"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://user:secret@chatgpt.com/path?token=value#fragment",
+            "https://chatgpt.com/path",
+        ),
+        (
+            "https://user:secret@[2001:db8::1]:8443/path?token=value",
+            "https://[2001:db8::1]:8443/path",
+        ),
+    ],
+)
+def test_direct_redact_url_removes_userinfo(url, expected):
+    assert _redact_url(url) == expected
+
+
+def test_direct_redact_url_rejects_invalid_port():
+    assert _redact_url("https://user:secret@chatgpt.com:invalid/path") == ""
 
 
 @pytest.mark.parametrize(
@@ -90,6 +114,74 @@ def test_fetch_wham_usage_rejects_invalid_http_status(status, monkeypatch):
 
     with pytest.raises(DirectFetchError, match="invalid HTTP status"):
         _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
+def test_direct_credentials_are_not_forwarded_to_redirect_target(monkeypatch):
+    class FakeResponse:
+        status = 200
+
+        def __init__(self):
+            self.headers = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return b"{}"
+
+    def fake_urlopen(request, *, timeout):
+        redirected = HTTPRedirectHandler().redirect_request(
+            request,
+            None,
+            302,
+            "found",
+            {},
+            "https://attacker.example/collect",
+        )
+        assert request.get_header("Authorization") == "Bearer secret"
+        assert request.get_header("Chatgpt-account-id") == "account"
+        assert redirected is not None
+        assert redirected.get_header("Authorization") is None
+        assert redirected.get_header("Chatgpt-account-id") is None
+        return FakeResponse()
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", fake_urlopen)
+
+    assert _fetch_wham_usage(
+        "secret",
+        account_id="account",
+        timeout_seconds=1,
+    ) == {}
+
+
+def test_direct_rejects_foreign_final_response_url(monkeypatch):
+    class FakeResponse:
+        status = 200
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+        url = "https://attacker.example/collect"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def geturl(self):
+            return self.url
+
+        def read(self, _limit):
+            return b"{}"
+
+    monkeypatch.setattr(
+        "codex_usage.direct.urlopen",
+        lambda _request, *, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(DirectFetchError, match="response URL is untrusted"):
+        _fetch_wham_usage("secret", account_id=None, timeout_seconds=1)
 
 
 def test_jwt_expiry_ignores_non_object_payloads():
@@ -497,12 +589,13 @@ def test_fetch_account_usage_direct_uses_auth_json_access_token(tmp_path, monkey
 
     usage = fetch_account_usage_direct(account, timeout_seconds=7)
 
+    timeout = captured.pop("timeout")
     assert captured == {
         "url": "https://chatgpt.com/backend-api/wham/usage",
         "authorization": "Bearer secret-access-token",
         "account_id": "server-account",
-        "timeout": 7,
     }
+    assert 0 < timeout <= 7
     assert usage.status == AccountStatus.OK
     assert usage.five_hour is not None
     assert usage.five_hour.remaining == 97
@@ -1110,6 +1203,60 @@ def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):
 
     assert payload["rate_limit"]["primary_window"]["used_percent"] == 1
     assert payload["rate_limit"]["secondary_window"]["used_percent"] == 51
+
+
+def test_fetch_stable_wham_usage_uses_one_aggregate_deadline(monkeypatch):
+    now = [100.0]
+    request_timeouts: list[float] = []
+
+    monkeypatch.setattr("codex_usage.direct.time.monotonic", lambda: now[0])
+    monkeypatch.setattr(
+        "codex_usage.direct.time.sleep",
+        lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+
+    def fake_fetch(_token, *, account_id, timeout_seconds):
+        request_timeouts.append(timeout_seconds)
+        now[0] += 4.0
+        return {}
+
+    def reject(_payloads):
+        raise DirectFetchError("inconsistent")
+
+    monkeypatch.setattr("codex_usage.direct._fetch_wham_usage", fake_fetch)
+    monkeypatch.setattr("codex_usage.direct._select_stable_wham_usage", reject)
+
+    with pytest.raises(DirectFetchError, match="direct fetch timed out"):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=10)
+
+    assert request_timeouts == pytest.approx([10.0, 6.0, 2.0])
+
+
+@pytest.mark.parametrize(
+    "timeout_seconds",
+    (
+        pytest.param(True, id="bool"),
+        pytest.param(0, id="zero"),
+        pytest.param(-1, id="negative"),
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="infinity"),
+        pytest.param(float("-inf"), id="negative-infinity"),
+        pytest.param("1", id="string"),
+        pytest.param(10**10_000, id="huge-int"),
+    ),
+)
+def test_fetch_stable_wham_usage_rejects_invalid_timeout(timeout_seconds, monkeypatch):
+    def fail_network(*_args, **_kwargs):
+        raise AssertionError("network must not be reached")
+
+    monkeypatch.setattr("codex_usage.direct._fetch_wham_usage", fail_network)
+
+    with pytest.raises(DirectFetchError, match="positive finite"):
+        _fetch_stable_wham_usage(
+            "token",
+            account_id=None,
+            timeout_seconds=timeout_seconds,
+        )
 
 
 def test_fetch_stable_wham_usage_keeps_backend_identities_in_separate_groups(
@@ -1845,6 +1992,66 @@ def test_fetch_account_usage_direct_retries_after_rotated_auth_token(
     assert usage.status == AccountStatus.OK
     assert usage.five_hour is not None and usage.five_hour.remaining == 97
     assert usage.weekly is not None and usage.weekly.remaining == 55
+
+
+def test_fetch_account_usage_direct_keeps_deadline_after_rotated_auth_token(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    old_token = "old-access-token"
+    new_token = "new-access-token"
+    now = [100.0]
+    request_timeouts: list[float] = []
+
+    def write_auth(token: str) -> None:
+        auth_path.write_text(
+            json.dumps(
+                {
+                    "tokens": {
+                        "access_token": token,
+                        "id_token": _jwt_with_claims(
+                            {"https://api.openai.com/auth": {"chatgpt_user_id": "user-a"}}
+                        ),
+                        "account_id": "account-a",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        auth_path.chmod(0o600)
+
+    complete_payload = {
+        "rate_limit": {
+            "primary_window": {"used_percent": 3, "limit_window_seconds": 18000},
+            "secondary_window": {"used_percent": 45, "limit_window_seconds": 604800},
+        },
+        "user_id": "user-a",
+        "account_id": "account-a",
+    }
+
+    def fake_fetch(token: str, *, account_id, timeout_seconds):
+        request_timeouts.append(timeout_seconds)
+        if token == old_token:
+            write_auth(new_token)
+            now[0] += 9.0
+            raise DirectAuthError("direct auth failed: HTTP 401")
+        return complete_payload
+
+    write_auth(old_token)
+    monkeypatch.setattr("codex_usage.direct.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("codex_usage.direct._fetch_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account, timeout_seconds=10)
+
+    assert usage.status == AccountStatus.OK
+    assert request_timeouts == pytest.approx([10.0, 1.0, 1.0, 1.0])
 
 
 def test_fetch_account_usage_direct_retries_after_rotated_auth_token_with_suffix_error_message(
@@ -2718,6 +2925,38 @@ def test_fetch_account_usage_direct_rejects_symlink_auth_json(tmp_path, monkeypa
     assert "secret-access-token" not in usage.error
 
 
+def test_fetch_account_usage_direct_rejects_symlink_auth_parent(tmp_path, monkeypatch):
+    target_dir = tmp_path / "target-auth"
+    target_dir.mkdir()
+    auth_path = target_dir / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    linked_parent = tmp_path / "linked-auth"
+    linked_parent.symlink_to(target_dir, target_is_directory=True)
+
+    def fake_urlopen(request, *, timeout):
+        raise AssertionError("network must not be reached for symlink auth parent")
+
+    monkeypatch.setattr("codex_usage.direct.urlopen", fake_urlopen)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(linked_parent / "auth.json"),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error is not None
+    assert "auth.json parent" in usage.error
+    assert "symlink ancestors" in usage.error
+    assert "secret-access-token" not in usage.error
+
+
 def test_auth_json_helpers_accept_inherited_regular_fd(tmp_path):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text('{"tokens": {"access_token": "token"}}', encoding="utf-8")
@@ -2734,6 +2973,22 @@ def test_auth_json_helpers_accept_inherited_regular_fd(tmp_path):
     assert raw == '{"tokens": {"access_token": "token"}}'
     assert raw_again == raw
     assert file_stat.st_ino == validated.st_ino
+
+
+def test_auth_json_helpers_reject_hard_linked_file(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        '{"tokens": {"access_token": "token"}}',
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    os.link(auth_path, tmp_path / "auth-copy.json")
+
+    assert auth_path.stat().st_nlink == 2
+    with pytest.raises(DirectAuthError, match="hard-linked"):
+        read_auth_json_file(auth_path)
+    with pytest.raises(DirectAuthError, match="hard-linked"):
+        validate_auth_json_file(auth_path)
 
 
 def test_auth_json_helpers_reject_inherited_non_regular_fd():

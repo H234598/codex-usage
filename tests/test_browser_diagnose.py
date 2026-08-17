@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from playwright.sync_api import sync_playwright
 
 from codex_usage.browser import (
+    DIAGNOSTIC_MAX_RESPONSES,
+    _capture_diagnostic_response,
     _detect_page_state,
     _diagnose_auth_json,
+    _diagnostic_keys,
+    _prepare_private_output_dir,
     _redact_url,
+    _safe_body_text,
+    _safe_html_text,
     _save_diagnostic_screenshot,
     _save_probe_payloads,
     _status_for_result,
+    _top_level_keys,
 )
 from codex_usage.direct import MAX_AUTH_JSON_BYTES
 from codex_usage.extractor import JsonCandidate
@@ -63,6 +73,116 @@ def test_diagnose_auth_json_redacts_token_values(tmp_path):
     assert "sk-secret" not in serialized
 
 
+def test_diagnostic_response_window_keeps_newest_entries():
+    responses = []
+
+    for index in range(DIAGNOSTIC_MAX_RESPONSES + 2):
+        _capture_diagnostic_response(
+            SimpleNamespace(
+                url=f"https://chatgpt.com/backend-api/usage/{index}",
+                status=200,
+                headers={"content-type": "application/json"},
+            ),
+            responses,
+        )
+
+    assert len(responses) == DIAGNOSTIC_MAX_RESPONSES
+    assert responses[0]["url"].endswith("/2")
+    assert responses[-1]["url"].endswith("/101")
+
+
+def test_diagnostic_key_lists_are_bounded_and_sorted():
+    payload = {f"key-{index:04d}": index for index in range(100)}
+
+    assert _diagnostic_keys(payload) == [f"key-{index:04d}" for index in range(40)]
+    assert _top_level_keys(payload) == [f"key-{index:04d}" for index in range(30)]
+
+
+def test_diagnostic_response_window_ignores_irrelevant_entries_without_eviction():
+    responses = []
+
+    for index in range(DIAGNOSTIC_MAX_RESPONSES):
+        _capture_diagnostic_response(
+            SimpleNamespace(
+                url=f"https://chatgpt.com/backend-api/usage/{index}",
+                status=200,
+                headers={"content-type": "application/json"},
+            ),
+            responses,
+        )
+
+    _capture_diagnostic_response(
+        SimpleNamespace(
+            url="https://example.test/irrelevant",
+            status=200,
+            headers={"content-type": "application/json"},
+        ),
+        responses,
+    )
+
+    assert responses[0]["url"].endswith("/0")
+    assert responses[-1]["url"].endswith("/99")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evilchatgpt.com/backend-api/usage",
+        "https://chatgpt.com.evil.example/backend-api/usage",
+        "https://notopenai.com/rate_limit",
+        "https://chatgpt.com@evil.example/rate_limit",
+        "http://chatgpt.com/rate_limit",
+        "https://chatgpt.com:8443/rate_limit",
+    ],
+)
+def test_diagnostic_response_window_rejects_untrusted_urls(url: str):
+    responses = []
+
+    _capture_diagnostic_response(
+        SimpleNamespace(
+            url=url,
+            status=200,
+            headers={"content-type": "application/json"},
+        ),
+        responses,
+    )
+
+    assert responses == []
+
+
+def test_diagnostic_response_window_accepts_openai_subdomain():
+    responses = []
+
+    _capture_diagnostic_response(
+        SimpleNamespace(
+            url="https://api.openai.com/rate_limit",
+            status=200,
+            headers={"content-type": "application/json"},
+        ),
+        responses,
+    )
+
+    assert responses[0]["url"] == "https://api.openai.com/rate_limit"
+
+
+def test_diagnose_auth_json_ignores_relative_codex_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    cwd = tmp_path / "cwd"
+    relative_home = cwd / "relative"
+    relative_home.mkdir(parents=True)
+    (relative_home / "auth.json").write_text('{"tokens": {}}', encoding="utf-8")
+
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("CODEX_HOME", "relative")
+
+    result = _diagnose_auth_json(None)
+
+    assert result["path"] == str(home / ".codex" / "auth.json")
+    assert result["exists"] is False
+
+
 def test_diagnose_auth_json_rejects_symlink_auth_file(tmp_path):
     target = tmp_path / "target-auth.json"
     target.write_text(
@@ -94,6 +214,70 @@ def test_diagnose_auth_json_rejects_oversized_auth_file(tmp_path):
     assert "auth.json too large" in result["error"]
 
 
+def test_safe_html_text_does_not_clone_unbounded_dom():
+    with sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(headless=True)
+        except Exception as exc:
+            pytest.skip(f"Chromium unavailable: {exc}")
+        page = browser.new_page()
+        try:
+            page.set_content(
+                "<main><div style='width: 97%'>5-hour usage</div>"
+                + ("<p>padding</p>" * 200_000)
+                + "</main>"
+            )
+            page.evaluate(
+                """(() => {
+                    const original = Node.prototype.cloneNode;
+                    Node.prototype.cloneNode = function(...args) {
+                        if (this === document.documentElement) {
+                            throw new Error("cloneNode called");
+                        }
+                        return original.apply(this, args);
+                    };
+                })()"""
+            )
+
+            html_text = _safe_html_text(page)
+
+            assert html_text.startswith("<html")
+            assert "width: 97%" in html_text
+            assert len(html_text) == 2_000_000
+        finally:
+            browser.close()
+
+
+def test_safe_body_text_does_not_materialize_inner_text_before_limit():
+    with sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(headless=True)
+        except Exception as exc:
+            pytest.skip(f"Chromium unavailable: {exc}")
+        page = browser.new_page()
+        try:
+            page.set_content(
+                "<main><div>5-hour usage 97%</div>"
+                + "<div style='display:none'>hidden stale usage 1%</div>"
+                + ("<div>x</div>" * 100)
+                + ("x" * 3_000_000)
+                + "</main>"
+            )
+            page.evaluate(
+                """Object.defineProperty(HTMLElement.prototype, "innerText", {
+                    get() { throw new Error("innerText materialized"); }
+                })"""
+            )
+
+            body_text = _safe_body_text(page)
+
+            assert "5-hour usage 97%" in body_text[:100]
+            assert "hidden stale usage" not in body_text
+            assert len(body_text) == 2_000_000
+        finally:
+            browser.close()
+
+
 def test_diagnose_detects_cloudflare_challenge_and_redacts_url():
     challenge_url = "https://chatgpt.com/cdn-cgi/challenge-platform/h/g/flow/secret-token"
 
@@ -107,6 +291,27 @@ def test_diagnose_detects_cloudflare_challenge_and_redacts_url():
         )
         == "cloudflare"
     )
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://user:secret@chatgpt.com/path?token=value#fragment",
+            "https://chatgpt.com/path",
+        ),
+        (
+            "https://user:secret@[2001:db8::1]:8443/path?token=value",
+            "https://[2001:db8::1]:8443/path",
+        ),
+    ],
+)
+def test_browser_redact_url_removes_userinfo(url, expected):
+    assert _redact_url(url) == expected
+
+
+def test_browser_redact_url_rejects_invalid_port():
+    assert _redact_url("https://user:secret@chatgpt.com:invalid/path") == ""
 
 
 def test_status_for_result_marks_reset_only_windows_partial():
@@ -175,6 +380,21 @@ def test_save_diagnostic_screenshot_rejects_symlink_directory(tmp_path):
         _save_diagnostic_screenshot(FakeScreenshotPage(), account, screenshot_link)
 
     assert not (outside / "privat-diagnose.png").exists()
+
+
+def test_private_output_directory_rejects_failed_permission_hardening(
+    tmp_path, monkeypatch
+):
+    output_dir = tmp_path / "screens"
+    output_dir.mkdir()
+
+    def fail_chmod(_path, _mode):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "chmod", fail_chmod)
+
+    with pytest.raises(ValueError, match="could not secure private path"):
+        _prepare_private_output_dir(output_dir, label="diagnose screenshot directory")
 
 
 def test_save_diagnostic_screenshot_rejects_symlink_output_file(tmp_path):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import math
 import os
 import secrets
 import stat
@@ -13,15 +14,103 @@ from pathlib import Path
 PRIVATE_LOCK_TIMEOUT_SECONDS = 30
 
 
+def _lock_deadline(timeout_seconds: int | float) -> float:
+    error = "lock timeout must be a non-negative finite number"
+    if isinstance(timeout_seconds, bool) or not isinstance(
+        timeout_seconds, (int, float)
+    ):
+        raise ValueError(error)
+    try:
+        seconds = float(timeout_seconds)
+    except (OverflowError, TypeError, ValueError):
+        raise ValueError(error) from None
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ValueError(error)
+    deadline = time.monotonic() + seconds
+    if not math.isfinite(deadline):
+        raise ValueError(error)
+    return deadline
+
+
+def _require_private_directory(path: Path, *, label: str) -> None:
+    try:
+        item = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"{label} must be a real directory: {path}") from exc
+    if (
+        not stat.S_ISDIR(item.st_mode)
+        or stat.S_ISLNK(item.st_mode)
+        or item.st_uid != os.getuid()
+    ):
+        raise ValueError(f"{label} must be a private user-owned directory: {path}")
+
+
 def assert_no_symlink_ancestors(path: Path, *, label: str) -> None:
-    absolute = Path(os.path.abspath(path))
+    raw_path = Path(path)
+    absolute = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
     current = Path(absolute.anchor)
     for part in absolute.parts[1:]:
+        if part == ".":
+            continue
+        if part == "..":
+            current = current.parent
+            continue
         current /= part
         if current.is_symlink():
             raise ValueError(f"{label} must not contain symlink ancestors: {current}")
         if not current.exists():
             break
+
+
+def ensure_private_directory(
+    path: Path,
+    *,
+    label: str,
+    created_paths: list[tuple[Path, int, int]] | None = None,
+) -> Path:
+    """Create private directory path without weakening existing parents."""
+    raw_path = Path(path)
+    assert_no_symlink_ancestors(raw_path, label=label)
+    if raw_path.is_symlink():
+        raise ValueError(f"{label} must not be a symlink: {raw_path}")
+    absolute = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
+    try:
+        protected = {Path("/").resolve(), Path.home().resolve()}
+        normalized = absolute.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"{label} cannot be resolved safely: {raw_path}") from exc
+    if normalized in protected:
+        raise ValueError(f"{label} must not be a protected directory: {raw_path}")
+
+    missing: list[Path] = []
+    current = raw_path
+    while not current.exists():
+        if current.is_symlink():
+            raise ValueError(f"{label} must not be a symlink: {current}")
+        missing.append(current)
+        parent = current.parent
+        if parent == current:
+            raise ValueError(f"{label} has no usable directory parent: {raw_path}")
+        current = parent
+    if current.is_symlink() or not current.is_dir():
+        raise ValueError(f"{label} must be a real directory: {current}")
+
+    for candidate in reversed(missing):
+        created = False
+        try:
+            candidate.mkdir(mode=0o700)
+            created = True
+        except FileExistsError:
+            pass
+        if created and created_paths is not None:
+            item = candidate.lstat()
+            created_paths.append((candidate, item.st_dev, item.st_ino))
+        _require_private_directory(candidate, label=label)
+        candidate.chmod(0o700)
+
+    _require_private_directory(raw_path, label=label)
+    raw_path.chmod(0o700)
+    return raw_path
 
 
 def read_private_text(
@@ -54,7 +143,7 @@ def read_private_text(
 
     try:
         file_stat = os.fstat(fd)
-        if not stat.S_ISREG(file_stat.st_mode):
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != os.getuid():
             raise ValueError(f"{regular_label} must be a regular file: {path}")
         if file_stat.st_size > max_bytes:
             raise ValueError(
@@ -81,12 +170,21 @@ def read_private_text(
         ) from exc
 
 
-def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) -> None:
+def write_private_text(
+    path: Path,
+    text: str,
+    *,
+    label: str,
+    mode: int = 0o600,
+    replace_existing: bool = True,
+) -> None:
     assert_no_symlink_ancestors(path, label=label)
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
-    if path.exists() and path.stat().st_nlink != 1:
-        raise ValueError(f"{label} must not be hard-linked: {path}")
+    if path.exists():
+        target_stat = path.stat()
+        if target_stat.st_nlink != 1 or target_stat.st_uid != os.getuid():
+            raise ValueError(f"{label} must be a private user-owned file: {path}")
     parent = path.parent
     if parent.is_symlink() or not parent.is_dir():
         raise ValueError(f"{label} parent must be a real directory: {parent}")
@@ -108,7 +206,11 @@ def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) 
     try:
         fd = os.open(temporary, flags, mode)
         file_stat = os.fstat(fd)
-        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+        if (
+            not stat.S_ISREG(file_stat.st_mode)
+            or file_stat.st_nlink != 1
+            or file_stat.st_uid != os.getuid()
+        ):
             raise ValueError(f"temporary {label} is not a private regular file")
         os.fchmod(fd, mode)
         offset = 0
@@ -120,8 +222,27 @@ def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) 
         os.fsync(fd)
         os.close(fd)
         fd = -1
-        os.replace(temporary, path)
-        replaced = True
+        if replace_existing:
+            os.replace(temporary, path)
+            replaced = True
+        else:
+            try:
+                os.link(temporary, path)
+            except FileExistsError as exc:
+                raise ValueError(f"{label} must not overwrite existing file: {path}") from exc
+            replaced = True
+            try:
+                temporary.unlink()
+            except OSError as unlink_error:
+                try:
+                    path.unlink()
+                except OSError as rollback_error:
+                    raise ExceptionGroup(
+                        f"could not roll back create-only {label}",
+                        [unlink_error, rollback_error],
+                    ) from None
+                replaced = False
+                raise
         _fsync_directory(parent)
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
@@ -133,7 +254,7 @@ def write_private_text(path: Path, text: str, *, label: str, mode: int = 0o600) 
         if not replaced:
             try:
                 temporary.unlink()
-            except FileNotFoundError:
+            except OSError:
                 pass
 
 
@@ -159,9 +280,10 @@ def _fsync_directory(path: Path) -> None:
 def private_path_lock(
     path: Path,
     *,
-    timeout_seconds: int = PRIVATE_LOCK_TIMEOUT_SECONDS,
+    timeout_seconds: int | float = PRIVATE_LOCK_TIMEOUT_SECONDS,
     label: str = "private lock",
 ) -> Iterator[None]:
+    deadline = _lock_deadline(timeout_seconds)
     parent = path.parent
     assert_no_symlink_ancestors(parent, label=label)
     if parent.is_symlink() or not parent.is_dir():
@@ -182,10 +304,13 @@ def private_path_lock(
         raise
     try:
         file_stat = os.fstat(fd)
-        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+        if (
+            not stat.S_ISREG(file_stat.st_mode)
+            or file_stat.st_nlink != 1
+            or file_stat.st_uid != os.getuid()
+        ):
             raise ValueError(f"{label} must be a private regular file: {lock_path}")
         os.fchmod(fd, 0o600)
-        deadline = time.monotonic() + timeout_seconds
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

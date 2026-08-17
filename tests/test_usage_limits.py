@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 
+import codex_usage.usage_limits as usage_limits_module
 from codex_usage.extractor import LOCAL_TZ
 from codex_usage.models import AccountUsage, LimitWindow, UsagePool
 from codex_usage.usage_limits import (
@@ -600,6 +601,27 @@ def test_wham_disables_spark_pool_with_conflicting_duplicate_entries():
     assert models[0].exhausted is True
 
 
+def test_wham_keeps_only_first_identical_spark_duplicate():
+    item = {
+        "limit_name": SPARK_MODEL,
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 1,
+                "limit_window_seconds": 604800,
+            }
+        },
+    }
+
+    _, models = parse_wham_usage_pools(
+        {"additional_rate_limits": [item] * 1000},
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert len(models) == 1
+    assert models[0].available is True
+
+
 def test_model_catalog_cannot_reenable_disabled_usage_pool():
     disabled = UsagePool(
         key=SPARK_MODEL,
@@ -617,6 +639,28 @@ def test_model_catalog_cannot_reenable_disabled_usage_pool():
 def test_model_catalog_does_not_normalize_spark_identity():
     assert merge_model_catalog((), (f"{SPARK_MODEL} ",)) == ()
     assert merge_model_catalog((), (SPARK_MODEL.upper(),)) == ()
+
+
+def test_model_catalog_bounds_arbitrary_iterators():
+    def overlong_catalog():
+        for index in range(101):
+            yield SPARK_MODEL if index == 0 else f"model-{index}"
+        raise AssertionError("model catalog iterator was consumed past its cap")
+
+    assert merge_model_catalog((), overlong_catalog()) == ()
+
+
+def test_model_catalog_bounds_pool_iterators(monkeypatch):
+    monkeypatch.setattr(usage_limits_module, "MAX_MODEL_CATALOG_IDS", 2)
+    consumed = []
+
+    def overlong_pools():
+        for index in range(5):
+            consumed.append(index)
+            yield UsagePool(key=f"model-{index}", display_name="Model")
+
+    assert merge_model_catalog(overlong_pools(), ()) == ()
+    assert consumed == [0, 1, 2]
 
 
 @pytest.mark.parametrize(
@@ -976,6 +1020,24 @@ def test_app_server_disables_spark_with_conflicting_duplicate_buckets():
     assert len(models) == 1
     assert models[0].available is False
     assert models[0].exhausted is True
+
+
+def test_app_server_keeps_only_first_identical_spark_duplicate():
+    bucket = {
+        "limitId": "codex_bengalfox",
+        "primary": {
+            "usedPercent": 1,
+            "windowDurationMins": 10080,
+        },
+    }
+
+    _, models = parse_app_server_usage_pools(
+        {"rateLimitsByLimitId": {f"spark-{index}": bucket for index in range(1000)}},
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].available is True
 
 
 def test_app_server_disables_spark_when_exact_bucket_is_malformed():

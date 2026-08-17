@@ -3,10 +3,12 @@ from __future__ import annotations
 import base64
 import json
 import shutil
+import ssl
 import subprocess
 from datetime import datetime, timedelta
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from threading import Thread
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -14,21 +16,28 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.bridge as bridge_module
 from codex_usage.bridge import (
     _authenticated_snapshot_supersedes_browser_current,
+    _BoundedThreadingHTTPServer,
+    _bridge_host_requires_tls,
     _browser_payload_is_covered_by_authenticated_state,
     _json_candidates_from_payload,
     _make_handler,
     _newest_known_usage,
     _parse_captured_at,
     _redact_url,
+    _safe_context_value,
+    _safe_excerpt,
     _sanitize_debug_number,
+    _tls_context,
     bridge_token_for_account,
     bridge_token_matches,
     ingest_and_save,
     load_latest_usages,
     render_bridge_snippet,
     revoke_bridge_token,
+    run_bridge_server,
     save_bridge_debug_payload,
     usage_from_ingest_payload,
     write_bridge_extension,
@@ -61,6 +70,172 @@ def test_parse_captured_at_uses_dst_aware_local_zone(monkeypatch):
     assert _parse_captured_at("2026-01-14T23:15:00Z") == expected
 
 
+def test_bridge_text_sanitizers_normalize_and_bound_whitespace():
+    assert _safe_excerpt("\n  alpha\t beta  ", limit=9) == "alpha ..."
+    assert _safe_context_value("alpha\n beta gamma", limit=11) == "alpha be..."
+
+
+def test_bridge_server_rejects_connections_when_slots_are_exhausted(tmp_path, monkeypatch):
+    monkeypatch.setattr("codex_usage.bridge.BRIDGE_MAX_CONNECTIONS", 1)
+    handler = _make_handler(AppConfig(accounts=()), tmp_path / "snapshots", {})
+    server = _BoundedThreadingHTTPServer(("127.0.0.1", 0), handler)
+
+    class FakeRequest:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    request = FakeRequest()
+    assert server._connection_slots.acquire(blocking=False) is True
+    try:
+        server.process_request(request, ("127.0.0.1", 0))
+        assert request.closed is True
+    finally:
+        server._connection_slots.release()
+        server.server_close()
+
+
+def test_bridge_tls_wraps_each_accepted_connection_with_handshake_timeout(
+    tmp_path, monkeypatch
+):
+    handler = _make_handler(AppConfig(accounts=()), tmp_path / "snapshots", {})
+    raw_socket = type(
+        "RawSocket",
+        (),
+        {
+            "settimeout": lambda self, value: setattr(self, "timeout", value),
+            "close": lambda self: setattr(self, "closed", True),
+        },
+    )()
+    wrapped_socket = type(
+        "WrappedSocket",
+        (),
+        {
+            "do_handshake": lambda self: setattr(self, "handshaken", True),
+            "settimeout": lambda self, value: setattr(self, "timeout", value),
+            "close": lambda self: setattr(self, "closed", True),
+        },
+    )()
+
+    class FakeTLSContext:
+        def wrap_socket(self, sock, *, server_side, do_handshake_on_connect):
+            assert sock is raw_socket
+            assert server_side is True
+            assert do_handshake_on_connect is False
+            return wrapped_socket
+
+    monkeypatch.setattr(
+        ThreadingHTTPServer,
+        "get_request",
+        lambda _server: (raw_socket, ("127.0.0.1", 1)),
+    )
+    server = _BoundedThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        handler,
+        tls_context=FakeTLSContext(),
+    )
+    try:
+        request, address = server.get_request()
+    finally:
+        server.server_close()
+
+    assert request is wrapped_socket
+    assert address == ("127.0.0.1", 1)
+    assert getattr(wrapped_socket, "handshaken", False) is False
+    assert wrapped_socket.timeout == bridge_module.BRIDGE_REQUEST_TIMEOUT_SECONDS
+
+
+def test_bridge_tls_handshake_runs_in_bounded_worker(tmp_path):
+    handler = _make_handler(AppConfig(accounts=()), tmp_path / "snapshots", {})
+    server = _BoundedThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        handler,
+        tls_context=object(),
+    )
+    events = []
+    request = type(
+        "WrappedSocket",
+        (),
+        {
+            "do_handshake": lambda self: events.append("handshake"),
+            "close": lambda self: events.append("close"),
+        },
+    )()
+    server.finish_request = lambda current, address: events.append("handler")
+    server.shutdown_request = lambda current: events.append("shutdown")
+    assert server._connection_slots.acquire(blocking=False)
+    try:
+        server.process_request_thread(request, ("127.0.0.1", 1))
+    finally:
+        server.server_close()
+    assert events == ["handshake", "handler", "shutdown"]
+    assert server._connection_slots.acquire(blocking=False)
+    server._connection_slots.release()
+
+
+def test_bridge_tls_handshake_failure_skips_handler_and_releases_slot(tmp_path):
+    handler = _make_handler(AppConfig(accounts=()), tmp_path / "snapshots", {})
+    server = _BoundedThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        handler,
+        tls_context=object(),
+    )
+    events = []
+
+    def fail_handshake(_self):
+        events.append("handshake")
+        raise ssl.SSLError("bad client hello")
+
+    request = type(
+        "WrappedSocket",
+        (),
+        {
+            "do_handshake": fail_handshake,
+            "close": lambda self: events.append("close"),
+        },
+    )()
+    server.finish_request = lambda current, address: events.append("handler")
+    server.shutdown_request = lambda current: events.append("shutdown")
+    assert server._connection_slots.acquire(blocking=False)
+    try:
+        server.process_request_thread(request, ("127.0.0.1", 1))
+    finally:
+        server.server_close()
+    assert events == ["handshake", "close"]
+    assert server._connection_slots.acquire(blocking=False)
+    server._connection_slots.release()
+
+
+def test_tls_context_requires_matching_private_material(tmp_path):
+    assert _tls_context(None, None) is None
+    with pytest.raises(ValueError, match="both certificate and key"):
+        _tls_context(tmp_path / "cert.pem", None)
+
+    certificate = tmp_path / "cert.pem"
+    key = tmp_path / "key.pem"
+    certificate.write_text("certificate", encoding="utf-8")
+    key.write_text("private key", encoding="utf-8")
+    key.chmod(0o644)
+
+    with pytest.raises(ValueError, match="permissions too broad"):
+        _tls_context(certificate, key)
+
+
+def test_bridge_server_rejects_plaintext_non_loopback_before_bind(monkeypatch):
+    monkeypatch.setattr(
+        "codex_usage.bridge._BoundedThreadingHTTPServer",
+        lambda *_args, **_kwargs: pytest.fail("server must not bind"),
+    )
+
+    assert _bridge_host_requires_tls("127.0.0.1") is False
+    assert _bridge_host_requires_tls("localhost") is False
+    assert _bridge_host_requires_tls("0.0.0.0") is True
+
+    with pytest.raises(ValueError, match="require TLS"):
+        run_bridge_server(AppConfig(accounts=()), host="0.0.0.0", port=8765)
+
+
 def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
     with pytest.raises(ValueError, match="timezone"):
         _parse_captured_at("2026-01-15T00:15:00", strict=True)
@@ -73,6 +248,14 @@ def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
 @pytest.mark.parametrize("url", [None, [], {}, "http://[malformed"])
 def test_redact_url_rejects_malformed_external_values(url):
     assert _redact_url(url) == ""
+
+
+def test_redact_url_removes_userinfo_and_rejects_invalid_port():
+    assert (
+        _redact_url("https://user:secret@example.test:8443/path?token=value#fragment")
+        == "https://example.test:8443/path"
+    )
+    assert _redact_url("https://example.test:invalid/path") == ""
 
 
 @pytest.mark.parametrize(
@@ -2592,6 +2775,27 @@ def test_json_candidates_keep_each_response_url():
     ]
 
 
+def test_json_candidates_reject_oversized_combined_response_collection():
+    responses = [
+        {
+            "url": f"https://example.test/usage-{index}",
+            "status": 200,
+            "contentType": "application/json",
+            "ok": True,
+            "truncated": False,
+            "bodyText": json.dumps({"usage": {}}),
+        }
+        for index in range(bridge_module.MAX_BRIDGE_API_RESPONSES + 1)
+    ]
+
+    assert _json_candidates_from_payload(
+        {
+            "apiResponses": responses[: bridge_module.MAX_BRIDGE_API_RESPONSES // 2],
+            "api_responses": responses[bridge_module.MAX_BRIDGE_API_RESPONSES // 2 :],
+        }
+    ) == []
+
+
 @pytest.mark.parametrize(
     "request_sequence",
     (None, True, False, -1, 1.5, "1", "", "invalid", [], {}),
@@ -3586,6 +3790,27 @@ def test_save_bridge_debug_payload_rejects_symlink_debug_directory(tmp_path):
     assert not (outside / "privat-last-ingest.json").exists()
 
 
+def test_save_bridge_debug_payload_fails_closed_when_directory_cannot_be_secured(
+    tmp_path, monkeypatch
+):
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    debug_dir = tmp_path / "debug"
+    original_chmod = bridge_module.Path.chmod
+
+    def fail_debug_chmod(path, mode):
+        if path == debug_dir:
+            raise OSError("simulated debug chmod failure")
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(bridge_module.Path, "chmod", fail_debug_chmod)
+
+    with pytest.raises(ValueError, match="secure debug directory"):
+        save_bridge_debug_payload("privat", {"bodyText": "debug"}, snapshot_dir)
+
+    assert not (debug_dir / "privat-last-ingest.json").exists()
+
+
 def test_save_bridge_debug_payload_rejects_symlink_debug_file(tmp_path):
     debug_dir = tmp_path / "debug"
     debug_dir.mkdir()
@@ -3615,12 +3840,16 @@ def test_render_bridge_snippet_contains_account_endpoint_and_interval():
     assert '"http://127.0.0.1:8765/ingest"' in snippet
     assert "setInterval" in snippet
     assert "300000" in snippet
+    assert '"X-Codex-Usage-Account": account' in snippet
     assert '"Authorization": "Bearer " + token' in snippet
     assert token in snippet
     assert "htmlText" in snippet
     assert "accessibilityText" in snippet
     assert "sendInFlight" in snippet
     assert "codex-usage bridge failed" in snippet
+    assert "Array.from(node.childNodes" not in snippet
+    assert "Array.from(node.attributes" not in snippet
+    assert "Array.from(document.querySelectorAll" not in snippet
 
 
 def test_render_bridge_snippet_sends_dom_fields_and_handles_fetch_failure(tmp_path):
@@ -3640,24 +3869,29 @@ const vm = require("node:vm");
 const source = fs.readFileSync(process.argv[1], "utf8");
 const requests = [];
 let warnings = 0;
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, attributes, childNodes) => ({
+  nodeType: 1,
+  tagName,
+  attributes: Object.entries(attributes).map(([name, value]) => ({ name, value })),
+  childNodes
+});
 const document = {
   title: "Codex",
   readyState: "complete",
   body: { innerText: "5 Stunden Nutzungsgrenze 97% verbleibend" },
-  documentElement: {
-    cloneNode() {
-      return {
-        textContent: "5 Stunden Nutzungsgrenze 97% verbleibend",
-        outerHTML: '<html><body><div style="width: 97%"></div></body></html>',
-        querySelectorAll() { return { forEach() {} }; }
-      };
-    }
-  },
+  documentElement: element("html", {}, [
+    element("body", {}, [
+      element("div", { style: "width: 97%" }, [
+        textNode("5 Stunden Nutzungsgrenze 97% verbleibend")
+      ])
+    ])
+  ]),
   querySelectorAll(selector) {
     if (selector.includes("[aria-label]")) {
       return [{
         getAttribute(name) {
-          return name === "aria-label" ? "97% verbleibend" : null;
+          return name === "aria-label" ? "x".repeat(2000100) : null;
         }
       }];
     }
@@ -3688,15 +3922,471 @@ const sandbox = {
   setTimeout,
   clearTimeout
 };
-vm.runInNewContext(source, sandbox);
+const boundsGuard = `
+Array.prototype.map = function() { throw new Error("unbounded map collector used"); };
+Array.prototype.flatMap = function() { throw new Error("unbounded flatMap collector used"); };
+Object.getPrototypeOf([]).map = Array.prototype.map;
+Object.getPrototypeOf([]).flatMap = Array.prototype.flatMap;
+`;
+vm.runInNewContext(boundsGuard + source, sandbox);
 setTimeout(() => {
   if (
     requests.length !== 1
     || !requests[0].htmlText.includes("width: 97%")
-    || !requests[0].accessibilityText
-    || warnings !== 1
+    || !requests[0].htmlText.includes("5 Stunden Nutzungsgrenze")
+        || requests[0].accessibilityText.length > 2000000
+        || requests[0].accessibilityText.length === 0
+        || requests[0].truncatedFields.accessibilityText !== true
+        || warnings !== 1
+      ) {
+        throw new Error(JSON.stringify({ requests, warnings }));
+      }
+  process.exit(0);
+}, 100);
+'''
+
+    result = subprocess.run(
+        [node, "-e", harness, str(snippet_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_render_bridge_snippet_preserves_metadata_when_payload_fallback_runs(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    snippet = render_bridge_snippet(
+        "BW_Privat",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    snippet = snippet.replace(
+        "  void sendCodexUsage();\n  setInterval",
+        "  globalThis.fitPayloadForTest = fitPayload;\n"
+        "  if (false) void sendCodexUsage();\n"
+        "  setInterval",
+    )
+    snippet_path = tmp_path / "snippet.js"
+    snippet_path.write_text(snippet, encoding="utf-8")
+    harness = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const sandbox = {
+  TextEncoder,
+  setInterval() { return 1; },
+  clearInterval() {},
+  globalThis: null
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const payload = sandbox.fitPayloadForTest({
+  account: "BW_Privat",
+  url: "u".repeat(500000),
+  title: "t".repeat(2000),
+  capturedAt: "2026-08-16T10:00:00.000Z",
+  readyState: "complete",
+  noise: new Array(5000000).fill(0)
+});
+if (
+  payload.account !== "BW_Privat"
+  || payload.url.length !== 500000
+  || payload.title.length !== 2000
+  || payload.capturedAt !== "2026-08-16T10:00:00.000Z"
+  || payload.readyState !== "complete"
+) {
+  throw new Error(JSON.stringify(payload));
+}
+process.exit(0);
+'''
+    result = subprocess.run(
+        [node, "-e", harness, str(snippet_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_render_bridge_snippet_reports_field_limit_truncation(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    snippet = render_bridge_snippet(
+        "BW_Privat",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    snippet = snippet.replace(
+        "  void sendCodexUsage();\n  setInterval",
+        "  globalThis.boundedVisibleTextForTest = boundedVisibleText;\n"
+        "  globalThis.boundedDomCaptureForTest = boundedDomCapture;\n"
+        "  if (false) void sendCodexUsage();\n"
+        "  setInterval",
+    )
+    snippet_path = tmp_path / "snippet.js"
+    snippet_path.write_text(snippet, encoding="utf-8")
+    harness = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1,
+  tagName,
+  childNodes,
+  attributes: [],
+  hidden: false
+});
+const sandbox = {
+  TextEncoder,
+  getComputedStyle() { return {}; },
+  setInterval() { return 1; },
+  clearInterval() {},
+  globalThis: null
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const visible = sandbox.boundedVisibleTextForTest(
+  element("div", [textNode("x".repeat(1999999))])
+);
+const boundaryVisible = sandbox.boundedVisibleTextForTest(
+  element("span", [textNode("x".repeat(2000000)), textNode("later")])
+);
+const dom = sandbox.boundedDomCaptureForTest(
+  element("body", [textNode("x".repeat(1999994))])
+);
+if (!visible.truncated || !boundaryVisible.truncated || !dom.htmlTruncated) {
+  throw new Error(JSON.stringify({
+    visibleTruncated: visible.truncated,
+    visibleLength: visible.text.length,
+    domTextTruncated: dom.textTruncated,
+    domHtmlTruncated: dom.htmlTruncated,
+    domHtmlLength: dom.html.length
+  }));
+}
+process.exit(0);
+'''
+    result = subprocess.run(
+        [node, "-e", harness, str(snippet_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_content_preserves_metadata_when_payload_fallback_runs(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    content_path = output / "content.js"
+    source = content_path.read_text(encoding="utf-8").replace(
+        "\nstartCodexUsageBridge();",
+        "\nglobalThis.fitCodexUsagePayloadForTest = fitCodexUsagePayload;\n"
+        "if (false) startCodexUsageBridge();",
+    )
+    content_path.write_text(source, encoding="utf-8")
+    harness = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const sandbox = {
+  TextEncoder,
+  window: { addEventListener() {} },
+  globalThis: null
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const payload = sandbox.fitCodexUsagePayloadForTest({
+  account: "BW_Privat",
+  url: "https://chatgpt.com/codex/cloud/settings/analytics",
+  title: "Codex",
+  capturedAt: "2026-08-16T10:00:00.000Z",
+  readyState: "complete",
+  apiResponses: [],
+  noise: new Array(5000000).fill(0)
+});
+if (
+  payload.account !== "BW_Privat"
+  || payload.url !== "https://chatgpt.com/codex/cloud/settings/analytics"
+  || payload.title !== "Codex"
+  || payload.capturedAt !== "2026-08-16T10:00:00.000Z"
+  || payload.readyState !== "complete"
+) {
+  throw new Error(JSON.stringify(payload));
+}
+process.exit(0);
+'''
+    result = subprocess.run(
+        [node, "-e", harness, str(content_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_content_marks_boundary_truncation_with_remaining_nodes(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    content_path = output / "content.js"
+    source = content_path.read_text(encoding="utf-8").replace(
+        "\nstartCodexUsageBridge();",
+        "\nglobalThis.boundedVisibleTextForTest = boundedCodexUsageVisibleText;\n"
+        "if (false) startCodexUsageBridge();",
+    )
+    content_path.write_text(source, encoding="utf-8")
+    harness = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1,
+  tagName,
+  childNodes,
+  attributes: [],
+  hidden: false
+});
+const sandbox = {
+  TextEncoder,
+  window: { addEventListener() {} },
+  getComputedStyle() { return {}; },
+  globalThis: null
+};
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox);
+const result = sandbox.boundedVisibleTextForTest(
+  element("span", [textNode("x".repeat(2000000)), textNode("later")])
+);
+if (!result.truncated || result.text.length !== 2000000) {
+  throw new Error(JSON.stringify(result));
+}
+process.exit(0);
+'''
+    result = subprocess.run(
+        [node, "-e", harness, str(content_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_render_bridge_snippet_bounds_streaming_and_legacy_ack(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    snippet = render_bridge_snippet(
+        "BW_Privat",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    snippet_path = tmp_path / "snippet.js"
+    snippet_path.write_text(snippet, encoding="utf-8")
+    harness = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const logs = [];
+let intervalCallback = null;
+let fetchIndex = 0;
+let maxDecoderInput = 0;
+class TrackingTextDecoder {
+  constructor() { this.decoder = new TextDecoder(); }
+  decode(value, options) {
+    maxDecoderInput = Math.max(maxDecoderInput, value ? value.length : 0);
+    return this.decoder.decode(value, options);
+  }
+}
+const makeStreamingResponse = () => {
+    const bytes = new TextEncoder().encode("a".repeat(4095) + "Ä" + "z".repeat(5000000));
+    const split = bytes.indexOf(0xc3) + 1;
+    const chunks = [bytes.slice(0, split), bytes.slice(split)];
+    let cancelled = false;
+  return {
+    status: 200,
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (!chunks.length) {
+              return { done: true, value: undefined };
+            }
+            return { done: false, value: chunks.shift() };
+          },
+          async cancel() { cancelled = true; }
+        };
+      }
+    },
+    text: async () => "fallback".repeat(2000),
+    wasCancelled() { return cancelled; }
+  };
+};
+const first = makeStreamingResponse();
+const document = {
+  title: "Codex",
+  readyState: "complete",
+  body: { nodeType: 1, tagName: "body", attributes: [], childNodes: [] },
+  documentElement: {
+    nodeType: 1,
+    tagName: "html",
+    attributes: [],
+    childNodes: []
+  },
+  querySelectorAll() { return []; }
+};
+const sandbox = {
+  document,
+  location: { href: "https://chatgpt.com/codex/cloud/settings/analytics" },
+  fetch: async () => {
+    fetchIndex += 1;
+    return fetchIndex === 1
+      ? first
+      : { status: 413, text: async () => "x".repeat(5000) };
+  },
+  console: {
+    log(...args) { logs.push(args); },
+    warn() {}
+  },
+  Date,
+  JSON,
+  String,
+  Object,
+  Array,
+  Promise,
+  TextDecoder: TrackingTextDecoder,
+  TextEncoder,
+  Uint8Array,
+  setInterval(callback) { intervalCallback = callback; return 1; },
+  clearInterval() {}
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => {
+  if (typeof intervalCallback !== "function") {
+    throw new Error("interval callback was not installed");
+  }
+  intervalCallback();
+}, 20);
+setTimeout(() => {
+  const firstText = logs[0] && logs[0][2];
+  const secondText = logs[1] && logs[1][2];
+  if (
+    fetchIndex !== 2
+    || typeof firstText !== "string"
+    || firstText.length !== 4096
+    || !firstText.endsWith("Ä")
+    || !first.wasCancelled()
+    || typeof secondText !== "string"
+    || secondText.length !== 4096
+    || secondText !== "x".repeat(4096)
+    || maxDecoderInput > 65536
   ) {
-    throw new Error(JSON.stringify({ requests, warnings }));
+    throw new Error(JSON.stringify({
+      fetchIndex, logs, cancelled: first.wasCancelled(), maxDecoderInput
+    }));
+  }
+  process.exit(0);
+}, 100);
+'''
+
+    result = subprocess.run(
+        [node, "-e", harness, str(snippet_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_render_bridge_snippet_keeps_aggregate_payload_under_ingest_limit(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    snippet = render_bridge_snippet(
+        "BW_Privat",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    snippet_path = tmp_path / "snippet.js"
+    snippet_path.write_text(snippet, encoding="utf-8")
+    harness = r'''
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const requests = [];
+const huge = "ä".repeat(2000100);
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, attributes: [], childNodes
+});
+const body = element("body", [textNode(huge)]);
+const document = {
+  title: "Codex",
+  readyState: "complete",
+  body,
+  documentElement: element("html", [body]),
+  querySelectorAll(selector) {
+    if (selector.includes("[aria-label]")) {
+      return [{ getAttribute() { return huge; } }];
+    }
+    if (selector.includes("svg text")) {
+      return [{ textContent: huge }];
+    }
+    return [];
+  }
+};
+const sandbox = {
+  document,
+  location: { href: "https://chatgpt.com/codex/cloud/settings/analytics" },
+  fetch: async (_url, options) => {
+    requests.push(options.body);
+    throw new Error("CSP blocked");
+  },
+  console: { log() {}, warn() {} },
+  Date,
+  JSON,
+  String,
+  Array,
+  Set,
+  Promise,
+  setInterval() { return 1; },
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => {
+  if (requests.length !== 1 || Buffer.byteLength(requests[0], "utf8") >= 10000000) {
+    throw new Error(JSON.stringify({ length: requests[0] && requests[0].length }));
   }
   process.exit(0);
 }, 100);
@@ -3743,6 +4433,7 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert manifest["content_scripts"][1]["js"] == ["page-hook.js"]
     assert "fetch(ENDPOINT" in background
     assert f'const TOKEN = "{token}";' in background
+    assert '"X-Codex-Usage-Account": ACCOUNT' in background
     assert '"Authorization": "Bearer " + TOKEN' in background
     assert "chrome.runtime.sendMessage" in content
     assert "/backend-api/wham/usage" in content
@@ -3764,10 +4455,10 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
         "const probeResponses = pageRefreshSucceeded ? [] : await fetchCodexUsageApis()"
         in content
     )
-    assert "document.body.innerText" in content
-    assert "sanitizedCodexUsageRoot" in content
-    assert "script, style, link, meta, noscript, template" in content
-    assert "sanitizedRoot.outerHTML" in content
+    assert "boundedCodexUsageVisibleText" in content
+    assert "boundedCodexUsageDomCapture" in content
+    assert '"script", "style", "link", "meta", "noscript", "template"' in content
+    assert "root.html" in content
     assert "collectCodexUsageAttributeText" in content
     assert "collectCodexUsageSvgText" in content
     assert "fieldLengths" in content
@@ -3785,9 +4476,318 @@ def test_write_bridge_extension_creates_vivaldi_compatible_files(tmp_path):
     assert "window.postMessage" in page_hook
     assert "codexUsageApiResponses" in page_hook
     assert "codexUsageApiResponseKey" in page_hook
+    assert "CODEX_USAGE_CAPTURED_API_MAX_CHARS" in page_hook
     assert "requestSequence" in page_hook
     assert "/backend-api/wham/" in page_hook
     assert 'source: "page-fetch"' in page_hook
+
+
+def test_bridge_extension_transaction_stays_inside_output_directory(tmp_path, monkeypatch):
+    output_dir = tmp_path / "extension"
+    recorded = {}
+    original_temporary_directory = bridge_module.tempfile.TemporaryDirectory
+
+    def temporary_directory(*args, **kwargs):
+        recorded["dir"] = kwargs.get("dir")
+        return original_temporary_directory(*args, **kwargs)
+
+    monkeypatch.setattr(
+        bridge_module.tempfile,
+        "TemporaryDirectory",
+        temporary_directory,
+    )
+
+    write_bridge_extension(
+        "BW_Privat",
+        output_dir,
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+
+    assert Path(recorded["dir"]) == output_dir
+
+
+def test_generated_background_bounds_streaming_and_legacy_ack_responses(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+let listener = null;
+let fetchIndex = 0;
+const responses = [];
+let maxDecoderInput = 0;
+class TrackingTextDecoder {
+  constructor() { this.decoder = new TextDecoder(); }
+  decode(value, options) {
+    maxDecoderInput = Math.max(maxDecoderInput, value ? value.length : 0);
+    return this.decoder.decode(value, options);
+  }
+}
+const makeStreamingResponse = () => {
+  const bytes = new TextEncoder().encode("a".repeat(4095) + "Ä" + "z".repeat(5000000));
+  const split = bytes.indexOf(0xc3) + 1;
+  const chunks = [bytes.slice(0, split), bytes.slice(split)];
+  let cancelled = false;
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (!chunks.length) {
+              return { done: true, value: undefined };
+            }
+            return { done: false, value: chunks.shift() };
+          },
+          async cancel() { cancelled = true; }
+        };
+      }
+    },
+    text() { throw new Error("stream reader must be used"); },
+    wasCancelled() { return cancelled; }
+  };
+};
+const runtime = {
+  onMessage: {
+    addListener(callback) { listener = callback; }
+  }
+};
+const first = makeStreamingResponse();
+const sandbox = {
+  chrome: { runtime },
+  fetch: async () => {
+    fetchIndex += 1;
+    return fetchIndex === 1
+      ? first
+      : {
+          ok: false,
+          status: 413,
+          text: async () => "x".repeat(5000)
+        };
+  },
+  TextDecoder: TrackingTextDecoder,
+  TextEncoder,
+  Uint8Array,
+  Promise,
+  JSON,
+  String,
+  Object,
+  Array,
+  Error,
+  console
+};
+vm.runInNewContext(source, sandbox);
+function invoke() {
+  listener({ type: "codexUsageIngest", payload: {} }, {}, (response) => {
+    responses.push(response);
+    if (responses.length === 1) {
+      invoke();
+      return;
+    }
+    if (
+      responses[0].text.length !== 4096
+      || !responses[0].text.endsWith("Ä")
+      || !first.wasCancelled()
+      || responses[1].text.length !== 4096
+      || responses[1].text !== "x".repeat(4096)
+      || maxDecoderInput > 65536
+    ) {
+      throw new Error(JSON.stringify({ responses }));
+    }
+    process.exit(0);
+  });
+}
+invoke();
+setTimeout(() => process.exit(1), 1000);
+"""
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "background.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_write_bridge_extension_does_not_leave_partial_files_when_staging_fails(
+    tmp_path, monkeypatch
+):
+    output_dir = tmp_path / "extension"
+    output_dir.mkdir()
+    old_files = {
+        "manifest.json": "old manifest",
+        "background.js": "old background",
+        "content.js": "old content",
+        "page-hook.js": "old page hook",
+    }
+    for filename, content in old_files.items():
+        (output_dir / filename).write_text(content, encoding="utf-8")
+    unrelated = output_dir / "keep.txt"
+    unrelated.write_text("keep", encoding="utf-8")
+
+    original_write = bridge_module._write_private_text
+
+    def fail_content(path, content, *, label):
+        if path.name == "content.js":
+            raise OSError("simulated content generation failure")
+        return original_write(path, content, label=label)
+
+    monkeypatch.setattr(bridge_module, "_write_private_text", fail_content)
+
+    with pytest.raises(OSError, match="simulated content generation failure"):
+        write_bridge_extension(
+            "BW_Privat",
+            output_dir,
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 43,
+        )
+
+    for filename, content in old_files.items():
+        assert (output_dir / filename).read_text(encoding="utf-8") == content
+    assert unrelated.read_text(encoding="utf-8") == "keep"
+
+
+def test_write_bridge_extension_serializes_output_transaction(tmp_path, monkeypatch):
+    output_dir = tmp_path / "extension"
+    lock_events = []
+
+    class FakeLock:
+        def __enter__(self):
+            lock_events.append("enter")
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            lock_events.append("exit")
+
+    def fake_lock(path, **kwargs):
+        assert path == output_dir / ".codex-usage-write"
+        assert kwargs["label"] == "bridge extension output lock"
+        return FakeLock()
+
+    original_write = bridge_module._write_private_text
+
+    def observe_stage_write(path, content, *, label):
+        assert lock_events == ["enter"]
+        return original_write(path, content, label=label)
+
+    monkeypatch.setattr(bridge_module, "private_path_lock", fake_lock)
+    monkeypatch.setattr(bridge_module, "_write_private_text", observe_stage_write)
+
+    assert write_bridge_extension(
+        "BW_Privat",
+        output_dir,
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+        token="A" * 43,
+    ) == output_dir
+    assert lock_events == ["enter", "exit"]
+
+
+def test_write_bridge_extension_rolls_back_when_commit_fails(tmp_path, monkeypatch):
+    output_dir = tmp_path / "extension"
+    output_dir.mkdir()
+    old_files = {
+        "manifest.json": "old manifest",
+        "background.js": "old background",
+        "content.js": "old content",
+        "page-hook.js": "old page hook",
+    }
+    for filename, content in old_files.items():
+        (output_dir / filename).write_text(content, encoding="utf-8")
+    original_replace = Path.replace
+
+    def fail_page_hook_commit(source, target):
+        if source.parent.name == "stage" and target.name == "page-hook.js":
+            raise OSError("simulated page hook commit failure")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail_page_hook_commit)
+
+    with pytest.raises(OSError, match="simulated page hook commit failure"):
+        write_bridge_extension(
+            "BW_Privat",
+            output_dir,
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 43,
+        )
+
+    for filename, content in old_files.items():
+        assert (output_dir / filename).read_text(encoding="utf-8") == content
+
+
+def test_http_bridge_rejects_invalid_auth_before_reading_body(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    config = AppConfig(accounts=(account,))
+    token = bridge_token_for_account(account.id)
+    handler = _make_handler(config, tmp_path / "snapshots", {account.id: token})
+    read_calls = []
+    close_flags = []
+    original_setup = handler.setup
+    original_send_json = handler._send_json
+
+    def send_json_with_close_probe(instance, status, payload):
+        close_flags.append(instance.close_connection)
+        return original_send_json(instance, status, payload)
+
+    handler._send_json = send_json_with_close_probe
+
+    def setup_with_read_probe(instance):
+        original_setup(instance)
+        stream = instance.rfile
+
+        class ReadProbe:
+            def read(self, *args, **kwargs):
+                read_calls.append(args)
+                return stream.read(*args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(stream, name)
+
+        instance.rfile = ReadProbe()
+
+    handler.setup = setup_with_read_probe
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection(server.server_address[0], server.server_address[1], timeout=5)
+        try:
+            connection.putrequest("POST", "/ingest")
+            connection.putheader("Content-Type", "application/json")
+            connection.putheader("Content-Length", "10000000")
+            connection.putheader("Origin", "https://chatgpt.com")
+            connection.putheader("X-Codex-Usage-Account", account.id)
+            connection.putheader("Authorization", "Bearer invalid-token")
+            connection.endheaders()
+            response = connection.getresponse()
+            assert response.status == 401
+            response.read()
+        finally:
+            connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert read_calls == []
+    assert close_flags == [True]
 
 
 def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
@@ -3860,8 +4860,8 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
     }
     body = json.dumps(payload).encode("utf-8")
 
-    def post(headers=None):
-        request = Request(endpoint, data=body, method="POST", headers=headers or {})
+    def post(headers=None, request_body=body):
+        request = Request(endpoint, data=request_body, method="POST", headers=headers or {})
         return urlopen(request, timeout=5)
 
     try:
@@ -3872,6 +4872,7 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
             post(
                 {
                     "Origin": "https://chatgpt.com",
+                    "X-Codex-Usage-Account": account.id,
                     "Authorization": "Bearer wrong-token",
                 }
             )
@@ -3880,6 +4881,7 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
             post(
                 {
                     "Origin": "https://evil.example",
+                    "X-Codex-Usage-Account": account.id,
                     "Authorization": f"Bearer {token}",
                 }
             )
@@ -3887,17 +4889,30 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
         with post(
             {
                 "Origin": "https://chatgpt.com",
+                "X-Codex-Usage-Account": account.id,
                 "Authorization": f"Bearer {token}",
             }
         ) as response:
             assert response.status == 200
             assert json.loads(response.read())["status"] == "ok"
+        mismatched_payload = dict(payload, account="other")
+        with pytest.raises(HTTPError) as mismatch:
+            post(
+                {
+                    "Origin": "https://chatgpt.com",
+                    "X-Codex-Usage-Account": account.id,
+                    "Authorization": f"Bearer {token}",
+                },
+                json.dumps(mismatched_payload).encode("utf-8"),
+            )
+        assert mismatch.value.code == 400
         assert bridge_token_matches(account.id, token) is True
         assert revoke_bridge_token(account.id) is True
         with pytest.raises(HTTPError) as revoked:
             post(
                 {
                     "Origin": "https://chatgpt.com",
+                    "X-Codex-Usage-Account": account.id,
                     "Authorization": f"Bearer {token}",
                 }
             )
@@ -3907,6 +4922,7 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
         with post(
             {
                 "Origin": "chrome-extension://abcdefghijklmnopabcdefghijklmnop",
+                "X-Codex-Usage-Account": account.id,
                 "Authorization": f"Bearer {replacement}",
             }
         ) as response:
@@ -3918,6 +4934,7 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
             connection.putheader("Content-Type", "application/json")
             connection.putheader("Content-Length", str(len(body)))
             connection.putheader("Origin", "https://chatgpt.com")
+            connection.putheader("X-Codex-Usage-Account", account.id)
             connection.putheader("Authorization", f"Bearer {replacement}")
             connection.putheader("Authorization", f"Bearer {replacement}")
             connection.endheaders(body)
@@ -3932,6 +4949,7 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
             connection.putheader("Content-Type", "application/json")
             connection.putheader("Content-Length", "9" * 100)
             connection.putheader("Origin", "https://chatgpt.com")
+            connection.putheader("X-Codex-Usage-Account", account.id)
             connection.putheader("Authorization", f"Bearer {replacement}")
             connection.endheaders()
             oversized_length = connection.getresponse()
@@ -3944,12 +4962,13 @@ def test_http_bridge_requires_the_account_token(tmp_path, monkeypatch):
             method="OPTIONS",
             headers={
                 "Origin": "https://chatgpt.com",
-                "Access-Control-Request-Headers": "authorization",
+                "Access-Control-Request-Headers": "authorization, x-codex-usage-account",
             },
         )
         with urlopen(options, timeout=5) as response:
             assert response.status == 204
             assert "Authorization" in response.headers["Access-Control-Allow-Headers"]
+            assert "X-Codex-Usage-Account" in response.headers["Access-Control-Allow-Headers"]
     finally:
         server.shutdown()
         server.server_close()
@@ -4054,6 +5073,7 @@ def test_http_bridge_accepts_account_added_after_server_start(tmp_path, monkeypa
             method="POST",
             headers={
                 "Origin": "https://chatgpt.com",
+                "X-Codex-Usage-Account": "second",
                 "Authorization": f"Bearer {second_token}",
             },
         )
@@ -4169,19 +5189,15 @@ const pageWindow = {
   }
 };
 const text = "Codex analytics page text with enough content";
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, attributes: [], childNodes
+});
 const document = {
   title: "Codex",
   readyState: "complete",
   body: { innerText: text },
-  documentElement: {
-    cloneNode() {
-      return {
-        textContent: text,
-        outerHTML: "<html><body>Codex</body></html>",
-        querySelectorAll() { return { forEach() {} }; }
-      };
-    }
-  },
+  documentElement: element("html", [element("body", [textNode(text)])]),
   querySelectorAll() { return []; }
 };
 const runtime = {
@@ -4222,7 +5238,13 @@ const sandbox = {
   setTimeout,
   clearTimeout
 };
-vm.runInNewContext(source, sandbox);
+const boundsGuard = `
+Array.prototype.map = function() { throw new Error("unbounded map collector used"); };
+Array.prototype.flatMap = function() { throw new Error("unbounded flatMap collector used"); };
+Object.getPrototypeOf([]).map = Array.prototype.map;
+Object.getPrototypeOf([]).flatMap = Array.prototype.flatMap;
+`;
+vm.runInNewContext(boundsGuard + source, sandbox);
 setTimeout(() => {
   const ingest = messages.find((message) => message.type === "codexUsageIngest");
   const usage = ingest && ingest.payload.apiResponses.find(
@@ -4234,6 +5256,453 @@ setTimeout(() => {
     || probeFetches.length !== 0
     || !usage
     || body.rate_limit.primary_window.used_percent !== 20
+  ) {
+    throw new Error(JSON.stringify({ messages, refreshRequests, probeFetches }));
+  }
+  process.exit(0);
+}, 700);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "content.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_content_enforces_api_response_aggregate_budget(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+let messageHandler = null;
+const huge = "x".repeat(1100000);
+const responses = [
+  {
+    source: "page-fetch",
+    requestSequence: 1,
+    url: "https://chatgpt.com/backend-api/wham/usage",
+    status: 200,
+    ok: true,
+    contentType: "application/json",
+    truncated: false,
+    bodyText: JSON.stringify({ rate_limit: { primary_window: { used_percent: 10 } } })
+  },
+  ...Array.from({ length: 4 }, (_, index) => ({
+    source: "page-fetch",
+    requestSequence: index + 2,
+    url: `https://chatgpt.com/backend-api/wham/other-${index}`,
+    status: 200,
+    ok: true,
+    contentType: "application/json",
+    truncated: false,
+    bodyText: huge
+  }))
+];
+const pageWindow = {
+  addEventListener(type, callback) {
+    if (type === "message") {
+      messageHandler = callback;
+    }
+  },
+  postMessage(message) {
+    if (!message || message.type !== "codexUsageRefresh") {
+      return;
+    }
+    setTimeout(() => messageHandler({
+      source: pageWindow,
+      data: {
+        type: "codexUsageApiResponses",
+        requestId: message.requestId,
+        responses
+      }
+    }), 0);
+  }
+};
+const bodyText = "ä".repeat(2000000);
+const domText = "ß".repeat(2000000);
+const attributeText = "ç".repeat(2000000);
+const svgText = "€".repeat(2000000);
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, childNodes, hidden: false, attributes: []
+});
+const body = element("body", [textNode(domText)]);
+const document = {
+  title: "Codex",
+  readyState: "complete",
+  body: { innerText: bodyText },
+  documentElement: element("html", [body]),
+  querySelectorAll(selector) {
+    if (selector.includes("[aria-label]")) {
+      return [{ getAttribute(name) { return name === "aria-label" ? attributeText : ""; } }];
+    }
+    if (selector.includes("svg text")) {
+      return [{ textContent: svgText }];
+    }
+    return [];
+  }
+};
+const runtime = {
+  id: "test-extension",
+  lastError: null,
+  sendMessage(message, callback) {
+    messages.push(message);
+    callback({ ok: true });
+  }
+};
+const sandbox = {
+  window: pageWindow,
+  document,
+  chrome: { runtime },
+  location: {
+    href: "https://chatgpt.com/codex/cloud/settings/analytics",
+    origin: "https://chatgpt.com"
+  },
+  console: { log() {}, warn() {} },
+  Date,
+  JSON,
+  Map,
+  Set,
+  Array,
+  Number,
+  String,
+  Object,
+  Promise,
+  URL,
+  TextEncoder,
+  MutationObserver: class { observe() {} disconnect() {} },
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => {
+  const ingest = messages.find((message) => message.type === "codexUsageIngest");
+  const captured = ingest && ingest.payload.apiResponses;
+  const total = captured && captured.reduce(
+    (sum, item) => sum + String(item.bodyText || "").length,
+    0
+  );
+  const serialized = ingest && JSON.stringify(ingest.payload);
+  const serializedBytes = serialized && new TextEncoder().encode(serialized).length;
+  if (
+    !captured
+    || total > 4000000
+    || !captured.some((item) => item.url.endsWith("/wham/usage"))
+    || !ingest.payload.htmlText.includes("ß")
+    || !serialized
+    || serializedBytes >= 9500000
+  ) {
+      throw new Error(JSON.stringify({
+        captured: captured && captured.length,
+        total,
+        serializedBytes,
+      }));
+  }
+  process.exit(0);
+}, 100);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "content.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_content_bounds_streaming_api_responses(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+const refreshRequests = [];
+let messageHandler = null;
+let cancelled = 0;
+const encoder = new TextEncoder();
+const prefix = '{"rate_limit":{"label":"Ä","padding":"';
+const boundaryPadding = "x".repeat(65536 - encoder.encode(prefix).length - 1);
+const oversized = encoder.encode(
+  prefix + boundaryPadding + "Ä" + "x".repeat(2000100) + '"}}'
+);
+let maxDecoderInput = 0;
+class TrackingTextDecoder {
+  constructor() { this.decoder = new TextDecoder(); }
+  decode(value, options) {
+    maxDecoderInput = Math.max(maxDecoderInput, value ? value.length : 0);
+    return this.decoder.decode(value, options);
+  }
+}
+function streamingResponse() {
+  let offset = 0;
+  return {
+    status: 200,
+    ok: true,
+    headers: { get() { return "application/json"; } },
+    body: {
+      getReader() {
+        return {
+          async read() {
+            if (offset >= oversized.length) {
+              return { done: true, value: undefined };
+            }
+            const chunkSize = oversized.length;
+            const end = Math.min(offset + chunkSize, oversized.length);
+            const value = oversized.slice(offset, end);
+            offset = end;
+            return { done: false, value };
+          },
+          async cancel() { cancelled += 1; }
+        };
+      }
+    }
+  };
+}
+const pageWindow = {
+  addEventListener(type, callback) {
+    if (type === "message") {
+      messageHandler = callback;
+    }
+  },
+  postMessage(message) {
+    refreshRequests.push(message);
+    setTimeout(() => messageHandler({
+      source: pageWindow,
+      data: {
+        type: "codexUsageApiResponses",
+        requestId: message.requestId,
+        responses: []
+      }
+    }), 0);
+  }
+};
+const text = "Codex analytics page text with enough content";
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, attributes: [], childNodes
+});
+const document = {
+  title: "Codex",
+  readyState: "complete",
+  body: { innerText: text },
+  documentElement: element("html", [element("body", [textNode(text)])]),
+  querySelectorAll() { return []; }
+};
+const runtime = {
+  id: "test-extension",
+  lastError: null,
+  sendMessage(message, callback) {
+    messages.push(message);
+    callback({ ok: true });
+  }
+};
+const sandbox = {
+  window: pageWindow,
+  document,
+  chrome: { runtime },
+  location: {
+    href: "https://chatgpt.com/codex/cloud/settings/analytics",
+    origin: "https://chatgpt.com"
+  },
+  fetch: async () => streamingResponse(),
+  console,
+  Date,
+  JSON,
+  Map,
+  Set,
+  Array,
+  Number,
+  String,
+  Object,
+  Promise,
+  URL,
+  TextDecoder: TrackingTextDecoder,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => {
+  const ingest = messages.find((message) => message.type === "codexUsageIngest");
+  const responses = ingest && ingest.payload.apiResponses;
+  const oversizedResponse = responses && responses.find(
+    (item) => item && item.truncated === true
+  );
+  if (
+    refreshRequests.length !== 1
+    || !oversizedResponse
+    || oversizedResponse.bodyText !== ""
+    || !oversizedResponse.bodyExcerpt.includes("Ä")
+    || cancelled !== 4
+    || maxDecoderInput > 65536
+  ) {
+    throw new Error(JSON.stringify({ messages, refreshRequests, cancelled, maxDecoderInput }));
+  }
+  process.exit(0);
+}, 1000);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "content.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_content_compacts_truncated_api_responses_before_ingest(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+const refreshRequests = [];
+const probeFetches = [];
+let messageHandler = null;
+const huge = "x".repeat(2000000);
+const truncatedResponses = Array.from({ length: 8 }, (_, index) => ({
+  source: "page-fetch",
+  requestSequence: index + 1,
+  url: `https://chatgpt.com/backend-api/wham/other-${index}`,
+  status: 200,
+  ok: true,
+  contentType: "application/json",
+  truncated: true,
+  bodyText: huge
+}));
+truncatedResponses.push({
+  source: "page-fetch",
+  requestSequence: 99,
+  url: "https://chatgpt.com/backend-api/wham/usage",
+  status: 200,
+  ok: true,
+  contentType: "application/json",
+  truncated: false,
+  bodyText: JSON.stringify({ rate_limit: { primary_window: { used_percent: 20 } } })
+});
+const pageWindow = {
+  addEventListener(type, callback) {
+    if (type === "message") {
+      messageHandler = callback;
+    }
+  },
+  postMessage(message) {
+    refreshRequests.push(message);
+    setTimeout(() => messageHandler({
+      source: pageWindow,
+      data: {
+        type: "codexUsageApiResponses",
+        requestId: message.requestId,
+        responses: truncatedResponses
+      }
+    }), 0);
+  }
+};
+const text = "Codex analytics page text with enough content";
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, attributes: [], childNodes
+});
+const body = element("body", [textNode(text)]);
+const document = {
+  title: "Codex",
+  readyState: "complete",
+  body,
+  documentElement: element("html", [body]),
+  querySelectorAll() { return []; }
+};
+const runtime = {
+  id: "test-extension",
+  lastError: null,
+  sendMessage(message, callback) {
+    messages.push(message);
+    callback({ ok: true });
+  }
+};
+const sandbox = {
+  window: pageWindow,
+  document,
+  chrome: { runtime },
+  location: {
+    href: "https://chatgpt.com/codex/cloud/settings/analytics",
+    origin: "https://chatgpt.com"
+  },
+  fetch: async (url) => {
+    probeFetches.push(url);
+    return { headers: { get() { return "application/json"; } }, text: async () => "{}" };
+  },
+  console,
+  Date,
+  JSON,
+  Map,
+  Set,
+  Array,
+  Number,
+  String,
+  Object,
+  Promise,
+  URL,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+setTimeout(() => {
+  const ingest = messages.find((message) => message.type === "codexUsageIngest");
+  const responses = ingest && ingest.payload.apiResponses;
+  const compacted = responses && responses.find((item) => item.truncated === true);
+  const serialized = ingest && JSON.stringify(ingest.payload);
+  if (
+    refreshRequests.length !== 1
+    || probeFetches.length !== 0
+    || !compacted
+    || compacted.bodyText !== ""
+    || compacted.bodyExcerpt.length > 500
+    || !serialized
+    || Buffer.byteLength(serialized, "utf8") >= 10000000
   ) {
     throw new Error(JSON.stringify({ messages, refreshRequests, probeFetches }));
   }
@@ -4306,19 +5775,15 @@ const pageWindow = {
   }
 };
 const text = "Codex analytics page text with enough content";
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, attributes: [], childNodes
+});
 const document = {
   title: "Codex",
   readyState: "complete",
   body: { innerText: text },
-  documentElement: {
-    cloneNode() {
-      return {
-        textContent: text,
-        outerHTML: "<html><body>Codex</body></html>",
-        querySelectorAll() { return { forEach() {} }; }
-      };
-    }
-  },
+  documentElement: element("html", [element("body", [textNode(text)])]),
   querySelectorAll() { return []; }
 };
 const runtime = {
@@ -4450,19 +5915,15 @@ const pageWindow = {
   }
 };
 const text = "Codex analytics page text with enough content";
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, attributes: [], childNodes
+});
 const document = {
   title: "Codex",
   readyState: "complete",
   body: { innerText: text },
-  documentElement: {
-    cloneNode() {
-      return {
-        textContent: text,
-        outerHTML: "<html><body>Codex</body></html>",
-        querySelectorAll() { return { forEach() {} }; }
-      };
-    }
-  },
+  documentElement: element("html", [element("body", [textNode(text)])]),
   querySelectorAll() { return []; }
 };
 const runtime = {
@@ -4573,21 +6034,17 @@ Object.defineProperty(runtime, "lastError", {
   }
 });
 const text = "Codex analytics page text with enough content";
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, attributes: [], childNodes
+});
 const sandbox = {
   window: { addEventListener() {} },
   document: {
     title: "Codex",
     readyState: "complete",
     body: { innerText: text },
-    documentElement: {
-      cloneNode() {
-        return {
-          textContent: text,
-          outerHTML: "<html><body>Codex</body></html>",
-          querySelectorAll() { return { forEach() {} }; }
-        };
-      }
-    },
+    documentElement: element("html", [element("body", [textNode(text)])]),
     querySelectorAll() { return []; }
       },
       chrome: { runtime },
@@ -4647,6 +6104,10 @@ const messages = [];
 const fetched = [];
 let messageHandler = null;
 let observerCallback = null;
+const textNode = (value) => ({ nodeType: 3, nodeValue: value, childNodes: [] });
+const element = (tagName, childNodes) => ({
+  nodeType: 1, tagName, attributes: [], childNodes
+});
 const pageWindow = {
   addEventListener(type, callback) {
     if (type === "message") {
@@ -4658,15 +6119,7 @@ const document = {
   title: "Codex",
   readyState: "loading",
   body: { innerText: "" },
-  documentElement: {
-    cloneNode() {
-      return {
-        textContent: document.body.innerText,
-        outerHTML: "<html><body>Codex</body></html>",
-        querySelectorAll() { return { forEach() {} }; }
-      };
-    }
-  },
+  documentElement: element("html", [element("body", [textNode("")])]),
   querySelectorAll() { return []; }
 };
 class MutationObserver {
@@ -4821,7 +6274,13 @@ const sandbox = {
   setTimeout,
   clearTimeout
 };
-vm.runInNewContext(source, sandbox);
+const boundsGuard = `
+Array.prototype.map = function() { throw new Error("unbounded map collector used"); };
+Array.prototype.flatMap = function() { throw new Error("unbounded flatMap collector used"); };
+Object.getPrototypeOf([]).map = Array.prototype.map;
+Object.getPrototypeOf([]).flatMap = Array.prototype.flatMap;
+`;
+vm.runInNewContext(boundsGuard + source, sandbox);
 async function run() {
   await window.fetch("https://chatgpt.com/backend-api/wham/usage");
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -4837,6 +6296,211 @@ run().catch((error) => {
   process.exitCode = 1;
 });
 setTimeout(() => process.exit(process.exitCode || 0), 100);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "page-hook.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_page_hook_bounds_streaming_response_clone(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+let cancelled = 0;
+const encoder = new TextEncoder();
+const prefix = '{"rate_limit":{"label":"Ä","padding":"';
+const boundaryPadding = "x".repeat(65536 - encoder.encode(prefix).length - 1);
+const oversized = encoder.encode(
+  prefix + boundaryPadding + "Ä" + "x".repeat(2000100) + '"}}'
+);
+let maxDecoderInput = 0;
+class TrackingTextDecoder {
+  constructor() { this.decoder = new TextDecoder(); }
+  decode(value, options) {
+    maxDecoderInput = Math.max(maxDecoderInput, value ? value.length : 0);
+    return this.decoder.decode(value, options);
+  }
+}
+function makeResponse() {
+  return {
+    clone() {
+      let offset = 0;
+      return {
+        status: 200,
+        headers: { get() { return "application/json"; } },
+        body: {
+          getReader() {
+            return {
+              async read() {
+                if (offset >= oversized.length) {
+                  return { done: true, value: undefined };
+                }
+                const chunkSize = oversized.length;
+                const end = Math.min(offset + chunkSize, oversized.length);
+                const value = oversized.slice(offset, end);
+                offset = end;
+                return { done: false, value };
+              },
+              async cancel() { cancelled += 1; }
+            };
+          }
+        }
+      };
+    }
+  };
+}
+const window = {
+  addEventListener() {},
+  fetch: async () => makeResponse(),
+  postMessage(message) {
+    messages.push(message);
+  }
+};
+const sandbox = {
+  window,
+  location: { origin: "https://chatgpt.com" },
+  Number,
+  String,
+  Object,
+  Array,
+  Promise,
+  JSON,
+  URL,
+  TextDecoder: TrackingTextDecoder,
+  console,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+async function run() {
+  await window.fetch("https://chatgpt.com/backend-api/wham/usage");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const responses = messages.at(-1)?.responses || [];
+  if (
+    responses.length !== 1
+    || responses[0].truncated !== true
+    || responses[0].bodyText !== ""
+    || !responses[0].bodyExcerpt.includes("Ä")
+    || cancelled !== 1
+    || maxDecoderInput > 65536
+  ) {
+    throw new Error(JSON.stringify({ messages, responses, cancelled, maxDecoderInput }));
+  }
+}
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+setTimeout(() => process.exit(process.exitCode || 0), 300);
+"""
+
+    result = subprocess.run(
+        [node, "-e", harness, str(output / "page-hook.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_generated_page_hook_enforces_api_response_aggregate_budget(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    output = write_bridge_extension(
+        "BW_Privat",
+        tmp_path / "extension",
+        endpoint="http://127.0.0.1:8765/ingest",
+        interval_seconds=300,
+    )
+    harness = r"""
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const messages = [];
+const huge = "x".repeat(1100000);
+function makeResponse(url) {
+  const bodyText = url.endsWith("/usage")
+    ? JSON.stringify({ rate_limit: { primary_window: { used_percent: 10 } } })
+    : huge;
+  return {
+    clone() {
+      return {
+        status: 200,
+        headers: { get() { return "application/json"; } },
+        text: async () => bodyText
+      };
+    }
+  };
+}
+const window = {
+  addEventListener() {},
+  fetch: async (url) => makeResponse(url),
+  postMessage(message) { messages.push(message); }
+};
+const sandbox = {
+  window,
+  location: { origin: "https://chatgpt.com" },
+  Number,
+  String,
+  Object,
+  Array,
+  Promise,
+  JSON,
+  URL,
+  TextDecoder,
+  console,
+  setInterval() { return 1; },
+  clearInterval() {},
+  setTimeout,
+  clearTimeout
+};
+vm.runInNewContext(source, sandbox);
+async function run() {
+  await window.fetch("https://chatgpt.com/backend-api/wham/usage");
+  for (let index = 0; index < 4; index += 1) {
+    await window.fetch(`https://chatgpt.com/backend-api/wham/other-${index}`);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const responses = messages.at(-1)?.responses || [];
+  const total = responses.reduce(
+    (sum, item) => sum + String(item.bodyText || "").length,
+    0
+  );
+  if (
+    total > 4000000
+    || !responses.some((item) => item.url.endsWith("/wham/usage"))
+  ) {
+    throw new Error(JSON.stringify({ responses: responses.length, total }));
+  }
+}
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+setTimeout(() => process.exit(process.exitCode || 0), 500);
 """
 
     result = subprocess.run(
@@ -5180,6 +6844,31 @@ def test_write_bridge_extension_rejects_symlink_output_dir(tmp_path):
         )
 
     assert not (outside / "manifest.json").exists()
+
+
+def test_write_bridge_extension_fails_closed_when_output_directory_cannot_be_secured(
+    tmp_path, monkeypatch
+):
+    output_dir = tmp_path / "extension"
+    original_chmod = bridge_module.Path.chmod
+
+    def fail_output_chmod(path, mode):
+        if path == output_dir:
+            raise OSError("simulated extension chmod failure")
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(bridge_module.Path, "chmod", fail_output_chmod)
+
+    with pytest.raises(ValueError, match="secure extension output directory"):
+        write_bridge_extension(
+            "BW_Privat",
+            output_dir,
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 43,
+        )
+
+    assert not (output_dir / "manifest.json").exists()
 
 
 def test_write_bridge_extension_rejects_symlink_output_file(tmp_path):

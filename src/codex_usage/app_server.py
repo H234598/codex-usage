@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
+import select
 import shutil
 import signal
 import subprocess
@@ -15,7 +17,9 @@ from typing import Any
 from . import __version__
 from .direct import (
     DirectAuthError,
+    DirectFetchError,
     _auth_plan_type_changed,
+    _direct_deadline,
     _extract_auth_details,
     _normalized_plan_type,
     auth_email_from_payload,
@@ -28,6 +32,7 @@ from .extractor import LOCAL_TZ
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 from .usage_limits import parse_app_server_usage_pools
+from .usage_resets import parse_usage_resets
 
 APP_SERVER_BACKEND = "app-server"
 APP_SERVER_TIMEOUT_SECONDS = 30
@@ -36,6 +41,7 @@ WEEKLY_WINDOW_MINUTES = 10_080
 APP_SERVER_MAX_LINE_BYTES = 2_000_000
 APP_SERVER_MAX_MESSAGES = 100
 APP_SERVER_STDERR_BYTES = 4096
+APP_SERVER_READER_JOIN_TIMEOUT_SECONDS = 2
 TOKEN_REFRESH_WINDOW_SECONDS = 15 * 60
 
 
@@ -59,10 +65,19 @@ class AppServerFetchError(AppServerError):
     pass
 
 
+def _app_server_deadline(timeout_seconds: int | float) -> float:
+    try:
+        return _direct_deadline(timeout_seconds)
+    except DirectFetchError as exc:
+        raise AppServerFetchError(
+            "app server timeout must be a positive finite number"
+        ) from exc
+
+
 def fetch_account_usage_app_server(
     account: Account,
     *,
-    timeout_seconds: int = APP_SERVER_TIMEOUT_SECONDS,
+    timeout_seconds: int | float = APP_SERVER_TIMEOUT_SECONDS,
     codex_command: str | None = None,
 ) -> AccountUsage:
     captured_at = datetime.now(tz=LOCAL_TZ)
@@ -127,6 +142,7 @@ def fetch_account_usage_app_server(
             weekly=weekly,
             main=main,
             models=model_pools,
+            usage_resets=parse_usage_resets(payload),
             status=status,
             error=(
                 None
@@ -187,6 +203,8 @@ def _auth_context(
     path = Path(account.auth_json_path).expanduser()
     if path.name != "auth.json":
         raise DirectAuthError("app-server requires auth_json_path filename auth.json")
+    # Preserve CODEX_HOME validation precedence before reading auth.json.
+    _validate_codex_home(path.parent)
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -210,20 +228,20 @@ def _read_rate_limits(
     codex_home: Path,
     *,
     refresh: bool,
-    timeout_seconds: int,
+    timeout_seconds: int | float,
     codex_command: str | None,
     expected_plan_type: str | None,
     expected_email: str | None,
 ) -> dict[str, Any]:
     _validate_codex_home(codex_home)
     command = _resolve_codex(codex_command)
-    deadline = time.monotonic() + timeout_seconds
+    deadline = _app_server_deadline(timeout_seconds)
     process = _start_app_server(command, codex_home)
     reader = _LineReader(process.stdout)
     stderr_reader = _StderrReader(process.stderr)
-    reader.start()
-    stderr_reader.start()
     try:
+        reader.start()
+        stderr_reader.start()
         _send(
             process,
             {
@@ -237,9 +255,10 @@ def _read_rate_limits(
                     }
                 },
             },
+            deadline=deadline,
         )
         _response_for(reader, 1, deadline=deadline, stderr_reader=stderr_reader)
-        _send(process, {"method": "initialized", "params": {}})
+        _send(process, {"method": "initialized", "params": {}}, deadline=deadline)
         def read_account(request_id: int, *, refresh_token: bool) -> None:
             _send(
                 process,
@@ -248,6 +267,7 @@ def _read_rate_limits(
                     "id": request_id,
                     "params": {"refreshToken": refresh_token},
                 },
+                deadline=deadline,
             )
             account_result = _response_for(
                 reader,
@@ -325,7 +345,7 @@ def _read_rate_limits(
                 ),
             )
     finally:
-        _stop_process(process)
+        _stop_process(process, readers=(reader, stderr_reader))
 
 
 def _auth_email_changed(before: str | None, after: str | None) -> bool:
@@ -342,7 +362,11 @@ def _request_rate_limits(
     deadline: float,
     stderr_reader: _StderrReader,
 ) -> dict[str, Any]:
-    _send(process, {"method": "account/rateLimits/read", "id": request_id})
+    _send(
+        process,
+        {"method": "account/rateLimits/read", "id": request_id},
+        deadline=deadline,
+    )
     response = _response_for(
         reader,
         request_id,
@@ -369,6 +393,7 @@ def _request_model_ids(
             "id": request_id,
             "params": {"includeHidden": True, "limit": 100},
         },
+        deadline=deadline,
     )
     response = _response_for(
         reader,
@@ -441,9 +466,15 @@ def _validate_codex_home(codex_home: Path) -> None:
 
 
 def _assert_no_symlink_ancestors(path: Path) -> None:
-    absolute = Path(os.path.abspath(path))
+    raw_path = Path(path)
+    absolute = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
     current = Path(absolute.anchor)
     for part in absolute.parts[1:]:
+        if part == ".":
+            continue
+        if part == "..":
+            current = current.parent
+            continue
         current /= part
         if current.is_symlink():
             raise AppServerAuthError("CODEX_HOME must not contain symlinks")
@@ -477,17 +508,45 @@ def _app_server_environment(codex_home: Path) -> dict[str, str]:
     return env
 
 
-def _send(process: subprocess.Popen[bytes], message: dict[str, Any]) -> None:
+def _send(
+    process: subprocess.Popen[bytes],
+    message: dict[str, Any],
+    *,
+    deadline: float,
+) -> None:
     if process.stdin is None:
         raise AppServerProtocolError("app server stdin is unavailable")
     raw = json.dumps(message, ensure_ascii=True, separators=(",", ":")).encode("utf-8") + b"\n"
     if len(raw) > 64_000:
         raise AppServerProtocolError("app server request is too large")
     try:
-        process.stdin.write(raw)
-        process.stdin.flush()
-    except OSError as exc:
-        raise AppServerProtocolError("could not write to codex app server") from exc
+        file_descriptor = process.stdin.fileno()
+    except (AttributeError, OSError, ValueError) as exc:
+        raise AppServerProtocolError("app server stdin is unavailable") from exc
+    try:
+        os.set_blocking(file_descriptor, False)
+    except (OSError, ValueError) as exc:
+        raise AppServerProtocolError("could not configure codex app server stdin") from exc
+    offset = 0
+    while offset < len(raw):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AppServerFetchError("codex app server timed out")
+        try:
+            _, writable, _ = select.select([], [file_descriptor], [], remaining)
+        except (OSError, ValueError) as exc:
+            raise AppServerProtocolError("could not monitor codex app server stdin") from exc
+        if not writable:
+            raise AppServerFetchError("codex app server timed out")
+        try:
+            written = os.write(file_descriptor, raw[offset:])
+        except BlockingIOError:
+            continue
+        except OSError as exc:
+            raise AppServerProtocolError("could not write to codex app server") from exc
+        if written <= 0:
+            raise AppServerProtocolError("could not write to codex app server")
+        offset += written
 
 
 def _response_for(
@@ -539,7 +598,9 @@ def _raise_rpc_error(error: Any) -> None:
     if not isinstance(error, dict):
         raise AppServerProtocolError("codex app server returned an invalid error")
     code = error.get("code")
-    message = " ".join(str(error.get("message") or "app server request failed").split())[:500]
+    message = re.sub(
+        r"\s+", " ", str(error.get("message") or "app server request failed")
+    ).strip()[:500]
     lower = message.lower()
     if code == -32601 or "method not found" in lower or "unknown method" in lower:
         raise AppServerUnavailableError("installed Codex does not support rate-limit RPC")
@@ -763,28 +824,49 @@ def _should_refresh(expiry: datetime | None, *, now: datetime) -> bool:
     return (expiry - now).total_seconds() <= TOKEN_REFRESH_WINDOW_SECONDS
 
 
-def _stop_process(process: subprocess.Popen[bytes]) -> None:
-    if process.stdin is not None:
-        try:
-            process.stdin.close()
-        except OSError:
-            pass
-    if process.poll() is not None:
-        _signal_process_group(process, signal.SIGTERM, fallback=False)
-        return
-    if not _signal_process_group(process, signal.SIGTERM):
-        return
+def _stop_process(
+    process: subprocess.Popen[bytes],
+    *,
+    readers: tuple[threading.Thread, ...] = (),
+) -> None:
     try:
-        process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        if not _signal_process_group(process, signal.SIGKILL):
+        _close_process_stream(getattr(process, "stdin", None))
+        if process.poll() is not None:
+            _signal_process_group(process, signal.SIGTERM, fallback=False)
+            return
+        if not _signal_process_group(process, signal.SIGTERM):
             return
         try:
             process.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            if not _signal_process_group(process, signal.SIGKILL):
+                return
+            try:
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                return
+        except OSError:
             return
-    except OSError:
+    finally:
+        _close_process_stream(getattr(process, "stdout", None))
+        _close_process_stream(getattr(process, "stderr", None))
+        for reader in readers:
+            try:
+                reader.join(timeout=APP_SERVER_READER_JOIN_TIMEOUT_SECONDS)
+            except RuntimeError:
+                pass
+
+
+def _close_process_stream(stream: Any) -> None:
+    if stream is None:
         return
+    close = getattr(stream, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except (OSError, ValueError):
+        pass
 
 
 def _signal_process_group(
@@ -810,7 +892,7 @@ def _signal_process_group(
 
 
 def _bounded_error(exc: Exception) -> str:
-    return " ".join(str(exc).split())[:500] or type(exc).__name__
+    return re.sub(r"\s+", " ", str(exc)).strip()[:500] or type(exc).__name__
 
 
 class _LineReader(threading.Thread):
@@ -900,4 +982,4 @@ class _StderrReader(threading.Thread):
     def text(self) -> str:
         raw = b"".join(self._chunks)
         text = raw.decode("utf-8", errors="replace")
-        return " ".join(text.split())[:500]
+        return re.sub(r"\s+", " ", text).strip()[:500]

@@ -11,7 +11,7 @@ from .config import default_state_dir
 from .identity import MAX_BACKEND_ID_CHARS
 from .json_utils import loads_strict
 from .private_io import (
-    assert_no_symlink_ancestors,
+    ensure_private_directory,
     private_path_lock,
     read_private_text,
     write_private_text,
@@ -133,12 +133,14 @@ def _load_records(path: Path) -> dict[str, dict[str, Any]]:
             raise ValueError("spark health path must be a regular file")
         return {}
     try:
-        text, _ = read_private_text(
+        text, file_stat = read_private_text(
             path,
             regular_label="spark health path",
             read_label="spark health file",
             max_bytes=SPARK_HEALTH_MAX_BYTES,
         )
+        if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+            return {}
         payload = loads_strict(text)
     except (OSError, RecursionError, TypeError, ValueError, UnicodeDecodeError):
         return {}
@@ -146,6 +148,8 @@ def _load_records(path: Path) -> dict[str, dict[str, Any]]:
         return {}
     raw_records = payload.get("records")
     if not isinstance(raw_records, dict):
+        return {}
+    if len(raw_records) > SPARK_HEALTH_MAX_RECORDS:
         return {}
     return {
         key: value
@@ -159,16 +163,7 @@ def _load_records(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def _prepare_health_directory(directory: Path) -> None:
-    assert_no_symlink_ancestors(directory, label="spark health directory")
-    if directory.is_symlink():
-        raise ValueError("spark health directory must not be a symlink")
-    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if directory.is_symlink() or not directory.is_dir():
-        raise ValueError("spark health directory must be a real directory")
-    try:
-        directory.chmod(0o700)
-    except OSError:
-        pass
+    ensure_private_directory(directory, label="spark health directory")
 
 
 def _parse_timestamp(value: Any) -> datetime | None:

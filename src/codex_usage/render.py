@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import datetime
+from itertools import islice
 from pathlib import Path
 
-from .config import AppConfig
+from .config import MAX_CONFIG_ACCOUNTS, AppConfig
 from .extractor import LOCAL_TZ
 from .models import Account, AccountStatus, AccountUsage, LimitWindow
 from .state import backend_provenance_matches_configured
@@ -19,9 +21,24 @@ VALUE_CELL_MAX = 28
 AUTH_CELL_MAX = 28
 
 
+def _bounded_usage_list(usages: Iterable[AccountUsage]) -> list[AccountUsage]:
+    usage_list = list(islice(usages, MAX_CONFIG_ACCOUNTS + 1))
+    if len(usage_list) > MAX_CONFIG_ACCOUNTS:
+        raise ValueError("too many usage records")
+    return usage_list
+
+
+def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:
+    account_list = list(islice(accounts, MAX_CONFIG_ACCOUNTS + 1))
+    if len(account_list) > MAX_CONFIG_ACCOUNTS:
+        raise ValueError("too many account records")
+    return account_list
+
+
 def render_json(usages: Iterable[AccountUsage]) -> str:
+    usage_list = _bounded_usage_list(usages)
     return json.dumps(
-        [_safe_usage_for_display(usage).as_dict() for usage in usages],
+        [_safe_usage_for_display(usage).as_dict() for usage in usage_list],
         ensure_ascii=False,
         indent=2,
         allow_nan=False,
@@ -95,6 +112,7 @@ def render_account_values(
     accounts: Iterable[Account],
     usages: Mapping[str, AccountUsage],
 ) -> str:
+    account_list = _bounded_account_list(accounts)
     rows = [
         [
             _cell(account.label, ACCOUNT_CELL_MAX),
@@ -103,7 +121,7 @@ def render_account_values(
                 expected_backend=account.backend,
             ),
         ]
-        for account in sorted(accounts, key=lambda item: item.id)
+        for account in sorted(account_list, key=lambda item: item.id)
     ]
     headers = [
         "Account",
@@ -125,7 +143,7 @@ def render_account_values(
 
 
 def render_table(usages: Iterable[AccountUsage]) -> str:
-    rows = list(usages)
+    rows = _bounded_usage_list(usages)
     now = datetime.now(tz=LOCAL_TZ).strftime("%d.%m.%Y %H:%M")
     headers = [
         "Account",
@@ -518,7 +536,7 @@ def _cell(value: str, max_len: int) -> str:
 
 
 def _shorten(value: str, max_len: int) -> str:
-    clean = " ".join(value.split())
+    clean = re.sub(r"\s+", " ", value).strip()
     if len(clean) <= max_len:
         return clean
     return clean[: max_len - 1] + "…"

@@ -4,8 +4,10 @@ import json
 import os
 import re
 import stat
-from contextlib import contextmanager
+import tempfile
+from contextlib import ExitStack, contextmanager
 from datetime import datetime
+from heapq import nsmallest
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -34,19 +36,21 @@ from .identity import (
 )
 from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
-from .private_io import (
-    assert_no_symlink_ancestors,
-)
+from .private_io import ensure_private_directory, private_path_lock
 from .private_io import (
     write_private_text as write_private_output_text,
 )
 
 JSON_MAX_BYTES = 2_000_000
+JSON_CANDIDATE_MAX_BYTES = 4_000_000
+JSON_CANDIDATE_MAX_COUNT = 50
+BROWSER_TIMEOUT_MAX_MS = 60 * 60 * 1000
 PROBE_OUTPUT_MAX_BYTES = 2_000_000
 BROWSER_TEXT_MAX_CHARS = 2_000_000
 TITLE_MAX_CHARS = 500
 DIAGNOSTIC_MAX_KEYS = 40
 DIAGNOSTIC_MAX_FIELD_CHARS = 200
+DIAGNOSTIC_MAX_RESPONSES = 100
 LOGIN_HINTS = ("log in", "sign in", "anmelden", "einloggen", "continue with")
 LOGIN_PAGE_HINTS = (
     "log in to start chatting",
@@ -66,6 +70,16 @@ CLOUDFLARE_HINTS = (
     "ueberpruefen sie",
     "überprüfen sie",
 )
+TRUSTED_BROWSER_HOSTS = frozenset(("chatgpt.com", "openai.com"))
+
+
+def _validate_browser_timeout_ms(timeout_ms: object) -> None:
+    if (
+        isinstance(timeout_ms, bool)
+        or not isinstance(timeout_ms, int)
+        or not 1 <= timeout_ms <= BROWSER_TIMEOUT_MAX_MS
+    ):
+        raise ValueError("browser timeout is invalid")
 
 
 def login_account(account: Account, config: AppConfig) -> None:
@@ -107,8 +121,10 @@ def fetch_account_usage(
     headed: bool = False,
     timeout_ms: int = 45_000,
 ) -> AccountUsage:
+    _validate_browser_timeout_ms(timeout_ms)
     captured_at = datetime.now(tz=LOCAL_TZ)
     candidates: list[JsonCandidate] = []
+    candidate_bytes = [0]
     source_urls: set[str] = set()
 
     try:
@@ -128,7 +144,9 @@ def fetch_account_usage(
                     page = context.new_page()
                     page.on(
                         "response",
-                        lambda response: _capture_json_response(response, candidates),
+                        lambda response: _capture_json_response(
+                            response, candidates, candidate_bytes
+                        ),
                     )
                     main_response = page.goto(
                         config.analytics_url,
@@ -146,8 +164,11 @@ def fetch_account_usage(
                 finally:
                     _close_context(context)
 
-        raw_candidates = list(candidates)
-        source_urls.update(_redact_url(candidate.url) for candidate in raw_candidates)
+        raw_candidates = candidates
+        for candidate in raw_candidates:
+            redacted_url = _redact_url(candidate.url)
+            if redacted_url:
+                source_urls.add(redacted_url)
         page_state = _detect_page_state(
             current_url,
             page_title,
@@ -395,6 +416,7 @@ def probe_account(
 ) -> dict[str, Any]:
     captured_at = datetime.now(tz=LOCAL_TZ)
     candidates: list[JsonCandidate] = []
+    candidate_bytes = [0]
     profile_dir = _prepare_profile(account)
     with _profile_lock(profile_dir):
         with sync_playwright() as playwright:
@@ -409,7 +431,9 @@ def probe_account(
                 page = context.new_page()
                 page.on(
                     "response",
-                    lambda response: _capture_json_response(response, candidates),
+                    lambda response: _capture_json_response(
+                        response, candidates, candidate_bytes
+                    ),
                 )
                 page.goto(
                     config.analytics_url,
@@ -454,6 +478,7 @@ def diagnose_account(
     auth_json_path: Path | None = None,
     timeout_ms: int = 60_000,
 ) -> dict[str, Any]:
+    _validate_browser_timeout_ms(timeout_ms)
     captured_at = datetime.now(tz=LOCAL_TZ)
     profile_dir = _prepare_profile(account)
     diagnostic_auth_path = auth_json_path
@@ -523,15 +548,22 @@ def diagnose_account(
     return result
 
 
-def _capture_json_response(response: Any, candidates: list[JsonCandidate]) -> None:
+def _capture_json_response(
+    response: Any,
+    candidates: list[JsonCandidate],
+    candidate_bytes: list[int] | None = None,
+) -> None:
     url = response.url
     if not _looks_relevant_url(url):
         return
     content_type = response.headers.get("content-type", "")
     content_length = response.headers.get("content-length")
-    if content_length:
+    if content_length is not None and content_length != "":
+        if not isinstance(content_length, str) or not content_length.strip():
+            return
         try:
-            if int(content_length) > JSON_MAX_BYTES:
+            parsed_content_length = int(content_length)
+            if parsed_content_length < 0 or parsed_content_length > JSON_MAX_BYTES:
                 return
         except (TypeError, ValueError):
             return
@@ -553,11 +585,43 @@ def _capture_json_response(response: Any, candidates: list[JsonCandidate]) -> No
         payload = loads_strict(text)
     except ValueError:
         return
+    if len(candidates) >= JSON_CANDIDATE_MAX_COUNT:
+        return
+    try:
+        payload_bytes = len(
+            json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        )
+    except (TypeError, ValueError, OverflowError):
+        return
+    if candidate_bytes is None:
+        existing_bytes = 0
+        for candidate in candidates:
+            try:
+                existing_bytes += len(
+                    json.dumps(
+                        candidate.payload,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    ).encode("utf-8")
+                )
+            except (TypeError, ValueError, OverflowError):
+                return
+    else:
+        existing_bytes = candidate_bytes[0]
+    if existing_bytes + payload_bytes > JSON_CANDIDATE_MAX_BYTES:
+        return
     candidates.append(JsonCandidate(url=url, payload=payload))
+    if candidate_bytes is not None:
+        candidate_bytes[0] += payload_bytes
 
 
 def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
-    codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    configured_home = os.environ.get("CODEX_HOME")
+    if configured_home:
+        candidate = Path(configured_home).expanduser()
+        codex_home = candidate if candidate.is_absolute() else Path.home() / ".codex"
+    else:
+        codex_home = Path.home() / ".codex"
     auth_path = path or codex_home / "auth.json"
     expanded = auth_path.expanduser()
     exists = expanded.exists() or expanded.is_symlink()
@@ -615,7 +679,10 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
 def _diagnostic_keys(mapping: dict[Any, Any]) -> list[str]:
     return [
         _diagnostic_text(key, limit=120)
-        for key in sorted(str(key) for key in mapping.keys())[:DIAGNOSTIC_MAX_KEYS]
+        for key in nsmallest(
+            DIAGNOSTIC_MAX_KEYS,
+            (str(key) for key in mapping.keys()),
+        )
     ]
 
 
@@ -642,8 +709,10 @@ def _format_datetime(value: datetime | None) -> str | None:
 
 def _capture_diagnostic_response(response: Any, responses: list[dict[str, Any]]) -> None:
     url = response.url
-    if "chatgpt.com" not in url.lower() and "openai.com" not in url.lower():
+    if not _is_trusted_browser_url(url):
         return
+    if len(responses) >= DIAGNOSTIC_MAX_RESPONSES:
+        del responses[0]
     responses.append(
         {
             "status": response.status,
@@ -654,9 +723,9 @@ def _capture_diagnostic_response(response: Any, responses: list[dict[str, Any]])
 
 
 def _looks_relevant_url(url: str) -> bool:
-    lower = url.lower()
-    if "chatgpt.com" not in lower and "openai.com" not in lower:
+    if not _is_trusted_browser_url(url):
         return False
+    lower = url.lower()
     return any(
         hint in lower
         for hint in (
@@ -671,19 +740,122 @@ def _looks_relevant_url(url: str) -> bool:
     )
 
 
+def _is_trusted_browser_url(url: str) -> bool:
+    if not isinstance(url, str):
+        return False
+    try:
+        parts = urlsplit(url)
+        hostname = (parts.hostname or "").lower()
+        port = parts.port
+    except (TypeError, ValueError):
+        return False
+    if not hostname or not any(
+        hostname == trusted_host or hostname.endswith(f".{trusted_host}")
+        for trusted_host in TRUSTED_BROWSER_HOSTS
+    ):
+        return False
+    return (
+        parts.scheme.lower() == "https"
+        and parts.username is None
+        and parts.password is None
+        and port in (None, 443)
+    )
+
+
 def _safe_body_text(page: Any) -> str:
     try:
-        return _limit_text(
-            page.locator("body").inner_text(timeout=10_000),
-            BROWSER_TEXT_MAX_CHARS,
+        locator = page.locator("body")
+        if not hasattr(locator, "evaluate"):
+            return _limit_text(
+                locator.inner_text(timeout=10_000),
+                BROWSER_TEXT_MAX_CHARS,
+            )
+        body_text = locator.evaluate(
+            """element => {
+                const maxChars = 2000000;
+                const maxNodes = 500000;
+                const skippedTags = new Set([
+                    "script", "style", "link", "meta", "noscript", "template"
+                ]);
+                const blockTags = new Set([
+                    "address", "article", "aside", "blockquote", "br", "dd",
+                    "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
+                    "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
+                    "li", "main", "nav", "ol", "p", "pre", "section", "table",
+                    "td", "th", "tr", "ul"
+                ]);
+                const parts = [];
+                let length = 0;
+                let nodesSeen = 0;
+
+                function append(value) {
+                    if (length >= maxChars) {
+                        return;
+                    }
+                    const text = String(value || "");
+                    const remaining = maxChars - length;
+                    const chunk = text.slice(0, remaining);
+                    parts.push(chunk);
+                    length += chunk.length;
+                }
+
+                const stack = [{ kind: "visit", node: element }];
+                while (stack.length && length < maxChars && nodesSeen < maxNodes) {
+                    const item = stack.pop();
+                    if (item.kind === "close") {
+                        append("\\n");
+                        continue;
+                    }
+                    const node = item.node;
+                    if (!node) {
+                        continue;
+                    }
+                    nodesSeen += 1;
+                    if (node.nodeType === 3) {
+                        append(node.nodeValue);
+                        continue;
+                    }
+                    if (node.nodeType !== 1) {
+                        continue;
+                    }
+                    const tag = String(node.tagName || "").toLowerCase();
+                    if (!tag || skippedTags.has(tag) || node.hidden) {
+                        continue;
+                    }
+                    const style = typeof getComputedStyle === "function"
+                        ? getComputedStyle(node)
+                        : null;
+                    if (
+                        style
+                        && (style.display === "none" || style.visibility === "hidden")
+                    ) {
+                        continue;
+                    }
+                    const isBlock = blockTags.has(tag);
+                    if (isBlock) {
+                        append("\\n");
+                        stack.push({ kind: "close" });
+                    }
+                    const children = node.childNodes || [];
+                    for (let index = children.length - 1; index >= 0; index -= 1) {
+                        stack.push({ kind: "visit", node: children[index] });
+                    }
+                }
+                return parts.join("");
+            }"""
         )
-    except PlaywrightError:
+        return _limit_text(body_text, BROWSER_TEXT_MAX_CHARS)
+    except (AttributeError, PlaywrightError, TypeError):
         return ""
 
 
 def _safe_page_text_sources(page: Any) -> tuple[str, tuple[tuple[str, str], ...]]:
-    body_text = _safe_body_text(page)
-    html_text = _safe_html_text(page)
+    combined = _safe_combined_page_text_sources(page)
+    if combined is None:
+        body_text = _safe_body_text(page)
+        html_text = _safe_html_text(page)
+    else:
+        body_text, html_text = combined
     sources = tuple(
         (source, text)
         for source, text in (("bodyText", body_text), ("htmlText", html_text))
@@ -692,15 +864,262 @@ def _safe_page_text_sources(page: Any) -> tuple[str, tuple[tuple[str, str], ...]
     return body_text, sources
 
 
+def _safe_combined_page_text_sources(
+    page: Any,
+) -> tuple[str, str] | None:
+    try:
+        result = page.locator("html").evaluate(
+            """element => {
+                const maxChars = 2000000;
+                const maxNodes = 1000000;
+                const skippedTags = new Set([
+                    "script", "style", "link", "meta", "noscript", "template"
+                ]);
+                const blockTags = new Set([
+                    "address", "article", "aside", "blockquote", "br", "dd",
+                    "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer",
+                    "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
+                    "li", "main", "nav", "ol", "p", "pre", "section", "table",
+                    "td", "th", "tr", "ul"
+                ]);
+                const voidTags = new Set([
+                    "area", "base", "br", "col", "embed", "hr", "img",
+                    "input", "link", "meta", "param", "source", "track", "wbr"
+                ]);
+                const attributesToKeep = new Set([
+                    "style", "class", "role", "hidden", "aria-hidden",
+                    "aria-valuenow", "aria-valuemin", "aria-valuemax", "aria-label", "title"
+                ]);
+                const bodyParts = [];
+                const htmlParts = [];
+                let bodyLength = 0;
+                let htmlLength = 0;
+                let nodesSeen = 0;
+
+                function appendBody(value) {
+                    if (bodyLength >= maxChars) {
+                        return;
+                    }
+                    const text = String(value || "");
+                    const remaining = maxChars - bodyLength;
+                    const chunk = text.slice(0, remaining);
+                    bodyParts.push(chunk);
+                    bodyLength += chunk.length;
+                }
+
+                function appendHtml(value) {
+                    if (htmlLength >= maxChars) {
+                        return;
+                    }
+                    const text = String(value || "");
+                    const remaining = maxChars - htmlLength;
+                    const chunk = text.slice(0, remaining);
+                    htmlParts.push(chunk);
+                    htmlLength += chunk.length;
+                }
+
+                function escape(value) {
+                    return String(value || "")
+                        .replaceAll("&", "&amp;")
+                        .replaceAll("<", "&lt;")
+                        .replaceAll(">", "&gt;")
+                        .replaceAll('"', "&quot;");
+                }
+
+                function visible(node) {
+                    if (node.hidden) {
+                        return false;
+                    }
+                    const style = typeof getComputedStyle === "function"
+                        ? getComputedStyle(node)
+                        : null;
+                    return !style
+                        || (style.display !== "none" && style.visibility !== "hidden");
+                }
+
+                const stack = [{
+                    kind: "visit",
+                    node: element,
+                    inBody: false,
+                    bodyVisible: false
+                }];
+                while (
+                    stack.length
+                    && nodesSeen < maxNodes
+                    && (bodyLength < maxChars || htmlLength < maxChars)
+                ) {
+                    const item = stack.pop();
+                    if (item.kind === "close") {
+                        if (item.bodyBlock) {
+                            appendBody("\\n");
+                        }
+                        if (item.htmlTag) {
+                            appendHtml("</" + item.htmlTag + ">");
+                        }
+                        continue;
+                    }
+                    const node = item.node;
+                    if (!node) {
+                        continue;
+                    }
+                    nodesSeen += 1;
+                    if (node.nodeType === 3) {
+                        if (item.inBody && item.bodyVisible) {
+                            appendBody(node.nodeValue);
+                        }
+                        appendHtml(escape(node.nodeValue));
+                        continue;
+                    }
+                    if (node.nodeType !== 1) {
+                        continue;
+                    }
+                    const tag = String(node.tagName || "").toLowerCase();
+                    if (!tag || skippedTags.has(tag)) {
+                        continue;
+                    }
+
+                    const isBody = tag === "body";
+                    const inBody = item.inBody || isBody;
+                    const bodyVisible = isBody
+                        ? visible(node)
+                        : item.bodyVisible && visible(node);
+                    const bodyBlock = inBody && bodyVisible && blockTags.has(tag);
+                    if (bodyBlock) {
+                        appendBody("\\n");
+                    }
+
+                    appendHtml("<" + tag);
+                    const attributes = node.attributes || [];
+                    for (let index = 0; index < attributes.length; index += 1) {
+                        const attribute = attributes[index];
+                        const name = String(attribute.name || "").toLowerCase();
+                        if (attributesToKeep.has(name)) {
+                            appendHtml(
+                                " "
+                                + attribute.name
+                                + '=\\"'
+                                + escape(attribute.value)
+                                + '\\"'
+                            );
+                        }
+                    }
+                    appendHtml(">");
+
+                    const htmlTag = voidTags.has(tag) ? null : tag;
+                    if (htmlTag || bodyBlock) {
+                        stack.push({ kind: "close", bodyBlock, htmlTag });
+                    }
+                    const children = node.childNodes || [];
+                    for (let index = children.length - 1; index >= 0; index -= 1) {
+                        stack.push({
+                            kind: "visit",
+                            node: children[index],
+                            inBody,
+                            bodyVisible
+                        });
+                    }
+                }
+                return {
+                    bodyText: bodyParts.join(""),
+                    htmlText: htmlParts.join("")
+                };
+            }"""
+        )
+    except (AttributeError, PlaywrightError, TypeError):
+        return None
+    if not isinstance(result, dict):
+        return None
+    body_text = result.get("bodyText")
+    html_text = result.get("htmlText")
+    if not isinstance(body_text, str) or not isinstance(html_text, str):
+        return None
+    return (
+        _limit_text(body_text, BROWSER_TEXT_MAX_CHARS),
+        _limit_text(html_text, BROWSER_TEXT_MAX_CHARS),
+    )
+
+
 def _safe_html_text(page: Any) -> str:
     try:
         html_text = page.locator("html").evaluate(
             """element => {
-                const clone = element.cloneNode(true);
-                clone.querySelectorAll(
-                    "script, style, link, meta, noscript, template"
-                ).forEach((child) => child.remove());
-                return clone.outerHTML || "";
+                const maxChars = 2000000;
+                const maxNodes = 500000;
+                const skippedTags = new Set([
+                    "script", "style", "link", "meta", "noscript", "template"
+                ]);
+                const voidTags = new Set([
+                    "area", "base", "br", "col", "embed", "hr", "img",
+                    "input", "link", "meta", "param", "source", "track", "wbr"
+                ]);
+                const attributesToKeep = new Set([
+                    "style", "class", "role", "hidden", "aria-hidden",
+                    "aria-valuenow", "aria-valuemin", "aria-valuemax", "aria-label", "title"
+                ]);
+                const parts = [];
+                let length = 0;
+                let nodesSeen = 0;
+
+                function append(value) {
+                    if (length >= maxChars) {
+                        return;
+                    }
+                    const text = String(value || "");
+                    const remaining = maxChars - length;
+                    parts.push(text.slice(0, remaining));
+                    length += Math.min(text.length, remaining);
+                }
+
+                function escape(value) {
+                    return String(value || "")
+                        .replaceAll("&", "&amp;")
+                        .replaceAll("<", "&lt;")
+                        .replaceAll(">", "&gt;")
+                        .replaceAll('"', "&quot;");
+                }
+
+                const stack = [{ kind: "visit", node: element }];
+                while (stack.length && length < maxChars && nodesSeen < maxNodes) {
+                    const item = stack.pop();
+                    if (item.kind === "close") {
+                        append("</" + item.tag + ">");
+                        continue;
+                    }
+                    const node = item.node;
+                    if (!node) {
+                        continue;
+                    }
+                    nodesSeen += 1;
+                    if (node.nodeType === 3) {
+                        append(escape(node.nodeValue));
+                        continue;
+                    }
+                    if (node.nodeType !== 1) {
+                        continue;
+                    }
+                    const tag = String(node.tagName || "").toLowerCase();
+                    if (!tag || skippedTags.has(tag)) {
+                        continue;
+                    }
+                    append("<" + tag);
+                    const attributes = node.attributes || [];
+                    for (let index = 0; index < attributes.length; index += 1) {
+                        const attribute = attributes[index];
+                        const name = String(attribute.name || "").toLowerCase();
+                        if (attributesToKeep.has(name)) {
+                            append(" " + attribute.name + '=\\"' + escape(attribute.value) + '\\"');
+                        }
+                    }
+                    append(">");
+                    if (!voidTags.has(tag)) {
+                        stack.push({ kind: "close", tag });
+                    }
+                    const children = node.childNodes || [];
+                    for (let index = children.length - 1; index >= 0; index -= 1) {
+                        stack.push({ kind: "visit", node: children[index] });
+                    }
+                }
+                return parts.join("");
             }"""
         )
     except (AttributeError, PlaywrightError, TypeError):
@@ -874,8 +1293,8 @@ def _prepare_profile(account: Account) -> Path:
 def _chmod_private(path: Path, mode: int = 0o700) -> None:
     try:
         path.chmod(mode)
-    except OSError:
-        pass
+    except OSError as exc:
+        raise ValueError(f"could not secure private path: {path}") from exc
 
 
 def _profile_browser_dir(browser: str) -> str:
@@ -883,8 +1302,32 @@ def _profile_browser_dir(browser: str) -> str:
 
 
 @contextmanager
-def _profile_lock(profile_dir: Path):
-    lock_path = profile_dir / ".codex-usage.lock"
+def _profile_lock(profile_dir: Path, *, lock_root: Path | None = None):
+    root = lock_root or _profile_lock_root(profile_dir)
+    relative = profile_dir.relative_to(root)
+    lock_components = (root.name, *relative.parts)
+    encoded_components = tuple(
+        component.encode("utf-8").hex() for component in lock_components
+    )
+    lock_name = "." + ".".join(encoded_components) + ".codex-usage.lock"
+    lock_paths = [root.parent / lock_name]
+    legacy_lock = profile_dir / ".codex-usage.lock"
+    if legacy_lock.is_symlink() or legacy_lock.exists():
+        lock_paths.append(legacy_lock)
+    with ExitStack() as locks:
+        for lock_path in sorted(set(lock_paths), key=str):
+            locks.enter_context(_profile_lock_file(lock_path, profile_dir))
+        yield
+
+
+def _profile_lock_root(profile_dir: Path) -> Path:
+    if profile_dir.parent.name == "oauth":
+        return profile_dir.parent.parent
+    return profile_dir.parent
+
+
+@contextmanager
+def _profile_lock_file(lock_path: Path, profile_dir: Path):
     if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
         raise ValueError(f"profile lock path must be a regular file: {lock_path}")
     flags = os.O_RDWR | os.O_CREAT
@@ -940,7 +1383,7 @@ def _summarize_candidate(candidate: JsonCandidate) -> dict[str, Any]:
 
 def _top_level_keys(payload: Any) -> list[str]:
     if isinstance(payload, dict):
-        return sorted(str(key) for key in payload.keys())[:30]
+        return nsmallest(30, (str(key) for key in payload.keys()))
     if isinstance(payload, list):
         return [f"list[{len(payload)}]"]
     return [type(payload).__name__]
@@ -953,31 +1396,95 @@ def _save_probe_payloads(
     body_text: str,
 ) -> list[str]:
     _prepare_private_output_dir(save_dir, label="probe save directory")
-    saved: list[str] = []
+    with private_path_lock(
+        save_dir / ".codex-usage-probe-write",
+        label="probe output lock",
+    ):
+        return _save_probe_payloads_transaction(
+            save_dir,
+            account,
+            candidates,
+            body_text,
+        )
+
+
+def _save_probe_payloads_transaction(
+    save_dir: Path,
+    account: Account,
+    candidates: list[JsonCandidate],
+    body_text: str,
+) -> list[str]:
+    files: dict[str, str] = {}
     for index, candidate in enumerate(candidates, start=1):
-        path = save_dir / f"{account.id}-{index:02d}.json"
         payload_text = json.dumps(
             candidate.payload,
             ensure_ascii=False,
             indent=2,
             allow_nan=False,
         )
-        _write_bounded_private_text(path, payload_text, label="probe output path")
-        saved.append(str(path))
-    body_path = save_dir / f"{account.id}-body.txt"
-    _write_bounded_private_text(body_path, body_text, label="probe output path")
-    saved.append(str(body_path))
-    return saved
+        files[f"{account.id}-{index:02d}.json"] = payload_text
+    files[f"{account.id}-body.txt"] = body_text
+    paths = {filename: save_dir / filename for filename in files}
+    for path in paths.values():
+        _validate_private_output_path(path, label="probe output path")
+
+    with tempfile.TemporaryDirectory(
+        prefix=f".{save_dir.name}.",
+        dir=str(save_dir),
+    ) as transaction:
+        transaction_dir = Path(transaction)
+        stage_dir = transaction_dir / "stage"
+        backup_dir = transaction_dir / "backup"
+        stage_dir.mkdir(mode=0o700)
+        backup_dir.mkdir(mode=0o700)
+        for filename, content in files.items():
+            _write_bounded_private_text(
+                stage_dir / filename,
+                content,
+                label="probe staging path",
+            )
+
+        backed_up: list[tuple[Path, Path]] = []
+        committed: list[Path] = []
+        try:
+            for path in paths.values():
+                _validate_private_output_path(path, label="probe output path")
+            for filename, path in paths.items():
+                backup = backup_dir / filename
+                if path.exists():
+                    path.replace(backup)
+                    backed_up.append((path, backup))
+                (stage_dir / filename).replace(path)
+                committed.append(path)
+        except Exception as primary_error:
+            rollback_errors: list[Exception] = []
+            for path in reversed(committed):
+                try:
+                    if path.is_symlink() or (path.exists() and not path.is_file()):
+                        raise ValueError(f"probe output path is not a regular file: {path}")
+                    if path.exists():
+                        path.unlink()
+                except Exception as rollback_error:
+                    rollback_errors.append(rollback_error)
+            for path, backup in reversed(backed_up):
+                try:
+                    backup.replace(path)
+                except Exception as rollback_error:
+                    rollback_errors.append(rollback_error)
+            if rollback_errors:
+                raise ExceptionGroup(
+                    "probe output commit rollback failed",
+                    [primary_error, *rollback_errors],
+                ) from None
+            raise
+    return [str(path) for path in paths.values()]
 
 
 def _prepare_private_output_dir(path: Path, *, label: str) -> None:
-    assert_no_symlink_ancestors(path, label=label)
-    if path.is_symlink():
-        raise ValueError(f"{label} must not be a symlink: {path}")
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if path.is_symlink() or not path.is_dir():
-        raise ValueError(f"{label} is not a real directory: {path}")
-    _chmod_private(path)
+    try:
+        ensure_private_directory(path, label=label)
+    except OSError as exc:
+        raise ValueError(f"could not secure private path: {path}") from exc
 
 
 def _write_private_text(path: Path, text: str, *, label: str) -> None:
@@ -993,14 +1500,26 @@ def _write_bounded_private_text(path: Path, text: str, *, label: str) -> None:
 def _validate_private_output_path(path: Path, *, label: str) -> None:
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
+    if path.exists() and path.stat().st_nlink != 1:
+        raise ValueError(f"{label} must not be hard-linked: {path}")
 
 
 def _redact_url(url: str) -> str:
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except (TypeError, ValueError):
+        return ""
+    hostname = parts.hostname
+    if not hostname:
+        return ""
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    netloc = hostname if port is None else f"{hostname}:{port}"
     path = parts.path
     if path.startswith("/cdn-cgi/challenge-platform/"):
         path = "/cdn-cgi/challenge-platform/..."
-    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+    return urlunsplit((parts.scheme, netloc, path, "", ""))
 
 
 def _clean_error(error: str) -> str:

@@ -5,12 +5,16 @@ import json
 import sys
 from datetime import datetime, timedelta
 from io import StringIO
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.cli as cli_module
 from codex_usage import __version__
+from codex_usage.account_lock import AccountLockError, account_lock
 from codex_usage.bridge import MAX_INGEST_BYTES, bridge_token_for_account, load_latest_usages
+from codex_usage.browser import _profile_browser_dir, _profile_lock
 from codex_usage.cli import (
     _all_usage_results_valid,
     _is_successful_usage,
@@ -18,10 +22,10 @@ from codex_usage.cli import (
     _select_accounts,
     main,
 )
-from codex_usage.config import AppConfig, load_config
+from codex_usage.config import AppConfig, add_or_update_account, load_config, save_config
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.spark_health import set_spark_health
-from codex_usage.state import save_current_usage, save_usage_snapshot
+from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
 
 
 def test_sync_managed_service_does_not_rebind_another_config(tmp_path, monkeypatch):
@@ -43,6 +47,40 @@ def test_sync_managed_service_does_not_rebind_another_config(tmp_path, monkeypat
     _sync_managed_service(object(), requested)
 
     assert calls == []
+
+
+def test_integration_snapshot_rejects_symlinked_cache_parent_before_chmod(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "target"
+    target.mkdir()
+    target.chmod(0o755)
+    integration = tmp_path / "integration"
+    integration.symlink_to(target, target_is_directory=True)
+    cache_path = integration / "account-usage-v1.json"
+
+    monkeypatch.setattr(cli_module, "read_current_usage_records", lambda _path: ())
+    monkeypatch.setattr(
+        cli_module,
+        "build_schema1_document",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(cli_module, "serialize_schema1_document", lambda _document: b"{}")
+    monkeypatch.setattr(
+        cli_module,
+        "publish_schema1_cache",
+        lambda *_args, **_kwargs: pytest.fail("publish must not run"),
+    )
+
+    args = type(
+        "IntegrationSnapshotArgs",
+        (),
+        {"current_dir": tmp_path / "current", "cache_path": cache_path},
+    )()
+    with pytest.raises(ValueError, match="integration cache"):
+        cli_module._cmd_integration_snapshot(args)
+
+    assert target.stat().st_mode & 0o777 == 0o755
 
 
 def test_root_help_lists_all_commands(capsys):
@@ -67,6 +105,12 @@ def test_root_help_lists_all_commands(capsys):
     assert "--config-only" in output
     assert "codex-usage account backend ACCOUNT direct|app-server" in output
     assert "codex-usage account delete ACCOUNT" in output
+    assert "--format table|json" in output
+    assert "codex-usage profile jobs [--account ACCOUNT] [--json]" in output
+    assert "codex-usage profile job-status JOB_ID [--json]" in output
+    assert "codex-usage profile cancel JOB_ID [--json]" in output
+    assert "codex-usage profile device-login --account ACCOUNT [--codex-bin PATH]" in output
+    assert "[--timeout SEKUNDEN]" in output
     assert "codex-usage login ACCOUNT" in output
     assert "codex-usage once" in output
     assert "codex-usage watch" in output
@@ -87,6 +131,8 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage bridge-extension ACCOUNT" in output
     assert "codex-usage bridge-server" in output
     assert "--allow-remote" in output
+    assert "--tls-cert" in output
+    assert "--tls-key" in output
     assert "codex-usage paths" in output
     assert (
         "Direct- und App-Server-Abrufe mit mehreren Accounts brauchen pro Account "
@@ -130,6 +176,214 @@ def test_account_add_json_returns_all_editable_fields(tmp_path, capsys):
     assert payload["account"]["reactivation_browser"] == "firefox"
     assert payload["account"]["backend"] == "app-server"
     assert payload["account"]["auth_json_path"] is None
+
+
+def test_account_add_rolls_back_when_managed_service_sync_fails(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+
+    def fail_service_sync(*_args, **_kwargs):
+        raise OSError("service sync failed")
+
+    monkeypatch.setattr("codex_usage.cli.service_install", fail_service_sync)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts == ()
+
+
+def test_account_add_syncs_managed_service_with_updated_config(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    synced = []
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.cli.service_install",
+        lambda config, path: synced.append((config, path)),
+    )
+
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    assert len(synced) == 1
+    assert synced[0][0].accounts[0].id == "privat"
+    assert synced[0][1] == config_path
+
+
+def test_account_update_rolls_back_when_managed_service_sync_fails(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "Old",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+    def fail_service_sync(*_args, **_kwargs):
+        raise OSError("service sync failed")
+
+    monkeypatch.setattr("codex_usage.cli.service_install", fail_service_sync)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "New",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].label == "Old"
+
+
+def test_account_update_service_sync_rollback_keeps_previous_usage_state(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "Old",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Old",
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=12),
+            weekly=LimitWindow(name="weekly", remaining=34),
+        )
+    )
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+
+    def fail_service_sync(*_args, **_kwargs):
+        raise OSError("service sync failed")
+
+    monkeypatch.setattr("codex_usage.cli.service_install", fail_service_sync)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "New",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+
+    assert load_current_usage("privat") is not None
+
+
+def test_account_update_state_failure_rolls_back_managed_service_unit(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+    synced = []
+    monkeypatch.setattr(
+        "codex_usage.cli.service_install",
+        lambda config, path: synced.append((config, path)),
+    )
+
+    def fail_state_cleanup(*_args, **_kwargs):
+        raise OSError("state cleanup failed")
+
+    monkeypatch.setattr("codex_usage.state.remove_account_state", fail_state_cleanup)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "New",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+
+    assert [config.accounts[0].label for config, _ in synced] == ["New", "privat"]
+    assert load_config(config_path).accounts[0].label == "privat"
 
 
 def test_account_overview_json_exposes_paths_and_reactivation_browser(
@@ -863,6 +1117,120 @@ def test_once_direct_passes_auth_json_and_saves_snapshots(tmp_path, monkeypatch,
     }
 
 
+def test_once_rejects_override_when_configured_auth_identity_is_unavailable(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    configured_auth = tmp_path / "configured-auth.json"
+    override_auth = tmp_path / "override-auth.json"
+    override_auth.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "account_id": "account-override",
+                    "id_token": "header.payload.signature",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_fetch_all(*_args, **_kwargs):
+        raise AssertionError("fetch must not run without configured auth binding")
+
+    monkeypatch.setattr("codex_usage.cli.fetch_all", fail_fetch_all)
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--auth-json",
+                str(configured_auth),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "once",
+                "--direct",
+                "--auth-json",
+                str(override_auth),
+            ]
+        )
+        == 1
+    )
+    assert "configured auth.json identity unavailable" in capsys.readouterr().err
+
+
+def test_once_accepts_matching_auth_json_override_for_configured_account(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    configured_auth = tmp_path / "configured-auth.json"
+    override_auth = tmp_path / "override-auth.json"
+    auth_payload = json.dumps({"tokens": {"account_id": "account-private"}})
+    configured_auth.write_text(auth_payload, encoding="utf-8")
+    override_auth.write_text(auth_payload, encoding="utf-8")
+    configured_auth.chmod(0o600)
+    override_auth.chmod(0o600)
+    called = {}
+
+    def fake_fetch_all(config, accounts, **kwargs):
+        called["account"] = [account.id for account in accounts]
+        called["auth_json_path"] = kwargs["auth_json_path"]
+        return [
+            AccountUsage(
+                account_id="privat",
+                label="Privat",
+                captured_at=datetime.now().astimezone(),
+                backend_configured="direct",
+                backend_used="direct",
+                five_hour=LimitWindow(name="5h", remaining=97),
+            )
+        ]
+
+    monkeypatch.setattr("codex_usage.cli.fetch_all", fake_fetch_all)
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--auth-json",
+                str(configured_auth),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "once",
+                "--direct",
+                "--auth-json",
+                str(override_auth),
+            ]
+        )
+        == 0
+    )
+    assert called == {"account": ["privat"], "auth_json_path": override_auth}
+
+
 def test_once_fails_closed_for_empty_fetch_result(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / "config.toml"
     assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
@@ -1103,9 +1471,11 @@ def test_bridge_server_allows_remote_host_with_explicit_opt_in(
     config_path = tmp_path / "config.toml"
     called = {}
 
-    def fake_run_bridge_server(config, *, host, port, config_path):
+    def fake_run_bridge_server(config, *, host, port, config_path, tls_cert, tls_key):
         called["host"] = host
         called["port"] = port
+        called["tls_cert"] = tls_cert
+        called["tls_key"] = tls_key
 
     monkeypatch.setattr("codex_usage.cli.run_bridge_server", fake_run_bridge_server)
 
@@ -1118,12 +1488,47 @@ def test_bridge_server_allows_remote_host_with_explicit_opt_in(
                 "--host",
                 "0.0.0.0",
                 "--allow-remote",
+                "--tls-cert",
+                str(tmp_path / "cert.pem"),
+                "--tls-key",
+                str(tmp_path / "key.pem"),
             ]
         )
         == 0
     )
 
-    assert called == {"host": "0.0.0.0", "port": 8765}
+    assert called == {
+        "host": "0.0.0.0",
+        "port": 8765,
+        "tls_cert": tmp_path / "cert.pem",
+        "tls_key": tmp_path / "key.pem",
+    }
+
+
+def test_bridge_server_rejects_remote_host_without_tls(
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    config_path = tmp_path / "config.toml"
+    called = {}
+
+    def fake_run_bridge_server(*_args, **_kwargs):
+        called["started"] = True
+
+    monkeypatch.setattr("codex_usage.cli.run_bridge_server", fake_run_bridge_server)
+
+    assert main([
+        "--config",
+        str(config_path),
+        "bridge-server",
+        "--host",
+        "0.0.0.0",
+        "--allow-remote",
+    ]) == 1
+
+    assert called == {}
+    assert "tls" in capsys.readouterr().err.lower()
 
 
 def test_bridge_server_allows_loopback_host_without_opt_in(
@@ -1133,9 +1538,11 @@ def test_bridge_server_allows_loopback_host_without_opt_in(
     config_path = tmp_path / "config.toml"
     called = {}
 
-    def fake_run_bridge_server(config, *, host, port, config_path):
+    def fake_run_bridge_server(config, *, host, port, config_path, tls_cert, tls_key):
         called["host"] = host
         called["port"] = port
+        called["tls_cert"] = tls_cert
+        called["tls_key"] = tls_key
 
     monkeypatch.setattr("codex_usage.cli.run_bridge_server", fake_run_bridge_server)
 
@@ -1154,7 +1561,12 @@ def test_bridge_server_allows_loopback_host_without_opt_in(
         == 0
     )
 
-    assert called == {"host": "::1", "port": 9999}
+    assert called == {
+        "host": "::1",
+        "port": 9999,
+        "tls_cert": None,
+        "tls_key": None,
+    }
 
 
 def test_direct_rejects_multiple_accounts_without_per_account_auth_json(tmp_path, capsys):
@@ -1992,6 +2404,44 @@ def test_bridge_snippet_command_normalizes_label_to_account_id(tmp_path, capsys)
     assert "setInterval" in output
 
 
+def test_bridge_snippet_command_accepts_absolute_https_endpoint(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "bridge-snippet",
+            "privat",
+            "--endpoint",
+            "https://bridge.example.test:8765/ingest",
+        ]
+    ) == 0
+
+    assert "https://bridge.example.test:8765/ingest" in capsys.readouterr().out
+
+
+def test_bridge_snippet_command_rejects_malformed_endpoint(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "bridge-snippet",
+            "privat",
+            "--endpoint",
+            "https://bridge.example.test:0/ingest",
+        ]
+    ) == 1
+
+    assert "absolute HTTP(S) URL" in capsys.readouterr().err
+
+
 def test_bridge_extension_command_writes_extension(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     config_path = tmp_path / "config.toml"
@@ -2051,6 +2501,756 @@ def test_account_delete_removes_config_but_keeps_profile_by_default(tmp_path, ca
 
     assert main(["--config", str(config_path), "account", "overview"]) == 0
     assert "Accounts: 0" in capsys.readouterr().out
+
+
+def test_account_delete_supports_structured_json_output(tmp_path, capsys):
+    config_path = tmp_path / "config.toml"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--label",
+                "BW_Privat",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--format",
+                "json",
+            ]
+        )
+        == 0
+    )
+
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": True,
+        "account": "privat",
+        "label": "BW_Privat",
+        "profile_deleted": False,
+    }
+
+
+def test_account_delete_rejects_parallel_replacement(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    add_or_update_account(
+        "same",
+        label="Old",
+        profile_dir=str(tmp_path / "old-profile"),
+        path=config_path,
+    )
+    original_remove = cli_module.remove_account
+
+    def replace_then_remove(account_ref, *, path=None, **kwargs):
+        save_config(
+            AppConfig(
+                accounts=(
+                    Account(
+                        id="same",
+                        label="New",
+                        profile_dir=str(tmp_path / "new-profile"),
+                    ),
+                ),
+                interval_seconds=300,
+            ),
+            path,
+        )
+        return original_remove(account_ref, path=path, **kwargs)
+
+    monkeypatch.setattr(cli_module, "remove_account", replace_then_remove)
+
+    assert main(["--config", str(config_path), "account", "delete", "same"]) == 1
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].label == "New"
+
+
+def test_account_delete_holds_all_accounts_lock_during_cleanup(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+
+    def assert_transaction_lock(_account_id, **_kwargs):
+        with pytest.raises(AccountLockError):
+            with account_lock("__all_accounts__", timeout_seconds=0):
+                pass
+
+    monkeypatch.setattr(cli_module, "remove_account_state", assert_transaction_lock)
+    monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account_id: None)
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 0
+    capsys.readouterr()
+
+
+def test_account_delete_serializes_reactivation_account_lock(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+    assert main(
+        [
+            "--config", str(config_path), "account", "add", "privat",
+            "--profile-dir", str(profile_dir),
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    def reactivation_attempt(*_args, **_kwargs):
+        with account_lock("privat", timeout_seconds=0):
+            pass
+        return "geloescht"
+
+    monkeypatch.setattr(cli_module, "_delete_profile_dir", reactivation_attempt)
+    monkeypatch.setattr(cli_module, "revoke_bridge_token", lambda _account_id: None)
+
+    assert main(
+        [
+            "--config", str(config_path), "account", "delete", "privat",
+            "--delete-profile",
+        ]
+    ) == 1
+    assert "already running" in capsys.readouterr().err
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert profile_dir.is_dir()
+
+
+def test_account_delete_keeps_config_when_profile_cleanup_fails(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    def fail_profile_cleanup(*_args, **_kwargs):
+        raise OSError("profile cleanup failed")
+
+    monkeypatch.setattr("codex_usage.cli._delete_profile_dir", fail_profile_cleanup)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--delete-profile",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert profile_dir.is_dir()
+
+
+def test_profile_delete_uses_normalized_path_for_lock_and_quarantine(
+    tmp_path, monkeypatch
+):
+    profile_root = tmp_path / "profiles"
+    profile_root.mkdir()
+    alias_parent = profile_root / "alias-parent"
+    alias_parent.mkdir()
+    profile_dir = profile_root / "privat"
+    profile_dir.mkdir(mode=0o700)
+    (profile_dir / ".codex-usage-profile").write_text("marker\n", encoding="utf-8")
+    alias_path = alias_parent / ".." / "privat"
+    seen = []
+    original_lock_targets = cli_module._profile_delete_lock_targets
+
+    def capture_lock_targets(path, *, browser):
+        seen.append(path)
+        return original_lock_targets(path, browser=browser)
+
+    monkeypatch.setattr(
+        cli_module,
+        "_profile_delete_lock_targets",
+        capture_lock_targets,
+    )
+
+    assert cli_module._delete_profile_dir(
+        alias_path,
+        browser="firefox",
+        force=False,
+    ) == "geloescht"
+
+    assert seen == [profile_dir.resolve()]
+    assert not profile_dir.exists()
+
+
+def test_account_delete_profile_failure_preserves_state_and_bridge_token(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    token = bridge_token_for_account("privat")
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=12),
+            weekly=LimitWindow(name="weekly", remaining=34),
+        )
+    )
+    state_path = tmp_path / "data" / "codex-usage" / "current" / "privat.json"
+
+    def fail_profile_cleanup(*_args, **_kwargs):
+        raise OSError("profile cleanup failed")
+
+    monkeypatch.setattr("codex_usage.cli._delete_profile_dir", fail_profile_cleanup)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--delete-profile",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+
+    assert state_path.exists()
+    assert bridge_token_for_account("privat") == token
+
+
+def test_account_delete_keeps_config_when_config_delete_fails(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    token = bridge_token_for_account("privat")
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=12),
+            weekly=LimitWindow(name="weekly", remaining=34),
+        )
+    )
+    def fail_remove(*_args, **_kwargs):
+        raise OSError("config delete failed")
+
+    monkeypatch.setattr("codex_usage.cli.remove_account", fail_remove)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--delete-profile",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert (tmp_path / "data" / "codex-usage" / "current" / "privat.json").is_file()
+    assert bridge_token_for_account("privat") == token
+    assert profile_dir.is_dir()
+
+
+def test_account_delete_syncs_managed_service_with_updated_config(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    synced = []
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.cli.service_install",
+        lambda config, path: synced.append((config, path)),
+    )
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 0
+    capsys.readouterr()
+
+    assert len(synced) == 1
+    assert synced[0][0].accounts == ()
+    assert synced[0][1] == config_path
+    assert load_config(config_path).accounts == ()
+
+
+def test_account_delete_cleanup_failure_rolls_back_managed_service_config(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    synced = []
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+    monkeypatch.setattr(
+        "codex_usage.cli.service_install",
+        lambda config, path: synced.append((config, path)),
+    )
+    def fail_state_cleanup(_account_id, **_kwargs):
+        raise OSError("state cleanup failed")
+
+    monkeypatch.setattr("codex_usage.cli.remove_account_state", fail_state_cleanup)
+    monkeypatch.setattr("codex_usage.cli.revoke_bridge_token", lambda _account_id: None)
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 1
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert [config.accounts for config, _path in synced] == [(), load_config(config_path).accounts]
+
+
+def test_account_delete_state_failure_restores_profile_when_profile_delete_requested(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    profile_dir.mkdir(exist_ok=True)
+    (profile_dir / ".codex-usage-profile").write_text("marker\n", encoding="utf-8")
+
+    def fail_state_cleanup(_account_id, **_kwargs):
+        raise OSError("state cleanup failed")
+
+    monkeypatch.setattr("codex_usage.cli.remove_account_state", fail_state_cleanup)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--delete-profile",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert profile_dir.is_dir()
+    assert (profile_dir / ".codex-usage-profile").read_text(encoding="utf-8") == "marker\n"
+
+
+def test_account_delete_cancels_active_profile_jobs_before_cleanup(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    cancelled = []
+    job = {"job_id": "job-" + "a" * 32, "status": "running"}
+
+    monkeypatch.setattr("codex_usage.cli.list_profile_jobs", lambda account_id: [job])
+    monkeypatch.setattr(
+        "codex_usage.cli.cancel_profile_job",
+        lambda job_id: cancelled.append(job_id) or {"job_id": job_id, "status": "cancel_requested"},
+    )
+    monkeypatch.setattr(
+        "codex_usage.cli.profile_job_status",
+        lambda job_id: {"job_id": job_id, "status": "cancelled", "ok": False},
+    )
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 0
+
+    assert cancelled == [job["job_id"]]
+
+
+def test_account_delete_aborts_when_profile_job_does_not_stop(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    job_id = "job-" + "b" * 32
+    clock = iter((0.0, 31.0))
+
+    monkeypatch.setattr(
+        "codex_usage.cli.list_profile_jobs",
+        lambda account_id: [{"job_id": job_id, "status": "running"}],
+    )
+    monkeypatch.setattr("codex_usage.cli.cancel_profile_job", lambda value: {"job_id": value})
+    monkeypatch.setattr(
+        "codex_usage.cli.profile_job_status",
+        lambda value: {"job_id": value, "status": "running"},
+    )
+    monkeypatch.setattr("codex_usage.cli.time.monotonic", lambda: next(clock))
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 1
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].id == "privat"
+
+
+def test_account_delete_profile_commit_failure_restores_profile(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    (profile_dir / ".codex-usage-profile").write_text("marker\n", encoding="utf-8")
+
+    def fail_profile_commit(*_args, **_kwargs):
+        raise OSError("profile commit failed")
+
+    monkeypatch.setattr("codex_usage.cli.shutil.rmtree", fail_profile_commit)
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--delete-profile",
+            ]
+        )
+        == 1
+    )
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert profile_dir.is_dir()
+    assert (profile_dir / ".codex-usage-profile").read_text(encoding="utf-8") == "marker\n"
+
+
+def test_account_delete_does_not_restore_partially_deleted_profile(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    marker = profile_dir / ".codex-usage-profile"
+    marker.write_text("marker\n", encoding="utf-8")
+    original_rmtree = cli_module.shutil.rmtree
+    rmtree_calls: list[tuple[str, bool]] = []
+
+    def partially_fail_profile_commit(path, *args, onerror=None, **kwargs):
+        rmtree_calls.append((Path(path).name, onerror is not None))
+        if not Path(path).name.startswith(".profile.delete-"):
+            return original_rmtree(path, *args, onerror=onerror, **kwargs)
+        quarantined_marker = Path(path) / marker.name
+        quarantined_marker.unlink()
+        error = OSError("partial profile commit failed")
+        if onerror is None:
+            raise error
+        onerror(Path.unlink, str(quarantined_marker), (OSError, error, None))
+
+    monkeypatch.setattr(
+        "codex_usage.cli.shutil.rmtree",
+        partially_fail_profile_commit,
+    )
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--delete-profile",
+            ]
+        )
+        == 1
+    )
+    error = capsys.readouterr().err
+
+    assert rmtree_calls, error
+    assert rmtree_calls == [(rmtree_calls[0][0], True)]
+    assert rmtree_calls[0][0].startswith(".profile.delete-")
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert not profile_dir.exists()
+    quarantines = list(tmp_path.glob(".profile.delete-*"))
+    assert len(quarantines) == 1
+    assert quarantines[0].is_dir()
+    assert "profile deletion rollback failed" in error
+
+
+def test_account_delete_rolls_back_config_when_managed_service_sync_fails(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+
+    def fail_service_sync(*_args, **_kwargs):
+        raise OSError("service sync failed")
+
+    monkeypatch.setattr("codex_usage.cli.service_install", fail_service_sync)
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 1
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].id == "privat"
+
+
+def test_account_delete_service_sync_failure_preserves_all_account_data(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "add",
+            "privat",
+            "--profile-dir",
+            str(profile_dir),
+        ]
+    ) == 0
+    capsys.readouterr()
+    token = bridge_token_for_account("privat")
+    state_dir = tmp_path / "data" / "codex-usage"
+    current_path = state_dir / "current" / "privat.json"
+    snapshot_path = state_dir / "snapshots" / "privat.json"
+    current_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    current_path.write_text("current\n", encoding="utf-8")
+    snapshot_path.write_text("snapshot\n", encoding="utf-8")
+
+    monkeypatch.setattr("codex_usage.cli.service_status", lambda: {"installed": True})
+    monkeypatch.setattr(
+        "codex_usage.cli.managed_service_config_path",
+        lambda: config_path.absolute(),
+    )
+
+    def fail_service_sync(*_args, **_kwargs):
+        raise OSError("service sync failed")
+
+    monkeypatch.setattr("codex_usage.cli.service_install", fail_service_sync)
+
+    assert main(
+        [
+            "--config",
+            str(config_path),
+            "account",
+            "delete",
+            "privat",
+            "--delete-profile",
+        ]
+    ) == 1
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert current_path.read_text(encoding="utf-8") == "current\n"
+    assert snapshot_path.read_text(encoding="utf-8") == "snapshot\n"
+    assert bridge_token_for_account("privat") == token
+    assert profile_dir.is_dir()
+
+
+def test_account_delete_revokes_token_when_state_cleanup_fails(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    revoked = []
+
+    def fail_state_cleanup(*_args, **_kwargs):
+        raise OSError("state cleanup failed")
+
+    monkeypatch.setattr("codex_usage.cli.remove_account_state", fail_state_cleanup)
+    monkeypatch.setattr(
+        "codex_usage.cli.revoke_bridge_token",
+        lambda account_id: revoked.append(account_id),
+    )
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 1
+    assert revoked == ["privat"]
+    assert load_config(config_path).accounts[0].id == "privat"
+
+
+def test_account_delete_token_failure_restores_staged_state(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    save_current_usage(
+        AccountUsage(
+            account_id="privat",
+            label="Privat",
+            captured_at=datetime.now().astimezone(),
+            five_hour=LimitWindow(name="5h", remaining=12),
+        )
+    )
+    state_path = tmp_path / "data" / "codex-usage" / "current" / "privat.json"
+    before = state_path.read_bytes()
+
+    def fail_token_revoke(_account_id):
+        raise OSError("token revoke failed")
+
+    monkeypatch.setattr(cli_module, "revoke_bridge_token", fail_token_revoke)
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 1
+    capsys.readouterr()
+
+    assert load_config(config_path).accounts[0].id == "privat"
+    assert state_path.read_bytes() == before
+
+
+def test_account_delete_preserves_state_error_when_token_revoke_also_fails(
+    tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.toml"
+    assert main(["--config", str(config_path), "account", "add", "privat"]) == 0
+    capsys.readouterr()
+    revoked = []
+
+    def fail_state_cleanup(*_args, **_kwargs):
+        raise OSError("state cleanup failed")
+
+    def fail_token_revoke(account_id):
+        revoked.append(account_id)
+        raise OSError("token revoke failed")
+
+    monkeypatch.setattr("codex_usage.cli.remove_account_state", fail_state_cleanup)
+    monkeypatch.setattr("codex_usage.cli.revoke_bridge_token", fail_token_revoke)
+
+    assert main(["--config", str(config_path), "account", "delete", "privat"]) == 1
+    error = capsys.readouterr().err
+    assert "state cleanup failed" in error
+    assert "token revoke failed" not in error
+    assert revoked == ["privat"]
 
 
 def test_account_delete_revokes_bridge_token_before_same_id_is_readded(
@@ -2121,6 +3321,142 @@ def test_account_delete_can_delete_marked_profile(tmp_path, capsys):
     assert not profile_dir.exists()
 
 
+def test_account_delete_refuses_profile_removal_while_browser_lock_held(
+    tmp_path, capsys
+):
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+                "--browser",
+                "chromium",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    browser_profile = profile_dir / _profile_browser_dir("chromium")
+    browser_profile.mkdir()
+
+    with _profile_lock(browser_profile):
+        assert (
+            main(
+                [
+                    "--config",
+                    str(config_path),
+                    "account",
+                    "delete",
+                    "privat",
+                    "--delete-profile",
+                ]
+            )
+            == 1
+        )
+        assert "profile is already in use" in capsys.readouterr().err
+        assert profile_dir.is_dir()
+        assert load_config(config_path).accounts[0].id == "privat"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--delete-profile",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert not profile_dir.exists()
+    assert list(profile_dir.parent.glob(".*.codex-usage.lock"))
+
+
+def test_account_delete_oauth_profile_lock_refuses_removal_while_held(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    config_path = tmp_path / "config.toml"
+    profile_dir = tmp_path / "profile"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "add",
+                "privat",
+                "--profile-dir",
+                str(profile_dir),
+                "--browser",
+                "chromium",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    oauth_profile = profile_dir / "oauth" / "chromium"
+    oauth_profile.mkdir(parents=True)
+
+    with _profile_lock(oauth_profile):
+        assert (
+            main(
+                [
+                    "--config",
+                    str(config_path),
+                    "account",
+                    "delete",
+                    "privat",
+                    "--delete-profile",
+                ]
+            )
+            == 1
+        )
+        assert "profile is already in use" in capsys.readouterr().err
+        assert profile_dir.is_dir()
+        assert load_config(config_path).accounts[0].id == "privat"
+
+    assert (
+        main(
+            [
+                "--config",
+                str(config_path),
+                "account",
+                "delete",
+                "privat",
+                "--delete-profile",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert not profile_dir.exists()
+    assert list(profile_dir.parent.glob(".*.codex-usage.lock"))
+
+
+def test_profile_delete_rejects_too_many_oauth_entries(tmp_path, monkeypatch):
+    profile_dir = tmp_path / "profile"
+    oauth_root = profile_dir / "oauth"
+    (oauth_root / "chromium").mkdir(parents=True)
+    (oauth_root / "firefox").mkdir()
+    monkeypatch.setattr(cli_module, "MAX_PROFILE_OAUTH_ENTRIES", 1)
+
+    with pytest.raises(ValueError, match="too many OAuth browser profiles"):
+        cli_module._profile_delete_lock_targets(profile_dir, browser="chromium")
+
+
 def test_account_delete_rejects_symlink_profile_and_keeps_config(tmp_path, capsys):
     config_path = tmp_path / "config.toml"
     target = tmp_path / "target-profile"
@@ -2134,9 +3470,10 @@ id = "privat"
 label = "BW_Privat"
 profile_dir = "{profile_link}"
 browser = "firefox"
-""",
+        """,
         encoding="utf-8",
     )
+    config_path.chmod(0o600)
 
     assert (
         main(["--config", str(config_path), "account", "delete", "privat", "--delete-profile"])
@@ -2145,6 +3482,42 @@ browser = "firefox"
 
     assert profile_link.is_symlink()
     assert target.is_dir()
+    assert "privat" in config_path.read_text(encoding="utf-8")
+    assert "symlink" in capsys.readouterr().err
+
+
+def test_account_delete_rejects_symlink_profile_ancestor_and_keeps_config(
+    tmp_path, capsys
+):
+    config_path = tmp_path / "config.toml"
+    target_parent = tmp_path / "target-parent"
+    target_profile = target_parent / "profile"
+    target_profile.mkdir(parents=True)
+    (target_profile / ".codex-usage-profile").write_text("marker\n", encoding="utf-8")
+    profile_parent_link = tmp_path / "profile-parent-link"
+    profile_parent_link.symlink_to(target_parent, target_is_directory=True)
+    profile_path = profile_parent_link / "profile"
+    config_path.write_text(
+        "\n".join(
+            (
+                "[[accounts]]",
+                'id = "privat"',
+                'label = "BW_Privat"',
+                f'profile_dir = "{profile_path}"',
+                'browser = "firefox"',
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+
+    assert (
+        main(["--config", str(config_path), "account", "delete", "privat", "--delete-profile"])
+        == 1
+    )
+
+    assert target_profile.is_dir()
     assert "privat" in config_path.read_text(encoding="utf-8")
     assert "symlink" in capsys.readouterr().err
 

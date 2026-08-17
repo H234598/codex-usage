@@ -1,5 +1,298 @@
 # Changelog
 
+## 0.6.532 - 2026-08-16
+### Added
+- Die Warnungstabelle aktualisiert `Spark %` nach jedem Usage-Refresh; sicher
+  Spark-lose Accounts zeigen dort dauerhaft `no Spark`.
+- Device-Login veröffentlicht kanonisches `auth.json` jetzt create-only und
+  löscht bei Race-/Copyfehlern keine fremde Datei.
+- Historie, Verbrauchsberechnung und sanitisiertes `account-usage-v1`-
+  Integrationssnapshot mit Coverage- und Stale-Markierung.
+- Kanonische Accountprofile, konfliktbewusste Auth-Migration per Dry-Run/
+  Apply/Rollback sowie Device-Login mit privatem Staging und atomarer
+  Veröffentlichung.
+- Profile-Layout-Verzeichnisse verwenden jetzt denselben privaten Helper wie
+  übrige Zustandsverzeichnisse; direkte Root-/Home-Ziele werden vor Mutation
+  abgelehnt.
+- Auth-Migrationsmanifeste werden exklusiv erstellt; vorhandene
+  Rollback-Metadaten bleiben erhalten, und fehlgeschlagene Manifest-Commits
+  räumen bereits angelegte Migrationsziele wieder auf.
+- Integrationssnapshots prüfen die Accountgrenze vor der vollständigen
+  Secret-Traversierung und verwerfen übergroße Accountlisten frühzeitig.
+- CLI- und Bridge-Renderer begrenzen beliebige Usage-Iteratoren vor der
+  Materialisierung auf die gemeinsame Accountgrenze.
+- Der kompakte Account-Renderer begrenzt beliebige Account-Iteratoren vor
+  Sortierung und Tabellenmaterialisierung auf dieselbe Accountgrenze.
+- History-Writer weisen übergroße Sample-Batches vor Typprüfung und SQLite-
+  Transaktion anhand der bestehenden Samplegrenze ab.
+- Device-Login finalisiert Account-Konfigurationen unter dem globalen
+  Account-Lock; zwischenzeitlich gelöschte oder geänderte Accounts werden nicht
+  wieder angelegt, und veröffentlichte Auth-Dateien werden in diesem Fall
+  entfernt.
+- Consumption-History-Abfragen zählen eine optionale Baseline in das gemeinsame
+  Sample-Cap ein und behalten bei Überlauf die neuesten Beobachtungen.
+- Integrationssnapshots begrenzen Modellpools pro Account vor der vollständigen
+  Pool-Materialisierung auf 32; übergroße direkte API-Eingaben werden verworfen.
+- Model-Catalog-Helpers begrenzen jetzt auch direkte Pool-Iterables vor der
+  Materialisierung; überlange Kataloge werden fail-closed verworfen.
+- Attestation-RECORD-Prüfungen lösen ungültige, doppelte und überlange Zeilen
+  wieder tatsächlich aus und können diese nicht mehr stillschweigend
+  passieren lassen.
+- State-Expiry verwirft überlange direkte Modellpool-Kataloge vor der
+  Materialisierung; Kernfenster bleiben erhalten, der Cache wird invalidiert.
+- History-Sample-Extraktion und Batch-Aufzeichnung verarbeiten Modellpools lazy
+  und prüfen das bestehende Sample-Cap vor weiterer Materialisierung.
+- Applet-Einstellungen für Verbrauchszeiträume und Resetanzeige sowie
+  laufende Device-Login-Events und expliziten Abbruch pro Account.
+- Verbrauchsfenster liefern jetzt eine frische Zeitprojektion bis zur
+  Tokenlimiterschöpfung; partielle Abdeckung wird als Näherung markiert,
+  stale oder unzureichende Daten bleiben unbekannt.
+- Resetdatum, Resetuhrzeit, Restlaufzeit, Verbrauchszeitraum und Prognose
+  verwenden getrennte Anzeigeziele für Leiste, Hover und Klick-Menü.
+- Formatierungslisten heißen jetzt „Verbleibendes Tokenlimit in %“,
+  „OpenAI - Reset: Datum des Reset“, „OpenAI - Reset: Uhrzeit“ und
+  „OpenAI - Reset: Restlaufzeit in Tagen bis Limitreset“; die Abschnitte
+  „Hervorhebungen und Design:“ und „Anzeige:“ sind getrennt.
+- Anzeigeziele enthalten Account-ID, Label, Kürzel, Usage-Resets,
+  Verbrauchszeitraum und „Zeit bis Tokenende“. Bearbeitungsstifte sind für
+  die synchronisierten per-Account-Listen aktiv.
+- Device-Login-URL und -Code können während des laufenden Assistenten explizit
+  in die Zwischenablage kopiert werden; nach Abschluss oder Abbruch werden
+  diese ephemeren Werte aus dem Applet-State entfernt.
+- Die Einstellungstabelle „Abrufwege und Accounts“ kann Accounts per `+` anlegen
+  und per `-` aus der Config entfernen; der Profilordner bleibt dabei ohne
+  explizite Profil-Löschoption erhalten.
+- Die zentrale Anzeige bietet je Account eigene Account-ID-/Label-/Kürzel-
+  Auswahl für Leiste, Hover und Klick-Menü sowie getrennte Abstandshalter für
+  Hover und Klick-Menü.
+- Persistente Device-Login-Jobs bieten CLI-Verträge für `profile create`,
+  `profile jobs`, `profile job-status` und `profile cancel`; das Applet kann
+  aktive Jobs nach Neustart wieder aufnehmen und URL-/Code-Events pollen.
+- Neue Accounts aus der Einstellungstabelle starten nach dem Config-Add direkt
+  einen persistenten Profiljob; währenddessen bleiben sie aus den Usage-Zeilen
+  heraus, und nach erfolgreichem Abschluss wird der erste Abruf aktualisiert.
+- Profiljobs transportieren den kontospezifischen Reaktivierungsbrowser; alte
+  Manifeste ohne dieses Feld bleiben mit `auto` kompatibel.
+- Identische Fehlerbenachrichtigungen werden 48 Stunden lang unterdrückt,
+  einschließlich nach Applet-Neustart. Persistiert werden nur gehashte
+  Schlüssel und Zeitstempel; Warnungen bleiben unverändert.
+- Fehlerbenachrichtigungs-Fingerprints verwenden zwei 32-Bit-Spuren statt
+  eines einzelnen 32-Bit-Werts; bekannte Hash-Kollisionen unterdrücken keine
+  unterschiedlichen Fehlermeldungen mehr.
+- Identity-Helper begrenzen beliebige Kandidaten-Iteratoren auf die bekannte
+  JSON-Kandidatenobergrenze und verwerfen überlange Eingaben sicher.
+- Die Text-/HTML-Extraktion verwirft Seiten mit übermäßig vielen wiederholten
+  Limit-Labels, bevor Offset-Listen und weitere Volltextsuchen wachsen.
+- Der HTML-Progress-Parser prüft geerbte Unsichtbarkeit per Tiefenzähler statt
+  per wiederholter Stack-Vollsuche.
+- Der HTML-Progress-Parser indiziert offene Tags; unbekannte Endtags lösen
+  keine Stack-Vollsuche mehr aus.
+- Der HTML-Progress-Parser hält Zeilenpositionen lazy fortgeschrieben statt
+  für jeden Zeilenumbruch eine vollständige Offset-Liste zu materialisieren.
+- Der HTML-Progress-Parser verwirft übergroße Stack-, Kandidaten- oder
+  Hidden-Range-Strukturen fail-closed.
+- Cinnamon-Settings-Tabellen verwenden kompatible `string`-Optionsfelder;
+  der Installer migriert vorhandene alte `enum`-Caches atomar.
+- Integrationsattestation und Wheel-Installer verarbeiten `RECORD`-CSV
+  zeilenweise und lehnen mehr als 4096 Einträge vor weiterer Materialisierung ab.
+- Wheel-Validierung begrenzt ZIP-Mitglieder in Extraktions- und Detailpfad auf
+  4096 Einträge.
+- Spark-Health-Loader lehnt mehr als 256 gültige Records fail-closed ab, statt
+  die Schreibgrenze nur beim Rotieren anzuwenden.
+- Account-Löschung hält State-Löschung bis nach erfolgreichem Bridge-Token-
+  Widerruf transaktional offen und rollt bei Widerrufsfehler zurück.
+- Progress-Parser begrenzt auch textuelle `width:%`-Fallback-Treffer auf 1000
+  Einträge und verwirft überlange Folgen fail-closed.
+- Browser- und Bridge-DOM-Capture traversieren Kinder und Attribute
+  indexbasiert; einzelne DOM-Knoten erzeugen keine unbounded Array-Kopien mehr.
+- Browser- und Bridge-DOM-Capture verarbeiten `querySelectorAll`-Treffer
+  indexbasiert statt sie vor dem Zeichenlimit zusätzlich zu materialisieren.
+- Textfenster-Parser suchen Stoplabels direkt und materialisieren keine Liste
+  aller späteren Treffer.
+- Browser-Diagnose wählt begrenzte JSON-Schlüssellisten per fixed-size
+  `heapq.nsmallest` statt vorab alle Schlüssel zu sortieren.
+- Text-Sanitizer in Bridge, State, Scheduler, App-Server und Renderer
+  normalisieren Whitespace ohne temporäre Wortlisten über den Gesamteingang.
+- Progress-Parser prüfen versteckte Klassen-Tokens direkt per Regex statt ein
+  vollständiges `class`-Token-Set zu materialisieren.
+- WHAM-Spark-Poolparser halten nur erste Kopie und Konfliktstatus statt alle
+  wiederholten Spark-Pools zu materialisieren.
+- JSON-Window-Extractor verwirft überlange Trefferfolgen fail-closed, bevor
+  Ranking- und Ambiguitätslisten weiter wachsen.
+- App-Server-Sparkparser hält nur ersten Pool und Konfliktstatus statt
+  wiederholte Spark-Payloads und Poolobjekte zwischenzuspeichern.
+- Bridge-API-Responses werden vor Deduplizierung und JSON-Parsing auf 50
+  kombinierte Einträge begrenzt; überlange Payloads brechen fail-closed ab.
+- Consumption-Berechnungen begrenzen externe Sample-Iteratoren auf die
+  bestehende History-Obergrenze und verwerfen überlange Eingaben fail-closed.
+- Scheduler-Einstiegspunkte begrenzen Account-Iteratoren auf die Config-
+  Obergrenze und starten bei Überlauf keine Fetch- oder ThreadPool-Arbeit.
+- Scheduler-Health- und Ergebnis-Mapping lesen höchstens erwartete Accounts
+  plus einen Überlaufpunkt aus Usage-Iteratoren.
+- Auth-Migrationspläne und Rollback-Manifeste begrenzen Itemfolgen auf die
+  Config-Accountgrenze und weisen ungültige Manifeststrukturen kontrolliert ab.
+- Health-State liest höchstens den benötigten gültigen Event-Tail und
+  materialisiert keine vollständige Filterliste älterer Einträge.
+- Consumption-Berechnungen überspringen bei bereits zeitlich sortierter
+  History die vollständige Sortierkopie; unsortierte Eingaben bleiben sortiert.
+- CLI- und Integrations-Consumption laden nur Lookback-Fenster plus Baseline
+  aus SQLite statt die gesamte begrenzte History zu materialisieren.
+- Browser-Consumption wertet die bereits begrenzte Candidate-Liste ohne flache
+  Zweitkopie aus.
+- Das Applet nimmt nach Neustart alle aktiven persistenten Profiljobs wieder
+  auf; kein validierter Job bleibt unbeobachtet als ausstehend markiert.
+- Live-Device-Login-Ausgabe hält unvollständige UTF-8-Zeichen über Prozess-
+  output-Chunks hinweg korrekt zusammen.
+- Fehlgeschlagene Device-Login-Versuche löschen kein bereits vorhandenes
+  kanonisches `auth.json`; neue Profilvorfahren werden vollständig privat
+  (`0700`) angelegt.
+- Profile-Login-Output dekodiert UTF-8 ebenfalls inkrementell, beendet bei
+  nicht isolierten Aufrufen nur den eigenen Prozess und hält persistente
+  Workerstatus auch bei Importfehlern sauber behandelbar.
+- Consumption-Resets markieren vollständige Zeitreihen nicht mehr fälschlich
+  als `partial`; der Integrationssnapshot akzeptiert dieselben Coverage- und
+  History-Grenzen wie Producer und HistoryStore.
+- Die Installer-Bereinigung entfernt versionsunabhängig alle
+  `python3.<minor>`-Einträge; CLI-Hilfe und History-Dokumentation entsprechen
+  wieder den tatsächlich verfügbaren Optionen und Retention-Funktionen.
+- Das Applet gibt bei konkurrierendem Device-/Profiljob einen sichtbaren
+  Hinweis und lässt CLI-Timeout-JSON durch einen kleinen Timeout-Puffer zu.
+
+### Security
+- Device-Codes und Prozess-Rohdaten bleiben flüchtig und werden nicht in
+  Logs, Jobs, Manifesten oder Integrationssnapshots gespeichert.
+- Reset-Einlösung bleibt capability-disabled, solange Capability-, Replay-,
+  Lock-, Bestätigungs- und Postcondition-Gates nicht verifiziert sind.
+- Integration-Attestation weist Release-Dateien über 4 MiB ab, auch wenn sie
+  nach der Metadatenprüfung wachsen.
+- Der isolierte Integration-Producer-Preflight begrenzt stdout auf 64 KiB und
+  beendet seine Prozessgruppe bei Timeout oder Überlauf.
+- Der `systemctl --user`-Statuspfad begrenzt stdout/stderr gemeinsam auf 64 KiB
+  und beendet die Prozessgruppe bei Timeout oder Überlauf.
+- Der native Device-Login-Runner startet in einer eigenen Prozessgruppe und
+  beendet bei Timeout oder Ausgabeüberlauf auch gestartete Descendants.
+- Zukünftige persistierte Fehler-Zeitstempel nach Uhr-Rücksprung unterdrücken
+  Meldungen nicht länger als die vorgesehenen 48 Stunden.
+- Der abschließende Device-Login-`wait()` erhält ebenfalls die verbleibende
+  Deadline; frühes EOF auf stdout/stderr kann keinen unbounded Hang mehr
+  erzeugen.
+- Job-Manifeste liegen privat mit begrenzter Größe und enthalten keine Secrets,
+  URL-/Code-Events oder Rohprozessausgabe. Worker übernehmen Accountoptionen,
+  erzwingen optional die erwartete Backend-Account-ID und beenden eigene
+  Prozessgruppen bei Cancel; SIGTERM wird als `cancelled` statt als Fehler
+  verbucht.
+- Job-Events liegen getrennt vom Manifest in einer privaten, auf acht Events
+  und 8 KiB begrenzten Datei. Sie werden nur während aktiver Jobs exponiert und
+  bei Terminalstatus atomar entfernt.
+- Der Worker verwendet atomare Statusübergänge für `running` → Terminalstatus;
+  ein gleichzeitig eintreffendes `cancel_requested` kann nicht mehr durch
+  `completed` oder `failed` überschrieben werden.
+- Der Worker übernimmt `queued` nur per Compare-and-Set in `running`; ein
+  gleichzeitig eintreffendes `cancel_requested` startet keinen Device-Login.
+- Cancel und Worker-Lost-Reconcile schreiben nur noch mit erwartetem
+  Vorstatus; verspätete Statuspolls oder Cancel-Aufrufe können `completed` und
+  `failed` nicht mehr zurücksetzen.
+- Wenn die Worker-PID nach `Popen` nicht persistiert werden kann, beendet der
+  Startpfad den eigenen Prozessverband und markiert den Job best-effort als
+  fehlgeschlagen; untracked Device-Login-Worker bleiben nicht zurück.
+- Die 64er-Grenze für persistierte Profiljob-Manifeste gilt nun bereits bei
+  der Creation unter einem gemeinsamen Lock; ein voller Jobbestand startet
+  keinen weiteren Worker.
+- Profiljob-Status und Creation prüfen Verzeichnisse nun bounded per
+  `iterdir()` und brechen bei `Cap + 1` gültigen Manifesten ab; unlimitierte
+  `glob()`-Pfadsammlungen entfallen.
+- Profiljobs verifizieren vor `completed` den veröffentlichten Config-Account,
+  seine Optionen und die private kanonische Auth-Datei.
+- Account-Löschung cancelt einen aktiven persistenten Profiljob zuerst, damit
+  dessen späteres Finalize den gelöschten Account nicht wiederherstellt.
+- Account-Profil-Löschung begrenzt OAuth-Profil-Enumeration auf acht Einträge;
+  manipulierte `oauth/`-Verzeichnisse können den Löschpfad nicht unbegrenzt
+  durch Directory-Scanning binden.
+- Profilmetadaten werden unter einem privaten Lock außerhalb neu erzeugter
+  Profilordner geschrieben; parallele Layoutpfade bleiben serialisiert, ohne
+  Rollback-Cleanup zu verunreinigen.
+- Installer begrenzt Builder-Wheel-Verzeichnis vor Filterung und Sortierung auf
+  4096 Einträge; übergroße Builder-Ausgaben werden fail-closed abgewiesen.
+- Snapshot-Builder weist übergroße Cost-Window-Listen vor der internen
+  Listenkopie ab; das bestehende Limit von 64 Einträgen bleibt maßgeblich.
+- Model-Catalog-Helper konsumiert beliebige Iteratoren nur bis 101 Einträge;
+  überlange Kataloge aktivieren keine zusätzlichen Modelle.
+- Extractor materialisiert höchstens 51 JSON-Kandidaten und verwirft überlange
+  Kandidatenfolgen; Textquellen bleiben unabhängig nutzbar.
+- Profiljob-Listing und Creation brechen auch bei zu vielen fremden
+  Verzeichniseinträgen bounded ab; Lock-/Eventdateien für den maximalen
+  legitimen Jobbestand bleiben innerhalb des Limits.
+- Account-Profil-Rollback materialisiert Verzeichnisinhalte nicht mehr
+  vollständig und bricht beim ersten unerwarteten Eintrag ab.
+- Profil-Lock-Namen kodieren Pfadkomponenten kollisionsfrei; Profile mit
+  Punkten in unterschiedlichen Komponenten blockieren sich nicht mehr falsch.
+- Bridge-Erweiterungen legen Staging und Backup innerhalb des geschützten
+  Ausgabeordners an.
+- Integration-Snapshot prüft Cache-Pfad-Ancestors vor `mkdir()` und `chmod()`
+  auf Symlinks.
+- Bridge-Payload-Größenanpassung verändert URL-/Titel-/Zeitmetadaten nicht;
+  abgeschnittene DOM-Traversierungen setzen Flags auch am Zeichenlimit.
+- Service-Auflösung behandelt auch `RuntimeError` fail-closed; unbekannte
+  systemd-Aktivierungszustände werden als unvollständiger Rollback gemeldet.
+- Decodierte NUL-Zeichen in lokalen `file://`-Accountpfaden werden abgewiesen.
+- Native NUL-Zeichen in absoluten Account-Pfaden werden bereits an der
+  Config-Grenze fail-closed abgewiesen.
+- `auth.json`-Hardlinks werden als Sicherheitsmaßnahme abgewiesen; bestehende
+  Hardlink-basierte Setups müssen sich gegebenenfalls neu anmelden.
+- Bridge-Payload-Fallbacks bewahren Account-, URL-, Zeit- und Laufzeitmetadaten;
+  DOM-Capture meldet auch Feldlimit-Trunkierung. Profil-Locks liegen außerhalb
+  löschbarer Profilverzeichnisse und bleiben mit alten Lockdateien kompatibel.
+- Browser-JSON-Capture akzeptiert fehlendes `Content-Length` und begrenzt den
+  gelesenen UTF-8-Body weiterhin hart; terminale oder invalidierte Snapshots
+  geben keine veralteten Usage-Resetwerte weiter.
+- History-Abfragen materialisieren höchstens die neuesten 500.000 Samples und
+  geben sie weiterhin chronologisch aufsteigend zurück.
+- History-SQLite initialisiert Schema, WAL und Sidecars nun unter dem privaten
+  Datenbank-Lock; parallele Erstverbindungen werden serialisiert.
+- State-Transaktionsbereinigung akzeptiert nur reguläre Backup-Dateien und
+  löscht unerwartete Unterverzeichnisse nicht mehr rekursiv.
+- State-Transaktionscleanup validiert und begrenzt alle Einträge vor dem
+  ersten Löschen; partielle Backup-Löschung bei Rollback-Fehlern ist damit
+  ausgeschlossen.
+- Integration-Snapshot-Reader sammeln höchstens 100 Account-Dateien und
+  brechen beim ersten überzähligen Verzeichniseintrag ab.
+- Auth-Migrations-Rollback liest kanonische Ziele bounded bis 2 MiB und prüft
+  Einzeldatei-Privatsphäre vor Digestvergleich und Löschung.
+- Installer-Dateireader übernehmen 4-MiB-Attestation-Cap auch bei Quellen und
+  Release-Artefakten und lesen bei Wachstum höchstens `Cap + 1` Bytes.
+- Installer-Postwalks brechen während bounded `os.scandir()`-Enumeration an
+  der Releasebaum-Eintragsgrenze ab; vollständige `rglob()`-Materialisierung
+  entfällt.
+- Release-Attestation begrenzt Baum-Einträge und aggregierte Dateibytes
+  fail-closed, bevor weitere Verzeichnis- oder Dateidaten materialisiert werden.
+- Wheel-Archive werden vor jedem `ZipFile`-Aufruf bounded gelesen; dadurch
+  gilt das 4-MiB-Cap bereits für Central-Directory-Daten.
+- Device-Login-Staging-Cleanupfehler werden als definierter
+  `device_login_cleanup_failed`-Fehler gemeldet und nicht als roher `OSError`
+  durchgereicht.
+- Wheel-Mitglieder werden vor und während Entpackung auf 4 MiB begrenzt;
+  komprimierte Übergrößen werden nicht vollständig in RAM materialisiert.
+- Reactivation meldet `wait()`-Fehler separat und beendet den bereits
+  gestarteten Login-Prozessverband vor der Fehlerweitergabe.
+- Untracked Profile-Worker werden nach fehlgeschlagener PID-Verfolgung
+  bounded gereaped; bei Wait-Timeout folgt ein direkter Kill mit erneutem Wait.
+- Device-Login-Prozesse werden auch bei Exceptions aus dem laufenden
+  Output-/Event-Sink bounded beendet und gereaped; kein Prozess bleibt nach
+  fehlgeschlagener Event-Persistierung zurück.
+- Der lokale Installer-Build läuft in eigener Prozessgruppe; Timeout oder
+  Abbruch beendet und reaped auch Builder-Descendants.
+- Persistierte Fehler-Fingerprints enthalten weiterhin keine Rohtexte und
+  werden jetzt als 64-Bit-Hexschlüssel abgelegt.
+- Bridge-Bound-Tests überwachen jetzt zusätzlich VM-eigene Array-Prototypen;
+  unbounded Array-Literale können die Harness-Prüfung nicht mehr umgehen.
+- Browser-JSON-Capture akzeptiert fehlende oder leere `Content-Length`-Header
+  und erzwingt die UTF-8-Größengrenze nach dem tatsächlichen Response-Body.
+
+### Verification
+- `pytest -q`: 1812 passed, 1 skipped.
+- Installer-Suite: 90 passed; Applet-Runtime: 268 passed; `make applet-check`; Ruff; Compile und
+  `git diff --check` grün.
+
 ## 0.6.531 - 2026-08-02
 ### Fixed
 - Der systemd-User-Timer nutzt `OnActiveSec` statt `OnBootSec`, damit eine

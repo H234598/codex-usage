@@ -115,6 +115,25 @@ def test_identity_helpers_skip_candidates_without_usable_urls():
     ) == [valid]
 
 
+def test_identity_helpers_bound_arbitrary_candidate_iterators():
+    def overlong_candidates():
+        for _ in range(51):
+            yield JsonCandidate(
+                url="https://chatgpt.com/backend-api/wham/usage",
+                payload={"user_id": "ignored-user"},
+            )
+        raise AssertionError("identity candidate iterator was consumed past its cap")
+
+    assert backend_identity_from_candidates(overlong_candidates()) == (None, None)
+    assert backend_plan_type_from_candidates(overlong_candidates()) is None
+    assert (
+        select_identity_consistent_candidates(
+            overlong_candidates(), auth_user_id=None, auth_account_id=None
+        )
+        == []
+    )
+
+
 def test_select_identity_consistent_candidates_does_not_mix_accounts():
     candidates = [
         JsonCandidate(

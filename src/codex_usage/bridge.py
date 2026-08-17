@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import math
 import re
 import secrets
+import ssl
 import sys
+import tempfile
 from dataclasses import replace
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import BoundedSemaphore
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -26,7 +30,13 @@ from .direct import (
     auth_plan_type_for_account,
     canonical_backend_identity,
 )
-from .extractor import LOCAL_TZ, JsonCandidate, extract_windows, load_json_candidate
+from .extractor import (
+    LOCAL_TZ,
+    MAX_JSON_CANDIDATES,
+    JsonCandidate,
+    extract_windows,
+    load_json_candidate,
+)
 from .identity import (
     backend_identity_from_candidates,
     backend_identity_from_payload,
@@ -37,6 +47,7 @@ from .json_utils import loads_strict
 from .models import Account, AccountStatus, AccountUsage, UsagePool
 from .private_io import (
     assert_no_symlink_ancestors,
+    ensure_private_directory,
     private_path_lock,
     read_private_text,
 )
@@ -57,8 +68,14 @@ from .state import (
     save_current_usage,
     save_usage_snapshot,
 )
+from .usage_resets import parse_usage_resets
 
 MAX_INGEST_BYTES = 10_000_000
+# Keep bridge collection bounded to the extractor's maximum candidate set.
+MAX_BRIDGE_API_RESPONSES = MAX_JSON_CANDIDATES
+BRIDGE_ACCOUNT_HEADER = "X-Codex-Usage-Account"
+BRIDGE_MAX_CONNECTIONS = 64
+BRIDGE_REQUEST_TIMEOUT_SECONDS = 15
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
 AUTHENTICATED_BRIDGE_GRACE_SECONDS = 60
 BRIDGE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{32,128}")
@@ -236,6 +253,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         five_hour=five_hour,
         weekly=weekly,
         main=main,
+        usage_resets=parse_usage_resets(payload),
         status=status,
         error=error,
         source_urls=tuple(sorted(source_urls)),
@@ -303,16 +321,10 @@ def save_bridge_debug_payload(
             snapshot_dir,
         )
         directory = (snapshot_dir.parent if snapshot_dir else default_state_dir()) / "debug"
-        assert_no_symlink_ancestors(directory, label="debug directory")
-        if directory.is_symlink():
-            raise ValueError(f"debug directory must not be a symlink: {directory}")
-        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
-        if directory.is_symlink() or not directory.is_dir():
-            raise ValueError(f"debug directory is not a real directory: {directory}")
         try:
-            directory.chmod(0o700)
-        except OSError:
-            pass
+            ensure_private_directory(directory, label="debug directory")
+        except OSError as exc:
+            raise ValueError("could not secure debug directory") from exc
         path = directory / f"{safe_account_id}-last-ingest.json"
         if state_generation != current_generation:
             return path
@@ -412,49 +424,52 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
     responses_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     response_sequences: dict[tuple[str, str], int | None] = {}
     conflicting_keys: set[tuple[str, str]] = set()
-    response_items: list[Any] = []
+    response_count = 0
     for field in ("apiResponses", "api_responses"):
         value = payload.get(field)
-        if isinstance(value, list):
-            response_items.extend(value)
-    for item in response_items:
-        if not isinstance(item, dict):
+        if not isinstance(value, list):
             continue
-        source = _bridge_response_source(item)
-        if source is None:
-            continue
-        raw_url = item.get("url")
-        if not isinstance(raw_url, str):
-            continue
-        url = _redact_url(raw_url)
-        if not url:
-            continue
-        key = (source, url)
-        if "requestSequence" in item:
-            sequence = item["requestSequence"]
-            if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+        response_count += len(value)
+        if response_count > MAX_BRIDGE_API_RESPONSES:
+            return []
+        for item in value:
+            if not isinstance(item, dict):
                 continue
-        else:
-            sequence = None
-        previous_sequence = response_sequences.get(key)
-        if key in responses_by_key:
-            if previous_sequence is not None and (
-                sequence is None or sequence < previous_sequence
-            ):
+            source = _bridge_response_source(item)
+            if source is None:
                 continue
-            if sequence is None:
-                responses_by_key[key] = item
-                response_sequences[key] = sequence
+            raw_url = item.get("url")
+            if not isinstance(raw_url, str):
                 continue
-            if sequence == previous_sequence:
-                if _response_without_sequence(responses_by_key[key]) != (
-                    _response_without_sequence(item)
+            url = _redact_url(raw_url)
+            if not url:
+                continue
+            key = (source, url)
+            if "requestSequence" in item:
+                sequence = item["requestSequence"]
+                if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+                    continue
+            else:
+                sequence = None
+            previous_sequence = response_sequences.get(key)
+            if key in responses_by_key:
+                if previous_sequence is not None and (
+                    sequence is None or sequence < previous_sequence
                 ):
-                    conflicting_keys.add(key)
-                continue
-            conflicting_keys.discard(key)
-        responses_by_key[key] = item
-        response_sequences[key] = sequence
+                    continue
+                if sequence is None:
+                    responses_by_key[key] = item
+                    response_sequences[key] = sequence
+                    continue
+                if sequence == previous_sequence:
+                    if _response_without_sequence(responses_by_key[key]) != (
+                        _response_without_sequence(item)
+                    ):
+                        conflicting_keys.add(key)
+                    continue
+                conflicting_keys.discard(key)
+            responses_by_key[key] = item
+            response_sequences[key] = sequence
 
     for key in conflicting_keys:
         responses_by_key.pop(key, None)
@@ -560,7 +575,7 @@ def _bridge_response_source_priority(value: Any) -> int:
 
 
 def _safe_excerpt(value: str, limit: int = 240) -> str:
-    excerpt = " ".join(value.split())
+    excerpt = re.sub(r"\s+", " ", value).strip()
     excerpt = excerpt.replace("\\", "\\\\").replace('"', '\\"')
     if len(excerpt) <= limit:
         return excerpt
@@ -570,7 +585,7 @@ def _safe_excerpt(value: str, limit: int = 240) -> str:
 def _safe_context_value(value: Any, limit: int) -> str:
     if value is None or value == "":
         return "-"
-    text = " ".join(str(value).split())
+    text = re.sub(r"\s+", " ", str(value)).strip()
     if not text:
         return "-"
     if len(text) <= limit:
@@ -802,6 +817,10 @@ def render_bridge_snippet(
   const token = {token_json};
   const intervalMs = {interval_ms};
   const maxFieldChars = 2000000;
+  const maxAckChars = 4096;
+  const maxAckChunkBytes = 65536;
+  const maxSerializedPayloadBytes = 9500000;
+  const textEncoder = typeof TextEncoder === "function" ? new TextEncoder() : null;
   let sendInFlight = null;
   let sendPending = false;
 
@@ -810,48 +829,391 @@ def render_bridge_snippet(
     return text.length > maxFieldChars ? text.slice(0, maxFieldChars) : text;
   }}
 
+  function utf8ByteLength(value) {{
+    const text = String(value || "");
+    return textEncoder ? textEncoder.encode(text).length : text.length * 6;
+  }}
+
+  function serializedPayloadBytes(payload) {{
+    return utf8ByteLength(JSON.stringify(payload));
+  }}
+
+  function fitPayload(payload) {{
+    const metadataFields = new Set([
+      "account", "url", "title", "capturedAt", "readyState"
+    ]);
+    let serializedBytes = serializedPayloadBytes(payload);
+    if (serializedBytes < maxSerializedPayloadBytes) {{
+      return payload;
+    }}
+    for (let attempt = 0; attempt < 8; attempt += 1) {{
+      if (serializedBytes < maxSerializedPayloadBytes) {{
+        return payload;
+      }}
+      const candidates = [];
+      for (const field of Object.keys(payload)) {{
+        if (
+          typeof payload[field] === "string"
+          && !metadataFields.has(field)
+          && payload[field].length > 1000
+        ) {{
+          candidates.push(field);
+        }}
+      }}
+      if (!candidates.length) {{
+        break;
+      }}
+      const trimRatio = Math.min(
+        0.5,
+        (maxSerializedPayloadBytes / serializedBytes) * 0.9,
+      );
+      for (const field of candidates) {{
+        payload[field] = payload[field].slice(
+          0,
+          Math.floor(payload[field].length * Math.max(0, trimRatio)),
+        );
+      }}
+      serializedBytes = serializedPayloadBytes(payload);
+    }}
+    for (const field of Object.keys(payload)) {{
+      if (
+        typeof payload[field] === "string"
+        && !metadataFields.has(field)
+      ) {{
+        payload[field] = "";
+      }}
+    }}
+    return payload;
+  }}
+
+  async function readBoundedAckText(response) {{
+    const reader = response && response.body && typeof response.body.getReader === "function"
+      ? response.body.getReader()
+      : null;
+    if (!reader) {{
+      const text = await response.text();
+      return String(text || "").slice(0, maxAckChars);
+    }}
+    const decoder = new TextDecoder();
+    const parts = [];
+    let length = 0;
+    let shouldCancel = false;
+    while (true) {{
+      const item = await reader.read();
+      if (item.done) {{
+        const tail = decoder.decode();
+        const remaining = maxAckChars - length;
+        parts.push(tail.slice(0, remaining));
+        break;
+      }}
+      const bytes = item.value || new Uint8Array();
+      for (let offset = 0; offset < bytes.length; offset += maxAckChunkBytes) {{
+        if (length >= maxAckChars) {{
+          shouldCancel = true;
+          break;
+        }}
+        const chunk = decoder.decode(
+          bytes.subarray(offset, offset + maxAckChunkBytes),
+          {{ stream: true }},
+        );
+        const remaining = maxAckChars - length;
+        if (chunk.length > remaining) {{
+          parts.push(chunk.slice(0, remaining));
+          shouldCancel = true;
+          break;
+        }}
+        parts.push(chunk);
+        length += chunk.length;
+      }}
+      if (shouldCancel) {{
+        try {{
+          await reader.cancel();
+        }} catch (_error) {{
+          // The response is already bounded; cancellation is best effort.
+        }}
+        break;
+      }}
+    }}
+    return parts.join("");
+  }}
+
   function collectAttributeText() {{
     const attrs = ["aria-label", "aria-valuetext", "aria-valuenow", "title", "alt"];
     if (!document.querySelectorAll) {{
-      return "";
+      return {{ text: "", truncated: false }};
     }}
-    const selector = attrs.map((name) => `[${{name}}]`).join(",");
-    return Array.from(document.querySelectorAll(selector))
-      .flatMap((element) => attrs.map((name) => element.getAttribute(name)))
-      .filter((value) => value && String(value).trim())
-      .join("\\n");
+    const selector = attrs.reduce(
+      (result, name) => result ? `${{result}},[${{name}}]` : `[${{name}}]`,
+      "",
+    );
+    const parts = [];
+    let length = 0;
+    let truncated = false;
+    const elements = document.querySelectorAll(selector);
+    for (let index = 0; index < elements.length; index += 1) {{
+      const element = elements[index];
+      for (const name of attrs) {{
+        const value = element.getAttribute(name);
+        const text = String(value || "");
+        if (!text.trim()) {{
+          continue;
+        }}
+        const prefix = length ? "\\n" : "";
+        const remaining = maxFieldChars - length;
+        const chunk = (prefix + text).slice(0, remaining);
+        parts.push(chunk);
+        length += chunk.length;
+        if (chunk.length < prefix.length + text.length) {{
+          truncated = true;
+          return {{ text: parts.join(""), truncated }};
+        }}
+      }}
+    }}
+    return {{ text: parts.join(""), truncated }};
   }}
 
   function collectSvgText() {{
     if (!document.querySelectorAll) {{
-      return "";
+      return {{ text: "", truncated: false }};
     }}
-    return Array.from(document.querySelectorAll("svg text, svg title, svg desc"))
-      .map((element) => element.textContent || "")
-      .filter((value) => value.trim())
-      .join("\\n");
+    const parts = [];
+    let length = 0;
+    let truncated = false;
+    const elements = document.querySelectorAll("svg text, svg title, svg desc");
+    for (let index = 0; index < elements.length; index += 1) {{
+      const element = elements[index];
+      const text = String(element.textContent || "");
+      if (!text.trim()) {{
+        continue;
+      }}
+      const prefix = length ? "\\n" : "";
+      const remaining = maxFieldChars - length;
+      const chunk = (prefix + text).slice(0, remaining);
+      parts.push(chunk);
+      length += chunk.length;
+      if (chunk.length < prefix.length + text.length) {{
+        truncated = true;
+        break;
+      }}
+    }}
+    return {{ text: parts.join(""), truncated }};
   }}
 
-  function sanitizedRoot() {{
-    if (!document.documentElement) {{
-      return null;
+  function boundedVisibleText(root) {{
+    if (!root) {{
+      return {{ text: "", truncated: false }};
     }}
-    const clone = document.documentElement.cloneNode(true);
-    if (clone.querySelectorAll) {{
-      clone
-        .querySelectorAll("script, style, link, meta, noscript, template")
-        .forEach((element) => element.remove());
+    if (root.nodeType !== 1) {{
+      const fallback = String(root.innerText || "");
+      return {{
+        text: fallback.slice(0, maxFieldChars),
+        truncated: fallback.length > maxFieldChars
+      }};
     }}
-    return clone;
+    const maxNodes = 500000;
+    const skippedTags = new Set([
+      "script", "style", "link", "meta", "noscript", "template"
+    ]);
+    const blockTags = new Set([
+      "address", "article", "aside", "blockquote", "br", "dd", "div", "dl",
+      "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2",
+      "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol",
+      "p", "pre", "section", "table", "td", "th", "tr", "ul"
+    ]);
+    const parts = [];
+    let length = 0;
+    let nodesSeen = 0;
+    let truncated = false;
+
+    function append(value) {{
+      if (length >= maxFieldChars) {{
+        truncated = true;
+        return;
+      }}
+      const text = String(value || "");
+      const remaining = maxFieldChars - length;
+      const chunk = text.slice(0, remaining);
+      parts.push(chunk);
+      length += chunk.length;
+      truncated = truncated || chunk.length < text.length;
+    }}
+
+    const stack = [{{ kind: "visit", node: root }}];
+    while (stack.length && length < maxFieldChars && nodesSeen < maxNodes) {{
+      const item = stack.pop();
+      if (item.kind === "close") {{
+        append("\\n");
+        continue;
+      }}
+      const node = item.node;
+      if (!node) {{
+        continue;
+      }}
+      nodesSeen += 1;
+      if (node.nodeType === 3) {{
+        append(node.nodeValue);
+        continue;
+      }}
+      if (node.nodeType !== 1) {{
+        continue;
+      }}
+      const tag = String(node.tagName || "").toLowerCase();
+      if (!tag || skippedTags.has(tag) || node.hidden) {{
+        continue;
+      }}
+      const style = typeof getComputedStyle === "function"
+        ? getComputedStyle(node)
+        : null;
+      if (
+        style
+        && (style.display === "none" || style.visibility === "hidden")
+      ) {{
+        continue;
+      }}
+      if (blockTags.has(tag)) {{
+        append("\\n");
+        stack.push({{ kind: "close" }});
+      }}
+      const children = node.childNodes || [];
+      for (let index = children.length - 1; index >= 0; index -= 1) {{
+        stack.push({{ kind: "visit", node: children[index] }});
+      }}
+    }}
+    if (stack.length) {{
+      truncated = true;
+    }}
+    return {{ text: parts.join(""), truncated }};
+  }}
+
+  function boundedDomCapture(root) {{
+    if (!root) {{
+      return {{ text: "", html: "", textTruncated: false, htmlTruncated: false }};
+    }}
+    const maxNodes = 500000;
+    const skippedTags = new Set([
+      "script", "style", "link", "meta", "noscript", "template"
+    ]);
+    const voidTags = new Set([
+      "area", "base", "br", "col", "embed", "hr", "img", "input",
+      "link", "meta", "param", "source", "track", "wbr"
+    ]);
+    const attributesToKeep = new Set([
+      "style", "class", "role", "hidden", "aria-hidden", "aria-valuenow",
+      "aria-valuemin", "aria-valuemax", "aria-label", "title"
+    ]);
+    const textParts = [];
+    const htmlParts = [];
+    let textLength = 0;
+    let htmlLength = 0;
+    let nodesSeen = 0;
+    let textTruncated = false;
+    let htmlTruncated = false;
+
+    function append(parts, value, limit, state) {{
+      const text = String(value || "");
+      if (state.length >= limit) {{
+        state.truncated = true;
+        return;
+      }}
+      const remaining = limit - state.length;
+      parts.push(text.slice(0, remaining));
+      state.length += Math.min(text.length, remaining);
+      state.truncated = state.truncated || text.length > remaining;
+    }}
+
+    function escape(value) {{
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;");
+    }}
+
+    const stack = [{{ kind: "visit", node: root }}];
+    while (
+      stack.length
+      && nodesSeen < maxNodes
+      && (textLength < maxFieldChars || htmlLength < maxFieldChars)
+    ) {{
+      const item = stack.pop();
+      if (item.kind === "close") {{
+        const closingState = {{ length: htmlLength, truncated: htmlTruncated }};
+        append(htmlParts, "</" + item.tag + ">", maxFieldChars, closingState);
+        htmlLength = closingState.length;
+        htmlTruncated = closingState.truncated;
+        continue;
+      }}
+      const node = item.node;
+      if (!node) {{
+        continue;
+      }}
+      nodesSeen += 1;
+      if (node.nodeType === 3) {{
+        const state = {{ length: textLength, truncated: textTruncated }};
+        append(textParts, node.nodeValue, maxFieldChars, state);
+        textLength = state.length;
+        textTruncated = state.truncated;
+        const htmlState = {{ length: htmlLength, truncated: htmlTruncated }};
+        append(htmlParts, escape(node.nodeValue), maxFieldChars, htmlState);
+        htmlLength = htmlState.length;
+        htmlTruncated = htmlState.truncated;
+        continue;
+      }}
+      if (node.nodeType !== 1) {{
+        continue;
+      }}
+      const tag = String(node.tagName || "").toLowerCase();
+      if (!tag || skippedTags.has(tag)) {{
+        continue;
+      }}
+      const htmlState = {{ length: htmlLength, truncated: htmlTruncated }};
+      append(htmlParts, "<" + tag, maxFieldChars, htmlState);
+      const attributes = node.attributes || [];
+      for (let index = 0; index < attributes.length; index += 1) {{
+        const attribute = attributes[index];
+        const name = String(attribute.name || "").toLowerCase();
+        if (attributesToKeep.has(name)) {{
+          append(
+            htmlParts,
+            " " + attribute.name + '=\\"' + escape(attribute.value) + '\\"',
+            maxFieldChars,
+            htmlState,
+          );
+        }}
+      }}
+      append(htmlParts, ">", maxFieldChars, htmlState);
+      htmlLength = htmlState.length;
+      htmlTruncated = htmlState.truncated;
+      if (!voidTags.has(tag)) {{
+        stack.push({{ kind: "close", tag }});
+      }}
+      const children = node.childNodes || [];
+      for (let index = children.length - 1; index >= 0; index -= 1) {{
+        stack.push({{ kind: "visit", node: children[index] }});
+      }}
+    }}
+    if (stack.length) {{
+      textTruncated = true;
+      htmlTruncated = true;
+    }}
+    return {{
+      text: textParts.join(""),
+      html: htmlParts.join(""),
+      textTruncated,
+      htmlTruncated,
+    }};
   }}
 
   function collectPayload() {{
-    const bodyText = document.body ? (document.body.innerText || "") : "";
-    const root = sanitizedRoot();
-    const domText = root ? (root.textContent || "") : "";
-    const accessibilityText = collectAttributeText();
-    const svgText = collectSvgText();
-    const htmlText = root ? (root.outerHTML || "") : "";
+    const bodyCapture = boundedVisibleText(document.body);
+    const bodyText = bodyCapture.text;
+    const root = boundedDomCapture(document.documentElement);
+    const domText = root.text;
+    const accessibilityCapture = collectAttributeText();
+    const accessibilityText = accessibilityCapture.text;
+    const svgCapture = collectSvgText();
+    const svgText = svgCapture.text;
+    const htmlText = root.html;
     const searchText = [bodyText, domText, accessibilityText, svgText, htmlText]
       .filter((value) => value && String(value).trim())
       .join("\\n\\n");
@@ -872,11 +1234,11 @@ def render_bridge_snippet(
         htmlText: htmlText.length
       }},
       truncatedFields: {{
-        bodyText: bodyText.length > maxFieldChars,
-        domText: domText.length > maxFieldChars,
-        accessibilityText: accessibilityText.length > maxFieldChars,
-        svgText: svgText.length > maxFieldChars,
-        htmlText: htmlText.length > maxFieldChars
+        bodyText: bodyCapture.truncated,
+        domText: root.textTruncated,
+        accessibilityText: accessibilityCapture.truncated,
+        svgText: svgCapture.truncated,
+        htmlText: root.htmlTruncated
       }},
       bodyText: limitText(bodyText),
       domText: limitText(domText),
@@ -897,11 +1259,12 @@ def render_bridge_snippet(
           method: "POST",
           headers: {{
             "Content-Type": "application/json",
+            "X-Codex-Usage-Account": account,
             "Authorization": "Bearer " + token
           }},
-          body: JSON.stringify(collectPayload())
+          body: JSON.stringify(fitPayload(collectPayload()))
         }});
-        console.log("codex-usage bridge", response.status, await response.text());
+        console.log("codex-usage bridge", response.status, await readBoundedAckText(response));
       }} catch (error) {{
         console.warn("codex-usage bridge failed", String(error));
       }}
@@ -935,6 +1298,27 @@ def write_bridge_extension(
 ) -> Path:
     token = _validate_bridge_token(token) if token else bridge_token_for_account(account_ref)
     _prepare_private_directory(output_dir, label="extension output directory")
+    with private_path_lock(
+        output_dir / ".codex-usage-write",
+        label="bridge extension output lock",
+    ):
+        return _write_bridge_extension_transaction(
+            account_ref,
+            output_dir,
+            endpoint=endpoint,
+            interval_seconds=interval_seconds,
+            token=token,
+        )
+
+
+def _write_bridge_extension_transaction(
+    account_ref: str,
+    output_dir: Path,
+    *,
+    endpoint: str,
+    interval_seconds: int,
+    token: str,
+) -> Path:
     manifest = {
         "manifest_version": 3,
         "name": f"codex-usage bridge ({account_ref})",
@@ -963,31 +1347,132 @@ def write_bridge_extension(
     }
     files = {
         "manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False),
-        "background.js": _render_extension_background(endpoint, token),
+        "background.js": _render_extension_background(account_ref, endpoint, token),
         "content.js": _render_extension_content(account_ref, interval_seconds),
         "page-hook.js": _render_extension_page_hook(),
     }
-    for filename, content in files.items():
-        path = output_dir / filename
-        _write_private_text(path, content, label="extension output path")
+    paths = {filename: output_dir / filename for filename in files}
+    for path in paths.values():
+        _validate_extension_output_path(path)
+
+    with tempfile.TemporaryDirectory(
+        prefix=f".{output_dir.name}.",
+        dir=str(output_dir),
+    ) as transaction:
+        transaction_dir = Path(transaction)
+        stage_dir = transaction_dir / "stage"
+        backup_dir = transaction_dir / "backup"
+        stage_dir.mkdir(mode=0o700)
+        backup_dir.mkdir(mode=0o700)
+        for filename, content in files.items():
+            _write_private_text(
+                stage_dir / filename,
+                content,
+                label="extension staging path",
+            )
+
+        backed_up: list[tuple[Path, Path]] = []
+        committed: list[Path] = []
+        try:
+            for path in paths.values():
+                _validate_extension_output_path(path)
+            for filename, path in paths.items():
+                backup = backup_dir / filename
+                if path.exists():
+                    path.replace(backup)
+                    backed_up.append((path, backup))
+                (stage_dir / filename).replace(path)
+                committed.append(path)
+        except Exception as primary_error:
+            rollback_errors: list[Exception] = []
+            for path in reversed(committed):
+                try:
+                    if path.is_symlink() or (path.exists() and not path.is_file()):
+                        raise ValueError(f"extension output path is not a regular file: {path}")
+                    if path.exists():
+                        path.unlink()
+                except Exception as rollback_error:
+                    rollback_errors.append(rollback_error)
+            for path, backup in reversed(backed_up):
+                try:
+                    backup.replace(path)
+                except Exception as rollback_error:
+                    rollback_errors.append(rollback_error)
+            if rollback_errors:
+                raise ExceptionGroup(
+                    "bridge extension commit rollback failed",
+                    [primary_error, *rollback_errors],
+                ) from None
+            raise
     return output_dir
 
 
+def _validate_extension_output_path(path: Path) -> None:
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError(f"extension output path must be a regular file: {path}")
+    if path.exists() and path.stat().st_nlink != 1:
+        raise ValueError(f"extension output path must not be hard-linked: {path}")
+
+
 def _prepare_private_directory(path: Path, *, label: str) -> None:
-    assert_no_symlink_ancestors(path, label=label)
-    if path.is_symlink():
-        raise ValueError(f"{label} must not be a symlink: {path}")
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if path.is_symlink() or not path.is_dir():
-        raise ValueError(f"{label} is not a real directory: {path}")
     try:
-        path.chmod(0o700)
-    except OSError:
-        pass
+        ensure_private_directory(path, label=label)
+    except OSError as exc:
+        raise ValueError(f"could not secure {label}") from exc
 
 
 def _write_private_text(path: Path, content: str, *, label: str) -> None:
     write_private_output_text(path, content, label=label)
+
+
+class _BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = BRIDGE_MAX_CONNECTIONS
+
+    def __init__(self, *args, tls_context=None, **kwargs):
+        self._tls_context = tls_context
+        super().__init__(*args, **kwargs)
+        self._connection_slots = BoundedSemaphore(BRIDGE_MAX_CONNECTIONS)
+
+    def get_request(self):
+        request, client_address = super().get_request()
+        if self._tls_context is None:
+            return request, client_address
+        wrapped_request = None
+        try:
+            request.settimeout(BRIDGE_REQUEST_TIMEOUT_SECONDS)
+            wrapped_request = self._tls_context.wrap_socket(
+                request,
+                server_side=True,
+                do_handshake_on_connect=False,
+            )
+            wrapped_request.settimeout(BRIDGE_REQUEST_TIMEOUT_SECONDS)
+            return wrapped_request, client_address
+        except BaseException:
+            (wrapped_request or request).close()
+            raise
+
+    def process_request(self, request, client_address):
+        if not self._connection_slots.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            if self._tls_context is not None:
+                try:
+                    request.do_handshake()
+                except (OSError, ssl.SSLError):
+                    request.close()
+                    return
+            super().process_request_thread(request, client_address)
+        finally:
+            self._connection_slots.release()
 
 
 def run_bridge_server(
@@ -997,7 +1482,12 @@ def run_bridge_server(
     port: int,
     snapshot_dir: Path | None = None,
     config_path: Path | None = None,
+    tls_cert: Path | None = None,
+    tls_key: Path | None = None,
 ) -> None:
+    tls_context = _tls_context(tls_cert, tls_key)
+    if _bridge_host_requires_tls(host) and tls_context is None:
+        raise ValueError("non-loopback bridge bindings require TLS")
     tokens = {
         account.id: bridge_token_for_account(account.id)
         for account in config.accounts
@@ -1008,13 +1498,56 @@ def run_bridge_server(
         tokens,
         config_path=config_path.expanduser() if config_path else None,
     )
-    server = ThreadingHTTPServer((host, port), handler)
-    print(f"Bridge-Server: http://{host}:{port}/ingest")
+    server = _BoundedThreadingHTTPServer(
+        (host, port),
+        handler,
+        tls_context=tls_context,
+    )
+    scheme = "https" if tls_context is not None else "http"
+    print(f"Bridge-Server: {scheme}://{host}:{port}/ingest")
     print("Stop: Ctrl+C")
     try:
         server.serve_forever()
     finally:
         server.server_close()
+
+
+def _bridge_host_requires_tls(host: str) -> bool:
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return False
+    try:
+        address = ipaddress.ip_address(normalized.strip("[]"))
+    except ValueError:
+        return True
+    return not address.is_loopback
+
+
+def _tls_context(
+    tls_cert: Path | None,
+    tls_key: Path | None,
+) -> ssl.SSLContext | None:
+    if (tls_cert is None) != (tls_key is None):
+        raise ValueError("TLS requires both certificate and key")
+    if tls_cert is None:
+        return None
+    certificate = tls_cert.expanduser()
+    key = tls_key.expanduser()
+    assert_no_symlink_ancestors(certificate, label="TLS certificate")
+    assert_no_symlink_ancestors(key, label="TLS key")
+    if certificate.is_symlink() or not certificate.is_file():
+        raise ValueError(f"TLS certificate must be a regular file: {certificate}")
+    if key.is_symlink() or not key.is_file():
+        raise ValueError(f"TLS key must be a regular file: {key}")
+    if key.stat().st_mode & 0o077:
+        raise ValueError(f"TLS key permissions too broad: {key}")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        context.load_cert_chain(certfile=str(certificate), keyfile=str(key))
+    except (OSError, ssl.SSLError) as exc:
+        raise ValueError("invalid TLS certificate or key") from exc
+    return context
 
 
 def ingest_and_save(
@@ -1521,6 +2054,10 @@ def _make_handler(
     class BridgeHandler(BaseHTTPRequestHandler):
         server_version = "codex-usage-bridge/0.1"
 
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(BRIDGE_REQUEST_TIMEOUT_SECONDS)
+
         def do_OPTIONS(self) -> None:
             if not self._is_allowed_origin():
                 self._send_json(403, {"error": "origin rejected"})
@@ -1554,25 +2091,36 @@ def _make_handler(
             if content_length <= 0 or content_length > MAX_INGEST_BYTES:
                 self._send_json(413, {"error": "invalid payload size"})
                 return
+            request_config = self._config_for_request()
+            if request_config is None:
+                self._send_json(503, {"error": "configuration unavailable"})
+                return
+            account_headers = self.headers.get_all(BRIDGE_ACCOUNT_HEADER) or []
+            if len(account_headers) != 1:
+                self._send_json(401, {"error": "authorization required"})
+                return
+            account_ref = account_headers[0]
+            try:
+                resolved_account = resolve_account(request_config, account_ref)
+            except KeyError:
+                self._send_json(401, {"error": "authorization required"})
+                return
+            if resolved_account.id != account_ref or not self._is_authorized(
+                account_ref, request_config
+            ):
+                self._send_json(401, {"error": "authorization required"})
+                return
             try:
                 payload = loads_strict(self.rfile.read(content_length).decode("utf-8"))
-            except (UnicodeDecodeError, ValueError):
+            except (OSError, UnicodeDecodeError, ValueError):
                 self._send_json(400, {"error": "invalid JSON payload"})
                 return
             if not isinstance(payload, dict):
                 self._send_json(400, {"error": "invalid JSON payload"})
                 return
 
-            request_config = self._config_for_request()
-            if request_config is None:
-                self._send_json(503, {"error": "configuration unavailable"})
-                return
-            account_ref = payload.get("account")
-            if not isinstance(account_ref, str) or not account_ref:
-                self._send_json(401, {"error": "authorization required"})
-                return
-            if not self._is_authorized(account_ref, request_config):
-                self._send_json(401, {"error": "authorization required"})
+            if payload.get("account") != account_ref:
+                self._send_json(400, {"error": "account mismatch"})
                 return
             try:
                 usage, path = ingest_and_save(
@@ -1639,7 +2187,10 @@ def _make_handler(
             self.send_response(status)
             self.send_header("Access-Control-Allow-Origin", self._allowed_origin())
             self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                f"Content-Type, Authorization, {BRIDGE_ACCOUNT_HEADER}",
+            )
             self.send_header("Content-Type", content_type)
             if length:
                 self.send_header("Content-Length", str(length))
@@ -1738,16 +2289,78 @@ def _redact_url(url: Any) -> str:
         return ""
     try:
         parts = urlsplit(url)
+        port = parts.port
     except (TypeError, ValueError):
         return ""
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    hostname = parts.hostname
+    if not hostname:
+        return ""
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    netloc = hostname if port is None else f"{hostname}:{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
-def _render_extension_background(endpoint: str, token: str) -> str:
+def _render_extension_background(account_ref: str, endpoint: str, token: str) -> str:
+    account_json = json.dumps(account_ref)
     endpoint_json = json.dumps(endpoint)
     token_json = json.dumps(_validate_bridge_token(token))
-    return f"""const ENDPOINT = {endpoint_json};
+    return f"""const ACCOUNT = {account_json};
+const ENDPOINT = {endpoint_json};
 const TOKEN = {token_json};
+const CODEX_USAGE_ACK_MAX_CHARS = 4096;
+const CODEX_USAGE_ACK_CHUNK_BYTES = 65536;
+
+async function readCodexUsageAckText(response) {{
+  const reader = response && response.body && typeof response.body.getReader === "function"
+    ? response.body.getReader()
+    : null;
+  if (!reader) {{
+    const text = await response.text();
+    return String(text || "").slice(0, CODEX_USAGE_ACK_MAX_CHARS);
+  }}
+  const decoder = new TextDecoder();
+  const parts = [];
+  let length = 0;
+  let shouldCancel = false;
+  while (true) {{
+    const item = await reader.read();
+    if (item.done) {{
+      const tail = decoder.decode();
+      const remaining = CODEX_USAGE_ACK_MAX_CHARS - length;
+      parts.push(tail.slice(0, remaining));
+      break;
+    }}
+    const bytes = item.value || new Uint8Array();
+    for (let offset = 0; offset < bytes.length; offset += CODEX_USAGE_ACK_CHUNK_BYTES) {{
+      if (length >= CODEX_USAGE_ACK_MAX_CHARS) {{
+        shouldCancel = true;
+        break;
+      }}
+      const chunk = decoder.decode(
+        bytes.subarray(offset, offset + CODEX_USAGE_ACK_CHUNK_BYTES),
+        {{ stream: true }},
+      );
+      const remaining = CODEX_USAGE_ACK_MAX_CHARS - length;
+      if (chunk.length > remaining) {{
+        parts.push(chunk.slice(0, remaining));
+        shouldCancel = true;
+        break;
+      }}
+      parts.push(chunk);
+      length += chunk.length;
+    }}
+    if (shouldCancel) {{
+      try {{
+        await reader.cancel();
+      }} catch (_error) {{
+        // The response is already bounded; cancellation is best effort.
+      }}
+      break;
+    }}
+  }}
+  return parts.join("");
+}}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {{
   if (!message || message.type !== "codexUsageIngest") {{
@@ -1757,6 +2370,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {{
     method: "POST",
     headers: {{
       "Content-Type": "application/json",
+      "X-Codex-Usage-Account": ACCOUNT,
       "Authorization": "Bearer " + TOKEN
     }},
     body: JSON.stringify(message.payload)
@@ -1765,7 +2379,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {{
       sendResponse({{
         ok: response.ok,
         status: response.status,
-        text: await response.text()
+        text: await readCodexUsageAckText(response)
       }});
     }})
     .catch((error) => {{
@@ -1783,6 +2397,11 @@ def _render_extension_content(account_ref: str, interval_seconds: int) -> str:
 const CODEX_USAGE_INTERVAL_MS = {interval_ms};
 const CODEX_USAGE_MIN_TEXT = 40;
 const CODEX_USAGE_MAX_FIELD_CHARS = 2000000;
+const CODEX_USAGE_CAPTURED_API_MAX_CHARS = 4000000;
+const CODEX_USAGE_RESPONSE_CHUNK_BYTES = 65536;
+const CODEX_USAGE_MAX_SERIALIZED_PAYLOAD_BYTES = 9500000;
+const codexUsageTextEncoder = typeof TextEncoder === "function"
+  ? new TextEncoder() : null;
 const CODEX_USAGE_READY_TIMEOUT_MS = 60000;
 const CODEX_USAGE_PAGE_REFRESH_TIMEOUT_MS = 2500;
 const CODEX_USAGE_API_PATHS = [
@@ -1813,6 +2432,178 @@ function limitCodexUsageText(value) {{
 
 function isCodexUsageTruncated(value) {{
   return String(value || "").length > CODEX_USAGE_MAX_FIELD_CHARS;
+}}
+
+function codexUsageUtf8ByteLength(value) {{
+  const text = String(value || "");
+  if (codexUsageTextEncoder) {{
+    return codexUsageTextEncoder.encode(text).length;
+  }}
+  // Conservative fallback for older extension runtimes: JSON escaping can
+  // expand a UTF-16 code unit to at most six ASCII bytes.
+  return text.length * 6;
+}}
+
+function codexUsageSerializedPayloadBytes(payload) {{
+  return codexUsageUtf8ByteLength(JSON.stringify(payload));
+}}
+
+function codexUsagePayloadTextCandidates(payload) {{
+  const metadataFields = new Set([
+    "account", "url", "title", "capturedAt", "readyState"
+  ]);
+  const candidates = [];
+  for (const field of Object.keys(payload)) {{
+    if (field !== "apiResponses"
+      && typeof payload[field] === "string"
+      && !metadataFields.has(field)
+      && payload[field].length > 1000) {{
+      candidates.push({{ owner: payload, field, value: payload[field] }});
+    }}
+  }}
+  for (const response of Array.isArray(payload.apiResponses)
+    ? payload.apiResponses : []) {{
+    if (!response || typeof response !== "object") {{
+      continue;
+    }}
+    for (const field of Object.keys(response)) {{
+      if (
+        typeof response[field] === "string"
+        && !metadataFields.has(field)
+        && response[field].length > 1000
+      ) {{
+        candidates.push({{ owner: response, field, value: response[field] }});
+      }}
+    }}
+  }}
+  return candidates;
+}}
+
+function fitCodexUsagePayload(payload) {{
+  const metadataFields = new Set([
+    "account", "url", "title", "capturedAt", "readyState"
+  ]);
+  let serializedBytes = codexUsageSerializedPayloadBytes(payload);
+  if (serializedBytes < CODEX_USAGE_MAX_SERIALIZED_PAYLOAD_BYTES) {{
+    return payload;
+  }}
+  if (Array.isArray(payload.apiResponses)) {{
+    payload.apiResponses = payload.apiResponses.map((item) => (
+      item && typeof item === "object" ? {{ ...item }} : item
+    ));
+  }}
+  for (let attempt = 0; attempt < 8; attempt += 1) {{
+    if (serializedBytes < CODEX_USAGE_MAX_SERIALIZED_PAYLOAD_BYTES) {{
+      return payload;
+    }}
+    const candidates = codexUsagePayloadTextCandidates(payload);
+    if (!candidates.length) {{
+      break;
+    }}
+    const trimRatio = Math.min(
+      0.5,
+      (CODEX_USAGE_MAX_SERIALIZED_PAYLOAD_BYTES / serializedBytes) * 0.9,
+    );
+    for (const candidate of candidates) {{
+      const nextLength = Math.floor(
+        candidate.value.length * Math.max(0, trimRatio),
+      );
+      candidate.owner[candidate.field] = candidate.value.slice(
+        0,
+        Math.max(0, nextLength),
+      );
+    }}
+    serializedBytes = codexUsageSerializedPayloadBytes(payload);
+  }}
+  while (serializedBytes >= CODEX_USAGE_MAX_SERIALIZED_PAYLOAD_BYTES
+    && Array.isArray(payload.apiResponses)
+    && payload.apiResponses.length) {{
+    const removable = payload.apiResponses.findIndex(
+      (item) => !codexUsageIsMainUsageResponse(item),
+    );
+    payload.apiResponses.splice(removable >= 0 ? removable : 0, 1);
+    serializedBytes = codexUsageSerializedPayloadBytes(payload);
+  }}
+  if (serializedBytes >= CODEX_USAGE_MAX_SERIALIZED_PAYLOAD_BYTES) {{
+    for (const field of Object.keys(payload)) {{
+      if (
+        field !== "apiResponses"
+        && typeof payload[field] === "string"
+        && !metadataFields.has(field)
+      ) {{
+        payload[field] = "";
+      }}
+    }}
+    payload.apiResponses = [];
+  }}
+  return payload;
+}}
+
+async function readBoundedCodexUsageResponse(response) {{
+  const reader = response && response.body && typeof response.body.getReader === "function"
+    ? response.body.getReader()
+    : null;
+  if (!reader) {{
+    const text = await response.text();
+    return {{
+      text: limitCodexUsageText(text),
+      truncated: isCodexUsageTruncated(text)
+    }};
+  }}
+  const decoder = new TextDecoder();
+  const parts = [];
+  let length = 0;
+  let truncated = false;
+  let shouldCancel = false;
+  while (true) {{
+    const item = await reader.read();
+    if (item.done) {{
+      const tail = decoder.decode();
+      const remaining = CODEX_USAGE_MAX_FIELD_CHARS - length;
+      if (tail.length > remaining) {{
+        parts.push(tail.slice(0, remaining));
+        truncated = true;
+      }} else {{
+        parts.push(tail);
+        length += tail.length;
+      }}
+      break;
+    }}
+    const bytes = item.value || new Uint8Array();
+    for (
+      let offset = 0;
+      offset < bytes.length;
+      offset += CODEX_USAGE_RESPONSE_CHUNK_BYTES
+    ) {{
+      if (length >= CODEX_USAGE_MAX_FIELD_CHARS) {{
+        truncated = true;
+        shouldCancel = true;
+        break;
+      }}
+      const chunk = decoder.decode(
+        bytes.subarray(offset, offset + CODEX_USAGE_RESPONSE_CHUNK_BYTES),
+        {{ stream: true }},
+      );
+      const remaining = CODEX_USAGE_MAX_FIELD_CHARS - length;
+      if (chunk.length > remaining) {{
+        parts.push(chunk.slice(0, remaining));
+        truncated = true;
+        shouldCancel = true;
+        break;
+      }}
+      parts.push(chunk);
+      length += chunk.length;
+    }}
+    if (shouldCancel) {{
+      try {{
+        await reader.cancel();
+      }} catch (_error) {{
+        // The response is already bounded; cancellation is best effort.
+      }}
+      break;
+    }}
+  }}
+  return {{ text: parts.join(""), truncated }};
 }}
 
 function looksLikeCodexUsageJson(contentType, bodyText) {{
@@ -1854,6 +2645,54 @@ function codexUsageApiResponseIsNewer(candidate, current) {{
     currentSequence !== null
     && (candidateSequence === null || candidateSequence < currentSequence)
   );
+}}
+
+function compactCodexUsageApiResponse(item) {{
+  if (!item || item.truncated !== true) {{
+    return item;
+  }}
+  const bodyText = String(item.bodyText || item.body || item.text || "");
+  return {{
+    ...item,
+    bodyText: "",
+    body: "",
+    text: "",
+    bodyExcerpt: bodyText.slice(0, 500)
+  }};
+}}
+
+function codexUsageApiResponseTextSize(item) {{
+  return ["bodyText", "body", "text", "bodyExcerpt"].reduce(
+    (total, name) => total + String((item && item[name]) || "").length,
+    0,
+  );
+}}
+
+function trimCodexUsageApiResponses(items) {{
+  const main = [];
+  const others = [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {{
+    const item = items[index];
+    if (!item || typeof item !== "object") {{
+      continue;
+    }}
+    if (!main.length && codexUsageIsMainUsageResponse(item)) {{
+      main.push(item);
+    }} else {{
+      others.push(item);
+    }}
+  }}
+  const retained = [];
+  let total = 0;
+  for (const item of [...main, ...others]) {{
+    const size = codexUsageApiResponseTextSize(item);
+    if (total + size > CODEX_USAGE_CAPTURED_API_MAX_CHARS) {{
+      continue;
+    }}
+    retained.push(item);
+    total += size;
+  }}
+  return retained.reverse();
 }}
 
 function codexUsageIsMainUsageResponse(item) {{
@@ -1913,6 +2752,7 @@ function stopCodexUsageBridge(reason) {{
 }}
 
 function rememberCodexUsageApiResponse(item) {{
+  item = compactCodexUsageApiResponse(item);
   if (!item || typeof item !== "object" || !item.url) {{
     return;
   }}
@@ -1930,11 +2770,18 @@ function rememberCodexUsageApiResponse(item) {{
   while (codexUsageCapturedApiResponses.length > CODEX_USAGE_CAPTURED_API_LIMIT) {{
     codexUsageCapturedApiResponses.shift();
   }}
+  const bounded = trimCodexUsageApiResponses(codexUsageCapturedApiResponses);
+  codexUsageCapturedApiResponses.splice(
+    0,
+    codexUsageCapturedApiResponses.length,
+    ...bounded,
+  );
 }}
 
 function dedupeCodexUsageApiResponses(items) {{
   const byKey = new Map();
-  for (const item of items) {{
+  for (const rawItem of items) {{
+    const item = compactCodexUsageApiResponse(rawItem);
     if (!item || typeof item !== "object" || !item.url) {{
       continue;
     }}
@@ -1944,7 +2791,9 @@ function dedupeCodexUsageApiResponses(items) {{
       byKey.set(key, item);
     }}
   }}
-  return Array.from(byKey.values()).slice(-CODEX_USAGE_CAPTURED_API_LIMIT);
+  return trimCodexUsageApiResponses(
+    Array.from(byKey.values()).slice(-CODEX_USAGE_CAPTURED_API_LIMIT),
+  );
 }}
 
 function scheduleCodexUsageSend(delayMs = 500) {{
@@ -2042,18 +2891,148 @@ window.addEventListener("message", (event) => {{
 
 function collectCodexUsageAttributeText() {{
   const attrs = ["aria-label", "aria-valuetext", "aria-valuenow", "title", "alt"];
-  const selector = attrs.map((name) => `[${{name}}]`).join(",");
-  return Array.from(document.querySelectorAll(selector))
-    .flatMap((element) => attrs.map((name) => element.getAttribute(name)))
-    .filter((value) => value && String(value).trim())
-    .join("\\n");
+  const selector = attrs.reduce(
+    (result, name) => result ? `${{result}},[${{name}}]` : `[${{name}}]`,
+    "",
+  );
+  const parts = [];
+  let length = 0;
+  let truncated = false;
+  const elements = document.querySelectorAll(selector);
+  for (let index = 0; index < elements.length; index += 1) {{
+    const element = elements[index];
+    for (const name of attrs) {{
+      const value = element.getAttribute(name);
+      const text = String(value || "");
+      if (!text.trim()) {{
+        continue;
+      }}
+      const prefix = length ? "\\n" : "";
+      const remaining = CODEX_USAGE_MAX_FIELD_CHARS - length;
+      const chunk = (prefix + text).slice(0, remaining);
+      parts.push(chunk);
+      length += chunk.length;
+      if (chunk.length < prefix.length + text.length) {{
+        truncated = true;
+        return {{ text: parts.join(""), truncated }};
+      }}
+    }}
+  }}
+  return {{ text: parts.join(""), truncated }};
 }}
 
 function collectCodexUsageSvgText() {{
-  return Array.from(document.querySelectorAll("svg text, svg title, svg desc"))
-    .map((element) => element.textContent || "")
-    .filter((value) => value.trim())
-    .join("\\n");
+  const parts = [];
+  let length = 0;
+  let truncated = false;
+  const elements = document.querySelectorAll("svg text, svg title, svg desc");
+  for (let index = 0; index < elements.length; index += 1) {{
+    const element = elements[index];
+    const text = String(element.textContent || "");
+    if (!text.trim()) {{
+      continue;
+    }}
+    const prefix = length ? "\\n" : "";
+    const remaining = CODEX_USAGE_MAX_FIELD_CHARS - length;
+    const chunk = (prefix + text).slice(0, remaining);
+    parts.push(chunk);
+    length += chunk.length;
+    if (chunk.length < prefix.length + text.length) {{
+      truncated = true;
+      break;
+    }}
+  }}
+  return {{ text: parts.join(""), truncated }};
+}}
+
+function boundedCodexUsageVisibleText(root) {{
+  if (!root) {{
+    return {{ text: "", truncated: false }};
+  }}
+  if (root.nodeType !== 1) {{
+    const fallback = String(root.innerText || "");
+    return {{
+      text: fallback.slice(0, CODEX_USAGE_MAX_FIELD_CHARS),
+      truncated: fallback.length > CODEX_USAGE_MAX_FIELD_CHARS
+    }};
+  }}
+  const maxNodes = 500000;
+  const skippedTags = new Set([
+    "script", "style", "link", "meta", "noscript", "template"
+  ]);
+  const blockTags = new Set([
+    "address", "article", "aside", "blockquote", "br", "dd", "div", "dl",
+    "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2",
+    "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol",
+    "p", "pre", "section", "table", "td", "th", "tr", "ul"
+  ]);
+  const parts = [];
+  let length = 0;
+  let nodesSeen = 0;
+  let truncated = false;
+
+  function append(value) {{
+    if (length >= CODEX_USAGE_MAX_FIELD_CHARS) {{
+      truncated = true;
+      return;
+    }}
+    const text = String(value || "");
+    const remaining = CODEX_USAGE_MAX_FIELD_CHARS - length;
+    const chunk = text.slice(0, remaining);
+    parts.push(chunk);
+    length += chunk.length;
+    truncated = truncated || chunk.length < text.length;
+  }}
+
+  const stack = [{{ kind: "visit", node: root }}];
+  while (
+    stack.length
+    && length < CODEX_USAGE_MAX_FIELD_CHARS
+    && nodesSeen < maxNodes
+  ) {{
+    const item = stack.pop();
+    if (item.kind === "close") {{
+      append("\\n");
+      continue;
+    }}
+    const node = item.node;
+    if (!node) {{
+      continue;
+    }}
+    nodesSeen += 1;
+    if (node.nodeType === 3) {{
+      append(node.nodeValue);
+      continue;
+    }}
+    if (node.nodeType !== 1) {{
+      continue;
+    }}
+    const tag = String(node.tagName || "").toLowerCase();
+    if (!tag || skippedTags.has(tag) || node.hidden) {{
+      continue;
+    }}
+    const style = typeof getComputedStyle === "function"
+      ? getComputedStyle(node)
+      : null;
+    if (
+      style
+      && (style.display === "none" || style.visibility === "hidden")
+    ) {{
+      continue;
+    }}
+    if (blockTags.has(tag)) {{
+      append("\\n");
+      stack.push({{ kind: "close" }});
+    }}
+    const children = node.childNodes || [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {{
+      stack.push({{ kind: "visit", node: children[index] }});
+    }}
+  }}
+  if (stack.length) {{
+    truncated = true;
+  }}
+  return {{ text: parts.join(""), truncated }};
 }}
 
 async function fetchCodexUsageApi(path) {{
@@ -2064,16 +3043,17 @@ async function fetchCodexUsageApi(path) {{
     headers: {{ "Accept": "application/json" }}
   }});
   const contentType = response.headers.get("content-type") || "";
-  const bodyText = await response.text();
+  const captured = await readBoundedCodexUsageResponse(response);
+  const bodyText = captured.text;
   const isJson = looksLikeCodexUsageJson(contentType, bodyText);
   return {{
     url: url.href,
     status: response.status,
     ok: response.ok,
     contentType,
-    bodyText: isJson ? limitCodexUsageText(bodyText) : "",
-    bodyExcerpt: isJson ? "" : limitCodexUsageText(bodyText).slice(0, 500),
-    truncated: isJson ? isCodexUsageTruncated(bodyText) : false
+    bodyText: isJson ? bodyText : "",
+    bodyExcerpt: isJson ? "" : bodyText.slice(0, 500),
+    truncated: isJson ? captured.truncated : false
   }};
 }}
 
@@ -2089,24 +3069,143 @@ async function fetchCodexUsageApis() {{
   return results;
 }}
 
-function sanitizedCodexUsageRoot() {{
-  if (!document.documentElement) {{
-    return null;
+function boundedCodexUsageDomCapture(root) {{
+  if (!root) {{
+    return {{ text: "", html: "", textTruncated: false, htmlTruncated: false }};
   }}
-  const clone = document.documentElement.cloneNode(true);
-  clone
-    .querySelectorAll("script, style, link, meta, noscript, template")
-    .forEach((element) => element.remove());
-  return clone;
+  const maxNodes = 500000;
+  const skippedTags = new Set([
+    "script", "style", "link", "meta", "noscript", "template"
+  ]);
+  const voidTags = new Set([
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr"
+  ]);
+  const attributesToKeep = new Set([
+    "style", "class", "role", "hidden", "aria-hidden", "aria-valuenow",
+    "aria-valuemin", "aria-valuemax", "aria-label", "title"
+  ]);
+  const textParts = [];
+  const htmlParts = [];
+  let textLength = 0;
+  let htmlLength = 0;
+  let nodesSeen = 0;
+  let textTruncated = false;
+  let htmlTruncated = false;
+
+  function append(parts, value, limit, state) {{
+    const text = String(value || "");
+    if (state.length >= limit) {{
+      state.truncated = true;
+      return;
+    }}
+    const remaining = limit - state.length;
+    parts.push(text.slice(0, remaining));
+    state.length += Math.min(text.length, remaining);
+    state.truncated = state.truncated || text.length > remaining;
+  }}
+
+  function escape(value) {{
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;");
+  }}
+
+  const stack = [{{ kind: "visit", node: root }}];
+  while (
+    stack.length
+    && nodesSeen < maxNodes
+    && (
+      textLength < CODEX_USAGE_MAX_FIELD_CHARS
+      || htmlLength < CODEX_USAGE_MAX_FIELD_CHARS
+    )
+  ) {{
+    const item = stack.pop();
+    if (item.kind === "close") {{
+      const closingState = {{ length: htmlLength, truncated: htmlTruncated }};
+      append(htmlParts, "</" + item.tag + ">", CODEX_USAGE_MAX_FIELD_CHARS, closingState);
+      htmlLength = closingState.length;
+      htmlTruncated = closingState.truncated;
+      continue;
+    }}
+    const node = item.node;
+    if (!node) {{
+      continue;
+    }}
+    nodesSeen += 1;
+    if (node.nodeType === 3) {{
+      const state = {{ length: textLength, truncated: textTruncated }};
+      append(textParts, node.nodeValue, CODEX_USAGE_MAX_FIELD_CHARS, state);
+      textLength = state.length;
+      textTruncated = state.truncated;
+      const htmlState = {{ length: htmlLength, truncated: htmlTruncated }};
+      append(
+        htmlParts,
+        escape(node.nodeValue),
+        CODEX_USAGE_MAX_FIELD_CHARS,
+        htmlState,
+      );
+      htmlLength = htmlState.length;
+      htmlTruncated = htmlState.truncated;
+      continue;
+    }}
+    if (node.nodeType !== 1) {{
+      continue;
+    }}
+    const tag = String(node.tagName || "").toLowerCase();
+    if (!tag || skippedTags.has(tag)) {{
+      continue;
+    }}
+    const htmlState = {{ length: htmlLength, truncated: htmlTruncated }};
+    append(htmlParts, "<" + tag, CODEX_USAGE_MAX_FIELD_CHARS, htmlState);
+    const attributes = node.attributes || [];
+    for (let index = 0; index < attributes.length; index += 1) {{
+      const attribute = attributes[index];
+      const name = String(attribute.name || "").toLowerCase();
+      if (attributesToKeep.has(name)) {{
+        append(
+          htmlParts,
+          " " + attribute.name + '=\\"' + escape(attribute.value) + '\\"',
+          CODEX_USAGE_MAX_FIELD_CHARS,
+          htmlState,
+        );
+      }}
+    }}
+    append(htmlParts, ">", CODEX_USAGE_MAX_FIELD_CHARS, htmlState);
+    htmlLength = htmlState.length;
+    htmlTruncated = htmlState.truncated;
+    if (!voidTags.has(tag)) {{
+      stack.push({{ kind: "close", tag }});
+    }}
+    const children = node.childNodes || [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {{
+      stack.push({{ kind: "visit", node: children[index] }});
+    }}
+  }}
+  if (stack.length) {{
+    textTruncated = true;
+    htmlTruncated = true;
+  }}
+  return {{
+    text: textParts.join(""),
+    html: htmlParts.join(""),
+    textTruncated,
+    htmlTruncated,
+  }};
 }}
 
 function collectCodexUsage() {{
-  const bodyText = document.body ? (document.body.innerText || "") : "";
-  const sanitizedRoot = sanitizedCodexUsageRoot();
-  const domText = sanitizedRoot ? (sanitizedRoot.textContent || "") : "";
-  const accessibilityText = collectCodexUsageAttributeText();
-  const svgText = collectCodexUsageSvgText();
-  const htmlText = sanitizedRoot ? (sanitizedRoot.outerHTML || "") : "";
+  const bodyCapture = boundedCodexUsageVisibleText(document.body);
+  const bodyText = bodyCapture.text;
+  const root = boundedCodexUsageDomCapture(document.documentElement);
+  const domText = root.text;
+  const accessibilityCapture = collectCodexUsageAttributeText();
+  const accessibilityText = accessibilityCapture.text;
+  const svgCapture = collectCodexUsageSvgText();
+  const svgText = svgCapture.text;
+  const htmlText = root.html;
   const searchText = [bodyText, domText, accessibilityText, svgText, htmlText]
     .filter((value) => value && String(value).trim())
     .join("\\n\\n");
@@ -2126,11 +3225,11 @@ function collectCodexUsage() {{
       htmlText: htmlText.length
     }},
     truncatedFields: {{
-      bodyText: isCodexUsageTruncated(bodyText),
-      domText: isCodexUsageTruncated(domText),
-      accessibilityText: isCodexUsageTruncated(accessibilityText),
-      svgText: isCodexUsageTruncated(svgText),
-      htmlText: isCodexUsageTruncated(htmlText)
+      bodyText: bodyCapture.truncated,
+      domText: root.textTruncated,
+      accessibilityText: accessibilityCapture.truncated,
+      svgText: svgCapture.truncated,
+      htmlText: root.htmlTruncated
     }},
     visibleTextLength: bodyText.length,
     bodyText: limitCodexUsageText(bodyText),
@@ -2152,6 +3251,7 @@ async function sendCodexUsageOnce() {{
     ...codexUsageCapturedApiResponses,
     ...probeResponses
   ]);
+  fitCodexUsagePayload(payload);
   if (codexUsageStopped) {{
     return;
   }}
@@ -2304,6 +3404,8 @@ def _render_extension_page_hook() -> str:
     return """(() => {
   const CODEX_USAGE_MAX_FIELD_CHARS = 2000000;
   const CODEX_USAGE_CAPTURED_API_LIMIT = 50;
+  const CODEX_USAGE_CAPTURED_API_MAX_CHARS = 4000000;
+  const CODEX_USAGE_RESPONSE_CHUNK_BYTES = 65536;
   const CODEX_USAGE_FLUSH_INTERVAL_MS = 1000;
   const CODEX_USAGE_FLUSH_TICKS = 120;
   const codexUsageCapturedApiResponses = [];
@@ -2321,6 +3423,73 @@ def _render_extension_page_hook() -> str:
 
   function isCodexUsageTruncated(value) {
     return String(value || "").length > CODEX_USAGE_MAX_FIELD_CHARS;
+  }
+
+  async function readBoundedCodexUsageResponse(response) {
+    const reader = response && response.body && typeof response.body.getReader === "function"
+      ? response.body.getReader()
+      : null;
+    if (!reader) {
+      const text = await response.text();
+      return {
+        text: limitCodexUsageText(text),
+        truncated: isCodexUsageTruncated(text)
+      };
+    }
+    const decoder = new TextDecoder();
+    const parts = [];
+    let length = 0;
+    let truncated = false;
+    let shouldCancel = false;
+    while (true) {
+      const item = await reader.read();
+      if (item.done) {
+        const tail = decoder.decode();
+        const remaining = CODEX_USAGE_MAX_FIELD_CHARS - length;
+        if (tail.length > remaining) {
+          parts.push(tail.slice(0, remaining));
+          truncated = true;
+        } else {
+          parts.push(tail);
+          length += tail.length;
+        }
+        break;
+      }
+      const bytes = item.value || new Uint8Array();
+      for (
+        let offset = 0;
+        offset < bytes.length;
+        offset += CODEX_USAGE_RESPONSE_CHUNK_BYTES
+      ) {
+        if (length >= CODEX_USAGE_MAX_FIELD_CHARS) {
+          truncated = true;
+          shouldCancel = true;
+          break;
+        }
+        const chunk = decoder.decode(
+          bytes.subarray(offset, offset + CODEX_USAGE_RESPONSE_CHUNK_BYTES),
+          { stream: true },
+        );
+        const remaining = CODEX_USAGE_MAX_FIELD_CHARS - length;
+        if (chunk.length > remaining) {
+          parts.push(chunk.slice(0, remaining));
+          truncated = true;
+          shouldCancel = true;
+          break;
+        }
+        parts.push(chunk);
+        length += chunk.length;
+      }
+      if (shouldCancel) {
+        try {
+          await reader.cancel();
+        } catch (_error) {
+          // The response is already bounded; cancellation is best effort.
+        }
+        break;
+      }
+    }
+    return { text: parts.join(""), truncated };
   }
 
   function looksLikeCodexUsageJson(contentType, bodyText) {
@@ -2389,7 +3558,56 @@ def _render_extension_page_hook() -> str:
     );
   }
 
+  function compactCodexUsageApiResponse(item) {
+    if (!item || item.truncated !== true) {
+      return item;
+    }
+    const bodyText = String(item.bodyText || item.body || item.text || "");
+    return {
+      ...item,
+      bodyText: "",
+      body: "",
+      text: "",
+      bodyExcerpt: bodyText.slice(0, 500)
+    };
+  }
+
+  function codexUsageApiResponseTextSize(item) {
+    return ["bodyText", "body", "text", "bodyExcerpt"].reduce(
+      (total, name) => total + String((item && item[name]) || "").length,
+      0,
+    );
+  }
+
+  function trimCodexUsageApiResponses(items) {
+    const main = [];
+    const others = [];
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      if (!main.length && codexUsageIsMainUsageUrl(item.url)) {
+        main.push(item);
+      } else {
+        others.push(item);
+      }
+    }
+    const retained = [];
+    let total = 0;
+    for (const item of [...main, ...others]) {
+      const size = codexUsageApiResponseTextSize(item);
+      if (total + size > CODEX_USAGE_CAPTURED_API_MAX_CHARS) {
+        continue;
+      }
+      retained.push(item);
+      total += size;
+    }
+    return retained.reverse();
+  }
+
   function rememberCodexUsageApiResponse(item, requestId = null) {
+    item = compactCodexUsageApiResponse(item);
     const requestSequence = codexUsageApiResponseSequence(item);
     if (
       codexUsageIsMainUsageUrl(item.url)
@@ -2415,6 +3633,12 @@ def _render_extension_page_hook() -> str:
     while (codexUsageCapturedApiResponses.length > CODEX_USAGE_CAPTURED_API_LIMIT) {
       codexUsageCapturedApiResponses.shift();
     }
+    const bounded = trimCodexUsageApiResponses(codexUsageCapturedApiResponses);
+    codexUsageCapturedApiResponses.splice(
+      0,
+      codexUsageCapturedApiResponses.length,
+      ...bounded,
+    );
     flushCodexUsageApiResponses(requestId);
   }
 
@@ -2453,7 +3677,8 @@ def _render_extension_page_hook() -> str:
     try {
       const clone = response.clone();
       const contentType = clone.headers.get("content-type") || "";
-      const bodyText = await clone.text();
+      const captured = await readBoundedCodexUsageResponse(clone);
+      const bodyText = captured.text;
       const isJson = looksLikeCodexUsageJson(contentType, bodyText);
       rememberCodexUsageApiResponse({
         source: "page-fetch",
@@ -2462,9 +3687,9 @@ def _render_extension_page_hook() -> str:
         status: clone.status,
         ok: clone.ok,
         contentType,
-        bodyText: isJson ? limitCodexUsageText(bodyText) : "",
-        bodyExcerpt: isJson ? "" : limitCodexUsageText(bodyText).slice(0, 500),
-        truncated: isJson ? isCodexUsageTruncated(bodyText) : false
+        bodyText: isJson ? bodyText : "",
+        bodyExcerpt: isJson ? "" : bodyText.slice(0, 500),
+        truncated: isJson ? captured.truncated : false
       }, requestId);
     } catch (error) {
       rememberCodexUsageApiResponse({

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
-import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,7 +12,7 @@ from .identity import MAX_BACKEND_ID_CHARS
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import (
-    assert_no_symlink_ancestors,
+    ensure_private_directory,
     private_path_lock,
     read_private_text,
     write_private_text,
@@ -674,10 +672,4 @@ def _validate_optional_identifier(value: Any) -> str | None:
 
 
 def _prepare_private_directory(path: Path) -> None:
-    assert_no_symlink_ancestors(path, label="routing policy directory")
-    if path.is_symlink():
-        raise ValueError("routing policy directory must be a real directory")
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if path.is_symlink() or not path.is_dir():
-        raise ValueError("routing policy directory must be a real directory")
-    os.chmod(path, stat.S_IRWXU)
+    ensure_private_directory(path, label="routing policy directory")

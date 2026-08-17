@@ -6,6 +6,33 @@ import pytest
 
 from codex_usage.account_lock import AccountLockError, account_lock
 
+INVALID_LOCK_TIMEOUTS = (
+    True,
+    -1,
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    "1",
+    10**10_000,
+)
+
+
+@pytest.mark.parametrize(
+    "timeout_seconds",
+    INVALID_LOCK_TIMEOUTS,
+    ids=("bool", "negative", "nan", "inf", "negative-inf", "string", "huge-int"),
+)
+def test_account_lock_rejects_invalid_timeout_before_creating_state(
+    tmp_path, monkeypatch, timeout_seconds
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
+    with pytest.raises(AccountLockError, match="non-negative finite"):
+        with account_lock("work", timeout_seconds=timeout_seconds):
+            pass
+
+    assert not (tmp_path / "codex-usage").exists()
+
 
 def test_account_lock_serializes_same_account(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
@@ -49,3 +76,19 @@ def test_account_lock_rejects_path_traversal(tmp_path, monkeypatch):
             pass
 
     assert not (tmp_path / "outside.lock").exists()
+
+
+def test_account_lock_wraps_directory_io_error(monkeypatch):
+    def fail_directory(*_args, **_kwargs):
+        raise OSError("directory unavailable")
+
+    monkeypatch.setattr(
+        "codex_usage.account_lock.ensure_private_directory",
+        fail_directory,
+    )
+
+    with pytest.raises(AccountLockError, match="directory unavailable") as captured:
+        with account_lock("work"):
+            pass
+
+    assert isinstance(captured.value.__cause__, OSError)

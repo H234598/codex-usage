@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tomllib
+from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from .models import Account
 from .private_io import (
     assert_no_symlink_ancestors,
+    ensure_private_directory,
     private_path_lock,
     read_private_text,
     write_private_text,
@@ -35,15 +39,22 @@ class AppConfig:
 
 
 def default_config_path() -> Path:
-    base = os.environ.get("XDG_CONFIG_HOME")
-    root = Path(base).expanduser() if base else Path.home() / ".config"
+    root = _xdg_root("XDG_CONFIG_HOME", Path.home() / ".config")
     return root / APP_NAME / "config.toml"
 
 
 def default_state_dir() -> Path:
-    base = os.environ.get("XDG_DATA_HOME")
-    root = Path(base).expanduser() if base else Path.home() / ".local" / "share"
+    root = _xdg_root("XDG_DATA_HOME", Path.home() / ".local" / "share")
     return root / APP_NAME
+
+
+def _xdg_root(variable: str, fallback: Path) -> Path:
+    value = os.environ.get(variable)
+    if value:
+        candidate = Path(value).expanduser()
+        if candidate.is_absolute():
+            return candidate
+    return fallback
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -84,7 +95,7 @@ def load_config(path: Path | None = None) -> AppConfig:
 
 
 def _read_config_text(config_path: Path) -> str:
-    text, _ = read_private_text(
+    text, file_stat = read_private_text(
         config_path,
         regular_label="config path",
         read_label="config file",
@@ -92,6 +103,10 @@ def _read_config_text(config_path: Path) -> str:
         too_large_label="config file",
         invalid_utf8_label="config file",
     )
+    if file_stat.st_nlink != 1:
+        raise ValueError("config file must not be hard-linked")
+    if file_stat.st_mode & 0o077:
+        raise ValueError("config file permissions must be 0600")
     return text
 
 
@@ -112,16 +127,32 @@ def _save_config_unlocked(config: AppConfig, config_path: Path) -> None:
 
 
 def _prepare_config_directory(config_dir: Path) -> None:
+    try:
+        resolved = config_dir.expanduser().resolve(strict=False)
+        home = Path.home().resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("config directory cannot be resolved") from exc
+    if resolved in {
+        Path("/").resolve(),
+        home,
+        home / ".config",
+        home / ".local",
+        home / ".local" / "share",
+    }:
+        raise ValueError(f"config directory must not be a protected directory: {config_dir}")
     assert_no_symlink_ancestors(config_dir, label="config directory")
     if config_dir.is_symlink():
         raise ValueError(f"config directory must not be a symlink: {config_dir}")
-    config_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if config_dir.is_symlink() or not config_dir.is_dir():
-        raise ValueError(f"config directory is not a real directory: {config_dir}")
+    if config_dir.exists() and config_dir.is_dir():
+        mode = stat.S_IMODE(config_dir.stat().st_mode)
+        if mode & 0o077:
+            raise ValueError(
+                f"private config directory must not be group/world accessible: {config_dir}"
+            )
     try:
-        config_dir.chmod(0o700)
-    except OSError:
-        pass
+        ensure_private_directory(config_dir, label="config directory")
+    except OSError as exc:
+        raise ValueError("could not secure config directory") from exc
 
 
 def add_or_update_account(
@@ -134,6 +165,9 @@ def add_or_update_account(
     reactivation_browser: str | None = None,
     clear_auth_json: bool = False,
     path: Path | None = None,
+    before_state_cleanup: Callable[[AppConfig], None] | None = None,
+    rollback_callback: Callable[[AppConfig], None] | None = None,
+    _all_accounts_lock_held: bool = False,
 ) -> tuple[AppConfig, Account]:
     _validate_account_id(account_id)
     if browser is not None:
@@ -144,23 +178,41 @@ def add_or_update_account(
         _validate_reactivation_browser(reactivation_browser)
     if clear_auth_json and auth_json_path is not None:
         raise ValueError("clear_auth_json cannot be combined with auth_json_path")
+    if not isinstance(_all_accounts_lock_held, bool):
+        raise ValueError("_all_accounts_lock_held must be boolean")
     config_path = path or default_config_path()
     _prepare_config_directory(config_path.parent)
-    with private_path_lock(config_path, label="config lock"):
+    from .account_lock import account_lock
+
+    account_guard = (
+        nullcontext()
+        if _all_accounts_lock_held
+        else account_lock("__all_accounts__")
+    )
+    with account_guard, private_path_lock(
+        config_path, label="config lock"
+    ):
         config = load_config(config_path)
         existing = next((item for item in config.accounts if item.id == account_id), None)
+        selected_profile_dir = profile_dir or (
+            existing.profile_dir if existing else str(_default_profile_root(account_id))
+        )
+        selected_auth_json_path = (
+            None
+            if clear_auth_json
+            else auth_json_path
+            if auth_json_path is not None
+            else (existing.auth_json_path if existing else None)
+        )
         account = Account(
             id=account_id,
             label=label or (existing.label if existing else account_id),
-            profile_dir=profile_dir
-            or (existing.profile_dir if existing else str(_default_profile_root(account_id))),
+            profile_dir=_absolute_account_path(selected_profile_dir, "profile_dir"),
             browser=browser or (existing.browser if existing else "firefox"),
             auth_json_path=(
-                None
-                if clear_auth_json
-                else auth_json_path
-                if auth_json_path is not None
-                else (existing.auth_json_path if existing else None)
+                _absolute_account_path(selected_auth_json_path, "auth_json_path")
+                if selected_auth_json_path not in (None, "")
+                else selected_auth_json_path
             ),
             backend=backend or (existing.backend if existing else "direct"),
             reactivation_browser=reactivation_browser
@@ -176,24 +228,84 @@ def add_or_update_account(
             headless=config.headless,
         )
         _validate_account(account)
-        _prepare_profile_dir(account.profile_dir)
         _validate_config(updated)
-        if existing is None or existing != account:
-            # A re-added or changed account must not inherit values from another
-            # configuration generation under the same local account ID.
-            from .state import remove_account_state
+        profile_path, profile_created, profile_created_directories = _prepare_profile_dir(
+            account.profile_dir
+        )
+        state_changed = existing is None or existing != account
+        try:
+            _save_config_unlocked(updated, config_path)
+        except Exception as original_error:
+            if profile_created:
+                try:
+                    _cleanup_created_profile_directories(
+                        profile_path,
+                        profile_created_directories,
+                    )
+                except Exception as cleanup_error:
+                    raise ExceptionGroup(
+                        "account update rollback failed: profile cleanup",
+                        [original_error, cleanup_error],
+                    ) from None
+            raise
+        callback_started = False
+        try:
+            if before_state_cleanup is not None:
+                callback_started = True
+                before_state_cleanup(updated)
+            if state_changed:
+                # A re-added or changed account must not inherit values from another
+                # configuration generation under the same local account ID.
+                from .state import remove_account_state
 
-            remove_account_state(account.id)
-        _save_config_unlocked(updated, config_path)
+                remove_account_state(account.id)
+        except Exception as original_error:
+            rollback_errors: list[tuple[str, Exception]] = []
+            try:
+                _save_config_unlocked(config, config_path)
+            except Exception as exc:
+                rollback_errors.append(("config rollback", exc))
+            if callback_started and rollback_callback is not None:
+                try:
+                    rollback_callback(config)
+                except Exception as exc:
+                    rollback_errors.append(("service rollback", exc))
+            if profile_created:
+                try:
+                    _cleanup_created_profile_directories(
+                        profile_path,
+                        profile_created_directories,
+                    )
+                except Exception as exc:
+                    rollback_errors.append(("profile rollback", exc))
+            if len(rollback_errors) == 1:
+                label, rollback_error = rollback_errors[0]
+                raise ValueError(
+                    f"could not roll back account configuration ({label})"
+                ) from rollback_error
+            if rollback_errors:
+                labels = ", ".join(label for label, _ in rollback_errors)
+                raise ExceptionGroup(
+                    f"account update rollback failed: primary operation, {labels}",
+                    [original_error, *(error for _, error in rollback_errors)],
+                ) from None
+            raise original_error
     return updated, account
 
 
-def remove_account(account_ref: str, path: Path | None = None) -> tuple[AppConfig, Account]:
+def remove_account(
+    account_ref: str,
+    path: Path | None = None,
+    *,
+    expected: Account | None = None,
+) -> tuple[AppConfig, Account]:
     config_path = path or default_config_path()
     _prepare_config_directory(config_path.parent)
     with private_path_lock(config_path, label="config lock"):
         config = load_config(config_path)
         account = resolve_account(config, account_ref)
+        if expected is not None and account != expected:
+            raise ValueError(f"account {account.id} changed before removal")
         updated = AppConfig(
             accounts=tuple(item for item in config.accounts if item.id != account.id),
             interval_seconds=config.interval_seconds,
@@ -203,6 +315,50 @@ def remove_account(account_ref: str, path: Path | None = None) -> tuple[AppConfi
         _validate_config(updated)
         _save_config_unlocked(updated, config_path)
     return updated, account
+
+
+def restore_account(
+    account: Account,
+    path: Path | None = None,
+    *,
+    index: int | None = None,
+    expected: Account | None = None,
+) -> AppConfig:
+    config_path = path or default_config_path()
+    _prepare_config_directory(config_path.parent)
+    with private_path_lock(config_path, label="config lock"):
+        config = load_config(config_path)
+        existing_index = next(
+            (position for position, item in enumerate(config.accounts) if item.id == account.id),
+            None,
+        )
+        existing = (
+            config.accounts[existing_index]
+            if existing_index is not None
+            else None
+        )
+        if existing is not None:
+            if existing == account:
+                return config
+            if expected is None or existing != expected:
+                raise ValueError(
+                    f"account {account.id} was recreated with different settings"
+                )
+            accounts = list(config.accounts)
+            accounts[existing_index] = account
+        else:
+            accounts = list(config.accounts)
+            insert_at = len(accounts) if index is None else max(0, min(index, len(accounts)))
+            accounts.insert(insert_at, account)
+        restored = AppConfig(
+            accounts=tuple(accounts),
+            interval_seconds=config.interval_seconds,
+            analytics_url=config.analytics_url,
+            headless=config.headless,
+        )
+        _validate_config(restored)
+        _save_config_unlocked(restored, config_path)
+    return restored
 
 
 def get_account(config: AppConfig, account_id: str) -> Account:
@@ -251,6 +407,7 @@ def _account_from_data(item: object) -> Account:
         raise ValueError("profile_dir must be a string")
     else:
         profile_dir = raw_profile_dir
+    profile_dir = _absolute_account_path(profile_dir, "profile_dir")
     raw_browser = item.get("browser")
     if raw_browser in (None, ""):
         browser = "firefox"
@@ -264,6 +421,8 @@ def _account_from_data(item: object) -> Account:
         auth_json_path = None
     elif auth_json_path is not None and not isinstance(auth_json_path, str):
         raise ValueError("auth_json_path must be a string")
+    if auth_json_path is not None:
+        auth_json_path = _absolute_account_path(auth_json_path, "auth_json_path")
     raw_backend = item.get("backend")
     if raw_backend in (None, ""):
         backend = "direct"
@@ -292,7 +451,11 @@ def _account_from_data(item: object) -> Account:
 
 
 def _validate_account_id(account_id: str) -> None:
-    if account_id in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", account_id):
+    if account_id == "__all_accounts__":
+        raise ValueError("account id is reserved for internal coordination")
+    if account_id in {".", ".."} or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,64}", account_id
+    ):
         raise ValueError("account id must be 1-64 chars: letters, digits, underscore, dot, dash")
 
 
@@ -304,29 +467,146 @@ def _default_profile_root(account_id: str) -> Path:
     return default_state_dir() / "profiles" / _safe_profile_name(account_id)
 
 
-def _prepare_profile_dir(profile_dir: str) -> Path:
-    path = Path(profile_dir).expanduser()
+def _absolute_account_path(value: str, name: str) -> str:
+    raw_value = value
+    parsed = urlsplit(value)
+    if parsed.scheme:
+        if parsed.scheme.lower() != "file":
+            raise ValueError(f"{name} must be a local file URI")
+        if parsed.netloc not in ("", "localhost"):
+            raise ValueError(f"{name} must be a local file URI")
+        if not parsed.path or not parsed.path.startswith("/"):
+            raise ValueError(f"{name} must be a local file URI")
+        if parsed.query or parsed.fragment:
+            raise ValueError(f"{name} must be a local file URI")
+        raw_value = unquote(parsed.path)
+        if "\x00" in raw_value:
+            raise ValueError(f"{name} must be a local file URI")
+    if "\x00" in raw_value:
+        raise ValueError(f"{name} must be an absolute path")
+    path = Path(raw_value).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"{name} must be an absolute path")
+    return str(path)
+
+
+def _remove_created_profile_dir(path: Path) -> None:
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(f"new profile directory is not a real directory: {path}")
+    marker = path / ".codex-usage-profile"
+    for entry in path.iterdir():
+        if entry != marker:
+            raise ValueError(f"new profile directory contains unexpected data: {path}")
+    if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+        raise ValueError(f"new profile marker is not a regular file: {marker}")
+    if marker.exists():
+        marker.unlink()
+    path.rmdir()
+
+
+def _cleanup_created_profile_directories(
+    profile_path: Path,
+    created_directories: list[tuple[Path, int, int]],
+) -> None:
+    final_created = next(
+        (item for item in created_directories if item[0] == profile_path),
+        None,
+    )
+    if final_created is not None and (profile_path.exists() or profile_path.is_symlink()):
+        _assert_created_directory_identity(profile_path, final_created)
+        _remove_created_profile_dir(profile_path)
+    for directory, device, inode in reversed(created_directories):
+        if directory == profile_path:
+            continue
+        if not directory.exists():
+            if directory.is_symlink():
+                raise ValueError(f"created profile directory became a symlink: {directory}")
+            continue
+        _assert_created_directory_identity(directory, (directory, device, inode))
+        directory.rmdir()
+
+
+def _assert_created_directory_identity(
+    path: Path,
+    expected: tuple[Path, int, int],
+) -> None:
+    item = path.lstat()
+    if (
+        item.st_dev != expected[1]
+        or item.st_ino != expected[2]
+        or stat.S_ISLNK(item.st_mode)
+        or not stat.S_ISDIR(item.st_mode)
+    ):
+        raise ValueError(f"created profile directory changed: {path}")
+
+
+def _prepare_profile_dir(
+    profile_dir: str,
+) -> tuple[Path, bool, list[tuple[Path, int, int]]]:
+    path = _validate_profile_path(profile_dir)
     assert_no_symlink_ancestors(path, label="profile dir")
     if path.is_symlink():
         raise ValueError(f"profile dir must not be a symlink: {path}")
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if path.is_symlink():
-        raise ValueError(f"profile dir must not be a symlink: {path}")
-    if not path.is_dir():
-        raise ValueError(f"profile path is not a directory: {path}")
+    created = False
+    created_directories: list[tuple[Path, int, int]] = []
     try:
-        path.chmod(0o700)
-    except OSError:
-        pass
-    marker = path / ".codex-usage-profile"
-    if marker.is_symlink() or (marker.exists() and not marker.is_file()):
-        raise ValueError(f"profile marker must be a regular file: {marker}")
-    if not marker.exists():
-        write_private_text(
-            marker,
-            "codex-usage persistent browser profile\n",
-            label="profile marker",
-        )
+        if not path.exists():
+            ensure_private_directory(
+                path,
+                label="profile dir",
+                created_paths=created_directories,
+            )
+            created = True
+        if path.is_symlink():
+            raise ValueError(f"profile dir must not be a symlink: {path}")
+        if not path.is_dir():
+            raise ValueError(f"profile path is not a directory: {path}")
+        try:
+            path.chmod(0o700)
+        except OSError as exc:
+            raise ValueError("could not secure profile directory") from exc
+        marker = path / ".codex-usage-profile"
+        if marker.is_symlink() or (marker.exists() and not marker.is_file()):
+            raise ValueError(f"profile marker must be a regular file: {marker}")
+        if not marker.exists():
+            write_private_text(
+                marker,
+                "codex-usage persistent browser profile\n",
+                label="profile marker",
+            )
+        return path, created, created_directories
+    except Exception as primary_error:
+        if not created_directories:
+            raise
+        try:
+            _cleanup_created_profile_directories(path, created_directories)
+        except Exception as cleanup_error:
+            raise ExceptionGroup(
+                "profile directory setup rollback failed",
+                [primary_error, cleanup_error],
+            ) from None
+        raise
+
+
+def _validate_profile_path(profile_dir: str) -> Path:
+    path = Path(profile_dir).expanduser()
+    try:
+        resolved = path.resolve(strict=False)
+        home = Path.home().resolve()
+        state = default_state_dir().expanduser().resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("profile dir cannot be resolved") from exc
+    protected = {
+        Path("/").resolve(),
+        home,
+        home / ".config",
+        home / ".local",
+        home / ".local" / "share",
+        state,
+        state / "profiles",
+    }
+    if resolved in protected:
+        raise ValueError(f"profile dir must not be a protected directory: {path}")
     return path
 
 
@@ -406,7 +686,8 @@ def _validate_account(account: object) -> None:
     _validate_account_id(account.id)
     _validate_text_field(account.label, "account label", MAX_CONFIG_LABEL_CHARS)
     _validate_text_field(account.profile_dir, "profile_dir", MAX_CONFIG_PATH_CHARS)
-    if not Path(account.profile_dir).expanduser().is_absolute():
+    profile_path = _validate_profile_path(account.profile_dir)
+    if not profile_path.is_absolute():
         raise ValueError("profile_dir must be an absolute path")
     _validate_browser(account.browser)
     _validate_backend(account.backend)

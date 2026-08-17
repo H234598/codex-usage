@@ -81,6 +81,26 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     }
 
 
+def test_list_columns_use_cinnamon_supported_variable_types() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+    supported = {
+        "string",
+        "file",
+        "icon",
+        "sound",
+        "keybinding",
+        "integer",
+        "float",
+        "boolean",
+    }
+
+    for key, definition in settings.items():
+        if definition.get("type") != "list":
+            continue
+        for column in definition.get("columns", []):
+            assert column["type"] in supported, (key, column["id"], column["type"])
+
+
 def test_account_table_contains_all_editable_fields() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     table = settings["account-backends"]
@@ -96,8 +116,14 @@ def test_account_table_contains_all_editable_fields() -> None:
         "backend",
     ]
     assert table["show-buttons"] is True
-    assert set(table["hidden-buttons"]) == {"-", "up", "down"}
+    assert set(table["hidden-buttons"]) == {"up", "down"}
+    assert "+" not in table["hidden-buttons"]
+    assert "-" not in table["hidden-buttons"]
+    assert "Minus löscht" in table["tooltip"]
     assert "automatisch angelegt" in table["description"]
+    assert "default" not in table["columns"][2]
+    assert "default" not in table["columns"][3]
+    assert table["columns"][-1]["default"] == 0
 
 
 def test_display_table_replaces_panel_tag_column() -> None:
@@ -109,9 +135,36 @@ def test_display_table_replaces_panel_tag_column() -> None:
     table = settings["account-display-settings"]
     assert [column["id"] for column in table["columns"]] == [
         "account", "tag", "panel", "hover", "click",
+        "hover-separator", "click-separator",
     ]
-    for column in table["columns"][2:]:
+    for column in table["columns"][2:5]:
         assert set(column["options"].values()) == {0, 1, 2}
+    assert table["columns"][5]["title"] == "Abstandshalter Hover davor"
+    assert table["columns"][6]["title"] == "Abstandshalter Klick davor"
+    assert table["columns"][5]["type"] == "boolean"
+    assert table["columns"][6]["type"] == "boolean"
+    assert table["columns"][5]["default"] is False
+    assert table["columns"][6]["default"] is False
+
+
+def test_consumption_table_exposes_per_account_queries() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+    table = settings["account-consumption-settings"]
+
+    assert settings["layout"]["consumption-section"]["title"] == "Verbrauchszeiträume"
+    assert [column["id"] for column in table["columns"]] == [
+        "account", "show-panel", "show-tooltip", "amount", "unit",
+        "limit-window", "format", "custom-format", "hide-when-zero",
+        "show-coverage-marker",
+    ]
+    columns = {column["id"]: column for column in table["columns"]}
+    assert columns["show-panel"]["default"] is False
+    assert columns["show-tooltip"]["default"] is True
+    assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days"}
+    assert set(columns["limit-window"]["options"].values()) == {"short", "weekly", "all"}
+    assert set(columns["format"]["options"].values()) == {"compact", "verbose", "custom"}
+    assert table["show-buttons"] is True
+    assert set(table["hidden-buttons"]) == {"+", "-", "up", "down"}
 
 
 def test_style_tables_group_threshold_fields() -> None:
@@ -144,9 +197,25 @@ def test_style_tables_group_threshold_fields() -> None:
         by_id = {column["id"]: column for column in columns}
         assert by_id["font"]["title"].startswith("Über der Schwelle")
         assert by_id["below-font"]["title"].startswith("Unter der Schwelle")
-        assert by_id["threshold"]["title"] == (
-            "Schwelle Minuten" if name == "account-duration-styles" else "Schwelle %"
-        )
+        assert by_id["threshold"]["title"] == "Schwelle %"
+
+
+def test_format_and_display_sections_use_new_labels() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+    layout = settings["layout"]
+
+    assert layout["format-page"]["sections"] == [
+        "formatting-section",
+        "display-target-section",
+    ]
+    assert layout["formatting-section"]["title"] == "Hervorhebungen und Design:"
+    assert layout["display-target-section"]["title"] == "Anzeige:"
+    assert layout["percent-style-section"]["title"] == "Verbleibendes Tokenlimit in %"
+    assert layout["date-style-section"]["title"] == "OpenAI - Reset: Datum des Reset"
+    assert layout["time-style-section"]["title"] == "OpenAI - Reset: Uhrzeit"
+    assert layout["duration-style-section"]["title"] == (
+        "OpenAI - Reset: Restlaufzeit in Tagen bis Limitreset"
+    )
 
 
 def test_alert_table_has_editable_spark_column() -> None:
@@ -170,7 +239,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
     backend_table = settings["account-backends"]
     assert backend_table["type"] == "list"
     assert backend_table["show-buttons"] is True
-    assert set(backend_table["hidden-buttons"]) == {"-", "up", "down"}
+    assert set(backend_table["hidden-buttons"]) == {"up", "down"}
     assert backend_table["columns"][-1]["options"] == {
         "Bisheriger Direktabruf": 0,
         "Codex App Server": 1,
@@ -189,7 +258,8 @@ def test_applet_metadata_and_settings_remainder() -> None:
     time_table = settings["account-time-styles"]
     for table in (date_table, time_table):
         assert table["type"] == "list"
-        assert table["show-buttons"] is False
+        assert table["show-buttons"] is True
+        assert set(table["hidden-buttons"]) == {"+", "-", "up", "down"}
         assert [column["id"] for column in table["columns"]] == [
             "account",
             "format",
@@ -228,7 +298,8 @@ def test_applet_metadata_and_settings_remainder() -> None:
     assert set(time_table["columns"][1]["options"].values()) == set(range(3))
     duration_table = settings["account-duration-styles"]
     assert duration_table["type"] == "list"
-    assert duration_table["show-buttons"] is False
+    assert duration_table["show-buttons"] is True
+    assert set(duration_table["hidden-buttons"]) == {"+", "-", "up", "down"}
     assert [column["id"] for column in duration_table["columns"]] == [
         "account",
         "format",
@@ -250,8 +321,8 @@ def test_applet_metadata_and_settings_remainder() -> None:
     assert set(duration_table["columns"][1]["options"].values()) == set(range(4))
     assert set(duration_table["columns"][2]["options"].values()) == set(range(4))
     duration_columns = {column["id"]: column for column in duration_table["columns"]}
-    assert duration_columns["threshold"]["default"] == 120
-    assert duration_columns["threshold"]["max"] == 10080
+    assert duration_columns["threshold"]["default"] == 20
+    assert duration_columns["threshold"]["max"] == 100
     assert set(duration_columns["color"]["options"].values()) == set(range(8))
     assert set(duration_columns["background"]["options"].values()) == set(range(7))
     assert set(duration_columns["below-color"]["options"].values()) == set(range(8))
@@ -304,8 +375,20 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "hover",
         "click",
     ]
-    assert set(targets["columns"][1]["options"].values()) == {0, 1, 2, 3}
-    assert targets["show-buttons"] is False
+    assert targets["columns"][1]["options"] == {
+        "Prozent": 0,
+        "Datum": 1,
+        "Uhrzeit": 2,
+        "Restlaufzeit": 3,
+        "Verbrauchszeitraum": 4,
+        "Zeit bis Tokenende": 5,
+        "Usage-Resets": 6,
+        "Account-ID": 7,
+        "Label": 8,
+        "Kürzel": 9,
+    }
+    assert targets["show-buttons"] is True
+    assert set(targets["hidden-buttons"]) == {"+", "-", "up", "down"}
 
     layout = settings["layout"]
     referenced_keys: set[str] = set()
@@ -317,6 +400,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "layout",
         "reactivation-browser",
         "reactivation-browser-migrated",
+        "error-notification-state",
     }
 
 
@@ -326,6 +410,7 @@ def test_reactivation_page_is_removed_and_switch_is_on_codex_usage() -> None:
     assert "login-page" not in settings["layout"]["pages"]
     assert "show-reactivation-actions" in settings["layout"]["reactivation-options-section"]["keys"]
     assert "reactivation-browser" not in settings["layout"]["reactivation-options-section"]["keys"]
+    assert "description" in settings["reactivation-browser-migrated"]
 
 
 def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
@@ -431,6 +516,37 @@ def test_installer_and_uninstaller_round_trip(tmp_path: Path) -> None:
     )
     assert uninstall.returncode == 0, uninstall.stderr
     assert not installed.exists()
+
+
+def test_installer_migrates_cached_enum_types_without_changing_values(tmp_path: Path) -> None:
+    settings_path = tmp_path / "codex-usage.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "account-consumption-settings": {
+                    "type": "list",
+                    "columns": [
+                        {
+                            "id": "unit",
+                            "type": "enum",
+                            "options": {"Stunden": "hours"},
+                        }
+                    ],
+                    "value": [{"unit": "hours"}],
+                },
+                "__md5__": "old",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert installer._migrate_cached_settings(settings_path) is True
+    migrated = json.loads(settings_path.read_text(encoding="utf-8"))
+    column = migrated["account-consumption-settings"]["columns"][0]
+    assert column["type"] == "string"
+    assert column["options"] == {"Stunden": "hours"}
+    assert migrated["account-consumption-settings"]["value"] == [{"unit": "hours"}]
+    assert installer._migrate_cached_settings(settings_path) is False
 
 
 def test_reload_running_applet_uses_bounded_gdbus_call(monkeypatch) -> None:

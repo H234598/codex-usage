@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta
+from itertools import islice
 from pathlib import Path
 from threading import Event
 from typing import Any
@@ -16,7 +17,7 @@ from typing import Any
 from .account_lock import account_lock
 from .app_server import AppServerUnavailableError, fetch_account_usage_app_server
 from .browser import fetch_account_usage
-from .config import AppConfig
+from .config import MAX_CONFIG_ACCOUNTS, AppConfig
 from .direct import (
     DirectAuthError,
     _normalized_plan_type,
@@ -29,6 +30,7 @@ from .direct import (
 )
 from .extractor import LOCAL_TZ
 from .health import record_health_event
+from .history import record_usage_samples_batch
 from .models import Account, AccountStatus, AccountUsage
 from .render import render_json, render_table
 from .routing import _pool_has_usage_evidence
@@ -49,6 +51,7 @@ from .usage_limits import MAX_WINDOW_SECONDS
 
 DATETIME_TYPE = datetime
 AUTHENTICATED_BACKENDS = frozenset(("direct", "app-server"))
+MAX_SCHEDULER_ACCOUNTS = MAX_CONFIG_ACCOUNTS
 MAX_CAPTURE_FUTURE_SECONDS = 5 * 60
 RESET_FUTURE_SKEW_SECONDS = 5 * 60
 DIRECT_RESET_DISCONTINUITY_SECONDS = 30
@@ -68,6 +71,13 @@ REUSABLE_RESET_FALLBACK_REASONS = frozenset(
 )
 
 
+def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:
+    account_list = list(islice(accounts, MAX_SCHEDULER_ACCOUNTS + 1))
+    if len(account_list) > MAX_SCHEDULER_ACCOUNTS:
+        raise ValueError("too many accounts")
+    return account_list
+
+
 def fetch_all(
     config: AppConfig,
     accounts: Iterable[Account],
@@ -78,10 +88,10 @@ def fetch_all(
     auth_json_path: Path | None = None,
     save_snapshots: bool = False,
 ) -> list[AccountUsage]:
-    account_list = list(accounts)
+    account_list = _bounded_account_list(accounts)
     # A single-account command must not bypass ambiguity detection by selecting
     # only one row from a configuration that contains a shared user identity.
-    configured_accounts = list(config.accounts)
+    configured_accounts = _bounded_account_list(config.accounts)
     identity_scope = account_list if auth_json_path is not None else configured_accounts
     ambiguous_direct_accounts = _ambiguous_direct_accounts(
         identity_scope,
@@ -101,6 +111,7 @@ def fetch_all(
         headed=headed,
         direct=direct,
         backend_override=backend_override,
+        auth_json_path=auth_json_path,
     )
 
     def fetch(account: Account) -> AccountUsage:
@@ -173,6 +184,7 @@ def fetch_all(
     if save_snapshots:
         with account_lock("__all_accounts__"):
             accounts_by_id = {account.id: account for account in account_list}
+            history_candidates: list[AccountUsage] = []
             for index, usage in enumerate(usages):
                 account = accounts_by_id.get(usage.account_id)
                 effective_backend = _fetch_effective_backend(
@@ -196,11 +208,23 @@ def fetch_all(
                     save_current_usage(usage)
                     if _should_persist_snapshot(usage):
                         save_usage_snapshot(usage)
+                    history_candidates.append(usage)
                 except Exception as exc:
                     usages[index] = _usage_after_snapshot_failure(
                         usage,
                         error=f"snapshot save failed: {type(exc).__name__}",
                     )
+            if history_candidates:
+                try:
+                    record_usage_samples_batch(tuple(history_candidates))
+                except Exception as exc:
+                    for usage in history_candidates:
+                        _record_health(
+                            "history",
+                            "sample_save_failed",
+                            account=usage.account_id,
+                            error_class=type(exc).__name__,
+                        )
     for usage in usages:
         if usage.status == AccountStatus.ERROR:
             _record_health(
@@ -218,8 +242,18 @@ def _serial_fetch_required(
     headed: bool,
     direct: bool,
     backend_override: str | None,
+    auth_json_path: Path | None,
 ) -> bool:
-    return len(accounts) > 1
+    # Browser requests use isolated persistent profiles. Authenticated requests
+    # still need the global lock because provider buckets can overlap.
+    if len(accounts) <= 1 or headed:
+        return False
+    if direct or backend_override is not None or auth_json_path is not None:
+        return True
+    return any(
+        account.backend == "app-server" or account.auth_json_path is not None
+        for account in accounts
+    )
 
 
 def _ambiguous_direct_accounts(
@@ -407,7 +441,7 @@ def _fetch_one(
                         if reject_ambiguous_backend_identity:
                             direct_kwargs["reject_ambiguous_backend_identity"] = True
                         usage = fetch_account_usage_direct(account, **direct_kwargs)
-                        fallback_detail = " ".join(str(exc).split())
+                        fallback_detail = re.sub(r"\s+", " ", str(exc)).strip()
                         return replace(
                             usage,
                             backend_configured=effective_backend,
@@ -441,12 +475,8 @@ def _fetch_one(
                 backend_used="browser",
             )
 
-        if global_lock_held:
-            with account_lock(account.id):
-                return fetch_browser()
-        with account_lock("__all_accounts__"):
-            with account_lock(account.id):
-                return fetch_browser()
+        with account_lock(account.id):
+            return fetch_browser()
     except Exception as exc:
         return AccountUsage(
             account_id=account.id,
@@ -881,8 +911,8 @@ def _watch_cycle_is_healthy(
     backend_override: str | None = None,
     auth_json_path: Path | None = None,
 ) -> bool:
-    results = list(usages)
-    account_list = list(accounts)
+    account_list = _bounded_account_list(accounts)
+    results = list(islice(usages, len(account_list) + 1))
     expected = tuple(account.id for account in account_list)
     if _usage_map_for_accounts(results, account_list) is None:
         return False
@@ -928,8 +958,12 @@ def _watch_cycle_is_healthy(
 def _usage_map_for_accounts(
     usages: Iterable[AccountUsage], accounts: Iterable[Account]
 ) -> dict[str, AccountUsage] | None:
-    results = list(usages)
-    expected = tuple(account.id for account in accounts)
+    try:
+        account_list = _bounded_account_list(accounts)
+    except (TypeError, ValueError):
+        return None
+    results = list(islice(usages, len(account_list) + 1))
+    expected = tuple(account.id for account in account_list)
     if len(results) != len(expected):
         return None
     try:
@@ -1019,7 +1053,7 @@ def _watch_failure_usages(
             if attempted_usage is not None and attempted_usage.error
             else error
         )
-        detail = " ".join(str(detail).split())[:240] or "watch cycle failed"
+        detail = re.sub(r"\s+", " ", str(detail)).strip()[:240] or "watch cycle failed"
         failures.append(
             AccountUsage(
                 account_id=account.id,
@@ -1052,7 +1086,7 @@ def watch(
         or interval < 60
     ):
         raise ValueError("interval_seconds must be a finite integer of at least 60")
-    account_list = list(accounts)
+    account_list = _bounded_account_list(accounts)
     stop_event = Event()
     previous_handlers: dict[int, object] = {}
 
@@ -1113,7 +1147,7 @@ def watch(
                     duration_ms=int((time.monotonic() - started) * 1000),
                     error_class=type(exc).__name__,
                 )
-                message = " ".join(str(exc).split())[:240] or type(exc).__name__
+                message = re.sub(r"\s+", " ", str(exc)).strip()[:240] or type(exc).__name__
                 failure_usages = _watch_failure_usages(
                     account_list,
                     usages,
@@ -1154,7 +1188,7 @@ def watchdog(
     auth_json_path: Path | None = None,
 ) -> list[AccountUsage]:
     now = datetime.now(tz=LOCAL_TZ)
-    account_list = list(accounts)
+    account_list = _bounded_account_list(accounts)
     effective_backend = "direct" if (direct or auth_json_path is not None) else None
     if effective_backend is None:
         effective_backend = backend_override

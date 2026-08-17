@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .config import default_state_dir
-from .private_io import assert_no_symlink_ancestors
+from .private_io import _lock_deadline, ensure_private_directory
 
 ACCOUNT_LOCK_TIMEOUT_SECONDS = 30
 
@@ -24,12 +24,16 @@ class AccountLockError(Exception):
 def account_lock(
     account_id: str,
     *,
-    timeout_seconds: int = ACCOUNT_LOCK_TIMEOUT_SECONDS,
+    timeout_seconds: int | float = ACCOUNT_LOCK_TIMEOUT_SECONDS,
 ) -> Iterator[None]:
     if account_id in {".", ".."} or not re.fullmatch(
         r"[A-Za-z0-9_.-]{1,64}", account_id
     ):
         raise AccountLockError("invalid account id for lock")
+    try:
+        deadline = _lock_deadline(timeout_seconds)
+    except ValueError as exc:
+        raise AccountLockError(str(exc)) from exc
     directory = default_state_dir() / "locks"
     _prepare_lock_directory(directory)
     path = directory / f"{account_id}.lock"
@@ -51,7 +55,6 @@ def account_lock(
         if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
             raise AccountLockError("account lock must be a private regular file")
         os.fchmod(fd, 0o600)
-        deadline = time.monotonic() + timeout_seconds
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -71,12 +74,6 @@ def account_lock(
 
 def _prepare_lock_directory(path: Path) -> None:
     try:
-        assert_no_symlink_ancestors(path, label="account lock directory")
-    except ValueError as exc:
+        ensure_private_directory(path, label="account lock directory")
+    except (OSError, ValueError) as exc:
         raise AccountLockError(str(exc)) from exc
-    if path.is_symlink():
-        raise AccountLockError("account lock directory must not be a symlink")
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if path.is_symlink() or not path.is_dir():
-        raise AccountLockError("account lock directory must be a real directory")
-    path.chmod(0o700)

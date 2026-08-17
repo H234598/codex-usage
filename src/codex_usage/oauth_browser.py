@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .private_io import assert_no_symlink_ancestors
 from .reactivate import OAUTH_PROFILE_MARKER
 
 ALLOWED_BROWSER_KINDS = ("vivaldi", "chromium", "firefox")
@@ -54,12 +56,17 @@ def _validate_login_url(value: str) -> str:
     if len(value) > 8192:
         raise ValueError("login URL is too long")
     parts = urlsplit(value)
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ValueError("refusing non-OpenAI login URL") from exc
     hostname = (parts.hostname or "").lower()
     allowed_host = hostname in {"openai.com", "chatgpt.com"} or hostname.endswith(
         (".openai.com", ".chatgpt.com")
     )
     if (
         parts.scheme != "https"
+        or port not in (None, 443)
         or not allowed_host
         or parts.username is not None
         or parts.password is not None
@@ -81,12 +88,23 @@ def _browser_configuration() -> tuple[str, str, Path]:
         raise ValueError("isolated browser is not executable")
     profile = Path(profile_value)
     marker = profile / OAUTH_PROFILE_MARKER
+    if not profile.is_absolute():
+        raise ValueError("invalid isolated browser profile")
+    try:
+        assert_no_symlink_ancestors(profile, label="isolated browser profile")
+        profile_stat = profile.stat()
+        marker_is_symlink = marker.is_symlink()
+        marker_stat = marker.stat() if not marker_is_symlink else None
+    except (OSError, ValueError):
+        raise ValueError("invalid isolated browser profile") from None
     if (
-        not profile.is_absolute()
-        or profile.is_symlink()
-        or not profile.is_dir()
-        or marker.is_symlink()
-        or not marker.is_file()
+        not stat.S_ISDIR(profile_stat.st_mode)
+        or profile_stat.st_mode & 0o077
+        or marker_is_symlink
+        or marker_stat is None
+        or not stat.S_ISREG(marker_stat.st_mode)
+        or marker_stat.st_nlink != 1
+        or marker_stat.st_mode & 0o077
     ):
         raise ValueError("invalid isolated browser profile")
     return str(executable_path), browser_kind, profile

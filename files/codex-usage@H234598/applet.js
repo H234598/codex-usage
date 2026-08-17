@@ -19,6 +19,7 @@ const MAX_POOL_WINDOWS = 8;
 const MAX_TEXT_CHARS = 500;
 const COMMAND_TIMEOUT_MS = 120000;
 const AUX_COMMAND_TIMEOUT_MS = 30000;
+const DEVICE_LOGIN_TIMEOUT_MS = 910000;
 const MAX_DEFERRED_AUX_REQUESTS = 8;
 const REACTIVATION_TIMEOUT_MS = 900000;
 const CIRCUIT_BREAKER_MS = 900000;
@@ -26,7 +27,11 @@ const INTERNAL_FAILURE_WINDOW_MS = 300000;
 const INTERNAL_FAILURE_LIMIT = 3;
 const CACHE_SYNC_INTERVAL_MS = 60000;
 const REFRESH_FAILURE_LIMIT = 3;
+const ERROR_NOTIFICATION_SUPPRESSION_MS = 48 * 60 * 60 * 1000;
+const MAX_ERROR_NOTIFICATION_STATES = 128;
+const MAX_ERROR_NOTIFICATION_STATE_CHARS = 16 * 1024;
 const MAX_CAPTURE_FUTURE_MS = 5 * 60 * 1000;
+const MENU_SPACER = "────────";
 const PANEL_CLASSES = [
     "codex-usage-panel-warning",
     "codex-usage-panel-critical",
@@ -61,11 +66,14 @@ CodexUsageApplet.prototype = {
         this.warningThreshold = 20;
         this.notifyWarnings = false;
         this.notifyErrors = false;
+        this.errorNotificationState = "{}";
         this.showReactivationActions = true;
         this.reactivationBrowser = "auto";
         this.reactivationBrowserMigrated = false;
         this.accountBackends = [];
         this.accountPanelSettings = [];
+        this.accountConsumptionSettings = [];
+        this.accountResetDisplaySettings = [];
         this.accountAlertSettings = [];
         this.accountPercentStyles = [];
         this.accountDateStyles = [];
@@ -107,6 +115,19 @@ CodexUsageApplet.prototype = {
         this._reactivations = Object.create(null);
         this._reactivationErrors = Object.create(null);
         this._reactivationRefreshPending = false;
+        this._deviceLoginActive = Object.create(null);
+        this._deviceLoginJobs = Object.create(null);
+        this._deviceLoginErrors = Object.create(null);
+        this._deviceLoginEvents = Object.create(null);
+        this._deviceLoginLiveText = Object.create(null);
+        this._deviceLoginLiveAccount = "";
+        this._profileJobsLoaded = false;
+        this._profileJobsResumeRequested = false;
+        this._profileJobResumeQueue = [];
+        this._profileJobPollingAccount = "";
+        this._deviceLoginPollId = 0;
+        this._deviceLoginPollGeneration = 0;
+        this._profilePendingAccounts = Object.create(null);
         this._auxProcess = null;
         this._auxCommand = "";
         this._auxTimeoutId = 0;
@@ -122,11 +143,18 @@ CodexUsageApplet.prototype = {
         this._backendChangeCurrent = null;
         this._accountChangeQueue = [];
         this._accountChangeCurrent = null;
+        this._accountChangePendingRows = null;
+        this._accountDeleteWaitingForProfileJob = Object.create(null);
         this._legacyReactivationMigrationPending = 0;
         this._legacyReactivationMigrationStarted = false;
         this._backendAuxQueue = [];
         this._syncingAccountSettings = false;
         this._panelSettings = Object.create(null);
+        this._consumptionSettings = Object.create(null);
+        this._resetSettings = Object.create(null);
+        this._consumptionQueue = [];
+        this._consumptionCurrent = null;
+        this._consumptionGeneration = 0;
         this._alertSettings = Object.create(null);
         this._syncingStyleRows = false;
         this._percentStyles = Object.create(null);
@@ -206,6 +234,7 @@ CodexUsageApplet.prototype = {
         bind("warning-threshold", "warningThreshold", this._updatePanel);
         bind("notify-warnings", "notifyWarnings", null);
         bind("notify-errors", "notifyErrors", null);
+        bind("error-notification-state", "errorNotificationState", null);
         bind(
             "show-reactivation-actions",
             "showReactivationActions",
@@ -215,6 +244,16 @@ CodexUsageApplet.prototype = {
         bind("reactivation-browser-migrated", "reactivationBrowserMigrated", null);
         bind("account-backends", "accountBackends", this._onAccountBackendsChanged);
         bind("account-panel-settings", "accountPanelSettings", this._onPanelSettingsChanged);
+        bind(
+            "account-consumption-settings",
+            "accountConsumptionSettings",
+            this._onConsumptionSettingsChanged
+        );
+        bind(
+            "account-reset-display-settings",
+            "accountResetDisplaySettings",
+            this._onResetDisplaySettingsChanged
+        );
         bind("account-alert-settings", "accountAlertSettings", this._onAlertSettingsChanged);
         bind("account-percent-styles", "accountPercentStyles", this._onPercentStylesChanged);
         bind("account-date-styles", "accountDateStyles", this._onDateStylesChanged);
@@ -232,6 +271,61 @@ CodexUsageApplet.prototype = {
             "routingCreditOverrides",
             this._onRoutingSettingsChanged
         );
+        this._normalizeAccountBackendSettingPaths();
+    },
+
+    _normalizeAccountBackendSettingPaths: function() {
+        let rows = this.accountBackends;
+        if (!Array.isArray(rows)) {
+            return;
+        }
+        let normalized = [];
+        let changed = false;
+        let pathKeys = ["auth-json", "profile-dir"];
+        for (let i = 0; i < rows.length; i++) {
+            let row = rows[i];
+            if (!row || typeof row !== "object" || Array.isArray(row)) {
+                return;
+            }
+            let normalizedRow = {};
+            for (let key in row) {
+                if (Object.prototype.hasOwnProperty.call(row, key)) {
+                    normalizedRow[key] = row[key];
+                }
+            }
+            for (let j = 0; j < pathKeys.length; j++) {
+                let key = pathKeys[j];
+                if (!Object.prototype.hasOwnProperty.call(row, key)) {
+                    continue;
+                }
+                if (row[key] === null || row[key] === undefined) {
+                    continue;
+                }
+                try {
+                    normalizedRow[key] = this._accountSettingPath(
+                        this._localAccountPath(row[key])
+                    );
+                } catch (e) {
+                    global.log("[" + UUID + "] legacy account path migration skipped");
+                    return;
+                }
+                if (normalizedRow[key] !== row[key]) {
+                    changed = true;
+                }
+            }
+            normalized.push(normalizedRow);
+        }
+        if (!changed) {
+            return;
+        }
+        try {
+            this.settings.setValue("account-backends", normalized);
+        } catch (e) {
+            global.log("[" + UUID + "] account path migration write failed: " +
+                this._shortText(e, 180));
+            return;
+        }
+        this.accountBackends = normalized;
     },
 
     _runSafely: function(context, callback, fallback) {
@@ -817,7 +911,7 @@ CodexUsageApplet.prototype = {
         throw new Error(_("codex-usage wurde nicht gefunden"));
     },
 
-    _readBoundedProcessOutput: function(process, callback) {
+    _readBoundedProcessOutput: function(process, callback, onChunk) {
         let output = { stdout: "", stderr: "" };
         let completed = 0;
         let stopped = false;
@@ -840,6 +934,7 @@ CodexUsageApplet.prototype = {
             }
             let chunks = [];
             let total = 0;
+            let livePending = new Uint8Array(0);
             let next = Lang.bind(this, function() {
                 if (stopped) {
                     return;
@@ -857,7 +952,20 @@ CodexUsageApplet.prototype = {
                                 let bytes = source.read_bytes_finish(result);
                                 let size = bytes.get_size();
                                 if (size === 0) {
-                                    output[name] = chunks.join("");
+                                    let raw = new Uint8Array(total);
+                                    let offset = 0;
+                                    for (let index = 0; index < chunks.length; index++) {
+                                        raw.set(chunks[index], offset);
+                                        offset += chunks[index].length;
+                                    }
+                                    if (typeof onChunk === "function" && livePending.length) {
+                                        try {
+                                            onChunk(name, ByteArray.toString(livePending));
+                                        } catch (chunkError) {
+                                            global.log("[" + UUID + "] live output callback failed: " + this._shortText(chunkError, 180));
+                                        }
+                                    }
+                                    output[name] = ByteArray.toString(raw);
                                     completed += 1;
                                     if (completed === 2) {
                                         complete(output.stdout, output.stderr, null);
@@ -876,7 +984,19 @@ CodexUsageApplet.prototype = {
                                         : _("Fehlerausgabe ist zu groß"));
                                     return;
                                 }
-                                chunks.push(ByteArray.toString(bytes.get_data()));
+                                let chunk = new Uint8Array(bytes.get_data());
+                                chunks.push(chunk);
+                                if (typeof onChunk === "function") {
+                                    try {
+                                        let decoded = this._decodeLiveUtf8Chunk(livePending, chunk);
+                                        livePending = decoded.pending;
+                                        if (decoded.text) {
+                                            onChunk(name, decoded.text);
+                                        }
+                                    } catch (chunkError) {
+                                        global.log("[" + UUID + "] live output callback failed: " + this._shortText(chunkError, 180));
+                                    }
+                                }
                                 next();
                             } catch (e) {
                                 try {
@@ -901,6 +1021,34 @@ CodexUsageApplet.prototype = {
         });
         read("stdout", process.get_stdout_pipe(), MAX_JSON_CHARS);
         read("stderr", process.get_stderr_pipe(), MAX_STDERR_CHARS);
+    },
+
+    _decodeLiveUtf8Chunk: function(pending, chunk) {
+        let combined = new Uint8Array(pending.length + chunk.length);
+        combined.set(pending, 0);
+        combined.set(chunk, pending.length);
+        let completeLength = combined.length;
+        let leadIndex = combined.length - 1;
+        while (leadIndex >= 0 && (combined[leadIndex] & 0xc0) === 0x80) {
+            leadIndex -= 1;
+        }
+        if (leadIndex >= 0) {
+            let lead = combined[leadIndex];
+            let expectedLength = lead < 0x80
+                ? 1
+                : (lead >= 0xc2 && lead <= 0xdf
+                    ? 2
+                    : (lead >= 0xe0 && lead <= 0xef
+                        ? 3
+                        : (lead >= 0xf0 && lead <= 0xf4 ? 4 : 1)));
+            if (combined.length - leadIndex < expectedLength) {
+                completeLength = leadIndex;
+            }
+        }
+        return {
+            text: completeLength ? ByteArray.toString(combined.subarray(0, completeLength)) : "",
+            pending: combined.subarray(completeLength),
+        };
     },
 
     _spawnJsonArray: function(argv, callback, request) {
@@ -996,6 +1144,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         this._checkServiceStatus(Lang.bind(this, function() {
+            this._profileJobsResumeRequested = true;
             this._loadAccountBackends();
         }));
     },
@@ -1211,6 +1360,7 @@ CodexUsageApplet.prototype = {
                 return;
             }
             let rows = [];
+            let settingRows = [];
             let accounts = Object.create(null);
             for (let i = 0; i < payload.accounts.length; i++) {
                 let item = payload.accounts[i];
@@ -1235,10 +1385,10 @@ CodexUsageApplet.prototype = {
                         ? "auto"
                         : this._strictText(item.reactivation_browser, 32);
                     profileDir = item.profile_dir === undefined || item.profile_dir === null
-                        ? ""
+                        ? null
                         : this._strictText(item.profile_dir, 4096);
                     authJsonPath = item.auth_json_path === null || item.auth_json_path === undefined
-                        ? ""
+                        ? null
                         : this._strictText(item.auth_json_path, 4096);
                 } catch (e) {
                     global.log("[" + UUID + "] invalid account in backend overview");
@@ -1249,7 +1399,7 @@ CodexUsageApplet.prototype = {
                     ["direct", "app-server"].indexOf(backend) === -1 ||
                     ["firefox", "chromium"].indexOf(browser) === -1 ||
                     ["auto", "vivaldi", "chromium", "firefox"].indexOf(reactivationBrowser) === -1 ||
-                    profileDir.length > 4096) {
+                    (profileDir !== null && profileDir.length > 4096)) {
                     global.log("[" + UUID + "] invalid account in backend overview");
                     return;
                 }
@@ -1271,7 +1421,23 @@ CodexUsageApplet.prototype = {
                     }[reactivationBrowser],
                     backend: backend === "app-server" ? 1 : 0
                 };
+                let settingRow;
+                try {
+                    settingRow = {
+                        account: row.account,
+                        label: row.label,
+                        "auth-json": this._accountSettingPath(row["auth-json"]),
+                        "profile-dir": this._accountSettingPath(row["profile-dir"]),
+                        browser: row.browser,
+                        "reactivation-browser": row["reactivation-browser"],
+                        backend: row.backend
+                    };
+                } catch (e) {
+                    global.log("[" + UUID + "] invalid account path in backend overview");
+                    return;
+                }
                 rows.push(row);
+                settingRows.push(settingRow);
                 accounts[account] = row;
             }
             let backendRefreshNeeded = false;
@@ -1318,9 +1484,9 @@ CodexUsageApplet.prototype = {
             let usageRowsChanged = this._ensureBackendUsageRows(backendRefreshAccounts);
             this._syncingBackendRows = true;
             try {
-                this.accountBackends = rows;
+                this.accountBackends = settingRows;
                 try {
-                    this.settings.setValue("account-backends", rows);
+                    this.settings.setValue("account-backends", settingRows);
                 } catch (e) {
                     global.log("[" + UUID + "] backend settings sync failed: " + String(e));
                 }
@@ -1344,6 +1510,11 @@ CodexUsageApplet.prototype = {
             }
             this._loadRoutingState();
             this._migrateLegacyReactivationBrowser(rows);
+            this._reconcilePendingAccountChanges();
+            if (this._profileJobsResumeRequested) {
+                this._profileJobsResumeRequested = false;
+                this._loadProfileJobs();
+            }
         }));
     },
 
@@ -1691,7 +1862,10 @@ CodexUsageApplet.prototype = {
         for (let i = 0; i < this._usages.length; i++) {
             let usage = this._usages[i];
             let account = usage && usage.account;
-            if (!account || !this._backendAccounts[account] || known[account]) {
+            if (
+                !account || !this._backendAccounts[account] ||
+                this._profilePendingAccounts[account] || known[account]
+            ) {
                 changed = true;
                 continue;
             }
@@ -1707,7 +1881,7 @@ CodexUsageApplet.prototype = {
         let accounts = Object.keys(this._backendAccounts);
         for (let i = 0; i < accounts.length; i++) {
             let account = accounts[i];
-            if (known[account]) {
+            if (known[account] || this._profilePendingAccounts[account]) {
                 continue;
             }
             filtered.push(this._newBackendUsageRow(
@@ -1737,6 +1911,8 @@ CodexUsageApplet.prototype = {
             weekly: null,
             main: null,
             models: Object.create(null),
+            cost_windows: [],
+            usage_resets: { available: null, known: false, redeem_capability: false },
             status: "partial",
             error: _("Noch keine gespeicherten Nutzungswerte"),
             blocked_until: "",
@@ -1770,17 +1946,40 @@ CodexUsageApplet.prototype = {
 
     _syncAccountSettings: function(accounts) {
         let panelRows = this._mergedPanelRows(accounts, this.accountPanelSettings);
+        let consumptionRows = this._mergedConsumptionRows(
+            accounts,
+            this.accountConsumptionSettings
+        );
+        let resetRows = this._mergedResetRows(accounts, this.accountResetDisplaySettings);
         let alertRows = this._mergedAlertRows(accounts, this.accountAlertSettings);
         let panelChanged = !this._styleRowsEqual(this.accountPanelSettings, panelRows);
+        let consumptionChanged = !this._styleRowsEqual(
+            this.accountConsumptionSettings,
+            consumptionRows
+        );
+        let resetChanged = !this._styleRowsEqual(
+            this.accountResetDisplaySettings,
+            resetRows
+        );
         let alertChanged = !this._styleRowsEqual(this.accountAlertSettings, alertRows);
         this._panelSettings = this._panelSettingsMap(panelRows);
+        this._consumptionSettings = this._consumptionSettingsMap(consumptionRows);
+        this._resetSettings = this._resetSettingsMap(resetRows);
         this._alertSettings = this._alertSettingsMap(alertRows);
         this._syncingAccountSettings = true;
         this.accountPanelSettings = panelRows;
+        this.accountConsumptionSettings = consumptionRows;
+        this.accountResetDisplaySettings = resetRows;
         this.accountAlertSettings = alertRows;
         try {
             if (panelChanged) {
                 this.settings.setValue("account-panel-settings", panelRows);
+            }
+            if (consumptionChanged) {
+                this.settings.setValue("account-consumption-settings", consumptionRows);
+            }
+            if (resetChanged) {
+                this.settings.setValue("account-reset-display-settings", resetRows);
             }
             if (alertChanged) {
                 this.settings.setValue("account-alert-settings", alertRows);
@@ -1824,6 +2023,151 @@ CodexUsageApplet.prototype = {
             slot1: this._panelSourceValue(this.panelPercentSource),
             slot2: 0
         };
+    },
+
+    _mergedConsumptionRows: function(accounts, currentRows) {
+        let current = Object.create(null);
+        if (Array.isArray(currentRows)) {
+            for (let i = 0; i < currentRows.length; i++) {
+                let account = this._configuredAccountId(
+                    currentRows[i] && currentRows[i].account
+                );
+                if (!account || current[account] || !this._backendAccounts[account]) {
+                    continue;
+                }
+                let normalized = this._normalizeConsumptionRow(currentRows[i], account);
+                if (normalized) {
+                    current[account] = normalized;
+                }
+            }
+        }
+        return accounts.map(Lang.bind(this, function(account) {
+            return current[account.account] || this._defaultConsumptionRow(account.account);
+        }));
+    },
+
+    _defaultConsumptionRow: function(account) {
+        return {
+            account: account,
+            "show-panel": false,
+            "show-tooltip": true,
+            amount: 1,
+            unit: "hours",
+            "limit-window": "short",
+            format: "compact",
+            "custom-format": "",
+            "hide-when-zero": false,
+            "show-coverage-marker": true
+        };
+    },
+
+    _normalizeConsumptionRow: function(row, account) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+            return null;
+        }
+        let amount = this._strictIntegerSetting(row.amount);
+        let unit = this._strictText(row.unit, 16);
+        let limitWindow = this._strictText(row["limit-window"], 16);
+        let format = this._strictText(row.format, 16);
+        let customFormat = row["custom-format"] === undefined
+            ? ""
+            : this._strictText(row["custom-format"], 160);
+        if (
+            typeof row["show-panel"] !== "boolean" ||
+            typeof row["show-tooltip"] !== "boolean" ||
+            !Number.isInteger(amount) || amount < 1 || amount > 365 ||
+            ["minutes", "hours", "days"].indexOf(unit) === -1 ||
+            ["short", "weekly", "all"].indexOf(limitWindow) === -1 ||
+            ["compact", "verbose", "custom"].indexOf(format) === -1 ||
+            typeof row["hide-when-zero"] !== "boolean" ||
+            typeof row["show-coverage-marker"] !== "boolean"
+        ) {
+            return null;
+        }
+        return {
+            account: account,
+            "show-panel": row["show-panel"],
+            "show-tooltip": row["show-tooltip"],
+            amount: amount,
+            unit: unit,
+            "limit-window": limitWindow,
+            format: format,
+            "custom-format": customFormat,
+            "hide-when-zero": row["hide-when-zero"],
+            "show-coverage-marker": row["show-coverage-marker"]
+        };
+    },
+
+    _consumptionSettingsMap: function(rows) {
+        let result = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            result[rows[i].account] = rows[i];
+        }
+        return result;
+    },
+
+    _mergedResetRows: function(accounts, currentRows) {
+        let current = Object.create(null);
+        if (Array.isArray(currentRows)) {
+            for (let i = 0; i < currentRows.length; i++) {
+                let account = this._configuredAccountId(
+                    currentRows[i] && currentRows[i].account
+                );
+                if (!account || current[account] || !this._backendAccounts[account]) {
+                    continue;
+                }
+                let normalized = this._normalizeResetRow(currentRows[i], account);
+                if (normalized) {
+                    current[account] = normalized;
+                }
+            }
+        }
+        return accounts.map(Lang.bind(this, function(account) {
+            return current[account.account] || this._defaultResetRow(account.account);
+        }));
+    },
+
+    _defaultResetRow: function(account) {
+        return {
+            account: account,
+            "show-panel": false,
+            "show-tooltip": true,
+            "hide-when-zero": true,
+            "show-unknown": false,
+            format: "compact"
+        };
+    },
+
+    _normalizeResetRow: function(row, account) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+            return null;
+        }
+        let format = this._strictText(row.format, 16);
+        if (
+            typeof row["show-panel"] !== "boolean" ||
+            typeof row["show-tooltip"] !== "boolean" ||
+            typeof row["hide-when-zero"] !== "boolean" ||
+            typeof row["show-unknown"] !== "boolean" ||
+            ["compact", "readable", "verbose"].indexOf(format) === -1
+        ) {
+            return null;
+        }
+        return {
+            account: account,
+            "show-panel": row["show-panel"],
+            "show-tooltip": row["show-tooltip"],
+            "hide-when-zero": row["hide-when-zero"],
+            "show-unknown": row["show-unknown"],
+            format: format
+        };
+    },
+
+    _resetSettingsMap: function(rows) {
+        let result = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            result[rows[i].account] = rows[i];
+        }
+        return result;
     },
 
     _normalizePanelRow: function(row, account) {
@@ -2024,6 +2368,75 @@ CodexUsageApplet.prototype = {
         this._refreshFormattedSurfaces();
     },
 
+    _onConsumptionSettingsChanged: function() {
+        if (!this._backendRowsReady || this._syncingAccountSettings || this._removed || this._safeMode) {
+            return;
+        }
+        let expected = Object.keys(this._backendAccounts).length;
+        if (
+            !Array.isArray(this.accountConsumptionSettings) ||
+            this.accountConsumptionSettings.length !== expected
+        ) {
+            this._loadAccountBackends();
+            return;
+        }
+        let normalized = [];
+        let seen = Object.create(null);
+        for (let i = 0; i < this.accountConsumptionSettings.length; i++) {
+            let account = this._configuredAccountId(
+                this.accountConsumptionSettings[i] && this.accountConsumptionSettings[i].account
+            );
+            let row = this._normalizeConsumptionRow(
+                this.accountConsumptionSettings[i],
+                account
+            );
+            if (!row || seen[account] || !this._backendAccounts[account]) {
+                this._loadAccountBackends();
+                return;
+            }
+            seen[account] = true;
+            normalized.push(row);
+        }
+        this._consumptionSettings = this._consumptionSettingsMap(normalized);
+        this.accountConsumptionSettings = normalized;
+        this._refreshConsumption();
+        this._refreshFormattedSurfaces();
+    },
+
+    _onResetDisplaySettingsChanged: function() {
+        if (!this._backendRowsReady || this._syncingAccountSettings || this._removed || this._safeMode) {
+            return;
+        }
+        let expected = Object.keys(this._backendAccounts).length;
+        if (
+            !Array.isArray(this.accountResetDisplaySettings) ||
+            this.accountResetDisplaySettings.length !== expected
+        ) {
+            this._loadAccountBackends();
+            return;
+        }
+        let normalized = [];
+        let seen = Object.create(null);
+        for (let i = 0; i < this.accountResetDisplaySettings.length; i++) {
+            let account = this._configuredAccountId(
+                this.accountResetDisplaySettings[i] && this.accountResetDisplaySettings[i].account
+            );
+            let row = this._normalizeResetRow(
+                this.accountResetDisplaySettings[i],
+                account
+            );
+            if (!row || seen[account] || !this._backendAccounts[account]) {
+                this._loadAccountBackends();
+                return;
+            }
+            seen[account] = true;
+            normalized.push(row);
+        }
+        this._resetSettings = this._resetSettingsMap(normalized);
+        this.accountResetDisplaySettings = normalized;
+        this._refreshFormattedSurfaces();
+    },
+
     _onAlertSettingsChanged: function() {
         if (!this._backendRowsReady || this._syncingAccountSettings || this._removed || this._safeMode) {
             return;
@@ -2124,7 +2537,9 @@ CodexUsageApplet.prototype = {
             tag: "",
             panel: 2,
             hover: 1,
-            click: 1
+            click: 1,
+            "hover-separator": false,
+            "click-separator": false
         };
     },
 
@@ -2136,10 +2551,18 @@ CodexUsageApplet.prototype = {
         let panel = this._strictIntegerSetting(row.panel);
         let hover = this._strictIntegerSetting(row.hover);
         let click = this._strictIntegerSetting(row.click);
+        let hoverSeparator = row["hover-separator"] === undefined
+            ? false
+            : row["hover-separator"];
+        let clickSeparator = row["click-separator"] === undefined
+            ? false
+            : row["click-separator"];
         if (
             !Number.isInteger(panel) || panel < 0 || panel > 2 ||
             !Number.isInteger(hover) || hover < 0 || hover > 2 ||
-            !Number.isInteger(click) || click < 0 || click > 2
+            !Number.isInteger(click) || click < 0 || click > 2 ||
+            typeof hoverSeparator !== "boolean" ||
+            typeof clickSeparator !== "boolean"
         ) {
             return null;
         }
@@ -2148,7 +2571,9 @@ CodexUsageApplet.prototype = {
             tag: tag,
             panel: panel,
             hover: hover,
-            click: click
+            click: click,
+            "hover-separator": hoverSeparator,
+            "click-separator": clickSeparator
         };
     },
 
@@ -2233,7 +2658,7 @@ CodexUsageApplet.prototype = {
         let row = {
             account: account,
             mode: 0,
-            threshold: kind === "duration" ? 120 : 20,
+            threshold: 20,
             font: 0,
             size: 0,
             bold: false,
@@ -2282,7 +2707,7 @@ CodexUsageApplet.prototype = {
             ? (row.conditional === true ? 1 : 0)
             : this._strictIntegerSetting(row.mode);
         let threshold = row.threshold === undefined
-            ? (kind === "duration" ? 120 : 20)
+            ? 20
             : this._strictIntegerSetting(row.threshold);
         let font = row.font === undefined ? 0 : this._strictIntegerSetting(row.font);
         let size = row.size === undefined ? 0 : this._strictIntegerSetting(row.size);
@@ -2305,7 +2730,7 @@ CodexUsageApplet.prototype = {
             ? 0
             : this._strictIntegerSetting(row["below-background"]);
         let maxFormat = kind === "date" ? 3 : (kind === "duration" ? 3 : 2);
-        let maxThreshold = kind === "duration" ? 10080 : 100;
+        let maxThreshold = 100;
         if (
             (kind !== "percent" && (
                 !Number.isInteger(format) || format < 0 || format > maxFormat
@@ -2393,21 +2818,53 @@ CodexUsageApplet.prototype = {
         }
         let rows = [];
         for (let i = 0; i < accounts.length; i++) {
-            for (let element = 0; element < 4; element++) {
+            for (let element = 0; element < 10; element++) {
                 let key = accounts[i].account + ":" + element;
-                rows.push(current[key] || this._defaultTargetRow(accounts[i].account, element));
+                rows.push(
+                    current[key] ||
+                    this._legacyTargetRow(accounts[i].account, element) ||
+                    this._defaultTargetRow(accounts[i].account, element)
+                );
             }
         }
         return rows;
     },
 
+    _legacyTargetRow: function(account, element) {
+        let sourceRows = [];
+        if (element === 4 || element === 5) {
+            sourceRows = Array.isArray(this.accountConsumptionSettings)
+                ? this.accountConsumptionSettings
+                : [];
+        } else if (element === 6) {
+            sourceRows = Array.isArray(this.accountResetDisplaySettings)
+                ? this.accountResetDisplaySettings
+                : [];
+        }
+        for (let i = 0; i < sourceRows.length; i++) {
+            let row = sourceRows[i];
+            if (row && row.account === account) {
+                return {
+                    account: account,
+                    element: element,
+                    panel: row["show-panel"] === true,
+                    hover: row["show-tooltip"] === true,
+                    click: true
+                };
+            }
+        }
+        return null;
+    },
+
     _defaultTargetRow: function(account, element) {
         let isPercent = element === 0;
+        let isSupplemental = element >= 4;
+        let isIdentity = element >= 7;
         return {
             account: account,
             element: element,
-            panel: isPercent,
-            hover: isPercent,
+            panel: isPercent || isIdentity,
+            hover: isPercent || isSupplemental,
             click: true
         };
     },
@@ -2418,7 +2875,7 @@ CodexUsageApplet.prototype = {
         }
         let element = this._strictIntegerSetting(row.element);
         if (
-            !Number.isInteger(element) || element < 0 || element > 3 ||
+            !Number.isInteger(element) || element < 0 || element > 9 ||
             typeof row.panel !== "boolean" || typeof row.hover !== "boolean" ||
             typeof row.click !== "boolean"
         ) {
@@ -2531,7 +2988,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let rows = this.accountStyleTargets;
-        let expected = Object.keys(this._backendAccounts).length * 4;
+        let expected = Object.keys(this._backendAccounts).length * 10;
         if (!Array.isArray(rows) || rows.length !== expected) {
             this._loadAccountBackends();
             return;
@@ -2576,13 +3033,15 @@ CodexUsageApplet.prototype = {
     },
 
     _markLegacyReactivationBrowserMigrated: function() {
-        this._legacyReactivationMigrationStarted = true;
-        this.reactivationBrowserMigrated = true;
         try {
             this.settings.setValue("reactivation-browser-migrated", true);
         } catch (e) {
             global.log("[" + UUID + "] reactivation migration marker failed: " + this._shortText(e, 180));
+            return false;
         }
+        this._legacyReactivationMigrationStarted = true;
+        this.reactivationBrowserMigrated = true;
+        return true;
     },
 
     _migrateLegacyReactivationBrowser: function(rows) {
@@ -2622,13 +3081,23 @@ CodexUsageApplet.prototype = {
             this._markLegacyReactivationBrowserMigrated();
             return;
         }
-        this._markLegacyReactivationBrowserMigrated();
         this._legacyReactivationMigrationPending = changed;
         this._reconcileAccountChanges(migratedRows);
     },
 
     _reconcileAccountChanges: function(rows) {
         let queue = [];
+        let desired = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            desired[rows[i].account] = true;
+        }
+        let configuredAccounts = Object.keys(this._backendAccounts);
+        for (let i = 0; i < configuredAccounts.length; i++) {
+            let account = configuredAccounts[i];
+            if (!desired[account]) {
+                queue.push({ action: "delete", account: account });
+            }
+        }
         for (let i = 0; i < rows.length; i++) {
             let row = rows[i];
             let canonical = this._backendAccounts[row.account];
@@ -2638,6 +3107,18 @@ CodexUsageApplet.prototype = {
         }
         this._accountChangeQueue = queue;
         this._drainAccountChanges();
+    },
+
+    _reconcilePendingAccountChanges: function() {
+        if (
+            !this._accountChangePendingRows || this._accountChangeCurrent ||
+            this._accountChangeQueue.length
+        ) {
+            return;
+        }
+        let rows = this._accountChangePendingRows;
+        this._accountChangePendingRows = null;
+        this._reconcileAccountChanges(rows);
     },
 
     _drainAccountChanges: function() {
@@ -2659,12 +3140,66 @@ CodexUsageApplet.prototype = {
             this._loadAccountBackends();
             return;
         }
+        let canonical = this._backendAccounts[changed.account];
+        if (changed.action === "delete") {
+            if (this._accountDeleteWaitingForProfileJob[changed.account]) {
+                if (this._deviceLoginJobs[changed.account]) {
+                    this._accountChangeCurrent = null;
+                    this._accountChangeQueue.unshift(changed);
+                    return;
+                }
+                delete this._accountDeleteWaitingForProfileJob[changed.account];
+            }
+            if (this._deviceLoginJobs[changed.account]) {
+                this._accountDeleteWaitingForProfileJob[changed.account] = true;
+                this._accountChangeCurrent = null;
+                this._accountChangeQueue.unshift(changed);
+                this._cancelProfileJob(changed.account, true);
+                return;
+            }
+            argv.push("account", "delete", changed.account, "--format", "json");
+            this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+                try {
+                    if (
+                        error || !payload || payload.ok !== true ||
+                        payload.account !== changed.account
+                    ) {
+                        this._showCommandError(error || _("Account konnte nicht gelöscht werden"));
+                    } else {
+                        this._refreshFresh(false);
+                    }
+                } finally {
+                    this._accountChangeCurrent = null;
+                    if (this._accountChangeQueue.length) {
+                        this._drainAccountChanges();
+                    } else {
+                        this._loadAccountBackends();
+                    }
+                }
+            }), true);
+            return;
+        }
+        let authJson;
+        let profileDir;
+        try {
+            authJson = this._localAccountPath(changed["auth-json"]);
+            profileDir = this._localAccountPath(changed["profile-dir"]);
+        } catch (e) {
+            this._accountChangeCurrent = null;
+            this._accountChangeQueue = [];
+            this._loadAccountBackends();
+            return;
+        }
+        let startProfile = !canonical && !authJson;
+        if (startProfile) {
+            this._profilePendingAccounts[changed.account] = true;
+        }
         argv.push("account", "add", changed.account);
         if (changed.label) {
             argv.push("--label", changed.label);
         }
-        if (changed["profile-dir"]) {
-            argv.push("--profile-dir", changed["profile-dir"]);
+        if (profileDir) {
+            argv.push("--profile-dir", profileDir);
         }
         argv.push(
             "--browser",
@@ -2674,9 +3209,8 @@ CodexUsageApplet.prototype = {
             "--backend",
             changed.backend === 1 ? "app-server" : "direct"
         );
-        let canonical = this._backendAccounts[changed.account];
-        if (changed["auth-json"]) {
-            argv.push("--auth-json", changed["auth-json"]);
+        if (authJson) {
+            argv.push("--auth-json", authJson);
         } else if (canonical && canonical["auth-json"]) {
             argv.push("--clear-auth-json");
         }
@@ -2687,6 +3221,7 @@ CodexUsageApplet.prototype = {
                     error || !payload || payload.ok !== true ||
                     !payload.account || payload.account.id !== changed.account
                 ) {
+                    delete this._profilePendingAccounts[changed.account];
                     this._legacyReactivationMigrationPending = 0;
                     this._showCommandError(error || _("Account konnte nicht gespeichert werden"));
                 } else {
@@ -2696,7 +3231,26 @@ CodexUsageApplet.prototype = {
                             this._markLegacyReactivationBrowserMigrated();
                         }
                     }
-                    this._refreshFresh(false);
+                    if (startProfile) {
+                        let createdProfileDir = profileDir;
+                        if (!createdProfileDir) {
+                            try {
+                                createdProfileDir = this._localAccountPath(
+                                    payload.account.profile_dir
+                                );
+                            } catch (e) {
+                                createdProfileDir = null;
+                            }
+                        }
+                        if (!createdProfileDir) {
+                            delete this._profilePendingAccounts[changed.account];
+                            this._showCommandError(_("Profilordner konnte nicht bestimmt werden"));
+                        } else {
+                            this._startProfileCreation(changed, createdProfileDir);
+                        }
+                    } else {
+                        this._refreshFresh(false);
+                    }
                 }
             } finally {
                 this._accountChangeCurrent = null;
@@ -2707,6 +3261,50 @@ CodexUsageApplet.prototype = {
                 }
             }
         }), true);
+    },
+
+    _startProfileCreation: function(row, profileDir) {
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            delete this._profilePendingAccounts[row.account];
+            this._deviceLoginErrors[row.account] = String(e);
+            this._buildUsageMenu();
+            return;
+        }
+        argv.push(
+            "profile", "create",
+            "--account-id", row.account,
+            "--label", row.label || row.account,
+            "--browser", row.browser === 1 ? "chromium" : "firefox",
+            "--backend", row.backend === 1 ? "app-server" : "direct",
+            "--profile-dir", profileDir,
+            "--reactivation-browser",
+            ["auto", "vivaldi", "chromium", "firefox"][row["reactivation-browser"]],
+            "--json-events"
+        );
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (
+                error || !payload || payload.ok !== true ||
+                payload.account !== row.account ||
+                !/^job-[0-9a-f]{32}$/.test(payload.job_id || "") ||
+                ["queued", "running", "cancel_requested"].indexOf(payload.status) === -1
+            ) {
+                delete this._profilePendingAccounts[row.account];
+                this._deviceLoginErrors[row.account] = this._shortText(
+                    error || "Profiljob konnte nicht gestartet werden",
+                    200
+                );
+                this._buildUsageMenu();
+                return;
+            }
+            this._deviceLoginJobs[row.account] = payload.job_id;
+            this._deviceLoginActive[row.account] = true;
+            delete this._deviceLoginErrors[row.account];
+            this._buildUsageMenu();
+            this._pollProfileJob(row.account, true);
+        }), true, 10000);
     },
 
     _reconcileBackendChanges: function(rows) {
@@ -2791,7 +3389,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let request = this._backendAuxQueue.shift();
-        this._spawnAuxJson(request.argv, request.callback);
+        this._spawnAuxJson(request.argv, request.callback, false, request.timeoutMs);
     },
 
     _auxRequestKey: function(argv) {
@@ -2805,16 +3403,12 @@ CodexUsageApplet.prototype = {
     _onAccountBackendsChanged: function() {
         if (
             !this._backendRowsReady || this._syncingBackendRows || this._removed ||
-            this._safeMode || this._accountChangeCurrent
+            this._safeMode
         ) {
             return;
         }
         let rows = this.accountBackends;
-        if (
-            !Array.isArray(rows) ||
-            rows.length < Object.keys(this._backendAccounts).length ||
-            rows.length > MAX_ACCOUNTS
-        ) {
+        if (!Array.isArray(rows) || rows.length > MAX_ACCOUNTS) {
             this._loadAccountBackends();
             return;
         }
@@ -2849,6 +3443,15 @@ CodexUsageApplet.prototype = {
             let profileDir = row["profile-dir"] === undefined
                 ? this._safeText(canonical && canonical["profile-dir"], 4096)
                 : this._safeText(row["profile-dir"], 4096);
+            try {
+                authJson = this._localAccountPath(authJson);
+                profileDir = this._localAccountPath(profileDir);
+            } catch (e) {
+                this._loadAccountBackends();
+                return;
+            }
+            authJson = authJson || null;
+            profileDir = profileDir || null;
             let browser = row.browser === undefined
                 ? (canonical && canonical.browser === 1 ? 1 : 0)
                 : this._strictIntegerSetting(row.browser);
@@ -2881,14 +3484,14 @@ CodexUsageApplet.prototype = {
                 backend: backendValue
             });
         }
-        let configuredAccounts = Object.keys(this._backendAccounts);
-        for (let i = 0; i < configuredAccounts.length; i++) {
-            if (!seen[configuredAccounts[i]]) {
-                this._loadAccountBackends();
-                return;
-            }
+        if (this._accountChangeCurrent || this._accountChangeQueue.length) {
+            this._accountChangePendingRows = desiredRows;
+            return;
         }
-        if (legacyBackendOnly) {
+        let removedAccount = Object.keys(this._backendAccounts).some(function(account) {
+            return !seen[account];
+        });
+        if (legacyBackendOnly && !removedAccount) {
             this._reconcileBackendChanges(desiredRows);
             return;
         }
@@ -2944,7 +3547,7 @@ CodexUsageApplet.prototype = {
         }));
     },
 
-    _spawnAuxJson: function(argv, callback, backendRequest) {
+    _spawnAuxJson: function(argv, callback, backendRequest, timeoutMs) {
         if (
             !backendRequest &&
             (
@@ -2956,6 +3559,7 @@ CodexUsageApplet.prototype = {
             for (let i = 0; i < this._backendAuxQueue.length; i++) {
                 if (this._backendAuxQueue[i].key === key) {
                     this._backendAuxQueue[i].callback = callback;
+                    this._backendAuxQueue[i].timeoutMs = timeoutMs;
                     return;
                 }
             }
@@ -2965,7 +3569,12 @@ CodexUsageApplet.prototype = {
                 }));
                 return;
             }
-            this._backendAuxQueue.push({ argv: argv, callback: callback, key: key });
+            this._backendAuxQueue.push({
+                argv: argv,
+                callback: callback,
+                key: key,
+                timeoutMs: timeoutMs
+            });
             return;
         }
         this._cancelAuxProcess();
@@ -2977,7 +3586,8 @@ CodexUsageApplet.prototype = {
                 break;
             }
         }
-        this._auxCommand = serviceEnable ? "service-enable" : "";
+        let deviceLogin = argv.indexOf("device-login") !== -1;
+        this._auxCommand = serviceEnable ? "service-enable" : (deviceLogin ? "device-login" : "");
         let process = null;
         let done = false;
         let finish = Lang.bind(this, function(payload, error) {
@@ -2999,6 +3609,7 @@ CodexUsageApplet.prototype = {
             this._drainBackendChanges();
             this._drainAccountChanges();
             this._drainDeferredAuxRequests();
+            this._drainConsumptionRequests();
         });
         try {
             let launcher = Gio.SubprocessLauncher.new(
@@ -3007,8 +3618,12 @@ CodexUsageApplet.prototype = {
             launcher.setenv("PYTHONUNBUFFERED", "1", true);
             process = launcher.spawnv(argv);
             this._auxProcess = process;
+            let selectedTimeout = timeoutMs === undefined ? AUX_COMMAND_TIMEOUT_MS : timeoutMs;
+            if (!Number.isInteger(selectedTimeout) || selectedTimeout < 1000 || selectedTimeout > 1800000) {
+                throw new Error("invalid auxiliary timeout");
+            }
             let timeoutId = Mainloop.timeout_add(
-                AUX_COMMAND_TIMEOUT_MS,
+                selectedTimeout,
                 Lang.bind(this, function() {
                     if (generation === this._auxGeneration) {
                         this._clearSource("_auxTimeoutId");
@@ -3018,7 +3633,9 @@ CodexUsageApplet.prototype = {
                     } catch (e) {
                         global.log("[" + UUID + "] auxiliary cleanup failed: " + String(e));
                     }
-                    finish(null, _("Hilfsbefehl nach 30 Sekunden abgebrochen"));
+                    finish(null, deviceLogin
+                        ? _("Device-Login nach 15 Minuten abgebrochen")
+                        : _("Hilfsbefehl nach 30 Sekunden abgebrochen"));
                     return false;
                 })
             );
@@ -3026,6 +3643,11 @@ CodexUsageApplet.prototype = {
                 throw new Error("auxiliary timeout source unavailable");
             }
             this._setSource("_auxTimeoutId", timeoutId);
+            let liveChunk = deviceLogin
+                ? Lang.bind(this, function(name, chunk) {
+                    this._recordDeviceLoginChunk(name, chunk);
+                })
+                : null;
             this._readBoundedProcessOutput(process, Lang.bind(this, function(stdout, stderr, outputError) {
                 if (outputError) {
                     finish(null, outputError);
@@ -3044,7 +3666,7 @@ CodexUsageApplet.prototype = {
                 } catch (e) {
                     finish(null, this._shortText(stderr || _("Ungültige Hilfsausgabe"), 240));
                 }
-            }));
+            }), liveChunk);
         } catch (e) {
             this._terminateChild(process, "auxiliary process startup cleanup");
             finish(null, _("Hilfsbefehl konnte nicht gestartet werden: ") + String(e));
@@ -3088,6 +3710,10 @@ CodexUsageApplet.prototype = {
             let weekly = this._safeWindow(item.weekly);
             let main = this._safePool(item.main, "main");
             let models = this._safePools(item.models);
+            let usageResets = this._safeUsageResets(item.usage_resets);
+            let costWindows = item.cost_windows === undefined
+                ? []
+                : this._safeConsumptionWindows(item.cost_windows);
             let backendConfigured = this._validatedBackend(item.backend_configured);
             let backendUsed = this._validatedBackend(item.backend_used, true);
             let stale = item.stale === true || staleFlagInvalid;
@@ -3179,6 +3805,9 @@ CodexUsageApplet.prototype = {
                 main = null;
                 models = Object.create(null);
             }
+            if (cacheInvalidated || status === "error" || status === "login_required") {
+                usageResets = this._safeUsageResets(null);
+            }
             result.push({
                 account: account,
                 label: this._safeText(item.label, 120) || account,
@@ -3187,6 +3816,8 @@ CodexUsageApplet.prototype = {
                 weekly: weekly,
                 main: main,
                 models: models,
+                cost_windows: costWindows,
+                usage_resets: usageResets,
                 status: status,
                 error: error,
                 blocked_until: this._safeText(item.blocked_until, 80),
@@ -3276,6 +3907,90 @@ CodexUsageApplet.prototype = {
             throw new Error("invalid limit duration");
         }
         return value;
+    },
+
+    _safeConsumptionWindows: function(value) {
+        if (!Array.isArray(value) || value.length > 32) {
+            throw new Error("invalid consumption windows");
+        }
+        let result = [];
+        for (let i = 0; i < value.length; i++) {
+            let item = value[i];
+            if (!item || typeof item !== "object" || Array.isArray(item)) {
+                throw new Error("invalid consumption window");
+            }
+            let lookback = item.lookback_seconds;
+            let limitWindow = item.limit_window_seconds;
+            let consumed = item.consumed_percentage_points;
+            let estimate = item.estimated_seconds_to_exhaustion;
+            let sampleCount = item.sample_count;
+            if (estimate === undefined) {
+                estimate = null;
+            }
+            if (
+                typeof lookback !== "number" || !Number.isInteger(lookback) ||
+                lookback <= 0 || lookback > 31536000 ||
+                typeof limitWindow !== "number" || !Number.isInteger(limitWindow) ||
+                limitWindow < 0 || limitWindow > 31536000 ||
+                typeof consumed !== "number" || !Number.isFinite(consumed) ||
+                consumed < 0 || consumed > 10000 ||
+                (estimate !== null && (
+                    typeof estimate !== "number" || !Number.isInteger(estimate) ||
+                    estimate < 0 || estimate > 31536000
+                )) ||
+                typeof sampleCount !== "number" || !Number.isInteger(sampleCount) ||
+                sampleCount < 0 || sampleCount > 500000 ||
+                ["complete", "partial", "stale", "insufficient"].indexOf(item.coverage) === -1
+            ) {
+                throw new Error("invalid consumption window");
+            }
+            result.push({
+                lookback_seconds: lookback,
+                pool: this._strictText(item.pool, 64),
+                limit_window_seconds: limitWindow,
+                consumed_percentage_points: consumed,
+                estimated_seconds_to_exhaustion: estimate,
+                coverage: item.coverage,
+                sample_count: sampleCount
+            });
+        }
+        return result;
+    },
+
+    _safeUsageResets: function(value) {
+        let unknown = { available: null, known: false, redeem_capability: false };
+        if (value === null || value === undefined) {
+            return unknown;
+        }
+        if (typeof value !== "object" || Array.isArray(value)) {
+            return unknown;
+        }
+        if (typeof value.known !== "boolean" ||
+            typeof value.redeem_capability !== "boolean") {
+            return unknown;
+        }
+        if (value.known !== true) {
+            return value.available === null
+                ? {
+                    available: null,
+                    known: false,
+                    redeem_capability: value.redeem_capability
+                }
+                : unknown;
+        }
+        if (
+            typeof value.available !== "number" ||
+            !Number.isInteger(value.available) ||
+            value.available < 0 ||
+            value.available > 10000
+        ) {
+            return unknown;
+        }
+        return {
+            available: value.available,
+            known: true,
+            redeem_capability: value.redeem_capability
+        };
     },
 
     _safePool: function(value, expectedKey) {
@@ -3494,6 +4209,56 @@ CodexUsageApplet.prototype = {
         return text;
     },
 
+    _localAccountPath: function(value) {
+        let text = this._safeText(value, 4096);
+        if (!text) {
+            return text;
+        }
+        if (!/^file:\/\//i.test(text)) {
+            if (text.charAt(0) !== "/") {
+                throw new Error("invalid local account path");
+            }
+            return text;
+        }
+        let uriMatch = text.match(/^file:\/\/([^\/]*)(\/.*)$/i);
+        if (!uriMatch) {
+            throw new Error("invalid local account path");
+        }
+        let authority = uriMatch[1];
+        if (authority && authority.toLowerCase() !== "localhost") {
+            throw new Error("invalid local account path");
+        }
+        let path;
+        try {
+            path = Gio.file_new_for_uri(text).get_path();
+        } catch (e) {
+            throw new Error("invalid local account path");
+        }
+        if (!path || path.charAt(0) !== "/") {
+            throw new Error("invalid local account path");
+        }
+        return path;
+    },
+
+    _accountSettingPath: function(value) {
+        if (value === null || value === undefined) {
+            return null;
+        }
+        let path = this._localAccountPath(value);
+        if (!path) {
+            return "";
+        }
+        try {
+            let uri = Gio.file_new_for_path(path).get_uri();
+            if (!uri || !/^file:\/\//i.test(uri)) {
+                throw new Error("invalid local account path");
+            }
+            return uri;
+        } catch (e) {
+            throw new Error("invalid local account path");
+        }
+    },
+
     _strictText: function(value, limit) {
         if (value === null || value === undefined) {
             return "";
@@ -3523,6 +4288,9 @@ CodexUsageApplet.prototype = {
         this._usages = usages;
         if (this._backendRowsReady) {
             this._ensureBackendUsageRows();
+            this._syncAccountSettings(Object.keys(this._backendAccounts).map(Lang.bind(this, function(account) {
+                return this._backendAccounts[account];
+            })));
         }
         let nowMs = Date.now();
         let staleAfterMs = this._staleAfterMs();
@@ -3535,7 +4303,103 @@ CodexUsageApplet.prototype = {
         }
         this._buildUsageMenu();
         this._updatePanel();
+        this._refreshConsumption();
         this._notifyForPayload();
+    },
+
+    _refreshConsumption: function() {
+        if (!this._consumptionSettings || typeof this._consumptionSettings !== "object") {
+            this._consumptionSettings = Object.create(null);
+        }
+        if (!Array.isArray(this._consumptionQueue)) {
+            this._consumptionQueue = [];
+        }
+        if (!Number.isInteger(this._consumptionGeneration)) {
+            this._consumptionGeneration = 0;
+        }
+        let generation = ++this._consumptionGeneration;
+        this._consumptionQueue = [];
+        for (let i = 0; i < this._usages.length; i++) {
+            let usage = this._usages[i];
+            let row = this._consumptionSettings[usage.account];
+            usage.cost_windows = [];
+            if (!row || !(
+                this._elementTargetEnabled(usage.account, "consumption", "panel", row["show-panel"]) ||
+                this._elementTargetEnabled(usage.account, "consumption", "hover", row["show-tooltip"]) ||
+                this._elementTargetEnabled(usage.account, "consumption", "click", true) ||
+                this._elementTargetEnabled(usage.account, "forecast", "panel", row["show-panel"]) ||
+                this._elementTargetEnabled(usage.account, "forecast", "hover", row["show-tooltip"]) ||
+                this._elementTargetEnabled(usage.account, "forecast", "click", true)
+            )) {
+                continue;
+            }
+            this._consumptionQueue.push({
+                account: usage.account,
+                amount: row.amount,
+                unit: row.unit,
+                limitWindow: row["limit-window"],
+                generation: generation
+            });
+        }
+        this._drainConsumptionRequests();
+    },
+
+    _drainConsumptionRequests: function() {
+        if (!Array.isArray(this._consumptionQueue)) {
+            return;
+        }
+        if (
+            this._removed || this._safeMode || this._consumptionCurrent ||
+            this._auxProcess || this._backendChangeCurrent ||
+            this._backendChangeQueue.length || this._accountChangeCurrent ||
+            this._accountChangeQueue.length || !this._consumptionQueue.length
+        ) {
+            return;
+        }
+        let request = this._consumptionQueue.shift();
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._drainConsumptionRequests();
+            return;
+        }
+        argv.push(
+            "consumption",
+            "--account",
+            request.account,
+            "--amount",
+            String(request.amount),
+            "--unit",
+            request.unit,
+            "--limit-window",
+            request.limitWindow,
+            "--format",
+            "json"
+        );
+        this._consumptionCurrent = request;
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            try {
+                if (
+                    !error && payload && payload.account_id === request.account &&
+                    Array.isArray(payload.windows) && request.generation === this._consumptionGeneration
+                ) {
+                    let usage = this._usageForAccount(request.account);
+                    if (usage) {
+                        usage.cost_windows = this._safeConsumptionWindows(payload.windows);
+                    }
+                }
+            } catch (e) {
+                global.log("[" + UUID + "] consumption payload rejected: " + this._shortText(e, 180));
+            } finally {
+                this._consumptionCurrent = null;
+                this._updatePanel();
+                if (this.menu && this.menu.isOpen) {
+                    this._buildUsageMenu();
+                }
+                this._drainConsumptionRequests();
+            }
+        }), true);
     },
 
     _mergeCachedPayload: function(cached) {
@@ -3867,6 +4731,7 @@ CodexUsageApplet.prototype = {
         invalidated.weekly = null;
         invalidated.main = null;
         invalidated.models = Object.create(null);
+        invalidated.cost_windows = [];
         invalidated.values_captured_at = null;
         if (invalidated.status === "ok") {
             invalidated.status = "partial";
@@ -4446,6 +5311,12 @@ CodexUsageApplet.prototype = {
             );
             this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
             for (let i = 0; i < this._usages.length; i++) {
+                if (
+                    i === 0 &&
+                    this._displaySeparatorEnabled(this._usages[i].account, "click")
+                ) {
+                    this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+                }
                 this._addAccount(this._usages[i]);
                 if (i < this._usages.length - 1) {
                     this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -4464,9 +5335,18 @@ CodexUsageApplet.prototype = {
         let week = this._percentParts(usage.weekly, usage.account, "click");
         let severity = this._usageSeverity(usage);
         let display = this._accountDisplayText({ usage: usage }, "click");
-        let summary = display + "     5h " + five.plain + "     Woche " + week.plain;
-        let summaryMarkup = this._escapeMarkup(display + "     5h ") + five.markup +
-            this._escapeMarkup("     Woche ") + week.markup;
+        let summaryParts = display ? [display] : [];
+        let summaryMarkupParts = display ? [this._escapeMarkup(display)] : [];
+        if (five.plain) {
+            summaryParts.push("5h " + five.plain);
+            summaryMarkupParts.push(this._escapeMarkup("5h ") + five.markup);
+        }
+        if (week.plain) {
+            summaryParts.push("Woche " + week.plain);
+            summaryMarkupParts.push(this._escapeMarkup("Woche ") + week.markup);
+        }
+        let summary = summaryParts.join("     ");
+        let summaryMarkup = summaryMarkupParts.join(this._escapeMarkup("     "));
         let summaryItem = this._addDisabled(
             this.menu,
             summary,
@@ -4474,6 +5354,20 @@ CodexUsageApplet.prototype = {
         );
         this._setItemMarkup(summaryItem, summaryMarkup);
         this._addResetDetail(usage);
+        let consumption = this._consumptionParts(usage, "click");
+        if (consumption) {
+            let consumptionItem = this._addDisabled(
+                this.menu,
+                consumption.plain,
+                "codex-usage-detail"
+            );
+            this._setItemMarkup(consumptionItem, consumption.markup);
+        }
+        let resets = this._usageResetParts(usage, "click");
+        if (resets) {
+            let resetItem = this._addDisabled(this.menu, resets.plain, "codex-usage-detail");
+            this._setItemMarkup(resetItem, resets.markup);
+        }
         this._addDynamicLimitDetails(usage);
         this._addAccountControls(usage);
         let status = this._statusLabel(usage.status);
@@ -4527,7 +5421,508 @@ CodexUsageApplet.prototype = {
             }));
         }));
         submenu.menu.addMenuItem(errors);
+        let loginActive = Boolean(this._deviceLoginActive[usage.account]);
+        if (loginActive) {
+            this._addDisabled(submenu.menu, "Device-Login läuft …", "codex-usage-warning");
+            let cancelLogin = new PopupMenu.PopupMenuItem("Device-Login abbrechen");
+            if (typeof cancelLogin.connect === "function") {
+                cancelLogin.connect("activate", Lang.bind(this, function() {
+                    this._runSafely("device login cancel", Lang.bind(this, function() {
+                        this._cancelDeviceLogin(usage.account);
+                    }));
+                }));
+            }
+            submenu.menu.addMenuItem(cancelLogin);
+        } else {
+            let deviceLogin = new PopupMenu.PopupMenuItem("Device-Login starten");
+            if (typeof deviceLogin.connect === "function") {
+                deviceLogin.connect("activate", Lang.bind(this, function() {
+                    this._runSafely("device login action", Lang.bind(this, function() {
+                        this._startDeviceLogin(usage);
+                    }));
+                }));
+            }
+            submenu.menu.addMenuItem(deviceLogin);
+        }
+        if (this._deviceLoginErrors[usage.account]) {
+            this._addDisabled(
+                submenu.menu,
+                this._shortText(this._deviceLoginErrors[usage.account], 160),
+                "codex-usage-error"
+            );
+        }
+        let loginEvents = this._deviceLoginEvents[usage.account] || [];
+        for (let eventIndex = 0; eventIndex < loginEvents.length; eventIndex++) {
+            let event = loginEvents[eventIndex];
+            this._addDisabled(
+                submenu.menu,
+                "Device-Login " + event.kind + ": " + event.value,
+                "codex-usage-detail"
+            );
+            let copy = new PopupMenu.PopupMenuItem(
+                event.kind === "url" ? "Device-Login URL kopieren" : "Device-Code kopieren"
+            );
+            if (typeof copy.connect === "function") {
+                copy.connect("activate", Lang.bind(this, function() {
+                    this._copyDeviceLoginEvent(event);
+                }));
+            }
+            submenu.menu.addMenuItem(copy);
+        }
         this.menu.addMenuItem(submenu);
+    },
+
+    _loadProfileJobs: function() {
+        if (this._profileJobsLoaded || this._removed || this._safeMode) {
+            return;
+        }
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            return;
+        }
+        argv.push("profile", "jobs", "--json");
+        this._profileJobsLoaded = true;
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (
+                error || !payload || payload.ok !== true ||
+                !Array.isArray(payload.jobs) || payload.jobs.length > 8
+            ) {
+                this._profileJobsLoaded = false;
+                return;
+            }
+            let jobs = [];
+            for (let index = 0; index < payload.jobs.length; index++) {
+                let job = payload.jobs[index];
+                let account;
+                let jobId;
+                let status;
+                try {
+                    account = this._strictText(job && job.account, 64);
+                    jobId = this._strictText(job && job.job_id, 64);
+                    status = this._strictText(job && job.status, 32);
+                } catch (e) {
+                    this._profileJobsLoaded = false;
+                    return;
+                }
+                if (
+                    !account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) ||
+                    !jobId || !/^job-[0-9a-f]{32}$/.test(jobId) ||
+                    ["queued", "running", "cancel_requested"].indexOf(status) === -1
+                ) {
+                    this._profileJobsLoaded = false;
+                    return;
+                }
+                jobs.push({ account: account, jobId: jobId, status: status });
+            }
+            this._profileJobResumeQueue = [];
+            for (let index = 0; index < jobs.length; index++) {
+                this._profilePendingAccounts[jobs[index].account] = true;
+                this._deviceLoginJobs[jobs[index].account] = jobs[index].jobId;
+                this._deviceLoginActive[jobs[index].account] = true;
+                this._profileJobResumeQueue.push(jobs[index].account);
+            }
+            if (jobs.length > 0 && this._ensureBackendUsageRows()) {
+                this._refreshFormattedSurfaces();
+            }
+            if (jobs.length > 0) {
+                this._pollNextProfileJob();
+            }
+            if (jobs.length > 0) {
+                this._buildUsageMenu();
+            }
+        }), false, 10000);
+    },
+
+    _pollNextProfileJob: function() {
+        if (this._removed || this._safeMode || this._profileJobPollingAccount) {
+            return;
+        }
+        while (this._profileJobResumeQueue.length) {
+            let account = this._profileJobResumeQueue.shift();
+            if (!this._deviceLoginJobs[account]) {
+                continue;
+            }
+            this._pollProfileJob(account);
+            return;
+        }
+    },
+
+    _pollProfileJob: function(account, force) {
+        let jobId = this._deviceLoginJobs[account];
+        if (!jobId || this._removed || this._safeMode) {
+            return;
+        }
+        if (
+            this._profileJobPollingAccount &&
+            this._profileJobPollingAccount !== account
+        ) {
+            this._profileJobResumeQueue.unshift(this._profileJobPollingAccount);
+        }
+        this._profileJobPollingAccount = account;
+        this._removeSource("_deviceLoginPollId");
+        let generation = ++this._deviceLoginPollGeneration;
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._finishProfileJob(account, String(e), false);
+            return;
+        }
+        argv.push("profile", "job-status", jobId, "--json");
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (
+                generation !== this._deviceLoginPollGeneration ||
+                this._deviceLoginJobs[account] !== jobId
+            ) {
+                return;
+            }
+            if (
+                error || !payload || payload.account !== account ||
+                payload.job_id !== jobId ||
+                ["queued", "running", "cancel_requested", "completed", "failed", "cancelled"]
+                    .indexOf(payload.status) === -1
+            ) {
+                this._finishProfileJob(account, error || "Profiljobstatus ungültig", false);
+                return;
+            }
+            if (payload.events !== undefined && !Array.isArray(payload.events)) {
+                this._finishProfileJob(account, "Device-Login-Events ungültig", false);
+                return;
+            }
+            let events = this._safeDeviceLoginEvents(payload.events || []);
+            if (payload.events && events.length !== payload.events.length) {
+                this._finishProfileJob(account, "Device-Login-Events ungültig", false);
+                return;
+            }
+            if (events.length) {
+                this._deviceLoginEvents[account] = events;
+                this._buildUsageMenu();
+            }
+            if (["queued", "running", "cancel_requested"].indexOf(payload.status) !== -1) {
+                this._scheduleProfileJobPoll(account, generation, force);
+                return;
+            }
+            if (payload.status === "completed") {
+                this._finishProfileJob(account, null, true);
+                return;
+            }
+            this._finishProfileJob(
+                account,
+                payload.status === "cancelled"
+                    ? "Device-Login abgebrochen"
+                    : this._shortText(payload.error || "Device-Login fehlgeschlagen", 200),
+                false
+            );
+        }), force === true, 10000);
+    },
+
+    _scheduleProfileJobPoll: function(account, generation, force) {
+        if (
+            generation !== this._deviceLoginPollGeneration ||
+            !this._deviceLoginJobs[account]
+        ) {
+            return;
+        }
+        let pollId = Mainloop.timeout_add(1000, Lang.bind(this, function() {
+            this._clearSource("_deviceLoginPollId");
+            this._pollProfileJob(account, force);
+            return false;
+        }));
+        if (!pollId) {
+            this._finishProfileJob(account, "Device-Login-Status konnte nicht weiter geprüft werden", false);
+            return;
+        }
+        this._setSource("_deviceLoginPollId", pollId);
+    },
+
+    _finishProfileJob: function(account, error, success) {
+        let deleteWaiting = Boolean(this._accountDeleteWaitingForProfileJob[account]);
+        delete this._accountDeleteWaitingForProfileJob[account];
+        delete this._profilePendingAccounts[account];
+        let remainingResumeJobs = [];
+        for (let index = 0; index < this._profileJobResumeQueue.length; index++) {
+            if (this._profileJobResumeQueue[index] !== account) {
+                remainingResumeJobs.push(this._profileJobResumeQueue[index]);
+            }
+        }
+        this._profileJobResumeQueue = remainingResumeJobs;
+        if (this._profileJobPollingAccount === account) {
+            this._profileJobPollingAccount = "";
+        }
+        this._deviceLoginPollGeneration += 1;
+        this._removeSource("_deviceLoginPollId");
+        delete this._deviceLoginJobs[account];
+        delete this._deviceLoginActive[account];
+        delete this._deviceLoginEvents[account];
+        delete this._deviceLoginLiveText[account];
+        if (this._deviceLoginLiveAccount === account) {
+            this._deviceLoginLiveAccount = "";
+        }
+        if (error) {
+            this._deviceLoginErrors[account] = this._shortText(error, 200);
+        } else if (success) {
+            delete this._deviceLoginErrors[account];
+            this._profileJobsLoaded = false;
+        }
+        this._buildUsageMenu();
+        if (success) {
+            this._refreshFresh(false);
+        } else if (!deleteWaiting && this._ensureBackendUsageRows()) {
+            this._refreshFormattedSurfaces();
+        }
+        if (deleteWaiting) {
+            this._drainAccountChanges();
+        }
+        this._pollNextProfileJob();
+    },
+
+    _cancelProfileJob: function(account, force) {
+        let jobId = this._deviceLoginJobs[account];
+        if (!jobId) {
+            return false;
+        }
+        if (
+            this._profileJobPollingAccount &&
+            this._profileJobPollingAccount !== account
+        ) {
+            this._profileJobResumeQueue.unshift(this._profileJobPollingAccount);
+            this._profileJobPollingAccount = "";
+        }
+        this._deviceLoginPollGeneration += 1;
+        this._removeSource("_deviceLoginPollId");
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._finishProfileJob(account, String(e), false);
+            return true;
+        }
+        argv.push("profile", "cancel", jobId, "--json");
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (this._deviceLoginJobs[account] !== jobId) {
+                return;
+            }
+            if (
+                error || !payload || payload.account !== account ||
+                payload.job_id !== jobId ||
+                ["cancel_requested", "cancelled", "completed", "failed"].indexOf(payload.status) === -1
+            ) {
+                this._finishProfileJob(account, error || "Device-Login konnte nicht abgebrochen werden", false);
+                return;
+            }
+            if (payload.status === "cancel_requested") {
+                this._pollProfileJob(account, true);
+                return;
+            }
+            if (payload.status === "completed") {
+                this._finishProfileJob(account, null, true);
+                return;
+            }
+            this._finishProfileJob(
+                account,
+                payload.status === "cancelled"
+                    ? "Device-Login abgebrochen"
+                    : this._shortText(payload.error || "Device-Login fehlgeschlagen", 200),
+                false
+            );
+        }), force === true, 10000);
+        return true;
+    },
+
+    _startDeviceLogin: function(usage) {
+        if (!usage || !usage.account || this._removed) {
+            return;
+        }
+        if (Object.keys(this._deviceLoginActive).length > 0) {
+            this._deviceLoginErrors[usage.account] =
+                "Es läuft bereits ein Anmelde- oder Profiljob";
+            this._buildUsageMenu();
+            return;
+        }
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._deviceLoginErrors[usage.account] = String(e);
+            this._buildUsageMenu();
+            return;
+        }
+        argv.push(
+            "profile", "device-login", "--account", usage.account,
+            "--timeout", "900", "--format", "json"
+        );
+        this._deviceLoginActive[usage.account] = true;
+        this._deviceLoginLiveAccount = usage.account;
+        this._deviceLoginLiveText[usage.account] = "";
+        delete this._deviceLoginErrors[usage.account];
+        this._buildUsageMenu();
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            delete this._deviceLoginActive[usage.account];
+            delete this._deviceLoginEvents[usage.account];
+            delete this._deviceLoginLiveText[usage.account];
+            if (this._deviceLoginLiveAccount === usage.account) {
+                this._deviceLoginLiveAccount = "";
+            }
+            if (
+                error || !payload || payload.account !== usage.account ||
+                typeof payload.ok !== "boolean"
+            ) {
+                this._deviceLoginErrors[usage.account] = this._shortText(
+                    error || "Device-Login fehlgeschlagen",
+                    200
+                );
+                this._buildUsageMenu();
+                return;
+            }
+            if (payload.ok !== true) {
+                this._deviceLoginErrors[usage.account] = this._shortText(
+                    payload.error || "Device-Login fehlgeschlagen",
+                    200
+                );
+                this._buildUsageMenu();
+                return;
+            }
+            delete this._deviceLoginErrors[usage.account];
+            this._refreshFresh(false);
+        }), false, DEVICE_LOGIN_TIMEOUT_MS);
+    },
+
+    _cancelDeviceLogin: function(account) {
+        if (!account || !this._deviceLoginActive[account]) {
+            return;
+        }
+        if (this._deviceLoginJobs[account]) {
+            this._cancelProfileJob(account);
+            return;
+        }
+        let running = this._auxCommand === "device-login" &&
+            this._deviceLoginLiveAccount === account;
+        let removedQueued = false;
+        if (!running && Array.isArray(this._backendAuxQueue)) {
+            let remaining = [];
+            for (let index = 0; index < this._backendAuxQueue.length; index++) {
+                let request = this._backendAuxQueue[index];
+                let argv = request && Array.isArray(request.argv) ? request.argv : [];
+                let accountIndex = argv.indexOf("--account");
+                if (
+                    argv.indexOf("device-login") !== -1 &&
+                    accountIndex !== -1 &&
+                    argv[accountIndex + 1] === account
+                ) {
+                    removedQueued = true;
+                    continue;
+                }
+                remaining.push(request);
+            }
+            this._backendAuxQueue = remaining;
+        }
+        if (!running && !removedQueued) {
+            return;
+        }
+        delete this._deviceLoginActive[account];
+        delete this._deviceLoginEvents[account];
+        delete this._deviceLoginLiveText[account];
+        if (this._deviceLoginLiveAccount === account) {
+            this._deviceLoginLiveAccount = "";
+        }
+        if (running) {
+            this._cancelAuxProcess();
+        }
+        this._deviceLoginErrors[account] = "Device-Login abgebrochen";
+        this._buildUsageMenu();
+        this._runSafely("device login queue drain", Lang.bind(this, function() {
+            this._drainBackendChanges();
+            this._drainAccountChanges();
+            this._drainDeferredAuxRequests();
+            this._drainConsumptionRequests();
+        }));
+    },
+
+    _recordDeviceLoginChunk: function(name, chunk) {
+        let account = this._deviceLoginLiveAccount;
+        if (!account || typeof chunk !== "string") {
+            return;
+        }
+        let current = String(this._deviceLoginLiveText[account] || "") + chunk;
+        let parsedEvents = this._deviceLoginEventsFromText(current);
+        this._deviceLoginLiveText[account] = current.slice(-4096);
+        let previous = this._deviceLoginEvents[account] || [];
+        let merged = previous.slice();
+        for (let index = 0; index < parsedEvents.length && merged.length < 8; index++) {
+            let event = parsedEvents[index];
+            let duplicate = merged.some(function(existing) {
+                return existing.kind === event.kind && existing.value === event.value;
+            });
+            if (!duplicate) {
+                merged.push(event);
+            }
+        }
+        let events = this._safeDeviceLoginEvents(merged);
+        if (JSON.stringify(events) !== JSON.stringify(previous)) {
+            this._deviceLoginEvents[account] = events;
+            this._buildUsageMenu();
+        }
+    },
+
+    _deviceLoginEventsFromText: function(text) {
+        if (typeof text !== "string" || !text) {
+            return [];
+        }
+        let events = [];
+        let urls = text.match(/https:\/\/[^\s<>"']{1,480}/gi) || [];
+        for (let index = 0; index < urls.length; index++) {
+            events.push({ kind: "url", value: urls[index].replace(/[),.;]+$/g, "") });
+        }
+        let codePattern = /(?:device\s+code|code|kode)\s*[:\uFF1A]\s*([A-Za-z0-9][A-Za-z0-9_-]{3,127})/gi;
+        let match;
+        while ((match = codePattern.exec(text)) !== null) {
+            events.push({ kind: "code", value: match[1] });
+        }
+        return this._safeDeviceLoginEvents(events);
+    },
+
+    _safeDeviceLoginEvents: function(events) {
+        if (!Array.isArray(events) || events.length > 8) {
+            return [];
+        }
+        let result = [];
+        let seen = Object.create(null);
+        for (let i = 0; i < events.length; i++) {
+            let event = events[i];
+            if (!event || typeof event !== "object" || Array.isArray(event)) {
+                continue;
+            }
+            let kind = this._safeText(event.kind, 16);
+            let value = this._safeText(event.value, 512);
+            if ((kind === "url" || kind === "code") && value) {
+                let identity = kind + "\u0000" + value;
+                if (!seen[identity]) {
+                    seen[identity] = true;
+                    result.push({ kind: kind, value: value });
+                }
+            }
+        }
+        return result;
+    },
+
+    _copyDeviceLoginEvent: function(event) {
+        if (!event || (event.kind !== "url" && event.kind !== "code") ||
+            typeof event.value !== "string" || !event.value) {
+            return false;
+        }
+        try {
+            let clipboard = St.Clipboard.get_default();
+            if (!clipboard || typeof clipboard.set_text !== "function") {
+                throw new Error("clipboard unavailable");
+            }
+            clipboard.set_text(St.ClipboardType.CLIPBOARD, event.value);
+            return true;
+        } catch (e) {
+            this._showCommandError("Device-Login konnte nicht kopiert werden");
+            return false;
+        }
     },
 
     _updateAccountPanelSetting: function(account, changes) {
@@ -4600,15 +5995,23 @@ CodexUsageApplet.prototype = {
     },
 
     _addResetDetail: function(usage) {
-        let five = this._windowResetParts(usage.five_hour, usage.account, "click", true);
-        let week = this._windowResetParts(usage.weekly, usage.account, "click", true);
+        let five = this._windowResetParts(usage.five_hour, usage.account, "click", false);
+        let week = this._windowResetParts(usage.weekly, usage.account, "click", false);
         let backend = this._backendSummary(usage);
-        let plain = "5h Reset " + five.plain +
-            "     Woche Reset " + week.plain +
-            "     Abruf " + backend;
-        let markup = this._escapeMarkup("5h Reset ") + five.markup +
-            this._escapeMarkup("     Woche Reset ") + week.markup +
-            this._escapeMarkup("     Abruf " + backend);
+        let plainParts = [];
+        let markupParts = [];
+        if (five.plain) {
+            plainParts.push("5h Reset " + five.plain);
+            markupParts.push(this._escapeMarkup("5h Reset ") + five.markup);
+        }
+        if (week.plain) {
+            plainParts.push("Woche Reset " + week.plain);
+            markupParts.push(this._escapeMarkup("Woche Reset ") + week.markup);
+        }
+        plainParts.push("Abruf " + backend);
+        markupParts.push(this._escapeMarkup("Abruf " + backend));
+        let plain = plainParts.join("     ");
+        let markup = markupParts.join(this._escapeMarkup("     "));
         let item = this._addDisabled(this.menu, plain, "codex-usage-detail");
         this._setItemMarkup(item, markup);
     },
@@ -4683,9 +6086,10 @@ CodexUsageApplet.prototype = {
             let label = this._windowDisplayLabel(windows[i]);
             let percent = this._percentParts(windows[i], account, surface);
             let reset = this._windowResetParts(windows[i], account, surface, false);
-            plain.push(label + " " + percent.plain + (reset.plain ? " (" + reset.plain + ")" : ""));
+            plain.push(label + (percent.plain ? " " + percent.plain : "") +
+                (reset.plain ? " (" + reset.plain + ")" : ""));
             markup.push(
-                this._escapeMarkup(label + " ") + percent.markup +
+                this._escapeMarkup(label + (percent.markup ? " " : "")) + percent.markup +
                 (reset.markup ? " (" + reset.markup + ")" : "")
             );
         }
@@ -5092,7 +6496,33 @@ CodexUsageApplet.prototype = {
                 usage: usage,
                 settings: settings,
                 slots: slots,
-                visible: !settings.muted && slots.length > 0
+                visible: !settings.muted && (
+                    slots.length > 0 ||
+                    this._elementTargetEnabled(
+                        usage.account,
+                        "consumption",
+                        "panel",
+                        this._consumptionSettings[usage.account] &&
+                            this._consumptionSettings[usage.account]["show-panel"]
+                    ) ||
+                    this._elementTargetEnabled(
+                        usage.account,
+                        "forecast",
+                        "panel",
+                        this._consumptionSettings[usage.account] &&
+                            this._consumptionSettings[usage.account]["show-panel"]
+                    ) ||
+                    this._elementTargetEnabled(
+                        usage.account,
+                        "usage-resets",
+                        "panel",
+                        this._resetSettings[usage.account] &&
+                            this._resetSettings[usage.account]["show-panel"]
+                    ) ||
+                    this._elementTargetEnabled(usage.account, "account-id", "panel") ||
+                    this._elementTargetEnabled(usage.account, "label", "panel") ||
+                    this._elementTargetEnabled(usage.account, "tag", "panel")
+                )
             });
         }
         items.sort(function(left, right) {
@@ -5121,9 +6551,16 @@ CodexUsageApplet.prototype = {
         let slots = item.slots.map(Lang.bind(this, function(slot) {
             return this._panelSlotContent(item, slot);
         }));
-        let plain = tag + " " + slots.map(function(slot) { return slot.plain; }).join(" / ");
-        let markup = this._escapeMarkup(tag + " ") +
-            slots.map(function(slot) { return slot.markup; }).join(" / ");
+        let consumption = this._consumptionParts(item.usage, "panel");
+        let resets = this._usageResetParts(item.usage, "panel");
+        let slotPlain = slots.map(function(slot) { return slot.plain; }).join(" / ");
+        let slotMarkup = slots.map(function(slot) { return slot.markup; }).join(" / ");
+        let plain = tag + (slotPlain ? " " + slotPlain : "") +
+            (consumption ? " " + consumption.plain : "") +
+            (resets ? " " + resets.plain : "");
+        let markup = this._escapeMarkup(tag) + (slotMarkup ? " " + slotMarkup : "") +
+            (consumption ? " " + consumption.markup : "") +
+            (resets ? " " + resets.markup : "");
         if (this.panelAccountSeparator === "brackets") {
             return {
                 plain: "[" + plain + "]",
@@ -5138,10 +6575,189 @@ CodexUsageApplet.prototype = {
         let reset = this._windowResetParts(slot.window, item.usage.account, "panel", false);
         let label = this._panelSourceLabel(slot.source);
         return {
-            plain: label + " " + percent.plain + (reset.plain ? " " + reset.plain : ""),
-            markup: this._escapeMarkup(label + " ") + percent.markup +
+            plain: label + (percent.plain ? " " + percent.plain : "") +
+                (reset.plain ? " " + reset.plain : ""),
+            markup: this._escapeMarkup(label + (percent.markup ? " " : "")) + percent.markup +
                 (reset.markup ? " " + reset.markup : "")
         };
+    },
+
+    _consumptionParts: function(usage, surface) {
+        let row = this._consumptionSettings && this._consumptionSettings[usage.account];
+        if (!row) {
+            return null;
+        }
+        let rawWindows = Array.isArray(usage.cost_windows) ? usage.cost_windows : [];
+        let parts = [];
+        for (let i = 0; i < rawWindows.length; i++) {
+            let part = this._consumptionWindowPart(rawWindows[i], row, surface);
+            if (part) {
+                parts.push(part);
+            }
+        }
+        if (!parts.length) {
+            return null;
+        }
+        return {
+            plain: parts.map(function(part) { return part.plain; }).join(" · "),
+            markup: parts.map(function(part) { return part.markup; }).join(" · ")
+        };
+    },
+
+    _usageResetParts: function(usage, surface) {
+        let row = this._resetSettings && this._resetSettings[usage.account];
+        if (!row) {
+            row = this._defaultResetRow(usage.account);
+        }
+        let legacyVisible = surface === "panel"
+            ? row["show-panel"]
+            : (surface === "hover" ? row["show-tooltip"] : true);
+        if (!this._elementTargetEnabled(usage.account, "usage-resets", surface, legacyVisible)) {
+            return null;
+        }
+        let state = this._safeUsageResets(usage.usage_resets);
+        if (!state.known) {
+            if (!row["show-unknown"]) {
+                return null;
+            }
+            return { plain: "Resets: —", markup: "Resets: —" };
+        }
+        if (state.available === 0 && row["hide-when-zero"]) {
+            return null;
+        }
+        let available = state.available;
+        let text;
+        if (row.format === "verbose") {
+            text = available + (available === 1
+                ? " Usage-Reset verfügbar"
+                : " Usage-Resets verfügbar");
+        } else if (row.format === "readable") {
+            text = available + (available === 1 ? " Reset" : " Resets");
+        } else {
+            text = "↻" + available;
+        }
+        return { plain: text, markup: this._escapeMarkup(text) };
+    },
+
+    _consumptionWindowPart: function(window, row, surface) {
+        if (!window || typeof window !== "object") {
+            return null;
+        }
+        let value = Number(window.consumed_percentage_points);
+        if (!Number.isFinite(value) || value < 0) {
+            return null;
+        }
+        if (row["hide-when-zero"] && value === 0) {
+            return null;
+        }
+        let valueText = this._formatConsumptionValue(value);
+        let period = this._consumptionPeriod(row.amount, row.unit);
+        let coverage = window.coverage;
+        if (coverage === "insufficient") {
+            return {
+                plain: "Limitverbrauch " + period + ": nicht genügend Messdaten",
+                markup: this._escapeMarkup(
+                    "Limitverbrauch " + period + ": nicht genügend Messdaten"
+                )
+            };
+        }
+        let marker = "";
+        if (row["show-coverage-marker"]) {
+            if (coverage === "partial") {
+                marker = " (mindestens)";
+            } else if (coverage === "stale") {
+                marker = " (veraltet)";
+            }
+        }
+        let windowLabel = Number(window.limit_window_seconds) === 604800 ? "Woche" : "5h";
+        let plain;
+        if (row.format === "verbose") {
+            plain = "Limitverbrauch " + period + " (" + windowLabel + "): " +
+                valueText + " %-Pkt." + marker;
+        } else if (row.format === "custom") {
+            plain = this._customConsumptionText(row["custom-format"], {
+                value: valueText,
+                period: period,
+                window: windowLabel,
+                coverage: marker ? marker.slice(2, -1) : "vollständig"
+            });
+        } else {
+            plain = "Δ" + period + " " + valueText + "pp" + marker;
+        }
+        let account = row.account;
+        let styleRow = this._percentStyles[account] || this._defaultStyleRow(account, "percent");
+        let visible = this._elementTargetEnabled(
+            account,
+            "consumption",
+            surface,
+            surface === "panel" ? row["show-panel"] :
+                (surface === "hover" ? row["show-tooltip"] : true)
+        );
+        let consumptionMarkup = visible
+            ? this._styleSpan(plain, styleRow, Math.max(0, 100 - value), surface)
+            : this._escapeMarkup(plain);
+        let parts = [{ plain: plain, markup: consumptionMarkup }];
+        let forecast = this._forecastWindowPart(window, row, surface, Math.max(0, 100 - value));
+        if (forecast) {
+            parts.push(forecast);
+        }
+        return {
+            plain: parts.map(function(part) { return part.plain; }).join(" "),
+            markup: parts.map(function(part) { return part.markup; }).join(" ")
+        };
+    },
+
+    _forecastWindowPart: function(window, row, surface, remaining) {
+        let visible = this._elementTargetEnabled(
+            row.account,
+            "forecast",
+            surface,
+            surface === "panel" ? row["show-panel"] :
+                (surface === "hover" ? row["show-tooltip"] : true)
+        );
+        if (!visible) {
+            return null;
+        }
+        let estimate = window.coverage === "stale" || window.coverage === "insufficient"
+            ? null
+            : window.estimated_seconds_to_exhaustion;
+        let durationStyle = this._durationStyles[row.account] ||
+            this._defaultStyleRow(row.account, "duration");
+        let duration = estimate === null || estimate === undefined
+            ? "—"
+            : this._formatDurationPart(Math.ceil(estimate / 60), durationStyle.format);
+        let marker = row["show-coverage-marker"] && window.coverage === "partial"
+            ? " (mindestens)"
+            : "";
+        let forecastText = estimate === null || estimate === undefined
+            ? "—"
+            : "≈ " + duration + marker;
+        let plain = "Zeit bis Tokenende " + forecastText;
+        let markup = estimate === null || estimate === undefined
+            ? this._escapeMarkup(plain)
+            : this._styleSpan(forecastText, durationStyle, remaining, surface);
+        if (estimate !== null && estimate !== undefined) {
+            markup = this._escapeMarkup("Zeit bis Tokenende ") + markup;
+        }
+        return { plain: plain, markup: markup };
+    },
+
+    _customConsumptionText: function(template, values) {
+        let text = typeof template === "string" && template ? template :
+            "Δ{period} {value}pp";
+        return text.replace(/\{(value|period|window|coverage)\}/g, function(_match, key) {
+            return values[key];
+        });
+    },
+
+    _formatConsumptionValue: function(value) {
+        let rounded = Math.round(value * 10) / 10;
+        return String(rounded.toFixed(1)).replace(".", ",");
+    },
+
+    _consumptionPeriod: function(amount, unit) {
+        let labels = { minutes: "Min.", hours: "h", days: "Tage" };
+        return String(amount) + " " + (labels[unit] || unit);
     },
 
     _panelTag: function(item) {
@@ -5298,6 +6914,12 @@ CodexUsageApplet.prototype = {
             display = this._defaultDisplayRow(account);
         }
         let selection = display[surface];
+        let identityElement = selection === 0
+            ? "account-id"
+            : (selection === 2 ? "tag" : "label");
+        if (!this._elementTargetEnabled(account, identityElement, surface, true)) {
+            return "";
+        }
         if (selection === 0) {
             return account;
         }
@@ -5305,6 +6927,14 @@ CodexUsageApplet.prototype = {
             return this._safeText(display.tag, 8) || this._accountTag(label);
         }
         return label;
+    },
+
+    _displaySeparatorEnabled: function(account, surface) {
+        let row = this._displaySettings && this._displaySettings[account];
+        if (!row || (surface !== "hover" && surface !== "click")) {
+            return false;
+        }
+        return row[surface + "-separator"] === true;
     },
 
     _clearPanelClasses: function() {
@@ -5322,18 +6952,30 @@ CodexUsageApplet.prototype = {
         let markupLines = [];
         for (let i = 0; i < this._usages.length; i++) {
             let usage = this._usages[i];
+            if (this._displaySeparatorEnabled(usage.account, "hover")) {
+                plainLines.push(MENU_SPACER);
+                markupLines.push(MENU_SPACER);
+            }
             let five = this._percentParts(usage.five_hour, usage.account, "hover");
             let week = this._percentParts(usage.weekly, usage.account, "hover");
             let stale = usage.stale ? " (gespeichert)" : "";
             let display = this._accountDisplayText({ usage: usage }, "hover");
-            plainLines.push(
-                display + ": 5h " + five.plain + ", Woche " + week.plain + stale
-            );
-            markupLines.push(
-                this._escapeMarkup(display + ": 5h ") + five.markup +
-                    this._escapeMarkup(", Woche ") + week.markup +
-                    this._escapeMarkup(stale)
-            );
+            let summaryParts = display ? [display + ":"] : [];
+            let summaryMarkupParts = display ? [this._escapeMarkup(display + ":")] : [];
+            if (five.plain) {
+                summaryParts.push("5h " + five.plain);
+                summaryMarkupParts.push(this._escapeMarkup("5h ") + five.markup);
+            }
+            if (week.plain) {
+                summaryParts.push("Woche " + week.plain);
+                summaryMarkupParts.push(this._escapeMarkup("Woche ") + week.markup);
+            }
+            if (stale) {
+                summaryParts.push(stale);
+                summaryMarkupParts.push(this._escapeMarkup(stale));
+            }
+            plainLines.push(summaryParts.join(", "));
+            markupLines.push(summaryMarkupParts.join(this._escapeMarkup(", ")));
             let fiveReset = this._windowResetParts(
                 usage.five_hour,
                 usage.account,
@@ -5354,6 +6996,16 @@ CodexUsageApplet.prototype = {
                     (weekReset.markup || "–");
                 plainLines.push(resetPlain);
                 markupLines.push(resetMarkup);
+            }
+            let consumption = this._consumptionParts(usage, "hover");
+            if (consumption) {
+                plainLines.push("  " + consumption.plain);
+                markupLines.push(this._escapeMarkup("  ") + consumption.markup);
+            }
+            let resets = this._usageResetParts(usage, "hover");
+            if (resets) {
+                plainLines.push("  " + resets.plain);
+                markupLines.push(this._escapeMarkup("  ") + resets.markup);
             }
             let main = this._poolDetailParts(
                 usage.main,
@@ -5383,6 +7035,80 @@ CodexUsageApplet.prototype = {
         };
     },
 
+    _errorNotificationNow: function() {
+        return Date.now();
+    },
+
+    _errorNotificationFingerprint: function(key) {
+        let text = String(key || "");
+        let primary = 2166136261;
+        let secondary = 3735928559;
+        for (let i = 0; i < text.length; i++) {
+            let code = text.charCodeAt(i);
+            primary = Math.imul(primary ^ code, 16777619) >>> 0;
+            secondary = Math.imul(secondary ^ (code + i), 2246822519) >>> 0;
+        }
+        return primary.toString(16).padStart(8, "0") + "-" +
+            secondary.toString(16).padStart(8, "0");
+    },
+
+    _shouldNotifyError: function(key) {
+        let now = this._errorNotificationNow();
+        if (!Number.isFinite(now)) {
+            now = Date.now();
+        }
+        let state = {};
+        try {
+            let raw = this.errorNotificationState;
+            let parsed = typeof raw === "string" &&
+                raw.length <= MAX_ERROR_NOTIFICATION_STATE_CHARS
+                ? JSON.parse(raw || "{}")
+                : {};
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                state = parsed;
+            }
+        } catch (e) {
+            state = {};
+        }
+
+        let fingerprint = this._errorNotificationFingerprint(key);
+        let keys = Object.keys(state);
+        for (let i = keys.length - 1; i >= 0; i--) {
+            let value = state[keys[i]];
+            if (!Number.isFinite(value) || value > now ||
+                now - value >= ERROR_NOTIFICATION_SUPPRESSION_MS) {
+                delete state[keys[i]];
+            }
+        }
+        if (Number.isFinite(state[fingerprint]) &&
+            now - state[fingerprint] < ERROR_NOTIFICATION_SUPPRESSION_MS) {
+            this.errorNotificationState = JSON.stringify(state);
+            return false;
+        }
+
+        state[fingerprint] = now;
+        keys = Object.keys(state);
+        if (keys.length > MAX_ERROR_NOTIFICATION_STATES) {
+            keys.sort(function(left, right) {
+                return state[right] - state[left];
+            });
+            for (let j = MAX_ERROR_NOTIFICATION_STATES; j < keys.length; j++) {
+                delete state[keys[j]];
+            }
+        }
+        let serialized = JSON.stringify(state);
+        this.errorNotificationState = serialized;
+        try {
+            if (this.settings && typeof this.settings.setValue === "function") {
+                this.settings.setValue("error-notification-state", serialized);
+            }
+        } catch (e) {
+            global.log("[" + UUID + "] error notification state write failed: " +
+                this._shortText(e, 180));
+        }
+        return true;
+    },
+
     _notifyForPayload: function() {
         let currentWarnings = Object.create(null);
         let currentErrors = Object.create(null);
@@ -5396,10 +7122,12 @@ CodexUsageApplet.prototype = {
                     let errorMessage = usage.status === "login_required"
                         ? "Token abgelaufen · codex-usage reactivate " + usage.account
                         : usage.error || this._statusLabel(usage.status);
-                    Main.notify(
-                        _("Codex Usage: ") + usage.label,
-                        errorMessage
-                    );
+                    if (this._shouldNotifyError(errorKey + ":" + errorMessage)) {
+                        Main.notify(
+                            _("Codex Usage: ") + usage.label,
+                            errorMessage
+                        );
+                    }
                 }
             }
             if (usage.status === "partial") {
@@ -5485,7 +7213,7 @@ CodexUsageApplet.prototype = {
         if (this.notifyErrors) {
             try {
                 let key = "command:" + text;
-                if (!this._errorState[key]) {
+                if (!this._errorState[key] && this._shouldNotifyError(key)) {
                     Main.notify(_("Codex Usage"), text);
                     this._errorState[key] = true;
                 }
@@ -5505,13 +7233,14 @@ CodexUsageApplet.prototype = {
     },
 
     _percentPartsFromValue: function(value, account, surface) {
+        if (!this._elementTargetEnabled(account, "percent", surface)) {
+            return { plain: "", markup: "" };
+        }
         let plain = value === null || !Number.isFinite(value)
             ? "–"
             : Math.round(value) + "%";
         let style = this._percentStyles[account] || this._defaultStyleRow(account, "percent");
-        let markup = this._targetEnabled(account, "percent", surface)
-            ? this._styleSpan(plain, style, value, surface)
-            : this._escapeMarkup(plain);
+        let markup = this._styleSpan(plain, style, value, surface);
         return { plain: plain, markup: markup };
     },
 
@@ -5594,9 +7323,12 @@ CodexUsageApplet.prototype = {
     },
 
     _windowResetParts: function(window, account, surface, includeUnselected) {
-        let showDate = includeUnselected || this._targetEnabled(account, "date", surface);
-        let showTime = includeUnselected || this._targetEnabled(account, "time", surface);
-        let showDuration = includeUnselected || this._targetEnabled(account, "duration", surface);
+        let dateEnabled = this._elementTargetEnabled(account, "date", surface);
+        let timeEnabled = this._elementTargetEnabled(account, "time", surface);
+        let durationEnabled = this._elementTargetEnabled(account, "duration", surface);
+        let showDate = includeUnselected || dateEnabled;
+        let showTime = includeUnselected || timeEnabled;
+        let showDuration = includeUnselected || durationEnabled;
         if (!showDate && !showTime && !showDuration) {
             return { plain: "", markup: "" };
         }
@@ -5620,21 +7352,21 @@ CodexUsageApplet.prototype = {
         let markupParts = [];
         if (showDate) {
             plainParts.push(dateText);
-            markupParts.push(this._targetEnabled(account, "date", surface)
+            markupParts.push(dateEnabled
                 ? this._styleSpan(dateText, dateStyle, remaining, surface)
                 : this._escapeMarkup(dateText));
         }
         if (showTime) {
             plainParts.push(timeText);
-            markupParts.push(this._targetEnabled(account, "time", surface)
+            markupParts.push(timeEnabled
                 ? this._styleSpan(timeText, timeStyle, remaining, surface)
                 : this._escapeMarkup(timeText));
         }
         if (showDuration) {
             let labeledDuration = "Rest " + durationText;
             plainParts.push(labeledDuration);
-            markupParts.push(this._targetEnabled(account, "duration", surface)
-                ? this._escapeMarkup("Rest ") + this._styleSpan(durationText, durationStyle, durationMinutes, surface)
+            markupParts.push(durationEnabled
+                ? this._escapeMarkup("Rest ") + this._styleSpan(durationText, durationStyle, remaining, surface)
                 : this._escapeMarkup(labeledDuration));
         }
         return {
@@ -5643,8 +7375,40 @@ CodexUsageApplet.prototype = {
         };
     },
 
+    _elementTargetEnabled: function(account, element, surface, legacyVisible) {
+        let elements = {
+            percent: 0,
+            date: 1,
+            time: 2,
+            duration: 3,
+            consumption: 4,
+            forecast: 5,
+            "usage-resets": 6,
+            "account-id": 7,
+            label: 8,
+            tag: 9
+        };
+        let elementId = elements[element];
+        let target = this._styleTargets[account + ":" + elementId];
+        if (!target && legacyVisible !== undefined) {
+            return legacyVisible === true;
+        }
+        return this._targetEnabled(account, element, surface);
+    },
+
     _targetEnabled: function(account, element, surface) {
-        let elements = { percent: 0, date: 1, time: 2, duration: 3 };
+        let elements = {
+            percent: 0,
+            date: 1,
+            time: 2,
+            duration: 3,
+            consumption: 4,
+            forecast: 5,
+            "usage-resets": 6,
+            "account-id": 7,
+            label: 8,
+            tag: 9
+        };
         let elementId = elements[element];
         let target = this._styleTargets[account + ":" + elementId];
         if (!target) {
@@ -6015,6 +7779,14 @@ CodexUsageApplet.prototype = {
     },
 
     _cancelAuxProcess: function() {
+        if (this._auxCommand === "device-login") {
+            let liveAccount = this._deviceLoginLiveAccount;
+            if (liveAccount && !this._deviceLoginJobs[liveAccount]) {
+                delete this._deviceLoginActive[liveAccount];
+            }
+            this._deviceLoginLiveText = Object.create(null);
+            this._deviceLoginLiveAccount = "";
+        }
         if (this._auxCommand === "service-enable" && !this._systemdActive) {
             this._serviceAutoAttempted = false;
         }
@@ -6117,6 +7889,8 @@ CodexUsageApplet.prototype = {
         this._removeSource("_timerId");
         this._removeSource("_displayTimerId");
         this._removeSource("_staleCheckId");
+        this._deviceLoginPollGeneration += 1;
+        this._removeSource("_deviceLoginPollId");
         this._removeIdleSources();
         this._cancelProcess();
         this._cancelAuxProcess();

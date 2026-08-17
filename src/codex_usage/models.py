@@ -6,6 +6,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from .usage_resets import UsageResetState
+
 _KNOWN_WINDOW_NAMES = frozenset(
     {
         "5h",
@@ -315,6 +317,9 @@ class AccountUsage:
     values_captured_at: datetime | None = None
     stale: bool = False
     cache_invalidated: bool = False
+    usage_resets: UsageResetState = field(
+        default_factory=lambda: UsageResetState(None, False, False)
+    )
     # Internal fetch generation; it prevents an in-flight pre-reconfiguration
     # result from recreating state after the account was reset.
     state_generation: int | None = field(default=None, compare=False, repr=False)
@@ -385,6 +390,7 @@ class AccountUsage:
             else None,
             "stale": self.stale or terminal_status,
             "cache_invalidated": self.cache_invalidated or terminal_status,
+            "usage_resets": self.usage_resets.as_dict(),
         }
 
     def model_pool(self, model: str) -> UsagePool | None:

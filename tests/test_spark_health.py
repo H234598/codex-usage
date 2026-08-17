@@ -1,10 +1,13 @@
 import json
+import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from codex_usage.spark_health import (
     SPARK_HEALTH_MAX_RECORDS,
+    _health_key,
     set_spark_health,
     spark_health_status,
 )
@@ -60,6 +63,58 @@ def test_spark_health_success_is_fresh_until_expiry(tmp_path):
     assert stale["reason"] == "spark_health_stale"
 
 
+def test_spark_health_status_ignores_group_readable_file(tmp_path):
+    path = tmp_path / "health.json"
+    set_spark_health("backend-nufker", "healthy", path=path, now=NOW)
+    path.chmod(0o640)
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["state"] == "unknown"
+    assert result["reason"] == "no_successful_spark_turn"
+
+
+def test_spark_health_status_ignores_hard_linked_file(tmp_path):
+    path = tmp_path / "health.json"
+    set_spark_health("backend-nufker", "healthy", path=path, now=NOW)
+    os.link(path, tmp_path / "health-copy.json")
+
+    assert path.stat().st_nlink == 2
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["state"] == "unknown"
+    assert result["reason"] == "no_successful_spark_turn"
+
+
+def test_spark_health_status_rejects_more_than_max_records(tmp_path):
+    path = tmp_path / "health.json"
+    records = {
+        _health_key("backend-nufker"): {
+            "state": "healthy",
+            "checked_at": NOW.isoformat(),
+        }
+    }
+    records.update(
+        {
+            f"{index:064x}": {
+                "state": "healthy",
+                "checked_at": NOW.isoformat(),
+            }
+            for index in range(SPARK_HEALTH_MAX_RECORDS)
+        }
+    )
+    path.write_text(
+        json.dumps({"version": 1, "records": records}),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["state"] == "unknown"
+    assert result["reason"] == "no_successful_spark_turn"
+
+
 def test_spark_health_failure_stays_fail_closed(tmp_path):
     path = tmp_path / "health.json"
     set_spark_health("backend-nufker", "failed", reason="spark_turn_timeout", path=path, now=NOW)
@@ -77,6 +132,7 @@ def test_spark_health_rejects_naive_checked_at(tmp_path):
     record = next(iter(payload["records"].values()))
     record["checked_at"] = "2026-07-16T04:00:00"
     path.write_text(json.dumps(payload))
+    path.chmod(0o600)
 
     result = spark_health_status("backend-nufker", path=path, now=NOW)
 
@@ -131,3 +187,17 @@ def test_refreshing_old_account_keeps_health_record_in_bounded_rotation(tmp_path
 
     assert result["state"] == "failed"
     assert result["reason"] == "spark_turn_timeout"
+
+
+def test_spark_health_write_fails_when_directory_chmod_fails(tmp_path, monkeypatch):
+    path = tmp_path / "spark-health-dir" / "health.json"
+
+    def fail_chmod(_path, _mode):
+        raise PermissionError("spark health directory chmod blocked")
+
+    monkeypatch.setattr(Path, "chmod", fail_chmod)
+
+    with pytest.raises(PermissionError, match="spark health directory chmod blocked"):
+        set_spark_health("backend-nufker", "healthy", path=path, now=NOW)
+
+    assert not path.exists()

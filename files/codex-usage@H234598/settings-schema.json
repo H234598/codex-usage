@@ -15,6 +15,7 @@
         "backend-section",
         "refresh-section",
         "display-section",
+        "consumption-section",
         "reactivation-options-section"
       ]
     },
@@ -22,11 +23,8 @@
       "type": "page",
       "title": "Formatierung",
       "sections": [
-        "percent-style-section",
-        "date-style-section",
-        "time-style-section",
-        "duration-style-section",
-        "style-target-section"
+        "formatting-section",
+        "display-target-section"
       ]
     },
     "alerts-page": {
@@ -70,11 +68,19 @@
     },
     "display-section": {
       "type": "section",
-      "title": "Panel",
+      "title": "Leiste",
       "keys": [
         "account-panel-settings",
         "panel-account-separator",
         "panel-percent-source"
+      ]
+    },
+    "consumption-section": {
+      "type": "section",
+      "title": "Verbrauchszeiträume",
+      "keys": [
+        "account-consumption-settings",
+        "account-reset-display-settings"
       ]
     },
     "reactivation-options-section": {
@@ -84,37 +90,55 @@
         "show-reactivation-actions"
       ]
     },
+    "formatting-section": {
+      "type": "section",
+      "title": "Hervorhebungen und Design:",
+      "keys": [
+        "account-percent-styles",
+        "account-date-styles",
+        "account-time-styles",
+        "account-duration-styles"
+      ]
+    },
+    "display-target-section": {
+      "type": "section",
+      "title": "Anzeige:",
+      "keys": [
+        "account-display-settings",
+        "account-style-targets"
+      ]
+    },
     "percent-style-section": {
       "type": "section",
-      "title": "Prozentanzeige pro Account",
+      "title": "Verbleibendes Tokenlimit in %",
       "keys": [
         "account-percent-styles"
       ]
     },
     "date-style-section": {
       "type": "section",
-      "title": "Datum pro Account",
+      "title": "OpenAI - Reset: Datum des Reset",
       "keys": [
         "account-date-styles"
       ]
     },
     "time-style-section": {
       "type": "section",
-      "title": "Uhrzeit pro Account",
+      "title": "OpenAI - Reset: Uhrzeit",
       "keys": [
         "account-time-styles"
       ]
     },
     "duration-style-section": {
       "type": "section",
-      "title": "Restlaufzeit pro Account",
+      "title": "OpenAI - Reset: Restlaufzeit in Tagen bis Limitreset",
       "keys": [
         "account-duration-styles"
       ]
     },
     "style-target-section": {
       "type": "section",
-      "title": "Formatierungsorte",
+      "title": "Anzeige:",
       "keys": [
         "account-display-settings",
         "account-style-targets"
@@ -169,7 +193,7 @@
   "account-backends": {
     "type": "list",
     "description": "Abrufwege und Accounts · Profilordner wird automatisch angelegt, wenn er noch nicht vorhanden ist.",
-    "tooltip": "Plus legt Account an. Doppelklick oder Bearbeiten ändert Account-Optionen.",
+    "tooltip": "Plus legt Account an. Minus löscht Account aus der Config, der Profilordner bleibt erhalten. Doppelklick oder Bearbeiten ändert Account-Optionen.",
     "columns": [
       {
         "id": "account",
@@ -184,8 +208,7 @@
       {
         "id": "auth-json",
         "title": "Auth JSON",
-        "type": "file",
-        "default": ""
+        "type": "file"
       },
       {
         "id": "profile-dir",
@@ -222,13 +245,13 @@
         "options": {
           "Bisheriger Direktabruf": 0,
           "Codex App Server": 1
-        }
+        },
+        "default": 0
       }
     ],
     "height": 180,
     "show-buttons": true,
     "hidden-buttons": [
-      "-",
       "up",
       "down"
     ],
@@ -236,7 +259,7 @@
   },
   "account-percent-styles": {
     "type": "list",
-    "description": "Prozentdarstellung pro Account",
+    "description": "Verbleibendes Tokenlimit in %",
     "columns": [
       {
         "id": "account",
@@ -392,12 +415,13 @@
       }
     ],
     "height": 180,
-    "show-buttons": false,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "account-date-styles": {
     "type": "list",
-    "description": "Datumsdarstellung pro Account",
+    "description": "OpenAI - Reset: Datum des Reset",
     "columns": [
       {
         "id": "account",
@@ -564,12 +588,13 @@
       }
     ],
     "height": 180,
-    "show-buttons": false,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "account-time-styles": {
     "type": "list",
-    "description": "Uhrzeitdarstellung pro Account",
+    "description": "OpenAI - Reset: Uhrzeit",
     "columns": [
       {
         "id": "account",
@@ -735,13 +760,14 @@
       }
     ],
     "height": 180,
-    "show-buttons": false,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "account-duration-styles": {
     "type": "list",
-    "description": "Restlaufzeitdarstellung pro Account",
-    "tooltip": "Restlaufzeit bis zum jeweiligen Limit-Reset. Die Schwelle ist in Minuten.",
+    "description": "OpenAI - Reset: Restlaufzeit in Tagen bis Limitreset",
+    "tooltip": "Restlaufzeit bis zum jeweiligen Limit-Reset. Die Schwelle ist ein verbleibender Prozentwert.",
     "columns": [
       {
         "id": "account",
@@ -837,11 +863,11 @@
       },
       {
         "id": "threshold",
-        "title": "Schwelle Minuten",
+        "title": "Schwelle %",
         "type": "integer",
         "min": 0,
-        "max": 10080,
-        "default": 120
+        "max": 100,
+        "default": 20
       },
       {
         "id": "below-font",
@@ -908,13 +934,14 @@
       }
     ],
     "height": 180,
-    "show-buttons": false,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "account-style-targets": {
     "type": "list",
-    "description": "Oberflächen für die Formatierung",
-    "tooltip": "Prozent, Datum, Uhrzeit und Restlaufzeit können je Oberfläche formatiert werden. Im Klick-Menü bleiben deaktivierte Werte als normaler Text sichtbar.",
+    "description": "Anzeigeziele für Account-ID, Label, Kürzel, Reset, Verbrauch und Prognose",
+    "tooltip": "Jedes Element kann je Oberfläche angezeigt und formatiert werden.",
     "columns": [
       {
         "id": "account",
@@ -929,7 +956,13 @@
           "Prozent": 0,
           "Datum": 1,
           "Uhrzeit": 2,
-          "Restlaufzeit": 3
+          "Restlaufzeit": 3,
+          "Verbrauchszeitraum": 4,
+          "Zeit bis Tokenende": 5,
+          "Usage-Resets": 6,
+          "Account-ID": 7,
+          "Label": 8,
+          "Kürzel": 9
         }
       },
       {
@@ -952,7 +985,8 @@
       }
     ],
     "height": 300,
-    "show-buttons": false,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "refresh-interval": {
@@ -1071,6 +1105,145 @@
     "show-buttons": false,
     "default": []
   },
+  "account-consumption-settings": {
+    "type": "list",
+    "description": "Limitverbrauch pro Account und Zeitraum",
+    "tooltip": "Das Applet fragt Verbrauchswerte über codex-usage ab; es rechnet keine Historie im JavaScript.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "show-panel",
+        "title": "Leiste anzeigen",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "show-tooltip",
+        "title": "Hover anzeigen",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "amount",
+        "title": "Menge",
+        "type": "integer",
+        "min": 1,
+        "max": 365,
+        "default": 1
+      },
+      {
+        "id": "unit",
+        "title": "Einheit",
+        "type": "string",
+        "options": {
+          "Minuten": "minutes",
+          "Stunden": "hours",
+          "Tage": "days"
+        },
+        "default": "hours"
+      },
+      {
+        "id": "limit-window",
+        "title": "Limitfenster",
+        "type": "string",
+        "options": {
+          "5h": "short",
+          "Woche": "weekly",
+          "Beide": "all"
+        },
+        "default": "short"
+      },
+      {
+        "id": "format",
+        "title": "Format",
+        "type": "string",
+        "options": {
+          "Kompakt": "compact",
+          "Ausführlich": "verbose",
+          "Benutzerdefiniert": "custom"
+        },
+        "default": "compact"
+      },
+      {
+        "id": "custom-format",
+        "title": "Eigenes Format",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "id": "hide-when-zero",
+        "title": "Bei null ausblenden",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "show-coverage-marker",
+        "title": "Datenmarker anzeigen",
+        "type": "boolean",
+        "default": true
+      }
+    ],
+    "height": 260,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-reset-display-settings": {
+    "type": "list",
+    "description": "Gespeicherte Usage-Resets pro Account",
+    "tooltip": "Panel und Hover zeigen bekannte Resetbestände. Einlösen bleibt ohne verifizierte Capability deaktiviert.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "show-panel",
+        "title": "Leiste anzeigen",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "show-tooltip",
+        "title": "Hover anzeigen",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "hide-when-zero",
+        "title": "Bei null ausblenden",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "show-unknown",
+        "title": "Unbekannt anzeigen",
+        "tooltip": "Zeigt bei fehlender belastbarer Quelle 'Resets: —'.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "format",
+        "title": "Format",
+        "type": "string",
+        "options": {
+          "Kompakt": "compact",
+          "Lesbar": "readable",
+          "Ausführlich": "verbose"
+        },
+        "default": "compact"
+      }
+    ],
+    "height": 220,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
   "account-display-settings": {
     "type": "list",
     "description": "Account-ID, Label und Kürzel je Oberfläche",
@@ -1120,6 +1293,18 @@
           "Kürzel": 2
         },
         "default": 1
+      },
+      {
+        "id": "hover-separator",
+        "title": "Abstandshalter Hover davor",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "click-separator",
+        "title": "Abstandshalter Klick davor",
+        "type": "boolean",
+        "default": false
       }
     ],
     "height": 260,
@@ -1223,6 +1408,10 @@
     "description": "Bei Abruf- oder Loginfehlern benachrichtigen",
     "default": false
   },
+  "error-notification-state": {
+    "type": "entry",
+    "default": "{}"
+  },
   "show-reactivation-actions": {
     "type": "switch",
     "description": "Reaktivierungsaktionen bei abgelaufenen Accounts anzeigen",
@@ -1242,6 +1431,7 @@
   },
   "reactivation-browser-migrated": {
     "type": "switch",
+    "description": "Interne Reaktivierungsbrowser-Migration abgeschlossen",
     "default": false
   }
 }

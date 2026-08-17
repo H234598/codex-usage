@@ -4,14 +4,19 @@ import base64
 import json
 import queue
 import signal
+import socket
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.app_server as app_server_module
 from codex_usage.app_server import (
+    AppServerAuthError,
     AppServerFetchError,
     AppServerProtocolError,
     AppServerUnavailableError,
@@ -19,7 +24,9 @@ from codex_usage.app_server import (
     _LineReader,
     _missing_usage_limits_error,
     _response_for,
+    _send,
     _should_refresh,
+    _StderrReader,
     _stop_process,
     _window,
     _windows_from_response,
@@ -68,6 +75,16 @@ def _auth(
         encoding="utf-8",
     )
     path.chmod(0o600)
+
+
+def test_app_server_symlink_check_rejects_dotdot_bypass(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(AppServerAuthError, match="must not contain symlinks"):
+        app_server_module._assert_no_symlink_ancestors(redirected / ".." / "target")
 
 
 def _fake_codex(
@@ -141,6 +158,65 @@ for line in sys.stdin:
     path.write_text(source, encoding="utf-8")
     path.chmod(0o700)
     return str(path)
+
+
+def test_app_server_send_honors_deadline_when_stdin_is_full():
+    sender, receiver = socket.socketpair()
+    sender.setblocking(False)
+    try:
+        while True:
+            sender.send(b"x" * 65_536)
+    except BlockingIOError:
+        pass
+
+    try:
+        with pytest.raises(AppServerFetchError, match="timed out"):
+            _send(
+                SimpleNamespace(stdin=sender),
+                {"method": "initialize", "id": 1},
+                deadline=time.monotonic() + 0.05,
+            )
+    finally:
+        sender.close()
+        receiver.close()
+
+
+@pytest.mark.parametrize(
+    "timeout_seconds",
+    (
+        pytest.param(True, id="bool"),
+        pytest.param(0, id="zero"),
+        pytest.param(-1, id="negative"),
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="infinity"),
+        pytest.param(float("-inf"), id="negative-infinity"),
+        pytest.param("1", id="string"),
+        pytest.param(10**10_000, id="huge-int"),
+    ),
+)
+def test_app_server_rejects_invalid_timeout_before_process_start(
+    tmp_path, monkeypatch, timeout_seconds
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    command = tmp_path / "codex"
+    command.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    command.chmod(0o700)
+
+    def fail_start(*_args, **_kwargs):
+        pytest.fail("app server process must not start")
+
+    monkeypatch.setattr(app_server_module, "_start_app_server", fail_start)
+
+    with pytest.raises(AppServerFetchError, match="positive finite"):
+        app_server_module._read_rate_limits(
+            codex_home,
+            refresh=False,
+            timeout_seconds=timeout_seconds,
+            codex_command=str(command),
+            expected_plan_type=None,
+            expected_email=None,
+        )
 
 
 def test_app_server_fetch_uses_only_account_methods(tmp_path):
@@ -1267,6 +1343,67 @@ def test_stop_process_ignores_exit_races():
             raise ProcessLookupError
 
     _stop_process(FakeProcess())
+
+
+def test_reader_cleanup_closes_streams_and_joins_reader_threads(monkeypatch):
+    class BlockingStream:
+        def __init__(self):
+            self.started = Event()
+            self.release = Event()
+            self.closed = False
+
+        def readline(self, _limit):
+            self.started.set()
+            self.release.wait(timeout=2)
+            return b""
+
+        def read(self, _limit):
+            self.started.set()
+            self.release.wait(timeout=2)
+            return b""
+
+        def close(self):
+            self.closed = True
+            self.release.set()
+
+    class FakeStdin:
+        def close(self):
+            return None
+
+    stdout = BlockingStream()
+    stderr = BlockingStream()
+    line_reader = _LineReader(stdout)
+    stderr_reader = _StderrReader(stderr)
+    line_reader.start()
+    stderr_reader.start()
+    assert stdout.started.wait(timeout=2)
+    assert stderr.started.wait(timeout=2)
+
+    class FakeProcess:
+        pid = 1234
+        stdin = FakeStdin()
+
+        def __init__(self):
+            self.stdout = stdout
+            self.stderr = stderr
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr("codex_usage.app_server.os.killpg", lambda *_args: None)
+    process = FakeProcess()
+    try:
+        _stop_process(process, readers=(line_reader, stderr_reader))
+    finally:
+        stdout.close()
+        stderr.close()
+        line_reader.join(timeout=2)
+        stderr_reader.join(timeout=2)
+
+    assert stdout.closed is True
+    assert stderr.closed is True
+    assert not line_reader.is_alive()
+    assert not stderr_reader.is_alive()
 
 
 def test_line_reader_does_not_block_on_full_message_queue():

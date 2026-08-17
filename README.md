@@ -108,6 +108,29 @@ codex-usage diagnose privat --headed --screenshot --save-dir diagnose-output
 codex-usage diagnose privat --auth-json ~/.codex/auth.json
 ```
 
+## Browser Bridge
+
+Local bridge snippets and extensions use loopback HTTP by default. Use `--endpoint`
+when generated code must send to a remote TLS bridge:
+
+```bash
+codex-usage bridge-server
+codex-usage bridge-snippet privat
+codex-usage bridge-extension privat
+codex-usage bridge-snippet privat --endpoint https://bridge.example.test:8765/ingest
+codex-usage bridge-extension privat --endpoint https://bridge.example.test:8765/ingest
+```
+
+Remote binding is TLS-only. Provide a certificate and a private key with
+permissions `0600` or stricter:
+
+```bash
+codex-usage bridge-server --host 0.0.0.0 --allow-remote \
+  --tls-cert /path/to/bridge.crt --tls-key /path/to/bridge.key
+```
+
+The default remains loopback HTTP. Do not expose it beyond the local machine.
+
 ## systemd User Timer
 
 Install and enable the generated, hardened user timer:
@@ -161,8 +184,10 @@ the direct and App Server readers. Poll ownership is selectable between the
 applet, the systemd user timer, and automatic detection. Per-account locks
 prevent concurrent token refreshes when both surfaces overlap.
 
-The `Date & Time` settings page keeps separate rows for every account's date
-and time. Each part has its own display format, font family, font size, bold,
+The `Hervorhebungen und Design:` settings section keeps separate rows for
+every account's `OpenAI - Reset: Datum des Reset`, `OpenAI - Reset: Uhrzeit`,
+`OpenAI - Reset: Restlaufzeit in Tagen bis Limitreset`, and `Verbleibendes
+Tokenlimit in %`. Each part has its own display format, font family, font size, bold,
 italic, font color, and background setting; the theme remains the default until
 changed. Every style supports four modes: always format, format only below the
 threshold, always format with a separate below-threshold style, or disable
@@ -178,12 +203,11 @@ It can independently be enabled for the status bar, hover tooltip, and click
 menu, and refreshes once per minute without triggering a new backend fetch.
 
 Percentage values have the same font, size, emphasis, font color, background,
-threshold, and below-threshold profile controls. A separate per-account target
-table selects whether percentage, date, time, and restlaufzeit formatting
-applies to the panel status line, hover tooltip and click menu. Enabling date,
-time, or restlaufzeit for the panel or tooltip also shows the relevant reset
-component there; the click menu always keeps its reset text visible. Mode
-`Aus` leaves a targeted value visible but unformatted.
+threshold, and below-threshold profile controls. The `Anzeige:` target table
+selects visibility for percentage, date, time, restlaufzeit, consumption,
+forecast, Usage-Resets, Account-ID, Label, and Kürzel independently on the
+panel status line, hover tooltip, and click menu. Mode `Aus` leaves an active
+target visible but unformatted; a disabled target is hidden on that surface.
 
 Expired direct-auth accounts get a reactivation action in the applet menu. It
 runs `codex login` against that account's configured `auth_json_path` and opens
@@ -196,6 +220,17 @@ The same flow is available from the terminal:
 ```bash
 codex-usage reactivate ACCOUNT --browser auto
 ```
+
+Consumption and reset display are read-only. The applet can show configured
+percent-point consumption, a backend-calculated time-to-token-end projection,
+and the provider-reported reset balance per account on the panel, hover
+tooltip, and click menu. Unknown values stay unknown; zero is not turned into
+a positive balance.
+
+Reset redemption is currently unavailable. No provider redemption endpoint has
+passed the required capability, nonce/replay, account-lock, confirmation, and
+postcondition checks. The CLI and applet therefore expose no redeem action and
+never redeem automatically.
 
 ## Health and recovery
 
