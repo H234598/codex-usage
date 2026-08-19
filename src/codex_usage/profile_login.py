@@ -33,11 +33,19 @@ from .profile_layout import ProfileLayout, ensure_profile_layout, layout_for_acc
 DEVICE_LOGIN_TIMEOUT_SECONDS = 15 * 60
 DEVICE_OUTPUT_MAX_BYTES = 64 * 1024
 DEVICE_EVENT_MAX_CHARS = 512
+ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DEVICE_CODE_RE = re.compile(
-    r"(?:device\s+code|code|kode)\s*[:\uFF1A]\s*([A-Za-z0-9][A-Za-z0-9_-]{3,127})",
+    r"\b(?:"
+    r"device[ \t]+code[ \t]*[:\uFF1A][ \t]*"
+    r"|one-time[ \t]+code(?:[ \t]*\([^\r\n)]{0,80}\))?"
+    r"[ \t]*(?:[:\uFF1A][ \t]*|\r?\n[ \t]*)"
+    r")([A-Za-z0-9][A-Za-z0-9_-]{3,127})(?![A-Za-z0-9_-])",
     re.IGNORECASE,
 )
-DEVICE_URL_RE = re.compile(r"https://[^\s<>\"']{1,480}", re.IGNORECASE)
+DEVICE_URL_RE = re.compile(
+    r"https://[^\s\x00-\x1f\x7f-\x9f<>\"']{1,481}",
+    re.IGNORECASE,
+)
 _SAFE_ENV_NAMES = frozenset(
     {
         "HOME",
@@ -416,13 +424,20 @@ def _bounded_output(stdout: object, stderr: object) -> str:
 def _device_events(output: str) -> tuple[DeviceLoginEvent, ...]:
     events: list[DeviceLoginEvent] = []
     seen: set[tuple[str, str]] = set()
-    for match in DEVICE_URL_RE.finditer(output):
+    cleaned = ANSI_CSI_RE.sub("", output)
+    for match in DEVICE_URL_RE.finditer(cleaned):
         value = match.group(0).rstrip(".,)")[:DEVICE_EVENT_MAX_CHARS]
+        if len(value) > len("https://") + 480:
+            continue
         event = ("url", value)
         if event not in seen:
             seen.add(event)
             events.append(DeviceLoginEvent(*event))
-    for match in DEVICE_CODE_RE.finditer(output):
+            if len(events) >= 8:
+                break
+    for match in DEVICE_CODE_RE.finditer(cleaned):
+        if len(events) >= 8:
+            break
         event = ("code", match.group(1)[:DEVICE_EVENT_MAX_CHARS])
         if event not in seen:
             seen.add(event)

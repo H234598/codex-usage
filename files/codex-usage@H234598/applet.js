@@ -73,6 +73,7 @@ CodexUsageApplet.prototype = {
         this.accountBackends = [];
         this.accountPanelSettings = [];
         this.accountConsumptionSettings = [];
+        this.showConsumptionDelta = true;
         this.accountResetDisplaySettings = [];
         this.accountAlertSettings = [];
         this.accountPercentStyles = [];
@@ -112,6 +113,7 @@ CodexUsageApplet.prototype = {
         this._usages = [];
         this._warningState = Object.create(null);
         this._errorState = Object.create(null);
+        this._errorNotificationStateWritePending = null;
         this._reactivations = Object.create(null);
         this._reactivationErrors = Object.create(null);
         this._reactivationRefreshPending = false;
@@ -249,6 +251,7 @@ CodexUsageApplet.prototype = {
             "accountConsumptionSettings",
             this._onConsumptionSettingsChanged
         );
+        bind("show-consumption-delta", "showConsumptionDelta", this._refreshFormattedSurfaces);
         bind(
             "account-reset-display-settings",
             "accountResetDisplaySettings",
@@ -924,12 +927,27 @@ CodexUsageApplet.prototype = {
                 callback(stdout, stderr, error);
             }));
         });
+        let emitLiveChunk = Lang.bind(this, function(name, text, final) {
+            if (typeof onChunk !== "function") {
+                return;
+            }
+            try {
+                onChunk(name, text, final === true);
+            } catch (chunkError) {
+                global.log("[" + UUID + "] live output callback failed: " +
+                    this._shortText(chunkError, 180));
+            }
+        });
+        let finishStream = Lang.bind(this, function() {
+            completed += 1;
+            if (completed === 2) {
+                emitLiveChunk("", "", true);
+                complete(output.stdout, output.stderr, null);
+            }
+        });
         let read = Lang.bind(this, function(name, stream, maximum) {
             if (!stream) {
-                completed += 1;
-                if (completed === 2) {
-                    complete(output.stdout, output.stderr, null);
-                }
+                finishStream();
                 return;
             }
             let chunks = [];
@@ -958,18 +976,15 @@ CodexUsageApplet.prototype = {
                                         raw.set(chunks[index], offset);
                                         offset += chunks[index].length;
                                     }
-                                    if (typeof onChunk === "function" && livePending.length) {
-                                        try {
-                                            onChunk(name, ByteArray.toString(livePending));
-                                        } catch (chunkError) {
-                                            global.log("[" + UUID + "] live output callback failed: " + this._shortText(chunkError, 180));
-                                        }
+                                    if (livePending.length) {
+                                        emitLiveChunk(
+                                            name,
+                                            ByteArray.toString(livePending),
+                                            false
+                                        );
                                     }
                                     output[name] = ByteArray.toString(raw);
-                                    completed += 1;
-                                    if (completed === 2) {
-                                        complete(output.stdout, output.stderr, null);
-                                    }
+                                    finishStream();
                                     return;
                                 }
                                 total += size;
@@ -991,7 +1006,7 @@ CodexUsageApplet.prototype = {
                                         let decoded = this._decodeLiveUtf8Chunk(livePending, chunk);
                                         livePending = decoded.pending;
                                         if (decoded.text) {
-                                            onChunk(name, decoded.text);
+                                            emitLiveChunk(name, decoded.text, false);
                                         }
                                     } catch (chunkError) {
                                         global.log("[" + UUID + "] live output callback failed: " + this._shortText(chunkError, 180));
@@ -1412,6 +1427,7 @@ CodexUsageApplet.prototype = {
                     label: label || account,
                     "auth-json": authJsonPath,
                     "profile-dir": profileDir,
+                    "test-home": this._isTestHomeProfile(profileDir),
                     browser: browser === "chromium" ? 1 : 0,
                     "reactivation-browser": {
                         auto: 0,
@@ -1428,6 +1444,7 @@ CodexUsageApplet.prototype = {
                         label: row.label,
                         "auth-json": this._accountSettingPath(row["auth-json"]),
                         "profile-dir": this._accountSettingPath(row["profile-dir"]),
+                        "test-home": row["test-home"],
                         browser: row.browser,
                         "reactivation-browser": row["reactivation-browser"],
                         backend: row.backend
@@ -2076,9 +2093,9 @@ CodexUsageApplet.prototype = {
             typeof row["show-panel"] !== "boolean" ||
             typeof row["show-tooltip"] !== "boolean" ||
             !Number.isInteger(amount) || amount < 1 || amount > 365 ||
-            ["minutes", "hours", "days"].indexOf(unit) === -1 ||
+            ["minutes", "hours", "days", "weeks"].indexOf(unit) === -1 ||
             ["short", "weekly", "all"].indexOf(limitWindow) === -1 ||
-            ["compact", "verbose", "custom"].indexOf(format) === -1 ||
+            ["compact", "compact-token", "verbose", "custom"].indexOf(format) === -1 ||
             typeof row["hide-when-zero"] !== "boolean" ||
             typeof row["show-coverage-marker"] !== "boolean"
         ) {
@@ -2180,8 +2197,8 @@ CodexUsageApplet.prototype = {
         if (
             !Number.isInteger(order) || order < 1 || order > 100 ||
             typeof row.muted !== "boolean" ||
-            !Number.isInteger(slot1) || slot1 < 0 || slot1 > 7 ||
-            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 7
+            !Number.isInteger(slot1) || slot1 < 0 || slot1 > 8 ||
+            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 8
         ) {
             return null;
         }
@@ -2225,6 +2242,7 @@ CodexUsageApplet.prototype = {
             account: account,
             "five-threshold": threshold,
             "weekly-threshold": threshold,
+            "monthly-threshold": threshold,
             "spark-threshold": String(threshold),
             warnings: true,
             errors: true
@@ -2291,6 +2309,10 @@ CodexUsageApplet.prototype = {
         }
         let five = this._strictIntegerSetting(row["five-threshold"]);
         let weekly = this._strictIntegerSetting(row["weekly-threshold"]);
+        let monthly = this._strictIntegerSetting(row["monthly-threshold"]);
+        if (monthly === null) {
+            monthly = this._boundedInteger(this.warningThreshold, 0, 100, 20);
+        }
         let spark = this._normalizeSparkThreshold(
             row["spark-threshold"],
             this._sparkLimitState(this._usageForAccount(account))
@@ -2298,6 +2320,7 @@ CodexUsageApplet.prototype = {
         if (
             !Number.isInteger(five) || five < 0 || five > 100 ||
             !Number.isInteger(weekly) || weekly < 0 || weekly > 100 ||
+            !Number.isInteger(monthly) || monthly < 0 || monthly > 100 ||
             typeof row.warnings !== "boolean" || typeof row.errors !== "boolean"
         ) {
             return null;
@@ -2306,6 +2329,7 @@ CodexUsageApplet.prototype = {
             account: account,
             "five-threshold": five,
             "weekly-threshold": weekly,
+            "monthly-threshold": monthly,
             "spark-threshold": spark,
             warnings: row.warnings,
             errors: row.errors
@@ -2473,7 +2497,8 @@ CodexUsageApplet.prototype = {
             "spark-five-hour": 4,
             "spark-weekly": 5,
             "spark-average": 6,
-            "spark-other": 7
+            "spark-other": 7,
+            "thirty-day": 8
         }[source] || 3;
     },
 
@@ -3026,9 +3051,21 @@ CodexUsageApplet.prototype = {
             left.label === right.label &&
             left["auth-json"] === right["auth-json"] &&
             left["profile-dir"] === right["profile-dir"] &&
+            Boolean(left["test-home"]) === Boolean(right["test-home"]) &&
             left.browser === right.browser &&
             left["reactivation-browser"] === right["reactivation-browser"] &&
             left.backend === right.backend
+        );
+    },
+
+    _isTestHomeProfile: function(profileDir) {
+        if (typeof profileDir !== "string" || !profileDir) {
+            return false;
+        }
+        let home = typeof GLib.get_home_dir === "function" ? GLib.get_home_dir() : "";
+        return Boolean(home) && (
+            profileDir === home + "/.codex-test" ||
+            profileDir.indexOf(home + "/.codex-test/") === 0
         );
     },
 
@@ -3067,6 +3104,7 @@ CodexUsageApplet.prototype = {
                 label: row.label,
                 "auth-json": row["auth-json"],
                 "profile-dir": row["profile-dir"],
+                "test-home": row["test-home"],
                 browser: row.browser,
                 "reactivation-browser": row["reactivation-browser"],
                 backend: row.backend
@@ -3200,6 +3238,9 @@ CodexUsageApplet.prototype = {
         }
         if (profileDir) {
             argv.push("--profile-dir", profileDir);
+        }
+        if (changed["test-home"]) {
+            argv.push("--test-home");
         }
         argv.push(
             "--browser",
@@ -3431,6 +3472,7 @@ CodexUsageApplet.prototype = {
             let canonical = this._backendAccounts[account];
             let hasEditableFields = Object.prototype.hasOwnProperty.call(row, "auth-json") ||
                 Object.prototype.hasOwnProperty.call(row, "profile-dir") ||
+                Object.prototype.hasOwnProperty.call(row, "test-home") ||
                 Object.prototype.hasOwnProperty.call(row, "browser") ||
                 Object.prototype.hasOwnProperty.call(row, "reactivation-browser");
             legacyBackendOnly = legacyBackendOnly && !hasEditableFields;
@@ -3443,6 +3485,9 @@ CodexUsageApplet.prototype = {
             let profileDir = row["profile-dir"] === undefined
                 ? this._safeText(canonical && canonical["profile-dir"], 4096)
                 : this._safeText(row["profile-dir"], 4096);
+            let testHome = row["test-home"] === undefined
+                ? Boolean(canonical && canonical["test-home"])
+                : row["test-home"];
             try {
                 authJson = this._localAccountPath(authJson);
                 profileDir = this._localAccountPath(profileDir);
@@ -3466,6 +3511,7 @@ CodexUsageApplet.prototype = {
                 !account || seen[account] ||
                 (!canonical && !/^[A-Za-z0-9_.-]{1,64}$/.test(account)) ||
                 (browser !== 0 && browser !== 1) ||
+                typeof testHome !== "boolean" ||
                 !Number.isInteger(reactivationBrowser) ||
                 (reactivationBrowser < 0 || reactivationBrowser > 3) ||
                 (backendValue !== 0 && backendValue !== 1)
@@ -3479,6 +3525,7 @@ CodexUsageApplet.prototype = {
                 label: label,
                 "auth-json": authJson,
                 "profile-dir": profileDir,
+                "test-home": testHome,
                 browser: browser,
                 "reactivation-browser": reactivationBrowser,
                 backend: backendValue
@@ -3622,6 +3669,19 @@ CodexUsageApplet.prototype = {
             if (!Number.isInteger(selectedTimeout) || selectedTimeout < 1000 || selectedTimeout > 1800000) {
                 throw new Error("invalid auxiliary timeout");
             }
+            let timeoutSeconds = Math.ceil(selectedTimeout / 1000);
+            let timeoutMinutes = Math.floor(timeoutSeconds / 60);
+            let remainingSeconds = timeoutSeconds % 60;
+            let timeoutParts = [];
+            if (timeoutMinutes) {
+                timeoutParts.push(timeoutMinutes +
+                    (timeoutMinutes === 1 ? " Minute" : " Minuten"));
+            }
+            if (remainingSeconds || !timeoutParts.length) {
+                timeoutParts.push(remainingSeconds +
+                    (remainingSeconds === 1 ? " Sekunde" : " Sekunden"));
+            }
+            let timeoutDuration = timeoutParts.join(" ");
             let timeoutId = Mainloop.timeout_add(
                 selectedTimeout,
                 Lang.bind(this, function() {
@@ -3633,9 +3693,9 @@ CodexUsageApplet.prototype = {
                     } catch (e) {
                         global.log("[" + UUID + "] auxiliary cleanup failed: " + String(e));
                     }
-                    finish(null, deviceLogin
-                        ? _("Device-Login nach 15 Minuten abgebrochen")
-                        : _("Hilfsbefehl nach 30 Sekunden abgebrochen"));
+                    finish(null, (deviceLogin
+                        ? _("Device-Login nach ")
+                        : _("Hilfsbefehl nach ")) + timeoutDuration + _(" abgebrochen"));
                     return false;
                 })
             );
@@ -3644,8 +3704,8 @@ CodexUsageApplet.prototype = {
             }
             this._setSource("_auxTimeoutId", timeoutId);
             let liveChunk = deviceLogin
-                ? Lang.bind(this, function(name, chunk) {
-                    this._recordDeviceLoginChunk(name, chunk);
+                ? Lang.bind(this, function(name, chunk, final) {
+                    this._recordDeviceLoginChunk(name, chunk, final);
                 })
                 : null;
             this._readBoundedProcessOutput(process, Lang.bind(this, function(stdout, stderr, outputError) {
@@ -5333,6 +5393,7 @@ CodexUsageApplet.prototype = {
     _addAccount: function(usage) {
         let five = this._percentParts(usage.five_hour, usage.account, "click");
         let week = this._percentParts(usage.weekly, usage.account, "click");
+        let monthly = this._percentParts(this._poolWindowForDuration(usage.main, 2592000), usage.account, "click");
         let severity = this._usageSeverity(usage);
         let display = this._accountDisplayText({ usage: usage }, "click");
         let summaryParts = display ? [display] : [];
@@ -5345,31 +5406,51 @@ CodexUsageApplet.prototype = {
             summaryParts.push("Woche " + week.plain);
             summaryMarkupParts.push(this._escapeMarkup("Woche ") + week.markup);
         }
+        if (monthly.plain) {
+            summaryParts.push("30d " + monthly.plain);
+            summaryMarkupParts.push(this._escapeMarkup("30d ") + monthly.markup);
+        }
         let summary = summaryParts.join("     ");
         let summaryMarkup = summaryMarkupParts.join(this._escapeMarkup("     "));
-        let summaryItem = this._addDisabled(
-            this.menu,
-            summary,
-            "codex-usage-account " + severity
-        );
-        this._setItemMarkup(summaryItem, summaryMarkup);
-        this._addResetDetail(usage);
+        let accountGroup = new PopupMenu.PopupSubMenuMenuItem(summary);
+        this._setItemMarkup(accountGroup, summaryMarkup);
+        try {
+            accountGroup.actor.add_style_class_name("codex-usage-account " + severity);
+        } catch (e) {
+            global.log("[" + UUID + "] account group style failed: " + String(e));
+        }
+        let accountMenu = accountGroup.menu;
+        this.menu.addMenuItem(accountGroup);
+        this._addResetDetail(usage, accountMenu);
         let consumption = this._consumptionParts(usage, "click");
         if (consumption) {
-            let consumptionItem = this._addDisabled(
-                this.menu,
-                consumption.plain,
-                "codex-usage-detail"
-            );
+            let consumptionItem = new PopupMenu.PopupMenuItem(consumption.plain);
+            consumptionItem.connect("activate", Lang.bind(this, function() {
+                this._runSafely("consumption delta toggle", Lang.bind(this, function() {
+                    this.showConsumptionDelta = !this.showConsumptionDelta;
+                    try {
+                        this.settings.setValue("show-consumption-delta", this.showConsumptionDelta);
+                    } catch (e) {
+                        global.log("[" + UUID + "] consumption delta setting failed: " + String(e));
+                    }
+                    this._refreshFormattedSurfaces();
+                }));
+            }));
+            try {
+                consumptionItem.actor.add_style_class_name("codex-usage-detail");
+            } catch (e) {
+                global.log("[" + UUID + "] consumption item style failed: " + String(e));
+            }
             this._setItemMarkup(consumptionItem, consumption.markup);
+            accountMenu.addMenuItem(consumptionItem);
         }
         let resets = this._usageResetParts(usage, "click");
         if (resets) {
-            let resetItem = this._addDisabled(this.menu, resets.plain, "codex-usage-detail");
+            let resetItem = this._addDisabled(accountMenu, resets.plain, "codex-usage-detail");
             this._setItemMarkup(resetItem, resets.markup);
         }
-        this._addDynamicLimitDetails(usage);
-        this._addAccountControls(usage);
+        this._addDynamicLimitDetails(usage, accountMenu);
+        this._addAccountControls(usage, accountMenu);
         let status = this._statusLabel(usage.status);
         if (usage.stale) {
             status += " · gespeichert vom " + this._formatDate(
@@ -5384,17 +5465,18 @@ CodexUsageApplet.prototype = {
         }
         if (usage.status !== "ok" || usage.stale) {
             this._addDisabled(
-                this.menu,
+                accountMenu,
                 status,
                 usage.status === "ok" ? "codex-usage-stale" : "codex-usage-error"
             );
         }
         if (usage.status === "login_required" && this.showReactivationActions) {
-            this._addReactivationAction(usage);
+            this._addReactivationAction(usage, accountMenu);
         }
     },
 
-    _addAccountControls: function(usage) {
+    _addAccountControls: function(usage, targetMenu) {
+        let target = targetMenu || this.menu;
         let panel = this._panelSettings[usage.account] || this._defaultPanelRow(usage.account, 1);
         let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
         let submenu = new PopupMenu.PopupSubMenuMenuItem(
@@ -5469,7 +5551,7 @@ CodexUsageApplet.prototype = {
             }
             submenu.menu.addMenuItem(copy);
         }
-        this.menu.addMenuItem(submenu);
+        target.addMenuItem(submenu);
     },
 
     _loadProfileJobs: function() {
@@ -5755,7 +5837,10 @@ CodexUsageApplet.prototype = {
         );
         this._deviceLoginActive[usage.account] = true;
         this._deviceLoginLiveAccount = usage.account;
-        this._deviceLoginLiveText[usage.account] = "";
+        this._deviceLoginLiveText[usage.account] = {
+            stdout: "",
+            stderr: ""
+        };
         delete this._deviceLoginErrors[usage.account];
         this._buildUsageMenu();
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
@@ -5840,14 +5925,31 @@ CodexUsageApplet.prototype = {
         }));
     },
 
-    _recordDeviceLoginChunk: function(name, chunk) {
+    _recordDeviceLoginChunk: function(name, chunk, final) {
         let account = this._deviceLoginLiveAccount;
         if (!account || typeof chunk !== "string") {
             return;
         }
-        let current = String(this._deviceLoginLiveText[account] || "") + chunk;
-        let parsedEvents = this._deviceLoginEventsFromText(current);
-        this._deviceLoginLiveText[account] = current.slice(-4096);
+        let buffers = this._deviceLoginLiveText[account];
+        if (!buffers || typeof buffers !== "object" || Array.isArray(buffers)) {
+            buffers = { stdout: "", stderr: "" };
+        }
+        if (name === "stdout" || name === "stderr") {
+            buffers[name] = (String(buffers[name] || "") + chunk).slice(-4096);
+        } else if (final !== true) {
+            return;
+        }
+        this._deviceLoginLiveText[account] = buffers;
+        let parsedEvents = [];
+        ["stdout", "stderr"].forEach(Lang.bind(this, function(streamName) {
+            let streamEvents = this._deviceLoginEventsFromText(
+                String(buffers[streamName] || ""),
+                final === true
+            );
+            for (let i = 0; i < streamEvents.length; i++) {
+                parsedEvents.push(streamEvents[i]);
+            }
+        }));
         let previous = this._deviceLoginEvents[account] || [];
         let merged = previous.slice();
         for (let index = 0; index < parsedEvents.length && merged.length < 8; index++) {
@@ -5866,19 +5968,43 @@ CodexUsageApplet.prototype = {
         }
     },
 
-    _deviceLoginEventsFromText: function(text) {
+    _deviceLoginEventsFromText: function(text, final) {
         if (typeof text !== "string" || !text) {
             return [];
         }
+        let completeText = final !== false;
         let events = [];
-        let urls = text.match(/https:\/\/[^\s<>"']{1,480}/gi) || [];
-        for (let index = 0; index < urls.length; index++) {
-            events.push({ kind: "url", value: urls[index].replace(/[),.;]+$/g, "") });
+        let seen = Object.create(null);
+        let cleaned = text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+        let urlPattern =
+            /https:\/\/[^\s\u0000-\u001f\u007f-\u009f<>"']{1,481}/gi;
+        let urlMatch;
+        while (events.length < 8 &&
+            (urlMatch = urlPattern.exec(cleaned)) !== null) {
+            let rawValue = urlMatch[0];
+            let value = rawValue.replace(/[),.;]+$/g, "");
+            let trailingUnbounded = !completeText &&
+                urlMatch.index + rawValue.length === cleaned.length;
+            let identity = "url\u0000" + value;
+            if (!trailingUnbounded &&
+                value.length <= "https://".length + 480 && !seen[identity]) {
+                seen[identity] = true;
+                events.push({ kind: "url", value: value });
+            }
         }
-        let codePattern = /(?:device\s+code|code|kode)\s*[:\uFF1A]\s*([A-Za-z0-9][A-Za-z0-9_-]{3,127})/gi;
+        let codePattern = /\b(?:device[ \t]+code[ \t]*[:\uFF1A][ \t]*|one-time[ \t]+code(?:[ \t]*\([^\r\n)]{0,80}\))?[ \t]*(?:[:\uFF1A][ \t]*|\r?\n[ \t]*))([A-Za-z0-9][A-Za-z0-9_-]{3,127})(?![A-Za-z0-9_-])/gi;
         let match;
-        while ((match = codePattern.exec(text)) !== null) {
-            events.push({ kind: "code", value: match[1] });
+        while (events.length < 8 && (match = codePattern.exec(cleaned)) !== null) {
+            let trailingUnbounded = !completeText &&
+                match.index + match[0].length === cleaned.length;
+            if (trailingUnbounded) {
+                continue;
+            }
+            let identity = "code\u0000" + match[1];
+            if (!seen[identity]) {
+                seen[identity] = true;
+                events.push({ kind: "code", value: match[1] });
+            }
         }
         return this._safeDeviceLoginEvents(events);
     },
@@ -5896,7 +6022,11 @@ CodexUsageApplet.prototype = {
             }
             let kind = this._safeText(event.kind, 16);
             let value = this._safeText(event.value, 512);
-            if ((kind === "url" || kind === "code") && value) {
+            let validValue = kind === "url"
+                ? /^https:\/\/[^\s\u0000-\u001f\u007f-\u009f<>"']{1,480}$/i.test(event.value)
+                : kind === "code" &&
+                  /^[A-Za-z0-9][A-Za-z0-9_-]{3,127}$/.test(event.value);
+            if (validValue && value) {
                 let identity = kind + "\u0000" + value;
                 if (!seen[identity]) {
                     seen[identity] = true;
@@ -5994,9 +6124,11 @@ CodexUsageApplet.prototype = {
         }
     },
 
-    _addResetDetail: function(usage) {
+    _addResetDetail: function(usage, targetMenu) {
+        let target = targetMenu || this.menu;
         let five = this._windowResetParts(usage.five_hour, usage.account, "click", false);
         let week = this._windowResetParts(usage.weekly, usage.account, "click", false);
+        let monthly = this._windowResetParts(this._poolWindowForDuration(usage.main, 2592000), usage.account, "click", false);
         let backend = this._backendSummary(usage);
         let plainParts = [];
         let markupParts = [];
@@ -6008,15 +6140,20 @@ CodexUsageApplet.prototype = {
             plainParts.push("Woche Reset " + week.plain);
             markupParts.push(this._escapeMarkup("Woche Reset ") + week.markup);
         }
+        if (monthly.plain) {
+            plainParts.push("30d Reset " + monthly.plain);
+            markupParts.push(this._escapeMarkup("30d Reset ") + monthly.markup);
+        }
         plainParts.push("Abruf " + backend);
         markupParts.push(this._escapeMarkup("Abruf " + backend));
         let plain = plainParts.join("     ");
         let markup = markupParts.join(this._escapeMarkup("     "));
-        let item = this._addDisabled(this.menu, plain, "codex-usage-detail");
+        let item = this._addDisabled(target, plain, "codex-usage-detail");
         this._setItemMarkup(item, markup);
     },
 
-    _addDynamicLimitDetails: function(usage) {
+    _addDynamicLimitDetails: function(usage, targetMenu) {
+        let target = targetMenu || this.menu;
         let main = this._poolDetailParts(
             usage.main,
             usage.account,
@@ -6036,7 +6173,7 @@ CodexUsageApplet.prototype = {
             if (!parts) {
                 return;
             }
-            let item = this._addDisabled(this.menu, parts.plain, "codex-usage-detail");
+            let item = this._addDisabled(target, parts.plain, "codex-usage-detail");
             this._setItemMarkup(item, parts.markup);
         }));
     },
@@ -6147,11 +6284,12 @@ CodexUsageApplet.prototype = {
         return text;
     },
 
-    _addReactivationAction: function(usage) {
+    _addReactivationAction: function(usage, targetMenu) {
+        let target = targetMenu || this.menu;
         let running = Boolean(this._reactivations[usage.account]);
         if (running) {
             this._addDisabled(
-                this.menu,
+                target,
                 usage.label + ": Login läuft im isolierten Browser …",
                 "codex-usage-warning"
             );
@@ -6167,10 +6305,10 @@ CodexUsageApplet.prototype = {
                 this._reactivateAccount(usage);
             }));
         }));
-        this.menu.addMenuItem(item);
+        target.addMenuItem(item);
         if (this._reactivationErrors[usage.account]) {
             this._addDisabled(
-                this.menu,
+                target,
                 this._shortText(this._reactivationErrors[usage.account], 140),
                 "codex-usage-error"
             );
@@ -6669,7 +6807,16 @@ CodexUsageApplet.prototype = {
                 marker = " (veraltet)";
             }
         }
-        let windowLabel = Number(window.limit_window_seconds) === 604800 ? "Woche" : "5h";
+        let windowLabel = Number(window.limit_window_seconds) === 604800
+            ? "Woche"
+            : (Number(window.limit_window_seconds) === 2592000 ? "30d" : "5h");
+        let compactUnit = {
+            minutes: "m",
+            hours: "S",
+            days: "T",
+            weeks: "W"
+        }[row.unit] || "S";
+        let compactPrefix = this.showConsumptionDelta !== false ? "Δ" : "";
         let plain;
         if (row.format === "verbose") {
             plain = "Limitverbrauch " + period + " (" + windowLabel + "): " +
@@ -6681,8 +6828,10 @@ CodexUsageApplet.prototype = {
                 window: windowLabel,
                 coverage: marker ? marker.slice(2, -1) : "vollständig"
             });
+        } else if (row.format === "compact-token") {
+            plain = compactPrefix + String(row.amount) + compactUnit + valueText + "P" + marker;
         } else {
-            plain = "Δ" + period + " " + valueText + "pp" + marker;
+            plain = compactPrefix + period + " " + valueText + "pp" + marker;
         }
         let account = row.account;
         let styleRow = this._percentStyles[account] || this._defaultStyleRow(account, "percent");
@@ -6756,7 +6905,7 @@ CodexUsageApplet.prototype = {
     },
 
     _consumptionPeriod: function(amount, unit) {
-        let labels = { minutes: "Min.", hours: "h", days: "Tage" };
+        let labels = { minutes: "Min.", hours: "h", days: "Tage", weeks: "Wochen" };
         return String(amount) + " " + (labels[unit] || unit);
     },
 
@@ -6775,7 +6924,16 @@ CodexUsageApplet.prototype = {
     },
 
     _panelSourceLabel: function(source) {
-        return { 1: "5h", 2: "W", 3: "Ø", 4: "S5h", 5: "SW", 6: "SØ", 7: "S+" }[source] || "?";
+        return {
+            1: "5h",
+            2: "W",
+            3: "Ø",
+            4: "S5h",
+            5: "SW",
+            6: "SØ",
+            7: "S+",
+            8: "30d"
+        }[source] || "?";
     },
 
     _panelValueForSource: function(usage, source) {
@@ -6789,6 +6947,9 @@ CodexUsageApplet.prototype = {
         }
         if (source === 2) {
             return week;
+        }
+        if (source === 8) {
+            return this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000));
         }
         let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
         if (source >= 4 && source <= 7 && !this._poolIsUsable(spark)) {
@@ -6821,6 +6982,12 @@ CodexUsageApplet.prototype = {
         }
         if (source === 2) {
             return usage.weekly;
+        }
+        if (source === 8) {
+            if (!usage.main || !this._poolIsUsable(usage.main)) {
+                return null;
+            }
+            return this._poolWindowForDuration(usage.main, 2592000);
         }
         let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
         if (source >= 4 && source <= 7 && !this._poolIsUsable(spark)) {
@@ -6866,6 +7033,10 @@ CodexUsageApplet.prototype = {
         }
         if (source === 2) {
             return weekly;
+        }
+        if (source === 8) {
+            let monthly = Number(alert["monthly-threshold"]);
+            return Number.isFinite(monthly) ? monthly : 100;
         }
         let values = [];
         let pool = source === 6
@@ -7052,6 +7223,26 @@ CodexUsageApplet.prototype = {
             secondary.toString(16).padStart(8, "0");
     },
 
+    _persistErrorNotificationState: function(serialized) {
+        this._errorNotificationStateWritePending = serialized;
+        try {
+            if (this.settings && typeof this.settings.setValue === "function") {
+                this.settings.setValue("error-notification-state", serialized);
+                this._errorNotificationStateWritePending = null;
+            }
+        } catch (e) {
+            global.log("[" + UUID + "] error notification state write failed: " +
+                this._shortText(e, 180));
+        }
+    },
+
+    _retryErrorNotificationStateWrite: function() {
+        let pending = this._errorNotificationStateWritePending;
+        if (typeof pending === "string") {
+            this._persistErrorNotificationState(pending);
+        }
+    },
+
     _shouldNotifyError: function(key) {
         let now = this._errorNotificationNow();
         if (!Number.isFinite(now)) {
@@ -7072,21 +7263,22 @@ CodexUsageApplet.prototype = {
         }
 
         let fingerprint = this._errorNotificationFingerprint(key);
+        let stateChanged = false;
         let keys = Object.keys(state);
         for (let i = keys.length - 1; i >= 0; i--) {
             let value = state[keys[i]];
             if (!Number.isFinite(value) || value > now ||
                 now - value >= ERROR_NOTIFICATION_SUPPRESSION_MS) {
                 delete state[keys[i]];
+                stateChanged = true;
             }
         }
-        if (Number.isFinite(state[fingerprint]) &&
-            now - state[fingerprint] < ERROR_NOTIFICATION_SUPPRESSION_MS) {
-            this.errorNotificationState = JSON.stringify(state);
-            return false;
+        let suppressed = Number.isFinite(state[fingerprint]) &&
+            now - state[fingerprint] < ERROR_NOTIFICATION_SUPPRESSION_MS;
+        if (!suppressed) {
+            state[fingerprint] = now;
+            stateChanged = true;
         }
-
-        state[fingerprint] = now;
         keys = Object.keys(state);
         if (keys.length > MAX_ERROR_NOTIFICATION_STATES) {
             keys.sort(function(left, right) {
@@ -7094,22 +7286,20 @@ CodexUsageApplet.prototype = {
             });
             for (let j = MAX_ERROR_NOTIFICATION_STATES; j < keys.length; j++) {
                 delete state[keys[j]];
+                stateChanged = true;
             }
         }
         let serialized = JSON.stringify(state);
         this.errorNotificationState = serialized;
-        try {
-            if (this.settings && typeof this.settings.setValue === "function") {
-                this.settings.setValue("error-notification-state", serialized);
-            }
-        } catch (e) {
-            global.log("[" + UUID + "] error notification state write failed: " +
-                this._shortText(e, 180));
+        if (stateChanged ||
+            typeof this._errorNotificationStateWritePending === "string") {
+            this._persistErrorNotificationState(serialized);
         }
-        return true;
+        return !suppressed;
     },
 
     _notifyForPayload: function() {
+        this._retryErrorNotificationStateWrite();
         let currentWarnings = Object.create(null);
         let currentErrors = Object.create(null);
         for (let i = 0; i < this._usages.length; i++) {
@@ -7142,7 +7332,8 @@ CodexUsageApplet.prototype = {
             }
             let windows = [
                 ["5h", usage.five_hour, "five-threshold"],
-                ["Woche", usage.weekly, "weekly-threshold"]
+                ["Woche", usage.weekly, "weekly-threshold"],
+                ["30d", this._poolWindowForDuration(usage.main, 2592000), "monthly-threshold"]
             ];
             let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
             if (spark && Array.isArray(spark.windows)) {
@@ -7620,7 +7811,8 @@ CodexUsageApplet.prototype = {
         }
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
-        let values = [five, week].filter(function(value) { return value !== null; });
+        let monthly = this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000));
+        let values = [five, week, monthly].filter(function(value) { return value !== null; });
         if (!values.length) {
             if (usage.status === "partial") {
                 return "codex-usage-warning";
@@ -7630,10 +7822,12 @@ CodexUsageApplet.prototype = {
         let alert = this._alertSettings[usage.account] || this._defaultAlertRow(usage.account);
         let fiveThreshold = Number(alert["five-threshold"]);
         let weeklyThreshold = Number(alert["weekly-threshold"]);
+        let monthlyThreshold = Number(alert["monthly-threshold"]);
         let critical = values.some(function(value) { return value <= 5; });
         let warning = usage.status === "partial" ||
             (five !== null && five <= fiveThreshold) ||
             (week !== null && week <= weeklyThreshold);
+        warning = warning || (monthly !== null && monthly <= monthlyThreshold);
         if (critical) {
             return "codex-usage-critical";
         }

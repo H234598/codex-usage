@@ -297,6 +297,191 @@ test("device login live parser exposes only bounded URL and code events", () => 
   ]));
 });
 
+test("device login live parser defers a URL split across chunks", () => {
+  const applet = makeApplet();
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginLiveText.alpha = { stdout: "", stderr: "" };
+
+  applet._recordDeviceLoginChunk(
+    "stdout",
+    "Open https://auth.example/dev",
+  );
+
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+
+  applet._recordDeviceLoginChunk("stdout", "ice\n");
+
+  assert.equal(JSON.stringify(applet._deviceLoginEvents.alpha), JSON.stringify([
+    { kind: "url", value: "https://auth.example/device" },
+  ]));
+});
+
+test("device login live parser defers URL punctuation at a chunk boundary", () => {
+  const applet = makeApplet();
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginLiveText.alpha = { stdout: "", stderr: "" };
+
+  applet._recordDeviceLoginChunk(
+    "stdout",
+    "Open https://auth.example/device.",
+  );
+
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+
+  applet._recordDeviceLoginChunk("stdout", "well-known\n");
+
+  assert.equal(JSON.stringify(applet._deviceLoginEvents.alpha), JSON.stringify([
+    { kind: "url", value: "https://auth.example/device.well-known" },
+  ]));
+});
+
+test("device login live parser emits a delimited URL before EOF", () => {
+  const applet = makeApplet();
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginLiveText.alpha = { stdout: "", stderr: "" };
+
+  applet._recordDeviceLoginChunk(
+    "stdout",
+    "Open https://auth.example/device. Continue\n",
+  );
+
+  assert.equal(JSON.stringify(applet._deviceLoginEvents.alpha), JSON.stringify([
+    { kind: "url", value: "https://auth.example/device" },
+  ]));
+});
+
+test("device login live parser defers a code split across chunks", () => {
+  const applet = makeApplet();
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginLiveText.alpha = { stdout: "", stderr: "" };
+
+  applet._recordDeviceLoginChunk("stdout", "Enter device code: ABCD");
+
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+
+  applet._recordDeviceLoginChunk("stdout", "-1234\n");
+
+  assert.equal(JSON.stringify(applet._deviceLoginEvents.alpha), JSON.stringify([
+    { kind: "code", value: "ABCD-1234" },
+  ]));
+});
+
+test("device login live parser never joins tokens across output streams", () => {
+  const applet = makeApplet();
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginLiveText.alpha = { stdout: "", stderr: "" };
+
+  applet._recordDeviceLoginChunk("stderr", "Enter device code: ABCD");
+  applet._recordDeviceLoginChunk("stdout", "-1234\n");
+
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+});
+
+test("device login parser accepts the current ANSI Codex prompt", () => {
+  const applet = makeApplet();
+  const output =
+    "1. Open this link in your browser and sign in to your account\n" +
+    "   \u001b[34mhttps://auth.openai.com/codex/device\u001b[0m\n" +
+    "2. Enter this one-time code \u001b[2m(expires in 15 minutes)\u001b[0m\n" +
+    "   \u001b[34mABCD-1234\u001b[0m\n";
+
+  assert.equal(JSON.stringify(applet._deviceLoginEventsFromText(output)),
+    JSON.stringify([
+      { kind: "url", value: "https://auth.openai.com/codex/device" },
+      { kind: "code", value: "ABCD-1234" },
+    ]));
+});
+
+test("device login parser stops URLs before control characters", () => {
+  const applet = makeApplet();
+  const controls = ["\u0007", "\u001b", "\u007f", "\u0085", "\u009f"];
+
+  for (const control of controls) {
+    assert.equal(JSON.stringify(applet._deviceLoginEventsFromText(
+      `Open https://auth.openai.com/codex/device${control}hidden\n`
+    )), JSON.stringify([
+      { kind: "url", value: "https://auth.openai.com/codex/device" },
+    ]));
+  }
+});
+
+test("device login parser rejects overlong URLs without a prefix match", () => {
+  const applet = makeApplet();
+
+  assert.equal(JSON.stringify(applet._deviceLoginEventsFromText(
+    `Open https://${"a".repeat(481)}\n`
+  )), "[]");
+});
+
+test("device login parser deduplicates before the eight event cap", () => {
+  const applet = makeApplet();
+  const url = "https://auth.openai.com/codex/device";
+  const repeated = `${Array(9).fill(url).join(" ")} device code: ABCD-1234`;
+  const unique = [
+    "https://auth.example/device/0",
+    "https://auth.example/device/1",
+    "https://auth.example/device/2",
+    "https://auth.example/device/3",
+    "https://auth.example/device/4",
+    "https://auth.example/device/5",
+    "https://auth.example/device/6",
+    "https://auth.example/device/7",
+    "https://auth.example/device/8",
+  ].join(" ");
+
+  assert.equal(JSON.stringify(applet._deviceLoginEventsFromText(repeated)), JSON.stringify([
+    { kind: "url", value: url },
+    { kind: "code", value: "ABCD-1234" },
+  ]));
+  assert.equal(JSON.stringify(applet._deviceLoginEventsFromText(unique)), JSON.stringify([
+    { kind: "url", value: "https://auth.example/device/0" },
+    { kind: "url", value: "https://auth.example/device/1" },
+    { kind: "url", value: "https://auth.example/device/2" },
+    { kind: "url", value: "https://auth.example/device/3" },
+    { kind: "url", value: "https://auth.example/device/4" },
+    { kind: "url", value: "https://auth.example/device/5" },
+    { kind: "url", value: "https://auth.example/device/6" },
+    { kind: "url", value: "https://auth.example/device/7" },
+  ]));
+});
+
+test("device login event boundary rejects malformed values before normalization", () => {
+  const applet = makeApplet();
+  const events = [
+    { kind: "url", value: "https://auth.openai.com/codex/device" },
+    { kind: "url", value: "https://auth.openai.com/codex/device\u0007hidden" },
+    { kind: "url", value: "http://auth.openai.com/codex/device" },
+    { kind: "url", value: `https://${"a".repeat(481)}` },
+    { kind: "code", value: "ABCD-1234" },
+    { kind: "code", value: "ABCD\n1234" },
+    { kind: "code", value: "A".repeat(129) },
+  ];
+
+  assert.equal(JSON.stringify(applet._safeDeviceLoginEvents(events)), JSON.stringify([
+    { kind: "url", value: "https://auth.openai.com/codex/device" },
+    { kind: "code", value: "ABCD-1234" },
+  ]));
+});
+
+test("device login parser ignores generic and malformed diagnostic codes", () => {
+  const applet = makeApplet();
+  const output =
+    "error code: E1234\n" +
+    "exit code: EXIT-7\n" +
+    "code: ABCD-1234\n" +
+    "kode: WXYZ-9876\n" +
+    "device\ncode: SPLIT-1\n" +
+    "one-time code\n\nABCD-1234\n" +
+    `device code: ${"A".repeat(129)}\n`;
+
+  assert.equal(JSON.stringify(applet._deviceLoginEventsFromText(output)), "[]");
+});
+
 test("device login event copy writes only the ephemeral event value", () => {
   const copied = [];
   const applet = makeApplet((runtime) => {
@@ -622,6 +807,7 @@ test("account overview rows expose editable account settings", () => {
     label: "Alpha",
     "auth-json": null,
     "profile-dir": "file:///tmp/alpha",
+    "test-home": false,
     browser: 1,
     "reactivation-browser": 1,
     backend: 1,
@@ -747,16 +933,71 @@ test("bounded process output decodes UTF-8 split across chunks", () => {
 
   applet._readBoundedProcessOutput(process, (output, _stderr, error) => {
     result = { output, error };
-  }, (_name, chunk) => {
-    liveChunks.push(chunk);
+  }, (_name, chunk, final) => {
+    liveChunks.push({ chunk, final: final === true });
   });
 
   assert.deepEqual(result, {
     output: '{"label":"Ä"}\n',
     error: null,
   });
-  assert.equal(liveChunks.length, 2);
-  assert.equal(liveChunks.join(""), '{"label":"Ä"}\n');
+  assert.equal(liveChunks.length, 3);
+  assert.equal(liveChunks.slice(0, 2).map((item) => item.chunk).join(""),
+    '{"label":"Ä"}\n');
+  assert.deepEqual(liveChunks[2], { chunk: "", final: true });
+});
+
+test("bounded reader finalizes a trailing device login token only at EOF", () => {
+  const applet = makeApplet();
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginLiveText.alpha = { stdout: "", stderr: "" };
+  const makeStream = (parts) => ({
+    read_bytes_async(_size, _priority, _cancellable, callback) {
+      callback(this, parts.shift());
+    },
+    read_bytes_finish(result) {
+      return {
+        get_size: () => result.length,
+        get_data: () => result,
+      };
+    },
+  });
+  const stdout = makeStream([
+    Buffer.from("Open https://auth.example/device", "utf8"),
+    new Uint8Array(0),
+  ]);
+  const stderr = makeStream([new Uint8Array(0)]);
+  const process = {
+    get_stdout_pipe: () => stdout,
+    get_stderr_pipe: () => stderr,
+    force_exit() {},
+  };
+  const snapshots = [];
+  let result = null;
+
+  applet._readBoundedProcessOutput(process, (output, errorOutput, error) => {
+    result = { output, errorOutput, error };
+  }, (name, chunk, final) => {
+    applet._recordDeviceLoginChunk(name, chunk, final);
+    snapshots.push({
+      final: final === true,
+      events: JSON.parse(JSON.stringify(applet._deviceLoginEvents.alpha || [])),
+    });
+  });
+
+  assert.deepEqual(result, {
+    output: "Open https://auth.example/device",
+    errorOutput: "",
+    error: null,
+  });
+  assert.deepEqual(snapshots, [
+    { final: false, events: [] },
+    {
+      final: true,
+      events: [{ kind: "url", value: "https://auth.example/device" }],
+    },
+  ]);
 });
 
 test("legacy account overview rows receive editable defaults", () => {
@@ -772,6 +1013,7 @@ test("legacy account overview rows receive editable defaults", () => {
     label: "Alpha",
     "auth-json": null,
     "profile-dir": null,
+    "test-home": false,
     browser: 0,
     "reactivation-browser": 0,
     backend: 0,
@@ -880,6 +1122,7 @@ test("account table changes produce complete account add data", () => {
     label: "Renamed",
     "auth-json": null,
     "profile-dir": "/tmp/alpha",
+    "test-home": false,
     browser: 1,
     "reactivation-browser": 2,
     backend: 0,
@@ -1051,6 +1294,7 @@ test("account edits during reconcile are retained for the next pass", () => {
     label: "Latest label",
     "auth-json": null,
     "profile-dir": "/tmp/alpha",
+    "test-home": false,
     browser: 0,
     "reactivation-browser": 0,
     backend: 0,
@@ -1425,14 +1669,19 @@ test("device login live events survive output buffer truncation", () => {
   applet._deviceLoginEvents.alpha = [
     { kind: "url", value: "https://auth.example/device" },
   ];
-  applet._deviceLoginLiveText.alpha = "x".repeat(4090);
+  applet._deviceLoginLiveText.alpha = {
+    stdout: "x".repeat(4090),
+    stderr: "",
+  };
 
-  applet._recordDeviceLoginChunk("stdout", " device code: ABCD-1234");
+  applet._recordDeviceLoginChunk("stdout", " device code: ABCD-1234\n");
 
   assert.equal(JSON.stringify(applet._deviceLoginEvents.alpha), JSON.stringify([
     { kind: "url", value: "https://auth.example/device" },
     { kind: "code", value: "ABCD-1234" },
   ]));
+  assert.equal(applet._deviceLoginLiveText.alpha.stdout.length, 4096);
+  assert.equal(applet._deviceLoginLiveText.alpha.stderr, "");
 });
 
 test("accounts without a Spark limit show no Spark and ignore edits", () => {
@@ -1570,6 +1819,7 @@ test("legacy alert rows receive Spark state without changing other thresholds", 
     account: "alpha",
     "five-threshold": 12,
     "weekly-threshold": 34,
+    "monthly-threshold": 20,
     "spark-threshold": "no Spark",
     warnings: true,
     errors: false,
@@ -3643,6 +3893,122 @@ test("same error notification is suppressed for 48 hours and survives restart", 
   assert.equal(notifications.length, 2);
 });
 
+test("suppressed error persists pruned notification state", () => {
+  const applet = makeApplet();
+  const now = 200_000_000;
+  const key = "persist-pruned";
+  const current = applet._errorNotificationFingerprint(key);
+  const expired = applet._errorNotificationFingerprint("expired");
+  const future = applet._errorNotificationFingerprint("future");
+  const writes = [];
+  applet._errorNotificationNow = () => now;
+  applet.errorNotificationState = JSON.stringify({
+    [current]: now - 1,
+    [expired]: now - 48 * 60 * 60 * 1000,
+    invalid: "not-a-timestamp",
+    [future]: now + 1,
+  });
+  applet.settings = {
+    setValue(keyName, value) {
+      writes.push([keyName, value]);
+    },
+  };
+
+  assert.equal(applet._shouldNotifyError(key), false);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][0], "error-notification-state");
+  assert.deepEqual(JSON.parse(writes[0][1]), { [current]: now - 1 });
+  assert.equal(applet.errorNotificationState, writes[0][1]);
+});
+
+test("suppressed error caps oversized valid notification state", () => {
+  const applet = makeApplet();
+  const now = 200_000_000;
+  const key = "persist-bounded";
+  const current = applet._errorNotificationFingerprint(key);
+  const state = { [current]: now };
+  for (let index = 0; index < 129; index++) {
+    state[applet._errorNotificationFingerprint(`bounded-${index}`)] = now - index - 1;
+  }
+  const writes = [];
+  applet._errorNotificationNow = () => now;
+  applet.errorNotificationState = JSON.stringify(state);
+  applet.settings = {
+    setValue(keyName, value) {
+      writes.push([keyName, value]);
+    },
+  };
+
+  assert.equal(applet._shouldNotifyError(key), false);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][0], "error-notification-state");
+  assert.equal(Object.keys(JSON.parse(writes[0][1])).length, 128);
+  assert.equal(JSON.parse(writes[0][1])[current], now);
+  assert.equal(applet.errorNotificationState, writes[0][1]);
+});
+
+test("suppressed error retries failed prune persistence without unsuppressing", () => {
+  const applet = makeApplet();
+  const now = 200_000_000;
+  const key = "persist-failure";
+  const current = applet._errorNotificationFingerprint(key);
+  const expired = applet._errorNotificationFingerprint("expired-failure");
+  const attempts = [];
+  applet._errorNotificationNow = () => now;
+  applet.errorNotificationState = JSON.stringify({
+    [current]: now - 1,
+    [expired]: now - 48 * 60 * 60 * 1000,
+  });
+  applet.settings = {
+    setValue(keyName, value) {
+      attempts.push([keyName, value]);
+      if (attempts.length === 1) {
+        throw new Error("settings write failed");
+      }
+    },
+  };
+
+  assert.equal(applet._shouldNotifyError(key), false);
+  assert.equal(applet._shouldNotifyError(key), false);
+  assert.equal(applet._shouldNotifyError(key), false);
+
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0][0], "error-notification-state");
+  assert.deepEqual(JSON.parse(attempts[0][1]), { [current]: now - 1 });
+  assert.deepEqual(attempts[1], attempts[0]);
+  assert.equal(applet.errorNotificationState, attempts[1][1]);
+});
+
+test("active error retries failed notification persistence without duplicate", () => {
+  const notifications = [];
+  const attempts = [];
+  const applet = makeApplet((runtime) => {
+    runtime.onNotify = (...args) => notifications.push(args);
+  });
+  applet.notifyErrors = true;
+  applet._alertSettings = { alpha: { account: "alpha", errors: true } };
+  applet.settings = {
+    setValue(keyName, value) {
+      attempts.push([keyName, value]);
+      if (attempts.length === 1) {
+        throw new Error("settings write failed");
+      }
+    },
+  };
+  applet._usages[0].status = "blocked";
+  applet._usages[0].error = "backend failed";
+
+  applet._notifyForPayload();
+  applet._notifyForPayload();
+  applet._notifyForPayload();
+
+  assert.equal(notifications.length, 1);
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0][0], "error-notification-state");
+  assert.deepEqual(attempts[1], attempts[0]);
+  assert.doesNotMatch(attempts[1][1], /backend failed/);
+});
+
 test("error notification fingerprints distinguish old 32-bit collisions", () => {
   const applet = makeApplet();
   const first = applet._errorNotificationFingerprint("collision-1upg");
@@ -3710,6 +4076,7 @@ test("oversized process output force-stops the child and reports a bounded error
   const applet = makeApplet();
   let forced = 0;
   let result = null;
+  const finalSignals = [];
   const oversized = {
     get_size: () => 262145,
     get_data: () => Buffer.alloc(0),
@@ -3725,10 +4092,13 @@ test("oversized process output force-stops the child and reports a bounded error
   };
   applet._readBoundedProcessOutput(process, (stdout, stderr, error) => {
     result = { stdout, stderr, error };
+  }, (_name, _chunk, final) => {
+    finalSignals.push(final === true);
   });
   assert.equal(forced, 1);
   assert.equal(result.stdout, null);
   assert.match(result.error, /zu groß/);
+  assert.deepEqual(finalSignals, []);
 });
 
 test("safe menu construction contains menu failures", () => {
@@ -4477,6 +4847,63 @@ test("health timeout clears the process even when force_exit fails", () => {
   assert.equal(typeof timeout, "function");
   timeout();
   assert.equal(applet._healthProcess, null);
+});
+
+test("auxiliary timeout message reports the selected duration", () => {
+  const cases = [
+    {
+      argv: ["codex-usage", "health"],
+      timeoutMs: 10000,
+      expected: "Hilfsbefehl nach 10 Sekunden abgebrochen",
+    },
+    {
+      argv: ["codex-usage", "health"],
+      timeoutMs: 30000,
+      expected: "Hilfsbefehl nach 30 Sekunden abgebrochen",
+    },
+    {
+      argv: ["codex-usage", "account", "device-login"],
+      timeoutMs: 910000,
+      expected: "Device-Login nach 15 Minuten 10 Sekunden abgebrochen",
+    },
+  ];
+  const results = [];
+
+  for (const scenario of cases) {
+    let timeout = null;
+    let scheduledMs = null;
+    let forced = 0;
+    const process = { force_exit() { forced += 1; } };
+    const applet = makeApplet((runtime) => {
+      runtime.timeoutAdd = (milliseconds, callback) => {
+        scheduledMs = milliseconds;
+        timeout = callback;
+        return 17;
+      };
+      runtime.launcherFactory = () => ({
+        setenv() {},
+        spawnv() { return process; },
+      });
+    });
+    applet._readBoundedProcessOutput = () => {};
+    let error = null;
+
+    applet._spawnAuxJson(
+      scenario.argv,
+      (_payload, value) => { error = value; },
+      false,
+      scenario.timeoutMs
+    );
+    assert.equal(typeof timeout, "function");
+    timeout();
+    results.push({ scheduledMs, error, forced });
+  }
+
+  assert.deepEqual(results, cases.map((scenario) => ({
+    scheduledMs: scenario.timeoutMs,
+    error: scenario.expected,
+    forced: 1,
+  })));
 });
 
 test("stale process timeouts cannot clear newer request timers", () => {

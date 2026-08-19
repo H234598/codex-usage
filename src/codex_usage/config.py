@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
+import subprocess
 import tomllib
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -164,6 +166,7 @@ def add_or_update_account(
     backend: str | None = None,
     reactivation_browser: str | None = None,
     clear_auth_json: bool = False,
+    test_home: bool = False,
     path: Path | None = None,
     before_state_cleanup: Callable[[AppConfig], None] | None = None,
     rollback_callback: Callable[[AppConfig], None] | None = None,
@@ -176,8 +179,12 @@ def add_or_update_account(
         _validate_backend(backend)
     if reactivation_browser is not None:
         _validate_reactivation_browser(reactivation_browser)
+    if not isinstance(test_home, bool):
+        raise ValueError("test_home must be boolean")
     if clear_auth_json and auth_json_path is not None:
         raise ValueError("clear_auth_json cannot be combined with auth_json_path")
+    if clear_auth_json and test_home:
+        raise ValueError("clear_auth_json cannot be combined with test_home")
     if not isinstance(_all_accounts_lock_held, bool):
         raise ValueError("_all_accounts_lock_held must be boolean")
     config_path = path or default_config_path()
@@ -195,7 +202,9 @@ def add_or_update_account(
         config = load_config(config_path)
         existing = next((item for item in config.accounts if item.id == account_id), None)
         selected_profile_dir = profile_dir or (
-            existing.profile_dir if existing else str(_default_profile_root(account_id))
+            str(_test_profile_root(account_id))
+            if test_home and existing is None
+            else (existing.profile_dir if existing else str(_default_profile_root(account_id)))
         )
         selected_auth_json_path = (
             None
@@ -204,15 +213,25 @@ def add_or_update_account(
             if auth_json_path is not None
             else (existing.auth_json_path if existing else None)
         )
+        source_auth_json = (
+            Path(selected_auth_json_path).expanduser()
+            if test_home and selected_auth_json_path
+            else None
+        )
+        canonical_auth_json = (
+            str(Path(selected_profile_dir).expanduser() / "codex-home" / "auth.json")
+            if test_home
+            else selected_auth_json_path
+        )
         account = Account(
             id=account_id,
             label=label or (existing.label if existing else account_id),
             profile_dir=_absolute_account_path(selected_profile_dir, "profile_dir"),
             browser=browser or (existing.browser if existing else "firefox"),
             auth_json_path=(
-                _absolute_account_path(selected_auth_json_path, "auth_json_path")
-                if selected_auth_json_path not in (None, "")
-                else selected_auth_json_path
+                _absolute_account_path(canonical_auth_json, "auth_json_path")
+                if canonical_auth_json not in (None, "")
+                else canonical_auth_json
             ),
             backend=backend or (existing.backend if existing else "direct"),
             reactivation_browser=reactivation_browser
@@ -232,10 +251,24 @@ def add_or_update_account(
         profile_path, profile_created, profile_created_directories = _prepare_profile_dir(
             account.profile_dir
         )
+        moved_auth_json: tuple[Path, Path] | None = None
         state_changed = existing is None or existing != account
         try:
+            if source_auth_json is not None:
+                _integrate_test_home_auth(source_auth_json, Path(account.auth_json_path))
+                moved_auth_json = (source_auth_json, Path(account.auth_json_path))
+            if test_home:
+                _prepare_test_codex_home(Path(account.profile_dir) / "codex-home")
             _save_config_unlocked(updated, config_path)
         except Exception as original_error:
+            if moved_auth_json is not None:
+                source, target = moved_auth_json
+                try:
+                    if target.is_file() and not source.exists():
+                        source.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                        shutil.move(str(target), str(source))
+                except OSError:
+                    pass
             if profile_created:
                 try:
                     _cleanup_created_profile_directories(
@@ -465,6 +498,65 @@ def _safe_profile_name(account_id: str) -> str:
 
 def _default_profile_root(account_id: str) -> Path:
     return default_state_dir() / "profiles" / _safe_profile_name(account_id)
+
+
+def _test_profile_root(account_id: str) -> Path:
+    return Path.home() / ".codex-test" / _safe_profile_name(account_id)
+
+
+def _integrate_test_home_auth(source: Path, target: Path) -> None:
+    source = source.expanduser().absolute()
+    target = target.expanduser().absolute()
+    if source == target:
+        return
+    assert_no_symlink_ancestors(source, label="test auth source")
+    if source.is_symlink() or not source.is_file():
+        raise ValueError("test auth source must be a regular file")
+    if target.exists() or target.is_symlink():
+        raise ValueError(f"test auth target already exists: {target}")
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target.parent.chmod(0o700)
+    shutil.move(str(source), str(target))
+    target.chmod(0o600)
+
+
+def _prepare_test_codex_home(codex_home: Path) -> None:
+    ensure_private_directory(codex_home, label="test CODEX_HOME")
+    config_path = codex_home / "config.toml"
+    if config_path.is_symlink() or (config_path.exists() and not config_path.is_file()):
+        raise ValueError("test CODEX_HOME config must be a regular file")
+    if not config_path.exists():
+        write_private_text(
+            config_path,
+            'cli_auth_credentials_store = "file"\n',
+            label="test CODEX_HOME config",
+        )
+    else:
+        existing, _ = read_private_text(
+            config_path,
+            regular_label="test CODEX_HOME config",
+            read_label="test CODEX_HOME config",
+            max_bytes=64 * 1024,
+        )
+        if 'cli_auth_credentials_store = "file"' not in existing:
+            write_private_text(
+                config_path,
+                existing.rstrip() + '\ncli_auth_credentials_store = "file"\n',
+                label="test CODEX_HOME config",
+                replace_existing=True,
+            )
+    try:
+        subprocess.run(
+            ["codex", "--help"],
+            env={**os.environ, "CODEX_HOME": str(codex_home)},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("could not start Codex in test CODEX_HOME") from exc
 
 
 def _absolute_account_path(value: str, name: str) -> str:

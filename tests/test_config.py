@@ -47,6 +47,39 @@ def test_relative_xdg_data_home_is_ignored_for_default_profile(tmp_path, monkeyp
     assert expected.is_dir()
 
 
+def test_test_home_moves_auth_and_initializes_file_store(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    calls = []
+    monkeypatch.setattr(
+        config_module.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs)),
+    )
+    source = tmp_path / "incoming" / "auth.json"
+    source.parent.mkdir()
+    source.write_text('{"tokens": {}}\n', encoding="utf-8")
+
+    _, account = add_or_update_account(
+        "test-account",
+        auth_json_path=str(source),
+        test_home=True,
+        path=tmp_path / "config.toml",
+    )
+
+    profile = home / ".codex-test" / "test-account"
+    target = profile / "codex-home" / "auth.json"
+    assert account.profile_dir == str(profile)
+    assert account.auth_json_path == str(target)
+    assert not source.exists()
+    assert target.read_text(encoding="utf-8") == '{"tokens": {}}\n'
+    assert (profile / "codex-home" / "config.toml").read_text(encoding="utf-8") == (
+        'cli_auth_credentials_store = "file"\n'
+    )
+    assert calls[0][0] == ["codex", "--help"]
+    assert calls[0][1]["env"]["CODEX_HOME"] == str(profile / "codex-home")
+
+
 def test_internal_all_accounts_lock_name_is_not_a_valid_account_id():
     with pytest.raises(ValueError, match="reserved"):
         config_module._validate_account_id("__all_accounts__")

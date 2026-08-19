@@ -8,12 +8,18 @@ from pathlib import Path
 import pytest
 
 import codex_usage.health as health_module
-from codex_usage.health import MAX_HEALTH_EVENTS, clear_health, load_health, record_health_event
+from codex_usage.health import (
+    HEALTH_RETENTION,
+    MAX_HEALTH_EVENTS,
+    clear_health,
+    load_health,
+    record_health_event,
+)
 
 
 def test_health_is_bounded_and_redacts_invalid_account(tmp_path):
     path = tmp_path / "health.json"
-    now = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    now = datetime.now(UTC)
 
     for index in range(MAX_HEALTH_EVENTS + 12):
         record_health_event(
@@ -44,13 +50,43 @@ def test_health_is_bounded_and_redacts_invalid_account(tmp_path):
 
 def test_health_discards_old_events_and_can_be_cleared(tmp_path):
     path = tmp_path / "health.json"
-    now = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    now = datetime.now(UTC)
     record_health_event("watch", "old", path=path, now=now - timedelta(days=31))
     record_health_event("watch", "new", path=path, now=now)
 
     assert [event["event"] for event in load_health(path)["events"]] == ["new"]
     clear_health(path)
     assert load_health(path)["event_count"] == 0
+
+
+def test_health_load_excludes_expired_events_without_a_new_write(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "health.json"
+    recorded_at = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    read_at = recorded_at + HEALTH_RETENTION + timedelta(seconds=1)
+    record_health_event("watch", "old", path=path, now=recorded_at)
+    persisted = path.read_bytes()
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return read_at.replace(tzinfo=None)
+            return read_at.astimezone(tz)
+
+    monkeypatch.setattr(health_module, "datetime", FrozenDateTime)
+
+    payload = load_health(path)
+
+    assert payload == {
+        "version": 1,
+        "event_count": 0,
+        "event_counts": {},
+        "events": [],
+    }
+    assert path.read_bytes() == persisted
 
 
 def test_health_read_stops_after_valid_tail(tmp_path, monkeypatch):

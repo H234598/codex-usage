@@ -131,6 +131,7 @@ Globale Optionen:
 Accounts:
   codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
                                    [--browser BROWSER] [--auth-json PATH]
+                                   [--test-home]
                                    [--reactivation-browser BROWSER]
                                    [--backend direct|app-server] [--format table|json]
   codex-usage account backend ACCOUNT direct|app-server [--format table|json]
@@ -304,6 +305,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Browser fuer Login und Polling, Standard: firefox",
     )
     add.add_argument("--auth-json", type=Path, help="Codex auth.json fuer direkten Abruf")
+    add.add_argument(
+        "--test-home",
+        action="store_true",
+        help="Separates CODEX_HOME unter ~/.codex-test anlegen und Codex dort initialisieren",
+    )
     add.add_argument(
         "--clear-auth-json",
         action="store_true",
@@ -688,6 +694,7 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
         backend=args.backend,
         reactivation_browser=args.reactivation_browser,
         clear_auth_json=args.clear_auth_json,
+        test_home=args.test_home,
         path=args.config,
         before_state_cleanup=lambda config: _sync_managed_service(
             config,

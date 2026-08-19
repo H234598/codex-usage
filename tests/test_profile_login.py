@@ -25,6 +25,79 @@ def _account(profile: Path) -> Account:
     return Account(id="alpha", label="Alpha", profile_dir=str(profile))
 
 
+def test_device_events_parse_current_ansi_codex_prompt():
+    output = (
+        "1. Open this link in your browser and sign in to your account\n"
+        "   \x1b[34mhttps://auth.openai.com/codex/device\x1b[0m\n"
+        "2. Enter this one-time code \x1b[2m(expires in 15 minutes)\x1b[0m\n"
+        "   \x1b[34mABCD-1234\x1b[0m\n"
+    )
+
+    assert [
+        (event.kind, event.value)
+        for event in profile_login._device_events(output)
+    ] == [
+        ("url", "https://auth.openai.com/codex/device"),
+        ("code", "ABCD-1234"),
+    ]
+
+
+@pytest.mark.parametrize("control", ["\x07", "\x1b", "\x7f", "\x85", "\x9f"])
+def test_device_events_stop_urls_before_control_characters(control):
+    output = f"Open https://auth.openai.com/codex/device{control}hidden\n"
+
+    assert [
+        (event.kind, event.value)
+        for event in profile_login._device_events(output)
+    ] == [("url", "https://auth.openai.com/codex/device")]
+
+
+def test_device_events_reject_overlong_urls_without_prefix_match():
+    output = f"Open https://{'a' * 481}\n"
+
+    assert profile_login._device_events(output) == ()
+
+
+def test_device_events_cap_unique_events_at_eight():
+    output = " ".join([
+        "https://auth.example/device/0",
+        "https://auth.example/device/1",
+        "https://auth.example/device/2",
+        "https://auth.example/device/3",
+        "https://auth.example/device/3",
+        "https://auth.example/device/4",
+        "https://auth.example/device/5",
+        "https://auth.example/device/6",
+        "https://auth.example/device/7",
+        "https://auth.example/device/8",
+    ])
+
+    assert [event.value for event in profile_login._device_events(output)] == [
+        "https://auth.example/device/0",
+        "https://auth.example/device/1",
+        "https://auth.example/device/2",
+        "https://auth.example/device/3",
+        "https://auth.example/device/4",
+        "https://auth.example/device/5",
+        "https://auth.example/device/6",
+        "https://auth.example/device/7",
+    ]
+
+
+def test_device_events_ignore_generic_and_malformed_diagnostic_codes():
+    output = (
+        "error code: E1234\n"
+        "exit code: EXIT-7\n"
+        "code: ABCD-1234\n"
+        "kode: WXYZ-9876\n"
+        "device\ncode: SPLIT-1\n"
+        "one-time code\n\nABCD-1234\n"
+        f"device code: {'A' * 129}\n"
+    )
+
+    assert profile_login._device_events(output) == ()
+
+
 def test_device_login_uses_staging_home_and_publishes_auth_atomically(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     config = tmp_path / "config.toml"

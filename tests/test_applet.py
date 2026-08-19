@@ -44,6 +44,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "spark-five-hour",
         "spark-other",
         "spark-weekly",
+        "thirty-day",
         "weekly",
     }
     panel_table = settings["account-panel-settings"]
@@ -56,7 +57,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     ]
     assert panel_table["columns"][1]["min"] == 1
     assert panel_table["columns"][1]["max"] == 100
-    assert set(panel_table["columns"][3]["options"].values()) == set(range(8))
+    assert set(panel_table["columns"][3]["options"].values()) == set(range(9))
     assert panel_table["columns"][2]["default"] is False
     assert settings["panel-account-separator"]["default"] == "bar"
     assert set(settings["panel-account-separator"]["options"].values()) == {
@@ -111,6 +112,7 @@ def test_account_table_contains_all_editable_fields() -> None:
         "label",
         "auth-json",
         "profile-dir",
+        "test-home",
         "browser",
         "reactivation-browser",
         "backend",
@@ -160,9 +162,11 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     columns = {column["id"]: column for column in table["columns"]}
     assert columns["show-panel"]["default"] is False
     assert columns["show-tooltip"]["default"] is True
-    assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days"}
+    assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days", "weeks"}
     assert set(columns["limit-window"]["options"].values()) == {"short", "weekly", "all"}
-    assert set(columns["format"]["options"].values()) == {"compact", "verbose", "custom"}
+    assert set(columns["format"]["options"].values()) == {
+        "compact", "compact-token", "verbose", "custom"
+    }
     assert table["show-buttons"] is True
     assert set(table["hidden-buttons"]) == {"+", "-", "up", "down"}
 
@@ -222,10 +226,10 @@ def test_alert_table_has_editable_spark_column() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     table = settings["account-alert-settings"]
     assert [column["id"] for column in table["columns"]] == [
-        "account", "five-threshold", "weekly-threshold", "spark-threshold",
+        "account", "five-threshold", "weekly-threshold", "monthly-threshold", "spark-threshold",
         "warnings", "errors",
     ]
-    assert table["columns"][3]["title"] == "Spark %"
+    assert table["columns"][4]["title"] == "Spark %"
     assert table["show-buttons"] is True
     assert set(table["hidden-buttons"]) == {"+", "-", "up", "down"}
 
@@ -358,15 +362,16 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "account",
         "five-threshold",
         "weekly-threshold",
+        "monthly-threshold",
         "spark-threshold",
         "warnings",
         "errors",
     ]
     assert alert_table["columns"][1]["default"] == 20
     assert alert_table["columns"][2]["default"] == 20
-    assert alert_table["columns"][3]["default"] == "20"
-    assert alert_table["columns"][4]["default"] is True
+    assert alert_table["columns"][4]["default"] == "20"
     assert alert_table["columns"][5]["default"] is True
+    assert alert_table["columns"][6]["default"] is True
     targets = settings["account-style-targets"]
     assert [column["id"] for column in targets["columns"]] == [
         "account",

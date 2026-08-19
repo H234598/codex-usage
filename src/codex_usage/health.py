@@ -65,7 +65,7 @@ def record_health_event(
 
 def load_health(path: Path | None = None) -> dict[str, Any]:
     health_path = path or default_health_path()
-    events = _read_events(health_path)
+    events = _trim_events(_read_events(health_path), datetime.now(UTC))
     counts: dict[str, int] = {}
     for event in events:
         key = f"{event['component']}:{event['event']}"

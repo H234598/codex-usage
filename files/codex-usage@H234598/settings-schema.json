@@ -80,6 +80,7 @@
       "title": "Verbrauchszeiträume",
       "keys": [
         "account-consumption-settings",
+        "show-consumption-delta",
         "account-reset-display-settings"
       ]
     },
@@ -215,6 +216,13 @@
         "title": "Profilordner",
         "type": "file",
         "select-dir": true
+      },
+      {
+        "id": "test-home",
+        "title": "Test-Home",
+        "type": "boolean",
+        "tooltip": "Legt das Profil unter ~/.codex-test an, integriert auth.json und initialisiert Codex mit Dateispeicher.",
+        "default": false
       },
       {
         "id": "browser",
@@ -1082,7 +1090,8 @@
           "Spark 5h": 4,
           "Spark Woche": 5,
           "Spark Mittelwert": 6,
-          "Spark weiteres Limit": 7
+          "Spark weiteres Limit": 7,
+          "30-Tage-Limit": 8
         }
       },
       {
@@ -1097,7 +1106,8 @@
           "Spark 5h": 4,
           "Spark Woche": 5,
           "Spark Mittelwert": 6,
-          "Spark weiteres Limit": 7
+          "Spark weiteres Limit": 7,
+          "30-Tage-Limit": 8
         }
       }
     ],
@@ -1142,7 +1152,8 @@
         "options": {
           "Minuten": "minutes",
           "Stunden": "hours",
-          "Tage": "days"
+          "Tage": "days",
+          "Wochen": "weeks"
         },
         "default": "hours"
       },
@@ -1163,6 +1174,7 @@
         "type": "string",
         "options": {
           "Kompakt": "compact",
+          "1T1P kompakt": "compact-token",
           "Ausführlich": "verbose",
           "Benutzerdefiniert": "custom"
         },
@@ -1172,6 +1184,7 @@
         "id": "custom-format",
         "title": "Eigenes Format",
         "type": "string",
+        "tooltip": "Nur bei Format Benutzerdefiniert. Platzhalter: {value} = Verbrauch in Prozentpunkten, {period} = Zeitraum, {window} = Limitfenster (5h/Woche/30d), {coverage} = Datenqualität. Beispiel: Δ{period} {value}pp ({window}, {coverage}).",
         "default": ""
       },
       {
@@ -1191,6 +1204,12 @@
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
+  },
+  "show-consumption-delta": {
+    "type": "switch",
+    "description": "Delta-Zeichen vor Verbrauchswerten anzeigen",
+    "tooltip": "Im Klick-Menü kann diese Anzeige ebenfalls durch Anklicken eines Verbrauchswerts umgeschaltet werden.",
+    "default": true
   },
   "account-reset-display-settings": {
     "type": "list",
@@ -1334,14 +1353,15 @@
       "Nur Spark-5-Stunden-Limit": "spark-five-hour",
       "Nur Spark-Wochenlimit": "spark-weekly",
       "Mittelwert aus beiden Spark-Limits": "spark-average",
-      "Knappstes weiteres Spark-Limit": "spark-other"
+      "Knappstes weiteres Spark-Limit": "spark-other",
+      "Nur 30-Tage-Limit": "thirty-day"
     },
     "default": "average"
   },
   "warning-threshold": {
     "type": "spinbutton",
     "description": "Standard-Warnschwelle für neue Accounts",
-    "tooltip": "Die individuellen 5h- und Wochenwerte werden in der Accounttabelle eingestellt.",
+    "tooltip": "Die individuellen 5h-, Wochen-, 30-Tage- und Spark-Werte werden in der Accounttabelle eingestellt.",
     "min": 0,
     "max": 100,
     "step": 5,
@@ -1368,6 +1388,14 @@
       {
         "id": "weekly-threshold",
         "title": "Woche Schwelle %",
+        "type": "integer",
+        "min": 0,
+        "max": 100,
+        "default": 20
+      },
+      {
+        "id": "monthly-threshold",
+        "title": "30d Schwelle %",
         "type": "integer",
         "min": 0,
         "max": 100,
