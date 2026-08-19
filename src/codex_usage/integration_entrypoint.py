@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .consumption import ConsumptionWindow, calculate_consumption
-from .history import HistoryStore
+from .history import CREDIT_HISTORY_WINDOW_SECONDS, HistoryStore
 from .integration_snapshot import (
     IntegrationSnapshotError,
     IntegrationUnavailable,
@@ -185,6 +185,25 @@ def _load_cost_windows(
                 )
                 if cost.limit_window_seconds == 0:
                     cost = replace(cost, limit_window_seconds=duration)
+                windows.append(cost)
+            credit = getattr(usage, "credits", None)
+            if credit is not None:
+                duration = credit.duration_seconds or CREDIT_HISTORY_WINDOW_SECONDS
+                samples = store.samples_for_consumption(
+                    usage.account_id,
+                    pool="credits",
+                    window_seconds=duration,
+                    start=now - timedelta(hours=1),
+                    end=now,
+                )
+                cost = calculate_consumption(
+                    samples,
+                    amount=1,
+                    unit="hours",
+                    now=now,
+                )
+                if cost.limit_window_seconds == 0:
+                    cost = replace(cost, pool="credits", limit_window_seconds=duration)
                 windows.append(cost)
             result[usage.account_id] = tuple(windows)
     return result

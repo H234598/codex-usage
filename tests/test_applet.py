@@ -59,7 +59,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     ]
     assert panel_table["columns"][1]["min"] == 1
     assert panel_table["columns"][1]["max"] == 100
-    assert set(panel_table["columns"][3]["options"].values()) == set(range(9))
+    assert set(panel_table["columns"][3]["options"].values()) == set(range(11))
     assert panel_table["columns"][2]["default"] is False
     assert settings["panel-account-separator"]["default"] == "bar"
     assert set(settings["panel-account-separator"]["options"].values()) == {
@@ -397,6 +397,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
             "Kürzel": 9,
             "Verbrauch Woche": 10,
             "Credits": 11,
+            "Creditverbrauch": 12,
         }
     assert targets["show-buttons"] is True
     assert set(targets["hidden-buttons"]) == {"+", "-", "up", "down"}

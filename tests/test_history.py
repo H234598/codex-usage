@@ -658,6 +658,7 @@ def test_usage_samples_extract_only_fresh_valid_limit_windows():
             ),
             availability_sources=("usage",),
         ),
+        credits=LimitWindow(name="credits", percent=70, reset_at=captured + timedelta(days=30)),
         status=AccountStatus.OK,
         backend_used="direct",
     )
@@ -665,6 +666,7 @@ def test_usage_samples_extract_only_fresh_valid_limit_windows():
     assert [(sample.pool, sample.window_seconds, sample.used_percent) for sample in samples] == [
         ("main", 18_000, 25.0),
         ("main", 604_800, 60.0),
+        ("credits", history_module.CREDIT_HISTORY_WINDOW_SECONDS, 30.0),
     ]
 
 

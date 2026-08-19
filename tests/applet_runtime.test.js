@@ -1855,6 +1855,41 @@ test("panel slots honor ordering, mute and duplicate-source normalization", () =
   );
 });
 
+test("panel slots can render credits and calculated credit consumption", () => {
+  const applet = makeApplet();
+  const alpha = applet._usages[0];
+  alpha.credits = { used: 20, limit: 100, remaining: 80, percent: 80 };
+  alpha.cost_windows = [{
+    pool: "credits",
+    lookback_seconds: 3600,
+    limit_window_seconds: 2592000,
+    consumed_percentage_points: 12.3,
+    coverage: "complete",
+    sample_count: 3,
+    estimated_seconds_to_exhaustion: null,
+  }];
+  applet._panelSettings.alpha = {
+    account: "alpha", order: 1, muted: false, slot1: 9, slot2: 10, slot3: 0, slot4: 0,
+  };
+  applet._creditSettings = {
+    alpha: {
+      account: "alpha", "show-panel": false, "show-tooltip": true,
+      format: "compact", "custom-format": "", "hide-when-zero": false,
+      "consumption-show-panel": false, "consumption-show-tooltip": true,
+      "consumption-amount": 1, "consumption-unit": "hours",
+      "consumption-format": "compact", "consumption-custom-format": "",
+      "consumption-hide-when-zero": false,
+      "consumption-show-coverage-marker": true,
+    },
+  };
+
+  const items = applet._panelItems();
+  assert.equal(
+    applet._panelContent(items.filter((item) => item.visible)).plain,
+    "A Credits 80 · Verbrauch 20 / Δ1 h 12,3 Credit-%-Pkt."
+  );
+});
+
 test("panel identity target keeps account visible when all value slots are off", () => {
   const applet = makeApplet();
   applet._panelSettings.alpha = {

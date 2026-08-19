@@ -157,6 +157,7 @@ CodexUsageApplet.prototype = {
         this._syncingAccountSettings = false;
         this._panelSettings = Object.create(null);
         this._consumptionSettings = Object.create(null);
+        this._creditSettings = Object.create(null);
         this._resetSettings = Object.create(null);
         this._consumptionQueue = [];
         this._consumptionCurrent = null;
@@ -2185,7 +2186,12 @@ CodexUsageApplet.prototype = {
 
     _defaultCreditRow: function(account) {
         return { account: account, "show-panel": false, "show-tooltip": true,
-            format: "compact", "custom-format": "", "hide-when-zero": false };
+            format: "compact", "custom-format": "", "hide-when-zero": false,
+            "consumption-show-panel": false, "consumption-show-tooltip": true,
+            "consumption-amount": 1, "consumption-unit": "hours",
+            "consumption-format": "compact", "consumption-custom-format": "",
+            "consumption-hide-when-zero": false,
+            "consumption-show-coverage-marker": true };
     },
 
     _normalizeCreditRow: function(row, account) {
@@ -2195,12 +2201,33 @@ CodexUsageApplet.prototype = {
             return null;
         }
         let format = this._strictText(row.format, 16);
-        if (["compact", "verbose", "custom"].indexOf(format) === -1) {
+        let consumptionAmount = row["consumption-amount"] === undefined
+            ? 1 : this._strictIntegerSetting(row["consumption-amount"]);
+        let consumptionUnit = row["consumption-unit"] === undefined
+            ? "hours" : this._strictText(row["consumption-unit"], 16);
+        let consumptionFormat = row["consumption-format"] === undefined
+            ? "compact" : this._strictText(row["consumption-format"], 16);
+        if (["compact", "verbose", "custom"].indexOf(format) === -1 ||
+            !Number.isInteger(consumptionAmount) || consumptionAmount < 1 || consumptionAmount > 365 ||
+            ["minutes", "hours", "days", "weeks"].indexOf(consumptionUnit) === -1 ||
+            ["compact", "verbose", "custom"].indexOf(consumptionFormat) === -1 ||
+            (row["consumption-show-panel"] !== undefined && typeof row["consumption-show-panel"] !== "boolean") ||
+            (row["consumption-show-tooltip"] !== undefined && typeof row["consumption-show-tooltip"] !== "boolean") ||
+            (row["consumption-hide-when-zero"] !== undefined && typeof row["consumption-hide-when-zero"] !== "boolean") ||
+            (row["consumption-show-coverage-marker"] !== undefined && typeof row["consumption-show-coverage-marker"] !== "boolean")) {
             return null;
         }
         return { account: account, "show-panel": row["show-panel"], "show-tooltip": row["show-tooltip"],
             format: format, "custom-format": this._strictText(row["custom-format"] || "", 200),
-            "hide-when-zero": row["hide-when-zero"] };
+            "hide-when-zero": row["hide-when-zero"],
+            "consumption-show-panel": row["consumption-show-panel"] === true,
+            "consumption-show-tooltip": row["consumption-show-tooltip"] !== false,
+            "consumption-amount": consumptionAmount,
+            "consumption-unit": consumptionUnit,
+            "consumption-format": consumptionFormat,
+            "consumption-custom-format": this._strictText(row["consumption-custom-format"] || "", 200),
+            "consumption-hide-when-zero": row["consumption-hide-when-zero"] === true,
+            "consumption-show-coverage-marker": row["consumption-show-coverage-marker"] !== false };
     },
 
     _creditSettingsMap: function(rows) {
@@ -2341,10 +2368,10 @@ CodexUsageApplet.prototype = {
         if (
             !Number.isInteger(order) || order < 1 || order > 100 ||
             typeof row.muted !== "boolean" ||
-            !Number.isInteger(slot1) || slot1 < 0 || slot1 > 8 ||
-            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 8 ||
-            !Number.isInteger(slot3) || slot3 < 0 || slot3 > 8 ||
-            !Number.isInteger(slot4) || slot4 < 0 || slot4 > 8
+            !Number.isInteger(slot1) || slot1 < 0 || slot1 > 10 ||
+            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 10 ||
+            !Number.isInteger(slot3) || slot3 < 0 || slot3 > 10 ||
+            !Number.isInteger(slot4) || slot4 < 0 || slot4 > 10
         ) {
             return null;
         }
@@ -4557,8 +4584,12 @@ CodexUsageApplet.prototype = {
         for (let i = 0; i < this._usages.length; i++) {
             let usage = this._usages[i];
             let row = this._consumptionSettings[usage.account];
+            let creditRow = this._creditSettings && this._creditSettings[usage.account];
+            let panelRow = this._panelSettings[usage.account] ||
+                this._defaultPanelRow(usage.account, i + 1);
+            let panelSources = [panelRow.slot1, panelRow.slot2, panelRow.slot3, panelRow.slot4];
             usage.cost_windows = [];
-            if (!row || !(
+            let tokenNeeded = row && (
                 this._elementTargetEnabled(usage.account, "consumption", "panel", row["show-panel"]) ||
                 this._elementTargetEnabled(usage.account, "consumption", "hover", row["show-tooltip"]) ||
                 this._elementTargetEnabled(usage.account, "consumption", "click", true) ||
@@ -4568,16 +4599,36 @@ CodexUsageApplet.prototype = {
                 this._elementTargetEnabled(usage.account, "forecast", "panel", row["show-panel"]) ||
                 this._elementTargetEnabled(usage.account, "forecast", "hover", row["show-tooltip"]) ||
                 this._elementTargetEnabled(usage.account, "forecast", "click", true)
-            )) {
-                continue;
+            );
+            let creditTarget = this._styleTargets[usage.account + ":12"];
+            let creditNeeded = creditRow && (
+                panelSources.indexOf(10) !== -1 ||
+                (usage.credits && (
+                    creditRow["consumption-show-panel"] === true ||
+                    creditRow["consumption-show-tooltip"] === true
+                )) ||
+                Boolean(creditTarget)
+            );
+            if (tokenNeeded) {
+                this._consumptionQueue.push({
+                    account: usage.account,
+                    amount: row.amount,
+                    unit: row.unit,
+                    limitWindow: row["limit-window"],
+                    pool: row["limit-window"] === "spark" ? "gpt-5.3-codex-spark" : "main",
+                    generation: generation
+                });
             }
-            this._consumptionQueue.push({
-                account: usage.account,
-                amount: row.amount,
-                unit: row.unit,
-                limitWindow: row["limit-window"],
-                generation: generation
-            });
+            if (creditNeeded) {
+                this._consumptionQueue.push({
+                    account: usage.account,
+                    amount: creditRow["consumption-amount"],
+                    unit: creditRow["consumption-unit"],
+                    limitWindow: "monthly",
+                    pool: "credits",
+                    generation: generation
+                });
+            }
         }
         this._drainConsumptionRequests();
     },
@@ -4611,7 +4662,7 @@ CodexUsageApplet.prototype = {
             "--unit",
             request.unit,
             "--pool",
-            request.limitWindow === "spark" ? "gpt-5.3-codex-spark" : "main",
+            request.pool,
             "--limit-window",
             request.limitWindow,
             "--format",
@@ -4626,7 +4677,13 @@ CodexUsageApplet.prototype = {
                 ) {
                     let usage = this._usageForAccount(request.account);
                     if (usage) {
-                        usage.cost_windows = this._safeConsumptionWindows(payload.windows);
+                        let windows = this._safeConsumptionWindows(payload.windows);
+                        let existing = Array.isArray(usage.cost_windows)
+                            ? usage.cost_windows.filter(function(window) {
+                                return window.pool !== request.pool;
+                            })
+                            : [];
+                        usage.cost_windows = existing.concat(windows);
                     }
                 }
             } catch (e) {
@@ -5605,6 +5662,10 @@ CodexUsageApplet.prototype = {
         let credits = this._creditParts(usage, "click");
         if (credits) {
             this._addDisabled(accountMenu, credits.plain, "codex-usage-detail");
+        }
+        let creditConsumption = this._creditConsumptionParts(usage, "click");
+        if (creditConsumption) {
+            this._addDisabled(accountMenu, creditConsumption.plain, "codex-usage-detail");
         }
         let consumption = this._consumptionParts(usage, "click");
         if (consumption) {
@@ -6746,7 +6807,8 @@ CodexUsageApplet.prototype = {
                 let slot = item.slots[j];
                 if (slot.value !== null) {
                     values.push(slot.value);
-                    if (slot.value <= this._panelThreshold(item, slot.source)) {
+                    if (slot.source !== 9 && slot.source !== 10 &&
+                        slot.value <= this._panelThreshold(item, slot.source)) {
                         hasWarning = true;
                     }
                 }
@@ -6838,6 +6900,10 @@ CodexUsageApplet.prototype = {
                         this._creditSettings && this._creditSettings[usage.account] && this._creditSettings[usage.account]["show-panel"]
                     ) ||
                     this._elementTargetEnabled(
+                        usage.account, "credit-consumption", "panel",
+                        this._creditSettings && this._creditSettings[usage.account] && this._creditSettings[usage.account]["consumption-show-panel"]
+                    ) ||
+                    this._elementTargetEnabled(
                         usage.account,
                         "forecast",
                         "panel",
@@ -6883,18 +6949,23 @@ CodexUsageApplet.prototype = {
         let slots = item.slots.map(Lang.bind(this, function(slot) {
             return this._panelSlotContent(item, slot);
         }));
+        let hasCreditSlot = item.slots.some(function(slot) { return slot.source === 9; });
+        let hasCreditConsumptionSlot = item.slots.some(function(slot) { return slot.source === 10; });
         let consumption = this._consumptionParts(item.usage, "panel");
+        let creditConsumption = this._creditConsumptionParts(item.usage, "panel");
         let credits = this._creditParts(item.usage, "panel");
         let resets = this._usageResetParts(item.usage, "panel");
         let slotPlain = slots.map(function(slot) { return slot.plain; }).join(" / ");
         let slotMarkup = slots.map(function(slot) { return slot.markup; }).join(" / ");
         let plain = tag + (slotPlain ? " " + slotPlain : "") +
             (consumption ? " " + consumption.plain : "") +
-            (credits ? " " + credits.plain : "") +
+            ((!hasCreditConsumptionSlot && creditConsumption) ? " " + creditConsumption.plain : "") +
+            ((!hasCreditSlot && credits) ? " " + credits.plain : "") +
             (resets ? " " + resets.plain : "");
         let markup = this._escapeMarkup(tag) + (slotMarkup ? " " + slotMarkup : "") +
             (consumption ? " " + consumption.markup : "") +
-            (credits ? " " + credits.markup : "") +
+            ((!hasCreditConsumptionSlot && creditConsumption) ? " " + creditConsumption.markup : "") +
+            ((!hasCreditSlot && credits) ? " " + credits.markup : "") +
             (resets ? " " + resets.markup : "");
         if (this.panelAccountSeparator === "brackets") {
             return {
@@ -6906,6 +6977,14 @@ CodexUsageApplet.prototype = {
     },
 
     _panelSlotContent: function(item, slot) {
+        if (slot.source === 9) {
+            let credits = this._creditParts(item.usage, "panel", true);
+            return credits || { plain: "Credits –", markup: "Credits –" };
+        }
+        if (slot.source === 10) {
+            let consumption = this._creditConsumptionParts(item.usage, "panel", true);
+            return consumption || { plain: "Creditverbrauch –", markup: "Creditverbrauch –" };
+        }
         let percent = this._percentPartsFromValue(slot.value, item.usage.account, "panel");
         let reset = this._windowResetParts(slot.window, item.usage.account, "panel", false);
         let label = this._panelSourceLabel(slot.source);
@@ -6925,6 +7004,9 @@ CodexUsageApplet.prototype = {
         let rawWindows = Array.isArray(usage.cost_windows) ? usage.cost_windows : [];
         let parts = [];
         for (let i = 0; i < rawWindows.length; i++) {
+            if (rawWindows[i] && rawWindows[i].pool === "credits") {
+                continue;
+            }
             let part = this._consumptionWindowPart(rawWindows[i], row, surface);
             if (part) {
                 parts.push(part);
@@ -7055,7 +7137,7 @@ CodexUsageApplet.prototype = {
         };
     },
 
-    _creditParts: function(usage, surface) {
+    _creditParts: function(usage, surface, forceVisible) {
         let credit = usage && usage.credits;
         let row = this._creditSettings && this._creditSettings[usage.account];
         if (!credit || !row) return null;
@@ -7070,7 +7152,7 @@ CodexUsageApplet.prototype = {
         let percent = credit.percent !== null && credit.percent !== undefined
             ? String(Math.round(credit.percent * 10) / 10) : "–";
         if (row["hide-when-zero"] && (credit.remaining === 0 || credit.percent === 0)) return null;
-        if (!this._elementTargetEnabled(usage.account, "credits", surface,
+        if (!forceVisible && !this._elementTargetEnabled(usage.account, "credits", surface,
             surface === "panel" ? row["show-panel"] : surface === "hover" ? row["show-tooltip"] : true)) {
             return null;
         }
@@ -7082,6 +7164,77 @@ CodexUsageApplet.prototype = {
                     " (Verbrauch " + used + ", " + percent + "%)"
                 : "Credits " + remaining + " · Verbrauch " + used);
         return { plain: text, markup: this._escapeMarkup(text) };
+    },
+
+    _creditConsumptionParts: function(usage, surface, forceVisible) {
+        let row = this._creditSettings && this._creditSettings[usage.account];
+        if (!row) {
+            return null;
+        }
+        let visible = forceVisible || this._elementTargetEnabled(
+            usage.account,
+            "credit-consumption",
+            surface,
+            surface === "panel" ? row["consumption-show-panel"] :
+                surface === "hover" ? row["consumption-show-tooltip"] : true
+        );
+        if (!visible) {
+            return null;
+        }
+        let windows = Array.isArray(usage.cost_windows)
+            ? usage.cost_windows.filter(function(window) { return window && window.pool === "credits"; })
+            : [];
+        if (!windows.length) {
+            return null;
+        }
+        let parts = [];
+        for (let i = 0; i < windows.length; i++) {
+            let window = windows[i];
+            let value = Number(window.consumed_percentage_points);
+            if (!Number.isFinite(value) || value < 0) {
+                continue;
+            }
+            if (row["consumption-hide-when-zero"] && value === 0) {
+                continue;
+            }
+            let valueText = this._formatConsumptionValue(value);
+            let period = this._consumptionPeriod(row["consumption-amount"], row["consumption-unit"]);
+            let marker = row["consumption-show-coverage-marker"]
+                ? (window.coverage === "partial" ? " (mindestens)" :
+                    window.coverage === "stale" ? " (veraltet)" : "")
+                : "";
+            let text;
+            if (window.coverage === "insufficient") {
+                text = "Creditverbrauch " + period + ": nicht genügend Messdaten";
+            } else if (row["consumption-format"] === "verbose") {
+                text = "Creditverbrauch " + period + ": " + valueText + " %-Pkt." + marker;
+            } else if (row["consumption-format"] === "custom") {
+                text = this._customCreditConsumptionText(row["consumption-custom-format"], {
+                    value: valueText,
+                    period: period,
+                    coverage: marker ? marker.slice(2, -1) : "vollständig"
+                });
+            } else {
+                let prefix = this.showConsumptionDelta !== false ? "Δ" : "";
+                text = prefix + period + " " + valueText + " Credit-%-Pkt." + marker;
+            }
+            parts.push({ plain: text, markup: this._escapeMarkup(text) });
+        }
+        if (!parts.length) {
+            return null;
+        }
+        return {
+            plain: parts.map(function(part) { return part.plain; }).join(" · "),
+            markup: parts.map(function(part) { return part.markup; }).join(" · ")
+        };
+    },
+
+    _customCreditConsumptionText: function(template, values) {
+        let text = typeof template === "string" && template ? template :
+            "Δ{period} {value} Credit-%-Pkt.";
+        return text.replace(/\{(value|period|coverage)\}/g, function(_match, key) {
+            return values[key];
+        });
     },
 
     _customCreditText: function(template, values) {
@@ -7186,11 +7339,19 @@ CodexUsageApplet.prototype = {
             5: "SW",
             6: "SØ",
             7: "S+",
-            8: "30d"
+            8: "30d",
+            9: "Credits",
+            10: "Creditverbrauch"
         }[source] || "?";
     },
 
     _panelValueForSource: function(usage, source) {
+        if (source === 9) {
+            return this._remainingPercent(usage.credits);
+        }
+        if (source === 10) {
+            return null;
+        }
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
         if (source >= 1 && source <= 3 && usage.main && !this._poolIsUsable(usage.main)) {
@@ -7228,6 +7389,9 @@ CodexUsageApplet.prototype = {
     },
 
     _panelWindowForSource: function(usage, source) {
+        if (source === 9 || source === 10) {
+            return null;
+        }
         if (source >= 1 && source <= 3 && usage.main && !this._poolIsUsable(usage.main)) {
             return null;
         }
@@ -7431,6 +7595,11 @@ CodexUsageApplet.prototype = {
             if (credits) {
                 plainLines.push("  " + credits.plain);
                 markupLines.push(this._escapeMarkup("  ") + credits.markup);
+            }
+            let creditConsumption = this._creditConsumptionParts(usage, "hover");
+            if (creditConsumption) {
+                plainLines.push("  " + creditConsumption.plain);
+                markupLines.push(this._escapeMarkup("  ") + creditConsumption.markup);
             }
             let resets = this._usageResetParts(usage, "hover");
             if (resets) {
@@ -7840,7 +8009,8 @@ CodexUsageApplet.prototype = {
             "account-id": 7,
             label: 8,
             tag: 9,
-            credits: 11
+            credits: 11,
+            "credit-consumption": 12
         };
         let elementId = elements[element];
         let target = this._styleTargets[account + ":" + elementId];
@@ -7863,7 +8033,8 @@ CodexUsageApplet.prototype = {
             "account-id": 7,
             label: 8,
             tag: 9,
-            credits: 11
+            credits: 11,
+            "credit-consumption": 12
         };
         let elementId = elements[element];
         let target = this._styleTargets[account + ":" + elementId];

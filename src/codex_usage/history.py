@@ -17,6 +17,7 @@ from .private_io import ensure_private_directory, private_path_lock
 MAX_HISTORY_SAMPLES = 500_000
 MAX_HISTORY_WINDOW_SECONDS = 2_592_000
 HISTORY_SCHEMA_VERSION = "1"
+CREDIT_HISTORY_WINDOW_SECONDS = 2_592_000
 
 
 def default_history_path() -> Path:
@@ -509,6 +510,22 @@ def _iter_usage_samples(usage: AccountUsage):
                 ),
                 source=usage.backend_used or "unknown",
             )
+    credit = usage.credits
+    if credit is not None and credit.remaining_percent is not None:
+        yield UsageSample(
+            account_id=usage.account_id,
+            pool="credits",
+            window_seconds=credit.duration_seconds or CREDIT_HISTORY_WINDOW_SECONDS,
+            captured_at=captured_at,
+            used_percent=100.0 - float(credit.remaining_percent),
+            reset_at=credit.reset_at,
+            reset_generation=(
+                credit.reset_at.astimezone(UTC).isoformat()
+                if credit.reset_at is not None
+                else None
+            ),
+            source=usage.backend_used or "unknown",
+        )
 
 
 def record_usage_samples(usage: AccountUsage, *, path: Path | None = None) -> int:

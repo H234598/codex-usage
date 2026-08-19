@@ -984,6 +984,7 @@
           "Kürzel": 9
           ,"Verbrauch Woche": 10
           ,"Credits": 11
+          ,"Creditverbrauch": 12
         }
       },
       {
@@ -1131,7 +1132,9 @@
           "Spark Woche": 5,
           "Spark Mittelwert": 6,
           "Spark weiteres Limit": 7,
-          "30-Tage-Limit": 8
+          "30-Tage-Limit": 8,
+          "Credits": 9,
+          "Creditverbrauch": 10
         }
       },
       {
@@ -1147,7 +1150,9 @@
           "Spark Woche": 5,
           "Spark Mittelwert": 6,
           "Spark weiteres Limit": 7,
-          "30-Tage-Limit": 8
+          "30-Tage-Limit": 8,
+          "Credits": 9,
+          "Creditverbrauch": 10
         }
       },
       {
@@ -1163,7 +1168,9 @@
           "Spark Woche": 5,
           "Spark Mittelwert": 6,
           "Spark weiteres Limit": 7,
-          "30-Tage-Limit": 8
+          "30-Tage-Limit": 8,
+          "Credits": 9,
+          "Creditverbrauch": 10
         }
       },
       {
@@ -1179,7 +1186,9 @@
           "Spark Woche": 5,
           "Spark Mittelwert": 6,
           "Spark weiteres Limit": 7,
-          "30-Tage-Limit": 8
+          "30-Tage-Limit": 8,
+          "Credits": 9,
+          "Creditverbrauch": 10
         }
       }
     ],
@@ -1197,9 +1206,17 @@
       {"id": "show-tooltip", "title": "Hover anzeigen", "type": "boolean", "default": true},
       {"id": "format", "title": "Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
       {"id": "custom-format", "title": "Eigenes Format", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}.", "default": ""},
-      {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false}
+      {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false},
+      {"id": "consumption-show-panel", "title": "Creditverbrauch Leiste", "type": "boolean", "default": false},
+      {"id": "consumption-show-tooltip", "title": "Creditverbrauch Hover", "type": "boolean", "default": true},
+      {"id": "consumption-amount", "title": "Creditverbrauch Menge", "type": "integer", "min": 1, "max": 365, "default": 1},
+      {"id": "consumption-unit", "title": "Creditverbrauch Einheit", "type": "string", "options": {"Minuten": "minutes", "Stunden": "hours", "Tage": "days", "Wochen": "weeks"}, "default": "hours"},
+      {"id": "consumption-format", "title": "Creditverbrauch Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
+      {"id": "consumption-custom-format", "title": "Eigenes Creditverbrauchsformat", "type": "string", "description": "Hilfe: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {coverage}=Datenqualität.", "default": ""},
+      {"id": "consumption-hide-when-zero", "title": "Creditverbrauch bei null ausblenden", "type": "boolean", "default": false},
+      {"id": "consumption-show-coverage-marker", "title": "Creditverbrauch-Datenmarker", "type": "boolean", "default": true}
     ],
-    "height": 220,
+    "height": 360,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
