@@ -9,10 +9,12 @@ from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePo
 from codex_usage.routing import (
     MAIN_MODEL,
     SPARK_HEALTH_MAX_AGE_SECONDS,
+    effective_credit_limits,
     effective_paid_overage,
     evaluate_routing,
     load_policy,
     set_policy_rule,
+    set_credit_limits,
 )
 from codex_usage.usage_limits import SPARK_MODEL
 
@@ -1254,3 +1256,42 @@ def test_paid_overage_policy_precedence_and_inherit(tmp_path):
         agent="a1",
     ) == (False, "group:frontend")
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_scoped_credit_limits_override_global_per_dimension(tmp_path):
+    path = tmp_path / "routing-policy.json"
+    set_credit_limits({"hourly": 10, "weekly": 100, "monthly": 1000}, path=path)
+    set_credit_limits(
+        {"hourly": 2, "weekly": None, "monthly": 0},
+        scope="account", identifier="private", path=path,
+    )
+    policy = load_policy(path)
+
+    assert policy["credit_limits"] == {"hourly": 10.0, "weekly": 100.0, "monthly": 1000.0}
+    assert effective_credit_limits(policy, account="private") == (
+        {"hourly": 2.0, "weekly": 100.0, "monthly": 1000.0},
+        "account:private",
+    )
+
+
+def test_scoped_credit_limits_use_specific_scope_first(tmp_path):
+    path = tmp_path / "routing-policy.json"
+    set_credit_limits({"hourly": 10}, path=path)
+    set_credit_limits({"hourly": 8}, scope="account", identifier="private", path=path)
+    set_credit_limits({"hourly": 4}, scope="job", identifier="build", path=path)
+    policy = load_policy(path)
+
+    assert effective_credit_limits(
+        policy, account="private", job="build"
+    ) == ({"hourly": 4.0, "weekly": None, "monthly": None}, "job:build")
+
+
+def test_scoped_credit_limit_zero_removes_override(tmp_path):
+    path = tmp_path / "routing-policy.json"
+    set_credit_limits({"hourly": 2}, scope="account", identifier="private", path=path)
+    set_credit_limits(
+        {"hourly": 0, "weekly": 0, "monthly": 0},
+        scope="account", identifier="private", path=path,
+    )
+    policy = load_policy(path)
+    assert policy["credit_limit_overrides"]["account"] == {}

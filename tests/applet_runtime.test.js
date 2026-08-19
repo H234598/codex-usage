@@ -1817,9 +1817,9 @@ test("legacy alert rows receive Spark state without changing other thresholds", 
 
   assert.deepEqual(JSON.parse(JSON.stringify(rows[0])), {
     account: "alpha",
-    "five-threshold": 12,
-    "weekly-threshold": 34,
-    "monthly-threshold": 20,
+    "five-threshold": "no 5h",
+    "weekly-threshold": "no Woche",
+    "monthly-threshold": "no 30d",
     "spark-threshold": "no Spark",
     warnings: true,
     errors: false,
@@ -1886,7 +1886,7 @@ test("panel slots can render credits and calculated credit consumption", () => {
   const items = applet._panelItems();
   assert.equal(
     applet._panelContent(items.filter((item) => item.visible)).plain,
-    "A Credits 80 · Verbrauch 20 / Δ1 h 12,3 Credit-%-Pkt."
+    "A CR 80 · Verbrauch 20 / CV Δ1 h 12,3 Credit-%-Pkt."
   );
 });
 
@@ -1958,7 +1958,7 @@ test("consumption DTO is validated and rendered with coverage marker", () => {
   };
   assert.equal(
     applet._consumptionParts(usage, "panel").plain,
-    "Δ1 h 9,3pp (mindestens) Zeit bis Tokenende —"
+    "Δ1 h 9,3pp (mindestens) TE=—"
   );
   assert.throws(() => applet._safeConsumptionWindows([{
     lookback_seconds: 3600,
@@ -2008,7 +2008,7 @@ test("consumption forecast is rendered from backend DTO", () => {
 
   const rendered = applet._consumptionParts(usage, "panel");
 
-  assert.match(rendered.plain, /Zeit bis Tokenende/);
+  assert.match(rendered.plain, /TE=/);
   assert.match(rendered.plain, /50m/);
 });
 
@@ -4454,8 +4454,8 @@ test("malformed numeric settings are rejected instead of coerced", () => {
     slot2: 0,
   }, "alpha"), null);
   assert.equal(applet._normalizeAlertRow({
-    "five-threshold": "20",
-    "weekly-threshold": 20,
+    "five-threshold": "20.5",
+    "weekly-threshold": "20",
     warnings: true,
     errors: true,
   }, "alpha"), null);
@@ -6943,7 +6943,7 @@ test("old three-surface target rows migrate with a duration row", () => {
       { account: "alpha", element: 2, panel: false, hover: false, click: true },
     ]
   );
-  assert.equal(rows.length, 24);
+  assert.equal(rows.length, 26);
   assert.equal(rows[3].element, 3);
   assert.equal(rows[3].click, true);
   assert.equal(rows[3].panel, false);

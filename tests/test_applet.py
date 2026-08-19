@@ -166,6 +166,9 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     columns = {column["id"]: column for column in table["columns"]}
     assert columns["show-panel"]["default"] is False
     assert columns["show-tooltip"]["default"] is True
+    assert columns["show-panel"]["title"] == "Tokenverbrauch Leiste"
+    assert columns["show-tooltip"]["title"] == "Tokenverbrauch anzeigen"
+    assert "{value}" in table["description"] or "{value}" in table["tooltip"]
     assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days", "weeks"}
     assert set(columns["limit-window"]["options"].values()) == {"short", "weekly", "monthly", "spark"}
     assert set(columns["format"]["options"].values()) == {
@@ -260,6 +263,9 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "identifier",
         "enabled",
         "allow",
+        "hourly-limit",
+        "weekly-limit",
+        "monthly-limit",
     ]
     assert set(routing_table["columns"][0]["options"].values()) == set(range(4))
     date_table = settings["account-date-styles"]
@@ -371,8 +377,8 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "warnings",
         "errors",
     ]
-    assert alert_table["columns"][1]["default"] == 20
-    assert alert_table["columns"][2]["default"] == 20
+    assert alert_table["columns"][1]["default"] == "20"
+    assert alert_table["columns"][2]["default"] == "20"
     assert alert_table["columns"][4]["default"] == "20"
     assert alert_table["columns"][5]["default"] is True
     assert alert_table["columns"][6]["default"] is True

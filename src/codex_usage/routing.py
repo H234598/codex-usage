@@ -116,20 +116,74 @@ def set_policy_rule(
 
 
 def set_credit_limits(
-    limits: dict[str, float | None], *, path: Path | None = None
+    limits: dict[str, float | None], *, scope: str = "global",
+    identifier: str | None = None, path: Path | None = None
 ) -> dict[str, Any]:
-    """Persist optional hourly, weekly and monthly paid-credit caps."""
+    """Persist global or scoped hourly, weekly and monthly paid-credit caps.
+
+    Scoped zero values mean "inherit the global value".  Global zero remains
+    the existing disabled-cap value for backwards compatibility.
+    """
     normalized = _validate_credit_limits(limits)
+    if not isinstance(scope, str):
+        raise ValueError("credit limit scope must be global, account, group, agent or job")
+    normalized_scope = scope.strip().casefold()
+    if normalized_scope not in ("global", *POLICY_SCOPES):
+        raise ValueError("credit limit scope must be global, account, group, agent or job")
+    if normalized_scope == "global":
+        if identifier not in (None, ""):
+            raise ValueError("global credit limits do not accept an identifier")
+    else:
+        identifier = _validate_identifier(identifier)
+        normalized = {
+            key: (None if value in (None, 0) else value)
+            for key, value in normalized.items()
+        }
     policy_path = path or default_policy_path()
     _prepare_private_directory(policy_path.parent)
     with private_path_lock(policy_path, label="routing policy lock"):
         policy = load_policy(policy_path)
-        policy["credit_limits"] = normalized
+        if normalized_scope == "global":
+            policy["credit_limits"] = normalized
+        elif all(value is None for value in normalized.values()):
+            policy["credit_limit_overrides"][normalized_scope].pop(identifier, None)
+        else:
+            policy["credit_limit_overrides"][normalized_scope][identifier] = normalized
         text = json.dumps(policy, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
         if len(text.encode("utf-8")) > MAX_POLICY_BYTES:
             raise ValueError("routing policy is too large")
         write_private_text(policy_path, text, label="routing policy")
     return policy
+
+
+def effective_credit_limits(
+    policy: dict[str, Any], *, account: str, group: str | None = None,
+    agent: str | None = None, job: str | None = None,
+) -> tuple[dict[str, float | None], str]:
+    """Resolve each credit cap from the most specific matching scope."""
+    account = _validate_identifier(account)
+    group = _validate_optional_identifier(group)
+    agent = _validate_optional_identifier(agent)
+    job = _validate_optional_identifier(job)
+    result = dict(policy.get("credit_limits", {}))
+    resolved: set[str] = set()
+    sources = []
+    context = (
+        ("job", job), ("group", group), ("agent", agent), ("account", account)
+    )
+    overrides = policy.get("credit_limit_overrides", {})
+    for scope, identifier in context:
+        if identifier is None:
+            continue
+        override = overrides.get(scope, {}).get(identifier)
+        if not override:
+            continue
+        for key in CREDIT_LIMIT_KEYS:
+            if key not in resolved and override.get(key) is not None:
+                result[key] = override[key]
+                resolved.add(key)
+        sources.append(f"{scope}:{identifier}")
+    return result, (sources[0] if sources else "global")
 
 
 def effective_paid_overage(
@@ -658,6 +712,7 @@ def _empty_policy() -> dict[str, Any]:
         "global": False,
         **{scope: {} for scope in POLICY_SCOPES},
         "credit_limits": {key: None for key in CREDIT_LIMIT_KEYS},
+        "credit_limit_overrides": {scope: {} for scope in POLICY_SCOPES},
     }
 
 
@@ -678,6 +733,19 @@ def _validate_policy(payload: Any) -> dict[str, Any]:
                 raise ValueError(f"routing policy {scope} value is invalid")
             result[scope][normalized] = value
     result["credit_limits"] = _validate_credit_limits(payload.get("credit_limits", {}))
+    overrides = payload.get("credit_limit_overrides", {})
+    if not isinstance(overrides, dict):
+        raise ValueError("routing credit limit overrides are invalid")
+    for scope in POLICY_SCOPES:
+        source = overrides.get(scope, {})
+        if not isinstance(source, dict) or len(source) > 500:
+            raise ValueError("routing credit limit overrides are invalid")
+        for identifier, limits in source.items():
+            normalized_identifier = _validate_identifier(identifier)
+            normalized = _validate_credit_limits(limits)
+            if all(value is None for value in normalized.values()):
+                raise ValueError("empty routing credit limit override")
+            result["credit_limit_overrides"][scope][normalized_identifier] = normalized
     return result
 
 

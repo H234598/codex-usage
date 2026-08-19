@@ -80,7 +80,9 @@
       "type": "section",
       "title": "Verbrauchszeiträume",
       "keys": [
+        "account-consumption-settings-heading",
         "account-consumption-settings",
+        "account-credit-settings-heading",
         "account-credit-settings",
         "show-consumption-delta"
       ]
@@ -103,17 +105,23 @@
       "type": "section",
       "title": "Hervorhebungen und Design:",
       "keys": [
+        "account-percent-styles-heading",
         "account-percent-styles",
+        "account-date-styles-heading",
         "account-date-styles",
+        "account-time-styles-heading",
         "account-time-styles",
+        "account-duration-styles-heading",
         "account-duration-styles"
       ]
     },
   "display-target-section": {
     "type": "section",
-    "title": "Formatierungsorte",
+      "title": "Formatierungsorte",
       "keys": [
+        "account-display-settings-heading",
         "account-display-settings",
+        "account-style-targets-heading",
         "account-style-targets"
       ]
     },
@@ -174,6 +182,38 @@
         "routing-credit-monthly-limit"
       ]
     }
+  },
+  "account-consumption-settings-heading": {
+    "type": "label",
+    "description": "Tokenverbrauch pro Account — Eigenes Format: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {window}=Limitfenster, {coverage}=Datenqualität."
+  },
+  "account-credit-settings-heading": {
+    "type": "label",
+    "description": "Credits und Creditverbrauch pro Account — eigene Formate und getrennte Leisten-/Hover-Anzeige."
+  },
+  "account-percent-styles-heading": {
+    "type": "label",
+    "description": "Verbleibendes Tokenlimit in %"
+  },
+  "account-date-styles-heading": {
+    "type": "label",
+    "description": "OpenAI — Reset: Datum des Reset"
+  },
+  "account-time-styles-heading": {
+    "type": "label",
+    "description": "OpenAI — Reset: Uhrzeit"
+  },
+  "account-duration-styles-heading": {
+    "type": "label",
+    "description": "OpenAI — Reset: Restlaufzeit in Tagen bis Limitreset"
+  },
+  "account-display-settings-heading": {
+    "type": "label",
+    "description": "Account-Identität und Sichtbarkeit pro Oberfläche"
+  },
+  "account-style-targets-heading": {
+    "type": "label",
+    "description": "Elemente und ihre Formatierungsorte — jede Zeile gehört genau zu einem Element"
   },
   "command-path": {
     "type": "entry",
@@ -1057,9 +1097,36 @@
         "title": "Credits erlauben",
         "type": "boolean",
         "default": false
+      },
+      {
+        "id": "hourly-limit",
+        "title": "Stundenlimit",
+        "tooltip": "0 = globales Stundenlimit verwenden",
+        "type": "integer",
+        "min": 0,
+        "max": 1000000000,
+        "default": 0
+      },
+      {
+        "id": "weekly-limit",
+        "title": "Wochenlimit",
+        "tooltip": "0 = globales Wochenlimit verwenden",
+        "type": "integer",
+        "min": 0,
+        "max": 1000000000,
+        "default": 0
+      },
+      {
+        "id": "monthly-limit",
+        "title": "Monatslimit",
+        "tooltip": "0 = globales Monatslimit verwenden",
+        "type": "integer",
+        "min": 0,
+        "max": 1000000000,
+        "default": 0
       }
     ],
-    "height": 240,
+    "height": 320,
     "show-buttons": true,
     "default": []
   },
@@ -1198,12 +1265,12 @@
   },
   "account-credit-settings": {
     "type": "list",
-    "description": "Verbleibende Credits pro Account",
-    "tooltip": "Credits werden nur angezeigt, wenn der Provider einen expliziten Creditstand liefert. Platzhalter im eigenen Format: {remaining}, {used}, {limit}, {percent}, {reset}.",
+    "description": "Credits und Creditverbrauch pro Account",
+    "tooltip": "Credits werden nur angezeigt, wenn der Provider einen expliziten Creditstand liefert. Platzhalter für Credits: {remaining}, {used}, {limit}, {percent}, {reset}. Für Creditverbrauch: {value}, {period}, {coverage}.",
     "columns": [
       {"id": "account", "title": "Account-ID", "type": "string"},
-      {"id": "show-panel", "title": "Leiste anzeigen", "type": "boolean", "default": false},
-      {"id": "show-tooltip", "title": "Hover anzeigen", "type": "boolean", "default": true},
+      {"id": "show-panel", "title": "Credit-Leiste", "type": "boolean", "default": false},
+      {"id": "show-tooltip", "title": "Credits anzeigen", "type": "boolean", "default": true},
       {"id": "format", "title": "Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
       {"id": "custom-format", "title": "Eigenes Format", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}.", "default": ""},
       {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false},
@@ -1212,7 +1279,7 @@
       {"id": "consumption-amount", "title": "Creditverbrauch Menge", "type": "integer", "min": 1, "max": 365, "default": 1},
       {"id": "consumption-unit", "title": "Creditverbrauch Einheit", "type": "string", "options": {"Minuten": "minutes", "Stunden": "hours", "Tage": "days", "Wochen": "weeks"}, "default": "hours"},
       {"id": "consumption-format", "title": "Creditverbrauch Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
-      {"id": "consumption-custom-format", "title": "Eigenes Creditverbrauchsformat", "type": "string", "description": "Hilfe: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {coverage}=Datenqualität.", "default": ""},
+      {"id": "consumption-custom-format", "title": "Eigenes Creditverbrauchsformat", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {coverage}=Datenqualität; Beispiel: CV {period} {value}pp ({coverage}).", "tooltip": "Nur bei Benutzerdefiniert: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {coverage}=vollständig/mindestens/veraltet.", "default": ""},
       {"id": "consumption-hide-when-zero", "title": "Creditverbrauch bei null ausblenden", "type": "boolean", "default": false},
       {"id": "consumption-show-coverage-marker", "title": "Creditverbrauch-Datenmarker", "type": "boolean", "default": true}
     ],
@@ -1224,7 +1291,7 @@
   "account-consumption-settings": {
     "type": "list",
     "description": "Limitverbrauch pro Account und Zeitraum",
-    "tooltip": "Das Applet fragt Verbrauchswerte über codex-usage ab; es rechnet keine Historie im JavaScript. Limitfenster: 5h, Woche, 30 Tage oder Spark.",
+    "tooltip": "Das Applet fragt Verbrauchswerte über codex-usage ab; es rechnet keine Historie im JavaScript. Limitfenster: 5h, Woche, 30 Tage oder Spark. Eigenes Format: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {window}=Limitfenster, {coverage}=Datenqualität.",
     "columns": [
       {
         "id": "account",
@@ -1233,13 +1300,13 @@
       },
       {
         "id": "show-panel",
-        "title": "Leiste anzeigen",
+        "title": "Tokenverbrauch Leiste",
         "type": "boolean",
         "default": false
       },
       {
         "id": "show-tooltip",
-        "title": "Hover anzeigen",
+        "title": "Tokenverbrauch anzeigen",
         "type": "boolean",
         "default": true
       },
@@ -1518,26 +1585,23 @@
       {
         "id": "five-threshold",
         "title": "5h Schwelle %",
-        "type": "integer",
-        "min": 0,
-        "max": 100,
-        "default": 20
+        "type": "string",
+        "description": "Bei fehlendem Wert wird no 5h angezeigt.",
+        "default": "20"
       },
       {
         "id": "weekly-threshold",
         "title": "Woche Schwelle %",
-        "type": "integer",
-        "min": 0,
-        "max": 100,
-        "default": 20
+        "type": "string",
+        "description": "Bei fehlendem Wert wird no Woche angezeigt.",
+        "default": "20"
       },
       {
         "id": "monthly-threshold",
         "title": "30d Schwelle %",
-        "type": "integer",
-        "min": 0,
-        "max": 100,
-        "default": 20
+        "type": "string",
+        "description": "Bei fehlendem Wert wird no 30d angezeigt.",
+        "default": "20"
       },
       {
         "id": "spark-threshold",

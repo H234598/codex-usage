@@ -475,6 +475,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     for name in ("hourly", "weekly", "monthly"):
         policy_limits.add_argument("--" + name, type=float, default=None)
+    policy_limits.add_argument(
+        "--scope", choices=("global", "account", "group", "agent", "job"),
+        default="global", help="global oder Geltungsbereich der Limits"
+    )
+    policy_limits.add_argument("--id", dest="identifier", help="ID des Geltungsbereichs")
+    policy_limits.add_argument("--format", choices=("json",), default="json")
     policy_limits.set_defaults(func=_cmd_policy_set_limits)
 
     policy_overview = policy_sub.add_parser(
@@ -1414,7 +1420,11 @@ def _cmd_policy_set_limits(args: argparse.Namespace) -> int:
         "weekly": args.weekly,
         "monthly": args.monthly,
     }
-    policy = set_credit_limits(limits)
+    if args.scope == "global" and args.identifier:
+        raise ValueError("--id is not allowed for global credit limits")
+    if args.scope != "global" and not args.identifier:
+        raise ValueError("--id is required for scoped credit limits")
+    policy = set_credit_limits(limits, scope=args.scope, identifier=args.identifier)
     print(json.dumps(policy, ensure_ascii=True, sort_keys=True))
     return 0
 
