@@ -124,6 +124,7 @@ CodexUsageApplet.prototype = {
         this._deviceLoginActive = Object.create(null);
         this._deviceLoginJobs = Object.create(null);
         this._deviceLoginErrors = Object.create(null);
+        this._accountManageErrors = Object.create(null);
         this._deviceLoginEvents = Object.create(null);
         this._deviceLoginLiveText = Object.create(null);
         this._deviceLoginLiveAccount = "";
@@ -5945,10 +5946,26 @@ CodexUsageApplet.prototype = {
             }
             submenu.menu.addMenuItem(deviceLogin);
         }
+        let manageAccount = new PopupMenu.PopupMenuItem("Manage Account");
+        if (typeof manageAccount.connect === "function") {
+            manageAccount.connect("activate", Lang.bind(this, function() {
+                this._runSafely("manage account action", Lang.bind(this, function() {
+                    this._manageAccount(usage);
+                }));
+            }));
+        }
+        submenu.menu.addMenuItem(manageAccount);
         if (this._deviceLoginErrors[usage.account]) {
             this._addDisabled(
                 submenu.menu,
                 this._shortText(this._deviceLoginErrors[usage.account], 160),
+                "codex-usage-error"
+            );
+        }
+        if (this._accountManageErrors && this._accountManageErrors[usage.account]) {
+            this._addDisabled(
+                submenu.menu,
+                "Manage Account: " + this._shortText(this._accountManageErrors[usage.account], 140),
                 "codex-usage-error"
             );
         }
@@ -6291,6 +6308,38 @@ CodexUsageApplet.prototype = {
             delete this._deviceLoginErrors[usage.account];
             this._refreshFresh(false);
         }), false, DEVICE_LOGIN_TIMEOUT_MS);
+    },
+
+    _manageAccount: function(usage) {
+        if (!usage || !usage.account || this._removed) {
+            return;
+        }
+        if (!this._accountManageErrors) {
+            this._accountManageErrors = Object.create(null);
+        }
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._accountManageErrors[usage.account] = String(e);
+            this._buildUsageMenu();
+            return;
+        }
+        argv.push("account", "manage", usage.account, "--format", "json");
+        delete this._accountManageErrors[usage.account];
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (
+                error || !payload || payload.account !== usage.account ||
+                payload.ok !== true ||
+                payload.url !== "https://chatgpt.com/codex/cloud/settings/analytics#usage"
+            ) {
+                this._accountManageErrors[usage.account] = this._shortText(
+                    error || (payload && payload.error) || "Account konnte nicht geöffnet werden",
+                    200
+                );
+                this._buildUsageMenu();
+            }
+        }), false, AUX_COMMAND_TIMEOUT_MS);
     },
 
     _cancelDeviceLogin: function(account) {

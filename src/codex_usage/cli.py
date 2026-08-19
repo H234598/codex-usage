@@ -84,7 +84,13 @@ from .profile_migration import (
     plan_auth_migration,
     rollback_auth_migration,
 )
-from .reactivate import REACTIVATION_BROWSERS, ReactivationError, reactivate_account
+from .reactivate import (
+    MANAGE_ACCOUNT_URL,
+    REACTIVATION_BROWSERS,
+    ReactivationError,
+    open_account_in_reactivation_browser,
+    reactivate_account,
+)
 from .render import (
     _safe_usage_for_display,
     render_account_overview,
@@ -354,6 +360,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     delete.add_argument("--format", choices=("table", "json"), default="table")
     delete.set_defaults(func=_cmd_account_delete)
+    manage = account_sub.add_parser(
+        "manage",
+        help="Codex Usage im isolierten Reaktivierungsbrowser öffnen",
+    )
+    manage.add_argument("account", help="Account-ID oder eindeutiges Label")
+    manage.add_argument(
+        "--browser",
+        choices=REACTIVATION_BROWSERS,
+        default=None,
+        help="Isolierter Browser; Standard: Browser des Accounts",
+    )
+    manage.add_argument("--format", choices=("table", "json"), default="table")
+    manage.set_defaults(func=_cmd_account_manage)
 
     login = sub.add_parser("login", help="Sichtbaren Browser fuer einen Account oeffnen")
     login.add_argument("account", help="Account-ID oder eindeutiges Label")
@@ -1301,6 +1320,34 @@ def _cmd_reactivate(args: argparse.Namespace) -> int:
         print(f"Browserprofil: isoliert ({result['browser']})")
     else:
         print(f"Reaktivierung fehlgeschlagen: {result['error']}")
+    return 0 if result["ok"] else 2
+
+
+def _cmd_account_manage(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
+    try:
+        result = open_account_in_reactivation_browser(
+            account,
+            url=MANAGE_ACCOUNT_URL,
+            browser=args.browser,
+        )
+    except ReactivationError as exc:
+        result = {
+            "ok": False,
+            "account": account.id,
+            "label": account.label,
+            "browser": args.browser or account.reactivation_browser,
+            "url": MANAGE_ACCOUNT_URL,
+            "error": str(exc),
+        }
+    if args.format == "json":
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    elif result["ok"]:
+        print(f"Account geöffnet: {account.id} ({account.label})")
+        print("Browserprofil: isoliert (Reaktivierungsbrowser)")
+    else:
+        print(f"Account konnte nicht geöffnet werden: {result['error']}")
     return 0 if result["ok"] else 2
 
 

@@ -9,6 +9,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .account_lock import AccountLockError, account_lock
 from .browser import _profile_lock
@@ -26,6 +27,7 @@ from .private_io import ensure_private_directory, write_private_text
 
 REACTIVATION_BROWSERS = SUPPORTED_REACTIVATION_BROWSERS
 REACTIVATION_TIMEOUT_SECONDS = 600
+MANAGE_ACCOUNT_URL = "https://chatgpt.com/codex/cloud/settings/analytics#usage"
 OAUTH_PROFILE_MARKER = ".codex-usage-oauth-profile"
 BROWSER_COMMANDS = {
     "vivaldi": ("vivaldi-stable", "vivaldi"),
@@ -98,6 +100,49 @@ def reactivate_account(
         raise ReactivationError(str(exc)) from exc
 
 
+def open_account_in_reactivation_browser(
+    account: Account,
+    *,
+    url: str = MANAGE_ACCOUNT_URL,
+    browser: str | None = None,
+    browser_helper: str | None = None,
+) -> dict[str, Any]:
+    """Open the account's existing isolated OAuth browser profile."""
+    _validate_manage_url(url)
+    requested_browser = account.reactivation_browser if browser is None else browser
+    browser_kind, browser_executable = _select_browser(requested_browser)
+    profile_dir = _prepare_oauth_profile(account, browser_kind)
+    helper = _resolve_executable(
+        browser_helper,
+        "codex-usage-browser",
+        label="browser helper",
+    )
+    env = _reactivation_environment(
+        browser_kind=browser_kind,
+        browser_executable=browser_executable,
+        profile_dir=profile_dir,
+    )
+    try:
+        subprocess.Popen(
+            [helper, url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True,
+            env=env,
+        )
+    except OSError as exc:
+        raise ReactivationError("could not start isolated account browser") from exc
+    return {
+        "ok": True,
+        "account": account.id,
+        "label": account.label,
+        "browser": browser_kind,
+        "url": url,
+    }
+
+
 def _reactivate_account_unlocked(
     account: Account,
     *,
@@ -143,19 +188,12 @@ def _run_reactivation(
     timeout_seconds: int,
 ) -> dict[str, Any]:
 
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key in REACTIVATION_ENV_NAMES or key.startswith("LC_")
-    }
-    env.update(
-        {
-            "CODEX_HOME": str(auth_path.parent),
-            "BROWSER": helper,
-            "CODEX_USAGE_BROWSER_EXECUTABLE": browser_executable,
-            "CODEX_USAGE_BROWSER_KIND": browser_kind,
-            "CODEX_USAGE_BROWSER_PROFILE": str(profile_dir),
-        }
+    env = _reactivation_environment(
+        browser_kind=browser_kind,
+        browser_executable=browser_executable,
+        profile_dir=profile_dir,
+        codex_home=auth_path.parent,
+        browser_helper=helper,
     )
 
     auth_backup = _capture_auth_backup(auth_path)
@@ -339,6 +377,54 @@ def _select_browser(requested: str) -> tuple[str, str]:
             if executable:
                 return kind, executable
     raise ReactivationError(f"reactivation browser is not installed: {requested}")
+
+
+def _reactivation_environment(
+    *,
+    browser_kind: str,
+    browser_executable: str,
+    profile_dir: Path,
+    codex_home: Path | None = None,
+    browser_helper: str | None = None,
+) -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in REACTIVATION_ENV_NAMES or key.startswith("LC_")
+    }
+    env.update(
+        {
+            "CODEX_USAGE_BROWSER_EXECUTABLE": browser_executable,
+            "CODEX_USAGE_BROWSER_KIND": browser_kind,
+            "CODEX_USAGE_BROWSER_PROFILE": str(profile_dir),
+        }
+    )
+    if codex_home is not None:
+        env["CODEX_HOME"] = str(codex_home)
+    if browser_helper is not None:
+        env["BROWSER"] = browser_helper
+    return env
+
+
+def _validate_manage_url(url: str) -> None:
+    if not isinstance(url, str) or len(url) > 2048:
+        raise ReactivationError("manage account URL is invalid")
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ReactivationError("manage account URL is invalid") from exc
+    if (
+        parts.scheme != "https"
+        or parts.hostname != "chatgpt.com"
+        or port not in (None, 443)
+        or parts.path.rstrip("/") != "/codex/cloud/settings/analytics"
+        or parts.query
+        or parts.fragment != "usage"
+        or parts.username is not None
+        or parts.password is not None
+    ):
+        raise ReactivationError("manage account URL is not the Codex Usage page")
 
 
 def _prepare_oauth_profile(account: Account, browser_kind: str) -> Path:

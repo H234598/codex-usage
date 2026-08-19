@@ -780,6 +780,29 @@ test("device login does not replace another active account login", () => {
   assert.equal(rebuilt, 1);
 });
 
+test("Manage Account opens the account in the isolated reactivation browser", () => {
+  const applet = makeApplet();
+  let command = null;
+  let rebuilt = 0;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => { rebuilt += 1; };
+  applet._spawnAuxJson = (argv, callback) => {
+    command = argv;
+    callback({
+      ok: true,
+      account: "alpha",
+      url: "https://chatgpt.com/codex/cloud/settings/analytics#usage",
+    }, null);
+  };
+
+  applet._manageAccount({ account: "alpha" });
+
+  assert.deepEqual(command, [
+    "codex-usage", "account", "manage", "alpha", "--format", "json",
+  ]);
+  assert.equal(rebuilt, 0);
+});
+
 test("account overview rows expose editable account settings", () => {
   const applet = makeAccountSettingsApplet();
   applet._spawnAuxJson = (argv, callback) => {

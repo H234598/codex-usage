@@ -16,10 +16,12 @@ from codex_usage.cli import main
 from codex_usage.config import AppConfig, save_config
 from codex_usage.models import Account
 from codex_usage.reactivate import (
+    MANAGE_ACCOUNT_URL,
     OAUTH_PROFILE_MARKER,
     ReactivationError,
     _validate_refreshed_auth,
     _validate_refreshed_identity,
+    open_account_in_reactivation_browser,
     reactivate_account,
 )
 
@@ -96,6 +98,68 @@ def test_reactivate_uses_account_browser_when_override_is_missing(monkeypatch, t
     reactivate_account(account, browser=None)
 
     assert captured["browser"] == "vivaldi"
+
+
+def test_manage_account_opens_the_existing_isolated_browser_profile(monkeypatch, tmp_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        reactivation_browser="vivaldi",
+    )
+    profile = tmp_path / "oauth-profile"
+    helper = str(tmp_path / "codex-usage-browser")
+    captured = {}
+    monkeypatch.setattr(
+        "codex_usage.reactivate._select_browser",
+        lambda requested: (requested, "/usr/bin/vivaldi-stable"),
+    )
+    monkeypatch.setattr(
+        "codex_usage.reactivate._prepare_oauth_profile",
+        lambda _account, _browser: profile,
+    )
+    monkeypatch.setattr(
+        "codex_usage.reactivate._resolve_executable",
+        lambda _explicit, _fallback, label: helper,
+    )
+    monkeypatch.setattr(
+        reactivate_module.subprocess,
+        "Popen",
+        lambda command, **kwargs: captured.update(command=command, kwargs=kwargs),
+    )
+
+    result = open_account_in_reactivation_browser(account)
+
+    assert result == {
+        "ok": True,
+        "account": "work",
+        "label": "Work",
+        "browser": "vivaldi",
+        "url": MANAGE_ACCOUNT_URL,
+    }
+    assert captured["command"] == [helper, MANAGE_ACCOUNT_URL]
+    assert captured["kwargs"]["env"]["CODEX_USAGE_BROWSER_PROFILE"] == str(profile)
+    assert "CODEX_HOME" not in captured["kwargs"]["env"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://chatgpt.com/codex/cloud/settings/analytics",
+        "https://example.com/codex/cloud/settings/analytics#usage",
+        "https://chatgpt.com/codex/cloud/settings/analytics?x=1#usage",
+    ],
+)
+def test_manage_account_rejects_non_usage_urls(tmp_path, url):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        reactivation_browser="vivaldi",
+    )
+
+    with pytest.raises(ReactivationError, match="Codex Usage page"):
+        open_account_in_reactivation_browser(account, url=url)
 
 
 @pytest.mark.parametrize(
