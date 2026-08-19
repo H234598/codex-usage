@@ -71,6 +71,7 @@ def create_profile_job(
     config_path: Path | None,
     json_events: bool,
     reactivation_browser: str = "auto",
+    tag: str = "",
     series: str = "",
     series_active: bool = False,
 ) -> dict[str, object]:
@@ -83,6 +84,7 @@ def create_profile_job(
         expected_backend_account_id=expected_backend_account_id,
         json_events=json_events,
         reactivation_browser=reactivation_browser,
+        tag=tag,
         series=series,
         series_active=series_active,
     )
@@ -100,6 +102,7 @@ def create_profile_job(
         "backend": backend,
         "profile_dir": str(Path(profile_dir).expanduser()),
         "reactivation_browser": reactivation_browser,
+        "tag": tag,
         "series": series,
         "series_active": series_active,
         "expected_backend_account_id": expected_backend_account_id,
@@ -298,6 +301,7 @@ def run_profile_job(job_id: str) -> int:
         id=job["account_id"],
         label=job["label"],
         profile_dir=job["profile_dir"],
+        tag=job.get("tag", ""),
         browser=job["browser"],
         backend=job["backend"],
         reactivation_browser=job["reactivation_browser"],
@@ -381,6 +385,7 @@ def _verify_profile_job_completion(job: dict[str, object]) -> bool:
             return False
         if (
             account.label != job["label"]
+            or account.tag != job.get("tag", "")
             or account.profile_dir != str(Path(str(job["profile_dir"])).expanduser().absolute())
             or account.browser != job["browser"]
             or account.backend != job["backend"]
@@ -528,6 +533,7 @@ def _validate_create_arguments(
     reactivation_browser: str,
     series: str = "",
     series_active: bool = False,
+    tag: str = "",
     check_profile_path: bool = True,
 ) -> None:
     if not isinstance(account_id, str) or account_id in {".", "..", "__all_accounts__"}:
@@ -548,6 +554,8 @@ def _validate_create_arguments(
         raise ValueError("series is invalid")
     if not isinstance(series_active, bool):
         raise ValueError("series_active is invalid")
+    if not isinstance(tag, str) or len(tag) > 8 or any(ord(c) < 32 or ord(c) == 127 for c in tag):
+        raise ValueError("tag is invalid")
     if series_active and not series:
         raise ValueError("active series requires a series name")
     if not isinstance(json_events, bool):
@@ -703,6 +711,7 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         "backend",
         "profile_dir",
         "reactivation_browser",
+        "tag",
         "series",
         "series_active",
         "expected_backend_account_id",
@@ -714,11 +723,11 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         "worker_pid",
         "error",
     }
-    legacy_required = required - {"reactivation_browser", "series", "series_active"}
+    legacy_required = required - {"reactivation_browser", "tag", "series", "series_active"}
     if set(value) == legacy_required:
-        value = {**value, "reactivation_browser": "auto", "series": "", "series_active": False}
-    elif set(value) == required - {"series", "series_active"}:
-        value = {**value, "series": "", "series_active": False}
+        value = {**value, "reactivation_browser": "auto", "tag": "", "series": "", "series_active": False}
+    elif set(value) == required - {"tag", "series", "series_active"}:
+        value = {**value, "tag": "", "series": "", "series_active": False}
     elif set(value) != required:
         raise ValueError("profile job manifest schema is invalid")
     if value["schema_version"] != PROFILE_JOB_SCHEMA_VERSION:
@@ -732,6 +741,7 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         expected_backend_account_id=value["expected_backend_account_id"],
         json_events=value["json_events"],
         reactivation_browser=value["reactivation_browser"],
+        tag=value["tag"],
         series=value["series"],
         series_active=value["series_active"],
         check_profile_path=False,

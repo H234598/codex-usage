@@ -80,6 +80,7 @@ class Account:
     id: str
     label: str
     profile_dir: str
+    tag: str = ""
     browser: str = "firefox"
     auth_json_path: str | None = None
     backend: str = "direct"

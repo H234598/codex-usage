@@ -178,6 +178,31 @@ def test_consumption_uses_baseline_before_window_and_marks_stale():
     assert result.coverage == "stale"
 
 
+def test_consumption_can_use_explicit_baseline_minutes():
+    result = calculate_consumption(
+        [_sample(0, 10), _sample(30, 20), _sample(60, 35)],
+        amount=1,
+        unit="hours",
+        baseline_minutes=30,
+        now=BASE + timedelta(minutes=60),
+    )
+    assert result.consumed_percentage_points == 15.0
+    assert result.lookback_seconds == 3600
+
+
+def test_consumption_baseline_value_does_not_replace_delta_window():
+    result = calculate_consumption(
+        [_sample(-120, 10), _sample(-60, 20), _sample(0, 35)],
+        amount=1,
+        unit="hours",
+        baseline_value_minutes=120,
+        now=BASE,
+    )
+
+    assert result.consumed_percentage_points == 15.0
+    assert result.baseline_used_percent == 10.0
+
+
 def test_consumption_rejects_invalid_period():
     with pytest.raises(ValueError, match="unit"):
         calculate_consumption([], amount=1, unit="weeks", now=BASE)

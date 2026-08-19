@@ -853,6 +853,7 @@ test("account overview rows expose editable account settings", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(applet.accountBackends[0])), {
     account: "alpha",
     label: "Alpha",
+    tag: "",
     "auth-json": null,
     "profile-dir": "file:///tmp/alpha",
     "test-home": false,
@@ -1073,6 +1074,7 @@ test("legacy account overview rows receive editable defaults", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(applet.accountBackends[0])), {
     account: "alpha",
     label: "Alpha",
+    tag: "",
     "auth-json": null,
     "profile-dir": null,
     "test-home": false,
@@ -1660,6 +1662,11 @@ test("display targets resolve account id, label and tag per surface", () => {
   assert.equal(applet._accountDisplayText(item, "panel"), "alpha");
   assert.equal(applet._accountDisplayText(item, "hover"), "Priv");
   assert.equal(applet._accountDisplayText(item, "click"), "alpha");
+
+  applet._backendAccounts.alpha = { tag: "BACKEND" };
+  applet._styleTargets["alpha:9"] = {panel: true, hover: false, click: false};
+  applet._displaySettings.alpha.panel = 1;
+  assert.equal(applet._accountDisplayText(item, "panel"), "BACKEND");
 });
 
 test("account identity elements can be disabled per surface", () => {
@@ -1715,7 +1722,20 @@ test("hover separator is inserted before marked account", () => {
   const applet = makeApplet();
   applet._displaySettings.beta["hover-separator"] = true;
 
-  assert.match(applet._tooltipContent().plain, /Alpha:[^\n]+\n────────\nBeta:/);
+  assert.match(applet._tooltipContent().plain, /────────\nBeta:[^\n]+\nAlpha:/);
+});
+
+test("hover tooltip puts reset duration on its own line", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:1"] = {panel: false, hover: true, click: true};
+  applet._styleTargets["alpha:2"] = {panel: false, hover: true, click: true};
+  applet._styleTargets["alpha:3"] = {panel: false, hover: true, click: true};
+
+  const lines = applet._tooltipContent().plain.split("\n");
+  const resetIndex = lines.findIndex((line) => line.indexOf("Reset 5h") >= 0);
+  const durationIndex = lines.findIndex((line) => line.indexOf("Restzeit 5h") >= 0);
+  assert.ok(resetIndex >= 0);
+  assert.equal(durationIndex, resetIndex + 1);
 });
 
 test("click separator is inserted before marked account", () => {
@@ -1931,6 +1951,19 @@ test("panel slots honor ordering, mute and duplicate-source normalization", () =
   );
 });
 
+test("panel settings follow the Abrufwege account order", () => {
+  const applet = makeApplet();
+  applet.accountBackends = [
+    {account: "alpha"},
+    {account: "beta"},
+  ];
+  const rows = applet._mergedPanelRows([
+    {account: "beta"},
+    {account: "alpha"},
+  ], []);
+  assert.equal(Array.from(rows, (row) => row.account).join(","), "alpha,beta");
+});
+
 test("panel slots can render credits and calculated credit consumption", () => {
   const applet = makeApplet();
   const alpha = applet._usages[0];
@@ -1962,7 +1995,7 @@ test("panel slots can render credits and calculated credit consumption", () => {
   const items = applet._panelItems();
   assert.equal(
     applet._panelContent(items.filter((item) => item.visible)).plain,
-    "A CR 794 · Verbrauch – / CV Δ1 h 12,3 Credit-%-Pkt."
+    "A CR 794 · Verbrauch – / CV Δ1 h 12,3 Credit-% (vollständig)"
   );
 });
 
@@ -1987,6 +2020,30 @@ test("credit balances are displayed as whole numbers", () => {
     applet._panelContent(items.filter((item) => item.visible)).plain,
     "A CR: 794 / 999 (Verbrauch 20, –%)"
   );
+});
+
+test("credit hover omits credit consumption when its hover setting is disabled", () => {
+  const applet = makeApplet();
+  applet._usages[0].credits = {
+    name: "credits", used: null, limit: null, remaining: 794, percent: null,
+  };
+  applet._usages[1].credits = {
+    name: "credits", used: null, limit: null, remaining: 321, percent: null,
+  };
+  applet._creditSettings = {
+    alpha: {
+      account: "alpha", "show-panel": false, "show-tooltip": true,
+      format: "compact", "custom-format": "", "hide-when-zero": false,
+      "consumption-show-panel": false, "consumption-show-tooltip": false,
+    },
+    beta: {
+      account: "beta", "show-panel": false, "show-tooltip": true,
+      format: "compact", "custom-format": "", "hide-when-zero": false,
+      "consumption-show-panel": false, "consumption-show-tooltip": false,
+    },
+  };
+  assert.equal(applet._creditParts(applet._usages[0], "hover").plain, "Credits 794");
+  assert.equal(applet._creditParts(applet._usages[1], "hover").plain, "Credits 321");
 });
 
 test("panel identity target keeps account visible when all value slots are off", () => {
@@ -2057,7 +2114,7 @@ test("consumption DTO is validated and rendered with coverage marker", () => {
   };
   assert.equal(
     applet._consumptionParts(usage, "panel").plain,
-    "Δ1 h 9,3pp (mindestens) TE=—"
+    "Δ1 h 9,3% (mindestens) TE=—"
   );
   assert.throws(() => applet._safeConsumptionWindows([{
     lookback_seconds: 3600,
@@ -2111,6 +2168,300 @@ test("consumption forecast is rendered from backend DTO", () => {
   assert.match(rendered.plain, /50m/);
 });
 
+test("own baseline does not hide delta or token end", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short",
+    format: "compact", "custom-format": "", "hide-when-zero": false,
+    "show-coverage-marker": true, "baseline-enabled": true,
+    "baseline-minutes": 60,
+  };
+  const usage = applet._usages[0];
+  usage.cost_windows = [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 12.5, baseline_used_percent: 40,
+    estimated_seconds_to_exhaustion: 600, coverage: "complete", sample_count: 3,
+  }];
+
+  const rendered = applet._consumptionParts(usage, "panel");
+  assert.match(rendered.plain, /Δ1 h 12,5%/);
+  assert.match(rendered.plain, /TE=10m/);
+  assert.match(rendered.plain, /AW60m=40,0%/);
+});
+
+test("forecast table coverage is not replaced by consumption defaults", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._syncingAccountSettings = false;
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  applet.accountForecastSettings = [{
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    "limit-window": "short", format: "compact", "custom-format": "",
+    smoothing: "ema-20", "hide-when-zero": false,
+    "show-coverage-marker": false, "baseline-enabled": false,
+    "baseline-minutes": 60, "warn-amount": 2, "warn-unit": "hours",
+    "warn-format": "red-yellow"
+  }];
+  applet.accountConsumptionSettings = [{
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", smoothing: "ema-10", "hide-when-zero": false,
+    "show-coverage-marker": true, "baseline-enabled": false,
+    "baseline-minutes": 60
+  }];
+  applet._refreshConsumption = () => {};
+  applet._refreshFormattedSurfaces = () => {};
+  applet._onForecastSettingsChanged();
+  assert.equal(applet._consumptionSettings.alpha["show-coverage-marker"], true);
+  assert.equal(applet._consumptionSettings.alpha["forecast-show-coverage-marker"], false);
+});
+
+test("all four metric tables keep AW, token end, credits and coverage independent", () => {
+  for (const coverageEnabled of [false, true]) {
+    for (const baselineEnabled of [false, true]) {
+      const applet = makeApplet();
+      applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+      applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+      applet._styleTargets["alpha:11"] = {panel: true, hover: true, click: true};
+      applet._styleTargets["alpha:12"] = {panel: true, hover: true, click: true};
+      applet._styleTargets["alpha:13"] = {panel: true, hover: true, click: true};
+      applet._creditSettings = {};
+      applet._consumptionSettings.alpha = {
+        account: "alpha", "show-panel": true, "show-tooltip": true,
+        amount: 1, unit: "hours", "limit-window": "short",
+        format: "compact", "custom-format": "", "hide-when-zero": false,
+        "show-coverage-marker": coverageEnabled,
+        "baseline-enabled": baselineEnabled, "baseline-minutes": 60,
+        "forecast-show-panel": true, "forecast-show-tooltip": true,
+        "forecast-format": "compact", "forecast-limit-window": "short",
+        "forecast-show-coverage-marker": coverageEnabled,
+        "forecast-baseline-enabled": baselineEnabled,
+        "forecast-baseline-minutes": 60
+      };
+      applet._creditSettings.alpha = {
+        account: "alpha", "show-panel": true, "show-tooltip": true,
+        format: "compact", "custom-format": "", "hide-when-zero": false,
+        "show-coverage-marker": coverageEnabled,
+        "baseline-enabled": baselineEnabled, "baseline-minutes": 60,
+        "consumption-show-panel": true, "consumption-show-tooltip": true,
+        "consumption-format": "compact", "consumption-amount": 1,
+        "consumption-unit": "hours", "consumption-show-coverage-marker": coverageEnabled,
+        "consumption-baseline-enabled": baselineEnabled,
+        "consumption-baseline-minutes": 60
+      };
+      const usage = applet._usages[0];
+      usage.credits = {
+        remaining: 794, limit: 1000, used: 206, percent: 20.6,
+        coverage: "partial", baseline_used_percent: 40
+      };
+      usage.cost_windows = [
+        {pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+          consumed_percentage_points: 12.5, estimated_seconds_to_exhaustion: 600,
+          baseline_used_percent: 40, coverage: "partial", sample_count: 3},
+        {pool: "credits", lookback_seconds: 3600, limit_window_seconds: 2592000,
+          consumed_percentage_points: 8.5, baseline_used_percent: 30,
+          coverage: "partial", sample_count: 3}
+      ];
+
+      const token = applet._consumptionParts(usage, "panel").plain;
+      const credits = applet._creditParts(usage, "panel", true, "CR").plain;
+      const creditConsumption = applet._creditConsumptionParts(usage, "panel", true, "CV").plain;
+      assert.match(token, /Δ1 h 12,5%/);
+      assert.match(token, /TE=10m/);
+      assert.equal(token.includes("AW60m="), baselineEnabled);
+      assert.equal(token.includes("(mindestens)"), coverageEnabled);
+      assert.equal(credits.includes("AW60m="), baselineEnabled);
+      assert.equal(credits.includes("(mindestens)"), coverageEnabled);
+      assert.equal(creditConsumption.includes("AW60m="), baselineEnabled);
+      assert.equal(creditConsumption.includes("(mindestens)"), coverageEnabled);
+    }
+  }
+});
+
+test("every metric-table switch survives all boolean combinations", () => {
+  const switches = [
+    ["show-panel", true],
+    ["show-tooltip", true],
+    ["hide-when-zero", false],
+    ["show-coverage-marker", true],
+    ["baseline-enabled", false],
+  ];
+  const valuesFor = (mask, prefix = "") => {
+    const row = {};
+    for (let i = 0; i < switches.length; i++) {
+      row[prefix + switches[i][0]] = Boolean(mask & (1 << i));
+    }
+    return row;
+  };
+  for (let mask = 0; mask < (1 << switches.length); mask++) {
+    const applet = makeApplet();
+    const token = Object.assign({
+      account: "alpha", amount: 1, unit: "hours", "limit-window": "short",
+      format: "compact", "custom-format": "", smoothing: "ema-10",
+      "baseline-minutes": 60,
+    }, valuesFor(mask));
+    const tokenRow = applet._normalizeConsumptionRow(token, "alpha");
+    assert.ok(tokenRow, `token row rejected for mask ${mask}`);
+    for (const [key] of switches) assert.equal(tokenRow[key], token[key], `token ${key} mask ${mask}`);
+
+    const forecast = Object.assign({
+      account: "alpha", "limit-window": "weekly", format: "compact",
+      "custom-format": "", smoothing: "ema-20", "baseline-minutes": 60,
+      "warn-amount": 2, "warn-unit": "hours", "warn-format": "red-yellow",
+    }, valuesFor(mask));
+    const forecastRow = applet._normalizeForecastRow(forecast, "alpha");
+    assert.ok(forecastRow, `forecast row rejected for mask ${mask}`);
+    for (const [key] of switches) assert.equal(forecastRow[key], forecast[key], `forecast ${key} mask ${mask}`);
+
+    const credit = Object.assign({
+      account: "alpha", format: "compact", "custom-format": "", smoothing: "ema-20",
+      "baseline-minutes": 60, "consumption-show-panel": false,
+      "consumption-show-tooltip": true, "consumption-amount": 1,
+      "consumption-unit": "hours", "consumption-format": "compact",
+      "consumption-custom-format": "", "consumption-smoothing": "ema-20",
+      "consumption-hide-when-zero": false, "consumption-show-coverage-marker": true,
+      "consumption-baseline-enabled": false, "consumption-baseline-minutes": 60,
+    }, valuesFor(mask));
+    const creditRow = applet._normalizeCreditRow(credit, "alpha");
+    assert.ok(creditRow, `credit row rejected for mask ${mask}`);
+    for (const [key] of switches) assert.equal(creditRow[key], credit[key], `credit ${key} mask ${mask}`);
+
+    const creditConsumption = Object.assign({
+      account: "alpha", amount: 1, unit: "hours", format: "compact",
+      "custom-format": "", smoothing: "ema-20", "baseline-minutes": 60,
+    }, valuesFor(mask));
+    const creditConsumptionRow = applet._normalizeCreditConsumptionRow(creditConsumption, "alpha");
+    assert.ok(creditConsumptionRow, `credit consumption row rejected for mask ${mask}`);
+    for (const [key] of switches) {
+      assert.equal(creditConsumptionRow[key], creditConsumption[key], `credit consumption ${key} mask ${mask}`);
+    }
+  }
+});
+
+test("metric-table switches reject non-boolean values independently", () => {
+  const applet = makeApplet();
+  const base = {
+    account: "alpha", amount: 1, unit: "hours", "limit-window": "short",
+    format: "compact", "custom-format": "", smoothing: "ema-10", "baseline-minutes": 60,
+  };
+  for (const key of ["show-panel", "show-tooltip", "hide-when-zero", "show-coverage-marker", "baseline-enabled"]) {
+    const row = Object.assign({}, base, {
+      "show-panel": false, "show-tooltip": true, "hide-when-zero": false,
+      "show-coverage-marker": true, "baseline-enabled": false,
+    });
+    row[key] = "false";
+    assert.equal(applet._normalizeConsumptionRow(row, "alpha"), null, `token accepts ${key}`);
+    assert.equal(applet._normalizeForecastRow(row, "alpha"), null, `forecast accepts ${key}`);
+    assert.equal(applet._normalizeCreditConsumptionRow(row, "alpha"), null, `credit consumption accepts ${key}`);
+  }
+});
+
+test("remaining boolean switch groups round-trip independently", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  applet._usages = [];
+  const boolPairs = [
+    ["bold", "italic"],
+    ["below-bold", "below-italic"],
+  ];
+  for (const kind of ["percent", "date", "time", "duration"]) {
+    for (let mask = 0; mask < 4; mask++) {
+      const row = applet._defaultStyleRow("alpha", kind);
+      row[boolPairs[0][0]] = Boolean(mask & 1);
+      row[boolPairs[0][1]] = Boolean(mask & 2);
+      row[boolPairs[1][0]] = Boolean(mask & 1);
+      row[boolPairs[1][1]] = Boolean(mask & 2);
+      const normalized = applet._normalizeStyleRow(row, "alpha", kind);
+      assert.ok(normalized, `${kind} style mask ${mask}`);
+      for (const key of boolPairs.flat()) assert.equal(normalized[key], row[key], `${kind} ${key} mask ${mask}`);
+    }
+  }
+  for (let mask = 0; mask < 8; mask++) {
+    const target = applet._defaultTargetRow("alpha", 4);
+    target.panel = Boolean(mask & 1);
+    target.hover = Boolean(mask & 2);
+    target.click = Boolean(mask & 4);
+    assert.deepEqual(applet._normalizeTargetRow(target, "alpha"), target, `target mask ${mask}`);
+  }
+  for (let mask = 0; mask < 16; mask++) {
+    const reset = applet._defaultResetRow("alpha");
+    reset["show-panel"] = Boolean(mask & 1);
+    reset["show-tooltip"] = Boolean(mask & 2);
+    reset["hide-when-zero"] = Boolean(mask & 4);
+    reset["show-unknown"] = Boolean(mask & 8);
+    assert.deepEqual(applet._normalizeResetRow(reset, "alpha"), reset, `reset mask ${mask}`);
+  }
+  for (let mask = 0; mask < 4; mask++) {
+    const panel = applet._defaultPanelRow("alpha", 1);
+    panel.muted = Boolean(mask & 1);
+    assert.equal(applet._normalizePanelRow(panel, "alpha").muted, panel.muted, `panel mask ${mask}`);
+    const display = applet._defaultDisplayRow("alpha");
+    display["hover-separator"] = Boolean(mask & 1);
+    display["click-separator"] = Boolean(mask & 2);
+    assert.deepEqual(applet._normalizeDisplayRow(display, "alpha"), display, `display mask ${mask}`);
+    const alert = applet._defaultAlertRow("alpha");
+    alert.warnings = Boolean(mask & 1);
+    alert.errors = Boolean(mask & 2);
+    assert.equal(applet._normalizeAlertRow(alert, "alpha").warnings, alert.warnings, `alert warnings mask ${mask}`);
+    assert.equal(applet._normalizeAlertRow(alert, "alpha").errors, alert.errors, `alert errors mask ${mask}`);
+  }
+  for (let mask = 0; mask < 4; mask++) {
+    const routing = applet._normalizeRoutingRows([{
+      scope: 0, identifier: "alpha", enabled: Boolean(mask & 1), allow: Boolean(mask & 2),
+    }]);
+    assert.equal(routing[0].enabled, Boolean(mask & 1), `routing enabled mask ${mask}`);
+    assert.equal(routing[0].allow, Boolean(mask & 2), `routing allow mask ${mask}`);
+  }
+});
+
+test("insufficient coverage does not suppress the independent token-end row", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", "hide-when-zero": false,
+    "show-coverage-marker": true
+  };
+  const usage = applet._usages[0];
+  usage.cost_windows = [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 4, coverage: "insufficient", sample_count: 0
+  }];
+  const rendered = applet._consumptionParts(usage, "panel").plain;
+  assert.match(rendered, /nicht genügend Messdaten/);
+  assert.match(rendered, /TE=—/);
+});
+
+test("token end can use a different configured limit than token consumption", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short",
+    "forecast-limit-window": "weekly", format: "compact", "custom-format": "",
+    "forecast-format": "compact", "forecast-custom-format": "",
+    "hide-when-zero": false, "show-coverage-marker": true,
+  };
+  const usage = applet._usages[0];
+  usage.cost_windows = [
+    {pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+      consumed_percentage_points: 10, estimated_seconds_to_exhaustion: 300,
+      coverage: "complete", sample_count: 3},
+    {pool: "main", lookback_seconds: 3600, limit_window_seconds: 604800,
+      consumed_percentage_points: 20, estimated_seconds_to_exhaustion: 600,
+      coverage: "complete", sample_count: 3},
+  ];
+  const rendered = applet._consumptionParts(usage, "panel");
+  assert.match(rendered.plain, /Δ1 h 10,0%/);
+  assert.match(rendered.plain, /TE=10m/);
+});
+
 test("consumption display asks CLI for configured account query", () => {
   const applet = makeApplet();
   applet._usages = [{ account: "alpha", cost_windows: [] }];
@@ -2133,7 +2484,7 @@ test("consumption display asks CLI for configured account query", () => {
   applet._spawnAuxJson = (argv, callback) => {
     assert.deepEqual(argv, [
       "codex-usage", "consumption", "--account", "alpha", "--amount", "2",
-      "--unit", "days", "--pool", "main", "--limit-window", "all", "--format", "json",
+      "--unit", "days", "--smoothing", "none", "--pool", "main", "--limit-window", "all", "--format", "json",
     ]);
     callback({
       account_id: "alpha",
@@ -7048,7 +7399,7 @@ test("old three-surface target rows migrate with a duration row", () => {
       { account: "alpha", element: 2, panel: false, hover: false, click: true },
     ]
   );
-  assert.equal(rows.length, 26);
+  assert.equal(rows.length, 28);
   assert.equal(rows[3].element, 3);
   assert.equal(rows[3].click, true);
   assert.equal(rows[3].panel, false);

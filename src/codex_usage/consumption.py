@@ -23,6 +23,7 @@ class ConsumptionWindow:
     coverage: str
     sample_count: int
     estimated_seconds_to_exhaustion: int | None = None
+    baseline_used_percent: float | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -33,6 +34,7 @@ class ConsumptionWindow:
             "coverage": self.coverage,
             "sample_count": self.sample_count,
             "estimated_seconds_to_exhaustion": self.estimated_seconds_to_exhaustion,
+            "baseline_used_percent": self.baseline_used_percent,
         }
 
 
@@ -54,10 +56,25 @@ def calculate_consumption(
     amount: int,
     unit: str,
     now: datetime,
+    baseline_minutes: int | None = None,
+    baseline_value_minutes: int | None = None,
     stale_after_seconds: int = 900,
     max_gap_seconds: int | None = None,
+    smoothing: str | None = None,
 ) -> ConsumptionWindow:
     lookback_seconds = consumption_lookback_seconds(amount, unit)
+    if baseline_minutes is not None and (
+        isinstance(baseline_minutes, bool)
+        or not isinstance(baseline_minutes, int)
+        or not 0 <= baseline_minutes <= 9_999
+    ):
+        raise ValueError("baseline_minutes must be between 0 and 9999")
+    if baseline_value_minutes is not None and (
+        isinstance(baseline_value_minutes, bool)
+        or not isinstance(baseline_value_minutes, int)
+        or not 0 <= baseline_value_minutes <= 9_999
+    ):
+        raise ValueError("baseline_value_minutes must be between 0 and 9999")
     _require_aware(now)
     if (
         isinstance(stale_after_seconds, bool)
@@ -73,6 +90,17 @@ def calculate_consumption(
         or max_gap_seconds <= 0
     ):
         raise ValueError("max_gap_seconds must be positive")
+    if smoothing not in (None, "none"):
+        if not isinstance(smoothing, str) or not smoothing.startswith("ema-"):
+            raise ValueError("smoothing must be none or ema-5 through ema-640")
+        try:
+            smoothing_minutes = int(smoothing[4:])
+        except ValueError as exc:
+            raise ValueError("smoothing must be none or ema-5 through ema-640") from exc
+        if smoothing_minutes not in {5, 10, 20, 40, 80, 160, 320, 640}:
+            raise ValueError("smoothing must be none or ema-5 through ema-640")
+    else:
+        smoothing_minutes = None
 
     sample_list = tuple(islice(samples, MAX_CONSUMPTION_SAMPLES + 1))
     if len(sample_list) > MAX_CONSUMPTION_SAMPLES:
@@ -86,6 +114,7 @@ def calculate_consumption(
             coverage="insufficient",
             sample_count=0,
             estimated_seconds_to_exhaustion=None,
+            baseline_used_percent=None,
         )
     ordered = sample_list
     previous_captured_at = None
@@ -109,11 +138,22 @@ def calculate_consumption(
     window_seconds = first.window_seconds
     if any(sample.pool != pool or sample.window_seconds != window_seconds for sample in ordered):
         raise ValueError("samples must use one pool and limit window")
-    start = now - timedelta(seconds=lookback_seconds)
+    baseline_seconds = (
+        lookback_seconds
+        if baseline_minutes is None
+        else baseline_minutes * 60
+    )
+    baseline_value_seconds = (
+        None if baseline_value_minutes is None else baseline_value_minutes * 60
+    )
+    start = now - timedelta(seconds=baseline_seconds)
     baseline = None
+    baseline_value = None
     for sample in ordered:
         if sample.captured_at <= start:
             baseline = sample
+        if baseline_value_seconds is not None and sample.captured_at <= now - timedelta(seconds=baseline_value_seconds):
+            baseline_value = sample
         if sample.captured_at > now:
             break
     observations = [sample for sample in ordered if start <= sample.captured_at <= now]
@@ -128,6 +168,11 @@ def calculate_consumption(
             coverage="insufficient",
             sample_count=len(observations),
             estimated_seconds_to_exhaustion=None,
+            baseline_used_percent=(
+                float(baseline_value.used_percent)
+                if baseline_value is not None
+                else (float(baseline.used_percent) if baseline is not None else None)
+            ),
         )
 
     partial = baseline is None or observations[0].captured_at > start
@@ -159,6 +204,8 @@ def calculate_consumption(
         ).total_seconds()
         remaining_percent = max(0.0, 100.0 - float(observations[-1].used_percent))
         rate = consumed / elapsed_seconds if elapsed_seconds > 0 else 0.0
+        if smoothing_minutes is not None:
+            rate = _ema_rate(observations, smoothing_minutes * 60, max_gap_seconds)
         if remaining_percent == 0:
             estimate = 0
         elif rate > 0:
@@ -173,7 +220,34 @@ def calculate_consumption(
         coverage=coverage,
         sample_count=len(observations),
         estimated_seconds_to_exhaustion=estimate,
+        baseline_used_percent=(
+            float(baseline_value.used_percent)
+            if baseline_value is not None
+            else (float(baseline.used_percent) if baseline is not None else None)
+        ),
     )
+
+
+def _ema_rate(observations: list[UsageSample], time_constant_seconds: int, max_gap_seconds: int) -> float:
+    """Return a time-aware EMA of positive usage rate, preserving reset semantics."""
+    ema = None
+    previous = None
+    for current in observations:
+        if previous is None:
+            previous = current
+            continue
+        gap = (current.captured_at - previous.captured_at).total_seconds()
+        if gap <= 0 or gap > max_gap_seconds:
+            previous = current
+            continue
+        delta = float(current.used_percent) - float(previous.used_percent)
+        if delta < 0:
+            delta = float(current.used_percent) if _confirmed_reset(previous, current) else 0.0
+        instantaneous = delta / gap
+        alpha = 1.0 - math.exp(-gap / float(time_constant_seconds))
+        ema = instantaneous if ema is None else ema + alpha * (instantaneous - ema)
+        previous = current
+    return max(0.0, float(ema or 0.0))
 
 
 def _confirmed_reset(previous: UsageSample, current: UsageSample) -> bool:

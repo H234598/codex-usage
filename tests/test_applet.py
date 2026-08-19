@@ -69,6 +69,9 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "brackets",
     }
     assert settings["show-reactivation-actions"]["default"] is True
+    assert settings["fast-mode-icon"]["type"] == "custom"
+    assert settings["fast-mode-icon"]["file"] == "fast_mode_icon_selector.py"
+    assert settings["fast-mode-icon"]["widget"] == "FastModeIconSelector"
     assert settings["reactivation-browser"]["default"] == "auto"
     assert set(settings["reactivation-browser"]["options"].values()) == {
         "auto",
@@ -112,11 +115,12 @@ def test_account_table_contains_all_editable_fields() -> None:
     assert [column["id"] for column in table["columns"]] == [
         "account",
         "label",
+        "tag",
+        "series",
+        "series-active",
         "auth-json",
         "profile-dir",
         "test-home",
-        "series",
-        "series-active",
         "browser",
         "backend",
     ]
@@ -126,10 +130,12 @@ def test_account_table_contains_all_editable_fields() -> None:
     assert "-" not in table["hidden-buttons"]
     assert "Minus löscht" in table["tooltip"]
     assert "automatisch angelegt" in table["description"]
-    assert table["columns"][4]["title"] == "Create new Account"
+    assert table["columns"][7]["title"] == "Create new Account"
     assert "default" not in table["columns"][2]
-    assert "default" not in table["columns"][3]
-    assert table["columns"][-1]["default"] == 0
+    assert "default" not in table["columns"][5]
+    assert "default" not in table["columns"][6]
+    assert table["columns"][4]["default"] is False
+    assert table["columns"][-2]["default"] == 0
 
 
 def test_display_table_replaces_panel_tag_column() -> None:
@@ -157,18 +163,18 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     table = settings["account-consumption-settings"]
 
-    assert settings["layout"]["consumption-section"]["title"] == "Verbrauchszeiträume"
+    assert settings["layout"]["consumption-periods-section"]["title"] == "Verbrauchszeiträume"
+    assert settings["layout"]["credit-periods-section"]["title"] == "Credits und Creditverbrauch"
     assert [column["id"] for column in table["columns"]] == [
-        "account", "show-panel", "show-tooltip", "forecast-show-panel",
-        "forecast-show-tooltip", "amount", "unit", "limit-window", "format",
-        "custom-format", "forecast-format", "forecast-custom-format",
-        "hide-when-zero", "show-coverage-marker",
+        "account", "show-panel", "show-tooltip", "amount", "unit", "limit-window",
+        "format", "custom-format", "smoothing", "hide-when-zero",
+        "show-coverage-marker", "baseline-enabled", "baseline-minutes",
     ]
     columns = {column["id"]: column for column in table["columns"]}
     assert columns["show-panel"]["default"] is False
     assert columns["show-tooltip"]["default"] is True
-    assert columns["show-panel"]["title"] == "Tokenverbrauch Leiste"
-    assert columns["show-tooltip"]["title"] == "Tokenverbrauch Hover"
+    assert columns["show-panel"]["title"] == "Δ Tokenverbrauch Leiste"
+    assert columns["show-tooltip"]["title"] == "Δ Tokenverbrauch Hover"
     assert "{value}" in table["description"] or "{value}" in table["tooltip"]
     assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days", "weeks"}
     assert set(columns["limit-window"]["options"].values()) == {"short", "weekly", "monthly", "spark"}
@@ -176,6 +182,27 @@ def test_consumption_table_exposes_per_account_queries() -> None:
         "compact", "compact-token", "verbose", "custom"
     }
     assert table["show-buttons"] is True
+    assert columns["amount"]["title"] == "Δ Menge"
+    assert columns["unit"]["title"] == "Δ Einheit"
+    assert columns["baseline-enabled"]["default"] is False
+    assert columns["baseline-minutes"]["min"] == 0
+    assert columns["baseline-minutes"]["max"] == 9999
+    assert set(columns["smoothing"]["options"].values()) == {
+        "none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"
+    }
+    assert columns["limit-window"]["title"] == "Δ Limit"
+    assert columns["format"]["title"] == "Δ Format"
+    assert columns["custom-format"]["title"] == "Δ Eigenes Format"
+    forecast = settings["account-forecast-settings"]
+    forecast_columns = {column["id"]: column for column in forecast["columns"]}
+    assert forecast_columns["show-panel"]["title"] == "Tokenende Leiste"
+    assert forecast_columns["show-tooltip"]["title"] == "Tokenende Hover"
+    assert set(forecast_columns["limit-window"]["options"].values()) == {
+        "short", "weekly", "monthly", "spark"
+    }
+    assert forecast_columns["limit-window"]["title"] == "Tokenende Limit"
+    assert forecast_columns["custom-format"]["title"] == "Tokenende Eigenes Format"
+    assert "coverage" in settings["account-consumption-settings-heading"]["description"]
     assert set(table["hidden-buttons"]) == {"+", "-", "up", "down"}
 
 
@@ -217,10 +244,15 @@ def test_format_and_display_sections_use_new_labels() -> None:
     layout = settings["layout"]
 
     assert layout["format-page"]["sections"] == [
-        "formatting-section",
+        "percent-style-section",
+        "date-style-section",
+        "time-style-section",
+        "duration-style-section",
+        "display-settings-section",
         "display-target-section",
     ]
-    assert layout["formatting-section"]["title"] == "Hervorhebungen und Design:"
+    assert layout["percent-style-section"]["title"] == "Verbleibendes Tokenlimit in %"
+    assert layout["display-settings-section"]["title"] == "Account-Anzeige"
     assert layout["display-target-section"]["title"] == "Formatierungsorte"
     assert layout["percent-style-section"]["title"] == "Verbleibendes Tokenlimit in %"
     assert layout["date-style-section"]["title"] == "OpenAI - Reset: Datum des Reset"
@@ -249,7 +281,9 @@ def test_applet_metadata_and_settings_remainder() -> None:
     assert "show-reactivation-actions" in settings["layout"]["reactivation-options-section"]["keys"]
     assert "reactivation-browser" not in settings["layout"]["reactivation-options-section"]["keys"]
     backend_table = settings["account-backends"]
-    assert backend_table["type"] == "list"
+    assert backend_table["type"] == "custom"
+    assert backend_table["file"] == "dynamic_series_list.py"
+    assert backend_table["widget"] == "DynamicSeriesList"
     assert backend_table["show-buttons"] is True
     assert set(backend_table["hidden-buttons"]) == {"up", "down"}
     assert backend_table["columns"][-1]["options"] == {
@@ -415,8 +449,9 @@ def test_applet_metadata_and_settings_remainder() -> None:
             "Label": 8,
             "Kürzel": 9,
             "Verbrauch Woche": 10,
-            "Credits": 11,
-            "Creditverbrauch": 12,
+                "Credits": 11,
+                "Creditverbrauch": 12,
+                "Delta-Ausgangswert": 13,
         }
     assert targets["show-buttons"] is True
     assert set(targets["hidden-buttons"]) == {"+", "-", "up", "down"}
@@ -537,7 +572,7 @@ def test_installer_and_uninstaller_round_trip(tmp_path: Path) -> None:
 
     installed = target_root / APPLET_UUID
     assert installed.is_dir()
-    for name in ("applet.js", "metadata.json", "settings-schema.json", "stylesheet.css"):
+    for name in ("applet.js", "metadata.json", "settings-schema.json", "stylesheet.css", "dynamic_series_list.py", "fast_mode_icon_selector.py"):
         assert (installed / name).is_file()
 
     uninstall = _run_script(

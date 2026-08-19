@@ -142,6 +142,44 @@ def test_manage_account_opens_the_existing_isolated_browser_profile(monkeypatch,
     assert "CODEX_HOME" not in captured["kwargs"]["env"]
 
 
+def test_manage_account_auto_reuses_the_account_browser(monkeypatch, tmp_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        browser="firefox",
+        reactivation_browser="auto",
+    )
+    profile = tmp_path / "firefox-profile"
+    helper = str(tmp_path / "codex-usage-browser")
+    captured = {}
+
+    monkeypatch.setattr(
+        "codex_usage.reactivate._select_browser",
+        lambda requested: (requested, "/usr/bin/firefox")
+        if requested == "firefox"
+        else pytest.fail("auto must prefer the configured account browser"),
+    )
+    monkeypatch.setattr(
+        "codex_usage.reactivate._manage_browser_profile",
+        lambda _account, browser: captured.update(browser=browser) or profile,
+    )
+    monkeypatch.setattr(
+        "codex_usage.reactivate._resolve_executable",
+        lambda _explicit, _fallback, label: helper,
+    )
+    monkeypatch.setattr(
+        reactivate_module.subprocess,
+        "Popen",
+        lambda command, **kwargs: captured.update(command=command, kwargs=kwargs),
+    )
+
+    result = open_account_in_reactivation_browser(account)
+
+    assert result["ok"] is True
+    assert captured["browser"] == "firefox"
+
+
 @pytest.mark.parametrize(
     "url",
     [

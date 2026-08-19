@@ -307,6 +307,7 @@ def _build_parser() -> argparse.ArgumentParser:
     add = account_sub.add_parser("add", help="Account-Profil anlegen oder aktualisieren")
     add.add_argument("account_id")
     add.add_argument("--label")
+    add.add_argument("--tag", help="Kurzes Account-Kürzel für Anzeige und Masterjet")
     add.add_argument("--profile-dir")
     add.add_argument(
         "--browser",
@@ -609,6 +610,22 @@ def _build_parser() -> argparse.ArgumentParser:
     consumption.add_argument("--account", required=True)
     consumption.add_argument("--amount", type=int, required=True)
     consumption.add_argument("--unit", choices=("minutes", "hours", "days"), required=True)
+    consumption.add_argument(
+        "--baseline-minutes",
+        type=int,
+        help="fester Ausgangspunkt in Minuten vor jetzt (0-9999); ohne Option automatisch",
+    )
+    consumption.add_argument(
+        "--baseline-value-minutes",
+        type=int,
+        help="separater Ausgangspunkt für den AW-Wert in Minuten (0-9999); ändert das Delta nicht",
+    )
+    consumption.add_argument(
+        "--smoothing",
+        choices=("none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"),
+        default="none",
+        help="zeitgewichtete EMA für die Prognoserate",
+    )
     consumption.add_argument("--pool", default="main")
     consumption.add_argument("--limit-window", choices=("short", "weekly", "monthly", "spark", "all"), default="short")
     consumption.add_argument("--path", type=Path)
@@ -646,6 +663,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     profile_create.add_argument("--account-id", required=True)
     profile_create.add_argument("--label", required=True)
+    profile_create.add_argument("--tag", default="")
     profile_create.add_argument("--browser", choices=SUPPORTED_BROWSERS, required=True)
     profile_create.add_argument("--backend", choices=SUPPORTED_BACKENDS, required=True)
     profile_create.add_argument("--profile-dir", required=True)
@@ -740,6 +758,7 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
     _, account = add_or_update_account(
         args.account_id,
         label=args.label,
+        tag=args.tag,
         profile_dir=args.profile_dir,
         browser=args.browser,
         auth_json_path=str(args.auth_json) if args.auth_json else None,
@@ -785,6 +804,7 @@ def _account_json(account: Any) -> dict[str, str | None]:
     return {
         "id": account.id,
         "label": account.label,
+        "tag": account.tag,
         "profile_dir": account.profile_dir,
         "auth_json_path": account.auth_json_path,
         "browser": account.browser,
@@ -805,6 +825,7 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
                 {
                     "id": account.id,
                     "label": account.label,
+                    "tag": account.tag,
                     "profile_dir": account.profile_dir,
                     "auth_json_path": account.auth_json_path,
                     "browser": account.browser,
@@ -1120,7 +1141,20 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
         "all": (18_000, 604_800),
     }[args.limit_window]
     windows: list[ConsumptionWindow] = []
-    start = now - timedelta(seconds=consumption_lookback_seconds(args.amount, args.unit))
+    lookback_seconds = consumption_lookback_seconds(args.amount, args.unit)
+    baseline_seconds = (
+        lookback_seconds
+        if args.baseline_minutes is None
+        else args.baseline_minutes * 60
+    )
+    if args.baseline_minutes is not None and not 0 <= args.baseline_minutes <= 9_999:
+        raise ValueError("baseline-minutes must be between 0 and 9999")
+    if args.baseline_value_minutes is not None and not 0 <= args.baseline_value_minutes <= 9_999:
+        raise ValueError("baseline-value-minutes must be between 0 and 9999")
+    baseline_value_seconds = (
+        0 if args.baseline_value_minutes is None else args.baseline_value_minutes * 60
+    )
+    start = now - timedelta(seconds=max(lookback_seconds, baseline_seconds, baseline_value_seconds))
     with HistoryStore(args.path) as store:
         for duration in durations:
             samples = store.samples_for_consumption(
@@ -1135,6 +1169,9 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
                 amount=args.amount,
                 unit=args.unit,
                 now=now,
+                baseline_minutes=args.baseline_minutes,
+                baseline_value_minutes=args.baseline_value_minutes,
+                smoothing=args.smoothing,
             )
             if result.limit_window_seconds == 0:
                 result = ConsumptionWindow(
@@ -1145,6 +1182,7 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
                     coverage=result.coverage,
                     sample_count=result.sample_count,
                     estimated_seconds_to_exhaustion=result.estimated_seconds_to_exhaustion,
+                    baseline_used_percent=result.baseline_used_percent,
                 )
             windows.append(result)
     payload = {"account_id": args.account, "windows": [window.as_dict() for window in windows]}
@@ -1267,6 +1305,8 @@ def _cmd_profile_create(args: argparse.Namespace) -> int:
             config_path=args.config,
             json_events=args.json_events,
         )
+        if args.tag:
+            profile_kwargs["tag"] = args.tag
         if args.series:
             profile_kwargs["series"] = args.series
         if args.series_active:

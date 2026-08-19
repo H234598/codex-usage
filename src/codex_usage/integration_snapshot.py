@@ -524,6 +524,11 @@ def _canonical_cost_window(value: object) -> dict[str, object]:
     }
     if "estimated_seconds_to_exhaustion" in value:
         result["estimated_seconds_to_exhaustion"] = estimate
+    if "baseline_used_percent" in value:
+        baseline = value["baseline_used_percent"]
+        result["baseline_used_percent"] = (
+            None if baseline is None else _canonical_percent(baseline)
+        )
     return result
 
 

@@ -161,6 +161,7 @@ def _prepare_config_directory(config_dir: Path) -> None:
 def add_or_update_account(
     account_id: str,
     label: str | None = None,
+    tag: str | None = None,
     profile_dir: str | None = None,
     browser: str | None = None,
     auth_json_path: str | None = None,
@@ -178,6 +179,8 @@ def add_or_update_account(
     _validate_account_id(account_id)
     if browser is not None:
         _validate_browser(browser)
+    if tag is not None:
+        _validate_text_field(tag, "account tag", 8, allow_empty=True)
     if backend is not None:
         _validate_backend(backend)
     if reactivation_browser is not None:
@@ -234,6 +237,7 @@ def add_or_update_account(
             id=account_id,
             label=label or (existing.label if existing else account_id),
             profile_dir=_absolute_account_path(selected_profile_dir, "profile_dir"),
+            tag=tag if tag is not None else (existing.tag if existing else ""),
             browser=browser or (existing.browser if existing else "firefox"),
             auth_json_path=(
                 _absolute_account_path(canonical_auth_json, "auth_json_path")
@@ -442,6 +446,14 @@ def _account_from_data(item: object) -> Account:
         raise ValueError("account label must be a string")
     else:
         label = raw_label
+    raw_tag = item.get("tag", "")
+    if raw_tag in (None, ""):
+        tag = ""
+    elif not isinstance(raw_tag, str):
+        raise ValueError("account tag must be a string")
+    else:
+        tag = raw_tag
+    _validate_text_field(tag, "account tag", 8, allow_empty=True)
     raw_profile_dir = item.get("profile_dir")
     if raw_profile_dir in (None, ""):
         profile_dir = str(_default_profile_root(account_id))
@@ -495,6 +507,7 @@ def _account_from_data(item: object) -> Account:
         id=account_id,
         label=label,
         profile_dir=profile_dir,
+        tag=tag,
         browser=browser,
         auth_json_path=auth_json_path,
         backend=backend,
@@ -807,6 +820,7 @@ def _validate_account(account: object) -> None:
         raise ValueError("account id must be a string")
     _validate_account_id(account.id)
     _validate_text_field(account.label, "account label", MAX_CONFIG_LABEL_CHARS)
+    _validate_text_field(account.tag, "account tag", 8, allow_empty=True)
     _validate_text_field(account.profile_dir, "profile_dir", MAX_CONFIG_PATH_CHARS)
     profile_path = _validate_profile_path(account.profile_dir)
     if not profile_path.is_absolute():
@@ -829,10 +843,12 @@ def _validate_account(account: object) -> None:
             raise ValueError("auth_json_path must be an absolute path")
 
 
-def _validate_text_field(value: object, name: str, max_chars: int) -> None:
+def _validate_text_field(
+    value: object, name: str, max_chars: int, *, allow_empty: bool = False
+) -> None:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
-    if not value:
+    if not value and not allow_empty:
         raise ValueError(f"{name} must not be empty")
     if len(value) > max_chars:
         raise ValueError(f"{name} must be at most {max_chars} characters")
@@ -909,6 +925,7 @@ def _to_toml(config: AppConfig) -> str:
                 f"id = {_quote(account.id)}",
                 f"label = {_quote(account.label)}",
                 f"profile_dir = {_quote(account.profile_dir)}",
+                f"tag = {_quote(account.tag)}",
                 f"browser = {_quote(account.browser)}",
                 f"backend = {_quote(account.backend)}",
                 f"reactivation_browser = {_quote(account.reactivation_browser)}",

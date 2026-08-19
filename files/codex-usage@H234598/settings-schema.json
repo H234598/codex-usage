@@ -15,7 +15,8 @@
         "backend-section",
         "refresh-section",
         "display-section",
-        "consumption-section",
+        "consumption-periods-section",
+        "credit-periods-section",
         "reset-display-section",
         "reactivation-options-section"
       ]
@@ -24,7 +25,11 @@
       "type": "page",
       "title": "Formatierung",
       "sections": [
-        "formatting-section",
+        "percent-style-section",
+        "date-style-section",
+        "time-style-section",
+        "duration-style-section",
+        "display-settings-section",
         "display-target-section"
       ]
     },
@@ -73,18 +78,29 @@
       "keys": [
         "account-panel-settings",
         "panel-account-separator",
-        "panel-percent-source"
+        "panel-percent-source",
+        "fast-mode-icon"
       ]
     },
-    "consumption-section": {
+    "consumption-periods-section": {
       "type": "section",
       "title": "Verbrauchszeiträume",
       "keys": [
         "account-consumption-settings-heading",
         "account-consumption-settings",
+        "account-forecast-settings-heading",
+        "account-forecast-settings",
+        "show-consumption-delta"
+      ]
+    },
+    "credit-periods-section": {
+      "type": "section",
+      "title": "Credits und Creditverbrauch",
+      "keys": [
         "account-credit-settings-heading",
         "account-credit-settings",
-        "show-consumption-delta"
+        "account-credit-consumption-settings-heading",
+        "account-credit-consumption-settings"
       ]
     },
     "reset-display-section": {
@@ -115,12 +131,18 @@
         "account-duration-styles"
       ]
     },
-  "display-target-section": {
+    "display-settings-section": {
+      "type": "section",
+      "title": "Account-Anzeige",
+      "keys": [
+        "account-display-settings-heading",
+        "account-display-settings"
+      ]
+    },
+    "display-target-section": {
     "type": "section",
       "title": "Formatierungsorte",
       "keys": [
-        "account-display-settings-heading",
-        "account-display-settings",
         "account-style-targets-heading",
         "account-style-targets"
       ]
@@ -129,6 +151,7 @@
       "type": "section",
       "title": "Verbleibendes Tokenlimit in %",
       "keys": [
+        "account-percent-styles-heading",
         "account-percent-styles"
       ]
     },
@@ -136,6 +159,7 @@
       "type": "section",
       "title": "OpenAI - Reset: Datum des Reset",
       "keys": [
+        "account-date-styles-heading",
         "account-date-styles"
       ]
     },
@@ -143,6 +167,7 @@
       "type": "section",
       "title": "OpenAI - Reset: Uhrzeit",
       "keys": [
+        "account-time-styles-heading",
         "account-time-styles"
       ]
     },
@@ -150,6 +175,7 @@
       "type": "section",
       "title": "OpenAI - Reset: Restlaufzeit in Tagen bis Limitreset",
       "keys": [
+        "account-duration-styles-heading",
         "account-duration-styles"
       ]
     },
@@ -185,11 +211,19 @@
   },
   "account-consumption-settings-heading": {
     "type": "label",
-    "description": "Tokenverbrauch pro Account — Eigenes Format: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {window}=Limitfenster, {coverage}=Datenqualität."
+    "description": "Tokenverbrauch pro Account.\nBerechnung: codex-usage vergleicht Messpunkte aus dem konfigurierten Rückblick mit dem gewählten Limit und liefert die Veränderung in Prozent; das Applet formatiert nur den gelieferten Wert.\nVerbrauchsrichtung: Der Wert zeigt, wie viel des gewählten Limits im Rückblick zusätzlich verbraucht wurde; bei einem Reset oder fallendem Zähler wird die Messung entsprechend als nicht direkt vergleichbar markiert.\ncoverage: vollständig = kompletter Messzeitraum, mindestens = Teilzeitraum/untere Schranke, veraltet = alter Cache, nicht genügend Messdaten = keine belastbare Berechnung.\nEigene Formate: {value}=Verbrauch in Prozent, {period}=Zeitraum, {window}=Limit, {coverage}=Datenqualität.\nBeispiel: Δ{period} {value}% ({window}, {coverage})."
   },
   "account-credit-settings-heading": {
     "type": "label",
-    "description": "Credits und Creditverbrauch pro Account — eigene Formate und getrennte Leisten-/Hover-Anzeige."
+    "description": "Credits und Creditverbrauch pro Account.\nBerechnung: codex-usage ermittelt die Veränderung im gewählten Rückblick relativ zum Credit-Limit; das Applet übernimmt diesen Prozentwert und berechnet keine eigene Historie.\nVerbrauchsrichtung: Der Wert zeigt die zusätzliche Credit-Limit-Nutzung im Rückblick, nicht den verbleibenden Creditstand.\ncoverage: vollständig = kompletter Messzeitraum, mindestens = Teilzeitraum/untere Schranke, veraltet = alter Cache, nicht genügend Messdaten = keine belastbare Berechnung.\nEigene Formate: {value}=Verbrauch in Prozent, {period}=Zeitraum, {coverage}=Datenqualität.\nBeispiel: Δ{period} {value}% ({coverage})."
+  },
+  "account-forecast-settings-heading": {
+    "type": "label",
+    "description": "Tokenende / Prognose.\nDer Ausgangswert kann automatisch oder über einen festen Messpunkt in Minuten gewählt werden. Coverage beschreibt, wie vollständig die Historie für die Restzeitprognose ist. Bei null ausblenden unterdrückt nur die fertige Nullanzeige, nicht die Berechnung."
+  },
+  "account-credit-consumption-settings-heading": {
+    "type": "label",
+    "description": "Creditverbrauch.\nDiese Tabelle misst die Veränderung des Creditverbrauchs getrennt vom aktuellen Creditstand. Eigener Ausgangswert und Coverage gelten nur für diese Verbrauchsrate. Bei null ausblenden blendet eine berechnete Null aus, verändert aber nicht die Messung."
   },
   "account-percent-styles-heading": {
     "type": "label",
@@ -243,9 +277,11 @@
     "default": "auto"
   },
   "account-backends": {
-    "type": "list",
+    "type": "custom",
+    "file": "dynamic_series_list.py",
+    "widget": "DynamicSeriesList",
     "description": "Abrufwege und Accounts · Profilordner wird automatisch angelegt, wenn er noch nicht vorhanden ist.",
-    "tooltip": "Plus legt Account an. Minus löscht Account aus der Config, der Profilordner bleibt erhalten. Doppelklick oder Bearbeiten ändert Account-Optionen.",
+    "tooltip": "Plus legt einen Account an und legt den Profilordner an. Minus löscht ihn aus der Konfiguration; vorhandene Homes, Auth-Dateien und Nutzdaten bleiben erhalten. Doppelklick oder Bearbeiten ändert die Account-Optionen. Serie ist die Masterjet-Flottenserie, zum Beispiel A, B oder C. Serie aktiv schaltet genau diese Zuordnung für Masterjet frei. Eine aktive Serie darf nur einem Account gehören; ein Konflikt wird beim Speichern abgewiesen. Wird die Serie geändert, kann der nächste Provisionierungs-/Startlauf die Authentifizierung aus diesem Account-Profil in die Homes der Serie ausrollen. Wird Serie aktiv deaktiviert, bleibt die Zuordnung gespeichert, aber Masterjet darf die Serie nicht verwenden. Eine bloß eingetragene, inaktive Serie startet daher keine Biene und verändert keine laufende Instanz. Änderungen werden in der Codex-Usage-Konfiguration gespeichert und vom Masterjet beim nächsten Einlesen/Reload berücksichtigt.",
     "columns": [
       {
         "id": "account",
@@ -256,6 +292,32 @@
         "id": "label",
         "title": "Label",
         "type": "string"
+      },
+      {
+        "id": "tag",
+        "title": "Kürzel",
+        "type": "string",
+        "tooltip": "Kurzes, frei definierbares Kürzel für die Account-Anzeige (maximal 8 Zeichen)."
+      },
+      {
+        "id": "series",
+        "title": "Serie",
+        "type": "string",
+        "options": {
+          "Keine Serie": "",
+          "A": "A",
+          "B": "B",
+          "C": "C",
+          "Q": "Q"
+        },
+        "tooltip": "Nur verfügbare Codex-Serien werden beim Bearbeiten angeboten. A ist fest belegt und wird nicht auswählbar gemacht. Eine Serie darf nur einem Account aktiv zugeordnet sein."
+      },
+      {
+        "id": "series-active",
+        "title": "Serie aktiv",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Wenn aktiviert, darf Masterjet diese Serie verwenden. Eine aktive Doppelbelegung wird beim Speichern abgewiesen."
       },
       {
         "id": "auth-json",
@@ -274,19 +336,6 @@
         "type": "boolean",
         "tooltip": "Legt das Profil unter ~/.codex-test an, integriert auth.json und initialisiert Codex mit Dateispeicher.",
         "default": false
-      },
-      {
-        "id": "series",
-        "title": "Serie",
-        "type": "string",
-        "tooltip": "Masterjet-Serie, z. B. A, B oder C. Eine aktive Serie darf nur einem Account zugeordnet sein."
-      },
-      {
-        "id": "series-active",
-        "title": "Serie aktiv",
-        "type": "boolean",
-        "default": false,
-        "tooltip": "Wenn aktiviert, darf Masterjet diese Serie verwenden."
       },
       {
         "id": "browser",
@@ -504,7 +553,7 @@
         "default": 0
       }
     ],
-    "height": 180,
+    "height": 240,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -707,7 +756,7 @@
         "default": 0
       }
     ],
-    "height": 180,
+    "height": 240,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -909,7 +958,7 @@
         "default": 0
       }
     ],
-    "height": 180,
+    "height": 240,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -1113,14 +1162,14 @@
         "default": 0
       }
     ],
-    "height": 180,
+    "height": 240,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "account-style-targets": {
     "type": "list",
-    "description": "Anzeigeziele für Account-ID, Label, Kürzel, Reset, Verbrauch und Prognose",
+    "description": "Anzeigeziele für Account-ID, Label, Reset, Verbrauch und Prognose",
     "tooltip": "Jede Zeile ist genau ein Element. Oberfläche und Element werden getrennt gespeichert; die Liste enthält keine Sammelwerte.",
     "columns": [
       {
@@ -1146,6 +1195,7 @@
           ,"Verbrauch Woche": 10
           ,"Credits": 11
           ,"Creditverbrauch": 12
+          ,"Delta-Ausgangswert": 13
         }
       },
       {
@@ -1386,23 +1436,19 @@
   },
   "account-credit-settings": {
     "type": "list",
-    "description": "Credits und Creditverbrauch pro Account",
-    "tooltip": "Credits werden nur angezeigt, wenn der Provider einen expliziten Creditstand liefert. Platzhalter für Credits: {remaining}, {used}, {limit}, {percent}, {reset}. Für Creditverbrauch: {value}, {period}, {coverage}.",
+    "description": "Creditstand pro Account",
+    "tooltip": "Credits werden nur angezeigt, wenn der Provider einen expliziten Creditstand liefert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}. Der Creditverbrauch wird separat in der Creditverbrauch-Tabelle konfiguriert.",
     "columns": [
       {"id": "account", "title": "Account-ID", "type": "string"},
       {"id": "show-panel", "title": "Credit-Leiste", "type": "boolean", "default": false},
       {"id": "show-tooltip", "title": "Credits-Hover", "type": "boolean", "default": true},
       {"id": "format", "title": "Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
       {"id": "custom-format", "title": "Eigenes Format", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}.", "default": ""},
+      {"id": "smoothing", "title": "Glättung", "type": "string", "options": {"Keine": "none", "EMA – 5 Minuten": "ema-5", "EMA – 10 Minuten": "ema-10", "EMA – 20 Minuten": "ema-20", "EMA – 40 Minuten": "ema-40", "EMA – 80 Minuten": "ema-80", "EMA – 160 Minuten": "ema-160", "EMA – 320 Minuten": "ema-320", "EMA – 640 Minuten": "ema-640"}, "tooltip": "Glättet die Creditmessung mit einer EMA.", "default": "ema-20"},
       {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false},
-      {"id": "consumption-show-panel", "title": "Creditverbrauch Leiste", "type": "boolean", "default": false},
-      {"id": "consumption-show-tooltip", "title": "Creditverbrauch Hover", "type": "boolean", "default": true},
-      {"id": "consumption-amount", "title": "Creditverbrauch Menge", "type": "integer", "min": 1, "max": 365, "default": 1},
-      {"id": "consumption-unit", "title": "Creditverbrauch Einheit", "type": "string", "options": {"Minuten": "minutes", "Stunden": "hours", "Tage": "days", "Wochen": "weeks"}, "default": "hours"},
-      {"id": "consumption-format", "title": "Creditverbrauch Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
-      {"id": "consumption-custom-format", "title": "Eigenes Creditverbrauchsformat", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {coverage}=Datenqualität; Beispiel: CV {period} {value}pp ({coverage}).", "tooltip": "Nur bei Benutzerdefiniert: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {coverage}=vollständig/mindestens/veraltet.", "default": ""},
-      {"id": "consumption-hide-when-zero", "title": "Creditverbrauch bei null ausblenden", "type": "boolean", "default": false},
-      {"id": "consumption-show-coverage-marker", "title": "Creditverbrauch-Datenmarker", "type": "boolean", "default": true}
+      {"id": "show-coverage-marker", "title": "Coverage", "type": "boolean", "default": true, "tooltip": "Zeigt die Datenabdeckung des Creditstands: vollständig, teilweise, veraltet oder unbekannt."},
+      {"id": "baseline-enabled", "title": "Setze eigenen AW", "type": "boolean", "default": false, "tooltip": "Zeigt den eigenen Ausgangswert, wenn der Credit-Provider einen solchen Messwert liefert."},
+      {"id": "baseline-minutes", "title": "Eigener AW in M.", "type": "integer", "min": 0, "max": 9999, "default": 60, "tooltip": "Eigener Ausgangspunkt in Minuten vor jetzt; wirkt nur bei einem verfügbaren Credit-Ausgangswert."}
     ],
     "height": 360,
     "show-buttons": true,
@@ -1412,7 +1458,7 @@
   "account-consumption-settings": {
     "type": "list",
     "description": "Limitverbrauch pro Account und Zeitraum",
-    "tooltip": "Das Applet fragt Verbrauchswerte über codex-usage ab; es rechnet keine Historie im JavaScript. Limitfenster: 5h, Woche, 30 Tage oder Spark. Eigenes Format: {value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {window}=Limitfenster, {coverage}=Datenqualität.",
+    "tooltip": "Das Applet fragt Verbrauchswerte über codex-usage ab; es rechnet keine Historie im JavaScript. Δ Limit wählt 5h, Woche, 30 Tage oder Spark. Ausgangswert ist optional ein fester Messpunkt 0–9999 Minuten vor jetzt. Glättung: EMA – 5, 10, 20, 40, 80, 160, 320 oder 640 Minuten. EMA gewichtet neue Messungen stärker und berücksichtigt den tatsächlichen Abstand zwischen Messungen; 5 Minuten reagiert schnell, 640 Minuten sehr ruhig. Die Rohmessung bleibt erhalten, EMA glättet Rate und Prognose. coverage: vollständig = kompletter Messzeitraum, mindestens = untere Schranke, veraltet = alter Cache, nicht genügend Messdaten = keine belastbare Berechnung. Eigenes Format: {value}=Verbrauch in Prozent, {period}=Zeitraum, {window}=Limit, {coverage}=Datenqualität. Tokenende wird separat in der Tokenende-Tabelle konfiguriert.",
     "columns": [
       {
         "id": "account",
@@ -1421,31 +1467,19 @@
       },
       {
         "id": "show-panel",
-        "title": "Tokenverbrauch Leiste",
+        "title": "Δ Tokenverbrauch Leiste",
         "type": "boolean",
         "default": false
       },
       {
         "id": "show-tooltip",
-        "title": "Tokenverbrauch Hover",
-        "type": "boolean",
-        "default": true
-      },
-      {
-        "id": "forecast-show-panel",
-        "title": "Tokenende Leiste",
-        "type": "boolean",
-        "default": false
-      },
-      {
-        "id": "forecast-show-tooltip",
-        "title": "Tokenende Hover",
+        "title": "Δ Tokenverbrauch Hover",
         "type": "boolean",
         "default": true
       },
       {
         "id": "amount",
-        "title": "Menge",
+        "title": "Δ Menge",
         "type": "integer",
         "min": 1,
         "max": 365,
@@ -1453,7 +1487,7 @@
       },
       {
         "id": "unit",
-        "title": "Einheit",
+        "title": "Δ Einheit",
         "type": "string",
         "options": {
           "Minuten": "minutes",
@@ -1465,7 +1499,7 @@
       },
       {
         "id": "limit-window",
-        "title": "Limitfenster",
+        "title": "Δ Limit",
         "type": "string",
         "options": {
           "5h": "short",
@@ -1477,7 +1511,7 @@
       },
       {
         "id": "format",
-        "title": "Format",
+        "title": "Δ Format",
         "type": "string",
         "options": {
           "Kompakt": "compact",
@@ -1489,29 +1523,29 @@
       },
       {
         "id": "custom-format",
-        "title": "Eigenes Format",
+        "title": "Δ Eigenes Format",
         "type": "string",
-        "description": "Hilfe: Nur bei Benutzerdefiniert. Platzhalter {value}, {period}, {window}, {coverage}; Beispiel: Δ{period} {value}pp ({window}, {coverage}).",
-        "tooltip": "{value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {window}=5h/Woche/30d/Spark, {coverage}=Datenqualität.",
+        "description": "Hilfe: Nur bei Benutzerdefiniert. coverage: vollständig = kompletter Messzeitraum, mindestens = Teilzeitraum/untere Schranke, veraltet = alter Cache, nicht genügend Messdaten = keine belastbare Berechnung. Platzhalter {value}, {period}, {window}, {coverage}.\nBeispiel: Δ{period} {value}% ({window}, {coverage}).",
+        "tooltip": "{value}=Verbrauch in Prozent, {period}=Zeitraum, {window}=5h/Woche/30d/Spark, {coverage}=vollständig/mindestens/veraltet/nicht genügend Messdaten.",
         "default": ""
       },
       {
-        "id": "forecast-format",
-        "title": "Tokenende Format",
+        "id": "smoothing",
+        "title": "Glättung",
         "type": "string",
         "options": {
-          "Kompakt": "compact",
-          "Ausführlich": "verbose",
-          "Benutzerdefiniert": "custom"
+          "Keine": "none",
+          "EMA – 5 Minuten": "ema-5",
+          "EMA – 10 Minuten": "ema-10",
+          "EMA – 20 Minuten": "ema-20",
+          "EMA – 40 Minuten": "ema-40",
+          "EMA – 80 Minuten": "ema-80",
+          "EMA – 160 Minuten": "ema-160",
+          "EMA – 320 Minuten": "ema-320",
+          "EMA – 640 Minuten": "ema-640"
         },
-        "default": "compact"
-      },
-      {
-        "id": "forecast-custom-format",
-        "title": "Eigenes Tokenende-Format",
-        "type": "string",
-        "description": "Hilfe: {value}=Restlaufzeit, {duration}=formatierte Dauer. Beispiel: Tokenende {value}.",
-        "default": ""
+        "tooltip": "EMA gewichtet neue Messungen stärker. Die Zeit zwischen zwei Messungen wird berücksichtigt; feste Messabstände sind nicht erforderlich. 5 Minuten reagiert schnell, 640 Minuten sehr ruhig.",
+        "default": "ema-10"
       },
       {
         "id": "hide-when-zero",
@@ -1521,12 +1555,28 @@
       },
       {
         "id": "show-coverage-marker",
-        "title": "Datenmarker anzeigen",
+        "title": "Coverage",
         "type": "boolean",
         "default": true
+      },
+      {
+        "id": "baseline-enabled",
+        "title": "Δ Setze eigenen AW",
+        "type": "boolean",
+        "description": "Aktiviert einen festen Ausgangsmesspunkt für die Verbrauchsrate. Dann wird nicht automatisch der früheste passende Messpunkt des Delta-Zeitfensters verwendet, sondern der ausdrücklich eingestellte Zeitpunkt aus Δ Eigener AW in M. Deaktiviert bleibt die automatische, lücken- und resetbewusste Auswahl.",
+        "default": false
+      },
+      {
+        "id": "baseline-minutes",
+        "title": "Δ Eigener AW in M.",
+        "type": "integer",
+        "min": 0,
+        "max": 9999,
+        "description": "Anzahl Minuten vor jetzt, aus der der feste Ausgangswert genommen wird (0–9999). Beispiel: 60 vergleicht den aktuellen Stand mit dem Stand vor 60 Minuten. Der Wert wirkt nur bei aktiviertem Δ Setze eigenen AW; bei zu altem, fehlendem oder durch Reset unbrauchbarem Messpunkt meldet codex-usage fehlende belastbare Abdeckung statt eine erfundene Rate.",
+        "default": 60
       }
     ],
-    "height": 260,
+    "height": 320,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -1536,6 +1586,54 @@
     "description": "Delta-Zeichen vor Verbrauchswerten anzeigen",
     "tooltip": "Im Klick-Menü kann diese Anzeige ebenfalls durch Anklicken eines Verbrauchswerts umgeschaltet werden.",
     "default": true
+  },
+  "account-forecast-settings": {
+    "type": "list",
+    "description": "Tokenende je Account",
+    "tooltip": "Tokenende ist die prognostizierte Restzeit bis zum Erreichen des Limitendes. Limit, Anzeige, Format und Warnung sind unabhängig vom Tokenverbrauch konfigurierbar.",
+    "columns": [
+      {"id": "account", "title": "Account-ID", "type": "string"},
+      {"id": "show-panel", "title": "Tokenende Leiste", "type": "boolean", "default": false},
+      {"id": "show-tooltip", "title": "Tokenende Hover", "type": "boolean", "default": true},
+      {"id": "limit-window", "title": "Tokenende Limit", "type": "string", "options": {"5h": "short", "Woche": "weekly", "30 Tage": "monthly", "Spark": "spark"}, "default": "short"},
+      {"id": "format", "title": "Tokenende Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
+      {"id": "custom-format", "title": "Tokenende Eigenes Format", "type": "string", "tooltip": "{value}=Restlaufzeit, {duration}=formatierte Dauer. Beispiel: Tokenende {value}.", "default": ""},
+      {"id": "smoothing", "title": "Glättung", "type": "string", "options": {"Keine": "none", "EMA – 5 Minuten": "ema-5", "EMA – 10 Minuten": "ema-10", "EMA – 20 Minuten": "ema-20", "EMA – 40 Minuten": "ema-40", "EMA – 80 Minuten": "ema-80", "EMA – 160 Minuten": "ema-160", "EMA – 320 Minuten": "ema-320", "EMA – 640 Minuten": "ema-640"}, "tooltip": "Glättet die Tokenende-Prognose mit einer EMA.", "default": "ema-20"},
+      {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false},
+      {"id": "show-coverage-marker", "title": "Coverage", "type": "boolean", "default": true, "tooltip": "Markiert, ob die Tokenende-Prognose vollständig, teilweise, veraltet oder unzureichend gedeckt ist."},
+      {"id": "baseline-enabled", "title": "Setze eigenen AW", "type": "boolean", "default": false, "tooltip": "Verwendet einen festen Ausgangsmesspunkt für die Tokenende-Prognose."},
+      {"id": "baseline-minutes", "title": "Eigener AW in M.", "type": "integer", "min": 0, "max": 9999, "default": 60, "tooltip": "Fester Prognose-Ausgangspunkt in Minuten vor jetzt; wirkt nur bei Setze eigenen AW."},
+      {"id": "warn-amount", "title": "Tokenende Warn: Menge", "type": "integer", "min": 0, "max": 365, "default": 2},
+      {"id": "warn-unit", "title": "Tokenende Warn: Einheit", "type": "string", "options": {"Minuten": "minutes", "Stunden": "hours", "Tage": "days", "Wochen": "weeks"}, "default": "hours"},
+      {"id": "warn-format", "title": "Tokenende Warn: Format", "type": "string", "options": {"Keine Hervorhebung": "none", "Rote Schrift": "red", "Rote Schrift, gelber Hintergrund": "red-yellow", "Fett rot, gelber Hintergrund": "blink-red-yellow", "Gelbe Schrift": "yellow", "Rote Schrift, grüner Hintergrund": "red-green", "Rote Schrift, roter Hintergrund": "red-red"}, "tooltip": "Warnt, wenn die prognostizierte Restzeit unter die konfigurierte Menge fällt. Blinken wird nicht von Cinnamon unterstützt und daher statisch dargestellt.", "default": "red-yellow"}
+    ],
+    "height": 280,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-credit-consumption-settings": {
+    "type": "list",
+    "description": "Creditverbrauch je Account",
+    "tooltip": "Creditverbrauch wird separat vom Creditstand konfiguriert. coverage beschreibt die Datenqualität: vollständig, mindestens, veraltet oder nicht genügend Messdaten.",
+    "columns": [
+      {"id": "account", "title": "Account-ID", "type": "string"},
+      {"id": "show-panel", "title": "Creditverbrauch Leiste", "type": "boolean", "default": false},
+      {"id": "show-tooltip", "title": "Creditverbrauch Hover", "type": "boolean", "default": true},
+      {"id": "amount", "title": "Creditverbrauch Menge", "type": "integer", "min": 1, "max": 365, "default": 1},
+      {"id": "unit", "title": "Creditverbrauch Einheit", "type": "string", "options": {"Minuten": "minutes", "Stunden": "hours", "Tage": "days", "Wochen": "weeks"}, "default": "hours"},
+      {"id": "format", "title": "Creditverbrauch Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
+      {"id": "custom-format", "title": "Eigenes Creditverbrauchsformat", "type": "string", "tooltip": "{value}=Verbrauch in Prozent, {period}=Zeitraum, {coverage}=Datenqualität. Beispiel: CV {period} {value}% ({coverage}).", "default": ""},
+      {"id": "smoothing", "title": "Glättung", "type": "string", "options": {"Keine": "none", "EMA – 5 Minuten": "ema-5", "EMA – 10 Minuten": "ema-10", "EMA – 20 Minuten": "ema-20", "EMA – 40 Minuten": "ema-40", "EMA – 80 Minuten": "ema-80", "EMA – 160 Minuten": "ema-160", "EMA – 320 Minuten": "ema-320", "EMA – 640 Minuten": "ema-640"}, "tooltip": "Glättet den Creditverbrauch mit einer EMA.", "default": "ema-20"},
+      {"id": "hide-when-zero", "title": "Creditverbrauch bei null ausblenden", "type": "boolean", "default": false},
+      {"id": "show-coverage-marker", "title": "Coverage", "type": "boolean", "default": true, "tooltip": "Markiert die Datenqualität der Creditverbrauchsrate."},
+      {"id": "baseline-enabled", "title": "Setze eigenen AW", "type": "boolean", "default": false, "tooltip": "Verwendet einen festen Ausgangsmesspunkt für den Creditverbrauch."},
+      {"id": "baseline-minutes", "title": "Eigener AW in M.", "type": "integer", "min": 0, "max": 9999, "default": 60, "tooltip": "Fester Ausgangspunkt in Minuten vor jetzt; wirkt nur bei Setze eigenen AW."}
+    ],
+    "height": 280,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
   },
   "account-reset-display-settings": {
     "type": "list",
@@ -1584,7 +1682,7 @@
         "default": "compact"
       }
     ],
-    "height": 220,
+    "height": 280,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -1744,7 +1842,7 @@
         "default": true
       }
     ],
-    "height": 220,
+    "height": 280,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -1768,6 +1866,25 @@
     "description": "Reaktivierungsaktionen bei abgelaufenen Accounts anzeigen",
     "tooltip": "Startet Codex-OAuth in einem eigenen Browserprofil. Cookies des normalen Hauptprofils werden nicht verwendet.",
     "default": true
+  },
+  "fast-mode-icon": {
+    "type": "custom",
+    "file": "fast_mode_icon_selector.py",
+    "widget": "FastModeIconSelector",
+    "description": "Warnsymbol für den Fast-Modus",
+    "tooltip": "Wird in beiden Codex-Usage-Panelinstanzen und im Hoverstatus angezeigt, sobald mindestens ein Account im Fast-Modus ist.",
+    "options": {
+      "Gelbes Dreieck": "fast-mode-warning.svg",
+      "Schild mit Dreieck": "fast-mode-warning-shield.svg",
+      "Schild, Outline": "fast-mode-warning-shield-outline.svg",
+      "Schild, Badge": "fast-mode-warning-shield-badge.svg",
+      "Kreiswarnung": "fast-mode-warning-circle.svg",
+      "Rautenwarnung": "fast-mode-warning-diamond.svg",
+      "Balkenwarnung": "fast-mode-warning-bars.svg",
+      "Dreieck, Outline": "fast-mode-warning-outline.svg",
+      "Dreieck, Compact": "fast-mode-warning-compact.svg"
+    },
+    "default": "fast-mode-warning-shield-outline.svg"
   },
   "reactivation-browser": {
     "type": "combobox",

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 APPLET_UUID = "codex-usage@H234598"
-REQUIRED_FILES = ("applet.js", "metadata.json", "settings-schema.json", "stylesheet.css")
+REQUIRED_FILES = ("applet.js", "metadata.json", "settings-schema.json", "stylesheet.css", "dynamic_series_list.py", "fast_mode_icon_selector.py")
 VERSION_CHECK_ATTEMPTS = 10
 VERSION_CHECK_DELAY_SECONDS = 0.2
 

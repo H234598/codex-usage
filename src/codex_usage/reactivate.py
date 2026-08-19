@@ -110,7 +110,17 @@ def open_account_in_reactivation_browser(
     """Open the account's existing isolated OAuth browser profile."""
     _validate_manage_url(url)
     requested_browser = account.reactivation_browser if browser is None else browser
-    browser_kind, browser_executable = _select_browser(requested_browser)
+    # ``auto`` should reuse the browser in which codex-usage already collected
+    # the account.  Selecting the first installed browser (formerly Vivaldi)
+    # often created a fresh, empty OAuth profile and therefore looked logged
+    # out even though the account itself was authenticated.
+    if requested_browser == "auto":
+        try:
+            browser_kind, browser_executable = _select_browser(account.browser)
+        except ReactivationError:
+            browser_kind, browser_executable = _select_browser(requested_browser)
+    else:
+        browser_kind, browser_executable = _select_browser(requested_browser)
     profile_dir = _manage_browser_profile(account, browser_kind)
     helper = _resolve_executable(
         browser_helper,
