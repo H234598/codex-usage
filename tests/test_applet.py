@@ -125,6 +125,7 @@ def test_account_table_contains_all_editable_fields() -> None:
     assert "-" not in table["hidden-buttons"]
     assert "Minus löscht" in table["tooltip"]
     assert "automatisch angelegt" in table["description"]
+    assert table["columns"][4]["title"] == "Create new Account"
     assert "default" not in table["columns"][2]
     assert "default" not in table["columns"][3]
     assert table["columns"][-1]["default"] == 0

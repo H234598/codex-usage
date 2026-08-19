@@ -230,7 +230,7 @@
       },
       {
         "id": "test-home",
-        "title": "Test-Home",
+        "title": "Create new Account",
         "type": "boolean",
         "tooltip": "Legt das Profil unter ~/.codex-test an, integriert auth.json und initialisiert Codex mit Dateispeicher.",
         "default": false
