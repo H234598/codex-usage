@@ -182,6 +182,12 @@ def _migrate_cached_settings(path: Path | None = None) -> bool:
                 updated = json.loads(json.dumps(definition, ensure_ascii=False))
                 if isinstance(previous, dict) and "value" in previous:
                     updated["value"] = previous["value"]
+                elif "default" in definition:
+                    # Cinnamon's cached settings file stores both the schema
+                    # and the current value.  New settings only have a
+                    # ``default`` in the source schema, so materialize that
+                    # default when there is no value to preserve.
+                    updated["value"] = definition["default"]
                 if payload.get(key) != updated:
                     payload[key] = updated
             payload["__md5__"] = hashlib.md5(source.read_bytes()).hexdigest()
