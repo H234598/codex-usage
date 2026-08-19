@@ -94,11 +94,13 @@ def _fake_codex(
     reject_initial_account_read: bool = False,
     account_plan_type: str | None = None,
     account_email: str | None = None,
+    account_credits: str | None = None,
     model_id: str = "gpt-5.3-codex-spark",
 ) -> str:
     reject_initial = str(reject_initial_account_read)
     plan_field = f", 'planType': {account_plan_type!r}" if account_plan_type else ""
     email_field = f", 'email': {account_email!r}" if account_email else ""
+    credits_field = f", 'credits': {{'has_credits': True, 'unlimited': False, 'balance': {account_credits!r}}}" if account_credits is not None else ""
     source = f"""#!/usr/bin/env python3
 import json
 import sys
@@ -122,7 +124,7 @@ for line in sys.stdin:
             response = {{
                 "id": message["id"],
                 "result": {{
-                    "account": {{"type": "chatgpt"{plan_field}{email_field}}},
+                    "account": {{"type": "chatgpt"{plan_field}{email_field}{credits_field}}},
                     "requiresOpenaiAuth": True,
                 }},
             }}
@@ -262,6 +264,30 @@ def test_app_server_fetch_uses_only_account_methods(tmp_path):
         "model/list",
     ]
     assert not any(method.startswith(("thread/", "turn/")) for method in methods)
+
+
+def test_app_server_preserves_absolute_account_credits(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_credits="794",
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.credits is not None
+    assert usage.credits.remaining == 794
 
 
 def test_app_server_rejects_normalized_model_identity(tmp_path):

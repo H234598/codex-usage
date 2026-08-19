@@ -84,6 +84,8 @@ class Account:
     auth_json_path: str | None = None
     backend: str = "direct"
     reactivation_browser: str = "auto"
+    series: str = ""
+    series_active: bool = False
 
 
 @dataclass(frozen=True)

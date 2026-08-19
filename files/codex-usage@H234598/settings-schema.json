@@ -276,24 +276,25 @@
         "default": false
       },
       {
+        "id": "series",
+        "title": "Serie",
+        "type": "string",
+        "tooltip": "Masterjet-Serie, z. B. A, B oder C. Eine aktive Serie darf nur einem Account zugeordnet sein."
+      },
+      {
+        "id": "series-active",
+        "title": "Serie aktiv",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Wenn aktiviert, darf Masterjet diese Serie verwenden."
+      },
+      {
         "id": "browser",
         "title": "Browser",
         "type": "integer",
         "options": {
           "Firefox": 0,
           "Chromium": 1
-        },
-        "default": 0
-      },
-      {
-        "id": "reactivation-browser",
-        "title": "Reaktivierungsbrowser",
-        "type": "integer",
-        "options": {
-          "Automatisch": 0,
-          "Vivaldi": 1,
-          "Chromium": 2,
-          "Firefox": 3
         },
         "default": 0
       },
@@ -402,6 +403,21 @@
         }
       },
       {
+        "id": "hover-background",
+        "title": "Über der Schwelle Hover-Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
+      },
+      {
         "id": "threshold",
         "title": "Schwelle %",
         "type": "integer",
@@ -460,6 +476,21 @@
       {
         "id": "below-background",
         "title": "Unter der Schwelle Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
+      },
+      {
+        "id": "below-hover-background",
+        "title": "Unter der Schwelle Hover-Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -575,6 +606,21 @@
         }
       },
       {
+        "id": "hover-background",
+        "title": "Über der Schwelle Hover-Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
+      },
+      {
         "id": "threshold",
         "title": "Schwelle %",
         "type": "integer",
@@ -633,6 +679,21 @@
       {
         "id": "below-background",
         "title": "Unter der Schwelle Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
+      },
+      {
+        "id": "below-hover-background",
+        "title": "Unter der Schwelle Hover-Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -747,6 +808,21 @@
         }
       },
       {
+        "id": "hover-background",
+        "title": "Über der Schwelle Hover-Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
+      },
+      {
         "id": "threshold",
         "title": "Schwelle %",
         "type": "integer",
@@ -805,6 +881,21 @@
       {
         "id": "below-background",
         "title": "Unter der Schwelle Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
+      },
+      {
+        "id": "below-hover-background",
+        "title": "Unter der Schwelle Hover-Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -921,6 +1012,21 @@
         }
       },
       {
+        "id": "hover-background",
+        "title": "Über der Schwelle Hover-Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
+      },
+      {
         "id": "threshold",
         "title": "Schwelle %",
         "type": "integer",
@@ -979,6 +1085,21 @@
       {
         "id": "below-background",
         "title": "Unter der Schwelle Hintergrund",
+        "type": "integer",
+        "options": {
+          "Transparent": 0,
+          "Dunkel": 1,
+          "Hell": 2,
+          "Rot": 3,
+          "Grün": 4,
+          "Blau": 5,
+          "Gelb": 6
+        },
+        "default": 0
+      },
+      {
+        "id": "below-hover-background",
+        "title": "Unter der Schwelle Hover-Hintergrund",
         "type": "integer",
         "options": {
           "Transparent": 0,
@@ -1270,7 +1391,7 @@
     "columns": [
       {"id": "account", "title": "Account-ID", "type": "string"},
       {"id": "show-panel", "title": "Credit-Leiste", "type": "boolean", "default": false},
-      {"id": "show-tooltip", "title": "Credits anzeigen", "type": "boolean", "default": true},
+      {"id": "show-tooltip", "title": "Credits-Hover", "type": "boolean", "default": true},
       {"id": "format", "title": "Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
       {"id": "custom-format", "title": "Eigenes Format", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}.", "default": ""},
       {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false},
@@ -1306,7 +1427,7 @@
       },
       {
         "id": "show-tooltip",
-        "title": "Tokenverbrauch anzeigen",
+        "title": "Tokenverbrauch Hover",
         "type": "boolean",
         "default": true
       },

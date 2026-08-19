@@ -88,23 +88,37 @@ def _browser_configuration() -> tuple[str, str, Path]:
         raise ValueError("isolated browser is not executable")
     profile = Path(profile_value)
     marker = profile / OAUTH_PROFILE_MARKER
+    browser_marker = profile / ".codex-usage-browser-profile"
     if not profile.is_absolute():
         raise ValueError("invalid isolated browser profile")
     try:
         assert_no_symlink_ancestors(profile, label="isolated browser profile")
         profile_stat = profile.stat()
         marker_is_symlink = marker.is_symlink()
-        marker_stat = marker.stat() if not marker_is_symlink else None
+        browser_marker_is_symlink = browser_marker.is_symlink()
+        marker_stat = marker.stat() if not marker_is_symlink and marker.exists() else None
+        browser_marker_stat = (
+            browser_marker.stat()
+            if not browser_marker_is_symlink and browser_marker.exists()
+            else None
+        )
     except (OSError, ValueError):
         raise ValueError("invalid isolated browser profile") from None
     if (
         not stat.S_ISDIR(profile_stat.st_mode)
         or profile_stat.st_mode & 0o077
-        or marker_is_symlink
-        or marker_stat is None
-        or not stat.S_ISREG(marker_stat.st_mode)
-        or marker_stat.st_nlink != 1
-        or marker_stat.st_mode & 0o077
+        or marker_is_symlink and browser_marker_is_symlink
+        or marker_stat is None and browser_marker_stat is None
+        or marker_stat is not None and (
+            not stat.S_ISREG(marker_stat.st_mode)
+            or marker_stat.st_nlink != 1
+            or marker_stat.st_mode & 0o077
+        )
+        or browser_marker_stat is not None and (
+            not stat.S_ISREG(browser_marker_stat.st_mode)
+            or browser_marker_stat.st_nlink != 1
+            or browser_marker_stat.st_mode & 0o077
+        )
     ):
         raise ValueError("invalid isolated browser profile")
     return str(executable_path), browser_kind, profile

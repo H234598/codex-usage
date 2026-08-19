@@ -1548,28 +1548,53 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
     produce a fabricated balance in the applet.
     """
     candidate: Any = None
-    for key in ("credits", "credit_balance", "creditBalance", "remaining_credits", "remainingCredits"):
-        if key in payload:
-            candidate = payload[key]
+    sources: list[dict[str, Any]] = [payload]
+    for key in ("rateLimits", "rate_limits"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            sources.append(nested)
+    by_id = payload.get("rateLimitsByLimitId")
+    if isinstance(by_id, dict):
+        for nested in by_id.values():
+            if isinstance(nested, dict):
+                sources.append(nested)
+    for source in sources:
+        for key in ("credits", "credit_balance", "creditBalance", "remaining_credits", "remainingCredits"):
+            if key in source:
+                candidate = source[key]
+                break
+        if candidate is not None:
             break
+        if isinstance(source.get("account"), dict):
+            candidate = source["account"].get("credits")
+            if candidate is not None:
+                break
     if candidate is None:
         return None
     if isinstance(candidate, bool):
         return None
-    if isinstance(candidate, (int, float)):
-        if not math.isfinite(float(candidate)) or float(candidate) < 0:
+    if isinstance(candidate, (int, float, str)) and not isinstance(candidate, bool):
+        try:
+            numeric = float(candidate)
+        except (TypeError, ValueError):
+            numeric = math.nan
+        if not math.isfinite(numeric) or numeric < 0:
             return None
-        return LimitWindow(name="credits", remaining=float(candidate))
+        return LimitWindow(name="credits", remaining=numeric)
     if not isinstance(candidate, dict):
         return None
 
     def number(*keys: str) -> float | None:
         for key in keys:
             value = candidate.get(key)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
                 continue
-            if math.isfinite(float(value)) and float(value) >= 0:
-                return float(value)
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(numeric) and numeric >= 0:
+                return numeric
         return None
 
     used = number("used", "consumed")

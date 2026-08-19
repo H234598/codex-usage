@@ -125,6 +125,7 @@ CodexUsageApplet.prototype = {
         this._deviceLoginJobs = Object.create(null);
         this._deviceLoginErrors = Object.create(null);
         this._accountManageErrors = Object.create(null);
+        this._accountTerminalErrors = Object.create(null);
         this._deviceLoginEvents = Object.create(null);
         this._deviceLoginLiveText = Object.create(null);
         this._deviceLoginLiveAccount = "";
@@ -1397,6 +1398,8 @@ CodexUsageApplet.prototype = {
                 let backend;
                 let browser;
                 let reactivationBrowser;
+                let series;
+                let seriesActive;
                 let profileDir;
                 let authJsonPath;
                 try {
@@ -1409,6 +1412,10 @@ CodexUsageApplet.prototype = {
                         item.reactivation_browser === null
                         ? "auto"
                         : this._strictText(item.reactivation_browser, 32);
+                    series = item.series === undefined || item.series === null
+                        ? ""
+                        : this._strictText(item.series, 16).toUpperCase();
+                    seriesActive = item.series_active === true;
                     profileDir = item.profile_dir === undefined || item.profile_dir === null
                         ? null
                         : this._strictText(item.profile_dir, 4096);
@@ -1424,6 +1431,7 @@ CodexUsageApplet.prototype = {
                     ["direct", "app-server"].indexOf(backend) === -1 ||
                     ["firefox", "chromium"].indexOf(browser) === -1 ||
                     ["auto", "vivaldi", "chromium", "firefox"].indexOf(reactivationBrowser) === -1 ||
+                    (series && !/^[A-Z][A-Z0-9_-]{0,15}$/.test(series)) ||
                     (profileDir !== null && profileDir.length > 4096)) {
                     global.log("[" + UUID + "] invalid account in backend overview");
                     return;
@@ -1445,6 +1453,8 @@ CodexUsageApplet.prototype = {
                         chromium: 2,
                         firefox: 3
                     }[reactivationBrowser],
+                    series: series,
+                    "series-active": seriesActive,
                     backend: backend === "app-server" ? 1 : 0
                 };
                 let settingRow;
@@ -1457,6 +1467,8 @@ CodexUsageApplet.prototype = {
                         "test-home": row["test-home"],
                         browser: row.browser,
                         "reactivation-browser": row["reactivation-browser"],
+                        series: row.series,
+                        "series-active": row["series-active"],
                         backend: row.backend
                     };
                 } catch (e) {
@@ -3070,7 +3082,9 @@ CodexUsageApplet.prototype = {
             "below-italic": false,
             "below-color": 3,
             "below-background": 0,
-            background: 0
+            "below-hover-background": 0,
+            background: 0,
+            "hover-background": 0
         };
         if (kind !== "percent") {
             row.format = 0;
@@ -3090,7 +3104,9 @@ CodexUsageApplet.prototype = {
                 "below-italic": row["below-italic"],
                 "below-color": row["below-color"],
                 "below-background": row["below-background"],
-                background: row.background
+                "below-hover-background": row["below-hover-background"],
+                background: row.background,
+                "hover-background": row["hover-background"]
             };
         }
         return row;
@@ -3115,6 +3131,9 @@ CodexUsageApplet.prototype = {
         let italic = row.italic === undefined ? false : row.italic;
         let color = row.color === undefined ? 0 : this._strictIntegerSetting(row.color);
         let background = row.background === undefined ? 0 : this._strictIntegerSetting(row.background);
+        let hoverBackground = row["hover-background"] === undefined
+            ? background
+            : this._strictIntegerSetting(row["hover-background"]);
         let belowFont = row["below-font"] === undefined
             ? 0
             : this._strictIntegerSetting(row["below-font"]);
@@ -3129,6 +3148,9 @@ CodexUsageApplet.prototype = {
         let belowBackground = row["below-background"] === undefined
             ? 0
             : this._strictIntegerSetting(row["below-background"]);
+        let belowHoverBackground = row["below-hover-background"] === undefined
+            ? belowBackground
+            : this._strictIntegerSetting(row["below-hover-background"]);
         let maxFormat = kind === "date" ? 3 : (kind === "duration" ? 3 : 2);
         let maxThreshold = 100;
         if (
@@ -3141,12 +3163,14 @@ CodexUsageApplet.prototype = {
             !Number.isInteger(size) || size < 0 || size > 48 ||
             !Number.isInteger(color) || color < 0 || color > 7 ||
             !Number.isInteger(background) || background < 0 || background > 6 ||
+            !Number.isInteger(hoverBackground) || hoverBackground < 0 || hoverBackground > 6 ||
             typeof bold !== "boolean" || typeof italic !== "boolean" ||
             !Number.isInteger(belowFont) || belowFont < 0 || belowFont > 3 ||
             !Number.isInteger(belowSize) || belowSize < 0 || belowSize > 48 ||
             typeof belowBold !== "boolean" || typeof belowItalic !== "boolean" ||
             !Number.isInteger(belowColor) || belowColor < 0 || belowColor > 7 ||
-            !Number.isInteger(belowBackground) || belowBackground < 0 || belowBackground > 6
+            !Number.isInteger(belowBackground) || belowBackground < 0 || belowBackground > 6 ||
+            !Number.isInteger(belowHoverBackground) || belowHoverBackground < 0 || belowHoverBackground > 6
         ) {
             return null;
         }
@@ -3165,7 +3189,9 @@ CodexUsageApplet.prototype = {
             "below-italic": belowItalic,
             "below-color": belowColor,
             "below-background": belowBackground,
-            background: background
+            "below-hover-background": belowHoverBackground,
+            background: background,
+            "hover-background": hoverBackground
         };
         if (kind === "percent") {
             return normalized;
@@ -3186,7 +3212,9 @@ CodexUsageApplet.prototype = {
             "below-italic": normalized["below-italic"],
             "below-color": normalized["below-color"],
             "below-background": normalized["below-background"],
-            background: normalized.background
+            "below-hover-background": normalized["below-hover-background"],
+            background: normalized.background,
+            "hover-background": normalized["hover-background"]
         };
     },
 
@@ -3429,6 +3457,8 @@ CodexUsageApplet.prototype = {
             Boolean(left["test-home"]) === Boolean(right["test-home"]) &&
             left.browser === right.browser &&
             left["reactivation-browser"] === right["reactivation-browser"] &&
+            left.series === right.series &&
+            Boolean(left["series-active"]) === Boolean(right["series-active"]) &&
             left.backend === right.backend
         );
     },
@@ -3482,6 +3512,8 @@ CodexUsageApplet.prototype = {
                 "test-home": row["test-home"],
                 browser: row.browser,
                 "reactivation-browser": row["reactivation-browser"],
+                series: row.series || "",
+                "series-active": row["series-active"] === true,
                 backend: row.backend
             };
             if (migrated["reactivation-browser"] === 0) {
@@ -3532,6 +3564,19 @@ CodexUsageApplet.prototype = {
         let rows = this._accountChangePendingRows;
         this._accountChangePendingRows = null;
         this._reconcileAccountChanges(rows);
+    },
+
+    _validateSeriesAssignments: function(rows) {
+        let owners = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            let row = rows[i];
+            let series = typeof row.series === "string" ? row.series.trim().toUpperCase() : "";
+            if (!row["series-active"] || !series) continue;
+            if (owners[series] && owners[series] !== row.account) {
+                throw new Error("Serie " + series + " ist bereits Account " + owners[series] + " zugeordnet");
+            }
+            owners[series] = row.account;
+        }
     },
 
     _drainAccountChanges: function() {
@@ -3621,10 +3666,14 @@ CodexUsageApplet.prototype = {
             "--browser",
             changed.browser === 1 ? "chromium" : "firefox",
             "--reactivation-browser",
-            ["auto", "vivaldi", "chromium", "firefox"][changed["reactivation-browser"]],
+            changed.browser === 1 ? "chromium" : "firefox",
             "--backend",
             changed.backend === 1 ? "app-server" : "direct"
         );
+        if (changed.series) {
+            argv.push("--series", changed.series);
+        }
+        argv.push(changed["series-active"] ? "--series-active" : "--no-series-active");
         if (authJson) {
             argv.push("--auth-json", authJson);
         } else if (canonical && canonical["auth-json"]) {
@@ -3697,7 +3746,9 @@ CodexUsageApplet.prototype = {
             "--backend", row.backend === 1 ? "app-server" : "direct",
             "--profile-dir", profileDir,
             "--reactivation-browser",
-            ["auto", "vivaldi", "chromium", "firefox"][row["reactivation-browser"]],
+            row.browser === 1 ? "chromium" : "firefox",
+            ...(row.series ? ["--series", row.series] : []),
+            ...(row["series-active"] ? ["--series-active"] : []),
             "--json-events"
         );
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
@@ -3849,7 +3900,9 @@ CodexUsageApplet.prototype = {
                 Object.prototype.hasOwnProperty.call(row, "profile-dir") ||
                 Object.prototype.hasOwnProperty.call(row, "test-home") ||
                 Object.prototype.hasOwnProperty.call(row, "browser") ||
-                Object.prototype.hasOwnProperty.call(row, "reactivation-browser");
+                Object.prototype.hasOwnProperty.call(row, "reactivation-browser") ||
+                Object.prototype.hasOwnProperty.call(row, "series") ||
+                Object.prototype.hasOwnProperty.call(row, "series-active");
             legacyBackendOnly = legacyBackendOnly && !hasEditableFields;
             let label = row.label === undefined
                 ? this._safeText(canonical && canonical.label, 120)
@@ -3882,6 +3935,12 @@ CodexUsageApplet.prototype = {
             let backendValue = row.backend === undefined
                 ? (canonical && canonical.backend === 1 ? 1 : 0)
                 : this._strictIntegerSetting(row.backend);
+            let series = row.series === undefined
+                ? (canonical && typeof canonical.series === "string" ? canonical.series : "")
+                : this._strictText(row.series, 16).toUpperCase();
+            let seriesActive = row["series-active"] === undefined
+                ? Boolean(canonical && canonical["series-active"])
+                : row["series-active"] === true;
             if (
                 !account || seen[account] ||
                 (!canonical && !/^[A-Za-z0-9_.-]{1,64}$/.test(account)) ||
@@ -3889,6 +3948,8 @@ CodexUsageApplet.prototype = {
                 typeof testHome !== "boolean" ||
                 !Number.isInteger(reactivationBrowser) ||
                 (reactivationBrowser < 0 || reactivationBrowser > 3) ||
+                (series && !/^[A-Z][A-Z0-9_-]{0,15}$/.test(series)) ||
+                (seriesActive && !series) ||
                 (backendValue !== 0 && backendValue !== 1)
             ) {
                 this._loadAccountBackends();
@@ -3903,8 +3964,17 @@ CodexUsageApplet.prototype = {
                 "test-home": testHome,
                 browser: browser,
                 "reactivation-browser": reactivationBrowser,
+                series: series,
+                "series-active": seriesActive,
                 backend: backendValue
             });
+        }
+        try {
+            this._validateSeriesAssignments(desiredRows);
+        } catch (e) {
+            this._showCommandError(e);
+            this._loadAccountBackends();
+            return;
         }
         if (this._accountChangeCurrent || this._accountChangeQueue.length) {
             this._accountChangePendingRows = desiredRows;
@@ -4280,6 +4350,7 @@ CodexUsageApplet.prototype = {
         if (typeof value !== "object" || Array.isArray(value)) {
             throw new Error("invalid limit window");
         }
+        let isAbsoluteCredit = value.name === "credits";
         let used = this._safeNumber(value.used);
         let limit = this._safeNumber(value.limit);
         let remaining = this._safeNumber(value.remaining);
@@ -4318,7 +4389,7 @@ CodexUsageApplet.prototype = {
         if (
             (limit === null || limit <= 0) &&
             remaining !== null &&
-            (remaining < 0 || remaining > 100)
+            (remaining < 0 || (!isAbsoluteCredit && remaining > 100))
         ) {
             // A denominatorless absolute counter is not a percentage.
             remaining = null;
@@ -5955,6 +6026,15 @@ CodexUsageApplet.prototype = {
             }));
         }
         submenu.menu.addMenuItem(manageAccount);
+        let startTerminal = new PopupMenu.PopupMenuItem("Start Terminal as User");
+        if (typeof startTerminal.connect === "function") {
+            startTerminal.connect("activate", Lang.bind(this, function() {
+                this._runSafely("account terminal action", Lang.bind(this, function() {
+                    this._startAccountTerminal(usage);
+                }));
+            }));
+        }
+        submenu.menu.addMenuItem(startTerminal);
         if (this._deviceLoginErrors[usage.account]) {
             this._addDisabled(
                 submenu.menu,
@@ -5966,6 +6046,16 @@ CodexUsageApplet.prototype = {
             this._addDisabled(
                 submenu.menu,
                 "Manage Account: " + this._shortText(this._accountManageErrors[usage.account], 140),
+                "codex-usage-error"
+            );
+        }
+        if (this._accountTerminalErrors && this._accountTerminalErrors[usage.account]) {
+            this._addDisabled(
+                submenu.menu,
+                "Start Terminal as User: " + this._shortText(
+                    this._accountTerminalErrors[usage.account],
+                    140
+                ),
                 "codex-usage-error"
             );
         }
@@ -6335,6 +6425,38 @@ CodexUsageApplet.prototype = {
             ) {
                 this._accountManageErrors[usage.account] = this._shortText(
                     error || (payload && payload.error) || "Account konnte nicht geöffnet werden",
+                    200
+                );
+                this._buildUsageMenu();
+            }
+        }), false, AUX_COMMAND_TIMEOUT_MS);
+    },
+
+    _startAccountTerminal: function(usage) {
+        if (!usage || !usage.account || this._removed) {
+            return;
+        }
+        if (!this._accountTerminalErrors) {
+            this._accountTerminalErrors = Object.create(null);
+        }
+        let argv;
+        try {
+            argv = this._baseCommandArgv();
+        } catch (e) {
+            this._accountTerminalErrors[usage.account] = String(e);
+            this._buildUsageMenu();
+            return;
+        }
+        argv.push("account", "terminal", usage.account, "--format", "json");
+        delete this._accountTerminalErrors[usage.account];
+        this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
+            if (
+                error || !payload || payload.account !== usage.account ||
+                payload.ok !== true || typeof payload.profile_dir !== "string" ||
+                !payload.profile_dir
+            ) {
+                this._accountTerminalErrors[usage.account] = this._shortText(
+                    error || (payload && payload.error) || "Terminal konnte nicht gestartet werden",
                     200
                 );
                 this._buildUsageMenu();
@@ -7364,14 +7486,18 @@ CodexUsageApplet.prototype = {
         let credit = usage && usage.credits;
         let row = this._creditSettings && this._creditSettings[usage.account];
         if (!credit || !row) return null;
-        let remaining = credit.remaining !== null && credit.remaining !== undefined ? String(credit.remaining) : "–";
-        let limit = credit.limit !== null && credit.limit !== undefined ? String(credit.limit) : "–";
+        let creditText = function(value) {
+            if (value === null || value === undefined || !Number.isFinite(Number(value))) return "–";
+            return String(Math.round(Number(value)));
+        };
+        let remaining = creditText(credit.remaining);
+        let limit = creditText(credit.limit);
         let usedValue = credit.used !== null && credit.used !== undefined
             ? credit.used
             : (credit.limit !== null && credit.limit !== undefined &&
                 credit.remaining !== null && credit.remaining !== undefined
                 ? Math.max(0, credit.limit - credit.remaining) : null);
-        let used = usedValue !== null && usedValue !== undefined ? String(usedValue) : "–";
+        let used = creditText(usedValue);
         let percent = credit.percent !== null && credit.percent !== undefined
             ? String(Math.round(credit.percent * 10) / 10) : "–";
         if (row["hide-when-zero"] && (credit.remaining === 0 || credit.percent === 0)) return null;
@@ -8375,6 +8501,11 @@ CodexUsageApplet.prototype = {
         let italicValue = useBelow ? style["below-italic"] : style.italic;
         let colorValue = useBelow ? style["below-color"] : style.color;
         let backgroundValue = useBelow ? style["below-background"] : style.background;
+        if (surface === "hover") {
+            backgroundValue = useBelow
+                ? style["below-hover-background"]
+                : style["hover-background"];
+        }
         if (fontValue === undefined) {
             fontValue = style.font;
         }
@@ -8391,7 +8522,13 @@ CodexUsageApplet.prototype = {
             colorValue = style.color === undefined ? 0 : style.color;
         }
         if (backgroundValue === undefined) {
-            backgroundValue = style.background === undefined ? 0 : style.background;
+            if (useBelow) {
+                backgroundValue = style["below-background"] === undefined
+                    ? 0
+                    : style["below-background"];
+            } else {
+                backgroundValue = style.background === undefined ? 0 : style.background;
+            }
         }
         let attrs = [];
         let fonts = [null, "Sans", "Serif", "Monospace"];

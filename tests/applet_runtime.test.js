@@ -252,6 +252,8 @@ function makeAccountSettingsApplet() {
       "profile-dir": "/tmp/alpha",
       browser: 0,
       "reactivation-browser": 0,
+      series: "",
+      "series-active": false,
       backend: 0,
     },
   };
@@ -803,6 +805,29 @@ test("Manage Account opens the account in the isolated reactivation browser", ()
   assert.equal(rebuilt, 0);
 });
 
+test("Start Terminal as User opens Codex in the account profile", () => {
+  const applet = makeApplet();
+  let command = null;
+  let rebuilt = 0;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => { rebuilt += 1; };
+  applet._spawnAuxJson = (argv, callback) => {
+    command = argv;
+    callback({
+      ok: true,
+      account: "alpha",
+      profile_dir: "/tmp/alpha",
+    }, null);
+  };
+
+  applet._startAccountTerminal({ account: "alpha" });
+
+  assert.deepEqual(command, [
+    "codex-usage", "account", "terminal", "alpha", "--format", "json",
+  ]);
+  assert.equal(rebuilt, 0);
+});
+
 test("account overview rows expose editable account settings", () => {
   const applet = makeAccountSettingsApplet();
   applet._spawnAuxJson = (argv, callback) => {
@@ -833,6 +858,8 @@ test("account overview rows expose editable account settings", () => {
     "test-home": false,
     browser: 1,
     "reactivation-browser": 1,
+    series: "",
+    "series-active": false,
     backend: 1,
   });
   assert.equal(applet._backendAccounts.alpha["profile-dir"], "/tmp/alpha");
@@ -861,6 +888,8 @@ test("legacy absolute account settings are migrated to file URIs", () => {
     "profile-dir": "/tmp/alpha profile",
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   }, {
     account: "beta",
@@ -869,6 +898,8 @@ test("legacy absolute account settings are migrated to file URIs", () => {
     "profile-dir": "",
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   }];
 
@@ -881,6 +912,8 @@ test("legacy absolute account settings are migrated to file URIs", () => {
     "profile-dir": "file:///tmp/alpha%20profile",
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   }, {
     account: "beta",
@@ -889,6 +922,8 @@ test("legacy absolute account settings are migrated to file URIs", () => {
     "profile-dir": "",
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   }]);
   assert.deepEqual(JSON.parse(JSON.stringify(writes)), [[
@@ -900,6 +935,8 @@ test("legacy absolute account settings are migrated to file URIs", () => {
       "profile-dir": "file:///tmp/alpha%20profile",
       browser: 0,
       "reactivation-browser": 0,
+      series: "",
+      "series-active": false,
       backend: 0,
     }, {
       account: "beta",
@@ -908,6 +945,8 @@ test("legacy absolute account settings are migrated to file URIs", () => {
       "profile-dir": "",
       browser: 0,
       "reactivation-browser": 0,
+      series: "",
+      "series-active": false,
       backend: 0,
     }],
   ]]);
@@ -1039,6 +1078,8 @@ test("legacy account overview rows receive editable defaults", () => {
     "test-home": false,
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   });
 });
@@ -1072,7 +1113,7 @@ test("legacy global reactivation browser migrates to account rows once", () => {
   assert.equal(commands.some((argv) => (
     argv.includes("add") &&
     argv.includes("--reactivation-browser") &&
-    argv[argv.indexOf("--reactivation-browser") + 1] === "vivaldi"
+    argv[argv.indexOf("--reactivation-browser") + 1] === "firefox"
   )), true);
   assert.deepEqual(writes.find(([key]) => key === "reactivation-browser-migrated"), [
     "reactivation-browser-migrated",
@@ -1135,6 +1176,8 @@ test("account table changes produce complete account add data", () => {
     "profile-dir": "/tmp/alpha",
     browser: 1,
     "reactivation-browser": 2,
+    series: "",
+    "series-active": false,
     backend: 0,
   }];
 
@@ -1148,6 +1191,8 @@ test("account table changes produce complete account add data", () => {
     "test-home": false,
     browser: 1,
     "reactivation-browser": 2,
+    series: "",
+    "series-active": false,
     backend: 0,
   }]]);
 });
@@ -1162,6 +1207,8 @@ test("removing account table row queues account delete without profile deletion"
     "profile-dir": "/tmp/beta",
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   };
   applet._drainAccountChanges = () => {};
@@ -1172,6 +1219,8 @@ test("removing account table row queues account delete without profile deletion"
     "profile-dir": "/tmp/alpha",
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   }];
 
@@ -1307,6 +1356,8 @@ test("account edits during reconcile are retained for the next pass", () => {
     "profile-dir": "/tmp/alpha",
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   }];
 
@@ -1320,6 +1371,8 @@ test("account edits during reconcile are retained for the next pass", () => {
     "test-home": false,
     browser: 0,
     "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
     backend: 0,
   }]][0]);
 });
@@ -1881,7 +1934,7 @@ test("panel slots honor ordering, mute and duplicate-source normalization", () =
 test("panel slots can render credits and calculated credit consumption", () => {
   const applet = makeApplet();
   const alpha = applet._usages[0];
-  alpha.credits = { used: 20, limit: 100, remaining: 80, percent: 80 };
+  alpha.credits = { name: "credits", used: null, limit: null, remaining: 794, percent: null };
   alpha.cost_windows = [{
     pool: "credits",
     lookback_seconds: 3600,
@@ -1909,7 +1962,30 @@ test("panel slots can render credits and calculated credit consumption", () => {
   const items = applet._panelItems();
   assert.equal(
     applet._panelContent(items.filter((item) => item.visible)).plain,
-    "A CR 80 · Verbrauch 20 / CV Δ1 h 12,3 Credit-%-Pkt."
+    "A CR 794 · Verbrauch – / CV Δ1 h 12,3 Credit-%-Pkt."
+  );
+});
+
+test("credit balances are displayed as whole numbers", () => {
+  const applet = makeApplet();
+  const alpha = applet._usages[0];
+  alpha.credits = {
+    name: "credits", used: 19.6, limit: 999.4, remaining: 794.4, percent: null,
+  };
+  applet._panelSettings.alpha = {
+    account: "alpha", order: 1, muted: false, slot1: 9, slot2: 0, slot3: 0, slot4: 0,
+  };
+  applet._creditSettings = {
+    alpha: {
+      account: "alpha", "show-panel": true, "show-tooltip": true,
+      format: "verbose", "custom-format": "", "hide-when-zero": false,
+    },
+  };
+
+  const items = applet._panelItems();
+  assert.equal(
+    applet._panelContent(items.filter((item) => item.visible)).plain,
+    "A CR: 794 / 999 (Verbrauch 20, –%)"
   );
 });
 
@@ -4239,11 +4315,14 @@ test("style modes control normal, threshold and disabled formatting", () => {
     italic: false,
     color: 4,
     background: 0,
+    "hover-background": 5,
     "below-bold": true,
     "below-color": 3,
     "below-background": 0,
+    "below-hover-background": 6,
   };
   assert.match(applet._styleSpan("80%", style, 80, "panel"), /foreground="#16a34a"/);
+  assert.match(applet._styleSpan("80%", style, 80, "hover"), /background="#1d4ed8"/);
 
   style.mode = 1;
   assert.equal(applet._styleSpan("80%", style, 80, "panel"), "80%");
@@ -4253,6 +4332,7 @@ test("style modes control normal, threshold and disabled formatting", () => {
   assert.match(applet._styleSpan("80%", style, 80, "panel"), /foreground="#16a34a"/);
   assert.match(applet._styleSpan("10%", style, 10, "panel"), /foreground="#dc2626"/);
   assert.match(applet._styleSpan("10%", style, 10, "panel"), /weight="bold"/);
+  assert.match(applet._styleSpan("10%", style, 10, "hover"), /background="#facc15"/);
 
   style.mode = 3;
   assert.equal(applet._styleSpan("<80%>", style, 10, "panel"), "&lt;80%&gt;");
@@ -4464,6 +4544,8 @@ test("legacy conditional style rows migrate to the corresponding mode", () => {
   assert.equal(migrated.mode, 1);
   assert.equal(migrated.color, 0);
   assert.equal(migrated["below-color"], 3);
+  assert.equal(migrated["hover-background"], migrated.background);
+  assert.equal(migrated["below-hover-background"], migrated["below-background"]);
 });
 
 test("malformed numeric settings are rejected instead of coerced", () => {

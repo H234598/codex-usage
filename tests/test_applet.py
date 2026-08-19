@@ -115,8 +115,9 @@ def test_account_table_contains_all_editable_fields() -> None:
         "auth-json",
         "profile-dir",
         "test-home",
+        "series",
+        "series-active",
         "browser",
-        "reactivation-browser",
         "backend",
     ]
     assert table["show-buttons"] is True
@@ -167,7 +168,7 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     assert columns["show-panel"]["default"] is False
     assert columns["show-tooltip"]["default"] is True
     assert columns["show-panel"]["title"] == "Tokenverbrauch Leiste"
-    assert columns["show-tooltip"]["title"] == "Tokenverbrauch anzeigen"
+    assert columns["show-tooltip"]["title"] == "Tokenverbrauch Hover"
     assert "{value}" in table["description"] or "{value}" in table["tooltip"]
     assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days", "weeks"}
     assert set(columns["limit-window"]["options"].values()) == {"short", "weekly", "monthly", "spark"}
@@ -183,23 +184,23 @@ def test_style_tables_group_threshold_fields() -> None:
     expected = {
         "account-percent-styles": [
             "account", "mode", "font", "size", "bold", "italic",
-            "color", "background", "threshold", "below-font", "below-size",
-            "below-bold", "below-italic", "below-color", "below-background",
+            "color", "background", "hover-background", "threshold", "below-font", "below-size",
+            "below-bold", "below-italic", "below-color", "below-background", "below-hover-background",
         ],
         "account-date-styles": [
             "account", "format", "mode", "font", "size", "bold", "italic",
-            "color", "background", "threshold", "below-font", "below-size",
-            "below-bold", "below-italic", "below-color", "below-background",
+            "color", "background", "hover-background", "threshold", "below-font", "below-size",
+            "below-bold", "below-italic", "below-color", "below-background", "below-hover-background",
         ],
         "account-time-styles": [
             "account", "format", "mode", "font", "size", "bold", "italic",
-            "color", "background", "threshold", "below-font", "below-size",
-            "below-bold", "below-italic", "below-color", "below-background",
+            "color", "background", "hover-background", "threshold", "below-font", "below-size",
+            "below-bold", "below-italic", "below-color", "below-background", "below-hover-background",
         ],
         "account-duration-styles": [
             "account", "format", "mode", "font", "size", "bold", "italic",
-            "color", "background", "threshold", "below-font", "below-size",
-            "below-bold", "below-italic", "below-color", "below-background",
+            "color", "background", "hover-background", "threshold", "below-font", "below-size",
+            "below-bold", "below-italic", "below-color", "below-background", "below-hover-background",
         ],
     }
     for name, ids in expected.items():
@@ -284,6 +285,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
             "italic",
             "color",
             "background",
+            "hover-background",
             "threshold",
             "below-font",
             "below-size",
@@ -291,6 +293,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
             "below-italic",
             "below-color",
             "below-background",
+            "below-hover-background",
         ]
         columns = {column["id"]: column for column in table["columns"]}
         assert set(columns["mode"]["options"].values()) == set(range(4))
@@ -303,11 +306,13 @@ def test_applet_metadata_and_settings_remainder() -> None:
         assert columns["italic"]["type"] == "boolean"
         assert set(columns["color"]["options"].values()) == set(range(8))
         assert set(columns["background"]["options"].values()) == set(range(7))
+        assert set(columns["hover-background"]["options"].values()) == set(range(7))
         assert columns["below-size"]["max"] == 48
         assert columns["below-bold"]["default"] is True
         assert columns["below-italic"]["type"] == "boolean"
         assert set(columns["below-color"]["options"].values()) == set(range(8))
         assert set(columns["below-background"]["options"].values()) == set(range(7))
+        assert set(columns["below-hover-background"]["options"].values()) == set(range(7))
     assert set(date_table["columns"][1]["options"].values()) == set(range(4))
     assert set(time_table["columns"][1]["options"].values()) == set(range(3))
     duration_table = settings["account-duration-styles"]
@@ -324,6 +329,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "italic",
         "color",
         "background",
+        "hover-background",
         "threshold",
         "below-font",
         "below-size",
@@ -331,6 +337,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "below-italic",
         "below-color",
         "below-background",
+        "below-hover-background",
     ]
     assert set(duration_table["columns"][1]["options"].values()) == set(range(4))
     assert set(duration_table["columns"][2]["options"].values()) == set(range(4))
@@ -339,8 +346,10 @@ def test_applet_metadata_and_settings_remainder() -> None:
     assert duration_columns["threshold"]["max"] == 100
     assert set(duration_columns["color"]["options"].values()) == set(range(8))
     assert set(duration_columns["background"]["options"].values()) == set(range(7))
+    assert set(duration_columns["hover-background"]["options"].values()) == set(range(7))
     assert set(duration_columns["below-color"]["options"].values()) == set(range(8))
     assert set(duration_columns["below-background"]["options"].values()) == set(range(7))
+    assert set(duration_columns["below-hover-background"]["options"].values()) == set(range(7))
     percent_table = settings["account-percent-styles"]
     assert [column["id"] for column in percent_table["columns"]] == [
         "account",
@@ -351,6 +360,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "italic",
         "color",
         "background",
+        "hover-background",
         "threshold",
         "below-font",
         "below-size",
@@ -358,6 +368,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "below-italic",
         "below-color",
         "below-background",
+        "below-hover-background",
     ]
     assert set(percent_table["columns"][1]["options"].values()) == set(range(4))
     percent_columns = {column["id"]: column for column in percent_table["columns"]}
@@ -365,8 +376,10 @@ def test_applet_metadata_and_settings_remainder() -> None:
     assert percent_columns["threshold"]["default"] == 20
     assert set(percent_columns["color"]["options"].values()) == set(range(8))
     assert set(percent_columns["background"]["options"].values()) == set(range(7))
+    assert set(percent_columns["hover-background"]["options"].values()) == set(range(7))
     assert set(percent_columns["below-color"]["options"].values()) == set(range(8))
     assert set(percent_columns["below-background"]["options"].values()) == set(range(7))
+    assert set(percent_columns["below-hover-background"]["options"].values()) == set(range(7))
     alert_table = settings["account-alert-settings"]
     assert [column["id"] for column in alert_table["columns"]] == [
         "account",

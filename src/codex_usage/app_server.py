@@ -19,6 +19,7 @@ from .direct import (
     DirectAuthError,
     DirectFetchError,
     _auth_plan_type_changed,
+    _credit_window,
     _direct_deadline,
     _extract_auth_details,
     _normalized_plan_type,
@@ -121,6 +122,7 @@ def fetch_account_usage_app_server(
         if _auth_email_changed(auth_email_before, auth_email):
             raise AppServerAuthError("auth.json email changed during rate-limit request")
         five_hour, weekly = _windows_from_response(payload)
+        credits = _credit_window(payload, captured_at)
         main, model_pools = parse_app_server_usage_pools(
             payload,
             captured_at=captured_at,
@@ -140,6 +142,7 @@ def fetch_account_usage_app_server(
             captured_at=captured_at,
             five_hour=five_hour,
             weekly=weekly,
+            credits=credits,
             main=main,
             models=model_pools,
             usage_resets=parse_usage_resets(payload),
@@ -259,7 +262,7 @@ def _read_rate_limits(
         )
         _response_for(reader, 1, deadline=deadline, stderr_reader=stderr_reader)
         _send(process, {"method": "initialized", "params": {}}, deadline=deadline)
-        def read_account(request_id: int, *, refresh_token: bool) -> None:
+        def read_account(request_id: int, *, refresh_token: bool) -> dict[str, Any]:
             _send(
                 process,
                 {
@@ -303,9 +306,10 @@ def _read_rate_limits(
                     raise AppServerAuthError(
                         "Codex app server email differs from auth.json"
                     )
+            return account
 
         try:
-            read_account(2, refresh_token=refresh)
+            account_payload = read_account(2, refresh_token=refresh)
             rate_limits = _request_rate_limits(
                 process,
                 reader,
@@ -313,6 +317,9 @@ def _read_rate_limits(
                 deadline=deadline,
                 stderr_reader=stderr_reader,
             )
+            if isinstance(account_payload, dict):
+                rate_limits = dict(rate_limits)
+                rate_limits["account"] = account_payload
             return _with_model_ids(
                 rate_limits,
                 _request_model_ids(
@@ -326,7 +333,7 @@ def _read_rate_limits(
         except AppServerAuthError:
             if refresh:
                 raise
-            read_account(4, refresh_token=True)
+            account_payload = read_account(4, refresh_token=True)
             rate_limits = _request_rate_limits(
                 process,
                 reader,
@@ -334,6 +341,9 @@ def _read_rate_limits(
                 deadline=deadline,
                 stderr_reader=stderr_reader,
             )
+            if isinstance(account_payload, dict):
+                rate_limits = dict(rate_limits)
+                rate_limits["account"] = account_payload
             return _with_model_ids(
                 rate_limits,
                 _request_model_ids(

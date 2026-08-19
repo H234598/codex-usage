@@ -25,6 +25,7 @@ APP_NAME = "codex-usage"
 SUPPORTED_BROWSERS = ("firefox", "chromium")
 SUPPORTED_REACTIVATION_BROWSERS = ("auto", "vivaldi", "chromium", "firefox")
 SUPPORTED_BACKENDS = ("direct", "app-server")
+SERIES_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,15}$")
 MAX_CONFIG_BYTES = 1_000_000
 MAX_CONFIG_ACCOUNTS = 100
 MAX_CONFIG_LABEL_CHARS = 256
@@ -165,6 +166,8 @@ def add_or_update_account(
     auth_json_path: str | None = None,
     backend: str | None = None,
     reactivation_browser: str | None = None,
+    series: str | None = None,
+    series_active: bool | None = None,
     clear_auth_json: bool = False,
     test_home: bool = False,
     path: Path | None = None,
@@ -179,6 +182,10 @@ def add_or_update_account(
         _validate_backend(backend)
     if reactivation_browser is not None:
         _validate_reactivation_browser(reactivation_browser)
+    if series is not None:
+        _validate_series(series)
+    if series_active is not None and not isinstance(series_active, bool):
+        raise ValueError("series_active must be boolean")
     if not isinstance(test_home, bool):
         raise ValueError("test_home must be boolean")
     if clear_auth_json and auth_json_path is not None:
@@ -236,6 +243,8 @@ def add_or_update_account(
             backend=backend or (existing.backend if existing else "direct"),
             reactivation_browser=reactivation_browser
             or (existing.reactivation_browser if existing else "auto"),
+            series=series if series is not None else (existing.series if existing else ""),
+            series_active=series_active if series_active is not None else (existing.series_active if existing else False),
         )
 
         accounts = [item for item in config.accounts if item.id != account_id]
@@ -472,6 +481,16 @@ def _account_from_data(item: object) -> Account:
     else:
         reactivation_browser = raw_reactivation_browser
     _validate_reactivation_browser(reactivation_browser)
+    raw_series = item.get("series", "")
+    if raw_series in (None, ""):
+        series = ""
+    elif not isinstance(raw_series, str):
+        raise ValueError("series must be a string")
+    else:
+        series = raw_series.strip().upper()
+    _validate_series(series, allow_empty=True)
+    raw_series_active = item.get("series_active", False)
+    series_active = _strict_bool(raw_series_active, "series_active")
     return Account(
         id=account_id,
         label=label,
@@ -480,6 +499,8 @@ def _account_from_data(item: object) -> Account:
         auth_json_path=auth_json_path,
         backend=backend,
         reactivation_browser=reactivation_browser,
+        series=series,
+        series_active=series_active,
     )
 
 
@@ -725,7 +746,16 @@ def _normalized_config_path(value: str) -> str:
 def _validate_unique_account_resources(accounts: tuple[Account, ...]) -> None:
     profile_paths: dict[str, str] = {}
     auth_paths: dict[str, str] = {}
+    series_accounts: dict[str, str] = {}
     for account in accounts:
+        if account.series_active and account.series:
+            previous_series = series_accounts.get(account.series)
+            if previous_series is not None:
+                raise ValueError(
+                    f"series conflict: {account.series} is already assigned to accounts "
+                    f"{previous_series} and {account.id}"
+                )
+            series_accounts[account.series] = account.id
         profile_key = _normalized_config_path(account.profile_dir)
         previous_profile = profile_paths.get(profile_key)
         if previous_profile is not None:
@@ -784,6 +814,11 @@ def _validate_account(account: object) -> None:
     _validate_browser(account.browser)
     _validate_backend(account.backend)
     _validate_reactivation_browser(account.reactivation_browser)
+    _validate_series(account.series, allow_empty=True)
+    if not isinstance(account.series_active, bool):
+        raise ValueError("series_active must be boolean")
+    if account.series_active and not account.series:
+        raise ValueError("active series requires a series name")
     if account.auth_json_path is not None:
         _validate_text_field(
             account.auth_json_path,
@@ -841,6 +876,13 @@ def _validate_reactivation_browser(browser: str) -> None:
         raise ValueError(f"reactivation browser must be one of: {choices}")
 
 
+def _validate_series(series: str, *, allow_empty: bool = False) -> None:
+    if allow_empty and series == "":
+        return
+    if not isinstance(series, str) or not SERIES_RE.fullmatch(series):
+        raise ValueError("series must be a letter followed by at most 15 letters, digits, dash or underscore")
+
+
 def _strict_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{name} must be an integer")
@@ -870,6 +912,8 @@ def _to_toml(config: AppConfig) -> str:
                 f"browser = {_quote(account.browser)}",
                 f"backend = {_quote(account.backend)}",
                 f"reactivation_browser = {_quote(account.reactivation_browser)}",
+                f"series = {_quote(account.series)}",
+                f"series_active = {'true' if account.series_active else 'false'}",
                 *(
                     [f"auth_json_path = {_quote(account.auth_json_path)}"]
                     if account.auth_json_path

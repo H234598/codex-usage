@@ -71,6 +71,8 @@ def create_profile_job(
     config_path: Path | None,
     json_events: bool,
     reactivation_browser: str = "auto",
+    series: str = "",
+    series_active: bool = False,
 ) -> dict[str, object]:
     _validate_create_arguments(
         account_id=account_id,
@@ -81,6 +83,8 @@ def create_profile_job(
         expected_backend_account_id=expected_backend_account_id,
         json_events=json_events,
         reactivation_browser=reactivation_browser,
+        series=series,
+        series_active=series_active,
     )
     selected_config = (config_path or default_config_path()).expanduser()
     if not selected_config.is_absolute():
@@ -96,6 +100,8 @@ def create_profile_job(
         "backend": backend,
         "profile_dir": str(Path(profile_dir).expanduser()),
         "reactivation_browser": reactivation_browser,
+        "series": series,
+        "series_active": series_active,
         "expected_backend_account_id": expected_backend_account_id,
         "config_path": str(selected_config),
         "json_events": json_events,
@@ -295,6 +301,8 @@ def run_profile_job(job_id: str) -> int:
         browser=job["browser"],
         backend=job["backend"],
         reactivation_browser=job["reactivation_browser"],
+        series=job.get("series", ""),
+        series_active=job.get("series_active", False),
     )
     event_sink = (
         (lambda event: _append_job_event(job_id, event))
@@ -377,6 +385,8 @@ def _verify_profile_job_completion(job: dict[str, object]) -> bool:
             or account.browser != job["browser"]
             or account.backend != job["backend"]
             or account.reactivation_browser != job["reactivation_browser"]
+            or account.series != job.get("series", "")
+            or account.series_active != job.get("series_active", False)
             or not account.auth_json_path
         ):
             return False
@@ -516,6 +526,8 @@ def _validate_create_arguments(
     expected_backend_account_id: str | None,
     json_events: object,
     reactivation_browser: str,
+    series: str = "",
+    series_active: bool = False,
     check_profile_path: bool = True,
 ) -> None:
     if not isinstance(account_id, str) or account_id in {".", "..", "__all_accounts__"}:
@@ -532,6 +544,12 @@ def _validate_create_arguments(
         raise ValueError("backend is invalid")
     if reactivation_browser not in SUPPORTED_REACTIVATION_BROWSERS:
         raise ValueError("reactivation browser is invalid")
+    if series and (not isinstance(series, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,15}", series)):
+        raise ValueError("series is invalid")
+    if not isinstance(series_active, bool):
+        raise ValueError("series_active is invalid")
+    if series_active and not series:
+        raise ValueError("active series requires a series name")
     if not isinstance(json_events, bool):
         raise ValueError("profile job json_events is invalid")
     profile_path = Path(profile_dir).expanduser()
@@ -685,6 +703,8 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         "backend",
         "profile_dir",
         "reactivation_browser",
+        "series",
+        "series_active",
         "expected_backend_account_id",
         "config_path",
         "json_events",
@@ -694,9 +714,11 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         "worker_pid",
         "error",
     }
-    legacy_required = required - {"reactivation_browser"}
+    legacy_required = required - {"reactivation_browser", "series", "series_active"}
     if set(value) == legacy_required:
-        value = {**value, "reactivation_browser": "auto"}
+        value = {**value, "reactivation_browser": "auto", "series": "", "series_active": False}
+    elif set(value) == required - {"series", "series_active"}:
+        value = {**value, "series": "", "series_active": False}
     elif set(value) != required:
         raise ValueError("profile job manifest schema is invalid")
     if value["schema_version"] != PROFILE_JOB_SCHEMA_VERSION:
@@ -710,6 +732,8 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         expected_backend_account_id=value["expected_backend_account_id"],
         json_events=value["json_events"],
         reactivation_browser=value["reactivation_browser"],
+        series=value["series"],
+        series_active=value["series_active"],
         check_profile_path=False,
     )
     if not isinstance(value["job_id"], str) or not PROFILE_JOB_ID_RE.fullmatch(value["job_id"]):

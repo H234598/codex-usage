@@ -111,7 +111,7 @@ def open_account_in_reactivation_browser(
     _validate_manage_url(url)
     requested_browser = account.reactivation_browser if browser is None else browser
     browser_kind, browser_executable = _select_browser(requested_browser)
-    profile_dir = _prepare_oauth_profile(account, browser_kind)
+    profile_dir = _manage_browser_profile(account, browser_kind)
     helper = _resolve_executable(
         browser_helper,
         "codex-usage-browser",
@@ -441,6 +441,22 @@ def _prepare_oauth_profile(account: Account, browser_kind: str) -> Path:
         label="OAuth profile marker",
     )
     return profile
+
+
+def _manage_browser_profile(account: Account, browser_kind: str) -> Path:
+    """Reuse the account's authenticated collection profile when compatible."""
+    account_browser = account.browser
+    compatible = (
+        browser_kind == account_browser or
+        browser_kind == "vivaldi" and account_browser == "chromium"
+    )
+    if compatible:
+        root = Path(account.profile_dir).expanduser()
+        browser_dir = root / ("firefox" if account_browser == "firefox" else "chromium")
+        marker = browser_dir / ".codex-usage-browser-profile"
+        if browser_dir.is_dir() and marker.is_file() and not marker.is_symlink():
+            return browser_dir
+    return _prepare_oauth_profile(account, browser_kind)
 
 
 def _prepare_real_private_directory(path: Path, *, label: str) -> None:

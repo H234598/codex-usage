@@ -123,6 +123,7 @@ from .state import (
     load_usage_snapshot,
     remove_account_state,
 )
+from .terminal import TerminalError, start_account_terminal
 
 # `auto` selects a browser; it does not create an OAuth profile. Keep a little
 # room for stale profiles while bounding hostile directory enumeration.
@@ -145,6 +146,7 @@ Accounts:
   codex-usage account overview [--format table|json] [--config-only]
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
                                       [--format table|json]
+  codex-usage account terminal ACCOUNT [--format table|json]
 
 Login und Reaktivierung:
   codex-usage login ACCOUNT
@@ -327,6 +329,13 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_REACTIVATION_BROWSERS,
         help="Isolierter OAuth-Browser fuer Reaktivierung",
     )
+    add.add_argument("--series", help="Masterjet-Serie, z. B. A, B oder C")
+    add.add_argument(
+        "--series-active",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Serie fuer Masterjet aktivieren oder deaktivieren",
+    )
     add.add_argument("--backend", choices=SUPPORTED_BACKENDS)
     add.add_argument("--format", choices=("table", "json"), default="table")
     add.set_defaults(func=_cmd_account_add)
@@ -373,6 +382,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     manage.add_argument("--format", choices=("table", "json"), default="table")
     manage.set_defaults(func=_cmd_account_manage)
+    terminal = account_sub.add_parser(
+        "terminal",
+        help="Neues Terminal mit Codex im Account-Profil starten",
+    )
+    terminal.add_argument("account", help="Account-ID oder eindeutiges Label")
+    terminal.add_argument("--format", choices=("table", "json"), default="table")
+    terminal.set_defaults(func=_cmd_account_terminal)
 
     login = sub.add_parser("login", help="Sichtbaren Browser fuer einen Account oeffnen")
     login.add_argument("account", help="Account-ID oder eindeutiges Label")
@@ -638,6 +654,8 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=SUPPORTED_REACTIVATION_BROWSERS,
         default="auto",
     )
+    profile_create.add_argument("--series", default="")
+    profile_create.add_argument("--series-active", action=argparse.BooleanOptionalAction, default=False)
     profile_create.add_argument("--expected-backend-account-id")
     profile_create.add_argument("--json-events", action="store_true")
     profile_create.set_defaults(func=_cmd_profile_create)
@@ -727,6 +745,8 @@ def _cmd_account_add(args: argparse.Namespace) -> int:
         auth_json_path=str(args.auth_json) if args.auth_json else None,
         backend=args.backend,
         reactivation_browser=args.reactivation_browser,
+        series=args.series,
+        series_active=args.series_active,
         clear_auth_json=args.clear_auth_json,
         test_home=args.test_home,
         path=args.config,
@@ -769,6 +789,8 @@ def _account_json(account: Any) -> dict[str, str | None]:
         "auth_json_path": account.auth_json_path,
         "browser": account.browser,
         "reactivation_browser": account.reactivation_browser,
+        "series": account.series,
+        "series_active": account.series_active,
         "backend": account.backend,
     }
 
@@ -787,6 +809,8 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
                     "auth_json_path": account.auth_json_path,
                     "browser": account.browser,
                     "reactivation_browser": account.reactivation_browser,
+                    "series": account.series,
+                    "series_active": account.series_active,
                     "backend": account.backend,
                     "backend_used": usages_by_account.get(account.id).backend_used
                     if usages_by_account.get(account.id)
@@ -1232,7 +1256,7 @@ def _cmd_profile_device_login(args: argparse.Namespace) -> int:
 
 def _cmd_profile_create(args: argparse.Namespace) -> int:
     with account_lock("__all_accounts__"):
-        result = create_profile_job(
+        profile_kwargs = dict(
             account_id=args.account_id,
             label=args.label,
             browser=args.browser,
@@ -1243,6 +1267,11 @@ def _cmd_profile_create(args: argparse.Namespace) -> int:
             config_path=args.config,
             json_events=args.json_events,
         )
+        if args.series:
+            profile_kwargs["series"] = args.series
+        if args.series_active:
+            profile_kwargs["series_active"] = True
+        result = create_profile_job(**profile_kwargs)
     print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
     return 0 if result.get("ok") is True else 2
 
@@ -1348,6 +1377,29 @@ def _cmd_account_manage(args: argparse.Namespace) -> int:
         print("Browserprofil: isoliert (Reaktivierungsbrowser)")
     else:
         print(f"Account konnte nicht geöffnet werden: {result['error']}")
+    return 0 if result["ok"] else 2
+
+
+def _cmd_account_terminal(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    account = resolve_account(config, args.account)
+    try:
+        result = start_account_terminal(account)
+    except TerminalError as exc:
+        result = {
+            "ok": False,
+            "account": account.id,
+            "label": account.label,
+            "profile_dir": account.profile_dir,
+            "error": str(exc),
+        }
+    if args.format == "json":
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+    elif result["ok"]:
+        print(f"Terminal gestartet: {account.id} ({account.label})")
+        print(f"Profil: {result['profile_dir']}")
+    else:
+        print(f"Terminal konnte nicht gestartet werden: {result['error']}")
     return 0 if result["ok"] else 2
 
 
