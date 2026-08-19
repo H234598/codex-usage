@@ -23,7 +23,16 @@ from codex_usage.render import (
 )
 
 
-def test_render_table_contains_values():
+def test_render_table_contains_values(monkeypatch):
+    now = datetime(2026, 7, 10, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    class Clock:
+        @classmethod
+        def now(cls, tz=None):
+            return now.astimezone(tz) if tz is not None else now
+
+    monkeypatch.setattr("codex_usage.render.datetime", Clock)
+
     usage = AccountUsage(
         account_id="privat",
         label="Privat",

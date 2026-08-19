@@ -1701,7 +1701,11 @@ def test_extract_windows_scopes_target_specific_root_fields():
         },
     )
 
-    five, weekly = extract_windows(body_text="", json_candidates=[candidate])
+    five, weekly = extract_windows(
+        body_text="",
+        json_candidates=[candidate],
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
 
     assert five is not None
     assert five.remaining == 97

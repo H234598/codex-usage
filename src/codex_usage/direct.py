@@ -1151,7 +1151,7 @@ def _normalized_response_identifier(value: Any) -> str:
     return value.casefold()
 
 
-def _signature_flag(value: Any) -> bool | None | tuple[str, str, str]:
+def _signature_flag(value: Any) -> bool | tuple[str, str, str] | None:
     if value is None or isinstance(value, bool):
         return value
     return ("invalid", type(value).__name__, str(value))

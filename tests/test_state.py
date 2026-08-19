@@ -1328,7 +1328,8 @@ def test_expire_reset_windows_ignores_future_values_capture():
     assert expired.error == "cached limit window expired: 5h; refresh required"
 
 
-def test_expire_reset_windows_localizes_naive_reset_timestamp():
+def test_expire_reset_windows_localizes_naive_reset_timestamp(monkeypatch):
+    monkeypatch.setattr("codex_usage.state.LOCAL_TZ", ZoneInfo("Europe/Berlin"))
     captured_at = datetime(2026, 7, 12, 10, 0, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
         account_id="privat",
@@ -1399,7 +1400,8 @@ def test_expire_reset_windows_clears_expired_blocked_state():
     assert expired.stale is True
 
 
-def test_expire_reset_windows_clears_blocked_state_with_naive_blocked_until():
+def test_expire_reset_windows_clears_blocked_state_with_naive_blocked_until(monkeypatch):
+    monkeypatch.setattr("codex_usage.state.LOCAL_TZ", ZoneInfo("Europe/Berlin"))
     reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(
         account_id="blocked",
