@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 import shutil
@@ -145,6 +146,7 @@ def _install_atomically(source: Path, target_root: Path, target: Path) -> None:
 
 
 def _migrate_cached_settings(path: Path | None = None) -> bool:
+    refresh_schema = path is None
     if path is None:
         config_root = Path(os.environ.get("XDG_CONFIG_HOME", "")).expanduser()
         if not config_root.is_absolute():
@@ -163,7 +165,29 @@ def _migrate_cached_settings(path: Path | None = None) -> bool:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
-    if not isinstance(payload, dict) or not _migrate_enum_types(payload):
+    if not isinstance(payload, dict):
+        return False
+    changed = _migrate_enum_types(payload)
+    if refresh_schema:
+        source = Path(__file__).resolve().parents[1] / "files" / APPLET_UUID / "settings-schema.json"
+        try:
+            source_payload = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            source_payload = None
+        if isinstance(source_payload, dict):
+            for key, definition in source_payload.items():
+                if not isinstance(definition, dict):
+                    continue
+                previous = payload.get(key)
+                updated = json.loads(json.dumps(definition, ensure_ascii=False))
+                if isinstance(previous, dict) and "value" in previous:
+                    updated["value"] = previous["value"]
+                if payload.get(key) != updated:
+                    payload[key] = updated
+            payload["__md5__"] = hashlib.md5(source.read_bytes()).hexdigest()
+            changed = True
+
+    if not changed:
         return False
 
     serialized = json.dumps(payload, indent=4, ensure_ascii=False) + "\n"
