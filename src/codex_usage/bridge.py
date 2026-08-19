@@ -26,6 +26,7 @@ from .config import (
 )
 from .direct import (
     DirectAuthError,
+    _credit_window,
     auth_identity_for_account,
     auth_plan_type_for_account,
     canonical_backend_identity,
@@ -192,6 +193,15 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         )
     else:
         five_hour, weekly = json_windows
+    credits = next(
+        (
+            window
+            for candidate in json_candidates
+            for window in (_credit_window(candidate.payload, captured_at),)
+            if window is not None
+        ),
+        None,
+    )
     backend_user_id, backend_account_id = backend_identity_from_candidates(identity_candidates)
     backend_plan_type = backend_plan_type_from_candidates(identity_candidates)
     auth_plan_type = auth_plan_type_for_account(account)
@@ -252,6 +262,7 @@ def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> Acco
         captured_at=captured_at,
         five_hour=five_hour,
         weekly=weekly,
+        credits=credits,
         main=main,
         usage_resets=parse_usage_resets(payload),
         status=status,

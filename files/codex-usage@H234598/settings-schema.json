@@ -81,6 +81,7 @@
       "title": "Verbrauchszeiträume",
       "keys": [
         "account-consumption-settings",
+        "account-credit-settings",
         "show-consumption-delta"
       ]
     },
@@ -164,10 +165,13 @@
     },
     "routing-section": {
       "type": "section",
-      "title": "Bezahlte Nutzung",
+      "title": "Routing und Credits",
       "keys": [
         "routing-global-paid-credits",
-        "routing-credit-overrides"
+        "routing-credit-overrides",
+        "routing-credit-hourly-limit",
+        "routing-credit-weekly-limit",
+        "routing-credit-monthly-limit"
       ]
     }
   },
@@ -978,6 +982,8 @@
           "Account-ID": 7,
           "Label": 8,
           "Kürzel": 9
+          ,"Verbrauch Woche": 10
+          ,"Credits": 11
         }
       },
       {
@@ -1056,6 +1062,33 @@
     "show-buttons": true,
     "default": []
   },
+  "routing-credit-hourly-limit": {
+    "type": "spinbutton",
+    "description": "Creditlimit pro Stunde (0 = deaktiviert)",
+    "tooltip": "Begrenzt die erlaubte Nutzung bezahlter Credits innerhalb eines Stundenfensters.",
+    "min": 0,
+    "max": 1000000000,
+    "step": 1,
+    "default": 0
+  },
+  "routing-credit-weekly-limit": {
+    "type": "spinbutton",
+    "description": "Creditlimit pro Woche (0 = deaktiviert)",
+    "tooltip": "Begrenzt die erlaubte Nutzung bezahlter Credits innerhalb einer Woche.",
+    "min": 0,
+    "max": 1000000000,
+    "step": 1,
+    "default": 0
+  },
+  "routing-credit-monthly-limit": {
+    "type": "spinbutton",
+    "description": "Creditlimit pro Monat (0 = deaktiviert)",
+    "tooltip": "Begrenzt die erlaubte Nutzung bezahlter Credits innerhalb eines Monats.",
+    "min": 0,
+    "max": 1000000000,
+    "step": 1,
+    "default": 0
+  },
   "refresh-on-open": {
     "type": "switch",
     "description": "Beim Öffnen des Menüs aktualisieren",
@@ -1132,10 +1165,43 @@
           "Spark weiteres Limit": 7,
           "30-Tage-Limit": 8
         }
+      },
+      {
+        "id": "slot4",
+        "title": "Wert 4",
+        "type": "integer",
+        "options": {
+          "Aus": 0,
+          "5h": 1,
+          "Woche": 2,
+          "Mittelwert": 3,
+          "Spark 5h": 4,
+          "Spark Woche": 5,
+          "Spark Mittelwert": 6,
+          "Spark weiteres Limit": 7,
+          "30-Tage-Limit": 8
+        }
       }
     ],
     "height": 220,
     "show-buttons": false,
+    "default": []
+  },
+  "account-credit-settings": {
+    "type": "list",
+    "description": "Verbleibende Credits pro Account",
+    "tooltip": "Credits werden nur angezeigt, wenn der Provider einen expliziten Creditstand liefert. Platzhalter im eigenen Format: {remaining}, {used}, {limit}, {percent}, {reset}.",
+    "columns": [
+      {"id": "account", "title": "Account-ID", "type": "string"},
+      {"id": "show-panel", "title": "Leiste anzeigen", "type": "boolean", "default": false},
+      {"id": "show-tooltip", "title": "Hover anzeigen", "type": "boolean", "default": true},
+      {"id": "format", "title": "Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
+      {"id": "custom-format", "title": "Eigenes Format", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}.", "default": ""},
+      {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false}
+    ],
+    "height": 220,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "account-consumption-settings": {

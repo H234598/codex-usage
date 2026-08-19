@@ -47,6 +47,7 @@ WINDOW_NAME_DURATIONS = {
 SUPPORTED_WINDOW_SECONDS = frozenset(WINDOW_NAME_DURATIONS.values())
 MAX_POLICY_BYTES = 64 * 1024
 POLICY_SCOPES = ("account", "group", "agent", "job")
+CREDIT_LIMIT_KEYS = ("hourly", "weekly", "monthly")
 IDENTIFIER_RE = re.compile(r"[A-Za-z0-9_.:@+-]{1,128}")
 EXEMPT_ROLES = frozenset(
     ("teamleiterin", "teamlead", "leader", "manager", "master", "admin")
@@ -107,6 +108,23 @@ def set_policy_rule(
             policy[normalized_scope].pop(identifier, None)
         else:
             policy[normalized_scope][identifier] = value
+        text = json.dumps(policy, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+        if len(text.encode("utf-8")) > MAX_POLICY_BYTES:
+            raise ValueError("routing policy is too large")
+        write_private_text(policy_path, text, label="routing policy")
+    return policy
+
+
+def set_credit_limits(
+    limits: dict[str, float | None], *, path: Path | None = None
+) -> dict[str, Any]:
+    """Persist optional hourly, weekly and monthly paid-credit caps."""
+    normalized = _validate_credit_limits(limits)
+    policy_path = path or default_policy_path()
+    _prepare_private_directory(policy_path.parent)
+    with private_path_lock(policy_path, label="routing policy lock"):
+        policy = load_policy(policy_path)
+        policy["credit_limits"] = normalized
         text = json.dumps(policy, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
         if len(text.encode("utf-8")) > MAX_POLICY_BYTES:
             raise ValueError("routing policy is too large")
@@ -639,6 +657,7 @@ def _empty_policy() -> dict[str, Any]:
         "schema_version": POLICY_SCHEMA_VERSION,
         "global": False,
         **{scope: {} for scope in POLICY_SCOPES},
+        "credit_limits": {key: None for key in CREDIT_LIMIT_KEYS},
     }
 
 
@@ -658,6 +677,25 @@ def _validate_policy(payload: Any) -> dict[str, Any]:
             if not isinstance(value, bool):
                 raise ValueError(f"routing policy {scope} value is invalid")
             result[scope][normalized] = value
+    result["credit_limits"] = _validate_credit_limits(payload.get("credit_limits", {}))
+    return result
+
+
+def _validate_credit_limits(value: Any) -> dict[str, float | None]:
+    if not isinstance(value, dict):
+        raise ValueError("routing credit limits are invalid")
+    result: dict[str, float | None] = {}
+    for key in CREDIT_LIMIT_KEYS:
+        raw = value.get(key)
+        if raw is None:
+            result[key] = None
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ValueError("routing credit limit is invalid")
+        number = float(raw)
+        if not math.isfinite(number) or number < 0:
+            raise ValueError("routing credit limit is invalid")
+        result[key] = number
     return result
 
 

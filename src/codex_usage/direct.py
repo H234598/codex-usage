@@ -197,6 +197,7 @@ def fetch_account_usage_direct(
             captured_at=captured_at,
             source=f"json:{_redact_url(WHAM_USAGE_URL)}",
         )
+        credits = _credit_window(payload, captured_at)
         main_is_usable = main is None or main.has_valid_usage
         has_dynamic_usage = bool(
             main_is_usable
@@ -220,6 +221,7 @@ def fetch_account_usage_direct(
             captured_at=captured_at,
             five_hour=five_hour,
             weekly=weekly,
+            credits=credits,
             main=main,
             models=model_pools,
             usage_resets=parse_usage_resets(payload),
@@ -1536,6 +1538,65 @@ def _parse_iso_datetime(value: Any) -> datetime | None:
         return datetime.fromisoformat(text)
     except ValueError:
         return None
+
+
+def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindow | None:
+    """Extract an explicitly reported credit balance, if the backend exposes one.
+
+    Credits are intentionally not inferred from token limits.  Only known,
+    explicit top-level fields are accepted so a missing credit API cannot
+    produce a fabricated balance in the applet.
+    """
+    candidate: Any = None
+    for key in ("credits", "credit_balance", "creditBalance", "remaining_credits", "remainingCredits"):
+        if key in payload:
+            candidate = payload[key]
+            break
+    if candidate is None:
+        return None
+    if isinstance(candidate, bool):
+        return None
+    if isinstance(candidate, (int, float)):
+        if not math.isfinite(float(candidate)) or float(candidate) < 0:
+            return None
+        return LimitWindow(name="credits", remaining=float(candidate))
+    if not isinstance(candidate, dict):
+        return None
+
+    def number(*keys: str) -> float | None:
+        for key in keys:
+            value = candidate.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            if math.isfinite(float(value)) and float(value) >= 0:
+                return float(value)
+        return None
+
+    used = number("used", "consumed")
+    limit = number("limit", "total", "maximum")
+    remaining = number("remaining", "available", "balance", "credit_balance")
+    percent = number("percent", "remaining_percent", "remainingPercentage")
+    if percent is not None and percent > 100:
+        percent = None
+    if remaining is None and used is None and limit is None and percent is None:
+        return None
+    if remaining is None and limit is not None and used is not None and used <= limit:
+        remaining = limit - used
+    if percent is None and remaining is not None and limit and limit > 0:
+        percent = remaining / limit * 100
+    if remaining is not None and limit is not None and remaining > limit:
+        return None
+    reset_at = _parse_iso_datetime(candidate.get("reset_at") or candidate.get("resetAt"))
+    return LimitWindow(
+        name="credits",
+        duration_seconds=None,
+        used=used,
+        limit=limit,
+        remaining=remaining,
+        percent=percent,
+        reset_at=reset_at,
+        source="json:credits",
+    )
 
 
 def _jwt_expiry(token: Any) -> datetime | None:

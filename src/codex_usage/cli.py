@@ -97,6 +97,7 @@ from .routing import (
     effective_paid_overage,
     evaluate_routing,
     load_policy,
+    set_credit_limits,
     set_policy_rule,
 )
 from .scheduler import fetch_all, watch, watchdog
@@ -467,6 +468,14 @@ def _build_parser() -> argparse.ArgumentParser:
     policy_set.add_argument("--id", dest="identifier")
     policy_set.add_argument("--format", choices=("json",), default="json")
     policy_set.set_defaults(func=_cmd_policy_set)
+
+    policy_limits = policy_sub.add_parser(
+        "set-limits",
+        help="Stunden-, Wochen- und Monatslimit fuer bezahlte Credits setzen",
+    )
+    for name in ("hourly", "weekly", "monthly"):
+        policy_limits.add_argument("--" + name, type=float, default=None)
+    policy_limits.set_defaults(func=_cmd_policy_set_limits)
 
     policy_overview = policy_sub.add_parser(
         "overview",
@@ -1395,6 +1404,17 @@ def _cmd_policy_set(args: argparse.Namespace) -> int:
         args.identifier,
         values[args.value],
     )
+    print(json.dumps(policy, ensure_ascii=True, sort_keys=True))
+    return 0
+
+
+def _cmd_policy_set_limits(args: argparse.Namespace) -> int:
+    limits = {
+        "hourly": args.hourly,
+        "weekly": args.weekly,
+        "monthly": args.monthly,
+    }
+    policy = set_credit_limits(limits)
     print(json.dumps(policy, ensure_ascii=True, sort_keys=True))
     return 0
 

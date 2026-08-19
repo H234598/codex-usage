@@ -6908,7 +6908,7 @@ test("old three-surface target rows migrate with a duration row", () => {
       { account: "alpha", element: 2, panel: false, hover: false, click: true },
     ]
   );
-  assert.equal(rows.length, 20);
+  assert.equal(rows.length, 24);
   assert.equal(rows[3].element, 3);
   assert.equal(rows[3].click, true);
   assert.equal(rows[3].panel, false);
@@ -6918,6 +6918,8 @@ test("old three-surface target rows migrate with a duration row", () => {
   assert.equal(rows[6].element, 6);
   assert.equal(rows[7].element, 7);
   assert.equal(rows[9].element, 9);
+  assert.equal(rows[10].element, 10);
+  assert.equal(rows[11].element, 11);
 });
 
 test("automatic service activation finishes before the next auxiliary request", () => {

@@ -802,8 +802,10 @@ def _window_expiry_capture(
 def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
     raw_five_hour = payload.get("five_hour")
     raw_weekly = payload.get("weekly")
+    raw_credits = payload.get("credits")
     five_hour = _window_from_dict(raw_five_hour, expected_kind="five_hour")
     weekly = _window_from_dict(raw_weekly, expected_kind="weekly")
+    credits = _window_from_dict(raw_credits, expected_kind="credits")
     raw_main = payload.get("main")
     main = _pool_from_dict(raw_main, expected_key="main")
     raw_models = payload.get("models")
@@ -1012,6 +1014,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         captured_at=_snapshot_datetime(payload["captured_at"]),
         five_hour=five_hour,
         weekly=weekly,
+        credits=credits,
         main=main,
         models=model_pools,
         usage_resets=usage_resets,
@@ -1399,6 +1402,8 @@ def _window_matches_expected_kind(
 ) -> bool:
     if window is None or expected_kind is None:
         return True
+    if expected_kind == "credits":
+        return isinstance(window.name, str) and window.name.strip().casefold() == "credits"
     kind = _window_kind(window)
     if kind is not None and kind != expected_kind:
         return False
@@ -1723,8 +1728,10 @@ def _window_from_dict(
     ):
         window = replace(window, used=None, remaining=None, percent=None)
     if (
-        window.limit is None or window.limit <= 0
-    ) and window.remaining is not None and not 0 <= window.remaining <= 100:
+        expected_kind != "credits" and
+        (window.limit is None or window.limit <= 0)
+        and window.remaining is not None and not 0 <= window.remaining <= 100
+    ):
         # Without a positive denominator, values outside the percentage range
         # are ambiguous absolute counters and must not survive cache loading.
         window = replace(window, remaining=None)

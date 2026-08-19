@@ -55,6 +55,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "slot1",
         "slot2",
         "slot3",
+        "slot4",
     ]
     assert panel_table["columns"][1]["min"] == 1
     assert panel_table["columns"][1]["max"] == 100
@@ -133,7 +134,7 @@ def test_display_table_replaces_panel_tag_column() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
 
     assert [column["id"] for column in settings["account-panel-settings"]["columns"]] == [
-        "account", "order", "muted", "slot1", "slot2", "slot3",
+        "account", "order", "muted", "slot1", "slot2", "slot3", "slot4",
     ]
     table = settings["account-display-settings"]
     assert [column["id"] for column in table["columns"]] == [
@@ -390,10 +391,12 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "Verbrauchszeitraum": 4,
         "Zeit bis Tokenende": 5,
         "Usage-Resets": 6,
-        "Account-ID": 7,
-        "Label": 8,
-        "Kürzel": 9,
-    }
+            "Account-ID": 7,
+            "Label": 8,
+            "Kürzel": 9,
+            "Verbrauch Woche": 10,
+            "Credits": 11,
+        }
     assert targets["show-buttons"] is True
     assert set(targets["hidden-buttons"]) == {"+", "-", "up", "down"}
 

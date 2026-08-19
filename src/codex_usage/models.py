@@ -299,6 +299,7 @@ class AccountUsage:
     captured_at: datetime
     five_hour: LimitWindow | None = None
     weekly: LimitWindow | None = None
+    credits: LimitWindow | None = None
     main: UsagePool | None = None
     models: tuple[UsagePool, ...] = field(default_factory=tuple)
     status: AccountStatus = AccountStatus.OK
@@ -362,6 +363,7 @@ class AccountUsage:
             if values_hidden
             else _window_to_dict(self.five_hour),
             "weekly": None if values_hidden else _window_to_dict(self.weekly),
+            "credits": None if values_hidden else _window_to_dict(self.credits),
             "main": None if values_hidden else _pool_to_dict(self.main),
             "models": {}
             if values_hidden
