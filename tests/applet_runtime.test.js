@@ -1999,7 +1999,7 @@ test("consumption display asks CLI for configured account query", () => {
   applet._spawnAuxJson = (argv, callback) => {
     assert.deepEqual(argv, [
       "codex-usage", "consumption", "--account", "alpha", "--amount", "2",
-      "--unit", "days", "--limit-window", "all", "--format", "json",
+      "--unit", "days", "--pool", "main", "--limit-window", "all", "--format", "json",
     ]);
     callback({
       account_id: "alpha",

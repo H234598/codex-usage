@@ -16,6 +16,7 @@
         "refresh-section",
         "display-section",
         "consumption-section",
+        "reset-display-section",
         "reactivation-options-section"
       ]
     },
@@ -80,7 +81,13 @@
       "title": "Verbrauchszeiträume",
       "keys": [
         "account-consumption-settings",
-        "show-consumption-delta",
+        "show-consumption-delta"
+      ]
+    },
+    "reset-display-section": {
+      "type": "section",
+      "title": "Reset-Anzeige",
+      "keys": [
         "account-reset-display-settings"
       ]
     },
@@ -101,9 +108,9 @@
         "account-duration-styles"
       ]
     },
-    "display-target-section": {
-      "type": "section",
-      "title": "Anzeige:",
+  "display-target-section": {
+    "type": "section",
+    "title": "Formatierungsorte",
       "keys": [
         "account-display-settings",
         "account-style-targets"
@@ -949,7 +956,7 @@
   "account-style-targets": {
     "type": "list",
     "description": "Anzeigeziele für Account-ID, Label, Kürzel, Reset, Verbrauch und Prognose",
-    "tooltip": "Jedes Element kann je Oberfläche angezeigt und formatiert werden.",
+    "tooltip": "Jede Zeile ist genau ein Element. Oberfläche und Element werden getrennt gespeichert; die Liste enthält keine Sammelwerte.",
     "columns": [
       {
         "id": "account",
@@ -964,7 +971,7 @@
           "Prozent": 0,
           "Datum": 1,
           "Uhrzeit": 2,
-          "Restlaufzeit": 3,
+          "Reset-Restlaufzeit": 3,
           "Verbrauchszeitraum": 4,
           "Zeit bis Tokenende": 5,
           "Usage-Resets": 6,
@@ -1013,8 +1020,8 @@
   },
   "routing-credit-overrides": {
     "type": "list",
-    "description": "Abweichende Credit-Richtlinien",
-    "tooltip": "Priorität: Job, Gruppe, Agentin, Account, global. Gruppen-, Agentinnen- und Job-IDs müssen den IDs aus codex-master-mcp entsprechen.",
+    "description": "Abweichende Credit-Richtlinien (Eigene Regel)",
+    "tooltip": "Eigene Regel bedeutet: Diese Zeile überschreibt die globale Regel nur für die angegebene Ebene und ID. Priorität: Job, Gruppe, Agentin, Account, global.",
     "columns": [
       {
         "id": "scope",
@@ -1057,7 +1064,7 @@
   "account-panel-settings": {
     "type": "list",
     "description": "Panelwerte pro Account",
-    "tooltip": "Jeder Account kann bis zu zwei Quellen anzeigen. Stumm betrifft nur die Statusleiste.",
+    "tooltip": "Jeder Account kann bis zu drei Quellen anzeigen. Die vier Limittypen sind 5h, Woche, 30-Tage-Limit und Spark. Stumm betrifft nur die Statusleiste.",
     "columns": [
       {
         "id": "account",
@@ -1109,6 +1116,22 @@
           "Spark weiteres Limit": 7,
           "30-Tage-Limit": 8
         }
+      },
+      {
+        "id": "slot3",
+        "title": "Wert 3",
+        "type": "integer",
+        "options": {
+          "Aus": 0,
+          "5h": 1,
+          "Woche": 2,
+          "Mittelwert": 3,
+          "Spark 5h": 4,
+          "Spark Woche": 5,
+          "Spark Mittelwert": 6,
+          "Spark weiteres Limit": 7,
+          "30-Tage-Limit": 8
+        }
       }
     ],
     "height": 220,
@@ -1118,7 +1141,7 @@
   "account-consumption-settings": {
     "type": "list",
     "description": "Limitverbrauch pro Account und Zeitraum",
-    "tooltip": "Das Applet fragt Verbrauchswerte über codex-usage ab; es rechnet keine Historie im JavaScript.",
+    "tooltip": "Das Applet fragt Verbrauchswerte über codex-usage ab; es rechnet keine Historie im JavaScript. Limitfenster: 5h, Woche, 30 Tage oder Spark.",
     "columns": [
       {
         "id": "account",
@@ -1134,6 +1157,18 @@
       {
         "id": "show-tooltip",
         "title": "Hover anzeigen",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "id": "forecast-show-panel",
+        "title": "Tokenende Leiste",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "id": "forecast-show-tooltip",
+        "title": "Tokenende Hover",
         "type": "boolean",
         "default": true
       },
@@ -1164,7 +1199,8 @@
         "options": {
           "5h": "short",
           "Woche": "weekly",
-          "Beide": "all"
+          "30 Tage": "monthly",
+          "Spark": "spark"
         },
         "default": "short"
       },
@@ -1184,7 +1220,26 @@
         "id": "custom-format",
         "title": "Eigenes Format",
         "type": "string",
-        "tooltip": "Nur bei Format Benutzerdefiniert. Platzhalter: {value} = Verbrauch in Prozentpunkten, {period} = Zeitraum, {window} = Limitfenster (5h/Woche/30d), {coverage} = Datenqualität. Beispiel: Δ{period} {value}pp ({window}, {coverage}).",
+        "description": "Hilfe: Nur bei Benutzerdefiniert. Platzhalter {value}, {period}, {window}, {coverage}; Beispiel: Δ{period} {value}pp ({window}, {coverage}).",
+        "tooltip": "{value}=Verbrauch in Prozentpunkten, {period}=Zeitraum, {window}=5h/Woche/30d/Spark, {coverage}=Datenqualität.",
+        "default": ""
+      },
+      {
+        "id": "forecast-format",
+        "title": "Tokenende Format",
+        "type": "string",
+        "options": {
+          "Kompakt": "compact",
+          "Ausführlich": "verbose",
+          "Benutzerdefiniert": "custom"
+        },
+        "default": "compact"
+      },
+      {
+        "id": "forecast-custom-format",
+        "title": "Eigenes Tokenende-Format",
+        "type": "string",
+        "description": "Hilfe: {value}=Restlaufzeit, {duration}=formatierte Dauer. Beispiel: Tokenende {value}.",
         "default": ""
       },
       {

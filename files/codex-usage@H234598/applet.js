@@ -2038,7 +2038,8 @@ CodexUsageApplet.prototype = {
             order: order,
             muted: false,
             slot1: this._panelSourceValue(this.panelPercentSource),
-            slot2: 0
+            slot2: 0,
+            slot3: 0
         };
     },
 
@@ -2068,11 +2069,15 @@ CodexUsageApplet.prototype = {
             account: account,
             "show-panel": false,
             "show-tooltip": true,
+            "forecast-show-panel": false,
+            "forecast-show-tooltip": true,
             amount: 1,
             unit: "hours",
             "limit-window": "short",
             format: "compact",
             "custom-format": "",
+            "forecast-format": "compact",
+            "forecast-custom-format": "",
             "hide-when-zero": false,
             "show-coverage-marker": true
         };
@@ -2089,13 +2094,20 @@ CodexUsageApplet.prototype = {
         let customFormat = row["custom-format"] === undefined
             ? ""
             : this._strictText(row["custom-format"], 160);
+        let forecastShowPanel = row["forecast-show-panel"] === undefined ? row["show-panel"] : row["forecast-show-panel"];
+        let forecastShowTooltip = row["forecast-show-tooltip"] === undefined ? row["show-tooltip"] : row["forecast-show-tooltip"];
+        let forecastFormat = row["forecast-format"] === undefined ? "compact" : this._strictText(row["forecast-format"], 16);
+        let forecastCustomFormat = row["forecast-custom-format"] === undefined ? "" : this._strictText(row["forecast-custom-format"], 160);
         if (
             typeof row["show-panel"] !== "boolean" ||
             typeof row["show-tooltip"] !== "boolean" ||
+            typeof forecastShowPanel !== "boolean" ||
+            typeof forecastShowTooltip !== "boolean" ||
             !Number.isInteger(amount) || amount < 1 || amount > 365 ||
             ["minutes", "hours", "days", "weeks"].indexOf(unit) === -1 ||
-            ["short", "weekly", "all"].indexOf(limitWindow) === -1 ||
+            ["short", "weekly", "monthly", "spark", "all"].indexOf(limitWindow) === -1 ||
             ["compact", "compact-token", "verbose", "custom"].indexOf(format) === -1 ||
+            ["compact", "verbose", "custom"].indexOf(forecastFormat) === -1 ||
             typeof row["hide-when-zero"] !== "boolean" ||
             typeof row["show-coverage-marker"] !== "boolean"
         ) {
@@ -2105,11 +2117,15 @@ CodexUsageApplet.prototype = {
             account: account,
             "show-panel": row["show-panel"],
             "show-tooltip": row["show-tooltip"],
+            "forecast-show-panel": forecastShowPanel,
+            "forecast-show-tooltip": forecastShowTooltip,
             amount: amount,
             unit: unit,
             "limit-window": limitWindow,
             format: format,
             "custom-format": customFormat,
+            "forecast-format": forecastFormat,
+            "forecast-custom-format": forecastCustomFormat,
             "hide-when-zero": row["hide-when-zero"],
             "show-coverage-marker": row["show-coverage-marker"]
         };
@@ -2194,23 +2210,25 @@ CodexUsageApplet.prototype = {
         let order = this._strictIntegerSetting(row.order);
         let slot1 = this._strictIntegerSetting(row.slot1);
         let slot2 = this._strictIntegerSetting(row.slot2);
+        let slot3 = row.slot3 === undefined ? 0 : this._strictIntegerSetting(row.slot3);
         if (
             !Number.isInteger(order) || order < 1 || order > 100 ||
             typeof row.muted !== "boolean" ||
             !Number.isInteger(slot1) || slot1 < 0 || slot1 > 8 ||
-            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 8
+            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 8 ||
+            !Number.isInteger(slot3) || slot3 < 0 || slot3 > 8
         ) {
             return null;
         }
-        if (slot1 !== 0 && slot1 === slot2) {
-            slot2 = 0;
-        }
+        if (slot1 !== 0 && slot1 === slot2) { slot2 = 0; }
+        if (slot3 !== 0 && (slot3 === slot1 || slot3 === slot2)) { slot3 = 0; }
         return {
             account: account,
             order: order,
             muted: row.muted,
             slot1: slot1,
-            slot2: slot2
+            slot2: slot2,
+            slot3: slot3
         };
     },
 
@@ -4432,6 +4450,8 @@ CodexUsageApplet.prototype = {
             String(request.amount),
             "--unit",
             request.unit,
+            "--pool",
+            request.limitWindow === "spark" ? "gpt-5.3-codex-spark" : "main",
             "--limit-window",
             request.limitWindow,
             "--format",
@@ -6857,12 +6877,16 @@ CodexUsageApplet.prototype = {
     },
 
     _forecastWindowPart: function(window, row, surface, remaining) {
+        let forecastVisible = surface === "panel"
+            ? (row["forecast-show-panel"] === undefined ? row["show-panel"] : row["forecast-show-panel"])
+            : (surface === "hover"
+                ? (row["forecast-show-tooltip"] === undefined ? row["show-tooltip"] : row["forecast-show-tooltip"])
+                : true);
         let visible = this._elementTargetEnabled(
             row.account,
             "forecast",
             surface,
-            surface === "panel" ? row["show-panel"] :
-                (surface === "hover" ? row["show-tooltip"] : true)
+            forecastVisible
         );
         if (!visible) {
             return null;
@@ -6881,7 +6905,15 @@ CodexUsageApplet.prototype = {
         let forecastText = estimate === null || estimate === undefined
             ? "—"
             : "≈ " + duration + marker;
-        let plain = "Zeit bis Tokenende " + forecastText;
+        let forecastFormat = row["forecast-format"] || "compact";
+        let plain = forecastFormat === "verbose"
+            ? "Zeit bis Tokenende: " + forecastText
+            : (forecastFormat === "custom"
+                ? this._customForecastText(row["forecast-custom-format"], {
+                    value: forecastText,
+                    duration: duration
+                })
+                : "Zeit bis Tokenende " + forecastText);
         let markup = estimate === null || estimate === undefined
             ? this._escapeMarkup(plain)
             : this._styleSpan(forecastText, durationStyle, remaining, surface);
@@ -6895,6 +6927,13 @@ CodexUsageApplet.prototype = {
         let text = typeof template === "string" && template ? template :
             "Δ{period} {value}pp";
         return text.replace(/\{(value|period|window|coverage)\}/g, function(_match, key) {
+            return values[key];
+        });
+    },
+
+    _customForecastText: function(template, values) {
+        let text = typeof template === "string" && template ? template : "Zeit bis Tokenende {value}";
+        return text.replace(/\{(value|duration)\}/g, function(_match, key) {
             return values[key];
         });
     },
@@ -7812,7 +7851,13 @@ CodexUsageApplet.prototype = {
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
         let monthly = this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000));
-        let values = [five, week, monthly].filter(function(value) { return value !== null; });
+        let sparkPool = this._modelPool(usage, "gpt-5.3-codex-spark");
+        let sparkValues = sparkPool && Array.isArray(sparkPool.windows)
+            ? sparkPool.windows.map(Lang.bind(this, function(window) {
+                return this._remainingPercent(window);
+            })).filter(function(value) { return value !== null; })
+            : [];
+        let values = [five, week, monthly].concat(sparkValues).filter(function(value) { return value !== null; });
         if (!values.length) {
             if (usage.status === "partial") {
                 return "codex-usage-warning";
@@ -7823,11 +7868,15 @@ CodexUsageApplet.prototype = {
         let fiveThreshold = Number(alert["five-threshold"]);
         let weeklyThreshold = Number(alert["weekly-threshold"]);
         let monthlyThreshold = Number(alert["monthly-threshold"]);
+        let sparkThreshold = Number(alert["spark-threshold"]);
         let critical = values.some(function(value) { return value <= 5; });
         let warning = usage.status === "partial" ||
             (five !== null && five <= fiveThreshold) ||
             (week !== null && week <= weeklyThreshold);
         warning = warning || (monthly !== null && monthly <= monthlyThreshold);
+        warning = warning || sparkValues.some(function(value) {
+            return Number.isFinite(sparkThreshold) && value <= sparkThreshold;
+        });
         if (critical) {
             return "codex-usage-critical";
         }

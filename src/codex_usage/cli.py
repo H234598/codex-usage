@@ -560,7 +560,7 @@ def _build_parser() -> argparse.ArgumentParser:
     consumption.add_argument("--amount", type=int, required=True)
     consumption.add_argument("--unit", choices=("minutes", "hours", "days"), required=True)
     consumption.add_argument("--pool", default="main")
-    consumption.add_argument("--limit-window", choices=("short", "weekly", "all"), default="short")
+    consumption.add_argument("--limit-window", choices=("short", "weekly", "monthly", "spark", "all"), default="short")
     consumption.add_argument("--path", type=Path)
     consumption.add_argument("--now")
     consumption.add_argument("--format", choices=("table", "json"), default="table")
@@ -1057,6 +1057,8 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
     durations = {
         "short": (18_000,),
         "weekly": (604_800,),
+        "monthly": (2_592_000,),
+        "spark": (18_000, 604_800, 2_592_000),
         "all": (18_000, 604_800),
     }[args.limit_window]
     windows: list[ConsumptionWindow] = []

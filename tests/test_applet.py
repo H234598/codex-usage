@@ -54,6 +54,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "muted",
         "slot1",
         "slot2",
+        "slot3",
     ]
     assert panel_table["columns"][1]["min"] == 1
     assert panel_table["columns"][1]["max"] == 100
@@ -132,7 +133,7 @@ def test_display_table_replaces_panel_tag_column() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
 
     assert [column["id"] for column in settings["account-panel-settings"]["columns"]] == [
-        "account", "order", "muted", "slot1", "slot2",
+        "account", "order", "muted", "slot1", "slot2", "slot3",
     ]
     table = settings["account-display-settings"]
     assert [column["id"] for column in table["columns"]] == [
@@ -155,15 +156,16 @@ def test_consumption_table_exposes_per_account_queries() -> None:
 
     assert settings["layout"]["consumption-section"]["title"] == "Verbrauchszeiträume"
     assert [column["id"] for column in table["columns"]] == [
-        "account", "show-panel", "show-tooltip", "amount", "unit",
-        "limit-window", "format", "custom-format", "hide-when-zero",
-        "show-coverage-marker",
+        "account", "show-panel", "show-tooltip", "forecast-show-panel",
+        "forecast-show-tooltip", "amount", "unit", "limit-window", "format",
+        "custom-format", "forecast-format", "forecast-custom-format",
+        "hide-when-zero", "show-coverage-marker",
     ]
     columns = {column["id"]: column for column in table["columns"]}
     assert columns["show-panel"]["default"] is False
     assert columns["show-tooltip"]["default"] is True
     assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days", "weeks"}
-    assert set(columns["limit-window"]["options"].values()) == {"short", "weekly", "all"}
+    assert set(columns["limit-window"]["options"].values()) == {"short", "weekly", "monthly", "spark"}
     assert set(columns["format"]["options"].values()) == {
         "compact", "compact-token", "verbose", "custom"
     }
@@ -213,7 +215,7 @@ def test_format_and_display_sections_use_new_labels() -> None:
         "display-target-section",
     ]
     assert layout["formatting-section"]["title"] == "Hervorhebungen und Design:"
-    assert layout["display-target-section"]["title"] == "Anzeige:"
+    assert layout["display-target-section"]["title"] == "Formatierungsorte"
     assert layout["percent-style-section"]["title"] == "Verbleibendes Tokenlimit in %"
     assert layout["date-style-section"]["title"] == "OpenAI - Reset: Datum des Reset"
     assert layout["time-style-section"]["title"] == "OpenAI - Reset: Uhrzeit"
@@ -384,7 +386,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "Prozent": 0,
         "Datum": 1,
         "Uhrzeit": 2,
-        "Restlaufzeit": 3,
+        "Reset-Restlaufzeit": 3,
         "Verbrauchszeitraum": 4,
         "Zeit bis Tokenende": 5,
         "Usage-Resets": 6,
