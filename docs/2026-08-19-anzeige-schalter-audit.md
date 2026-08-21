@@ -1792,3 +1792,16 @@ und Ruff sauber.
 unendliche Forecast-Division auf. Ein kleinster positiver Float als Rate führte
 dadurch zu `OverflowError`; nicht darstellbare Prognosen bleiben jetzt leer.
 `tests/test_consumption.py`: 20/20 bestanden; Mypy und Ruff sauber.
+
+## Runde 174: Gesamtverifikation
+
+Die vollständige Python-Suite lief nach dem Verbrauchsprognose-Fix mit
+**2174 bestanden, 1 übersprungen und 1 externer PyGObject-Warnung** in 86,36 s.
+Die Warnung betrifft weiterhin die veraltete `GLib.unix_signal_add_full`-API
+außerhalb des Repositories; keine Testfehler.
+
+## Runde 175: Gesamt-Mypy und Ruff
+
+Nach dem vollständigen Testlauf meldet `mypy src/codex_usage` weiterhin keine
+Fehler in 35 Quelldateien. Der aggregierte Ruff-Lauf über Produktion, Scripts,
+Launcher und Tests ist ebenfalls sauber.
