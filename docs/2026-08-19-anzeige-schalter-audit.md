@@ -4450,6 +4450,19 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 509: Auth-Quellen-Symlinks im Dry-Run fail-closed
+
+`_classify_source()` prüfte bisher nur den finalen Quellpfad und erkannte
+einen Symlink-Elternpfad erst beim Apply-Lesen. Außerdem wurde ein symlinkendes
+Canonical-Ziel bei identischem Pfad vor der Symlink-Prüfung als `canonical`
+klassifiziert. Die bestehende Ancestor-Prüfung läuft jetzt vor der
+Canonical-Entscheidung; beide Fälle erscheinen bereits im Dry-Run als
+`conflict`.
+
+Regressionen für Symlink-Ancestor und symlinkendes Ziel ergänzt. `pytest -q
+tests/test_profile_migration.py`: 52/52 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 508: Doppelte Auth-Migrations-Ressourcen abgewiesen
 
 `_validate_migration_plan()` erlaubte bisher dieselbe Auth-Quelle oder

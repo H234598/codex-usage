@@ -261,10 +261,14 @@ def _classify_source(source: Path | None, target: Path) -> tuple[str, str | None
     if source is None:
         return "missing", "no unambiguous auth source"
     source = _require_absolute(source, "auth source")
-    if source == target:
-        return "canonical", None
     if source.is_symlink():
         return "conflict", "auth source is a symlink"
+    try:
+        assert_no_symlink_ancestors(source, label="auth source")
+    except ValueError as exc:
+        return "conflict", str(exc)
+    if source == target:
+        return "canonical", None
     if not source.is_file():
         return "missing", "auth source does not exist"
     if target.is_symlink() or target.exists():
