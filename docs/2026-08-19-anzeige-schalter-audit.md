@@ -2137,3 +2137,12 @@ warning` in 87.70s. Die einzige Warnung bleibt externe PyGObject-
 Deprecation außerhalb des Repositories. `mypy src/codex_usage` meldet keine
 Fehler in 35 Quelldateien; der aggregierte Ruff-Lauf über Produktion, Scripts,
 Launcher und Tests ist sauber.
+
+## Runde 213: Gemeinsamer Malformed-Payload-Grenztest
+
+Ein kleiner assert-basierter Grenztest speiste sechs Nicht-Objekt-Varianten
+(`None`, Liste, String, Zahl, Boolean, beliebiges Objekt) in Bridge-Ingest,
+Auth-Metadaten, State-Deserializer sowie Usage-Limits-Parser ein. Alle sechs
+Varianten wurden kontrolliert zurückgewiesen bzw. als sichere Leerwerte
+behandelt; kein roher `TypeError` oder `AttributeError` blieb an diesen
+öffentlichen Eingangsgrenzen.
