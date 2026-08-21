@@ -115,6 +115,20 @@ def test_identity_helpers_skip_candidates_without_usable_urls():
     ) == [valid]
 
 
+@pytest.mark.parametrize("candidates", [None, 1, True, object()])
+def test_identity_helpers_reject_non_iterable_candidates(candidates):
+    assert backend_identity_from_candidates(candidates) == (None, None)  # type: ignore[arg-type]
+    assert backend_plan_type_from_candidates(candidates) is None  # type: ignore[arg-type]
+    assert (
+        select_identity_consistent_candidates(  # type: ignore[arg-type]
+            candidates,
+            auth_user_id=None,
+            auth_account_id=None,
+        )
+        == []
+    )
+
+
 def test_identity_helpers_bound_arbitrary_candidate_iterators():
     def overlong_candidates():
         for _ in range(51):

@@ -1938,33 +1938,6 @@ Testfehler.
 `mypy src/codex_usage` meldet keine Fehler in 35 Quelldateien. Der aggregierte
 Ruff-Lauf über Produktion, Scripts, Launcher und Tests ist ebenfalls sauber.
 
-## Runde 201: Extractor-Eingangsgrenzen
-
-`extractor.extract_windows()` nahm malformed `body_text`, nicht-iterierbare
-JSON-Candidates, fehlerhafte Textquellen oder ungültige Capture-Zeitpunkte
-ungeprüft an. Browser-/Parser-Aufrufe konnten dadurch mit `AttributeError` oder
-`TypeError` abbrechen. Ungültige Eingänge werden jetzt als leere Quelle bzw.
-aktueller Zeitpunkt behandelt; gültige Quellen bleiben unverändert.
-`tests/test_extractor.py`: 195/195 bestanden; Mypy für Source und Ruff für
-betroffene Dateien sauber.
-
-## Runde 202: Health-Event-Clock fail-closed
-
-`health.record_health_event()` übernahm truthy Nicht-datetime-Werte als
-`now` und rief darauf `.astimezone()` auf. Fehlertelemetrie konnte dadurch
-selbst mit `AttributeError` abbrechen. Der Event-Clock akzeptiert jetzt nur
-echte `datetime`-Werte und fällt sonst auf aktuelle UTC-Zeit zurück.
-`tests/test_health.py`: 20/20 bestanden; Mypy für Source und Ruff für
-betroffene Dateien sauber.
-
-## Runde 203: Consumption-Eingang validiert Sample-Iterator
-
-`consumption.calculate_consumption()` übergab nicht-iterierbare `samples`
-direkt an `itertools.islice`; API-Aufrufer erhielten rohen `TypeError` statt
-kontrollierter Eingabefehler. Der Sample-Iterator wird jetzt abgefangen und
-als `ValueError("samples are invalid")` gemeldet. `tests/test_consumption.py`:
-24/24 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.
-
 ## Runde 191: Scheduler-Reset- und Stabilisierungsguards
 
 `scheduler._watch_core_resets_current()` und `_stabilize_main_pool()` griffen
@@ -2053,3 +2026,38 @@ kontrolliert zu `IntegrationInvalidSource`. `tests/test_integration_snapshot.py`
 
 `mypy src/codex_usage` meldet keine Fehler in 35 Quelldateien. Der aggregierte
 Ruff-Lauf über Produktion, Scripts, Launcher und Tests ist ebenfalls sauber.
+
+## Runde 201: Extractor-Eingangsgrenzen
+
+`extractor.extract_windows()` nahm malformed `body_text`, nicht-iterierbare
+JSON-Candidates, fehlerhafte Textquellen oder ungültige Capture-Zeitpunkte
+ungeprüft an. Browser-/Parser-Aufrufe konnten dadurch mit `AttributeError` oder
+`TypeError` abbrechen. Ungültige Eingänge werden jetzt als leere Quelle bzw.
+aktueller Zeitpunkt behandelt; gültige Quellen bleiben unverändert.
+`tests/test_extractor.py`: 195/195 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
+
+## Runde 202: Health-Event-Clock fail-closed
+
+`health.record_health_event()` übernahm truthy Nicht-datetime-Werte als
+`now` und rief darauf `.astimezone()` auf. Fehlertelemetrie konnte dadurch
+selbst mit `AttributeError` abbrechen. Der Event-Clock akzeptiert jetzt nur
+echte `datetime`-Werte und fällt sonst auf aktuelle UTC-Zeit zurück.
+`tests/test_health.py`: 20/20 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
+
+## Runde 203: Consumption-Eingang validiert Sample-Iterator
+
+`consumption.calculate_consumption()` übergab nicht-iterierbare `samples`
+direkt an `itertools.islice`; API-Aufrufer erhielten rohen `TypeError` statt
+kontrollierter Eingabefehler. Der Sample-Iterator wird jetzt abgefangen und
+als `ValueError("samples are invalid")` gemeldet. `tests/test_consumption.py`:
+24/24 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.
+
+## Runde 204: Identity-Candidate-Iterator validiert
+
+`identity._usable_candidates()` übergab nicht-iterierbare Candidate-Container
+direkt an `islice`. Identitäts- und Plan-Typ-Helfer konnten dadurch mit rohem
+`TypeError` abbrechen. Ungültige Container liefern jetzt eine leere Candidate-
+Menge. `tests/test_identity.py`: 27/27 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
