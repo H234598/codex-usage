@@ -333,7 +333,7 @@ class AccountUsage:
     state_generation: int | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.main is not None or not (self.five_hour or self.weekly):
+        if self.main is not None:
             return
         windows = tuple(
             replace(window, duration_seconds=duration)
@@ -343,8 +343,10 @@ class AccountUsage:
                 (self.five_hour, 18_000),
                 (self.weekly, 604_800),
             )
-            if window is not None
+            if isinstance(window, LimitWindow)
         )
+        if not windows:
+            return
         object.__setattr__(
             self,
             "main",

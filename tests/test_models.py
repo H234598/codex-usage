@@ -95,3 +95,28 @@ def test_account_usage_as_dict_keeps_malformed_window_values_json_safe():
     assert payload["five_hour"]["name"] is None
     assert payload["five_hour"]["used"] is None
     assert payload["five_hour"]["reset_at"] is None
+
+
+@pytest.mark.parametrize(
+    ("five_hour", "weekly", "expected_windows"),
+    [
+        ([], None, ()),
+        (["malformed"], LimitWindow(name="weekly", remaining=80), ("weekly",)),
+    ],
+)
+def test_account_usage_skips_malformed_legacy_windows(
+    five_hour, weekly, expected_windows
+):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        five_hour=five_hour,  # type: ignore[arg-type]
+        weekly=weekly,
+    )
+
+    if expected_windows:
+        assert usage.main is not None
+        assert tuple(window.name for window in usage.main.windows) == expected_windows
+    else:
+        assert usage.main is None

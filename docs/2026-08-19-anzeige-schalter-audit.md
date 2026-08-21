@@ -1897,3 +1897,13 @@ und Ruff für betroffene Dateien sauber.
 Identitäten konnten den CLI-JSON-Output mit `TypeError` abbrechen. Beide
 Felder werden jetzt als String oder `null` ausgegeben. `tests/test_routing.py`:
 96/96 bestanden; Mypy und Ruff für betroffene Dateien sauber.
+
+## Runde 186: Legacy-Fenster-Konstruktor
+
+`AccountUsage.__post_init__()` griff bei truthy malformed `five_hour`- oder
+`weekly`-Werten direkt auf `duration_seconds` zu. Ein beschädigtes Legacy-
+Fenster konnte die Usage-Konstruktion mit `AttributeError` abbrechen. Die
+automatische Main-Pool-Synthese berücksichtigt jetzt nur echte
+`LimitWindow`-Objekte und übernimmt gültige Geschwisterfenster weiter.
+`tests/test_models.py`, `tests/test_render.py` und `tests/test_state.py`:
+282/282 bestanden; Mypy und Ruff für betroffene Dateien sauber.
