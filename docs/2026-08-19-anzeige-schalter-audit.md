@@ -4080,3 +4080,16 @@ erhalten.
 
 `pytest -q tests/test_terminal.py`: 27/27 bestanden; Modul-Coverage 87 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 421: Formatierungs-Selector-GUI
+
+`FormatTableSelector` auf genau ein sichtbares Gtk-Stack-Child, zentrale
+Dropdown-Auswahl, schema-gefilterte Tabellen-IDs, fehlende-Definitionen-
+Fallback, titel-/Selection-Synchronisation und unterdrückte Rückschreibungen
+bei Settings-Reload geprüft. Tabellen bleiben getrennt; Stack-Transition ist
+deaktiviert. Keine neue reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_format_table_selector.py tests/test_applet.py`:
+32/32 bestanden. `node --test tests/applet_runtime.test.js`: 395/395
+bestanden. JSON-Schema, Ruff und `git diff --check` sauber. Bekannte GTK-
+Deprecation-Warnungen bleiben extern/verhaltensneutral.
