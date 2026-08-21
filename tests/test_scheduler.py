@@ -261,6 +261,27 @@ def test_fetch_all_rejects_invalid_config(config):
         fetch_all(config, ())  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("auth_json_path", [[], "invalid", 1, object()])
+def test_scheduler_rejects_invalid_auth_json_path(auth_json_path):
+    config = AppConfig(accounts=())
+    with pytest.raises(ValueError, match="auth_json_path is invalid"):
+        fetch_all(config, (), auth_json_path=auth_json_path)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="auth_json_path is invalid"):
+        watch(
+            config,
+            (),
+            output="json",
+            auth_json_path=auth_json_path,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="auth_json_path is invalid"):
+        watchdog(
+            config,
+            (),
+            output="json",
+            auth_json_path=auth_json_path,  # type: ignore[arg-type]
+        )
+
+
 def test_fetch_all_rejects_oversized_config_account_iterators(monkeypatch):
     monkeypatch.setattr(scheduler_module, "MAX_SCHEDULER_ACCOUNTS", 2)
     accounts = (

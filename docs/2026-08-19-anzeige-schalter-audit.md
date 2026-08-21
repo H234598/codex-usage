@@ -2462,3 +2462,15 @@ optionale Snapshot-/Config-/TLS-Pfade vor Handler- und Socket-Aufbau direkt auf
 Attribute zu bzw. reichte sie an I/O weiter. Guards prüfen diese Grenzen jetzt
 vor TLS und Bind. `tests/test_bridge.py`: 254/254 bestanden; Mypy für Source
 und Ruff für die betroffenen Dateien sauber.
+
+## Runde 249: Scheduler validiert optionalen Auth-Pfad
+
+`scheduler.fetch_all()`, `watch()` und `watchdog()` übernahmen Fremdtypen für
+`auth_json_path`. `fetch_all()` brach dadurch roh mit `AttributeError` in der
+Pfadauflösung ab; `watchdog()` versteckte denselben Fehler als Fehlerusage.
+Ein gemeinsamer Guard weist ungültige Werte jetzt vor Scheduler-I/O als
+`ValueError("auth_json_path is invalid")` zurück. `tests/test_scheduler.py`:
+196/196 fokussierte Tests bestanden; Mypy für `scheduler.py` und Ruff für die
+betroffenen Dateien sauber. Der bestehende Mypy-Fehler im Testmodul für den
+absichtlich falsch typisierten `LimitWindow(remaining="97")`-Fixture bleibt
+unverändert.

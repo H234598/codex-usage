@@ -83,6 +83,12 @@ def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:
     return account_list
 
 
+def _validated_auth_json_path(auth_json_path: Path | None) -> Path | None:
+    if auth_json_path is not None and not isinstance(auth_json_path, Path):
+        raise ValueError("auth_json_path is invalid")
+    return auth_json_path
+
+
 def fetch_all(
     config: AppConfig,
     accounts: Iterable[Account],
@@ -95,6 +101,7 @@ def fetch_all(
 ) -> list[AccountUsage]:
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
+    auth_json_path = _validated_auth_json_path(auth_json_path)
     account_list = _bounded_account_list(accounts)
     # A single-account command must not bypass ambiguity detection by selecting
     # only one row from a configuration that contains a shared user identity.
@@ -1120,6 +1127,7 @@ def watch(
 ) -> None:
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
+    auth_json_path = _validated_auth_json_path(auth_json_path)
     interval = config.interval_seconds if interval_seconds is None else interval_seconds
     if (
         isinstance(interval, bool)
@@ -1230,6 +1238,7 @@ def watchdog(
 ) -> list[AccountUsage]:
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
+    auth_json_path = _validated_auth_json_path(auth_json_path)
     now = datetime.now(tz=LOCAL_TZ)
     account_list = _bounded_account_list(accounts)
     effective_backend = "direct" if (direct or auth_json_path is not None) else None
