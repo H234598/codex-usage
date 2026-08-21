@@ -3927,6 +3927,18 @@ Ressourcen werden im `finally`-Pfad geschlossen.
 `pytest -q tests/test_app_server.py`: 98/98 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 452: Backend-Identitätsaggregation und Planbindung
+
+`identity.py` auf Kandidaten-Limits, URL-/Payload-Validierung, Priorisierung
+von WHAM-Usage-Antworten, partielle Identitäten, Alias-Konten, Mehrkonto-
+Konflikte und Auth-/Planbindung geprüft. Identitätsfelder und Plan-Typen
+bleiben bounded und fail-closed; unvollständige oder mehrdeutige Kandidaten
+werden verworfen oder führen kontrolliert zu einem Attributionsfehler. Keine
+neue reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_identity.py`: 28/28 bestanden; Modul-Coverage 81 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 451: Bridge-Debug-Secret-Redaction
 
 `bridge._sanitize_debug_text()` redigierte bisher nur camelCase-Tokenfelder
