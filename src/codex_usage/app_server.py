@@ -625,6 +625,8 @@ def _raise_rpc_error(error: Any) -> None:
 def _windows_from_response(
     payload: dict[str, Any],
 ) -> tuple[LimitWindow | None, LimitWindow | None]:
+    if not isinstance(payload, dict):
+        raise AppServerProtocolError("app server response is not an object")
     snapshot = payload.get("rateLimits")
     raw_by_id = payload.get("rateLimitsByLimitId")
     if raw_by_id is not None and not isinstance(raw_by_id, dict):
@@ -768,6 +770,8 @@ def _missing_usage_limits_error(
 
 
 def _unsupported_window_durations(payload: dict[str, Any]) -> set[int]:
+    if not isinstance(payload, dict):
+        return set()
     snapshots: list[dict[str, Any]] = []
     top_level = payload.get("rateLimits")
     if isinstance(top_level, dict):

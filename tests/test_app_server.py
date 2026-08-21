@@ -29,6 +29,7 @@ from codex_usage.app_server import (
     _should_refresh,
     _StderrReader,
     _stop_process,
+    _unsupported_window_durations,
     _window,
     _windows_from_response,
     fetch_account_usage_app_server,
@@ -86,6 +87,16 @@ def test_app_server_symlink_check_rejects_dotdot_bypass(tmp_path):
 
     with pytest.raises(AppServerAuthError, match="must not contain symlinks"):
         app_server_module._assert_no_symlink_ancestors(redirected / ".." / "target")
+
+
+@pytest.mark.parametrize("payload", [None, [], "invalid", 1, True, object()])
+def test_app_server_response_helpers_reject_non_object_payloads(payload):
+    with pytest.raises(AppServerProtocolError, match="response is not an object"):
+        _windows_from_response(payload)  # type: ignore[arg-type]
+    assert _unsupported_window_durations(payload) == set()  # type: ignore[arg-type]
+    assert _missing_usage_limits_error(payload, None, None, None) == (
+        "usage limits not found in app server response"
+    )  # type: ignore[arg-type]
 
 
 def test_app_server_symlink_check_scans_after_missing_segment(tmp_path):

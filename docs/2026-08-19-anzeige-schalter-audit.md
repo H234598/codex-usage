@@ -2061,3 +2061,13 @@ direkt an `islice`. Identitäts- und Plan-Typ-Helfer konnten dadurch mit rohem
 `TypeError` abbrechen. Ungültige Container liefern jetzt eine leere Candidate-
 Menge. `tests/test_identity.py`: 27/27 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 205: App-Server-Response-Helper validieren Payload-Typ
+
+`app_server._windows_from_response()`, `_unsupported_window_durations()` und
+`_missing_usage_limits_error()` griffen bei non-dict Payloads direkt auf `.get()`
+zu. Beschädigte RPC-Antworten konnten dadurch mit rohem `AttributeError`
+abbrechen. Fenster-Parsing meldet jetzt kontrolliert
+`AppServerProtocolError`; Diagnose liefert fail-closed keine unsupported
+Fenster. `tests/test_app_server.py`: 87/87 bestanden; Mypy für Source und Ruff
+für betroffene Dateien sauber.
