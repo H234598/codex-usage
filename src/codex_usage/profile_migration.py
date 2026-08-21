@@ -257,7 +257,7 @@ def _source_for_account(
     candidates.extend(root / f"{account.id}.json" for root in search_roots)
     existing_by_normalized: dict[Path, Path] = {}
     for path in candidates:
-        if path.exists():
+        if path.exists() or path.is_symlink():
             normalized = Path(os.path.normpath(str(path)))
             existing_by_normalized.setdefault(normalized, path)
     existing = tuple(existing_by_normalized.values())

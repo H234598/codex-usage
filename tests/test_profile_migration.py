@@ -112,6 +112,23 @@ def test_auth_migration_plan_classifies_symlink_ancestor_source_as_conflict(tmp_
     assert "symlink ancestors" in (plan.items[0].reason or "")
 
 
+def test_auth_migration_plan_classifies_broken_search_symlink_as_conflict(tmp_path):
+    search_root = tmp_path / "search"
+    candidate = search_root / "alpha" / "auth.json"
+    candidate.parent.mkdir(parents=True)
+    candidate.symlink_to(tmp_path / "missing-auth.json")
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    plan = plan_auth_migration((account,), search_roots=(search_root,))
+
+    assert plan.items[0].status == "conflict"
+    assert plan.items[0].reason == "auth source is a symlink"
+
+
 def test_auth_migration_plan_does_not_classify_symlink_target_as_canonical(tmp_path):
     profile = tmp_path / "profile"
     target = profile / "codex-home" / "auth.json"

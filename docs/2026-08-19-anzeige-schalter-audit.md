@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 515: Broken-Auth-Symlink im Suchroot erkannt
+
+`_source_for_account()` berücksichtigte Kandidaten bisher nur mit
+`Path.exists()`. Ein kaputter finaler Symlink im Suchroot wurde dadurch als
+fehlende Quelle gemeldet; beim tatsächlichen Lesen wäre es ein Symlink-
+Konflikt. Kandidatensuche berücksichtigt jetzt auch `is_symlink()`, damit
+broken links bereits im Dry-Run fail-closed als `conflict` erscheinen.
+
+Regression ergänzt. `pytest -q tests/test_profile_migration.py`: 60/60
+bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 514: Ressourcen-Aliase in Auth-Migration abgewiesen
 
 Planner und Plan-Validator verglichen Quellen/Ziele bisher als rohe
