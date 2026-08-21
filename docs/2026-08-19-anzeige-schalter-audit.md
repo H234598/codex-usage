@@ -2312,3 +2312,11 @@ Intervalle führten außerdem zu unsicheren Ausgaben oder rohen Typfehlern.
 Snapshot-Verzeichnis ebenfalls ungeprüft zu. Gemeinsame Guards weisen solche
 Eingaben jetzt kontrolliert zurück. `tests/test_bridge.py`: 236/236 bestanden;
 Mypy für Source und Ruff für die betroffenen Dateien sauber.
+
+## Runde 232: Abschlussverifikation nach Bridge-Härtung
+
+Die Vollsuite bestätigt den aktuellen Stand: `2476 bestanden, 1 übersprungen,
+1 Warnung` in 81,74 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Produktion, Scripts, Launcher und
+Tests ist ebenfalls sauber.
