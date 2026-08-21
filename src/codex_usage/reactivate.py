@@ -273,7 +273,7 @@ def _run_reactivation(
 def _kill_login_process_group(process: subprocess.Popen[bytes]) -> None:
     pid = getattr(process, "pid", None)
     signaled_group = False
-    if isinstance(pid, int) and pid > 0:
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
         try:
             os.killpg(pid, signal.SIGKILL)
             signaled_group = True

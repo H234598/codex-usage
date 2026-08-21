@@ -19,6 +19,7 @@ from codex_usage.reactivate import (
     MANAGE_ACCOUNT_URL,
     OAUTH_PROFILE_MARKER,
     ReactivationError,
+    _kill_login_process_group,
     _resolve_executable,
     _validate_refreshed_auth,
     _validate_refreshed_identity,
@@ -634,6 +635,28 @@ def test_reactivate_timeout_kills_login_process_group(tmp_path, monkeypatch):
     assert popen_call[2]["stdout"] is subprocess.DEVNULL
     assert popen_call[2]["stderr"] is subprocess.DEVNULL
     assert ("killpg", 4321, signal.SIGKILL) in calls
+
+
+def test_kill_login_process_group_rejects_boolean_pid(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = True
+
+        def kill(self):
+            calls.append(("kill",))
+
+        def wait(self, timeout):
+            calls.append(("wait", timeout))
+
+    monkeypatch.setattr(
+        "codex_usage.reactivate.os.killpg",
+        lambda pid, signum: calls.append(("killpg", pid, signum)),
+    )
+
+    _kill_login_process_group(FakeProcess())
+
+    assert calls == [("kill",), ("wait", 2)]
 
 
 def test_reactivation_wait_oserror_kills_process_group(tmp_path, monkeypatch):

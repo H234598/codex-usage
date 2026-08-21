@@ -4450,6 +4450,16 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 493: Reactivation-Prozesssignal mit strikter PID-Grenze
+
+`reactivate._kill_login_process_group()` behandelte `bool` wegen Python-
+Integer-Vererbung als gültige PID und konnte damit `os.killpg(True, SIGKILL)`
+aufrufen. Der Guard weist Boolesche Werte jetzt ab und nutzt den bestehenden
+`process.kill()`-/`process.wait()`-Fallback.
+
+Regression ergänzt. `pytest -q tests/test_reactivate.py`: 68/68 bestanden.
+Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 492: App-Server-Prozesssignal mit strikter PID-Grenze
 
 `app_server._signal_process_group()` behandelte `bool` wegen Python-
