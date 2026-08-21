@@ -3044,3 +3044,10 @@ beim Aufbau des lokalen Pfads, bevor der Fehler-Fallback griff. Unbekanntes
 bis zum geschützten Expand/Resolve-Block unverändert. `tests/test_scheduler.py`:
 199/199 fokussierte Tests bestanden; Mypy für Scheduler, Ruff und
 `git diff --check` sauber.
+
+## Runde 314: Vollsuite nach Config-/Diagnose-/Scheduler-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2694 bestanden, 1 übersprungen,
+1 Warnung` in 89,53 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. Config-Test-Home, Browser-Auth-Diagnose und
+Scheduler-Auth-Quellpfade sind integriert grün.
