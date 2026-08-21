@@ -1665,3 +1665,11 @@ unbekannte String-Backends behalten bisheriges Verhalten. `tests/test_routing.py
 akzeptierte dadurch Bool- und Floatwerte als Integer `1`. Die Prüfung verlangt
 jetzt exakt den eingebauten Typ `int`; fremde Typen werden abgewiesen.
 `tests/test_routing.py`: 94/94 bestanden; Mypy und Ruff sauber.
+
+## Runde 157: Spark-Health-Version
+
+`spark_health._load_records()` verglich die persistierte Versionsnummer nur
+per Gleichheit und akzeptierte dadurch Bool-/Floatwerte als Version `1`.
+Gesundheitsdaten werden jetzt nur bei exakt eingebautem `int`-Versionstyp
+geladen; andere Versionen bleiben unbekannt. `tests/test_spark_health.py`:
+18/18 bestanden; Mypy und Ruff sauber.

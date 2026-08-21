@@ -115,6 +115,31 @@ def test_spark_health_status_rejects_more_than_max_records(tmp_path):
     assert result["reason"] == "no_successful_spark_turn"
 
 
+@pytest.mark.parametrize("version", [True, 1.0, "1"])
+def test_spark_health_status_requires_strict_version(tmp_path, version):
+    path = tmp_path / "health.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": version,
+                "records": {
+                    _health_key("backend-nufker"): {
+                        "state": "healthy",
+                        "checked_at": NOW.isoformat(),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["state"] == "unknown"
+    assert result["reason"] == "no_successful_spark_turn"
+
+
 def test_spark_health_failure_stays_fail_closed(tmp_path):
     path = tmp_path / "health.json"
     set_spark_health("backend-nufker", "failed", reason="spark_turn_timeout", path=path, now=NOW)

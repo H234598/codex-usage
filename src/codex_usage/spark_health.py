@@ -144,7 +144,11 @@ def _load_records(path: Path) -> dict[str, dict[str, Any]]:
         payload = loads_strict(text)
     except (OSError, RecursionError, TypeError, ValueError, UnicodeDecodeError):
         return {}
-    if not isinstance(payload, dict) or payload.get("version") != SPARK_HEALTH_VERSION:
+    if (
+        not isinstance(payload, dict)
+        or type(payload.get("version")) is not int
+        or payload["version"] != SPARK_HEALTH_VERSION
+    ):
         return {}
     raw_records = payload.get("records")
     if not isinstance(raw_records, dict):
