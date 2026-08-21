@@ -513,6 +513,16 @@ def test_render_account_overview_rejects_invalid_config(config):
         render_account_overview(config, Path("/tmp/config"))  # type: ignore[arg-type]
 
 
+def test_render_account_overview_rejects_non_string_account_id():
+    accounts = (
+        Account(id=[], label="Bad", profile_dir="/tmp/bad"),  # type: ignore[arg-type]
+        Account(id="good", label="Good", profile_dir="/tmp/good"),
+    )
+
+    with pytest.raises(ValueError, match="account records are invalid"):
+        render_account_overview(AppConfig(accounts=accounts), Path("/tmp/config"))
+
+
 def test_render_account_overview_marks_unresolvable_paths():
     account = Account(
         id="privat",

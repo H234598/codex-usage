@@ -41,7 +41,10 @@ def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:
         raise ValueError("account records are invalid") from exc
     if len(account_list) > MAX_CONFIG_ACCOUNTS:
         raise ValueError("too many account records")
-    if any(not isinstance(account, Account) for account in account_list):
+    if any(
+        not isinstance(account, Account) or not isinstance(account.id, str)
+        for account in account_list
+    ):
         raise ValueError("account records are invalid")
     return account_list
 
@@ -66,6 +69,7 @@ def render_account_overview(
     if usages is not None and not isinstance(usages, Mapping):
         raise ValueError("usage mapping is invalid")
     usage_by_account = usages or {}
+    account_list = _bounded_account_list(config.accounts)
     rows = [
         [
             _cell(account.id, 64),
@@ -83,7 +87,7 @@ def render_account_overview(
             _profile_state(account.profile_dir),
             _cell(_display_path(account.profile_dir), PATH_CELL_MAX),
         ]
-        for account in sorted(config.accounts, key=lambda item: item.id)
+        for account in sorted(account_list, key=lambda item: item.id)
     ]
     headers = [
         "ID",
@@ -112,7 +116,7 @@ def render_account_overview(
         "Account-Uebersicht",
         "",
         f"Config: {config_path}",
-        f"Accounts: {len(config.accounts)}",
+        f"Accounts: {len(account_list)}",
         f"Intervall: {config.interval_seconds}s",
         f"Headless: {'ja' if config.headless else 'nein'}",
         f"Analytics: {config.analytics_url}",

@@ -3972,3 +3972,14 @@ Account-Dateien bleiben unverändert.
 `pytest -q tests/test_browser_profile.py tests/test_browser_diagnose.py`:
 169/169 bestanden; Modul-Coverage 80 % (Branch). Ruff, Mypy und
 `git diff --check` sauber.
+
+## Runde 412: Render-Account-Grenze
+
+`render_account_overview()` sortierte Config-Accounts direkt; zusammen mit
+`render_account_values()` konnten nicht-stringartige `Account.id`-Werte bei
+gemischten Datensätzen ungefangen `TypeError` auslösen. Der gemeinsame
+Bounded-Account-Helper weist solche Datensätze jetzt kontrolliert zurück und
+die Overview nutzt ihn ebenfalls.
+
+`pytest -q tests/test_render.py`: 66/66 bestanden; Modul-Coverage 87 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
