@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import stat
 from dataclasses import dataclass
@@ -253,7 +254,12 @@ def _source_for_account(
         candidates.append(search_roots[0] / "auth.json")
     candidates.extend(root / account.id / "auth.json" for root in search_roots)
     candidates.extend(root / f"{account.id}.json" for root in search_roots)
-    existing = tuple(dict.fromkeys(path for path in candidates if path.exists()))
+    existing_by_normalized: dict[Path, Path] = {}
+    for path in candidates:
+        if path.exists():
+            normalized = Path(os.path.normpath(str(path)))
+            existing_by_normalized.setdefault(normalized, path)
+    existing = tuple(existing_by_normalized.values())
     if len(existing) > 1:
         raise ValueError(f"multiple auth sources for {account.id}")
     return existing[0] if existing else None

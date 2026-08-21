@@ -59,6 +59,28 @@ def test_auth_migration_deduplicates_identical_search_candidates(tmp_path):
     assert plan.items[0].source == source
 
 
+def test_auth_migration_deduplicates_dotdot_search_candidates(tmp_path):
+    search_root = tmp_path / "search"
+    source = search_root / "alpha" / "auth.json"
+    source.parent.mkdir(parents=True)
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    alias_parent = search_root / "nested"
+    alias_parent.mkdir()
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    plan = plan_auth_migration(
+        (account,), search_roots=(search_root, alias_parent / "..")
+    )
+
+    assert plan.items[0].status == "planned"
+    assert plan.items[0].source == source
+
+
 def test_auth_migration_rejects_unknown_auth_home(tmp_path):
     account = _account(
         tmp_path,

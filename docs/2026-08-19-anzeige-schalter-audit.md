@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 512: Lexikalische Suchroot-Aliase dedupliziert
+
+`_source_for_account()` deduplizierte bisher nur bytegleiche `Path`-Objekte.
+Zwei Suchroots wie `/root/data` und `/root/data/nested/..` meldeten dieselbe
+`auth.json` deshalb als mehrere Quellen. Kandidaten werden jetzt mit
+lexikalischem `normpath` dedupliziert, ohne Symlink-Auflösung; reale
+verschiedene oder symlinkbasierte Quellen bleiben getrennt und fail-closed.
+
+Regression für `..`-Alias ergänzt. `pytest -q tests/test_profile_migration.py`:
+55/55 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 511: Auth-Quellmodus beim Apply erneut geprüft
 
 `apply_auth_migration()` vertraute bisher auf die Modusprüfung aus dem
