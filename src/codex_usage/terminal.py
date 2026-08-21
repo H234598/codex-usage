@@ -86,6 +86,10 @@ def _validate_auth_json(path: Path) -> None:
         raise TerminalError(f"canonical auth.json cannot be inspected: {path}") from exc
     if stat.S_ISLNK(item.st_mode) or not stat.S_ISREG(item.st_mode):
         raise TerminalError(f"canonical auth.json must be a regular file: {path}")
+    if item.st_nlink != 1:
+        raise TerminalError(f"canonical auth.json must not be hard-linked: {path}")
+    if item.st_uid != os.getuid() or item.st_mode & 0o077:
+        raise TerminalError(f"canonical auth.json must be a private regular file: {path}")
 
 
 def _resolve_executable(explicit: str | None, fallback: str, *, label: str) -> str:

@@ -12,7 +12,9 @@ from codex_usage.terminal import TerminalError, start_account_terminal
 def _account(tmp_path: Path) -> Account:
     profile = tmp_path / "profile"
     (profile / "codex-home").mkdir(parents=True)
-    (profile / "codex-home" / "auth.json").write_text("{}\n", encoding="utf-8")
+    auth = profile / "codex-home" / "auth.json"
+    auth.write_text("{}\n", encoding="utf-8")
+    auth.chmod(0o600)
     return Account(id="work", label="Work", profile_dir=str(profile))
 
 
@@ -53,6 +55,26 @@ def test_start_account_terminal_rejects_missing_canonical_auth(tmp_path):
 
     with pytest.raises(TerminalError, match=r"canonical auth\.json is missing"):
         start_account_terminal(account, terminal="ghostty", codex_command="codex")
+
+
+def test_terminal_auth_validation_rejects_group_readable_file(tmp_path):
+    auth = tmp_path / "auth.json"
+    auth.write_text("{}\n", encoding="utf-8")
+    auth.chmod(0o640)
+
+    with pytest.raises(TerminalError, match="private regular file"):
+        terminal_module._validate_auth_json(auth)
+
+
+def test_terminal_auth_validation_rejects_hardlink(tmp_path):
+    auth = tmp_path / "auth.json"
+    auth.write_text("{}\n", encoding="utf-8")
+    auth.chmod(0o600)
+    auth_copy = tmp_path / "auth-copy.json"
+    auth_copy.hardlink_to(auth)
+
+    with pytest.raises(TerminalError, match="hard-linked"):
+        terminal_module._validate_auth_json(auth)
 
 
 def test_terminal_candidates_prefer_ghostty(monkeypatch):

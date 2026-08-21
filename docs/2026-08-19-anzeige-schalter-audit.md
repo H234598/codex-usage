@@ -1126,3 +1126,10 @@ explizite falsy Werte wie nicht gesetzte Optionen und starteten dadurch das
 Standardprogramm. Explizit übergebene Werte werden jetzt immer validiert;
 nur `None` aktiviert Fallback. `tests/test_terminal.py`: 11/11 bestanden;
 Ruff sauber.
+
+## Runde 91: Terminal-Auth-Dateischutz
+
+`terminal._validate_auth_json()` akzeptierte bisher gruppenlesbare oder
+hardlinkierte `auth.json`. Terminalstart konnte damit ungeschützte Tokens
+verwenden. Prüfung verlangt jetzt Eigentümer, 0600-Rechte und Linkzähler 1;
+`tests/test_terminal.py`: 13/13 bestanden; Ruff sauber.
