@@ -1703,5 +1703,6 @@ def _should_persist_snapshot(usage: AccountUsage) -> bool:
         return True
     return (
         usage.status == AccountStatus.PARTIAL
+        and isinstance(usage.backend_used, str)
         and usage.backend_used in AUTHENTICATED_BACKENDS
     )

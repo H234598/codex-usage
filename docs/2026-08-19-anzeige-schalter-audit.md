@@ -1616,3 +1616,11 @@ Frozenset-Mitgliedschaft. Unhashbare Werte konnten beim Vergleich gleichalter
 Snapshots `TypeError` auslösen. Die Backend-Mitgliedschaft ist jetzt auf
 Stringwerte begrenzt; ungültige Werte erhalten Priorität `-1`.
 `tests/test_state.py`: 225/225 bestanden; Mypy und Ruff sauber.
+
+## Runde 151: Scheduler-Snapshot-Persistenztyp
+
+`scheduler._should_persist_snapshot()` prüfte `backend_used` bei partiellen
+Snapshots direkt per Frozenset-Mitgliedschaft. Unhashbare Werte konnten den
+Watchdog-Persistenzpfad mit `TypeError` abbrechen. Der Wert wird jetzt zuerst
+als String geprüft; ungültige Snapshots werden nicht gespeichert.
+`tests/test_scheduler.py`: 165/165 bestanden; Mypy und Ruff sauber.

@@ -21,6 +21,7 @@ from codex_usage.scheduler import (
     _is_more_conservative_direct_usage,
     _raw_number,
     _remaining_percent,
+    _should_persist_snapshot,
     _stabilize_authenticated_usage,
     _usage_map_for_accounts,
     _watch_core_resets_current,
@@ -2685,6 +2686,19 @@ def test_scheduler_accepts_named_dynamic_reset_without_duration():
     )
 
     assert _watch_core_resets_current(usage) is True
+
+
+@pytest.mark.parametrize("backend_used", [[], {}])
+def test_scheduler_does_not_persist_unhashable_backend_snapshot(backend_used):
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.PARTIAL,
+        backend_used=backend_used,
+    )
+
+    assert _should_persist_snapshot(usage) is False
 
 
 def test_scheduler_rejects_named_dynamic_reset_without_timestamp():
