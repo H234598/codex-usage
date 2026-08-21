@@ -1432,13 +1432,13 @@ def _install_release(
                 symlinks=False,
                 with_pip=False,
             ).create(venv_root)
-            venv_root.chmod(0o700)
+            ensure_private_directory(venv_root, label="integration venv directory")
             _require_private_dir(staging, staging_identity, False)
             _remove_activation_files(venv_root)
             site_packages = next(venv_root.glob("lib/python*/site-packages"), None)
             if site_packages is None:
                 _fail()
-            site_packages.chmod(0o700)
+            ensure_private_directory(site_packages, label="integration site-packages")
             _safe_extract_wheel(
                 wheel_path=staged_wheel,
                 destination=site_packages,

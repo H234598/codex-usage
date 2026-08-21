@@ -4183,6 +4183,17 @@ FD-Fehlerinjektion aktualisiert.
 Profil-Race und Fehlerregressionen ergänzt. `pytest -q tests/test_config.py`:
 118/118 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 468: Installer-Venv-Verzeichnisse per Directory-FD
+
+`integration_installer._install_release()` setzte die Modi von erzeugtem
+`venv/` und `site-packages/` per `Path.chmod()`. Ein Pfad-Race konnte damit
+einen Fremdpfad ändern. Beide Modusänderungen verwenden jetzt
+`ensure_private_directory()` mit Directory-FD und `O_NOFOLLOW`.
+
+Regression verbietet Pfad-`chmod` für die beiden Verzeichnisse und prüft Modus
+und Symlink-Freiheit. `pytest -q tests/test_integration_installer.py`:
+110/110 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

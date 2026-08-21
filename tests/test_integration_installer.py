@@ -270,6 +270,27 @@ def test_install_creates_attested_private_active_release(tmp_path):
     assert not list((tmp_path / "temporary").rglob("candidate-*.json"))
 
 
+def test_install_secures_generated_venv_directories_without_path_chmod(
+    tmp_path, monkeypatch
+):
+    original_chmod = Path.chmod
+
+    def reject_generated_directory_chmod(path, mode):
+        if path.name in {"venv", "site-packages"}:
+            pytest.fail("generated venv directories require directory-FD mode changes")
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", reject_generated_directory_chmod)
+    release, _, _ = _install(tmp_path)
+
+    venv_root = release.release_dir / "venv"
+    site_packages = next(venv_root.glob("lib/python*/site-packages"))
+    assert stat.S_IMODE(venv_root.lstat().st_mode) == 0o700
+    assert stat.S_IMODE(site_packages.lstat().st_mode) == 0o700
+    assert not venv_root.is_symlink()
+    assert not site_packages.is_symlink()
+
+
 def test_attestation_requires_exact_integer_schema_version(tmp_path):
     from codex_usage.integration_attestation import (
         IntegrationAttestationUnavailable,
