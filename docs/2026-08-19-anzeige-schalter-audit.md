@@ -4450,6 +4450,16 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 501: LimitWindow-Eigenschaften direkt fail-closed getestet
+
+`LimitWindow.has_known_identity`, `is_complete`, `has_invalid_usage_value`
+und `has_usage_value` mit bekannten, dynamischen, ungültigen und fehlenden
+Grenzwerten direkt geprüft. Bestehendes Verhalten fail-closed; keine
+Produktionsänderung erforderlich.
+
+`pytest -q tests/test_models.py`: 31/31 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 500: AccountUsage-Modelpool direkt fail-closed getestet
 
 `AccountUsage.model_pool()` direkt geprüft: exakter eindeutiger Schlüssel

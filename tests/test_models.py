@@ -64,6 +64,45 @@ def test_account_usage_model_pool_rejects_invalid_model_input(model):
     assert usage.model_pool(model) is None  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("window", "expected"),
+    [
+        (LimitWindow(name="weekly", remaining=97), True),
+        (LimitWindow(name="", duration_seconds=604800, remaining=97), True),
+        (LimitWindow(name="unknown", remaining=97), False),
+        (LimitWindow(name="weekly", duration_seconds=True, remaining=97), False),
+    ],
+)
+def test_limit_window_known_identity_is_strict(window, expected):
+    assert window.has_known_identity is expected
+
+
+def test_limit_window_is_complete_requires_usage_limit_and_reset():
+    complete = LimitWindow(
+        name="weekly",
+        used=3,
+        limit=100,
+        reset_at=datetime.now(UTC),
+    )
+
+    assert complete.is_complete is True
+    assert LimitWindow(name="weekly", used=3, limit=100).is_complete is False
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        LimitWindow(name="weekly", used=-1, limit=100),
+        LimitWindow(name="weekly", remaining=-1),
+        LimitWindow(name="weekly", percent=101),
+        LimitWindow(name="weekly", remaining=120, limit=100),
+    ],
+)
+def test_limit_window_invalid_usage_values_fail_closed(window):
+    assert window.has_invalid_usage_value is True
+    assert window.has_usage_value is False
+
+
 def test_account_usage_as_dict_skips_unhashable_model_pool_keys():
     usage = AccountUsage(
         account_id="account",
