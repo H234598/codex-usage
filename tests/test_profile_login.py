@@ -110,7 +110,10 @@ def test_device_login_uses_staging_home_and_publishes_auth_atomically(tmp_path, 
         home = Path(env["CODEX_HOME"])
         home.mkdir(parents=True, exist_ok=True)
         auth = home / "auth.json"
-        auth.write_text('{"auth_mode":"chatgpt","tokens":{}}', encoding="utf-8")
+        auth.write_text(
+            '{"auth_mode":"chatgpt","tokens":{"access_token":"test-token"}}',
+            encoding="utf-8",
+        )
         auth.chmod(0o600)
         return subprocess.CompletedProcess(
             argv,
@@ -146,7 +149,7 @@ def test_device_login_reports_staging_cleanup_failure(tmp_path, monkeypatch):
         if argv[-1] == "--help":
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         auth = Path(env["CODEX_HOME"]) / "auth.json"
-        auth.write_text("{}", encoding="utf-8")
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
         auth.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -214,7 +217,7 @@ def test_device_login_finalize_preserves_account_options(tmp_path, monkeypatch):
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         home = Path(env["CODEX_HOME"])
         auth = home / "auth.json"
-        auth.write_text("{}", encoding="utf-8")
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
         auth.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -270,7 +273,7 @@ def test_device_login_finalization_holds_global_account_lock(tmp_path, monkeypat
         if argv[-1] == "--help":
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         auth = Path(env["CODEX_HOME"]) / "auth.json"
-        auth.write_text("{}", encoding="utf-8")
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
         auth.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -301,7 +304,7 @@ def test_device_login_does_not_recreate_account_after_config_change(
         if argv[-1] == "--help":
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         auth = Path(env["CODEX_HOME"]) / "auth.json"
-        auth.write_text("{}", encoding="utf-8")
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
         auth.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -321,7 +324,10 @@ def test_device_login_rejects_mismatched_expected_backend_account(tmp_path, monk
         if argv[-1] == "--help":
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         auth = Path(env["CODEX_HOME"]) / "auth.json"
-        auth.write_text('{"tokens":{"account_id":"backend-other"}}', encoding="utf-8")
+        auth.write_text(
+            '{"tokens":{"account_id":"backend-other","access_token":"test-token"}}',
+            encoding="utf-8",
+        )
         auth.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -334,6 +340,25 @@ def test_device_login_rejects_mismatched_expected_backend_account(tmp_path, monk
             runner=runner,
             expected_backend_account_id="backend-alpha",
         )
+
+    assert not (profile / "codex-home" / "auth.json").exists()
+
+
+def test_device_login_rejects_auth_without_access_token(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+
+    def runner(argv, *, env, timeout):
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        auth = Path(env["CODEX_HOME"]) / "auth.json"
+        auth.write_text("{}", encoding="utf-8")
+        auth.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("codex_usage.profile_login.account_lock", lambda _account: nullcontext())
+
+    with pytest.raises(DeviceLoginError, match="device_auth_invalid"):
+        run_device_login(_account(profile), tmp_path / "config.toml", runner=runner)
 
     assert not (profile / "codex-home" / "auth.json").exists()
 
@@ -352,7 +377,7 @@ def test_device_login_removes_published_auth_when_config_finalize_fails(tmp_path
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         home = Path(env["CODEX_HOME"])
         auth = home / "auth.json"
-        auth.write_text("{}", encoding="utf-8")
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
         auth.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -378,7 +403,7 @@ def test_device_login_removes_auth_when_canonical_config_publish_fails(tmp_path,
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         home = Path(env["CODEX_HOME"])
         auth = home / "auth.json"
-        auth.write_text("{}", encoding="utf-8")
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
         auth.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -409,7 +434,7 @@ def test_device_login_preserves_existing_canonical_auth_on_failure(tmp_path, mon
         if argv[-1] == "--help":
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         staged = Path(env["CODEX_HOME"]) / "auth.json"
-        staged.write_text("{}", encoding="utf-8")
+        staged.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
         staged.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
@@ -432,7 +457,7 @@ def test_device_login_does_not_overwrite_auth_created_after_existence_check(
         if argv[-1] == "--help":
             return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
         staged = Path(env["CODEX_HOME"]) / "auth.json"
-        staged.write_text("{}", encoding="utf-8")
+        staged.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
         staged.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 

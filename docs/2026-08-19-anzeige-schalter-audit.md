@@ -1133,3 +1133,12 @@ Ruff sauber.
 hardlinkierte `auth.json`. Terminalstart konnte damit ungeschützte Tokens
 verwenden. Prüfung verlangt jetzt Eigentümer, 0600-Rechte und Linkzähler 1;
 `tests/test_terminal.py`: 13/13 bestanden; Ruff sauber.
+
+## Runde 92: Device-Login-Auth-Validierung
+
+`profile_login._validate_staged_auth()` akzeptierte jedes JSON-Objekt. Ein
+staged `{}` konnte dadurch als erfolgreiches Profil publiziert werden, obwohl
+Direct-Usage zwingend `tokens.access_token` benötigt. Die bestehende
+Direct-Auth-Validierung wird jetzt wiederverwendet; fehlende oder ungültige
+Tokens brechen den Login vor dem Kopieren ab. Regression ergänzt;
+`tests/test_profile_login.py`: 30/30 bestanden; Ruff sauber.

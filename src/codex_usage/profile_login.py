@@ -19,6 +19,7 @@ from .config import add_or_update_account, load_config
 from .direct import (
     MAX_AUTH_JSON_BYTES,
     DirectAuthError,
+    _extract_auth_details,
     auth_identity_from_payload,
 )
 from .json_utils import loads_strict
@@ -496,6 +497,10 @@ def _validate_staged_auth(
         raise DeviceLoginError("device_auth_invalid") from exc
     if not isinstance(payload, dict):
         raise DeviceLoginError("device_auth_invalid")
+    try:
+        _extract_auth_details(payload, path=path)
+    except DirectAuthError as exc:
+        raise DeviceLoginError("device_auth_invalid") from exc
     if expected_backend_account_id is not None:
         try:
             _, account_id = auth_identity_from_payload(payload, path=path)
