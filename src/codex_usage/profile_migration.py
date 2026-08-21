@@ -314,7 +314,7 @@ def _validate_auth_json(text: str) -> None:
 
 
 def _record(item: AuthMigrationItem, status: str, digest: str | None) -> dict[str, object]:
-    result = {
+    result: dict[str, object] = {
         "account_id": item.account_id,
         "source": str(item.source) if item.source is not None else None,
         "target": str(item.target),

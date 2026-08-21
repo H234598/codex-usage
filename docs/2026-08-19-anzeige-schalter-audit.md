@@ -1335,3 +1335,11 @@ bestanden; Mypy und Ruff sauber.
 überschrieben. Explizite `str | memoryview[int]`- und Marker-Unionen bilden
 beide unterstützten Eingabeformen korrekt ab. `tests/test_json_utils.py`: 3/3
 bestanden; Mypy und Ruff sauber.
+
+## Runde 116: Migrations-Record-Typ
+
+`profile_migration._record()` wurde aus seinen String-/`None`-Werten als
+`dict[str, str | None]` inferiert, obwohl die öffentliche Rückgabe
+`dict[str, object]` ist. Explizite Ergebnisannotation behebt den
+Invarianzfehler ohne Laufzeitänderung. `tests/test_profile_migration.py`:
+24/24 bestanden; Mypy und Ruff sauber.
