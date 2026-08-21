@@ -2151,6 +2151,60 @@ def test_owned_file_cleanup_rejects_parent_swap_before_unlink(tmp_path, monkeypa
     assert (old_parent / target.name).read_bytes() == b"owned"
 
 
+def test_provisional_directory_cleanup_rejects_parent_swap_before_rmdir(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    target = parent / "staging"
+    target.mkdir(mode=0o700)
+    parent_identity = integration_installer._directory_identity(parent)
+    identity = integration_installer._provisional_path_identity(target, directory=True)
+    old_parent = tmp_path / "parent-old"
+    original_rmdir = Path.rmdir
+    original_open = os.open
+    swapped = False
+
+    def swap_parent():
+        nonlocal swapped
+        if swapped:
+            return
+        parent.rename(old_parent)
+        parent.mkdir(mode=0o700)
+        (parent / target.name).mkdir(mode=0o700)
+        swapped = True
+
+    def swap_before_rmdir(path, *args, **kwargs):
+        if path == target:
+            swap_parent()
+        return original_rmdir(path, *args, **kwargs)
+
+    def swap_before_open(path, flags, mode=0o777, *, dir_fd=None):
+        if path == parent and dir_fd is None:
+            swap_parent()
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(Path, "rmdir", swap_before_rmdir)
+    monkeypatch.setattr(integration_installer.os, "open", swap_before_open)
+    assert (
+        integration_installer._cleanup_provisional(
+            target,
+            identity,
+            parent_identity,
+            directory=True,
+        )
+        is False
+    )
+
+    assert swapped
+    assert (parent / target.name).is_dir()
+    assert (old_parent / target.name).is_dir()
+
+
 def test_exclusive_write_cleans_candidate_when_parent_revalidation_fails_after_open(
     tmp_path,
     monkeypatch,
