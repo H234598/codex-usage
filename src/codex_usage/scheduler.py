@@ -518,6 +518,7 @@ def _stabilize_authenticated_usage(
     if (
         previous is None
         or previous.status != AccountStatus.OK
+        or not isinstance(previous.backend_used, str)
         or previous.backend_used not in AUTHENTICATED_BACKENDS
         or not _backend_provenance_is_complete(usage)
         or not _backend_provenance_is_complete(previous)

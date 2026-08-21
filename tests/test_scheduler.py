@@ -1937,6 +1937,30 @@ def test_authenticated_stabilization_rejects_unhashable_previous_fallback_reason
     assert result is current
 
 
+def test_authenticated_stabilization_rejects_unhashable_previous_backend():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(name="5h", remaining=90),
+        backend_configured="direct",
+        backend_used=[],
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        backend_used="direct",
+        five_hour=replace(previous.five_hour, remaining=99),
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+
+
 def test_authenticated_app_server_absolute_reset_is_not_replaced_by_old_value():
     timezone = ZoneInfo("Europe/Berlin")
     previous = AccountUsage(

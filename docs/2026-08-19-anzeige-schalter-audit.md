@@ -1583,3 +1583,12 @@ Fallback-Grund direkt per Set-Mitgliedschaft. Ein manipuliertes vorheriges
 Stabilisieren `TypeError` auslösen. Der Grund wird jetzt als String validiert;
 ungültige Werte verwerfen Stabilisierung sicher. `tests/test_scheduler.py`:
 162/162 bestanden; Mypy und Ruff sauber.
+
+## Runde 147: Scheduler-Backend-Typprüfung
+
+`scheduler._stabilize_authenticated_usage()` prüfte zusätzlich
+`previous.backend_used` vor einer Typprüfung per Frozenset-Mitgliedschaft. Ein
+unhashbarer Backend-Wert konnte deshalb die Stabilisierung mit `TypeError`
+abbrechen. Der Wert wird jetzt zuerst als String geprüft; ungültige Snapshots
+werden ignoriert. `tests/test_scheduler.py`: 163/163 bestanden; Mypy und Ruff
+sauber.
