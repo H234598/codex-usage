@@ -3,7 +3,12 @@ from datetime import UTC, datetime, timedelta, timezone, tzinfo
 import pytest
 
 import codex_usage.consumption as consumption_module
-from codex_usage.consumption import calculate_consumption
+from codex_usage.consumption import (
+    ConsumptionWindow,
+    _confirmed_reset,
+    calculate_consumption,
+    consumption_lookback_seconds,
+)
 from codex_usage.history import UsageSample
 
 BASE = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
@@ -27,6 +32,44 @@ def _sample(
         reset_at=reset_at,
         source="test",
     )
+
+
+def test_consumption_lookback_seconds_converts_supported_units():
+    assert consumption_lookback_seconds(5, "minutes") == 300
+    assert consumption_lookback_seconds(2, "hours") == 7_200
+    assert consumption_lookback_seconds(1, "days") == 86_400
+
+
+def test_consumption_window_as_dict_preserves_optional_forecast_fields():
+    window = ConsumptionWindow(
+        lookback_seconds=3_600,
+        pool="main",
+        limit_window_seconds=18_000,
+        consumed_percentage_points=12.5,
+        coverage="partial",
+        sample_count=2,
+        estimated_seconds_to_exhaustion=4_200,
+        baseline_used_percent=10.0,
+    )
+
+    assert window.as_dict() == {
+        "lookback_seconds": 3_600,
+        "pool": "main",
+        "limit_window_seconds": 18_000,
+        "consumed_percentage_points": 12.5,
+        "coverage": "partial",
+        "sample_count": 2,
+        "estimated_seconds_to_exhaustion": 4_200,
+        "baseline_used_percent": 10.0,
+    }
+
+
+def test_consumption_confirmed_reset_accepts_crossed_reset_window():
+    previous_reset = BASE + timedelta(minutes=30)
+    previous = _sample(0, 90, reset_at=previous_reset)
+    current = _sample(60, 5, reset_at=BASE + timedelta(hours=2))
+
+    assert _confirmed_reset(previous, current) is True
 
 
 def test_consumption_sums_positive_deltas_as_percentage_points():

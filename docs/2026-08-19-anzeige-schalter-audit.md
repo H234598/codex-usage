@@ -4450,6 +4450,15 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 502: Consumption-Kernfunktionen direkt getestet
+
+`ConsumptionWindow.as_dict()`, `consumption_lookback_seconds()` und
+`_confirmed_reset()` direkt geprüft. Lookback-Einheiten, Forecast-Felder und
+Reset-Übergang bleiben korrekt; keine Produktionsänderung erforderlich.
+
+`pytest -q tests/test_consumption.py`: 35/35 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 501: LimitWindow-Eigenschaften direkt fail-closed getestet
 
 `LimitWindow.has_known_identity`, `is_complete`, `has_invalid_usage_value`
