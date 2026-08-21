@@ -3585,3 +3585,12 @@ reproduzierbarer Fehler; unklassifizierbare Pools bleiben unavailable.
 
 `pytest -q tests/test_usage_limits.py`: 124/124 bestanden. Mypy für
 `usage_limits.py`, Ruff und `git diff --check` sauber.
+
+## Runde 374: Usage-Reset-Zustand
+
+`usage_resets.py` wurde auf canonical/legacy Mapping, Konfliktauflösung,
+unknown-vs-zero, bounded Werte und Redemption-Gates geprüft. Kein neuer
+reproduzierbarer Fehler.
+
+`pytest -q tests/test_usage_resets.py`: 5/5 bestanden. Mypy für
+`usage_resets.py`, Ruff und `git diff --check` sauber.
