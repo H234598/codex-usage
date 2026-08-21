@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import datetime
 from itertools import islice
 from pathlib import Path
+from typing import TypeGuard
 
 from .config import MAX_CONFIG_ACCOUNTS, AppConfig
 from .extractor import LOCAL_TZ
@@ -519,7 +520,7 @@ def _fmt_number(value: float) -> str:
     return str(int(number)) if number.is_integer() else f"{number:.2f}".rstrip("0").rstrip(".")
 
 
-def _is_finite_number(value: float | None) -> bool:
+def _is_finite_number(value: object) -> TypeGuard[int | float]:
     if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     try:

@@ -1384,3 +1384,11 @@ Snapshot-Quelle und Quellen-Tuple statisch zu eng inferiert. Ungültige Pools
 werden jetzt verworfen, Merges bleiben bei nicht darstellbaren Werten
 unverändert; lokale Typen sind explizit. `tests/test_state.py`: 218/218
 bestanden; Mypy und Ruff sauber.
+
+## Runde 122: Render-Zahlen-Narrowing
+
+`render.py` prüfte numerische Werte zwar zur Laufzeit vollständig, gab
+`_is_finite_number()` aber nur `bool` zurück. Mypy konnte danach optionale
+Felder nicht als Zahlen erkennen und meldete 13 `float()`-Zugriffe. Der Helper
+ist jetzt ein passender `TypeGuard[int | float]`; `tests/test_render.py`:
+35/35 bestanden; Mypy und Ruff sauber.
