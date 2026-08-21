@@ -3759,3 +3759,13 @@ Regressionstest deckt den Astimezone-Fehler ab.
 
 `pytest -q tests/test_integration_entrypoint.py`: 27/27 bestanden;
 Modul-Coverage 91%. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 391: Strict-JSON-Helfer
+
+`json_utils.py` auf Eingabetypen, String-Scanner, Nesting-Limit,
+Duplicate-Key- und Konstantenbehandlung geprüft. Keine neue reproduzierbare
+Fehlfunktion; bestehende Fehler werden als `ValueError` normalisiert und die
+Aufrufer begrenzen ihre Rohdaten separat.
+
+`pytest -q tests/test_json_utils.py`: 8/8 bestanden; Modul-Coverage 93%.
+Ruff, Mypy und `git diff --check` sauber.
