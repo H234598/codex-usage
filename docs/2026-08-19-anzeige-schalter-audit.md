@@ -1763,3 +1763,9 @@ String und gibt fehlerhafte Ergebnisse unverändert zurück.
 Set-Mitgliedschaft ein. Ein malformed Loader-Ergebnis mit unhashbarem Wert
 führte zu `TypeError`; beide Policy-Prüfungen verlangen jetzt zuerst einen
 String. `tests/test_cli.py`: 109/109 bestanden; Mypy und Ruff sauber.
+
+## Runde 170: Gesamt-Lint
+
+Nach Scheduler- und CLI-Provenienzschutz meldet `mypy src/codex_usage` keine
+Fehler in 35 Quelldateien. Der aggregierte Ruff-Lauf über Produktion, Scripts,
+Launcher und Tests ist ebenfalls sauber.
