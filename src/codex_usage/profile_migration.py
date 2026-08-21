@@ -267,11 +267,17 @@ def _classify_source(source: Path | None, target: Path) -> tuple[str, str | None
         assert_no_symlink_ancestors(source, label="auth source")
     except ValueError as exc:
         return "conflict", str(exc)
+    if target.is_symlink():
+        return "conflict", "canonical auth target already exists"
+    try:
+        assert_no_symlink_ancestors(target, label="migration target")
+    except ValueError as exc:
+        return "conflict", str(exc)
     if source == target:
         return "canonical", None
     if not source.is_file():
         return "missing", "auth source does not exist"
-    if target.is_symlink() or target.exists():
+    if target.exists():
         return "conflict", "canonical auth target already exists"
     try:
         mode = source.stat().st_mode & 0o777

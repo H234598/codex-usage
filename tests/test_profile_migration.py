@@ -105,6 +105,22 @@ def test_auth_migration_plan_does_not_classify_symlink_target_as_canonical(tmp_p
     assert plan.items[0].reason == "auth source is a symlink"
 
 
+def test_auth_migration_plan_classifies_symlink_ancestor_target_as_conflict(tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (profile / "codex-home").symlink_to(outside, target_is_directory=True)
+
+    plan = plan_auth_migration((_account(tmp_path, source),))
+
+    assert plan.items[0].status == "conflict"
+    assert "symlink ancestors" in (plan.items[0].reason or "")
+
+
 def test_auth_migration_rejects_unrepresentable_created_at(tmp_path):
     plan = AuthMigrationPlan(
         migration_id="m-test",

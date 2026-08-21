@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 510: Canonical-Ziel-Symlinks im Dry-Run fail-closed
+
+`_classify_source()` prüfte bisher Symlinks am Canonical-Ziel erst beim
+Apply. Ein symlinkendes Elternverzeichnis mit fehlendem Ziel wurde deshalb im
+Dry-Run als `planned` ausgegeben, obwohl `_assert_migration_target_available()`
+später abbrach. Ziel und Ziel-Ancestors werden jetzt bereits bei der
+Klassifizierung geprüft; echte Ziele bleiben unverändert `conflict`.
+
+Regression für symlinkendes Canonical-Elternverzeichnis ergänzt. `pytest -q
+tests/test_profile_migration.py`: 53/53 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 509: Auth-Quellen-Symlinks im Dry-Run fail-closed
 
 `_classify_source()` prüfte bisher nur den finalen Quellpfad und erkannte
