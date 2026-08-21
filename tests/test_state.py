@@ -1115,6 +1115,9 @@ def test_expire_reset_windows_drops_malformed_none_model_pool():
     expired = expire_reset_windows(usage, reference_at=captured_at)
 
     assert expired.models == ()
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert expired.error == "model pool catalog invalid"
 
 
 def test_expire_reset_windows_drops_malformed_pool_windows():

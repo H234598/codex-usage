@@ -3276,3 +3276,14 @@ Chromium-Binary vorhanden, Firefox-Binary fehlt weiterhin extern.
 
 `pytest -q tests/test_browser_profile.py tests/test_browser_diagnose.py`:
 166/166 bestanden. Ruff und `git diff --check` sauber.
+
+## Runde 342: State-Expiry verwirft Modellfehler nicht mehr still
+
+`expire_reset_windows()` entfernte malformed Model-Pools, ließ den Account
+dabei aber als `OK` und frisch erscheinen. Ungültige Pool-/Fensterstrukturen
+werden jetzt als `PARTIAL`, `stale` und mit `model pool catalog invalid`
+markiert; reguläres Ablaufverhalten eines ausschließlich abgelaufenen Spark-
+Pools bleibt unverändert.
+
+Regressionstest ergänzt. `pytest -q tests/test_state.py`: 265/265 bestanden.
+Mypy für `state.py`, Ruff und `git diff --check` sauber.

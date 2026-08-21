@@ -721,10 +721,20 @@ def expire_reset_windows(
     )
     model_pools: tuple[UsagePool, ...] = ()
     models_changed = False
+    model_catalog_invalid = False
     for pool in usage.models:
         if not isinstance(pool, UsagePool):
+            model_catalog_invalid = True
             models_changed = True
             continue
+        try:
+            if not isinstance(pool.windows, tuple) or any(
+                not isinstance(window, LimitWindow) or not window.has_known_identity
+                for window in pool.windows
+            ):
+                model_catalog_invalid = True
+        except (AttributeError, TypeError, ValueError):
+            model_catalog_invalid = True
         updated_pool, pool_expired = _expire_pool_windows(
             pool,
             usage=usage,
@@ -767,8 +777,16 @@ def expire_reset_windows(
     if core_expired:
         names = ", ".join(expired_names)
         error = f"cached limit window expired: {names}; refresh required"
+        if model_catalog_invalid:
+            error += "; model pool catalog invalid"
     elif clear_expired_block:
         error = "cached blocked state expired; refresh required"
+    elif model_catalog_invalid:
+        error = (
+            f"{usage.error}; model pool catalog invalid"
+            if usage.error
+            else "model pool catalog invalid"
+        )
     else:
         error = usage.error
     status = usage.status
@@ -780,6 +798,8 @@ def expire_reset_windows(
         status = AccountStatus.PARTIAL
         blocked_until = None
         blocked_reason = None
+    elif model_catalog_invalid and status == AccountStatus.OK:
+        status = AccountStatus.PARTIAL
     return replace(
         usage,
         five_hour=five_hour,
@@ -790,7 +810,7 @@ def expire_reset_windows(
         error=error,
         blocked_until=blocked_until,
         blocked_reason=blocked_reason,
-        stale=usage.stale or core_expired or clear_expired_block,
+        stale=usage.stale or core_expired or model_catalog_invalid or clear_expired_block,
     )
 
 
