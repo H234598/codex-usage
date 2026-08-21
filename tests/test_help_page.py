@@ -47,6 +47,13 @@ def test_help_text_helpers_preserve_detail_and_escape_markup() -> None:
     assert "Standard: 20" in text
     assert "Grenzen: 0 bis 100" in text
     assert "Wertquelle für dieses Leistenfeld" in _field_text({"id": "slot23"})
+    combined = _field_text({
+        "id": "custom-format",
+        "description": "Kurzbeschreibung",
+        "tooltip": "Zusätzliche Platzhalterhilfe",
+    })
+    assert "Kurzbeschreibung" in combined
+    assert "Zusätzliche Platzhalterhilfe" in combined
     assert _markup("<tag>\n&") == "&lt;tag&gt;&#10;&amp;"
     assert _markup(0) == "0"
     assert _markup(False) == "False"

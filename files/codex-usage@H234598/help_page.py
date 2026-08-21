@@ -139,7 +139,12 @@ def _option_text(options: object) -> str:
 
 
 def _field_text(column: dict[str, object]) -> str:
-    text = _clean_text(column.get("description")) or _clean_text(column.get("tooltip"))
+    description = _clean_text(column.get("description"))
+    tooltip = _clean_text(column.get("tooltip"))
+    parts = [description] if description else []
+    if tooltip and tooltip != description:
+        parts.append(tooltip)
+    text = "\n\n".join(parts)
     if not text and str(column.get("id", "")).startswith("slot"):
         text = _COLUMN_GUIDANCE["slot1"]
     if not text:

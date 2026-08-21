@@ -5454,3 +5454,15 @@ Regressionen prüfen echten Widget-Aufbau, Listener-Abmeldung und die bisher
 ungetestete temporäre Serien-Spaltenfilterung samt Schema-Rücksetzung.
 `pytest -q tests/test_dynamic_series_list.py`: 12/12 bestanden. Ruff,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 461: Hilfe-Feldtexte enthalten Beschreibung und Tooltip
+
+`help_page._field_text()` verwendete bisher nur `description` oder — falls
+fehlend — `tooltip`. Bei `account-consumption-settings.custom-format` ging
+dadurch die zusätzliche Platzhalter-/Coverage-Hilfe verloren. Feldtexte
+führen jetzt beide bereinigten Texte zusammen und deduplizieren identische
+Inhalte.
+
+Regression prüft getrennte Beschreibung und Tooltip zusätzlich zu Optionen,
+Defaults, Grenzen und Markup-Escaping. `pytest -q tests/test_help_page.py`:
+5/5 bestanden; Ruff, Python-Compile und `git diff --check` sauber.
