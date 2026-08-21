@@ -4157,3 +4157,17 @@ und bleibt außerhalb dieses fokussierten Audits.
 
 `pytest -q tests/test_service.py`: 66/66 bestanden; Modul-Coverage 86 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 428: Browser-Config- und Diagnose-Grenzen
+
+Die öffentlichen Browser-Entry-Points prüften bisher nur den `AppConfig`-
+Typ. Direkt konstruierte Configs konnten dadurch eine fremde
+`analytics_url` bis zum eingeloggten Playwright-Browser durchreichen. Alle
+vier Entry-Points validieren die vollständige Config jetzt vor Profil- oder
+Browserarbeit; `diagnose --auth-json` weist Fremdtypen kontrolliert zurück.
+
+Regressionen verhindern Navigation zu fremden Hosts sowie Profilanlage bei
+ungültigen Eingaben. `pytest -q tests/test_browser_profile.py
+tests/test_browser_diagnose.py`: 174/174 bestanden; Modul-Coverage 81 %
+(Branch). Die aufrufenden Scheduler-/CLI-Tests bestanden mit 319/319.
+Ruff, Mypy und `git diff --check` sauber.

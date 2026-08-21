@@ -128,6 +128,55 @@ def test_browser_entrypoints_reject_non_config_input(entrypoint, config, tmp_pat
             diagnose_account(account, config)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("entrypoint", ("login", "fetch", "probe", "diagnose"))
+def test_browser_entrypoints_reject_untrusted_analytics_url_before_profile_creation(
+    entrypoint, tmp_path, monkeypatch
+):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    config = AppConfig(
+        accounts=(account,),
+        analytics_url="https://evil.example/analytics",
+    )
+
+    def fail_prepare(_account):
+        pytest.fail("browser profile must not be prepared")
+
+    monkeypatch.setattr(browser_module, "_prepare_profile", fail_prepare)
+
+    with pytest.raises(ValueError, match="analytics_url"):
+        if entrypoint == "login":
+            login_account(account, config)
+        elif entrypoint == "fetch":
+            fetch_account_usage(account, config)
+        elif entrypoint == "probe":
+            probe_account(account, config)
+        else:
+            diagnose_account(account, config)
+
+
+def test_diagnose_rejects_non_path_auth_override_before_profile_creation(
+    tmp_path, monkeypatch
+):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    config = AppConfig(accounts=(account,))
+
+    def fail_prepare(_account):
+        pytest.fail("browser profile must not be prepared")
+
+    monkeypatch.setattr(browser_module, "_prepare_profile", fail_prepare)
+
+    with pytest.raises(ValueError, match=r"auth\.json path is invalid"):
+        diagnose_account(account, config, auth_json_path="auth.json")  # type: ignore[arg-type]
+
+
 def test_login_opens_analytics_and_closes_context(tmp_path, monkeypatch, capsys):
     account = Account(
         id="privat",

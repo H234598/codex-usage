@@ -16,7 +16,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from .config import AppConfig, _validate_account_id
+from .config import AppConfig, _validate_account_id, _validate_config
 from .direct import (
     DirectAuthError,
     _auth_plan_type_changed,
@@ -87,6 +87,7 @@ def login_account(account: Account, config: AppConfig) -> None:
         raise ValueError("account is invalid")
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
+    _validate_config(config)
     profile_dir = _prepare_profile(account)
     with _profile_lock(profile_dir):
         with sync_playwright() as playwright:
@@ -129,6 +130,7 @@ def fetch_account_usage(
         raise ValueError("account is invalid")
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
+    _validate_config(config)
     _validate_browser_timeout_ms(timeout_ms)
     captured_at = datetime.now(tz=LOCAL_TZ)
     candidates: list[JsonCandidate] = []
@@ -426,6 +428,7 @@ def probe_account(
         raise ValueError("account is invalid")
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
+    _validate_config(config)
     captured_at = datetime.now(tz=LOCAL_TZ)
     candidates: list[JsonCandidate] = []
     candidate_bytes = [0]
@@ -494,6 +497,9 @@ def diagnose_account(
         raise ValueError("account is invalid")
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
+    _validate_config(config)
+    if auth_json_path is not None and not isinstance(auth_json_path, Path):
+        raise ValueError("auth.json path is invalid")
     _validate_browser_timeout_ms(timeout_ms)
     captured_at = datetime.now(tz=LOCAL_TZ)
     profile_dir = _prepare_profile(account)
