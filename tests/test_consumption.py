@@ -98,6 +98,39 @@ def test_consumption_forecast_is_available_as_approximation_with_fresh_partial_d
     assert result.estimated_seconds_to_exhaustion == 3_000
 
 
+def test_consumption_smoothing_uses_time_aware_ema_rate():
+    unsmoothed = calculate_consumption(
+        [_sample(0, 0), _sample(10, 10), _sample(20, 30)],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=20),
+    )
+    smoothed = calculate_consumption(
+        [_sample(0, 0), _sample(10, 10), _sample(20, 30)],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=20),
+        smoothing="ema-5",
+    )
+
+    assert smoothed.coverage == "partial"
+    assert smoothed.estimated_seconds_to_exhaustion is not None
+    assert unsmoothed.estimated_seconds_to_exhaustion is not None
+    assert smoothed.estimated_seconds_to_exhaustion < unsmoothed.estimated_seconds_to_exhaustion
+
+
+def test_consumption_accepts_large_stale_threshold_without_overflow():
+    result = calculate_consumption(
+        [_sample(0, 20), _sample(30, 50)],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=30),
+        stale_after_seconds=10**15,
+    )
+
+    assert result.coverage == "partial"
+
+
 def test_consumption_forecast_is_zero_when_limit_is_exhausted():
     result = calculate_consumption(
         [_sample(-30, 20), _sample(0, 100)],

@@ -3643,3 +3643,15 @@ Context-Schließen in Reihenfolge ab; kein echter Browser und kein Netzwerk.
 167/167 bestanden. Modul-Coverage für `browser.py` stieg auf 80%; offene
 Zeilen sind zusätzliche Diagnose-/Fehler- und Guard-Zweige. Ruff, Mypy und
 `git diff --check` sauber.
+
+## Runde 380: Consumption-Grenzen und EMA-Pfad
+
+`consumption.py` akzeptierte jeden positiven `stale_after_seconds`-Wert, baute
+für sehr große Werte aber ein überlaufendes `timedelta` und warf unerwartet
+`OverflowError`. Stale-Berechnung vergleicht jetzt direkt die Dauer in
+Sekunden. Regressionstest deckt einen Wert von `10**15` ab. Zusätzlich deckt
+ein Test den bisher ungetesteten zeitgewichteten EMA-Forecast ab.
+
+`pytest -q tests/test_consumption.py`: 31/31 bestanden; Modul-Coverage 83%.
+Offene Zeilen sind weitere Diagnose-/Guard- und EMA-Sonderzweige. Ruff, Mypy
+und `git diff --check` sauber.

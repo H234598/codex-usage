@@ -188,7 +188,9 @@ def calculate_consumption(
         )
 
     partial = baseline is None or observations[0].captured_at > start
-    stale = now - observations[-1].captured_at > timedelta(seconds=stale_after_seconds)
+    stale = (
+        now - observations[-1].captured_at
+    ).total_seconds() > stale_after_seconds
     consumed = 0.0
     for previous, current in pairwise(observations):
         gap = (current.captured_at - previous.captured_at).total_seconds()
