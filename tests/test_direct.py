@@ -106,6 +106,20 @@ def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     assert usage.error == "auth.json path is invalid"
 
 
+def test_direct_fetch_rejects_unknown_auth_home(tmp_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "work"),
+        auth_json_path="~definitely-no-such-user-zzzz/auth.json",
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "auth.json path is invalid"
+
+
 @pytest.mark.parametrize("auth_json_path", [1, {}, object()])
 def test_direct_fetch_rejects_invalid_auth_override_type(auth_json_path):
     account = Account(id="work", label="Work", profile_dir="/tmp/work")

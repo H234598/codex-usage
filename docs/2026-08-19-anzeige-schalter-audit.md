@@ -2746,3 +2746,20 @@ als rohes `RuntimeError` entkommen, obwohl relative Homes bereits sicher auf
 `~/.codex` zurückfallen. Nicht expandierbare Umgebungswerte werden jetzt wie
 relative Werte ignoriert. `tests/test_browser_diagnose.py`: 39/39 fokussierte
 Tests bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
+
+## Runde 280: Vollsuite nach Config-/Browser-Pfad-Härtung
+
+Die aktuelle Vollsuite bestätigt den HEAD: `2657 bestanden, 1 übersprungen,
+1 Warnung` in 87,51 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
+`git diff --check` sind sauber.
+
+## Runde 281: Direct-Auth-Pfade weisen unbekannte Home-Namen ab
+
+`direct._resolve_auth_json_path()` ließ unbekannte `~user`-Overrides und
+Account-Auth-Pfade als rohes `RuntimeError` entkommen. Beide Varianten liefern
+jetzt `DirectAuthError("auth.json path is invalid")`, sodass der Fetch wie bei
+anderen ungültigen Auth-Pfaden kontrolliert `LOGIN_REQUIRED` meldet.
+`tests/test_direct.py`: 180/180 fokussierte Tests bestanden; Mypy für Source,
+Ruff und `git diff --check` sauber.
