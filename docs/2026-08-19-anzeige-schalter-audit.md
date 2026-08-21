@@ -926,3 +926,18 @@ Neue Serien werden vor Account-/Konfliktvalidierung uppercase-normalisiert.
 Der Regressionstest reproduziert den Fall und erwartet sofortigen Konflikt.
 `tests/test_config.py`: 74/74 bestanden; Ruff für `src/codex_usage/config.py`
 ist sauber.
+
+## Runde 68: Test-Home-Rollback nach Auth-Verschiebung
+
+Bei `account add --test-home` wurde `auth.json` vor dem State-Cleanup in das
+neue Test-Profil verschoben. Scheiterte das Cleanup danach, wurde die Config
+zwar zurückgeschrieben, die Quelle blieb aber leer; außerdem konnte das neue
+Profil wegen des erzeugten `codex-home` nicht entfernt werden.
+
+Der Ablauf initialisiert den Test-Home jetzt vor der Auth-Verschiebung und
+merkt die dabei erzeugten Dateien und Verzeichnisse. Beide Rollback-Pfade
+stellen die Auth-Datei zurück und entfernen nur unveränderte Artefakte mit
+passender Datei-/Verzeichnisidentität. Der Regressionstest prüft Auth,
+Profil und leere Config nach fehlgeschlagenem State-Cleanup.
+`tests/test_config.py`: 75/75 bestanden; Ruff für `config.py` und den Test ist
+sauber. Vollständige Python-Suite: 1983 bestanden, 1 übersprungen, 1 Warnung.

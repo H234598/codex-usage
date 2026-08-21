@@ -80,6 +80,35 @@ def test_test_home_moves_auth_and_initializes_file_store(tmp_path, monkeypatch):
     assert calls[0][1]["env"]["CODEX_HOME"] == str(profile / "codex-home")
 
 
+def test_test_home_state_cleanup_failure_restores_auth_and_profile(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(config_module.subprocess, "run", lambda *_args, **_kwargs: None)
+    source = tmp_path / "incoming" / "auth.json"
+    source.parent.mkdir()
+    source.write_text('{"tokens": {}}\n', encoding="utf-8")
+    config_path = tmp_path / "config.toml"
+
+    def fail_cleanup(*_args):
+        raise OSError("state cleanup failed")
+
+    monkeypatch.setattr("codex_usage.state.remove_account_state", fail_cleanup)
+
+    with pytest.raises(OSError, match="state cleanup failed"):
+        add_or_update_account(
+            "test-account",
+            auth_json_path=str(source),
+            test_home=True,
+            path=config_path,
+        )
+
+    assert source.read_text(encoding="utf-8") == '{"tokens": {}}\n'
+    assert not (home / ".codex-test" / "test-account").exists()
+    assert load_config(config_path).accounts == ()
+
+
 def test_internal_all_accounts_lock_name_is_not_a_valid_account_id():
     with pytest.raises(ValueError, match="reserved"):
         config_module._validate_account_id("__all_accounts__")

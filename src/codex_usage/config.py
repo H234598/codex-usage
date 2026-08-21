@@ -270,34 +270,46 @@ def add_or_update_account(
             account.profile_dir
         )
         moved_auth_json: tuple[Path, Path] | None = None
+        created_test_home_directories: list[tuple[Path, int, int]] = []
+        created_test_home_files: list[tuple[Path, int, int]] = []
         state_changed = existing is None or existing != account
         try:
+            if test_home:
+                _prepare_test_codex_home(
+                    Path(account.profile_dir) / "codex-home",
+                    created_directories=created_test_home_directories,
+                    created_files=created_test_home_files,
+                )
             if source_auth_json is not None:
                 _integrate_test_home_auth(source_auth_json, Path(account.auth_json_path))
                 moved_auth_json = (source_auth_json, Path(account.auth_json_path))
-            if test_home:
-                _prepare_test_codex_home(Path(account.profile_dir) / "codex-home")
             _save_config_unlocked(updated, config_path)
         except Exception as original_error:
-            if moved_auth_json is not None:
-                source, target = moved_auth_json
-                try:
-                    if target.is_file() and not source.exists():
-                        source.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                        shutil.move(str(target), str(source))
-                except OSError:
-                    pass
+            rollback_errors: list[Exception] = []
+            try:
+                _restore_moved_test_home_auth(moved_auth_json)
+            except Exception as exc:
+                rollback_errors.append(exc)
+            try:
+                _cleanup_created_test_home(
+                    created_test_home_directories,
+                    created_test_home_files,
+                )
+            except Exception as exc:
+                rollback_errors.append(exc)
             if profile_created:
                 try:
                     _cleanup_created_profile_directories(
                         profile_path,
                         profile_created_directories,
                     )
-                except Exception as cleanup_error:
-                    raise ExceptionGroup(
-                        "account update rollback failed: profile cleanup",
-                        [original_error, cleanup_error],
-                    ) from None
+                except Exception as exc:
+                    rollback_errors.append(exc)
+            if rollback_errors:
+                raise ExceptionGroup(
+                    "account update rollback failed",
+                    [original_error, *rollback_errors],
+                ) from None
             raise
         callback_started = False
         try:
@@ -316,6 +328,17 @@ def add_or_update_account(
                 _save_config_unlocked(config, config_path)
             except Exception as exc:
                 rollback_errors.append(("config rollback", exc))
+            try:
+                _restore_moved_test_home_auth(moved_auth_json)
+            except Exception as exc:
+                rollback_errors.append(("auth rollback", exc))
+            try:
+                _cleanup_created_test_home(
+                    created_test_home_directories,
+                    created_test_home_files,
+                )
+            except Exception as exc:
+                rollback_errors.append(("test home rollback", exc))
             if callback_started and rollback_callback is not None:
                 try:
                     rollback_callback(config)
@@ -559,8 +582,17 @@ def _integrate_test_home_auth(source: Path, target: Path) -> None:
     target.chmod(0o600)
 
 
-def _prepare_test_codex_home(codex_home: Path) -> None:
-    ensure_private_directory(codex_home, label="test CODEX_HOME")
+def _prepare_test_codex_home(
+    codex_home: Path,
+    *,
+    created_directories: list[tuple[Path, int, int]] | None = None,
+    created_files: list[tuple[Path, int, int]] | None = None,
+) -> None:
+    ensure_private_directory(
+        codex_home,
+        label="test CODEX_HOME",
+        created_paths=created_directories,
+    )
     config_path = codex_home / "config.toml"
     if config_path.is_symlink() or (config_path.exists() and not config_path.is_file()):
         raise ValueError("test CODEX_HOME config must be a regular file")
@@ -570,6 +602,9 @@ def _prepare_test_codex_home(codex_home: Path) -> None:
             'cli_auth_credentials_store = "file"\n',
             label="test CODEX_HOME config",
         )
+        if created_files is not None:
+            file_stat = config_path.lstat()
+            created_files.append((config_path, file_stat.st_dev, file_stat.st_ino))
     else:
         existing, _ = read_private_text(
             config_path,
@@ -596,6 +631,37 @@ def _prepare_test_codex_home(codex_home: Path) -> None:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ValueError("could not start Codex in test CODEX_HOME") from exc
+
+
+def _restore_moved_test_home_auth(moved_auth_json: tuple[Path, Path] | None) -> None:
+    if moved_auth_json is None:
+        return
+    source, target = moved_auth_json
+    if target.is_file() and not source.exists():
+        source.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.move(str(target), str(source))
+
+
+def _cleanup_created_test_home(
+    created_directories: list[tuple[Path, int, int]],
+    created_files: list[tuple[Path, int, int]],
+) -> None:
+    for path, device, inode in reversed(created_files):
+        if not path.exists():
+            if path.is_symlink():
+                raise ValueError(f"created test CODEX_HOME file became a symlink: {path}")
+            continue
+        _assert_created_file_identity(path, (path, device, inode))
+        path.unlink()
+    for path, device, inode in reversed(created_directories):
+        if not path.exists():
+            if path.is_symlink():
+                raise ValueError(
+                    f"created test CODEX_HOME directory became a symlink: {path}"
+                )
+            continue
+        _assert_created_directory_identity(path, (path, device, inode))
+        path.rmdir()
 
 
 def _absolute_account_path(value: str, name: str) -> str:
@@ -669,6 +735,20 @@ def _assert_created_directory_identity(
         or not stat.S_ISDIR(item.st_mode)
     ):
         raise ValueError(f"created profile directory changed: {path}")
+
+
+def _assert_created_file_identity(
+    path: Path,
+    expected: tuple[Path, int, int],
+) -> None:
+    item = path.lstat()
+    if (
+        item.st_dev != expected[1]
+        or item.st_ino != expected[2]
+        or stat.S_ISLNK(item.st_mode)
+        or not stat.S_ISREG(item.st_mode)
+    ):
+        raise ValueError(f"created test CODEX_HOME file changed: {path}")
 
 
 def _prepare_profile_dir(
