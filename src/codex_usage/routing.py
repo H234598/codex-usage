@@ -238,6 +238,8 @@ def evaluate_routing(
         raise ValueError("role must be a non-empty string")
     if not isinstance(paid_overage_allowed, bool):
         raise ValueError("paid_overage_allowed must be a boolean")
+    if not isinstance(policy_source, str) or not policy_source.strip():
+        raise ValueError("policy_source must be a non-empty string")
     checked_at = now if now is not None else datetime.now(tz=UTC)
     normalized_role = role.strip().casefold()
     base = {
@@ -281,6 +283,8 @@ def evaluate_routing(
             "checked_at": None,
             "stale": False,
         }
+    else:
+        spark_health = _normalize_spark_health(spark_health)
     base["spark_health"] = spark_health
     spark = usage.model_pool(SPARK_MODEL)
     spark_has_usage_evidence = _pool_has_usage_evidence(spark)
@@ -505,6 +509,19 @@ def _spark_health_is_fresh(payload: dict[str, Any], *, now: datetime) -> bool:
     if age is None:
         return False
     return 0 <= age <= SPARK_HEALTH_MAX_AGE_SECONDS
+
+
+def _normalize_spark_health(payload: dict[str, Any]) -> dict[str, Any]:
+    state = payload.get("state")
+    reason = payload.get("reason")
+    checked_at = payload.get("checked_at")
+    stale = payload.get("stale")
+    return {
+        "state": state if isinstance(state, str) else "unknown",
+        "reason": reason if isinstance(reason, str) else None,
+        "checked_at": checked_at if isinstance(checked_at, str) else None,
+        "stale": stale if isinstance(stale, bool) else None,
+    }
 
 
 def _spark_health_age_seconds(payload: dict[str, Any], *, now: datetime) -> float | None:

@@ -715,6 +715,35 @@ def test_routing_fails_closed_for_invalid_supplied_spark_health(spark_health):
     assert result["reason"] == "spark_health_unverified"
 
 
+@pytest.mark.parametrize(
+    "spark_health",
+    [
+        {"state": object(), "stale": False},
+        {"state": "healthy", "stale": object()},
+        {"state": "healthy", "stale": False, "checked_at": object()},
+        {"state": "healthy", "stale": False, "extra": object()},
+    ],
+)
+def test_routing_json_is_safe_for_malformed_spark_health(spark_health):
+    result = evaluate_routing(
+        _usage(
+            main_windows=(_window("weekly", 80, 604800),),
+            spark=UsagePool(
+                key=SPARK_MODEL,
+                display_name="Spark",
+                windows=(_window("weekly", 99, 604800),),
+                available=True,
+            ),
+        ),
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health=spark_health,
+    )
+
+    json.dumps(result, allow_nan=False)
+
+
 def test_routing_uses_main_when_spark_is_exhausted_and_all_main_windows_are_safe():
     spark = UsagePool(
         key=SPARK_MODEL,
@@ -913,6 +942,18 @@ def test_routing_rejects_truthy_non_boolean_paid_policy():
             _usage(main_windows=(_window("weekly", 5, 604800),)),
             role="arbeitsbiene",
             paid_overage_allowed="false",
+            now=NOW,
+        )
+
+
+@pytest.mark.parametrize("policy_source", [None, [], {}, 1, object(), ""])
+def test_routing_rejects_invalid_policy_source(policy_source):
+    with pytest.raises(ValueError, match="policy_source must be a non-empty string"):
+        evaluate_routing(
+            _usage(main_windows=(_window("weekly", 80, 604800),)),
+            role="arbeitsbiene",
+            paid_overage_allowed=False,
+            policy_source=policy_source,  # type: ignore[arg-type]
             now=NOW,
         )
 

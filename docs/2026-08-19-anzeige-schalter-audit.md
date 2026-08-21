@@ -2612,3 +2612,17 @@ randständigen `datetime.max` und gab bei Überlauf rohen `OverflowError` zurüc
 Der Reset wird bei nicht darstellbarem Ergebnis jetzt als unbekannt verworfen;
 Usage-Werte bleiben nutzbar. `tests/test_usage_limits.py`: 123/123 bestanden;
 Mypy für Source und Ruff für die betroffenen Dateien sauber.
+
+## Runde 266: Routing validiert Policy-Quelle und Spark-Health-JSON
+
+`routing.evaluate_routing()` übernahm eine leere oder fremdtypige
+`policy_source`-Angabe bis in die Entscheidungsstruktur; ein nicht
+serialisierbares Objekt brach erst beim JSON-Ausgeben roh ab. Zusätzlich wurde
+ein fremdes `spark_health`-Dict unverändert in die Ausgabe kopiert, sodass
+Objektwerte in bekannten Feldern oder unbekannten Zusatzfeldern ebenfalls
+`json.dumps()` sprengten. Nichtleere String-Policy-Quellen werden jetzt am
+Eingang verlangt; bekannte Spark-Health-Felder werden typgeprüft und in eine
+JSON-sichere Struktur kopiert, Zusatzfelder verworfen. Routing bleibt bei
+malformed Health-Daten fail-closed. `tests/test_routing.py`: 123/123
+fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
+sauber.
