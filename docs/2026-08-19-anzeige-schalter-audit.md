@@ -3315,3 +3315,13 @@ Exception.
 
 `pytest -q tests/test_usage_resets.py`: 5/5 bestanden. Mypy für
 `usage_resets.py`, Ruff und `git diff --check` sauber.
+
+## Runde 346: Routing-Entscheidungs-DTO typisiert
+
+`evaluate_routing()` baute `base` ohne expliziten Mapping-Typ. Mypy inferierte
+dadurch ein zu enges Union-Mapping und meldete beim späteren Einfügen des
+`spark_health`-DTOs einen Typfehler in Zeile 288. `base` ist jetzt explizit
+`dict[str, Any]`; Laufzeitverhalten bleibt unverändert.
+
+`pytest -q tests/test_routing.py`: 125/125 bestanden. Mypy für `routing.py`,
+Ruff und `git diff --check` sauber.

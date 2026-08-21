@@ -242,7 +242,7 @@ def evaluate_routing(
         raise ValueError("policy_source must be a non-empty string")
     checked_at = now if now is not None else datetime.now(tz=UTC)
     normalized_role = role.strip().casefold()
-    base = {
+    base: dict[str, Any] = {
         "schema_version": DECISION_SCHEMA_VERSION,
         "account": usage.account_id if isinstance(usage.account_id, str) else None,
         "backend_account_id": (
