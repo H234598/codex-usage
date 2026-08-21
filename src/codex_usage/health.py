@@ -45,7 +45,7 @@ def record_health_event(
         "component": _safe_token(component, "unknown"),
         "event": _safe_token(event, "unknown"),
     }
-    if account and _TOKEN_RE.fullmatch(account):
+    if isinstance(account, str) and account and _TOKEN_RE.fullmatch(account):
         entry["account"] = account
     if (
         duration_ms is not None

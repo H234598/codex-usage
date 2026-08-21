@@ -48,6 +48,15 @@ def test_health_is_bounded_and_redacts_invalid_account(tmp_path):
     assert all("account" not in event for event in payload["events"][-1:])
 
 
+@pytest.mark.parametrize("account", [[], {}, 42])
+def test_health_redacts_non_string_account(tmp_path, account):
+    path = tmp_path / "health.json"
+
+    record_health_event("scheduler", "cycle_ok", account=account, path=path)
+
+    assert "account" not in load_health(path)["events"][0]
+
+
 def test_health_discards_old_events_and_can_be_cleared(tmp_path):
     path = tmp_path / "health.json"
     now = datetime.now(UTC)

@@ -1068,3 +1068,10 @@ weiter; `tests/test_applet.py`: 27/27 bestanden.
 Regex. Ungültige Typen leakten deshalb `TypeError` aus `load_current_usage()`
 statt den Snapshot sauber als nicht vorhanden zu behandeln. Stringprüfung
 ergänzt; `tests/test_state.py`: 217/217 bestanden; Ruff sauber.
+
+## Runde 83: Health-Account-Typprüfung
+
+`health.record_health_event()` rief Regex-Prüfung auf truthy Nicht-String-
+`account`-Werten auf. Integerwerte leakten dadurch `TypeError`; ungültige
+Accountwerte werden jetzt wie andere nicht vertrauenswürdige Labels verworfen.
+Regression ergänzt; `tests/test_health.py`: 11/11 bestanden; Ruff sauber.
