@@ -1436,3 +1436,11 @@ Rollback-Gruppen fingen `BaseException`, und CLI-Signalfehler blieben dadurch
 statisch unsauber. Lokale Payload-Schleife, Ergebnisunion, `parsed_port` und
 `BaseExceptionGroup` beheben die Verträge. 37 fokussierte CLI-Tests bestanden;
 Mypy und Ruff sauber.
+
+## Runde 128: Integration-Snapshot-Fehlervertrag
+
+`integration_snapshot._invalid()` wirft immer, war aber als rückkehrende
+`None`-Funktion typisiert. `NoReturn` verengt danach Mapping-/Listeingaben
+korrekt; zwei sortierte Account-Schlüssel erhalten explizite String-Casts.
+36 Mypy-Fehler verschwinden ohne Serialisierungslogik zu ändern.
+`tests/test_integration_snapshot.py`: 29/29 bestanden; Mypy und Ruff sauber.

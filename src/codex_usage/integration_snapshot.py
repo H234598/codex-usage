@@ -8,6 +8,7 @@ import stat
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import NoReturn, cast
 
 from .consumption import MAX_FORECAST_SECONDS
 from .history import MAX_HISTORY_SAMPLES
@@ -101,7 +102,7 @@ class IntegrationBusy(IntegrationSnapshotError):
     exit_code = 75
 
 
-def _invalid() -> None:
+def _invalid() -> NoReturn:
     raise IntegrationInvalidSource()
 
 
@@ -379,7 +380,7 @@ def build_schema1_document(
             _invalid()
         account["usage_resets"] = usage.usage_resets.as_dict()
         accounts.append(account)
-    accounts.sort(key=lambda account: account["account_id"])
+    accounts.sort(key=lambda account: cast(str, account["account_id"]))
     document: dict[str, object] = {
         "accounts": accounts,
         "generated_at": generated_text,
@@ -638,7 +639,10 @@ def _canonical_document(document: object) -> dict[str, object]:
         seen.add(account_id)
         accounts.append(account)
     result: dict[str, object] = {
-        "accounts": sorted(accounts, key=lambda account: account["account_id"]),
+        "accounts": sorted(
+            accounts,
+            key=lambda account: cast(str, account["account_id"]),
+        ),
         "generated_at": _canonical_timestamp(document["generated_at"]),
         "schema_version": 1,
     }
