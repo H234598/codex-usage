@@ -4239,6 +4239,18 @@ Datei- und Verzeichnis-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 114/114 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 473: Build-Pyproject-Austausch per Parent-FD
+
+`_copy_source_into_project()` löschte kopiertes `pyproject.toml` per
+`Path.unlink()`, bevor generierter Inhalt geschrieben wurde. Build-Directory-
+Identität wird jetzt vom Caller gebunden; alter Eintrag wird über den
+gemeinsamen FD-gebundenen Entry-Remover gelöscht und `_write_exclusive()` mit
+derselben Parent-Identität aufgerufen.
+
+Pfad-`unlink`- und Build-Replacement-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 116/116 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

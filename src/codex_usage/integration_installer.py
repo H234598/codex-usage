@@ -1420,12 +1420,32 @@ def _manifest_text(value: Mapping[str, object]) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
 
 
-def _copy_source_into_project(source_root: Path, build_root: Path) -> None:
+def _copy_source_into_project(
+    source_root: Path,
+    build_root: Path,
+    *,
+    build_identity: _DirectoryIdentity | None = None,
+) -> None:
+    expected_build_identity = build_identity or _directory_identity(build_root)
+    if _directory_identity(build_root) != expected_build_identity:
+        _fail()
     for relative_text in SOURCE_MANIFEST_FILES:
         _copy_regular(source_root / relative_text, build_root / relative_text)
     pyproject = build_root / "pyproject.toml"
-    pyproject.unlink()
-    _write_exclusive(pyproject, _GENERATED_PYPROJECT.encode("utf-8"), mode=0o600)
+    pyproject_identity = _file_identity(pyproject)
+    if not _remove_owned_entry(
+        pyproject,
+        pyproject_identity,
+        expected_build_identity,
+        directory=False,
+    ):
+        _fail()
+    _write_exclusive(
+        pyproject,
+        _GENERATED_PYPROJECT.encode("utf-8"),
+        mode=0o600,
+        parent_identity=expected_build_identity,
+    )
 
 
 def _install_release(
@@ -1504,7 +1524,11 @@ def _install_release(
             _require_private_dir(staging, staging_identity, False)
             _require_private_dir(build_root, build_identity, False)
             _require_private_dir(wheel_root, wheel_identity, False)
-            _copy_source_into_project(source_root, build_root)
+            _copy_source_into_project(
+                source_root,
+                build_root,
+                build_identity=build_identity,
+            )
             _require_private_dir(build_root, build_identity, False)
             _require_private_dir(temporary_root, temporary_identity, False)
             wheel_path = _build_verified_wheel(

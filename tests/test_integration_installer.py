@@ -221,6 +221,72 @@ def test_temporary_source_copy_rejects_untracked_symlink_in_existing_destination
         integration_installer._temporary_source_copy(output_root)
 
 
+def test_copy_source_project_removes_pyproject_without_path_unlink(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    source_root = _temporary_source_copy(tmp_path)
+    build_root = tmp_path / "build"
+    build_root.mkdir(mode=0o700)
+    build_identity = integration_installer._directory_identity(build_root)
+    original_unlink = Path.unlink
+
+    def reject_pyproject_unlink(path, *args, **kwargs):
+        if path == build_root / "pyproject.toml":
+            pytest.fail("generated pyproject cleanup requires parent-FD unlink")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", reject_pyproject_unlink)
+    integration_installer._copy_source_into_project(
+        source_root,
+        build_root,
+        build_identity=build_identity,
+    )
+
+    assert (build_root / "pyproject.toml").read_text(encoding="utf-8") == (
+        integration_installer._GENERATED_PYPROJECT
+    )
+
+
+def test_copy_source_project_rejects_build_replacement_before_pyproject_cleanup(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    source_root = _temporary_source_copy(tmp_path)
+    build_root = tmp_path / "build"
+    build_root.mkdir(mode=0o700)
+    build_identity = integration_installer._directory_identity(build_root)
+    old_build = tmp_path / "build-old"
+    original_copy = integration_installer._copy_regular
+    replaced = False
+
+    def replace_after_manifest(source, target, **kwargs):
+        nonlocal replaced
+        result = original_copy(source, target, **kwargs)
+        if target == build_root / Path(integration_installer.SOURCE_MANIFEST_FILES[-1]):
+            build_root.rename(old_build)
+            build_root.mkdir(mode=0o700)
+            foreign = build_root / "pyproject.toml"
+            foreign.write_bytes(b"foreign")
+            foreign.chmod(0o600)
+            replaced = True
+        return result
+
+    monkeypatch.setattr(integration_installer, "_copy_regular", replace_after_manifest)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._copy_source_into_project(
+            source_root,
+            build_root,
+            build_identity=build_identity,
+        )
+
+    assert replaced
+    assert (build_root / "pyproject.toml").read_bytes() == b"foreign"
+    assert (old_build / "pyproject.toml").exists()
+
+
 def test_remove_activation_files_removes_any_python3_minor_entry(tmp_path):
     from codex_usage import integration_installer
 
@@ -1857,8 +1923,8 @@ def test_cleanup_does_not_delete_replaced_owned_child(tmp_path, monkeypatch, rep
     if replaced_kind == "build":
         original_copy = integration_installer._copy_source_into_project
 
-        def replace_build(source, build):
-            result = original_copy(source, build)
+        def replace_build(source, build, **kwargs):
+            result = original_copy(source, build, **kwargs)
             replace_with_foreign_marker(build)
             return result
 
