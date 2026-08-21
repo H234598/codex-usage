@@ -81,6 +81,7 @@
         "account-panel-settings",
         "panel-account-separator",
         "panel-percent-source",
+        "hide-5h-when-long-limit-exhausted",
         "fast-mode-icon"
       ]
     },
@@ -1801,6 +1802,12 @@
       "Nur 30-Tage-Limit": "thirty-day"
     },
     "default": "average"
+  },
+  "hide-5h-when-long-limit-exhausted": {
+    "type": "switch",
+    "description": "5h bei erschöpftem Wochen- oder 30-Tage-Limit als – anzeigen",
+    "tooltip": "Wenn Woche oder 30-Tage-Limit eines Accounts 0 % erreichen, zeigt 5h für diesen Account –. Sobald ein Langlimit wieder verfügbar ist, wird 5h wieder angezeigt.",
+    "default": false
   },
   "warning-threshold": {
     "type": "spinbutton",

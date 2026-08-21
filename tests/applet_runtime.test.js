@@ -2688,6 +2688,77 @@ test("panel slots honor ordering, mute and duplicate-source normalization", () =
   );
 });
 
+test("long-limit exhaustion masks 5h on panel, click and hover only when enabled", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  applet.hideFiveHourWhenLongLimitExhausted = true;
+  usage.weekly.remaining = 0;
+
+  assert.equal(
+    applet._panelContent(applet._panelItems().filter((item) => item.visible)).plain,
+    "A 5h – / W 0%"
+  );
+  assert.match(applet._tooltipContent().plain, /Alpha:, 5h –, Woche 0%/);
+
+  applet.menu = {items: [], addMenuItem(item) { this.items.push(item); }};
+  applet._addResetDetail = () => {};
+  applet._creditParts = () => null;
+  applet._creditConsumptionParts = () => null;
+  applet._consumptionParts = () => null;
+  applet._usageResetParts = () => null;
+  applet._addDynamicLimitDetails = () => {};
+  applet._addAccountControls = () => {};
+  applet._addAccountTerminalAction = () => {};
+  applet._addDisabled = () => {};
+  applet._setItemMarkup = () => {};
+  applet.showReactivationActions = false;
+  applet._addAccount(usage);
+  assert.match(applet.menu.items[0].label.text, /5h –/);
+
+  applet.hideFiveHourWhenLongLimitExhausted = false;
+  assert.equal(
+    applet._panelContent(applet._panelItems().filter((item) => item.visible)).plain,
+    "A 5h 80% / W 0%"
+  );
+
+  applet.hideFiveHourWhenLongLimitExhausted = true;
+  usage.weekly.remaining = 60;
+  assert.equal(
+    applet._panelContent(applet._panelItems().filter((item) => item.visible)).plain,
+    "A 5h 80% / W 60%"
+  );
+});
+
+test("monthly exhaustion masks 5h when long-limit hiding is enabled", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.main = {
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    windows: [{
+      name: "30d",
+      duration_seconds: 2592000,
+      remaining: 0,
+      limit: 100,
+    }],
+  };
+  applet.hideFiveHourWhenLongLimitExhausted = true;
+
+  assert.match(applet._tooltipContent().plain, /Alpha:, 5h –, Woche 60%/);
+  assert.equal(
+    applet._panelContent(applet._panelItems().filter((item) => item.visible)).plain,
+    "A 5h – / W –"
+  );
+
+  usage.main.windows[0].remaining = 50;
+  assert.equal(
+    applet._panelContent(applet._panelItems().filter((item) => item.visible)).plain,
+    "A 5h 80% / W 60%"
+  );
+});
+
 test("panel settings follow the Abrufwege account order", () => {
   const applet = makeApplet();
   applet.accountBackends = [

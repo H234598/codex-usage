@@ -293,6 +293,11 @@ CodexUsageApplet.prototype = {
         bind("refresh-on-open", "refreshOnOpen", null);
         bind("panel-percent-source", "panelPercentSource", this._onPanelDefaultsChanged);
         bind("panel-account-separator", "panelAccountSeparator", this._updatePanel);
+        bind(
+            "hide-5h-when-long-limit-exhausted",
+            "hideFiveHourWhenLongLimitExhausted",
+            this._refreshFormattedSurfaces
+        );
         this._bindCustomSetting("fast-mode-icon", "fastModeIcon", this._updatePanel);
         bind("warning-threshold", "warningThreshold", this._updatePanel);
         bind("notify-warnings", "notifyWarnings", null);
@@ -6608,7 +6613,9 @@ CodexUsageApplet.prototype = {
     },
 
     _addAccount: function(usage) {
-        let five = this._percentParts(usage.five_hour, usage.account, "click");
+        let five = this._percentParts(
+            this._fiveHourDisplayWindow(usage), usage.account, "click"
+        );
         let week = this._percentParts(usage.weekly, usage.account, "click");
         let monthly = this._percentParts(this._poolWindowForDuration(usage.main, 2592000), usage.account, "click");
         let severity = this._usageSeverity(usage);
@@ -8741,6 +8748,17 @@ CodexUsageApplet.prototype = {
         }[source] || "?";
     },
 
+    _fiveHourDisplayWindow: function(usage) {
+        if (!usage || this.hideFiveHourWhenLongLimitExhausted !== true) {
+            return usage && usage.five_hour;
+        }
+        let weekly = this._remainingPercent(usage.weekly);
+        let monthly = this._remainingPercent(
+            this._poolWindowForDuration(usage.main, 2592000)
+        );
+        return weekly === 0 || monthly === 0 ? null : usage.five_hour;
+    },
+
     _panelValueForSource: function(usage, source) {
         if (source === 9) {
             return this._remainingPercent(usage.credits);
@@ -8755,7 +8773,7 @@ CodexUsageApplet.prototype = {
             return null;
         }
         if (source === 1) {
-            return five;
+            return this._remainingPercent(this._fiveHourDisplayWindow(usage));
         }
         if (source === 2) {
             return week;
@@ -8967,7 +8985,9 @@ CodexUsageApplet.prototype = {
                 plainLines.push(MENU_SPACER);
                 markupLines.push(MENU_SPACER);
             }
-            let five = this._percentParts(usage.five_hour, usage.account, "hover");
+            let five = this._percentParts(
+                this._fiveHourDisplayWindow(usage), usage.account, "hover"
+            );
             let week = this._percentParts(usage.weekly, usage.account, "hover");
             let stale = usage.stale ? " (gespeichert)" : "";
             let display = this._accountDisplayText({ usage: usage }, "hover");

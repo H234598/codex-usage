@@ -4091,6 +4091,19 @@ und `cancel_requested` ohne PID wird weiterhin als `cancelled` abgeschlossen.
 Regressionstest ergänzt. `pytest -q tests/test_profile_jobs.py`: 82/82
 bestanden; Mypy, Ruff und `git diff --check` sauber.
 
+## Runde 461: Optionale 5h-Ausblendung bei erschöpftem Langlimit
+
+Neue globale Checkbox `hide-5h-when-long-limit-exhausted` ergänzt. Ist sie
+aktiv, zeigt ein Account sein 5h-Prozent in Leiste, Klick-Menü und Hover als
+`–`, sobald dessen Wochen- oder 30-Tage-Fenster 0 % verbleiben. Die Prüfung
+läuft pro aktuellem Account-Datensatz; sobald ein Langlimit wieder Werte hat,
+erscheint 5h wieder. Reset-, Verbrauchs- und Spark-Anzeigen bleiben
+unverändert; Standard bleibt deaktiviert.
+
+Schema-/Rendering-Regressionen ergänzt. `pytest -q tests/test_applet.py`:
+27/27 bestanden; `node --test tests/applet_runtime.test.js`: 397/397
+bestanden. `node --check` und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

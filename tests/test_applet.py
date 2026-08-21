@@ -56,6 +56,9 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "thirty-day",
         "weekly",
     }
+    assert settings["hide-5h-when-long-limit-exhausted"]["type"] == "switch"
+    assert settings["hide-5h-when-long-limit-exhausted"]["default"] is False
+    assert "hide-5h-when-long-limit-exhausted" in settings["layout"]["display-section"]["keys"]
     panel_table = settings["account-panel-settings"]
     assert [column["id"] for column in panel_table["columns"]] == [
         "account",
