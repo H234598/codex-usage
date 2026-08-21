@@ -1741,3 +1741,10 @@ jetzt über ihren normalen Invalid-Source-Pfad. `tests/test_integration_snapshot
 als `ValueError` aus `int()` entweichen. Beide RECORD-Parser behandeln solche
 Größen jetzt als ungültige Eingabe und brechen kontrolliert ab.
 `tests/test_integration_installer.py`: 105/105 bestanden; Mypy und Ruff sauber.
+
+## Runde 167: Gesamtverifikation
+
+Die vollständige Python-Suite lief nach den Snapshot-, Routing-, Credit- und
+RECORD-Validierungen mit **2168 bestanden, 1 übersprungen und 1 externer
+PyGObject-Warnung** in 86,82 s. Die Warnung betrifft weiterhin die veraltete
+`GLib.unix_signal_add_full`-API außerhalb des Repositories; keine Testfehler.
