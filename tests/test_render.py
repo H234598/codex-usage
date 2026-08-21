@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from codex_usage.config import MAX_CONFIG_ACCOUNTS
+from codex_usage.config import MAX_CONFIG_ACCOUNTS, AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.render import (
     _auth_value,
@@ -17,6 +18,7 @@ from codex_usage.render import (
     _remaining_percent,
     _safe_usage_for_display,
     _usage_value,
+    render_account_overview,
     render_account_values,
     render_json,
     render_table,
@@ -479,6 +481,30 @@ def test_render_account_values_hides_invalid_usage_mapping_values():
 
     assert "Privat" in rendered
     assert "Weitere Limits" in rendered
+
+
+@pytest.mark.parametrize("usages", [None, [], "invalid", object()])
+def test_render_account_values_rejects_invalid_usage_mapping(usages):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
+
+    with pytest.raises(ValueError, match="usage mapping is invalid"):
+        render_account_values((account,), usages)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("config", [None, [], "invalid", object()])
+def test_render_account_overview_rejects_invalid_config(config):
+    with pytest.raises(ValueError, match="config is invalid"):
+        render_account_overview(config, Path("/tmp/config"))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("usages", [[], "invalid", object()])
+def test_render_account_overview_rejects_invalid_usage_mapping(usages):
+    with pytest.raises(ValueError, match="usage mapping is invalid"):
+        render_account_overview(
+            AppConfig(accounts=()),
+            Path("/tmp/config"),
+            usages,  # type: ignore[arg-type]
+        )
 
 
 def test_render_table_includes_dynamic_main_and_spark_limits():

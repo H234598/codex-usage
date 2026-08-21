@@ -2193,3 +2193,13 @@ rohem `TypeError` oder späterem Attributzugriff abbrechen. Config und Accounts
 werden jetzt vor Fetch kontrolliert geprüft; ungültige Container melden
 `ValueError`. `tests/test_scheduler.py`: 186/186 bestanden; Mypy für Source
 und Ruff für betroffene Dateien sauber.
+
+## Runde 219: Account-Übersicht validiert Config-/Usage-Mapping
+
+`render_account_values()` und `render_account_overview()` griffen bei
+Nicht-Mappings bzw. Fremd-Configs vor Validierung auf `.get()` oder
+`.accounts` zu. Solche Diagnose-/Übersichtsaufrufe konnten mit rohem
+`TypeError`/`AttributeError` abbrechen. Beide Entry-Points weisen ungültige
+Container jetzt kontrolliert zurück; einzelne malformed Usage-Werte bleiben
+fail-closed. `tests/test_render.py`: 61/61 bestanden; Mypy für Source und Ruff
+für betroffene Dateien sauber.

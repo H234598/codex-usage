@@ -61,6 +61,10 @@ def render_account_overview(
     config_path: Path,
     usages: Mapping[str, AccountUsage] | None = None,
 ) -> str:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
+    if usages is not None and not isinstance(usages, Mapping):
+        raise ValueError("usage mapping is invalid")
     usage_by_account = usages or {}
     rows = [
         [
@@ -127,6 +131,8 @@ def render_account_values(
     accounts: Iterable[Account],
     usages: Mapping[str, AccountUsage],
 ) -> str:
+    if not isinstance(usages, Mapping):
+        raise ValueError("usage mapping is invalid")
     account_list = _bounded_account_list(accounts)
     rows = [
         [
