@@ -3737,3 +3737,14 @@ fremde Cache-Datei ab.
 
 `pytest -q tests/test_integration_snapshot.py`: 52/52 bestanden;
 Modul-Coverage 76%. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 389: Integration-Installer-Lesegrenze
+
+`integration_installer._read_nofollow()` prüfte bisher regulären Dateityp,
+Hardlink-Anzahl und Größenlimit, aber nicht den Eigentümer. Gelesene Source-,
+Wheel- und Release-Artefakte müssen dem aktuellen User gehören; der Guard
+verlangt jetzt zusätzlich `st_uid == os.getuid()`. Regressionstest deckt eine
+fremde Datei ab.
+
+`pytest -q tests/test_integration_installer.py`: 106/106 bestanden;
+Modul-Coverage 83%. Ruff, Mypy und `git diff --check` sauber.

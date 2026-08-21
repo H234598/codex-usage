@@ -1350,6 +1350,18 @@ def test_installer_reader_rejects_oversized_file_before_materializing(tmp_path, 
         integration_installer._read_nofollow(path)
 
 
+def test_installer_reader_rejects_foreign_owner(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    path = tmp_path / "installer-file"
+    path.write_bytes(b"payload")
+    path.chmod(0o600)
+    monkeypatch.setattr(integration_installer.os, "getuid", lambda: 2**31 - 1)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._read_nofollow(path)
+
+
 def test_final_release_collision_is_immutable_and_staging_never_leaks_into_manifest_or_launcher(
     tmp_path,
 ):

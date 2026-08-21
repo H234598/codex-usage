@@ -545,7 +545,11 @@ def _read_nofollow(path: Path) -> bytes:
         _no_symlink_ancestors(path.parent)
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         item = os.fstat(fd)
-        if not stat.S_ISREG(item.st_mode) or item.st_nlink != 1:
+        if (
+            not stat.S_ISREG(item.st_mode)
+            or item.st_nlink != 1
+            or item.st_uid != os.getuid()
+        ):
             _fail()
         if item.st_size > MAX_INSTALL_FILE_BYTES:
             _fail()
