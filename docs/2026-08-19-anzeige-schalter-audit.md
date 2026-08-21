@@ -2474,3 +2474,21 @@ Ein gemeinsamer Guard weist ungültige Werte jetzt vor Scheduler-I/O als
 betroffenen Dateien sauber. Der bestehende Mypy-Fehler im Testmodul für den
 absichtlich falsch typisierten `LimitWindow(remaining="97")`-Fixture bleibt
 unverändert.
+
+## Runde 250: Abschlussverifikation nach Scheduler-Härtung
+
+Die Vollsuite bestätigt den Stand nach Scheduler-Runde 249: `2574 bestanden,
+1 übersprungen, 1 Warnung` in 87,87 s. Die Warnung bleibt externe PyGObject-
+Deprecation außerhalb des Repositories. `mypy src/codex_usage` ist in 35
+Quelldateien fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und
+Scripts ist ebenfalls sauber.
+
+## Runde 251: Identity-Helpers verwerfen malformed URLs
+
+`identity.backend_identity_from_candidates()` und
+`backend_plan_type_from_candidates()` reichten einen nicht parsebaren,
+nichtleeren URL-String wie `http://[::1` bis `urlsplit()` und brachen roh mit
+`ValueError` ab. Die Kandidatenprüfung validiert URL-Syntax jetzt vor der
+Priorisierung; solche Kandidaten werden wie andere unbrauchbare Kandidaten
+verworfen. `tests/test_identity.py`: 28/28 bestanden; Mypy für Source und
+Ruff für die betroffenen Dateien sauber.

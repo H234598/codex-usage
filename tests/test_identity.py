@@ -115,6 +115,20 @@ def test_identity_helpers_skip_candidates_without_usable_urls():
     ) == [valid]
 
 
+def test_identity_helpers_skip_candidates_with_malformed_urls():
+    malformed = JsonCandidate(url="http://[::1", payload={"user_id": "wrong-user"})
+    valid = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={"user_id": "valid-user", "plan_type": "plus"},
+    )
+
+    assert backend_identity_from_candidates([malformed, valid]) == ("valid-user", None)
+    assert backend_plan_type_from_candidates([malformed, valid]) == "plus"
+    assert select_identity_consistent_candidates(
+        [malformed, valid], auth_user_id=None, auth_account_id=None
+    ) == [valid]
+
+
 @pytest.mark.parametrize("candidates", [None, 1, True, object()])
 def test_identity_helpers_reject_non_iterable_candidates(candidates):
     assert backend_identity_from_candidates(candidates) == (None, None)  # type: ignore[arg-type]

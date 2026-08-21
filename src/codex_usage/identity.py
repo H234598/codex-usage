@@ -235,11 +235,17 @@ def _candidate_priority(candidate: JsonCandidate) -> int:
 
 
 def _candidate_is_usable(candidate: Any) -> bool:
-    return (
-        isinstance(candidate, JsonCandidate)
-        and isinstance(candidate.url, str)
-        and bool(candidate.url.strip())
-    )
+    if (
+        not isinstance(candidate, JsonCandidate)
+        or not isinstance(candidate.url, str)
+        or not candidate.url.strip()
+    ):
+        return False
+    try:
+        urlsplit(candidate.url)
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _usable_candidates(candidates: Iterable[JsonCandidate]) -> list[JsonCandidate]:
