@@ -3565,3 +3565,13 @@ reproduzierbarer Fehler.
 
 `pytest -q tests/test_profile_login.py tests/test_identity.py`: 67/67
 bestanden. Mypy für beide Module, Ruff und `git diff --check` sauber.
+
+## Runde 372: App-Server-RPC und Usage-DTOs
+
+`app_server.py` wurde auf Auth-Identitätswechsel, RPC-IDs/-Fehler,
+bounded Nachrichten und stderr, Timeout-/Prozessgruppen-Reaping,
+Modell-ID-Validierung sowie 5h-/Wochenfenster-Mapping geprüft. Kein neuer
+reproduzierbarer Fehler; malformed Slots bleiben partiell oder fail-closed.
+
+`pytest -q tests/test_app_server.py`: 98/98 bestanden. Mypy für
+`app_server.py`, Ruff und `git diff --check` sauber.
