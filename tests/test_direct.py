@@ -26,10 +26,15 @@ from codex_usage.direct import (
     _redact_url,
     _select_stable_wham_usage,
     _signature_number,
+    auth_email_from_file,
     auth_email_from_payload,
     auth_identity_changed,
+    auth_identity_for_account,
+    auth_identity_from_file,
     auth_identity_from_payload,
     auth_metadata_from_payload,
+    auth_plan_type_for_account,
+    auth_plan_type_from_file,
     auth_plan_type_from_payload,
     canonical_backend_identity,
     fetch_account_usage_direct,
@@ -3037,6 +3042,26 @@ def test_auth_json_helpers_accept_inherited_regular_fd(tmp_path):
     assert raw == '{"tokens": {"access_token": "token"}}'
     assert raw_again == raw
     assert file_stat.st_ino == validated.st_ino
+
+
+@pytest.mark.parametrize("path", [None, [], "invalid", 1, False, object()])
+def test_auth_file_helpers_reject_non_path(path):
+    for helper in (
+        auth_identity_from_file,
+        auth_email_from_file,
+        auth_plan_type_from_file,
+        read_auth_json_file,
+        validate_auth_json_file,
+    ):
+        with pytest.raises(DirectAuthError, match=r"auth\.json path is invalid"):
+            helper(path)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("account", [None, [], 1, object()])
+def test_auth_account_helpers_reject_non_account(account):
+    for helper in (auth_identity_for_account, auth_plan_type_for_account):
+        with pytest.raises(DirectAuthError, match="account is invalid"):
+            helper(account)  # type: ignore[arg-type]
 
 
 def test_auth_json_helpers_reject_hard_linked_file(tmp_path):

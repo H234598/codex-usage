@@ -449,7 +449,7 @@ def auth_identity_from_payload(
 
 
 def auth_identity_from_file(path: Path) -> tuple[str | None, str | None]:
-    path = path.expanduser()
+    path = _require_auth_path(path).expanduser()
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -461,8 +461,12 @@ def auth_identity_from_file(path: Path) -> tuple[str | None, str | None]:
 
 
 def auth_identity_for_account(account: Account) -> tuple[str | None, str | None]:
+    if not isinstance(account, Account):
+        raise DirectAuthError("account is invalid")
     if not account.auth_json_path:
         return None, None
+    if not isinstance(account.auth_json_path, str):
+        raise DirectAuthError("auth.json path is invalid")
     return auth_identity_from_file(Path(account.auth_json_path))
 
 
@@ -491,7 +495,7 @@ def auth_email_from_payload(
 
 
 def auth_email_from_file(path: Path) -> str | None:
-    path = path.expanduser()
+    path = _require_auth_path(path).expanduser()
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -534,7 +538,7 @@ def auth_plan_type_from_payload(
 
 
 def auth_plan_type_from_file(path: Path) -> str | None:
-    path = path.expanduser()
+    path = _require_auth_path(path).expanduser()
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -546,8 +550,12 @@ def auth_plan_type_from_file(path: Path) -> str | None:
 
 
 def auth_plan_type_for_account(account: Account) -> str | None:
+    if not isinstance(account, Account):
+        raise DirectAuthError("account is invalid")
     if not account.auth_json_path:
         return None
+    if not isinstance(account.auth_json_path, str):
+        raise DirectAuthError("auth.json path is invalid")
     return auth_plan_type_from_file(Path(account.auth_json_path))
 
 
@@ -820,6 +828,7 @@ def _open_auth_json_fd(path: Path) -> int:
 
 
 def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
+    path = _require_auth_path(path)
     fd = _open_auth_json_fd(path)
 
     try:
@@ -843,6 +852,7 @@ def read_auth_json_file(path: Path) -> tuple[str, os.stat_result]:
 
 
 def validate_auth_json_file(path: Path):
+    path = _require_auth_path(path)
     fd = _open_auth_json_fd(path)
     try:
         file_stat = os.fstat(fd)
@@ -852,6 +862,12 @@ def validate_auth_json_file(path: Path):
         os.close(fd)
     _validate_auth_json_stat(path, file_stat)
     return file_stat
+
+
+def _require_auth_path(path: object) -> Path:
+    if not isinstance(path, Path):
+        raise DirectAuthError("auth.json path is invalid")
+    return path
 
 
 def _validate_auth_json_stat(path: Path, file_stat: os.stat_result) -> None:

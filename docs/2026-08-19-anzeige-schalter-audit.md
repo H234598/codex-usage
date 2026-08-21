@@ -2371,3 +2371,14 @@ Die Vollsuite bestätigt den aktuellen lokalen HEAD: `2502 bestanden, 1
 Deprecation außerhalb des Repositories. `mypy src/codex_usage` ist in 35
 Quelldateien fehlerfrei; der aggregierte Ruff-Lauf über Produktion, Scripts,
 Launcher und Tests ist ebenfalls sauber.
+
+## Runde 239: Direct-Auth-Datei-/Account-Helper validieren Eingaben
+
+`direct.auth_identity_from_file()`, `auth_email_from_file()`,
+`auth_plan_type_from_file()`, `read_auth_json_file()` und
+`validate_auth_json_file()` griffen bei Fremdpfaden roh auf Path-Methoden zu.
+`auth_identity_for_account()` und `auth_plan_type_for_account()` taten dasselbe
+bei Fremd-Accounts. Gemeinsame Guards liefern jetzt kontrolliert
+`DirectAuthError`.
+`tests/test_direct.py`: 173/173 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.
