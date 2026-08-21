@@ -66,3 +66,19 @@ def test_terminal_candidates_prefer_ghostty(monkeypatch):
 
     assert terminal_module._resolve_terminal() == ("/usr/bin/ghostty", "ghostty")
     assert seen[0] == "ghostty"
+
+
+@pytest.mark.parametrize("explicit", ["", [], {}, 0])
+def test_executable_resolver_rejects_invalid_explicit_value(monkeypatch, explicit):
+    monkeypatch.setattr(terminal_module.shutil, "which", lambda _: "/usr/bin/codex")
+
+    with pytest.raises(TerminalError, match="codex command is invalid"):
+        terminal_module._resolve_executable(explicit, "codex", label="codex command")
+
+
+@pytest.mark.parametrize("explicit", ["", [], {}, 0])
+def test_terminal_resolver_rejects_invalid_explicit_value(monkeypatch, explicit):
+    monkeypatch.setattr(terminal_module.shutil, "which", lambda _: "/usr/bin/ghostty")
+
+    with pytest.raises(TerminalError, match="no supported terminal"):
+        terminal_module._resolve_terminal(explicit)

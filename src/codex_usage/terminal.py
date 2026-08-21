@@ -89,7 +89,7 @@ def _validate_auth_json(path: Path) -> None:
 
 
 def _resolve_executable(explicit: str | None, fallback: str, *, label: str) -> str:
-    candidate = explicit or fallback
+    candidate = fallback if explicit is None else explicit
     if not isinstance(candidate, str) or not candidate or candidate != candidate.strip():
         raise TerminalError(f"{label} is invalid")
     resolved = shutil.which(candidate)
@@ -99,9 +99,10 @@ def _resolve_executable(explicit: str | None, fallback: str, *, label: str) -> s
 
 
 def _resolve_terminal(explicit: str | None = None) -> tuple[str, str]:
-    candidates = (explicit,) if explicit else (
-        *TERMINAL_CANDIDATES,
-        os.environ.get("TERMINAL"),
+    candidates = (
+        (explicit,)
+        if explicit is not None
+        else (*TERMINAL_CANDIDATES, os.environ.get("TERMINAL"))
     )
     for candidate in candidates:
         if not isinstance(candidate, str) or not candidate or candidate != candidate.strip():

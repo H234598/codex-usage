@@ -1118,3 +1118,11 @@ jetzt erfolgt kontrollierte Ablehnung mit Fehlercode 1. Regression ergänzt;
 `auth_json_path=[]` als `TypeError` leaken. Optionale API-Argumente werden jetzt
 vor jeder Seiteneffekt-Phase typgeprüft; leere Strings bleiben kompatibel.
 `tests/test_config.py`: 88/88 bestanden; Ruff sauber.
+
+## Runde 90: Terminal-Resolver-Fallback
+
+`terminal._resolve_executable()` und `_resolve_terminal()` behandelten
+explizite falsy Werte wie nicht gesetzte Optionen und starteten dadurch das
+Standardprogramm. Explizit übergebene Werte werden jetzt immer validiert;
+nur `None` aktiviert Fallback. `tests/test_terminal.py`: 11/11 bestanden;
+Ruff sauber.
