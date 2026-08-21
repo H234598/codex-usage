@@ -3344,3 +3344,10 @@ vorgesehenen `IntegrationInvalidSource`-Fehler übersetzt; bestehende
 Regressionstest ergänzt. `pytest -q tests/test_integration_snapshot.py`:
 50/50 bestanden. Mypy für `integration_snapshot.py`, Ruff und
 `git diff --check` sauber.
+
+## Runde 349: Reload nach Snapshot-Serializer-Fix
+
+Service-Neustart nach `a43027b` verarbeitet die `app-server`-Konten weiter
+ohne Integration-/Parserfehler. Status 2 kommt weiterhin nur von den
+Browser-Konten mit fehlender Firefox-Playwright-Executable; keine automatische
+Netzwerkinstallation ausgeführt.
