@@ -1472,3 +1472,8 @@ def test_profile_job_create_rejects_invalid_config_path_type(
 def test_profile_job_event_rejects_non_string_kind(kind):
     with pytest.raises(ValueError, match="event kind is invalid"):
         profile_jobs._normalize_job_event({"kind": kind, "value": "https://example.com"})
+
+
+@pytest.mark.parametrize("argv", [None, (), "job", 1, object(), [None], ["a", "b"]])
+def test_profile_job_worker_rejects_invalid_argv(argv):
+    assert profile_jobs.worker_main(argv) == 2  # type: ignore[arg-type]

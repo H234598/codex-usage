@@ -542,7 +542,7 @@ def _event_path(job_id: str) -> Path:
 
 
 def worker_main(argv: list[str]) -> int:
-    if len(argv) != 1:
+    if not isinstance(argv, list) or len(argv) != 1 or not isinstance(argv[0], str):
         return 2
     try:
         return run_profile_job(argv[0])

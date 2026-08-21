@@ -2338,3 +2338,11 @@ definierten Invalid-Arguments-Ergebnisses mit rohem `TypeError` abbrechen.
 Nicht-sequenzielle argv-Werte liefern jetzt kontrolliert Exit-Code 64.
 `tests/test_integration_entrypoint.py`: 25/25 bestanden; Mypy für Source und
 Ruff für die betroffenen Dateien sauber.
+
+## Runde 235: Profile-Job-Worker validiert argv-Container
+
+`profile_jobs.worker_main()` griff bei `None`, Fremdcontainern oder falschen
+Elementen vor dem Fehlerpfad auf `len()` bzw. Indexzugriff zu. Der Worker weist
+ungültige argv-Form jetzt kontrolliert mit Exit-Code 2 zurück.
+`tests/test_profile_jobs.py`: 69/69 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.
