@@ -3245,3 +3245,13 @@ für malformed payloads und Prozessgrenzen bleibt unverändert.
 
 `pytest -q tests/test_app_server.py`: 98/98 bestanden. Coverage für das Modul:
 83 % Branch-inklusive; Ruff, Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 339: Usage-Limit-Parser geprüft
+
+`usage_limits.py` wurde für WHAM-/App-Server-Fenster, dynamische Dauer-
+Identitäten, Spark-Duplikate, Modellkatalog und Reset-/Control-Flags geprüft.
+Kein reproduzierbarer Parserfehler gefunden. Ein zusätzlicher Fuzz-Pass mit
+5.000 JSON-artigen Payloads ergab keine ungefangene Exception.
+
+`pytest -q tests/test_usage_limits.py`: 124/124 bestanden. Coverage für das
+Modul: 91 % Branch-inklusive; Ruff und `git diff --check` sauber.
