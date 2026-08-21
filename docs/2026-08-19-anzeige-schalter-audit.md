@@ -1518,3 +1518,8 @@ Nach den Resolver-, Formatierungs- und Model-Änderungen lief die vollständige
 Python-Suite mit **2113 bestanden, 1 übersprungen und 1 Warnung** in 86 s.
 Der Lauf schreibt keine offenen Testfehler; die Warnung bleibt als bestehender
 Test-/Umgebungsbefund separat zu beobachten.
+
+## Runde 138: Cinnamon-JavaScript-Verifikation
+
+Der vollständige Node-Testlauf `tests/applet_runtime.test.js` endet mit
+**391/391 bestanden**, ohne Skip oder Fehler.
