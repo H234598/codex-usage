@@ -48,6 +48,8 @@ def test_help_text_helpers_preserve_detail_and_escape_markup() -> None:
     assert "Grenzen: 0 bis 100" in text
     assert "Wertquelle für dieses Leistenfeld" in _field_text({"id": "slot23"})
     assert _markup("<tag>\n&") == "&lt;tag&gt;&#10;&amp;"
+    assert _markup(0) == "0"
+    assert _markup(False) == "False"
 
 
 def test_help_group_builder_covers_gui_pages_and_format_copies() -> None:

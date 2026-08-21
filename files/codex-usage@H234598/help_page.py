@@ -261,7 +261,8 @@ def build_help_groups(schema: object) -> list[dict[str, object]]:
 
 
 def _markup(text: object) -> str:
-    return html.escape(str(text or ""), quote=True).replace("\n", "&#10;")
+    value = "" if text is None else str(text)
+    return html.escape(value, quote=True).replace("\n", "&#10;")
 
 
 class HelpPage(SettingsWidget):

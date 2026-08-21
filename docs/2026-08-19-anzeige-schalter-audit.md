@@ -5351,3 +5351,14 @@ wirklich unbrauchbare Rows.
 
 Regressionen decken echte TreeModelRow-Form ab; `tests/test_dynamic_series_list.py`
 läuft mit 10/10 Tests. Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 454: Hilfe-Markup bewahrt primitive Werte
+
+`help_page._markup()` machte alle falsy Werte über `text or ""` leer. Dadurch
+wurden numerische oder boolesche Schemawerte `0` und `False` in generierten
+Hilfetexten unterschlagen. Nur `None` gilt nun als leer; alle anderen Werte
+werden vor GTK-Markup-Escaping als Text erhalten.
+
+Regressionen prüfen `0` und `False` zusätzlich zum bestehenden Escaping und
+Zeilenumbruch. `tests/test_help_page.py`: 5/5 bestanden; Ruff,
+Python-Compile und `git diff --check` sauber.
