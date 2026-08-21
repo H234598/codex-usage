@@ -3225,3 +3225,11 @@ Der Runtime-Test deckt zusätzlich ab, dass `consumption-short` und
 `consumption-monthly` bei gleicher Verbrauchszeile unabhängig stylen: ein
 deaktiviertes 5h-Ziel bleibt ungestylt, während ein aktiviertes 30d-Ziel
 Markup erhält. `node --test tests/applet_runtime.test.js`: 395/395 bestanden.
+
+## Runde 337: Browser-Installation dokumentiert
+
+Der laufende Service meldete fehlende Playwright-Browser-Binaries, weil die
+Installationsanleitung nur Chromium installierte, obwohl Firefox Standard und
+beide Browser konfigurierbar sind. README installiert jetzt beide unterstützten
+Playwright-Browser und beschreibt den Login korrekt als konfigurierten Browser.
+Keine automatische Netzwerkinstallation wurde ausgeführt.

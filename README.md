@@ -8,7 +8,7 @@ This is browser automation against `https://chatgpt.com/codex/cloud/settings/ana
 
 ```bash
 python -m pip install -e ".[dev]"
-python -m playwright install chromium
+python -m playwright install chromium firefox
 ```
 
 ## Configure Accounts
@@ -48,7 +48,7 @@ codex-usage login privat
 codex-usage login arbeit
 ```
 
-The login command opens a visible Chromium window. Sign in normally, including MFA, then press Enter in the terminal.
+The login command opens the configured browser visibly. Sign in normally, including MFA, then press Enter in the terminal.
 
 Remove an account from the config:
 
