@@ -6668,6 +6668,23 @@ test("stale cached values mark the panel as a warning", () => {
   assert.equal(classes.includes("codex-usage-panel-error"), false);
 });
 
+test("unchanged panel surfaces are not rewritten on every display tick", () => {
+  const applet = makeApplet();
+  let labels = 0;
+  let markups = 0;
+  let tooltips = 0;
+  applet.set_applet_label = () => { labels += 1; };
+  applet._setPanelMarkup = () => { markups += 1; };
+  applet.set_applet_tooltip = () => { tooltips += 1; };
+
+  applet._updatePanel();
+  applet._updatePanel();
+
+  assert.equal(labels, 1);
+  assert.equal(markups, 1);
+  assert.equal(tooltips, 1);
+});
+
 test("partial usage marks the panel and account row as incomplete", () => {
   const applet = makeApplet();
   const classes = [];

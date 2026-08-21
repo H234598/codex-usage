@@ -261,7 +261,7 @@ def build_help_groups(schema: object) -> list[dict[str, object]]:
 
 
 def _markup(text: object) -> str:
-    return html.escape(str(text or ""), quote=True).replace("\n", "<br/>")
+    return html.escape(str(text or ""), quote=True).replace("\n", "&#10;")
 
 
 class HelpPage(SettingsWidget):
@@ -330,6 +330,10 @@ class HelpPage(SettingsWidget):
     def _add_entry(self, parent, entry: dict[str, object]) -> None:
         expander = Gtk.Expander(label=str(entry.get("title", "Feld")))
         expander.set_hexpand(True)
+        expander.connect("notify::expanded", self._on_entry_expanded, entry)
+        parent.pack_start(expander, False, False, 0)
+
+    def _entry_content(self, entry: dict[str, object]):
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         content.set_margin_top(6)
         content.set_margin_bottom(6)
@@ -352,8 +356,19 @@ class HelpPage(SettingsWidget):
             field_body.set_selectable(True)
             field_body.set_markup(_markup(field.get("text", "")))
             content.pack_start(field_body, False, False, 0)
-        expander.add(content)
-        parent.pack_start(expander, False, False, 0)
+        return content
+
+    def _on_entry_expanded(self, expander, _spec, entry: dict[str, object]) -> None:
+        child = expander.get_child()
+        if expander.get_expanded():
+            if child is None:
+                child = self._entry_content(entry)
+                expander.add(child)
+            child.show_all()
+            return
+        if child is not None:
+            expander.remove(child)
+            child.destroy()
 
     def on_setting_changed(self, *_args):
         pass

@@ -12,6 +12,7 @@ sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
 from help_page import (  # noqa: E402
+    Gtk,
     HelpPage,
     _clean_text,
     _definition_entry,
@@ -46,7 +47,7 @@ def test_help_text_helpers_preserve_detail_and_escape_markup() -> None:
     assert "Standard: 20" in text
     assert "Grenzen: 0 bis 100" in text
     assert "Wertquelle für dieses Leistenfeld" in _field_text({"id": "slot23"})
-    assert _markup("<tag>\n&") == "&lt;tag&gt;<br/>&amp;"
+    assert _markup("<tag>\n&") == "&lt;tag&gt;&#10;&amp;"
 
 
 def test_help_group_builder_covers_gui_pages_and_format_copies() -> None:
@@ -83,5 +84,46 @@ def test_help_page_builds_scrollable_widget_from_schema() -> None:
         assert widget.content_widget is not None
         widget.on_setting_changed()
         widget.connect_widget_handlers()
+    finally:
+        widget.destroy()
+
+
+def _widget_count(widget) -> int:
+    count = 1
+    if isinstance(widget, Gtk.Container):
+        for child in widget.get_children():
+            count += _widget_count(child)
+    return count
+
+
+def _expanders(widget):
+    if isinstance(widget, Gtk.Expander):
+        yield widget
+    if isinstance(widget, Gtk.Container):
+        for child in widget.get_children():
+            yield from _expanders(child)
+
+
+def test_help_page_defers_field_widgets_until_entry_expands() -> None:
+    widget = HelpPage({}, "help-content", SimpleNamespace(settings=_schema()))
+    try:
+        expanders = list(_expanders(widget))
+        assert len(expanders) == 56
+        initial_count = _widget_count(widget)
+        assert initial_count < 300
+        assert all(expander.get_child() is None for expander in expanders)
+
+        target = next(
+            expander for expander in expanders
+            if expander.get_label() == "Leiste — Kürzel"
+        )
+        target.set_expanded(True)
+        assert target.get_child() is not None
+        expanded_count = _widget_count(widget)
+        assert expanded_count > initial_count
+
+        target.set_expanded(False)
+        assert target.get_child() is None
+        assert _widget_count(widget) == initial_count
     finally:
         widget.destroy()

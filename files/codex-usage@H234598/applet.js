@@ -190,6 +190,12 @@ CodexUsageApplet.prototype = {
         this._commandError = "";
         this._lastGoodPanel = { plain: "--", markup: "--" };
         this._lastGoodTooltip = "";
+        this._panelSurfaceState = {
+            plain: null,
+            markup: null,
+            tooltip: null,
+            icon: null,
+        };
         this._generation = 0;
         this._primaryRequest = null;
         this._primaryCachePending = false;
@@ -657,6 +663,12 @@ CodexUsageApplet.prototype = {
         this._cancelAuxProcess();
         this._cancelHealthProcess();
         this._cancelReactivations();
+        this._panelSurfaceState = {
+            plain: null,
+            markup: null,
+            tooltip: null,
+            icon: null,
+        };
         this._clearPanelClasses();
         try {
             this.actor.add_style_class_name("codex-usage-panel-error");
@@ -8119,6 +8131,13 @@ CodexUsageApplet.prototype = {
         }
         let worst = values.length ? Math.min.apply(Math, values) : null;
         let panel = this._panelContent(selected);
+        let surface = this._panelSurfaceState || {
+            plain: null,
+            markup: null,
+            tooltip: null,
+            icon: null,
+        };
+        this._panelSurfaceState = surface;
         if (this._fastModeIsActive()) {
             try {
                 let icon = String(this.fastModeIcon || FAST_MODE_ICON);
@@ -8126,20 +8145,36 @@ CodexUsageApplet.prototype = {
                     icon = FAST_MODE_ICON;
                 }
                 if (typeof this.set_applet_icon_path === "function") {
-                    this.set_applet_icon_path((this.metadata.path || "") + "/icons/" + icon);
+                    let iconPath = (this.metadata.path || "") + "/icons/" + icon;
+                    let iconState = "path:" + iconPath;
+                    if (surface.icon !== iconState) {
+                        this.set_applet_icon_path(iconPath);
+                        surface.icon = iconState;
+                    }
                 }
             } catch (e) {
                 if (typeof this.set_applet_icon_symbolic_name === "function") {
                     this.set_applet_icon_symbolic_name("dialog-warning-symbolic");
+                    surface.icon = "symbolic:dialog-warning-symbolic";
                 }
             }
         } else {
             if (typeof this.set_applet_icon_symbolic_name === "function") {
-                this.set_applet_icon_symbolic_name("view-statistics-symbolic");
+                let iconState = "symbolic:view-statistics-symbolic";
+                if (surface.icon !== iconState) {
+                    this.set_applet_icon_symbolic_name("view-statistics-symbolic");
+                    surface.icon = iconState;
+                }
             }
         }
-        this.set_applet_label(panel.plain);
-        this._setPanelMarkup(panel.markup);
+        if (surface.plain !== panel.plain) {
+            this.set_applet_label(panel.plain);
+            surface.plain = panel.plain;
+        }
+        if (surface.markup !== panel.markup) {
+            this._setPanelMarkup(panel.markup);
+            surface.markup = panel.markup;
+        }
         if (hasError) {
             this.actor.add_style_class_name("codex-usage-panel-error");
         } else if (worst !== null && worst <= 5) {
@@ -8165,10 +8200,11 @@ CodexUsageApplet.prototype = {
             };
         }
         let emptyTooltip = _("Keine Codex-Nutzungswerte");
-        this.set_applet_tooltip(
-            tooltip.markup || this._escapeMarkup(emptyTooltip),
-            true
-        );
+        let tooltipMarkup = tooltip.markup || this._escapeMarkup(emptyTooltip);
+        if (surface.tooltip !== tooltipMarkup) {
+            this.set_applet_tooltip(tooltipMarkup, true);
+            surface.tooltip = tooltipMarkup;
+        }
         this._lastGoodPanel = panel;
         this._lastGoodTooltip = tooltip.plain;
     },

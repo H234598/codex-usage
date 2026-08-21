@@ -5283,3 +5283,25 @@ reproduzierbare Fehlfunktion.
 
 `pytest -q tests/test_direct.py`: 183/183 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 450: Cinnamon-Heap-Härtung für Hilfe und Panel
+
+Die neue Hilfe-Seite erzeugte beim Öffnen alle 404 Feldbeschreibungen sofort als
+GTK-Widgets: 1.066 Widgets pro Aufbau. Das belastet Cinnamon-Settings bei jedem
+Seitenwechsel und hielt unnötige Actor-/Label-Strukturen bis zum Zerstören der
+Seite. Einträge erzeugen ihren Inhalt jetzt erst beim Aufklappen; beim Zuklappen
+wird der Inhalt zerstört. Der initiale Aufbau benötigt im aktuellen Schema 146
+Widgets. GTK3 unterstützt kein `<br>`-Markup; Zeilenumbrüche werden als gültiges
+XML-Zeichen `&#10;` gesetzt, wodurch die vorherige Warnungsflut entfällt.
+
+Das Applet dedupliziert unveränderte Panel-Label-, Markup-, Tooltip- und
+Icon-Schreibvorgänge. Display-Timer dürfen weiter rechnen und Warnklassen
+prüfen, schreiben aber keine identischen Cinnamon-Oberflächen mehr in jedem
+Tick. Der Safe-Mode verwirft den Cache, damit beim Wiederanlauf keine alte
+Oberfläche übersprungen wird.
+
+Regressionen:
+
+- `pytest -q tests/test_help_page.py tests/test_format_table_selector.py tests/test_applet.py`: 38/38 bestanden.
+- `node --test tests/applet_runtime.test.js`: 407/407 bestanden.
+- `make applet-check`, Ruff, Python-Compile, JSON-Parse und `git diff --check` sauber.
