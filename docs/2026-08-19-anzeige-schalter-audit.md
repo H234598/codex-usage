@@ -3869,3 +3869,11 @@ gesamte JSON-Serialisierung abbrechen. `_isoformat()` liefert bei fehlerhaftem
 
 `pytest -q tests/test_models.py`: 15/15 bestanden; Modul-Coverage 50% im
 isolierten Model-Test. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 402: Service-Reload nach Model-Serialization-Fix
+
+`codex-usage service enable --format json` nach `8f133b4` erfolgreich:
+Service installiert/aktiv, Timer aktiv und geplant. Exit 2 bleibt der bekannte
+Firefox-Playwright-Executable-Fehler der Browser-Konten; Journal zeigt keinen
+neuen Model-/Serialisierungsfehler. Keine Netzwerkinstallation und kein
+Fallback ausgeführt.
