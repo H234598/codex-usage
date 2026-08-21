@@ -1210,3 +1210,11 @@ auf Dateiart, Linkzähler und Rechte. Eine fremde Eigentümerdatei konnte damit
 als erfolgreiche Job-Postcondition gelten, obwohl Direct-Usage sie ablehnt.
 UID-Abgleich ergänzt; Regression mit simuliertem UID-Mismatch. `tests/test_profile_jobs.py`:
 57/57 bestanden; Ruff sauber.
+
+## Runde 101: Profiljob-Auth-Identität
+
+Die Job-Completion prüfte trotz gespeichertem `expected_backend_account_id`
+nicht die Identität der kanonischen Auth. Nach einem Datei-Race konnte damit
+formal private, aber fremde Auth als Erfolg gelten. Postcondition liest und
+vergleicht Backend-ID jetzt; Regression ergänzt. `tests/test_profile_jobs.py`:
+58/58 bestanden; Ruff sauber.

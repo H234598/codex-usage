@@ -21,6 +21,7 @@ from .config import (
     default_state_dir,
     load_config,
 )
+from .direct import DirectAuthError, auth_identity_from_file
 from .json_utils import loads_strict
 from .models import Account
 from .private_io import (
@@ -401,11 +402,20 @@ def _verify_profile_job_completion(job: dict[str, object]) -> bool:
         if auth_path.is_symlink() or not auth_path.is_file():
             return False
         file_stat = auth_path.stat()
-        return (
-            file_stat.st_uid == os.getuid()
-            and file_stat.st_nlink == 1
-            and not file_stat.st_mode & 0o077
-        )
+        if (
+            file_stat.st_uid != os.getuid()
+            or file_stat.st_nlink != 1
+            or file_stat.st_mode & 0o077
+        ):
+            return False
+        expected_backend_account_id = job.get("expected_backend_account_id")
+        if expected_backend_account_id is None:
+            return True
+        try:
+            _, actual_backend_account_id = auth_identity_from_file(auth_path)
+        except (DirectAuthError, ValueError):
+            return False
+        return actual_backend_account_id == expected_backend_account_id
     except (OSError, TypeError, ValueError):
         return False
 
