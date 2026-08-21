@@ -3351,3 +3351,13 @@ Service-Neustart nach `a43027b` verarbeitet die `app-server`-Konten weiter
 ohne Integration-/Parserfehler. Status 2 kommt weiterhin nur von den
 Browser-Konten mit fehlender Firefox-Playwright-Executable; keine automatische
 Netzwerkinstallation ausgeführt.
+
+## Runde 350: Integration-Entrypoint geprüft
+
+`integration_entrypoint.py` wurde bounded auf exakte Argumente, XDG-Pfade,
+Verifier-Reihenfolge, Exitcode-/Token-Abbildung, UTC-Normalisierung und
+History-Cost-Fenster geprüft. Kein neuer reproduzierbarer Fehler gefunden;
+Fehlerdetails bleiben aus stdout/stderr ausgeschlossen.
+
+`pytest -q tests/test_integration_entrypoint.py`: 26/26 bestanden. Mypy für
+`integration_entrypoint.py`, Ruff und `git diff --check` sauber.
