@@ -4005,3 +4005,16 @@ String-Typ; gültige Selektoren und Manifest-/Worker-Fluss bleiben unverändert.
 
 `pytest -q tests/test_profile_jobs.py`: 81/81 bestanden; Modul-Coverage 78 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 415: Device-Login-Account-Grenze
+
+`run_device_login()` akzeptierte ein direkt konstruiertes `Account` mit
+ungültiger ID bis zum Lock-Aufruf. Listen konnten dort rohes `TypeError`
+auslösen; Pfad-/Reservierungswerte wurden als `AccountLockError` statt als
+Device-Login-Fehler sichtbar. Der Entry Point nutzt jetzt die bestehende
+Account-ID-Validierung vor Layout und Lock; Config-basierte gültige Logins
+bleiben unverändert.
+
+`pytest -q tests/test_profile_login.py`: 43/43 bestanden; Modul-Coverage 85 %
+(Branch). Aufrufer-Tests `tests/test_profile_jobs.py tests/test_profile_cli.py`:
+85/85 bestanden. Ruff, Mypy und `git diff --check` sauber.

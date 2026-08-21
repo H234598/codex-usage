@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import IO, cast
 
 from .account_lock import account_lock
-from .config import add_or_update_account, load_config
+from .config import _validate_account_id, add_or_update_account, load_config
 from .direct import (
     MAX_AUTH_JSON_BYTES,
     DirectAuthError,
@@ -143,6 +143,10 @@ def run_device_login(
 
     if not isinstance(account, Account):
         raise DeviceLoginError("account is invalid")
+    try:
+        _validate_account_id(account.id)
+    except ValueError as exc:
+        raise DeviceLoginError("account id is invalid") from exc
     _validate_codex_command(codex_bin)
     if not isinstance(config_path, Path) or not config_path.is_absolute():
         raise DeviceLoginError("config path must be absolute")

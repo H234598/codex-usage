@@ -219,6 +219,18 @@ def test_device_login_fails_closed_when_capability_is_missing(tmp_path, monkeypa
     assert not (tmp_path / "profile" / ".device-login-staging").exists()
 
 
+@pytest.mark.parametrize("account_id", [None, [], "../escape", "__all_accounts__"])
+def test_device_login_rejects_invalid_account_id(account_id, tmp_path):
+    account = Account(
+        id=account_id,
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    with pytest.raises(DeviceLoginError, match="account id is invalid"):
+        run_device_login(account, tmp_path / "config.toml")
+
+
 def test_device_login_finalize_preserves_account_options(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     config = tmp_path / "config.toml"
