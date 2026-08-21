@@ -3990,6 +3990,18 @@ Rollback. Keine neue reproduzierbare Fehlfunktion.
 `pytest -q tests/test_config.py`: 117/117 bestanden; Modul-Coverage 82 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 457: Tabellen- und Statusrendering
+
+`render.py` auf bounded Eingabemengen, Account-/Usage-Zuordnung, Backend-
+Provenienz, Fehler-/Login-/Stale-Gates, Fenster- und Poolwerte, Reset-/Auth-
+Zeitformatierung sowie dynamische Zusatzlimits geprüft. Nicht bestätigte oder
+malformed Werte werden aus Tabellen und JSON-Ausgabe entfernt; Prozentwerte,
+Restmengen und Status bleiben konsistent. Keine neue reproduzierbare
+Fehlfunktion.
+
+`pytest -q tests/test_render.py`: 66/66 bestanden; Modul-Coverage 87 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 451: Bridge-Debug-Secret-Redaction
 
 `bridge._sanitize_debug_text()` redigierte bisher nur camelCase-Tokenfelder
