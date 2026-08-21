@@ -383,9 +383,22 @@ def build_schema1_document(
                 or len(raw_windows) > _MAX_COST_WINDOWS_PER_ACCOUNT
             ):
                 _invalid()
-            account["cost_windows"] = [
-                item.as_dict() if hasattr(item, "as_dict") else item for item in raw_windows
-            ]
+            cost_windows: list[object] = []
+            for item in raw_windows:
+                try:
+                    converter = getattr(item, "as_dict", None)
+                except Exception:
+                    _invalid()
+                if converter is None:
+                    cost_windows.append(item)
+                    continue
+                if not callable(converter):
+                    _invalid()
+                try:
+                    cost_windows.append(converter())
+                except Exception:
+                    _invalid()
+            account["cost_windows"] = cost_windows
         if not isinstance(usage.usage_resets, UsageResetState):
             _invalid()
         account["usage_resets"] = usage.usage_resets.as_dict()

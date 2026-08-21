@@ -2654,3 +2654,14 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2641 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
 `git diff --check` sind sauber.
+
+## Runde 270: Snapshot-Cost-Window-Konverter validiert
+
+`integration_snapshot.build_schema1_document()` rief bei beliebigen
+Cost-Window-Objekten ein vorhandenes `as_dict`-Attribut blind auf. Ein
+nicht-aufrufbares Attribut oder eine fehlerwerfende Property konnte dadurch
+rohen `TypeError` bzw. `RuntimeError` auslösen. Der Converter wird jetzt
+kontrolliert gelesen und aufrufbar geprüft; Fehler werden als
+`IntegrationInvalidSource` behandelt. `tests/test_integration_snapshot.py`:
+48/48 fokussierte Tests bestanden; Mypy für Source, Ruff und
+`git diff --check` sauber.

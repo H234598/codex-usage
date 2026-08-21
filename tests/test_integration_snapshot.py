@@ -227,6 +227,26 @@ def test_schema1_projection_exports_sanitized_cost_windows():
     assert payload["accounts"][0]["cost_windows"] == [cost.as_dict()]
 
 
+def test_schema1_projection_rejects_broken_cost_window_converter():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
+
+    class NonCallable:
+        as_dict = object()
+
+    class Raising:
+        @property
+        def as_dict(self):
+            raise RuntimeError("synthetic converter failure")
+
+    for item in (NonCallable(), Raising()):
+        with pytest.raises(IntegrationInvalidSource):
+            build_schema1_document(
+                (_usage("alpha"),),
+                generated_at=GENERATED,
+                cost_windows_by_account={"alpha": (item,)},
+            )
+
+
 def test_schema1_projection_rejects_oversized_cost_window_input_before_copying():
     from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
 
