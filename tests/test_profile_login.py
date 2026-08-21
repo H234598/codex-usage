@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -152,6 +153,41 @@ def test_device_login_uses_staging_home_and_publishes_auth_atomically(tmp_path, 
     assert not list(profile.glob(".device-login-staging/job-*/codex-home/auth.json"))
     assert calls[1][1]["CODEX_HOME"].startswith(str(profile / ".device-login-staging"))
     assert "OPENAI_API_KEY" not in calls[1][1]
+
+
+def test_staging_root_binds_mode_change_to_checked_directory(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    profile.mkdir(mode=0o700)
+    staging_parent = profile / ".device-login-staging"
+    staging_parent.mkdir(mode=0o755)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    layout = profile_login.ProfileLayout(
+        account_id="alpha",
+        profile_dir=profile,
+        codex_home=profile / "codex-home",
+        auth_json=profile / "codex-home" / "auth.json",
+        metadata=profile / "profile.json",
+        jobs=profile / "jobs",
+        migration=profile / "migration",
+    )
+    original_chmod = Path.chmod
+
+    def replace_target_before_path_chmod(path, mode):
+        if path == staging_parent:
+            staging_parent.rmdir()
+            staging_parent.symlink_to(outside, target_is_directory=True)
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", replace_target_before_path_chmod)
+    job = profile_login._create_staging_root(layout)
+    try:
+        assert staging_parent.is_dir() and not staging_parent.is_symlink()
+        assert job.parent == staging_parent
+        assert staging_parent.stat().st_mode & 0o777 == 0o700
+        assert outside.stat().st_mode & 0o777 == 0o755
+    finally:
+        shutil.rmtree(job, ignore_errors=True)
 
 
 def test_device_login_reports_staging_cleanup_failure(tmp_path, monkeypatch):

@@ -27,6 +27,7 @@ from .json_utils import loads_strict
 from .models import Account
 from .private_io import (
     assert_no_symlink_ancestors,
+    ensure_private_directory,
     read_private_text,
     write_private_text,
 )
@@ -490,10 +491,10 @@ def _device_events(output: str, *, final: bool = True) -> tuple[DeviceLoginEvent
 def _create_staging_root(layout: ProfileLayout) -> Path:
     assert_no_symlink_ancestors(layout.profile_dir, label="device login profile")
     staging_parent = layout.profile_dir / ".device-login-staging"
-    if staging_parent.is_symlink() or (staging_parent.exists() and not staging_parent.is_dir()):
-        raise DeviceLoginError("device login staging path is invalid")
-    staging_parent.mkdir(mode=0o700, exist_ok=True)
-    staging_parent.chmod(0o700)
+    try:
+        ensure_private_directory(staging_parent, label="device login staging directory")
+    except ValueError as exc:
+        raise DeviceLoginError("device login staging path is invalid") from exc
     return Path(tempfile.mkdtemp(prefix="job-", dir=staging_parent))
 
 

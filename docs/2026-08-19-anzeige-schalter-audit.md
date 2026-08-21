@@ -4158,6 +4158,19 @@ tests/test_profile_migration.py tests/test_profile_layout.py
 tests/test_profile_cli.py`: 67/67 bestanden. Ruff, Mypy und `git diff --check`
 sauber.
 
+## Runde 466: Device-Login-Staging per Directory-FD
+
+`profile_login._create_staging_root()` prüfte das Staging-Verzeichnis,
+erzeugte es und setzte den Modus danach über `Path.chmod()`. Ein
+Symlink-Race konnte dadurch einen externen Pfad treffen; `tempfile.mkdtemp()`
+lief anschließend sogar im umgeleiteten Verzeichnis. Der Pfad verwendet jetzt
+`ensure_private_directory()` mit `O_NOFOLLOW`/`fchmod`.
+
+Regression für Modus- und `mkdtemp`-Pfadbindung ergänzt. `pytest -q
+tests/test_profile_login.py tests/test_profile_layout.py
+tests/test_profile_jobs.py`: 147/147 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
