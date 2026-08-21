@@ -168,11 +168,14 @@ def _no_symlink_ancestors(path: Path) -> None:
     for part in path.parts[1:]:
         if part in {"", "."}:
             continue
+        if part == "..":
+            current = current.parent
+            continue
         current /= part
         try:
             item = current.lstat()
         except FileNotFoundError:
-            break
+            continue
         except (OSError, ValueError):
             _fail()
         if stat.S_ISLNK(item.st_mode):

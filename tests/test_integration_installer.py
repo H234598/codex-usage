@@ -107,6 +107,20 @@ def _roots(tmp_path: Path) -> tuple[Path, Path, Path]:
     return data_home, state_home, temporary_root
 
 
+def test_no_symlink_ancestors_scans_after_missing_segment(tmp_path):
+    from codex_usage import integration_installer
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._no_symlink_ancestors(
+            tmp_path / "missing" / ".." / "redirected" / "target"
+        )
+
+
 def _tree_bytes(root: Path) -> tuple[tuple[str, int, bytes], ...]:
     return tuple(
         (

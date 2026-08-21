@@ -1037,3 +1037,12 @@ Regressionfälle, `tests/test_config.py`: 79/79 bestanden.
 Nicht-Boolean-Werte konnten dadurch stillschweigend als `False` durchlaufen,
 truthy Werte als Löschschalter wirken. Explizite Booleanprüfung ergänzt;
 fünf Regressionfälle und die Konfigurationssuite: 84/84 bestanden.
+
+## Runde 79: Installer-Pfadprüfung
+
+`integration_installer._no_symlink_ancestors()` brach am ersten fehlenden
+Segment ab und behandelte `..` nicht als Pfadauflösung. Ein
+`missing/../symlink/...`-Pfad konnte damit einen Symlink unbemerkt lassen.
+Der Scanner überspringt fehlende Segmente weiter und normalisiert
+Aufwärtssegmente; Regressionstest ergänzt. `tests/test_integration_installer.py`:
+103/103 bestanden; Ruff sauber.
