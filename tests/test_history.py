@@ -629,14 +629,18 @@ def test_history_prune_is_dry_run_then_applies(tmp_path):
         assert store.samples("alpha", pool="main", window_seconds=18_000)[0].captured_at == new
 
 
-def test_history_rejects_invalid_sample(tmp_path):
+@pytest.mark.parametrize(
+    "used_percent",
+    [pytest.param(101, id="over-100"), pytest.param(10**10_000, id="float-overflow")],
+)
+def test_history_rejects_invalid_sample(tmp_path, used_percent):
     with pytest.raises(ValueError, match="used_percent"):
         UsageSample(
             account_id="alpha",
             pool="main",
             window_seconds=18_000,
             captured_at=datetime(2026, 8, 16, tzinfo=UTC),
-            used_percent=101,
+            used_percent=used_percent,
         )
 
 

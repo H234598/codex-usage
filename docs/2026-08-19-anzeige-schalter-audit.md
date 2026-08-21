@@ -1702,3 +1702,11 @@ PyGObject-Warnung** in 88,38 s. Die Warnung betrifft die veraltete
 Nach dem vollständigen Testlauf meldet `mypy src/codex_usage` weiterhin keine
 Fehler in 35 Quelldateien. Der aggregierte Ruff-Lauf über Produktion, Scripts,
 Launcher und Tests ist ebenfalls sauber.
+
+## Runde 162: History-Prozent-Typ
+
+`history.UsageSample` ließ die Float-Konvertierung eines extrem großen
+Integerwerts ungefangen; `OverflowError` konnte die Sample-Validierung verlassen.
+Die Konvertierung wird jetzt abgefangen und als normaler `ValueError` für
+ungültige Prozentwerte gemeldet. `tests/test_history.py`: 48/48 bestanden; Mypy
+und Ruff sauber.

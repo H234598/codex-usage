@@ -67,12 +67,15 @@ class UsageSample:
             window_seconds=self.window_seconds,
         )
         _require_aware(self.captured_at, "captured_at")
-        if (
-            isinstance(self.used_percent, bool)
-            or not isinstance(self.used_percent, (int, float))
-            or not math.isfinite(float(self.used_percent))
-            or not 0 <= float(self.used_percent) <= 100
+        if isinstance(self.used_percent, bool) or not isinstance(
+            self.used_percent, (int, float)
         ):
+            raise ValueError("used_percent is invalid")
+        try:
+            used_percent = float(self.used_percent)
+        except (OverflowError, TypeError, ValueError):
+            raise ValueError("used_percent is invalid") from None
+        if not math.isfinite(used_percent) or not 0 <= used_percent <= 100:
             raise ValueError("used_percent is invalid")
         if self.reset_at is not None:
             _require_aware(self.reset_at, "reset_at")
