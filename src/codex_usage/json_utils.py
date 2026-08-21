@@ -19,6 +19,13 @@ def loads_strict(value: str | bytes | bytearray) -> Any:
 
 
 def _reject_deep_nesting(value: str | bytes | bytearray) -> None:
+    sequence: str | memoryview[int]
+    quote: str | int
+    escape: str | int
+    open_array: str | int
+    open_object: str | int
+    close_array: str | int
+    close_object: str | int
     if isinstance(value, str):
         sequence = value
         quote, escape = '"', "\\"
@@ -26,7 +33,14 @@ def _reject_deep_nesting(value: str | bytes | bytearray) -> None:
         close_array, close_object = "]", "}"
     else:
         sequence = memoryview(value)
-        quote, escape, open_array, open_object, close_array, close_object = 34, 92, 91, 123, 93, 125
+        quote, escape, open_array, open_object, close_array, close_object = (
+            34,
+            92,
+            91,
+            123,
+            93,
+            125,
+        )
     depth = 0
     in_string = False
     escaped = False

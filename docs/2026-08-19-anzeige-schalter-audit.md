@@ -1327,3 +1327,11 @@ zweielementiges Tuple und überschattete `candidates` mit einer inkompatiblen
 Liste im Legacy-Zweig. Typannotation und eindeutiger Variablenname beheben die
 zwei Mypy-Fehler ohne Parseränderung. `tests/test_usage_resets.py`: 5/5
 bestanden; Mypy und Ruff sauber.
+
+## Runde 115: Strikter JSON-Byte-Scan
+
+`json_utils._reject_deep_nesting()` wurde beim Mypy-Lauf zunächst als
+`str`-Scanner inferiert und danach mit `memoryview` sowie Integer-Markern
+überschrieben. Explizite `str | memoryview[int]`- und Marker-Unionen bilden
+beide unterstützten Eingabeformen korrekt ab. `tests/test_json_utils.py`: 3/3
+bestanden; Mypy und Ruff sauber.
