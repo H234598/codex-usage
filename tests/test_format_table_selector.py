@@ -41,6 +41,32 @@ class _Title:
         self.markup = value
 
 
+class _Settings:
+    def __init__(self):
+        self.settings = {
+            "format-table-selector": {"value": "table-a"},
+            "table-a": {
+                "value": [],
+                "columns": [{"id": "name", "title": "Name", "type": "string"}],
+                "height": 100,
+                "show-buttons": False,
+                "hidden-buttons": [],
+            },
+        }
+        self.listeners = []
+        self.writes = []
+
+    def listen(self, key, callback):
+        self.listeners.append((key, callback))
+
+    def get_value(self, key):
+        return self.settings[key]["value"]
+
+    def set_value(self, key, value):
+        self.settings[key]["value"] = value
+        self.writes.append((key, value))
+
+
 def _selector() -> FormatTableSelector:
     selector = FormatTableSelector.__new__(FormatTableSelector)
     selector.combo = _Combo("account-date-styles")
@@ -58,6 +84,29 @@ def _selector() -> FormatTableSelector:
     selector.saved = []
     selector.set_value = selector.saved.append
     return selector
+
+
+def test_constructor_builds_only_declared_tables_and_initial_selection() -> None:
+    settings = _Settings()
+    selector = FormatTableSelector(
+        {
+            "tables": [
+                {"key": "table-a", "label": "A"},
+                {"key": "missing", "label": "Missing"},
+            ]
+        },
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        selector.show_all()
+        assert set(selector._tables) == {"table-a"}
+        assert selector.combo.get_active_id() == "table-a"
+        assert selector.table_stack.get_visible_child_name() == "table-a"
+        assert settings.writes == []
+    finally:
+        selector.destroy()
 
 
 def test_table_change_switches_stack_and_persists_selection() -> None:
