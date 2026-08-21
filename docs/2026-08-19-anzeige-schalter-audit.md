@@ -4321,6 +4321,20 @@ Child-Directory-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 122/122 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 480: Wheel-Extraction-Parent-Inodes binden
+
+`_safe_extract_wheel()` validierte Ziel-Parent zuvor über
+`Path.exists()`/`_require_private_dir()` und öffnete sie erst danach relativ
+zum Destination-FD. Ein Austausch gegen ein anderes reguläres Verzeichnis
+konnte dadurch fremde Zielpfade erreichen. Parent-Komponenten werden jetzt in
+einem FD-relativen Validierungspass erstellt/geöffnet, mit `stat()`/`fstat()`-
+Inode identifiziert und im Schreibpass erneut gegen diese Identität geprüft;
+Target-Duplikate bleiben vor Materialisierung blockiert.
+
+Ordinary-Directory-Swap-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 123/123 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

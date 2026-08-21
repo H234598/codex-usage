@@ -1300,19 +1300,8 @@ def _safe_extract_wheel(
     except (OSError, ValueError, zipfile.BadZipFile, KeyError):
         raise IntegrationInstallError() from None
     try:
-        destination_identity = _require_private_dir(
-            destination,
-            destination_identity,
-            False,
-        )
-        for name, _ in pending:
-            target = destination / Path(*name.split("/"))
-            parent = target.parent
-            if not parent.exists():
-                ensure_private_directory(parent, label="integration wheel directory")
-            _require_private_dir(parent, None, False)
-            if target.exists() or target.is_symlink():
-                raise _WheelMemberValidationError("duplicate_member")
+        if destination_identity is None:
+            destination_identity = _directory_identity(destination)
         directory_flags = os.O_RDONLY
         if hasattr(os, "O_DIRECTORY"):
             directory_flags |= os.O_DIRECTORY
@@ -1324,6 +1313,9 @@ def _safe_extract_wheel(
             os, "O_NOFOLLOW", 0
         )
         destination_fd = -1
+        directory_identities: dict[str, _DirectoryIdentity] = {
+            "": destination_identity,
+        }
         try:
             _no_symlink_ancestors(destination)
             destination_fd = os.open(destination, directory_flags)
@@ -1339,25 +1331,110 @@ def _safe_extract_wheel(
                 != destination_identity
             ):
                 _fail()
-            for name, payload in pending:
+            def open_parent(parts: tuple[str, ...], *, create: bool) -> int:
                 parent_fd = os.dup(destination_fd)
+                result_fd = -1
+                relative = ""
+                try:
+                    for part in parts:
+                        key = f"{relative}/{part}" if relative else part
+                        expected = directory_identities.get(key)
+                        try:
+                            child_item = os.stat(
+                                part,
+                                dir_fd=parent_fd,
+                                follow_symlinks=False,
+                            )
+                        except FileNotFoundError:
+                            if not create or expected is not None:
+                                _fail()
+                            try:
+                                os.mkdir(part, mode=0o700, dir_fd=parent_fd)
+                            except FileExistsError:
+                                _fail()
+                            child_item = os.stat(
+                                part,
+                                dir_fd=parent_fd,
+                                follow_symlinks=False,
+                            )
+                        current = _DirectoryIdentity(
+                            child_item.st_dev,
+                            child_item.st_ino,
+                            stat.S_IMODE(child_item.st_mode),
+                        )
+                        if (
+                            not stat.S_ISDIR(child_item.st_mode)
+                            or child_item.st_uid != os.getuid()
+                            or stat.S_IMODE(child_item.st_mode) != 0o700
+                            or (expected is not None and current != expected)
+                        ):
+                            _fail()
+                        child_fd = -1
+                        try:
+                            child_fd = os.open(
+                                part,
+                                directory_flags,
+                                dir_fd=parent_fd,
+                            )
+                            opened_item = os.fstat(child_fd)
+                            opened_identity = _DirectoryIdentity(
+                                opened_item.st_dev,
+                                opened_item.st_ino,
+                                stat.S_IMODE(opened_item.st_mode),
+                            )
+                            if (
+                                not stat.S_ISDIR(opened_item.st_mode)
+                                or opened_item.st_uid != os.getuid()
+                                or opened_identity != current
+                            ):
+                                _fail()
+                            directory_identities[key] = current
+                            old_parent_fd = parent_fd
+                            parent_fd = child_fd
+                            child_fd = -1
+                        finally:
+                            if child_fd >= 0:
+                                os.close(child_fd)
+                        os.close(old_parent_fd)
+                        relative = key
+                    result_fd = parent_fd
+                    parent_fd = -1
+                    return result_fd
+                finally:
+                    if parent_fd >= 0:
+                        os.close(parent_fd)
+
+            for name, _ in pending:
+                target_parts = tuple(name.split("/"))
+                parent_fd = open_parent(target_parts[:-1], create=True)
+                try:
+                    try:
+                        os.stat(
+                            target_parts[-1],
+                            dir_fd=parent_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        raise _WheelMemberValidationError("duplicate_member")
+                finally:
+                    os.close(parent_fd)
+
+            for name, payload in pending:
+                target_parts = tuple(name.split("/"))
+                parent_fd = open_parent(target_parts[:-1], create=False)
                 fd = -1
                 try:
-                    target_parts = name.split("/")
-                    for part in target_parts[:-1]:
-                        child_fd = os.open(
-                            part,
-                            directory_flags,
+                    try:
+                        fd = os.open(
+                            target_parts[-1],
+                            file_flags,
+                            0o600,
                             dir_fd=parent_fd,
                         )
-                        os.close(parent_fd)
-                        parent_fd = child_fd
-                    fd = os.open(
-                        target_parts[-1],
-                        file_flags,
-                        0o600,
-                        dir_fd=parent_fd,
-                    )
+                    except FileExistsError:
+                        raise _WheelMemberValidationError("duplicate_member") from None
                     with os.fdopen(fd, "wb") as handle:
                         fd = -1
                         handle.write(payload)
