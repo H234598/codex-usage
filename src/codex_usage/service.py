@@ -11,7 +11,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import IO, Any, cast
 
 from .config import AppConfig, _xdg_root, default_config_path, default_state_dir
 from .private_io import (
@@ -67,8 +67,9 @@ def _service_operation_lock() -> Iterator[None]:
 
 
 def service_enable(config: AppConfig, config_path: Path | None = None) -> dict[str, Any]:
+    selected_config_path = _select_service_config_path(config_path)
     with _service_operation_lock():
-        return _service_enable_unlocked(config, config_path)
+        return _service_enable_unlocked(config, selected_config_path)
 
 
 def _service_enable_unlocked(
@@ -124,8 +125,9 @@ def _service_enable_unlocked(
 
 
 def service_install(config: AppConfig, config_path: Path | None = None) -> dict[str, Any]:
+    selected_config_path = _select_service_config_path(config_path)
     with _service_operation_lock():
-        return _service_install_unlocked(config, config_path)
+        return _service_install_unlocked(config, selected_config_path)
 
 
 def _service_install_unlocked(
@@ -134,7 +136,7 @@ def _service_install_unlocked(
     unit_dir = _unit_directory()
     _validate_existing_managed_units(unit_dir)
     executable = _resolve_codex_usage()
-    config_file = (config_path or default_config_path()).expanduser().absolute()
+    config_file = _select_service_config_path(config_path).expanduser().absolute()
     service_text = _render_service(config, executable, config_file)
     timer_text = _render_timer(config.interval_seconds)
     paths = (unit_dir / SERVICE_NAME, unit_dir / TIMER_NAME)
@@ -165,6 +167,12 @@ def _service_install_unlocked(
             )
         raise primary_error
     return {"installed": True, "service": SERVICE_NAME, "timer": TIMER_NAME}
+
+
+def _select_service_config_path(path: object | None) -> Path:
+    if path is not None and not isinstance(path, Path):
+        raise ValueError("config path must be a Path")
+    return default_config_path() if path is None else path
 
 
 def service_disable() -> dict[str, Any]:
@@ -520,7 +528,7 @@ def _run_systemctl_bounded(command: list[str]) -> subprocess.CompletedProcess[st
                 _terminate_systemctl_process(process)
                 raise subprocess.TimeoutExpired(command, SYSTEMCTL_TIMEOUT_SECONDS)
             for key, _ in ready:
-                stream = key.fileobj
+                stream = cast(IO[bytes], key.fileobj)
                 chunk = os.read(stream.fileno(), min(8192, SYSTEMCTL_OUTPUT_MAX_BYTES + 1 - total))
                 if not chunk:
                     selector.unregister(stream)

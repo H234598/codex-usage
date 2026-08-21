@@ -43,6 +43,20 @@ def test_relative_xdg_config_home_uses_default_unit_directory(tmp_path, monkeypa
     assert not (cwd / "relative-config").exists()
 
 
+@pytest.mark.parametrize("operation", (service_install, service_enable))
+@pytest.mark.parametrize("config_path", ("", False, 0, [], {}))
+def test_service_rejects_invalid_config_path_before_side_effects(
+    tmp_path, monkeypatch, operation, config_path
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    with pytest.raises(ValueError, match="config path must be a Path"):
+        operation(AppConfig(accounts=()), config_path)
+
+    assert not (tmp_path / "config").exists()
+
+
 def test_service_symlink_check_rejects_dotdot_bypass(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()

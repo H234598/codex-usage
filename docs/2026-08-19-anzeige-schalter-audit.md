@@ -1272,3 +1272,20 @@ Link, User-Eigentum und private Rechte; Regression ergänzt. `tests/test_config.
 gesetztem File-Store-Eintrag ohne Rechteprüfung. 0644-Datei blieb damit
 bestehen. Bestehende Config verlangt jetzt Einzel-Link und private Rechte;
 Regression ergänzt. `tests/test_config.py`: 102/102 bestanden; Ruff sauber.
+
+## Runde 109: Service-Konfigurationspfadtypen
+
+`service_install()` und `service_enable()` behandelten falsy Fremdwerte bei
+`config_path` wie fehlende Angabe oder ließen truthy Fremdwerte später mit
+`AttributeError` scheitern. Die öffentliche Eingabe wird jetzt vor
+Lock-/Verzeichnis-Seiteneffekten auf `None` oder `Path` begrenzt; der Default
+wird nur bei `None` gewählt. Zehn Regressionen prüfen alle ungültigen Typen
+für beide Operationen; `tests/test_service.py`: 51/51 bestanden.
+
+## Runde 110: Systemd-Reader-Typgrenzen
+
+Der bounded-`systemctl`-Reader ließ `selectors.SelectorKey.fileobj` als
+`int | IO[bytes]` bis zu `.fileno()` und den Stream-Puffer durch. Zur Laufzeit
+war der Wert wegen der Registrierung immer ein Pipe-Objekt, aber Mypy meldete
+zwei unsichere Union-Zugriffe. Explizite `IO[bytes]`-Verengung ergänzt;
+`tests/test_service.py`: 51/51 bestanden, Mypy für `service.py` sauber.
