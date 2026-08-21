@@ -1466,3 +1466,11 @@ explizite Werte wie der Terminal- und App-Server-Resolver; nur `None` darf
 Fallback auslösen. Vier Regressionen für leere, whitespace-only und
 nicht-string Werte sind ergänzt. `tests/test_reactivate.py`: 50/50 bestanden;
 Mypy und Ruff sauber (bestehende E501-Testzeile ausgenommen).
+
+## Runde 131: Consumption-Formatierung
+
+Der globale Ruff-Lauf meldete zwei E501-Zeilen in `consumption.py`: die
+Baseline-Zeitbedingung und die `_ema_rate()`-Signatur. Beide sind nur auf
+mehrere Zeilen verteilt; Berechnung und API bleiben unverändert.
+`tests/test_consumption.py`: 19/19 bestanden; Mypy und Ruff für Modul und
+Test sauber.

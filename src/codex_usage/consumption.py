@@ -152,7 +152,9 @@ def calculate_consumption(
     for sample in ordered:
         if sample.captured_at <= start:
             baseline = sample
-        if baseline_value_seconds is not None and sample.captured_at <= now - timedelta(seconds=baseline_value_seconds):
+        if baseline_value_seconds is not None and sample.captured_at <= now - timedelta(
+            seconds=baseline_value_seconds
+        ):
             baseline_value = sample
         if sample.captured_at > now:
             break
@@ -228,7 +230,9 @@ def calculate_consumption(
     )
 
 
-def _ema_rate(observations: list[UsageSample], time_constant_seconds: int, max_gap_seconds: int) -> float:
+def _ema_rate(
+    observations: list[UsageSample], time_constant_seconds: int, max_gap_seconds: int
+) -> float:
     """Return a time-aware EMA of positive usage rate, preserving reset semantics."""
     ema = None
     previous = None
