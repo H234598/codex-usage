@@ -4450,6 +4450,16 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 500: AccountUsage-Modelpool direkt fail-closed getestet
+
+`AccountUsage.model_pool()` direkt geprüft: exakter eindeutiger Schlüssel
+wird gefunden; Groß-/Kleinschreibung, Whitespace, ungültige Eingaben,
+mehrdeutige und malformed Kataloge liefern `None`. Verhalten war bereits
+korrekt; keine Produktionsänderung erforderlich.
+
+`pytest -q tests/test_models.py`: 22/22 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 499: Routing-Fensteridentität explizit fail-closed getestet
 
 `routing._window_identity_is_known()` für unbekannten Fensternamen ohne

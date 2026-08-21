@@ -17,6 +17,53 @@ def test_window_for_duration_rejects_invalid_duration_types(duration):
     assert pool.window_for_duration(duration) is None
 
 
+def test_account_usage_model_pool_requires_one_exact_key_match():
+    pool = UsagePool(key="spark", display_name="Spark")
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        models=(pool,),
+    )
+
+    assert usage.model_pool("spark") is pool
+    assert usage.model_pool("SPARK") is None
+    assert usage.model_pool(" spark ") is None
+
+
+def test_account_usage_model_pool_fails_closed_for_malformed_or_ambiguous_catalog():
+    malformed = UsagePool(key=[], display_name="Malformed")  # type: ignore[arg-type]
+    ambiguous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        models=(
+            UsagePool(key="spark", display_name="Spark"),
+            UsagePool(key="SPARK", display_name="Spark duplicate"),
+        ),
+    )
+    invalid = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        models=(malformed, UsagePool(key="valid", display_name="Valid")),
+    )
+
+    assert ambiguous.model_pool("spark") is None
+    assert invalid.model_pool("valid") is None
+
+
+@pytest.mark.parametrize("model", [None, [], {}, True, ""])
+def test_account_usage_model_pool_rejects_invalid_model_input(model):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+
+    assert usage.model_pool(model) is None  # type: ignore[arg-type]
+
+
 def test_account_usage_as_dict_skips_unhashable_model_pool_keys():
     usage = AccountUsage(
         account_id="account",
