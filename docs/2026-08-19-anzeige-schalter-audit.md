@@ -5370,9 +5370,10 @@ bisher jede deklarierte Tabelle als vollständige GTK-`TreeView` mit Modell und
 Toolbar an. Sichtbar war nur eine Tabelle, aber alle Formatierungsziele und
 alle drei Prognoseziele blieben im Cinnamon-Heap. Die Selector-Seiten halten
 jetzt zunächst nur Allowlist, Label und Schema-Definition; die gebundene
-Tabelle entsteht erst bei Auswahl. Nachträgliches Umschalten zeigt neue
-Widgets korrekt an, ohne Stack-Animation. Doppelte deklarierte Schlüssel
-werden ignoriert.
+Tabelle entsteht erst bei Auswahl. Beim Umschalten werden bisherige
+TreeViews samt JSON-Listener entfernt, bevor neue entstehen; beim Schließen
+werden verbleibende Widgets ebenfalls freigegeben. Doppelte deklarierte
+Schlüssel werden ignoriert.
 
 Regressionen prüfen initial genau eine erzeugte Tabelle, vollständige leichte
 Definitionen und Aufbau beim ersten Umschalten. `pytest -q
@@ -5380,3 +5381,23 @@ tests/test_format_table_selector.py tests/test_forecast_table_selector.py`:
 10/10 bestanden; aufrufende Applet-, Hilfe-, Panel- und Serien-Suiten:
 47/47 bestanden. Ruff, Python-Compile, `git diff --check`, JSON-/JS-Prüfung
 und `make install-local` mit `reload=ok` sauber.
+
+## Runde 456: Cinnamon-Loader-Pfad für Forecast-Selector
+
+`xlet-settings` lädt Custom-Widgets per `spec_from_file_location()` und legt
+deren Applet-Verzeichnis nicht in `sys.path`. `forecast_table_selector.py`
+importierte trotzdem `_BoundFormatList` als Top-Level-Nachbarmodul. Dadurch
+brach der echte Einstellungsstart mit
+`ModuleNotFoundError: No module named 'format_table_selector'` ab; Python-Tests
+hatten den Fehler verdeckt, weil sie den Applet-Pfad manuell voranstellten.
+Der Forecast-Selector trägt seinen eigenen Verzeichnispfad jetzt kontrolliert
+vor dem Schwesterimport ein.
+
+Ein Loader-Regressionsfall entfernt den Applet-Pfad aus `sys.path` und lädt die
+Datei wie Cinnamon. `pytest -q tests/test_forecast_table_selector.py
+tests/test_format_table_selector.py tests/test_applet.py tests/test_help_page.py
+tests/test_panel_settings_list.py tests/test_dynamic_series_list.py`:
+58/58 bestanden. `xlet-settings applet codex-usage@H234598 -i 0` startet nach
+Installation ohne Traceback und bleibt als GUI-Prozess offen; der Testlauf
+wurde nach 8 Sekunden kontrolliert beendet. Ruff, Python-Compile und
+`git diff --check` sauber.

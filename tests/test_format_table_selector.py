@@ -60,11 +60,11 @@ class _Settings:
                 "hidden-buttons": [],
             },
         }
-        self.listeners = []
+        self.listeners = {}
         self.writes = []
 
     def listen(self, key, callback):
-        self.listeners.append((key, callback))
+        self.listeners.setdefault(key, []).append(callback)
 
     def get_value(self, key):
         return self.settings[key]["value"]
@@ -137,7 +137,9 @@ def test_table_is_built_when_first_selected() -> None:
         selector.combo.set_active_id("table-b")
         while Gtk.events_pending():
             Gtk.main_iteration()
-        assert set(selector._tables) == {"table-a", "table-b"}
+        assert set(selector._tables) == {"table-b"}
+        assert settings.listeners["table-a"] == []
+        assert len(settings.listeners["table-b"]) == 1
         assert selector.table_stack.get_visible_child_name() == "table-b"
     finally:
         selector.destroy()

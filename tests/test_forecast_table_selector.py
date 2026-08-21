@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -31,11 +32,11 @@ class _Settings:
                 "show-buttons": False,
                 "hidden-buttons": [],
             }
-        self.listeners = []
+        self.listeners = {}
         self.writes = []
 
     def listen(self, key, callback):
-        self.listeners.append((key, callback))
+        self.listeners.setdefault(key, []).append(callback)
 
     def get_value(self, key):
         return self.settings[key]["value"]
@@ -53,6 +54,26 @@ def _info():
             {"key": _TABLE_KEYS[2], "label": "Creditverbrauch"},
         ]
     }
+
+
+def test_forecast_module_loads_without_applet_directory_on_sys_path() -> None:
+    module_name = "_codex_usage_forecast_loader_probe"
+    original_path = list(sys.path)
+    original_format_module = sys.modules.pop("format_table_selector", None)
+    sys.path[:] = [path for path in sys.path if path != str(APPLET_DIR)]
+    try:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            APPLET_DIR / "forecast_table_selector.py",
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert module.ForecastTableSelector.__name__ == "ForecastTableSelector"
+    finally:
+        sys.path[:] = original_path
+        if original_format_module is not None:
+            sys.modules["format_table_selector"] = original_format_module
 
 
 def test_constructor_builds_only_selected_table_and_initial_selection() -> None:
@@ -82,6 +103,9 @@ def test_table_change_switches_stack_and_persists_selection() -> None:
             Gtk.main_iteration()
         assert selector.table_stack.get_visible_child_name() == _TABLE_KEYS[2]
         assert selector.table_title.get_text() == "Creditverbrauch"
+        assert set(selector._tables) == {_TABLE_KEYS[2]}
+        assert settings.listeners[_TABLE_KEYS[0]] == []
+        assert len(settings.listeners[_TABLE_KEYS[2]]) == 1
         assert settings.writes == [("forecast-table-selector", _TABLE_KEYS[2])]
     finally:
         selector.destroy()

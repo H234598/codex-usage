@@ -52,6 +52,16 @@ class _BoundFormatList(List, JSONSettingsBackend):
         )
         self.attach()
 
+    def detach(self):
+        listeners = getattr(self.settings, "listeners", None)
+        if not isinstance(listeners, dict):
+            return
+        callbacks = listeners.get(self.key)
+        if not isinstance(callbacks, list):
+            return
+        listener = self._settings_changed_callback
+        callbacks[:] = [callback for callback in callbacks if callback != listener]
+
 
 class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
     """Render formatting tables exclusively, selected by a centered dropdown."""
@@ -65,6 +75,7 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         self._table_labels = {}
         self._table_definitions = {}
         self._tables = {}
+        self._active_table_key = None
         self._saving = False
 
         SettingsWidget.__init__(self)
@@ -131,9 +142,21 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         widget.show_all()
         return widget
 
+    def _discard_table(self, table_key):
+        widget = self._tables.pop(table_key, None)
+        if widget is None:
+            return
+        widget.detach()
+        self.table_stack.remove(widget)
+        widget.destroy()
+
     def _show_table(self, table_key):
         if self._ensure_table(table_key) is None:
             return
+        active_table_key = getattr(self, "_active_table_key", None)
+        if active_table_key != table_key:
+            self._discard_table(active_table_key)
+            self._active_table_key = table_key
         self.table_stack.set_visible_child_name(table_key)
         self.table_title.set_markup(f"<b>{self._table_labels[table_key]}</b>")
 
@@ -152,3 +175,8 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
 
     def connect_widget_handlers(self, *_args):
         pass
+
+    def destroy(self):
+        for table_key in list(self._tables):
+            self._discard_table(table_key)
+        return super().destroy()
