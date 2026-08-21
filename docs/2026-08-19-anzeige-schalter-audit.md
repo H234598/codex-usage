@@ -1957,3 +1957,12 @@ Malformed Main-Pools liefern jetzt leere Fenster, sodass Pool-Flags den
 bekannten Unknown-Blockpfad auslösen; gültige Legacy-Fenster bleiben erhalten.
 `tests/test_scheduler.py`: 173/173 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 193: History-Zeitstempel aus SQLite
+
+`history._from_millis()` übernahm SQLite-Werte ohne Typ-/Bereichsprüfung.
+Beschädigte INTEGER-Werte führten zu rohem `OverflowError`/`TypeError`; Bool
+und Float wurden akzeptiert. Die Konvertierung verlangt jetzt striktes
+Integer und meldet ungültige Werte kontrolliert als `ValueError`.
+`tests/test_history.py`: 56/56 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.

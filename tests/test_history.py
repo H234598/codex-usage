@@ -676,6 +676,12 @@ def test_history_rejects_invalid_sample(tmp_path, used_percent):
         )
 
 
+@pytest.mark.parametrize("value", [10**100, -10**100, "invalid", None, True, 1.5])
+def test_history_rejects_malformed_millis(value):
+    with pytest.raises(ValueError, match="history timestamp"):
+        history_module._from_millis(value)
+
+
 def test_usage_samples_extract_only_fresh_valid_limit_windows():
     from codex_usage.history import usage_samples_from_usage
 

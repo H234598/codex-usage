@@ -99,8 +99,13 @@ def _to_millis(value: datetime) -> int:
     return round(value.astimezone(UTC).timestamp() * 1000)
 
 
-def _from_millis(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1000, tz=UTC)
+def _from_millis(value: object) -> datetime:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("history timestamp is invalid")
+    try:
+        return datetime.fromtimestamp(value / 1000, tz=UTC)
+    except (OSError, OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("history timestamp is invalid") from exc
 
 
 class HistoryStore:
