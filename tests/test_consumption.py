@@ -175,6 +175,23 @@ def test_consumption_handles_confirmed_reset_without_false_partial_status():
     assert result.coverage == "complete"
 
 
+def test_consumption_handles_future_next_reset_after_rollover():
+    previous_reset = BASE + timedelta(minutes=30)
+    current_reset = BASE + timedelta(hours=6)
+    result = calculate_consumption(
+        [
+            _sample(0, 90, generation="old", reset_at=previous_reset),
+            _sample(60, 5, generation="new", reset_at=current_reset),
+        ],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=60),
+    )
+
+    assert result.consumed_percentage_points == 5.0
+    assert result.coverage == "complete"
+
+
 def test_consumption_keeps_generation_only_reset_evidence():
     result = calculate_consumption(
         [

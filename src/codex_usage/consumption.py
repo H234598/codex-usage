@@ -276,9 +276,17 @@ def _confirmed_reset(previous: UsageSample, current: UsageSample) -> bool:
     )
     if current.reset_at is None:
         return generation_changed
-    if current.reset_at <= previous.captured_at:
-        return False
-    return current.reset_at <= current.captured_at and current.reset_at != previous.reset_at
+    if (
+        previous.reset_at is not None
+        and previous.reset_at > previous.captured_at
+        and previous.reset_at <= current.captured_at
+        and current.reset_at != previous.reset_at
+    ):
+        return True
+    return (
+        previous.captured_at < current.reset_at <= current.captured_at
+        and current.reset_at != previous.reset_at
+    )
 
 
 def _require_aware(value: datetime) -> None:

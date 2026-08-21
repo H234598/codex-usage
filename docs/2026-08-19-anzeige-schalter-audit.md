@@ -4278,3 +4278,18 @@ reproduzierbare Fehlfunktion.
 
 `pytest -q tests/test_usage_limits.py`: 124/124 bestanden; Modul-Coverage 91 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 440: Consumption-Resetrotation
+
+`consumption._confirmed_reset()` behandelte `reset_at` bisher nur als
+vergangenen Eventzeitpunkt. Die Historie speichert dort jedoch den jeweils
+nächsten Reset: Nach einer echten Rotation liegt der alte Reset zwischen den
+Samples, während der neue wieder in der Zukunft liegt. Verbrauch wurde damit
+als `partial` markiert und das Delta nach dem Reset unterschlagen. Die
+Erkennung akzeptiert jetzt diesen belegten Übergang, bleibt bei bloßen
+zukünftigen Resetverschiebungen konservativ und nutzt dieselbe Korrektur für
+EMA-Prognosen.
+
+`pytest -q tests/test_consumption.py`: 32/32 bestanden; Modul-Coverage 84 %
+(Branch). Aufrufende History-/CLI-/Integrations-Tests: 309/309 bestanden.
+Ruff, Mypy und `git diff --check` sauber.
