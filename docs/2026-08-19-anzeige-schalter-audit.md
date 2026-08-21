@@ -3887,3 +3887,13 @@ ungültige Pfade und Account-Daten bleiben vor Seiteneffekten abgewiesen.
 
 `pytest -q tests/test_config.py`: 116/116 bestanden; Modul-Coverage 83%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 404: State-Expiry-Zeitzonengrenze
+
+`state._cached_window_expired()` fängt bei Reset-/Capture-Altersberechnung
+jetzt beliebige `astimezone()`-Fehler und behandelt den Cache fail-closed als
+abgelaufen. Eine malformed `datetime`-Subclass konnte zuvor
+`expire_reset_windows()` abbrechen; Regressionstest deckt diesen Resetpfad ab.
+
+`pytest -q tests/test_state.py`: 266/266 bestanden; Modul-Coverage 87%.
+Ruff, Mypy und `git diff --check` sauber.

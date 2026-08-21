@@ -62,6 +62,11 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _RaisingAstimezone(datetime):
+    def astimezone(self, _tz=None):
+        raise RuntimeError("synthetic astimezone marker")
+
+
 def test_state_times_with_failing_timezone_callback_use_local_zone(monkeypatch):
     berlin = ZoneInfo("Europe/Berlin")
     monkeypatch.setattr("codex_usage.state.LOCAL_TZ", berlin)
@@ -76,6 +81,28 @@ def test_saved_state_time_with_failing_timezone_callback_uses_local_zone(monkeyp
     value = datetime(2026, 10, 26, 0, 15, tzinfo=_RaisingTimezone())
 
     assert _saved_datetime(value) == datetime(2026, 10, 26, 0, 15, tzinfo=berlin)
+
+
+def test_expire_reset_windows_fails_closed_for_astimezone_callback_failure():
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=90,
+            reset_at=_RaisingAstimezone(2026, 8, 16, 11, tzinfo=UTC),
+        ),
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=datetime(2026, 8, 16, 10, 30, tzinfo=UTC),
+    )
+
+    assert expired.five_hour is None
+    assert expired.status == AccountStatus.PARTIAL
 
 
 def test_snapshot_text_normalizes_and_bounds_whitespace():

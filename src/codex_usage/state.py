@@ -1685,7 +1685,7 @@ def _cached_window_expired(
             return reset_utc > captured_utc + timedelta(
                 seconds=duration + MAX_RESET_FUTURE_SKEW_SECONDS
             )
-        except (OverflowError, TypeError, ValueError):
+        except Exception:
             return True
     duration = _window_duration_seconds(window)
     if duration is None:
@@ -1699,7 +1699,7 @@ def _cached_window_expired(
             captured_utc + timedelta(seconds=duration)
             <= reference_utc
         )
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return True
 
 
