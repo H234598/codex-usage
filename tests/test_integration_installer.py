@@ -2798,6 +2798,38 @@ def test_manifest_release_id_and_source_digest_bind_final_path(tmp_path, field, 
         )
 
 
+def test_builder_scans_wheel_directory_by_descriptor(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    build_root = tmp_path / "build"
+    wheel_dir = tmp_path / "wheel"
+    build_root.mkdir(mode=0o700)
+    wheel_dir.mkdir(mode=0o700)
+    wheel_identity = integration_installer._directory_identity(wheel_dir)
+    monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
+
+    def fake_builder(command, *, env, cwd):
+        (wheel_dir / integration_installer.EXPECTED_WHEEL_NAME).write_bytes(b"wheel")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(integration_installer, "_run_builder_bounded", fake_builder)
+    original_iterdir = Path.iterdir
+
+    def reject_wheel_path_iterdir(path):
+        if path == wheel_dir:
+            pytest.fail("wheel scan requires an opened directory descriptor")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", reject_wheel_path_iterdir)
+    assert integration_installer._build_verified_wheel(
+        python_executable=Path(sys.executable),
+        environment=integration_installer._sanitized_build_environment(),
+        build_root=build_root,
+        wheel_dir=wheel_dir,
+        wheel_identity=wheel_identity,
+    ) == wheel_dir / integration_installer.EXPECTED_WHEEL_NAME
+
+
 def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

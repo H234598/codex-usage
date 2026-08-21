@@ -4274,6 +4274,17 @@ System symlink-angriffssicher.
 Parent-Swap-Regression ergänzt. `pytest -q tests/test_integration_installer.py`:
 118/118 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 476: Wheel-Output-Scan per Directory-FD
+
+`_build_verified_wheel()` iterierte `wheel_dir` nach Builder-Ende per
+`Path.iterdir()` und verwarf die Directory-Identität. Der Scan bindet jetzt
+`wheel_identity`, öffnet das Verzeichnis mit `O_DIRECTORY|O_NOFOLLOW` und
+prüft Einträge über `os.scandir(fd)`.
+
+Descriptor-Scan-Regression ergänzt und Install-Aufruf an gespeicherte
+Wheel-Identität gebunden. `pytest -q tests/test_integration_installer.py`:
+119/119 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

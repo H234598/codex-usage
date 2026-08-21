@@ -922,6 +922,7 @@ def _build_verified_wheel(
     environment: Mapping[str, str],
     build_root: Path,
     wheel_dir: Path,
+    wheel_identity: _DirectoryIdentity | None = None,
 ) -> Path:
     _require_offline_builder(
         python_executable=python_executable,
@@ -929,7 +930,7 @@ def _build_verified_wheel(
     )
     _require_private_dir(build_root, None, False)
     _require_private_dir(wheel_dir.parent, None, False)
-    _require_private_dir(wheel_dir, None, True)
+    wheel_identity = _require_private_dir(wheel_dir, wheel_identity, True)
     command = [
         str(python_executable),
         "-I",
@@ -956,12 +957,48 @@ def _build_verified_wheel(
         _fail()
     wheels: list[Path] = []
     entries_seen = 0
-    for path in wheel_dir.iterdir():
-        entries_seen += 1
-        if entries_seen > MAX_RELEASE_TREE_ENTRIES:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    wheel_fd = -1
+    try:
+        _no_symlink_ancestors(wheel_dir)
+        wheel_fd = os.open(wheel_dir, flags)
+        wheel_item = os.fstat(wheel_fd)
+        if (
+            not stat.S_ISDIR(wheel_item.st_mode)
+            or wheel_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                wheel_item.st_dev,
+                wheel_item.st_ino,
+                stat.S_IMODE(wheel_item.st_mode),
+            )
+            != wheel_identity
+        ):
             _fail()
-        if path.is_file() and path.name.endswith(".whl") and not path.is_symlink():
-            wheels.append(path)
+        with os.scandir(wheel_fd) as entries:
+            for entry in entries:
+                entries_seen += 1
+                if entries_seen > MAX_RELEASE_TREE_ENTRIES:
+                    _fail()
+                item = entry.stat(follow_symlinks=False)
+                if (
+                    stat.S_ISREG(item.st_mode)
+                    and item.st_nlink == 1
+                    and entry.name.endswith(".whl")
+                ):
+                    wheels.append(wheel_dir / entry.name)
+    except IntegrationInstallError:
+        raise
+    except (OSError, ValueError):
+        _fail()
+    finally:
+        if wheel_fd >= 0:
+            os.close(wheel_fd)
     wheels.sort()
     if len(wheels) != 1 or wheels[0].name != EXPECTED_WHEEL_NAME:
         _fail()
@@ -1628,6 +1665,7 @@ def _install_release(
                 environment=environment,
                 build_root=build_root,
                 wheel_dir=wheel_root,
+                wheel_identity=wheel_identity,
             )
             _require_private_dir(temporary_root, temporary_identity, False)
             _require_private_dir(build_root, build_identity, False)
