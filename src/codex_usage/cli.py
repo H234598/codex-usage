@@ -622,12 +622,26 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     consumption.add_argument(
         "--smoothing",
-        choices=("none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"),
+        choices=(
+            "none",
+            "ema-5",
+            "ema-10",
+            "ema-20",
+            "ema-40",
+            "ema-80",
+            "ema-160",
+            "ema-320",
+            "ema-640",
+        ),
         default="none",
         help="zeitgewichtete EMA für die Prognoserate",
     )
     consumption.add_argument("--pool", default="main")
-    consumption.add_argument("--limit-window", choices=("short", "weekly", "monthly", "spark", "all"), default="short")
+    consumption.add_argument(
+        "--limit-window",
+        choices=("short", "weekly", "monthly", "spark", "all"),
+        default="short",
+    )
     consumption.add_argument("--path", type=Path)
     consumption.add_argument("--now")
     consumption.add_argument("--format", choices=("table", "json"), default="table")
@@ -673,7 +687,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default="auto",
     )
     profile_create.add_argument("--series", default="")
-    profile_create.add_argument("--series-active", action=argparse.BooleanOptionalAction, default=False)
+    profile_create.add_argument(
+        "--series-active", action=argparse.BooleanOptionalAction, default=False
+    )
     profile_create.add_argument("--expected-backend-account-id")
     profile_create.add_argument("--json-events", action="store_true")
     profile_create.set_defaults(func=_cmd_profile_create)

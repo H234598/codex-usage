@@ -1488,3 +1488,10 @@ Der globale Ruff-Lauf meldete eine E501-Zeile beim Ergänzen von Legacy-Feldern
 im Profile-Job-Manifest. Das Dictionary ist jetzt mehrzeilig formatiert;
 Schema- und Migrationslogik bleiben unverändert. `tests/test_profile_jobs.py`:
 59/59 bestanden; Mypy und Ruff für das Modul sauber.
+
+## Runde 134: CLI-Parser-Formatierung
+
+Der globale Ruff-Lauf meldete drei E501-Zeilen in den Consumption- und
+Profile-Parsern. Choices und Argumentoptionen sind jetzt mehrzeilig formatiert;
+CLI-Vertrag und Defaults bleiben unverändert. `tests/test_cli.py`: 104/104
+bestanden; Mypy und Ruff für `cli.py` sauber.
