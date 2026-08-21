@@ -349,7 +349,13 @@ def test_profile_job_creation_reclaims_terminal_manifest_capacity(tmp_path, monk
     assert len(starts) == profile_jobs.PROFILE_JOB_MAX_RECORDS + 1
 
 
-def test_profile_job_start_failure_cleans_up_untracked_worker(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("process_pid", "expected_signal"),
+    [(4321, (4321, profile_jobs.signal.SIGTERM)), (True, None)],
+)
+def test_profile_job_start_failure_cleans_up_untracked_worker(
+    tmp_path, monkeypatch, process_pid, expected_signal
+):
     state = tmp_path / "state"
     calls = []
     signals = []
@@ -357,7 +363,7 @@ def test_profile_job_start_failure_cleans_up_untracked_worker(tmp_path, monkeypa
     monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
 
     class FakeProcess:
-        pid = 4321
+        pid = process_pid
 
         def wait(self, timeout=None):
             waits.append(timeout)
@@ -398,7 +404,8 @@ def test_profile_job_start_failure_cleans_up_untracked_worker(tmp_path, monkeypa
         )
 
     job_id = calls[0][0][-1]
-    assert signals == [(4321, profile_jobs.signal.SIGTERM)]
+    assert signals == ([expected_signal] if expected_signal is not None else [])
+    assert calls[1:] == ([("kill",)] if expected_signal is None else [])
     assert waits == [1]
     assert profile_jobs.profile_job_status(job_id)["status"] == "failed"
 

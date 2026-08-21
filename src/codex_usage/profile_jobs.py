@@ -143,10 +143,19 @@ def create_profile_job(
     try:
         _update_job(job_id, worker_pid=process.pid)
     except Exception:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except (OSError, ValueError):
-            pass
+        pid = getattr(process, "pid", None)
+        signaled_group = False
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+            try:
+                os.killpg(pid, signal.SIGTERM)
+                signaled_group = True
+            except (OSError, ValueError):
+                pass
+        if not signaled_group:
+            try:
+                process.kill()
+            except OSError:
+                pass
         _reap_untracked_worker(process)
         try:
             _update_job(

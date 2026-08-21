@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 498: Profile-Job-Start-Cleanup mit strikter PID-Grenze
+
+`profile_jobs.create_profile_job()` übergab bei fehlgeschlagenem Worker-
+Tracking `process.pid` ungeprüft an `os.killpg()`. Boolesche oder ungültige
+PIDs konnten damit falsche Prozessgruppen adressieren; bei `pid=True` fehlte
+außerdem ein sicherer Prozess-Fallback. Der Pfad validiert PID jetzt strikt,
+signalisiert nur gültige Gruppen und nutzt sonst `process.kill()`.
+
+Regression ergänzt. `pytest -q tests/test_profile_jobs.py`: 85/85 bestanden.
+Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 497: Installer-Prozesssignale mit strikter PID-Grenze
 
 `integration_installer` übergab Preflight-PIDs und Builder-Gruppen-IDs
