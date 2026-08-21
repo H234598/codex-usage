@@ -3575,3 +3575,13 @@ reproduzierbarer Fehler; malformed Slots bleiben partiell oder fail-closed.
 
 `pytest -q tests/test_app_server.py`: 98/98 bestanden. Mypy für
 `app_server.py`, Ruff und `git diff --check` sauber.
+
+## Runde 373: Usage-Pool-Parser und dynamische Fenster
+
+`usage_limits.py` wurde auf 5h-/Woche-/30d-Identitäten, fehlende oder
+unsupported Fensterdauern, Spark-Duplikate, Kontrollflags, Modellkatalog-
+Grenzen, Reset-Zeiten und malformed Pool-DTOs geprüft. Kein neuer
+reproduzierbarer Fehler; unklassifizierbare Pools bleiben unavailable.
+
+`pytest -q tests/test_usage_limits.py`: 124/124 bestanden. Mypy für
+`usage_limits.py`, Ruff und `git diff --check` sauber.
