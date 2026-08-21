@@ -1185,3 +1185,11 @@ bestanden; Ruff und Mypy für `profile_login.py` sauber.
 leakte `TypeError` aus Status-/List-Aufrufen. Explizite Stringprüfung ergänzt;
 Regression hinzugefügt. `tests/test_profile_jobs.py`: 47/47 bestanden; Ruff
 sauber.
+
+## Runde 98: Profiljob-Profilpfad-Typ
+
+`profile_jobs._validate_create_arguments()` übergab ungeprüfte
+`profile_dir`-Werte an `Path()`. `None`, Listen oder Dictionaries leakten
+`TypeError` statt kontrollierter Eingabeablehnung. `Path`-Konvertierung fängt
+ungültige Typen jetzt als `ValueError` ab; drei Regressionen ergänzt.
+`tests/test_profile_jobs.py`: 50/50 bestanden; Ruff sauber.

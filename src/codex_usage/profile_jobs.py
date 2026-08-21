@@ -562,7 +562,10 @@ def _validate_create_arguments(
         raise ValueError("active series requires a series name")
     if not isinstance(json_events, bool):
         raise ValueError("profile job json_events is invalid")
-    profile_path = Path(profile_dir).expanduser()
+    try:
+        profile_path = Path(profile_dir).expanduser()
+    except (TypeError, ValueError) as exc:
+        raise ValueError("profile dir is invalid") from exc
     if not profile_path.is_absolute():
         raise ValueError("profile dir must be absolute")
     if check_profile_path:

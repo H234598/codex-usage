@@ -1302,6 +1302,22 @@ def test_profile_job_manifest_rejects_unhashable_status(tmp_path):
         profile_jobs._validate_manifest(manifest)
 
 
+@pytest.mark.parametrize("profile_dir", [None, [], {}])
+def test_profile_job_create_rejects_invalid_profile_dir_type(profile_dir):
+    with pytest.raises(ValueError, match="profile dir is invalid"):
+        profile_jobs._validate_create_arguments(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir=profile_dir,
+            expected_backend_account_id=None,
+            json_events=False,
+            reactivation_browser="auto",
+            check_profile_path=False,
+        )
+
+
 @pytest.mark.parametrize("kind", [None, [], {}])
 def test_profile_job_event_rejects_non_string_kind(kind):
     with pytest.raises(ValueError, match="event kind is invalid"):
