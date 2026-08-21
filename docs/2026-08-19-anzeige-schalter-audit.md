@@ -1096,3 +1096,10 @@ ungültige Eventdaten mit `ValueError` abgewiesen. `tests/test_profile_jobs.py`:
 Set. Unhashbare Werte leakten beim direkten Contract-Check `TypeError`; die
 Prüfung verlangt jetzt zuerst Stringtyp. `tests/test_integration_snapshot.py`:
 29/29 bestanden; Ruff sauber.
+
+## Runde 87: Backend-Provenance-Typprüfung
+
+`state.backend_provenance_matches_configured()` prüfte den konfigurierten
+Backendwert direkt gegen ein `frozenset`. Unhashbare Fremdtypen leakten
+`TypeError`; sie werden jetzt als nicht passende Provenance verworfen.
+`tests/test_state.py`: 217/217 bestanden; Ruff sauber.

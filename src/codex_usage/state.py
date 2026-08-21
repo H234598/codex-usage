@@ -73,7 +73,10 @@ def backend_provenance_matches_configured(
     configured_backend: str,
 ) -> bool:
     """Reject authenticated cache data produced by an explicit other backend."""
-    if configured_backend not in KNOWN_BACKENDS:
+    if (
+        not isinstance(configured_backend, str)
+        or configured_backend not in KNOWN_BACKENDS
+    ):
         return False
     if not _backend_provenance_fields_valid(usage):
         return False

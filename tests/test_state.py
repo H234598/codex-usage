@@ -592,6 +592,8 @@ def test_backend_provenance_rejects_unknown_backend_fields():
 
     assert backend_provenance_matches_configured(unknown_used, "direct") is False
     assert backend_provenance_matches_configured(unknown_configured, "direct") is False
+    assert backend_provenance_matches_configured(unknown_used, []) is False
+    assert backend_provenance_matches_configured(unknown_used, {}) is False
     assert backend_provenance_matches(unknown_used, unknown_configured) is False
 
 
