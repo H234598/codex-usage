@@ -123,6 +123,29 @@ def test_health_read_stops_after_valid_tail(tmp_path, monkeypatch):
     assert [event["index"] for event in events] == list(range(1, MAX_HEALTH_EVENTS + 1))
 
 
+@pytest.mark.parametrize("version", [True, 1.0, "1"])
+def test_health_requires_strict_version(tmp_path, version):
+    path = tmp_path / "health.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": version,
+                "events": [
+                    {
+                        "at": datetime.now(UTC).isoformat(),
+                        "component": "watch",
+                        "event": "cycle_ok",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    assert load_health(path)["event_count"] == 0
+
+
 def test_health_file_recovery_ignores_invalid_json(tmp_path):
     path = tmp_path / "health.json"
     path.write_text("{invalid", encoding="utf-8")

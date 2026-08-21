@@ -1681,3 +1681,11 @@ Gleichheit und akzeptierte Bool-/Floatwerte als Version `1`. Die Prüfung
 verlangt jetzt exakt `int`; fremde Versionstypen werden als ungültiges Manifest
 abgewiesen. `tests/test_profile_jobs.py`: 62/62 bestanden; Mypy und Ruff
 sauber.
+
+## Runde 159: Health-Version
+
+`health._read_events()` verglich die persistierte Versionsnummer nur per
+Gleichheit und akzeptierte Bool-/Floatwerte als Version `1`. Gesundheitsdaten
+werden jetzt nur bei exakt eingebautem `int`-Versionstyp geladen; andere
+Versionen ergeben eine leere Historie. `tests/test_health.py`: 14/14 bestanden;
+Mypy und Ruff sauber.

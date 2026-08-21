@@ -104,7 +104,11 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
         if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
             return []
         payload = loads_strict(text)
-        if not isinstance(payload, dict) or payload.get("version") != HEALTH_VERSION:
+        if (
+            not isinstance(payload, dict)
+            or type(payload.get("version")) is not int
+            or payload["version"] != HEALTH_VERSION
+        ):
             return []
         raw_events = payload.get("events")
         if not isinstance(raw_events, list):
