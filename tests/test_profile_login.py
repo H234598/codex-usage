@@ -381,6 +381,17 @@ def test_device_auth_help_probe_requires_explicit_flag():
     ) is False
 
 
+@pytest.mark.parametrize("codex_bin", [None, [], 0, False, ""])
+def test_device_auth_supported_rejects_invalid_codex_command(codex_bin):
+    with pytest.raises(DeviceLoginError, match="codex command is invalid"):
+        device_auth_supported(
+            codex_bin,
+            runner=lambda argv, **kwargs: subprocess.CompletedProcess(
+                argv, 0, "--device-auth", ""
+            ),
+        )
+
+
 def test_device_login_removes_published_auth_when_config_finalize_fails(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
 

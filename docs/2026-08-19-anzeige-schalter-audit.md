@@ -1151,3 +1151,12 @@ erscheinen, bevor der nächste Chunk eintraf. `final=False` hält jetzt
 unbegrenzte Tokens am Chunkende zurück; die abschließende Gesamtausgabe wird
 weiter vollständig ausgewertet. Regression ergänzt;
 `tests/test_profile_login.py`: 31/31 bestanden; Ruff sauber.
+
+## Runde 94: Device-Login-Befehlstyp
+
+`device_auth_supported()` und `run_device_login()` übergaben ungeprüfte
+`codex_bin`-Werte an den Prozessstarter. Listen, `None`, Booleans oder ein
+leerer String konnten dadurch falsche Runner-Aufrufe oder rohe `TypeError`
+auslösen. Gemeinsame Prüfung verlangt jetzt nichtleeren String ohne
+Steuerzeichen vor jedem Seiteneffekt. Fünf Regressionfälle ergänzt;
+`tests/test_profile_login.py`: 36/36 bestanden; Ruff sauber.

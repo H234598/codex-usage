@@ -99,6 +99,13 @@ class DeviceLoginResult:
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
+def _validate_codex_command(codex_bin: object) -> None:
+    if not isinstance(codex_bin, str) or not codex_bin or any(
+        ord(character) < 32 or ord(character) == 127 for character in codex_bin
+    ):
+        raise DeviceLoginError("codex command is invalid")
+
+
 def device_auth_supported(
     codex_bin: str = "codex",
     *,
@@ -107,6 +114,7 @@ def device_auth_supported(
 ) -> bool:
     """Detect the explicit device-auth flag without starting a login."""
 
+    _validate_codex_command(codex_bin)
     result = _run_command(
         [codex_bin, "login", "--help"],
         env=_safe_environment(),
@@ -133,6 +141,7 @@ def run_device_login(
 
     if not isinstance(account, Account):
         raise DeviceLoginError("account is invalid")
+    _validate_codex_command(codex_bin)
     if not isinstance(config_path, Path) or not config_path.is_absolute():
         raise DeviceLoginError("config path must be absolute")
     if (
