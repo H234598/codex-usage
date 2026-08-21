@@ -4047,6 +4047,22 @@ malformed Antworten und übergroße Inhalte bleiben fail-closed.
 `pytest -q tests/test_direct.py`: 183/183 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 458: Usage-Reset-Vertrag und Redemption-Gate
+
+`usage_resets.py` erneut gegen den kanonischen/Legacy-Payload-Vertrag, die
+Unknown-vs-Zero-Semantik, Typ-/Bereichsgrenzen, Formatierung und das
+Redemption-Gate geprüft. Kanonische und verschachtelte Legacy-Formen bleiben
+konfliktsicher; unbekannte, boolesche, negative und übergroße Werte fallen
+fail-closed auf `unknown`. Die positive Redemption-Prüfung endet weiterhin
+absichtlich mit `NotImplementedError`: README und v1-Spezifikation erklären
+Redemption wegen fehlender Capability-, Nonce-/Replay-, Lock-, Bestätigungs-
+und Postcondition-Gates als nicht verfügbar. CLI und Applet bleiben
+read-only; keine neue reproduzierbare Fehlfunktion.
+
+Grenzpfadtests für jede Funktion ergänzt. `pytest -q tests/test_usage_resets.py`:
+17/17 bestanden; Modul-Coverage 100 % (Branch). Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

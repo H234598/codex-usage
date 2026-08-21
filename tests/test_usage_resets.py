@@ -57,3 +57,90 @@ def test_reset_state_and_redeem_require_consistent_positive_state():
         UsageResetState(None, True)
     with pytest.raises(ValueError, match="positive"):
         redeem_usage_reset(UsageResetState(0, True, True))
+
+
+@pytest.mark.parametrize(
+    ("available", "known", "redeem_capability", "message"),
+    [
+        (None, "yes", False, "known"),
+        (None, False, "yes", "redeem_capability"),
+        (1, False, False, "unknown"),
+        (True, True, False, "bounded"),
+        (10_001, True, False, "bounded"),
+    ],
+)
+def test_reset_state_rejects_malformed_fields(
+    available, known, redeem_capability, message
+):
+    with pytest.raises(ValueError, match=message):
+        UsageResetState(available, known, redeem_capability)
+
+
+def test_reset_state_serializes_canonical_fields():
+    assert UsageResetState(2, True, True).as_dict() == {
+        "available": 2,
+        "known": True,
+        "redeem_capability": True,
+    }
+
+
+def test_reset_parser_handles_nested_legacy_and_malformed_canonical_values():
+    state = parse_usage_resets(
+        {
+            "usage_resets": {
+                "available": 2,
+                "known": True,
+                "redeem_capability": False,
+            },
+            "resets": {"available": 2},
+        }
+    )
+    assert state == UsageResetState(2, True, False)
+    assert parse_usage_resets(
+        {
+            "usage_resets": {
+                "available": 2,
+                "known": True,
+                "redeem_capability": False,
+            },
+            "resets": True,
+        }
+    ) == UsageResetState(None, False, False)
+    assert parse_usage_resets(
+        {"available": None, "known": "yes", "redeem_capability": False}
+    ) == UsageResetState(None, False, False)
+    assert parse_usage_resets(
+        {
+            "available": 2,
+            "known": True,
+            "redeem_capability": False,
+            "usage_resets": {"available": 2},
+        }
+    ) == UsageResetState(2, True, False)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (None, UsageResetState(None, False, False)),
+        ({"usage_resets": {"available": 2}}, UsageResetState(2, True, False)),
+        ({"usage_resets": {"available": "2"}}, UsageResetState(None, False, False)),
+        ({"resets": 2, "redeem_capability": "yes"}, UsageResetState(None, False, False)),
+    ],
+)
+def test_reset_parser_handles_legacy_boundaries(payload, expected):
+    assert parse_usage_resets(payload) == expected
+
+
+def test_reset_formatting_and_redemption_boundaries():
+    zero = UsageResetState(0, True, False)
+    assert format_usage_resets(zero, hide_zero=False) == "0"
+    assert format_usage_resets(zero) == ""
+    with pytest.raises(ValueError, match="invalid"):
+        format_usage_resets(None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="invalid"):
+        redeem_usage_reset(None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="known"):
+        redeem_usage_reset(UsageResetState(None, False, True))
+    with pytest.raises(NotImplementedError, match="not implemented"):
+        redeem_usage_reset(UsageResetState(1, True, True))
