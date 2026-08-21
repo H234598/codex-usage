@@ -3687,3 +3687,13 @@ Home-Startgrenzen. Kein neuer reproduzierbarer Fehler.
 `pytest -q tests/test_terminal.py`: 23/23 bestanden; Modul-Coverage 87%.
 Offene Zeilen sind ausschließlich Start-/Fehler- und Resolver-Sonderzweige.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 384: Render-Pipeline
+
+`render.py` wurde auf Tabellenbreiten, dynamische Main-/Spark-Limits,
+Provenance-Redaction, Status-/Auth-Anzeige, malformed Zahlen und bounded
+Iterables geprüft. Alle 26 Funktionen werden durch Render-/History-CLI-Tests
+ausgeführt; kein neuer reproduzierbarer Darstellungsfehler.
+
+`pytest -q tests/test_render.py tests/test_history_cli.py`: 68/68 bestanden;
+Modul-Coverage 87%. Ruff, Mypy und `git diff --check` sauber.
