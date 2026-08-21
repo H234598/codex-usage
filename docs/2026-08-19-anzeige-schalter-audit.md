@@ -3471,3 +3471,12 @@ Rollback-Identitäten geprüft. Kein neuer reproduzierbarer Fehler gefunden.
 
 `pytest -q tests/test_profile_migration.py`: 33/33 bestanden. Mypy für
 `profile_migration.py`, Ruff und `git diff --check` sauber.
+
+## Runde 363: Profile-Layout geprüft
+
+`profile_layout.py` wurde auf canonical `codex-home`/`auth.json`, private
+Metadata, Symlink-/Protected-Path-Schutz, Locking und Rollback-Tracking geprüft.
+Kein neuer reproduzierbarer Fehler gefunden.
+
+`pytest -q tests/test_profile_layout.py`: 20/20 bestanden. Mypy für
+`profile_layout.py`, Ruff und `git diff --check` sauber.
