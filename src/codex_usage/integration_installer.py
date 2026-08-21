@@ -2237,12 +2237,8 @@ def _install_release(
             final_release_dir = releases / release_id
             if _rehash_source_manifest(source_root) != source_manifest:
                 _fail()
-            if final_release_dir.exists() or final_release_dir.is_symlink():
-                _fail()
             token = secrets.token_hex(8)
             staging = releases / f".{release_id}.staging-{token}"
-            if staging.exists() or staging.is_symlink():
-                _fail()
             staging_identity = _create_private_directory(staging, releases_identity)
             staging_parent_identity = releases_identity
             build_root = temporary_root / f"producer-build-{token}"
@@ -2371,8 +2367,6 @@ def _install_release(
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             _require_private_dir(releases, releases_identity, False)
             _require_private_dir(staging, staging_identity, False)
-            if final_release_dir.exists() or final_release_dir.is_symlink():
-                _fail()
             try:
                 candidate_at_seam = _read_manifest(candidate_path)
             except IntegrationAttestationUnavailable:

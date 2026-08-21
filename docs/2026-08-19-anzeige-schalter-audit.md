@@ -4401,6 +4401,17 @@ Parent-Swap- und Bootstrap-Race-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 128/128 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 486: Redundante Release-Existenzpfade entfernt
+
+`_install_release()` prüfte Staging- und Finalnamen zusätzlich per
+`Path.exists()`/`is_symlink()`, obwohl `_create_private_directory()` und
+`_rename_owned_directory()` bereits descriptor-gebunden und atomar prüfen.
+Die doppelten Pfad-Checks sind entfernt; Entscheidung bleibt bei den
+identitätsgebundenen Operationen.
+
+Install-/Preexisting-Target-Tests: `pytest -q tests/test_integration_installer.py`:
+128/128 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
