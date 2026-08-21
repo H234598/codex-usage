@@ -91,6 +91,16 @@ def test_policy_resolvers_reject_non_object_policy(policy):
         effective_paid_overage(policy, account="private")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("path", ["invalid", [], 1, True, object()])
+def test_policy_apis_reject_non_path_input(path):
+    with pytest.raises(ValueError, match="policy path is invalid"):
+        load_policy(path)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="policy path is invalid"):
+        set_policy_rule("global", None, True, path=path)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="policy path is invalid"):
+        set_credit_limits({"hourly": 1}, path=path)  # type: ignore[arg-type]
+
+
 def test_evaluate_routing_json_is_safe_for_malformed_identity_fields():
     usage = replace(
         _usage(),

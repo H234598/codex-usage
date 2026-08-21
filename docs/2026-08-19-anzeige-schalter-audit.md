@@ -2265,3 +2265,12 @@ direkt auf `config.accounts` zu. Fehlaufrufe konnten dadurch mit rohem
 Iteration und melden ungültige Eingaben als `ValueError`.
 `tests/test_config.py`: 108/108 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 227: Routing-Policy-APIs validieren Pfad-Typ
+
+`load_policy()`, `set_policy_rule()` und `set_credit_limits()` übernahmen
+Fremdtypen für `path` bis zum Dateisystemzugriff. Dadurch konnten ungültige
+Aufrufe mit rohem `AttributeError` abbrechen. Alle drei APIs weisen solche
+Pfade jetzt kontrolliert als `ValueError("policy path is invalid")` zurück.
+`tests/test_routing.py`: 113/113 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.

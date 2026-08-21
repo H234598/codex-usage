@@ -59,6 +59,8 @@ def default_policy_path() -> Path:
 
 
 def load_policy(path: Path | None = None) -> dict[str, Any]:
+    if path is not None and not isinstance(path, Path):
+        raise ValueError("policy path is invalid")
     policy_path = path or default_policy_path()
     if not policy_path.exists():
         if policy_path.is_symlink():
@@ -98,6 +100,8 @@ def set_policy_rule(
             raise ValueError("global policy does not accept an identifier")
     else:
         identifier = _validate_identifier(identifier)
+    if path is not None and not isinstance(path, Path):
+        raise ValueError("policy path is invalid")
     policy_path = path or default_policy_path()
     _prepare_private_directory(policy_path.parent)
     with private_path_lock(policy_path, label="routing policy lock"):
@@ -139,6 +143,8 @@ def set_credit_limits(
             key: (None if value in (None, 0) else value)
             for key, value in normalized.items()
         }
+    if path is not None and not isinstance(path, Path):
+        raise ValueError("policy path is invalid")
     policy_path = path or default_policy_path()
     _prepare_private_directory(policy_path.parent)
     with private_path_lock(policy_path, label="routing policy lock"):
