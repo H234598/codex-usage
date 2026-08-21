@@ -55,7 +55,7 @@ def _selector() -> FormatTableSelector:
         "account-date-styles": object(),
     }
     selector._saving = False
-    selector.saved: list[str] = []
+    selector.saved = []
     selector.set_value = selector.saved.append
     return selector
 
