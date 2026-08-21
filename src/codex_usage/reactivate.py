@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from .account_lock import AccountLockError, account_lock
 from .browser import _profile_lock
-from .config import SUPPORTED_REACTIVATION_BROWSERS
+from .config import SUPPORTED_REACTIVATION_BROWSERS, _validate_account_id
 from .direct import (
     DirectAuthError,
     _extract_auth_details,
@@ -80,6 +80,10 @@ def reactivate_account(
 ) -> dict[str, Any]:
     if not isinstance(account, Account):
         raise ReactivationError("account is invalid")
+    try:
+        _validate_account_id(account.id)
+    except ValueError as exc:
+        raise ReactivationError("account id is invalid") from exc
     if (
         isinstance(timeout_seconds, bool)
         or not isinstance(timeout_seconds, int)
@@ -112,6 +116,10 @@ def open_account_in_reactivation_browser(
     """Open the account's existing isolated OAuth browser profile."""
     if not isinstance(account, Account):
         raise ReactivationError("account is invalid")
+    try:
+        _validate_account_id(account.id)
+    except ValueError as exc:
+        raise ReactivationError("account id is invalid") from exc
     _validate_manage_url(url)
     requested_browser = account.reactivation_browser if browser is None else browser
     # ``auto`` should reuse the browser in which codex-usage already collected
@@ -375,6 +383,8 @@ def _validate_auth_target(account: Account) -> Path:
         path = Path(account.auth_json_path).expanduser()
     except RuntimeError as exc:
         raise ReactivationError("account auth_json_path is invalid") from exc
+    if not path.is_absolute():
+        raise ReactivationError("account auth_json_path is invalid")
     if path.name != "auth.json":
         raise ReactivationError("auth_json_path must point to auth.json")
     parent = path.parent
@@ -482,9 +492,12 @@ def _account_profile_root(account: Account) -> Path:
     if not isinstance(account.profile_dir, str) or not account.profile_dir:
         raise ReactivationError("account profile_dir is invalid")
     try:
-        return Path(account.profile_dir).expanduser()
+        path = Path(account.profile_dir).expanduser()
     except RuntimeError as exc:
         raise ReactivationError("account profile_dir is invalid") from exc
+    if not path.is_absolute():
+        raise ReactivationError("account profile_dir is invalid")
+    return path
 
 
 def _prepare_real_private_directory(path: Path, *, label: str) -> None:

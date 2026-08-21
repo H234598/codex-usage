@@ -289,6 +289,20 @@ def test_reactivation_entrypoints_reject_non_account_input(account):
         open_account_in_reactivation_browser(account)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("account_id", [None, [], "../escape", "__all_accounts__"])
+def test_reactivation_entrypoints_reject_invalid_account_id(tmp_path, account_id):
+    account = Account(
+        id=account_id,
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+    )
+
+    with pytest.raises(ReactivationError, match="account id is invalid"):
+        reactivate_account(account)
+    with pytest.raises(ReactivationError, match="account id is invalid"):
+        open_account_in_reactivation_browser(account)
+
+
 def test_reactivation_rejects_malformed_account_paths(tmp_path):
     malformed_profile = Account(
         id="work",
@@ -306,6 +320,23 @@ def test_reactivation_rejects_malformed_account_paths(tmp_path):
     )
     with pytest.raises(ReactivationError, match="account auth_json_path is invalid"):
         reactivate_account(malformed_auth)
+
+    relative_auth = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        auth_json_path="auth.json",
+    )
+    with pytest.raises(ReactivationError, match="account auth_json_path is invalid"):
+        reactivate_module._validate_auth_target(relative_auth)
+
+    relative_profile = Account(
+        id="work",
+        label="Work",
+        profile_dir="relative-profile",
+    )
+    with pytest.raises(ReactivationError, match="account profile_dir is invalid"):
+        reactivate_module._account_profile_root(relative_profile)
 
 
 def test_reactivation_rejects_unknown_home_paths(tmp_path):

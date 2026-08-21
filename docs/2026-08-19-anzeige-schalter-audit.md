@@ -4044,3 +4044,15 @@ Reactivation-Profile bleiben unverändert.
 
 `pytest -q tests/test_reactivate.py`: 63/63 bestanden; Modul-Coverage 84 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 418: Reactivation-Entry-Point- und Pfadgrenzen
+
+`reactivate_account()` und `open_account_in_reactivation_browser()` ließen
+direkte Accounts mit ungültiger ID bis zum Lock beziehungsweise bis in
+Ausgabe-/Profilpfade laufen. Zusätzlich akzeptierten Auth- und Profilpfad-
+Helper relative Pfade und konnten damit CWD-Dateien oder CWD-Profile berühren.
+Beide Entry Points validieren IDs jetzt zentral; Auth- und Profilpfade müssen
+absolut sein. Config-basierte gültige Accounts bleiben unverändert.
+
+`pytest -q tests/test_reactivate.py`: 67/67 bestanden; Modul-Coverage 79 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
