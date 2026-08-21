@@ -2239,3 +2239,11 @@ Aufrufe konnten dadurch mit rohem `AttributeError` abbrechen. Beide
 `ValueError("account is invalid")`. `tests/test_direct.py` und
 `tests/test_app_server.py`: 256/256 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 224: Abschlussverifikation nach Fetch-Härtung
+
+Der vollständige Testlauf des aktuellen HEAD bestätigt `2360 passed, 1
+skipped, 1 warning` in 88.31s. Die einzelne Warnung bleibt externe
+PyGObject-Deprecation außerhalb des Repositories. `mypy src/codex_usage`
+meldet keine Fehler in 35 Quelldateien; der aggregierte Ruff-Lauf über
+Produktion, Scripts, Launcher und Tests ist sauber.
