@@ -3966,6 +3966,18 @@ reproduzierbare Fehlfunktion.
 `pytest -q tests/test_extractor.py`: 198/198 bestanden; Modul-Coverage 91 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 455: Private Datei-I/O und Lock-Grenzen
+
+`private_io.py` auf Pfadtypen, Symlink-Ancestors, geschützte Verzeichnisse,
+Eigentümer-/Hardlink-Prüfungen, Byte-/UTF-8-Budgets, atomare Ersetzungen,
+Create-only-Rollback, Directory-Fsync und bounded Lock-Wartezeiten geprüft.
+Vorhandene Ziele werden nicht unkontrolliert überschrieben; temporäre Dateien,
+Locks und Rollbackpfade bleiben privat und regulär. Keine neue reproduzierbare
+Fehlfunktion.
+
+`pytest -q tests/test_private_io.py`: 44/44 bestanden; Modul-Coverage 75 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 451: Bridge-Debug-Secret-Redaction
 
 `bridge._sanitize_debug_text()` redigierte bisher nur camelCase-Tokenfelder
