@@ -19,6 +19,7 @@ from codex_usage.cli import (
     _all_usage_results_valid,
     _is_successful_usage,
     _load_overview_usages,
+    _overview_usage_json,
     _policy_decision_exit_code,
     _select_accounts,
     _usage_for_policy,
@@ -2047,6 +2048,23 @@ def test_account_overview_json_hides_login_required_values(
     assert usage["status"] == "login_required"
     assert usage["five_hour"] is None
     assert usage["weekly"] is None
+
+
+def test_overview_usage_json_uses_safe_serialized_metadata():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=[],  # type: ignore[arg-type]
+        backend_configured="direct",
+        backend_used="direct",
+    )
+
+    payload = _overview_usage_json(usage, expected_backend="direct")
+
+    assert payload is not None
+    assert payload["captured_at"] is None
+    assert payload["status"] == "ok"
+    assert payload["stale"] is False
 
 
 def test_values_shows_compact_live_values_for_all_accounts(tmp_path, monkeypatch, capsys):

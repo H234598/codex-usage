@@ -2130,14 +2130,14 @@ def _overview_usage_json(
     usage = _safe_usage_for_display(usage, expected_backend=expected_backend)
     serialized = usage.as_dict()
     return {
-        "captured_at": usage.captured_at.isoformat(),
+        "captured_at": serialized["captured_at"],
         "five_hour": _overview_window_json(serialized["five_hour"]),
         "weekly": _overview_window_json(serialized["weekly"]),
         "main": serialized["main"],
         "models": serialized["models"],
-        "status": usage.status.value,
-        "error": usage.error,
-        "stale": usage.stale,
+        "status": serialized["status"],
+        "error": serialized["error"],
+        "stale": serialized["stale"],
     }
 
 

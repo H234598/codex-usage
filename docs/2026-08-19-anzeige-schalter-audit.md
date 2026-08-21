@@ -1870,3 +1870,12 @@ typisiert normalisiert; ungültige Werte werden verborgen oder als `null`
 ausgegeben. `tests/test_models.py`, `tests/test_render.py`, `tests/test_cli.py`
 und `tests/test_state.py`: 389/389 bestanden; Mypy und Ruff für betroffene
 Dateien sauber.
+
+## Runde 183: CLI-Überblick nutzt sichere Serialisierung
+
+`cli._overview_usage_json()` las `captured_at`, `status`, `error` und `stale`
+nach dem Serializer-Schutz nochmals direkt aus dem Usage-Objekt. Ein malformed
+Snapshot konnte den JSON-Überblick dadurch weiterhin mit `AttributeError`
+abbrechen. Der Überblick übernimmt diese Felder jetzt ausschließlich aus der
+normalisierten Serializer-Ausgabe. `tests/test_cli.py`: 110/110 bestanden;
+Mypy und Ruff für betroffene Dateien sauber.
