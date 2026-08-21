@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar
 from zoneinfo import ZoneInfo
@@ -529,6 +529,17 @@ def test_browser_diagnostic_datetime_uses_dst_aware_local_timezone(monkeypatch):
     monkeypatch.setattr("codex_usage.browser.LOCAL_TZ", berlin)
 
     assert _format_datetime(value) == "2026-01-15T01:15:00+01:00"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=14))),
+        datetime(9999, 12, 31, 23, 59, 59, tzinfo=timezone(timedelta(hours=-14))),
+    ],
+)
+def test_browser_diagnostic_datetime_rejects_unrepresentable_conversion(value):
+    assert _format_datetime(value) is None
 
 
 def test_diagnose_prioritizes_login_page_over_cloudflare_challenge_assets():

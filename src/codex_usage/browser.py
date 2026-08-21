@@ -723,7 +723,10 @@ def _diagnostic_text(value: Any, *, limit: int) -> str:
 def _format_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
-    return value.astimezone(LOCAL_TZ).isoformat()
+    try:
+        return value.astimezone(LOCAL_TZ).isoformat()
+    except (OverflowError, TypeError, ValueError):
+        return None
 
 
 def _capture_diagnostic_response(response: Any, responses: list[dict[str, Any]]) -> None:

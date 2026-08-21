@@ -2975,3 +2975,19 @@ Normalisierung roh mit `OverflowError` abbrechen. Der Status fällt jetzt auf
 `invalid_spark_health_record` zurück. `tests/test_spark_health.py`: 25/25
 fokussierte Tests bestanden; Mypy für Spark Health, Ruff und
 `git diff --check` sauber.
+
+## Runde 306: Browser-Diagnose fängt Auth-Zeitformatierungsgrenzen
+
+`browser._format_datetime()` normalisierte Auth-Metadaten ohne Schutz vor
+unrepräsentierbaren UTC-Konvertierungen. Extremwerte aus `auth.json` konnten
+Diagnoseausgabe mit `OverflowError` abbrechen. Die Funktion liefert jetzt
+`None`. `tests/test_browser_profile.py`: 126/126 fokussierte Tests bestanden;
+Mypy für Browser, Ruff und `git diff --check` sauber.
+
+## Runde 307: Consumption validiert Offset-Konvertierung der Referenzzeit
+
+`consumption._require_aware()` akzeptierte timezone-aware Randwerte, ließ aber
+`astimezone(UTC)` bei `datetime.min/max` mit großem Offset roh scheitern. Die
+Bereichsprüfung liefert jetzt `ValueError("now is out of range")`.
+`tests/test_consumption.py`: 28/28 fokussierte Tests bestanden; Mypy für
+Consumption, Ruff und `git diff --check` sauber.

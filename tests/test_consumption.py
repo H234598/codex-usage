@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -260,6 +260,18 @@ def test_consumption_rejects_capture_time_out_of_range_for_baseline_value():
             baseline_value_minutes=9_999,
             now=datetime.min.replace(tzinfo=UTC) + timedelta(seconds=60),
         )
+
+
+@pytest.mark.parametrize(
+    "now",
+    [
+        datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        datetime.max.replace(tzinfo=timezone(timedelta(hours=-14))),
+    ],
+)
+def test_consumption_rejects_now_with_unrepresentable_timezone_conversion(now):
+    with pytest.raises(ValueError, match="now is out of range"):
+        calculate_consumption([], amount=1, unit="hours", now=now)
 
 
 def test_consumption_rejects_sample_iterators_over_cap(monkeypatch):

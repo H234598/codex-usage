@@ -282,4 +282,7 @@ def _require_aware(value: datetime) -> None:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
     if value.tzinfo is not UTC:
-        value.astimezone(UTC)
+        try:
+            value.astimezone(UTC)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError("now is out of range") from exc
