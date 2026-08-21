@@ -3437,3 +3437,10 @@ Untertyp) behandelt; kein neuer reproduzierbarer Fehler.
 
 `pytest -q tests/test_json_utils.py`: 8/8 bestanden. Mypy für `json_utils.py`,
 Ruff und `git diff --check` sauber.
+
+## Runde 359: Gesamt-Typcheck nach Einzelpasses
+
+Cross-File-Verifikation nach Routing-, Snapshot- und History-Anpassungen:
+`mypy src/codex_usage` meldet in allen 35 Quelldateien keine Fehler.
+Aggregierter Ruff auf `src/codex_usage` und `git diff --check` sind ebenfalls
+sauber.
