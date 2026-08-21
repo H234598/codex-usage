@@ -1703,15 +1703,6 @@ Nach dem vollständigen Testlauf meldet `mypy src/codex_usage` weiterhin keine
 Fehler in 35 Quelldateien. Der aggregierte Ruff-Lauf über Produktion, Scripts,
 Launcher und Tests ist ebenfalls sauber.
 
-## Runde 176: Serializer-Schutz für Modell-Pool-Keys
-
-`AccountUsage.as_dict()` setzte Modell-Pool-Keys ungeprüft als Dictionary-
-Schlüssel ein. Ein malformed `UsagePool` mit Liste oder Dict als `key` konnte
-dadurch JSON- und Render-Ausgabe mit `TypeError` abbrechen. Der Serializer
-berücksichtigt jetzt nur echte `UsagePool`-Objekte mit String-Key; ungültige
-Modell-Pools werden verworfen. `tests/test_models.py` und `tests/test_render.py`:
-42/42 bestanden; Mypy und Ruff für betroffene Dateien sauber.
-
 ## Runde 162: History-Prozent-Typ
 
 `history.UsageSample` ließ die Float-Konvertierung eines extrem großen
@@ -1814,3 +1805,12 @@ außerhalb des Repositories; keine Testfehler.
 Nach dem vollständigen Testlauf meldet `mypy src/codex_usage` weiterhin keine
 Fehler in 35 Quelldateien. Der aggregierte Ruff-Lauf über Produktion, Scripts,
 Launcher und Tests ist ebenfalls sauber.
+
+## Runde 176: Serializer-Schutz für Modell-Pool-Keys
+
+`AccountUsage.as_dict()` setzte Modell-Pool-Keys ungeprüft als Dictionary-
+Schlüssel ein. Ein malformed `UsagePool` mit Liste oder Dict als `key` konnte
+dadurch JSON- und Render-Ausgabe mit `TypeError` abbrechen. Der Serializer
+berücksichtigt jetzt nur echte `UsagePool`-Objekte mit String-Key; ungültige
+Modell-Pools werden verworfen. `tests/test_models.py` und `tests/test_render.py`:
+42/42 bestanden; Mypy und Ruff für betroffene Dateien sauber.
