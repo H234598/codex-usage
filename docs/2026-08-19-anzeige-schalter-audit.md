@@ -3326,6 +3326,16 @@ Kein neuer reproduzierbarer Fehler.
 `pytest -q tests/test_bridge.py`: 258/258 bestanden. Mypy für `bridge.py`,
 Ruff und `git diff --check` sauber.
 
+## Runde 376: Scheduler-Backend- und Snapshot-Grenzen
+
+`scheduler.py` wurde auf bounded Account-Iterables, Auth-Pfad-/Identitäts-
+Attribution, Direct/App-Server-Fallback, globale Lock-Reihenfolge,
+State-Generationen, Reset-Stabilisierung, Snapshot-/History-Rollback und
+Watchdog-Blockzustände geprüft. Kein neuer reproduzierbarer Fehler.
+
+`pytest -q tests/test_scheduler.py`: 201/201 bestanden. Mypy für
+`scheduler.py`, Ruff und `git diff --check` sauber.
+
 ## Runde 346: Routing-Entscheidungs-DTO typisiert
 
 `evaluate_routing()` baute `base` ohne expliziten Mapping-Typ. Mypy inferierte
