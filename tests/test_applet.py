@@ -291,7 +291,19 @@ def test_format_and_display_sections_use_new_labels() -> None:
     assert layout["general-page"]["title"] == "Einstellungen"
     assert layout["forecast-page"]["title"] == "Prognosen"
     assert layout["forecast-page"]["sections"] == [
-        "consumption-periods-section", "credit-consumption-section"
+        "forecast-table-section", "forecast-options-section"
+    ]
+    assert layout["forecast-table-section"]["keys"] == ["forecast-table-selector"]
+    assert layout["forecast-options-section"]["keys"] == ["show-consumption-delta"]
+    forecast_selector = settings["forecast-table-selector"]
+    assert forecast_selector["type"] == "custom"
+    assert forecast_selector["file"] == "forecast_table_selector.py"
+    assert forecast_selector["widget"] == "ForecastTableSelector"
+    assert forecast_selector["default"] == "account-consumption-settings"
+    assert [table["key"] for table in forecast_selector["tables"]] == [
+        "account-consumption-settings",
+        "account-forecast-settings",
+        "account-credit-consumption-settings",
     ]
     assert layout["status-page"]["title"] == "Status"
     assert layout["status-page"]["sections"] == [
@@ -598,6 +610,11 @@ def test_applet_metadata_and_settings_remainder() -> None:
     for table in selector["tables"]:
         referenced_keys.add(table["key"])
         referenced_keys.add(table["heading"])
+    forecast_selector = settings["forecast-table-selector"]
+    referenced_keys.add("forecast-table-selector")
+    for table in forecast_selector["tables"]:
+        referenced_keys.add(table["key"])
+        referenced_keys.add(table["heading"])
     assert referenced_keys == set(settings) - {
         "layout",
         "reactivation-browser",
@@ -716,6 +733,7 @@ def test_installer_and_uninstaller_round_trip(tmp_path: Path) -> None:
         "stylesheet.css",
         "dynamic_series_list.py",
         "fast_mode_icon_selector.py",
+        "forecast_table_selector.py",
         "format_table_selector.py",
         "help_page.py",
         "panel_settings_list.py",

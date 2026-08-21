@@ -31,8 +31,8 @@
       "type": "page",
       "title": "Prognosen",
       "sections": [
-        "consumption-periods-section",
-        "credit-consumption-section"
+        "forecast-table-section",
+        "forecast-options-section"
       ]
     },
     "status-page": {
@@ -77,6 +77,20 @@
       "title": "Formatierungsziel",
       "keys": [
         "format-table-selector"
+      ]
+    },
+    "forecast-table-section": {
+      "type": "section",
+      "title": "Prognosentabelle",
+      "keys": [
+        "forecast-table-selector"
+      ]
+    },
+    "forecast-options-section": {
+      "type": "section",
+      "title": "Prognoseoptionen",
+      "keys": [
+        "show-consumption-delta"
       ]
     },
     "command-section": {
@@ -244,6 +258,31 @@
         "help-content"
       ]
     }
+  },
+  "forecast-table-selector": {
+    "type": "custom",
+    "file": "forecast_table_selector.py",
+    "widget": "ForecastTableSelector",
+    "description": "Prognosentabelle",
+    "tooltip": "Wähle oben genau eine Prognosentabelle. Tokenverbrauch, Tokenende und Creditverbrauch bleiben getrennt gespeichert; sichtbar ist jeweils nur die gewählte Tabelle.",
+    "tables": [
+      {
+        "key": "account-consumption-settings",
+        "label": "Tokenverbrauch",
+        "heading": "account-consumption-settings-heading"
+      },
+      {
+        "key": "account-forecast-settings",
+        "label": "Tokenende",
+        "heading": "account-forecast-settings-heading"
+      },
+      {
+        "key": "account-credit-consumption-settings",
+        "label": "Creditverbrauch",
+        "heading": "account-credit-consumption-settings-heading"
+      }
+    ],
+    "default": "account-consumption-settings"
   },
   "format-table-selector": {
     "type": "custom",

@@ -5305,3 +5305,23 @@ Regressionen:
 - `pytest -q tests/test_help_page.py tests/test_format_table_selector.py tests/test_applet.py`: 38/38 bestanden.
 - `node --test tests/applet_runtime.test.js`: 407/407 bestanden.
 - `make applet-check`, Ruff, Python-Compile, JSON-Parse und `git diff --check` sauber.
+
+## Runde 451: Prognosen durchschaltbar
+
+Die drei Prognosentabellen lagen bisher gleichzeitig auf der Seite. Die Seite
+zeigt jetzt einen mittig ausgerichteten Dropdown-Umschalter mit genau einer
+sichtbaren Tabelle: Tokenverbrauch, Tokenende oder Creditverbrauch. Jede Tabelle
+bleibt unter ihrem bisherigen JSON-Schlüssel gespeichert; bestehende Account-
+Zeilen und Formatierungen brauchen keine Migration. Der Umschalter speichert
+seine Auswahl unter `forecast-table-selector` und fällt bei unbekanntem Wert auf
+Tokenverbrauch zurück. Stack-Animation ist deaktiviert, damit der Seitenwechsel
+keine zusätzliche Cinnamon-Oberflächenlast erzeugt.
+
+Die bestehende Tabellenbindung wird wiederverwendet. Installer und Hilfe-Schema
+kennen die neue Widget-Datei; die Hilfe-Seite führt Umschalter und alle drei
+Prognoseziele mit ihren Feldbeschreibungen auf.
+
+Regressionen:
+
+- `pytest -q tests/test_forecast_table_selector.py tests/test_format_table_selector.py tests/test_help_page.py tests/test_applet.py`: 41/41 bestanden.
+- Ruff, Python-Compile, JSON-Parse und `git diff --check` sauber.

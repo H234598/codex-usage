@@ -21,6 +21,7 @@ REQUIRED_FILES = (
     "stylesheet.css",
     "dynamic_series_list.py",
     "fast_mode_icon_selector.py",
+    "forecast_table_selector.py",
     "format_table_selector.py",
     "help_page.py",
     "panel_settings_list.py",

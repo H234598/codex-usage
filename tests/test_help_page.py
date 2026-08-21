@@ -63,6 +63,16 @@ def test_help_group_builder_covers_gui_pages_and_format_copies() -> None:
     assert "Leiste — Kürzel" in entry_titles
     tag_entry = next(entry for entry in entries if entry["title"] == "Leiste — Kürzel")
     assert any(field["title"] == "Account-ID" for field in tag_entry["fields"])
+    forecast_group = next(group for group in groups if group["title"] == "Prognosen")
+    forecast_entries = [
+        entry for section in forecast_group["sections"] for entry in section["entries"]
+    ]
+    assert {entry["title"] for entry in forecast_entries} >= {
+        "Prognosentabelle",
+        "Limitverbrauch pro Account und Zeitraum",
+        "Tokenende je Account",
+        "Creditverbrauch je Account",
+    }
 
 
 def test_help_definition_and_table_key_helpers_handle_malformed_input() -> None:
@@ -108,7 +118,7 @@ def test_help_page_defers_field_widgets_until_entry_expands() -> None:
     widget = HelpPage({}, "help-content", SimpleNamespace(settings=_schema()))
     try:
         expanders = list(_expanders(widget))
-        assert len(expanders) == 56
+        assert len(expanders) == 54
         initial_count = _widget_count(widget)
         assert initial_count < 300
         assert all(expander.get_child() is None for expander in expanders)
