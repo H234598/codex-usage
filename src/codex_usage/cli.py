@@ -1655,6 +1655,7 @@ def _usage_for_policy(
         return _invalid_policy_usage(account, "no usage snapshot")
     if (
         usage.backend_configured != account.backend
+        or not isinstance(usage.backend_used, str)
         or usage.backend_used not in {"browser", "direct", "app-server"}
         or not backend_provenance_matches_configured(usage, account.backend)
     ):
@@ -1670,7 +1671,8 @@ def _usage_for_policy(
         except (DirectAuthError, OSError, ValueError):
             return _invalid_policy_usage(account, "auth.json identity unavailable")
         if (
-            usage.backend_used not in {"direct", "app-server"}
+            not isinstance(usage.backend_used, str)
+            or usage.backend_used not in {"direct", "app-server"}
             or not usage.backend_account_id
             or auth_identity_changed(
                 before_user_id=usage.backend_user_id,

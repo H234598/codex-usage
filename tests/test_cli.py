@@ -21,6 +21,7 @@ from codex_usage.cli import (
     _load_overview_usages,
     _policy_decision_exit_code,
     _select_accounts,
+    _usage_for_policy,
     main,
 )
 from codex_usage.config import AppConfig, add_or_update_account, load_config, save_config
@@ -535,6 +536,30 @@ def test_successful_usage_rejects_unhashable_backend_provenance(field):
     object.__setattr__(usage, field, [])
 
     assert _is_successful_usage(usage) is False
+
+
+def test_policy_usage_rejects_unhashable_backend_without_raising(monkeypatch):
+    account = Account(
+        id="private",
+        label="Private",
+        profile_dir="/tmp/private",
+        backend="direct",
+    )
+    malformed = AccountUsage(
+        account_id=account.id,
+        label=account.label,
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used=[],
+    )
+    monkeypatch.setattr(cli_module, "load_current_usage", lambda _account_id: malformed)
+    monkeypatch.setattr(cli_module, "load_usage_snapshot", lambda _account_id: None)
+
+    result = _usage_for_policy(account)
+
+    assert result.status is AccountStatus.ERROR
+    assert result.error == "usage backend provenance mismatch"
 
 
 def test_policy_commands_are_machine_readable_and_use_saved_usage(
