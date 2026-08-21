@@ -3614,3 +3614,12 @@ Watchdog-Blockzustände geprüft. Kein neuer reproduzierbarer Fehler.
 
 `pytest -q tests/test_scheduler.py`: 201/201 bestanden. Mypy für
 `scheduler.py`, Ruff und `git diff --check` sauber.
+
+## Runde 377: Integration-Attestation-Testabdeckung
+
+`integration_attestation.py` hat keine eigene Testdatei, wird aber durch
+Installer-/Entrypoint-Tests direkt ausgeführt. Coverage-Nachweis mit
+`pytest -q tests/test_integration_installer.py tests/test_integration_entrypoint.py`:
+alle 17 Funktionen werden mindestens einmal ausgeführt, 310 Statements mit
+78% Zeilen- und 100 Branch-Messung; die offenen Zeilen sind ausschließlich
+zusätzliche Guard-/Fehlerzweige. Ruff, Mypy und `git diff --check` sauber.
