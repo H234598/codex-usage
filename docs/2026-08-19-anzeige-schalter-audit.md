@@ -1202,3 +1202,11 @@ ungültige Typen jetzt als `ValueError` ab; drei Regressionen ergänzt.
 `Path`-Wert ist jetzt zulässig; sechs Regressionen verhindern Job-/Worker-
 Seiteneffekte vor der Ablehnung. `tests/test_profile_jobs.py`: 56/56
 bestanden; Ruff sauber.
+
+## Runde 100: Profiljob-Auth-Eigentümer
+
+`_verify_profile_job_completion()` prüfte kanonische `auth.json` bisher nur
+auf Dateiart, Linkzähler und Rechte. Eine fremde Eigentümerdatei konnte damit
+als erfolgreiche Job-Postcondition gelten, obwohl Direct-Usage sie ablehnt.
+UID-Abgleich ergänzt; Regression mit simuliertem UID-Mismatch. `tests/test_profile_jobs.py`:
+57/57 bestanden; Ruff sauber.

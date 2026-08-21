@@ -401,7 +401,11 @@ def _verify_profile_job_completion(job: dict[str, object]) -> bool:
         if auth_path.is_symlink() or not auth_path.is_file():
             return False
         file_stat = auth_path.stat()
-        return file_stat.st_nlink == 1 and not file_stat.st_mode & 0o077
+        return (
+            file_stat.st_uid == os.getuid()
+            and file_stat.st_nlink == 1
+            and not file_stat.st_mode & 0o077
+        )
     except (OSError, TypeError, ValueError):
         return False
 

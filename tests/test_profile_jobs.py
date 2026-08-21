@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -1154,6 +1155,38 @@ def test_profile_job_completion_rejects_reactivation_browser_mismatch(
         "browser": "firefox",
         "backend": "direct",
         "reactivation_browser": "chromium",
+        "config_path": str(tmp_path / "config.toml"),
+    }
+
+    assert profile_jobs._verify_profile_job_completion(job) is False
+
+
+def test_profile_job_completion_rejects_non_owned_auth(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    write_private_text(auth_path, "{}\n", label="test auth")
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+        browser="firefox",
+        auth_json_path=str(auth_path),
+        backend="direct",
+        reactivation_browser="firefox",
+    )
+    monkeypatch.setattr(
+        profile_jobs,
+        "load_config",
+        lambda _path: AppConfig(accounts=(account,)),
+    )
+    current_uid = os.getuid()
+    monkeypatch.setattr(profile_jobs.os, "getuid", lambda: current_uid + 1)
+    job = {
+        "account_id": "alpha",
+        "label": "Alpha",
+        "profile_dir": str(tmp_path / "profile"),
+        "browser": "firefox",
+        "backend": "direct",
+        "reactivation_browser": "firefox",
         "config_path": str(tmp_path / "config.toml"),
     }
 
