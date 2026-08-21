@@ -663,7 +663,7 @@ def _cleanup_managed_timer_enable_link() -> None:
     try:
         target = link.resolve(strict=False)
         expected = (unit_dir / TIMER_NAME).resolve(strict=False)
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise ServiceError("could not resolve systemd enable link") from exc
     if target != expected:
         raise ServiceError("refusing to remove a foreign systemd enable link")

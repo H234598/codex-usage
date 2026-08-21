@@ -4063,6 +4063,22 @@ Grenzpfadtests für jede Funktion ergänzt. `pytest -q tests/test_usage_resets.p
 17/17 bestanden; Modul-Coverage 100 % (Branch). Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 459: Systemd-Linkauflösung und realer Service-Fehler
+
+`service.py` auf den fehlgeschlagenen User-Timer-Lauf zurückgeführt. Journal,
+Unit-`ExecStart` und Playwright-Dry-Run zeigen keinen neuen Repo- oder
+Config-Fehler: Der Timer startet `/home/teladi/.local/bin/codex-usage`, aber
+die konfigurierten Firefox-Browserkonten treffen auf eine fehlende
+Playwright-Executable; der kontrollierte Watchdog-Exit 2 ist damit
+umgebungsbedingt. Chromium ist im Cache vorhanden, Firefox nicht; kein
+unsicherer Browser-Fallback und keine automatische Netzwerkinstallation.
+
+Separat ließ `_cleanup_managed_timer_enable_link()` einen `RuntimeError` aus
+`Path.resolve()` ungefangen entkommen. Ein synthetischer Auflösungsfehler
+reproduziert jetzt `ServiceError` statt Roh-Exception; der Handler fängt
+`OSError` und `RuntimeError` gemeinsam. `pytest -q tests/test_service.py`:
+67/67 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

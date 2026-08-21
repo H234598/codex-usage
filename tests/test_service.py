@@ -473,6 +473,32 @@ def test_cleanup_managed_timer_link_refuses_foreign_target(tmp_path, monkeypatch
     assert link.is_symlink()
 
 
+def test_cleanup_managed_timer_link_wraps_runtime_resolution_errors(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    wants_dir = unit_dir / "timers.target.wants"
+    wants_dir.mkdir(parents=True)
+    timer_path = unit_dir / TIMER_NAME
+    timer_path.write_text("managed\n", encoding="utf-8")
+    link = wants_dir / TIMER_NAME
+    link.symlink_to(timer_path)
+    original_resolve = service_module.Path.resolve
+
+    def fail_link_resolution(path, strict=False):
+        if path == link:
+            raise RuntimeError("synthetic symlink resolution failure")
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(service_module.Path, "resolve", fail_link_resolution)
+
+    with pytest.raises(ServiceError, match="could not resolve systemd enable link"):
+        service_module._cleanup_managed_timer_enable_link()
+
+    assert link.is_symlink()
+
+
 def test_cleanup_managed_timer_link_refuses_regular_file(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     wants_dir = tmp_path / "config" / "systemd" / "user" / "timers.target.wants"
