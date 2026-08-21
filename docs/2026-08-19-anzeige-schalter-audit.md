@@ -4263,6 +4263,17 @@ Parent-Swap-Regression und Rename-Seam-Tests aktualisiert. `pytest -q
 tests/test_integration_installer.py`: 117/117 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 475: Rekursiver Installer-Cleanup per Parent-FD
+
+`_cleanup_owned_directory()` rief `shutil.rmtree(path)` nach einer
+Pfadprüfung auf. Parent-Swap konnte dadurch fremde Build-/Wheel-/Staging-
+Bäume löschen. Der gemeinsame Entry-Remover revalidiert Directory-Inode und
+ruft `shutil.rmtree(name, dir_fd=parent_fd)` auf; `rmtree` ist auf diesem
+System symlink-angriffssicher.
+
+Parent-Swap-Regression ergänzt. `pytest -q tests/test_integration_installer.py`:
+118/118 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

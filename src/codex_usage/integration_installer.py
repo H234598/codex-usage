@@ -340,10 +340,11 @@ def _cleanup_provisional(
 
 def _remove_owned_entry(
     path: Path,
-    identity: _FileIdentity | _ProvisionalIdentity,
+    identity: _DirectoryIdentity | _FileIdentity | _ProvisionalIdentity,
     parent_identity: _DirectoryIdentity,
     *,
     directory: bool,
+    recursive: bool = False,
 ) -> bool:
     flags = os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
@@ -377,6 +378,16 @@ def _remove_owned_entry(
         if isinstance(identity, _ProvisionalIdentity):
             if _provisional_from_stat(item) != identity:
                 return False
+        elif isinstance(identity, _DirectoryIdentity):
+            if (
+                _DirectoryIdentity(
+                    item.st_dev,
+                    item.st_ino,
+                    stat.S_IMODE(item.st_mode),
+                )
+                != identity
+            ):
+                return False
         elif (
             item.st_uid != os.getuid()
             or _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
@@ -384,7 +395,10 @@ def _remove_owned_entry(
         ):
             return False
         if directory:
-            os.rmdir(path.name, dir_fd=parent_fd)
+            if recursive:
+                shutil.rmtree(path.name, dir_fd=parent_fd)
+            else:
+                os.rmdir(path.name, dir_fd=parent_fd)
         else:
             os.unlink(path.name, dir_fd=parent_fd)
         try:
@@ -595,11 +609,13 @@ def _cleanup_owned_directory(
 ) -> bool:
     if not _owned_directory_matches(path, identity, parent_identity):
         return False
-    try:
-        shutil.rmtree(path)
-    except (OSError, ValueError):
-        return False
-    return not path.exists() and not path.is_symlink()
+    return _remove_owned_entry(
+        path,
+        identity,
+        parent_identity,
+        directory=True,
+        recursive=True,
+    )
 
 
 def _require_private_dir(

@@ -2325,6 +2325,62 @@ def test_owned_directory_rename_rejects_parent_swap_before_rename(tmp_path, monk
     assert (old_parent / staging.name / "owned-marker").read_bytes() == b"owned"
 
 
+def test_owned_directory_cleanup_rejects_parent_swap_before_rmtree(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "temporary"
+    parent.mkdir(mode=0o700)
+    target = parent / "producer-build"
+    target.mkdir(mode=0o700)
+    (target / "owned-marker").write_bytes(b"owned")
+    parent_identity = integration_installer._directory_identity(parent)
+    identity = integration_installer._directory_identity(target)
+    old_parent = tmp_path / "temporary-old"
+    original_rmtree = integration_installer.shutil.rmtree
+    original_open = os.open
+    swapped = False
+
+    def swap_parent():
+        nonlocal swapped
+        if swapped:
+            return
+        parent.rename(old_parent)
+        parent.mkdir(mode=0o700)
+        foreign = parent / target.name
+        foreign.mkdir(mode=0o700)
+        (foreign / "foreign-marker").write_bytes(b"foreign")
+        swapped = True
+
+    def swap_before_rmtree(path, *args, **kwargs):
+        if Path(path) == target:
+            swap_parent()
+        return original_rmtree(path, *args, **kwargs)
+
+    def swap_before_open(path, flags, mode=0o777, *, dir_fd=None):
+        if path == parent and dir_fd is None:
+            swap_parent()
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_installer.shutil, "rmtree", swap_before_rmtree)
+    monkeypatch.setattr(integration_installer.os, "open", swap_before_open)
+    assert (
+        integration_installer._cleanup_owned_directory(
+            target,
+            identity,
+            parent_identity,
+        )
+        is False
+    )
+
+    assert swapped
+    assert (parent / target.name / "foreign-marker").read_bytes() == b"foreign"
+    assert (old_parent / target.name / "owned-marker").read_bytes() == b"owned"
+
+
 def test_exclusive_write_cleans_candidate_when_parent_revalidation_fails_after_open(
     tmp_path,
     monkeypatch,
