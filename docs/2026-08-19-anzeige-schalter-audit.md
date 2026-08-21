@@ -4463,6 +4463,17 @@ Regression für ungültige ID und unbekannten Status ergänzt. `pytest -q
 tests/test_profile_migration.py`: 45/45 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 506: Identische Auth-Quellkandidaten dedupliziert
+
+`_source_for_account()` behandelte dieselbe Datei zweimal als konkurrierende
+Quelle, wenn `profile_dir` zugleich als einzelner `search_root` verwendet
+wurde. Die Planung brach dadurch mit „multiple auth sources“ ab, obwohl kein
+Konflikt vorlag. Existierende Kandidaten werden jetzt in Eingabereihenfolge
+dedupliziert; echte verschiedene Quellen bleiben Konflikt.
+
+Regression ergänzt. `pytest -q tests/test_profile_migration.py`: 46/46
+bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 504: Auth-Migrationsplan-IDs validiert
 
 `profile_migration._validate_migration_plan()` akzeptierte bisher ungültige

@@ -43,6 +43,22 @@ def test_auth_migration_dry_run_finds_explicit_source_without_writing(tmp_path):
     assert plan.items[0].secret_marker is None
 
 
+def test_auth_migration_deduplicates_identical_search_candidates(tmp_path):
+    source = tmp_path / "auth.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path),
+    )
+
+    plan = plan_auth_migration((account,), search_roots=(tmp_path,))
+
+    assert plan.items[0].status == "planned"
+    assert plan.items[0].source == source
+
+
 def test_auth_migration_rejects_unknown_auth_home(tmp_path):
     account = _account(
         tmp_path,
