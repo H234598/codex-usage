@@ -2021,3 +2021,8 @@ Schema-1-Projektion konnte dadurch mit rohem `AttributeError` abbrechen.
 Zeitstempel werden jetzt typ- und fehlergeprüft; ungültige Werte führen
 kontrolliert zu `IntegrationInvalidSource`. `tests/test_integration_snapshot.py`:
 47/47 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.
+
+## Runde 200: Gesamt-Mypy und Ruff nach Parser-Härtung
+
+`mypy src/codex_usage` meldet keine Fehler in 35 Quelldateien. Der aggregierte
+Ruff-Lauf über Produktion, Scripts, Launcher und Tests ist ebenfalls sauber.
