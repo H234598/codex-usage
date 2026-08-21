@@ -3548,3 +3548,10 @@ den Auftrag vor Manifest-/Prozessstart zurück.
 Zwei Regressionstests ergänzt. `pytest -q tests/test_profile_jobs.py`:
 78/78 bestanden. Mypy für `profile_jobs.py`, Ruff und `git diff --check`
 sauber.
+
+## Runde 370: Reload nach Profile-Job-Identitätsfix
+
+User-Timer nach `f54df54` neu aktiviert. `app-server`-Konten liefern weiterhin
+valide Daten. Service bleibt wegen der zwei direkten Browser-Konten ohne
+Firefox-Playwright-Executable bei Exit 2; Timer ist aktiv und geplant. Kein
+Fallback und keine Netzwerkinstallation ausgeführt.
