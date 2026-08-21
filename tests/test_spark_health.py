@@ -284,11 +284,14 @@ def test_refreshing_old_account_keeps_health_record_in_bounded_rotation(tmp_path
 
 def test_spark_health_write_fails_when_directory_chmod_fails(tmp_path, monkeypatch):
     path = tmp_path / "spark-health-dir" / "health.json"
+    original_fchmod = os.fchmod
 
-    def fail_chmod(_path, _mode):
-        raise PermissionError("spark health directory chmod blocked")
+    def fail_fchmod(fd, mode):
+        if Path(os.readlink(f"/proc/self/fd/{fd}")) == path.parent:
+            raise PermissionError("spark health directory chmod blocked")
+        return original_fchmod(fd, mode)
 
-    monkeypatch.setattr(Path, "chmod", fail_chmod)
+    monkeypatch.setattr("codex_usage.private_io.os.fchmod", fail_fchmod)
 
     with pytest.raises(PermissionError, match="spark health directory chmod blocked"):
         set_spark_health("backend-nufker", "healthy", path=path, now=NOW)

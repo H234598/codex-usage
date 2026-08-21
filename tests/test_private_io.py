@@ -100,6 +100,27 @@ def test_ensure_private_directory_secures_all_new_path_components(tmp_path):
     assert (existing.stat().st_mode & 0o777) == 0o755
 
 
+def test_ensure_private_directory_binds_mode_change_to_directory(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    target.mkdir(mode=0o755)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    original_chmod = Path.chmod
+
+    def replace_target_before_path_chmod(path, mode):
+        if path == target:
+            target.rmdir()
+            target.symlink_to(outside, target_is_directory=True)
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", replace_target_before_path_chmod)
+    ensure_private_directory(target, label="private directory")
+
+    assert target.is_dir() and not target.is_symlink()
+    assert target.stat().st_mode & 0o777 == 0o700
+    assert outside.stat().st_mode & 0o777 == 0o755
+
+
 def test_ensure_private_directory_rejects_root_before_chmod(monkeypatch):
     def fail_chmod(_self, _mode):
         pytest.fail("root must not be chmodded")

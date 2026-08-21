@@ -4118,6 +4118,20 @@ bleiben; der bestehende Cleanup-Fehlertest deckt den neuen `fchmod()`-Fehlerast
 für Kandidaten weiter ab. `pytest -q tests/test_integration_installer.py`:
 109/109 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 463: Private-I/O-Directory-FD-Modusbindung
+
+`private_io.ensure_private_directory()` setzte Verzeichnisrechte bisher nach
+der Identitätsprüfung über `Path.chmod()`. Ein Pfad-Race konnte das geprüfte
+Verzeichnis durch einen Symlink ersetzen und dadurch Rechte am Ziel außerhalb
+des geprüften Pfads ändern. Directory-Rechte werden jetzt über einen mit
+`O_NOFOLLOW` geöffneten Verzeichnis-FD und `os.fchmod()` gesetzt; Typ- und
+Ownerprüfung erfolgt nochmals am FD.
+
+Race-Regression sowie abhängige State-/Spark-Fehlerpfade auf FD-Fehlerinjektion
+umgestellt. `pytest -q tests/test_private_io.py tests/test_state.py
+tests/test_spark_health.py`: 344/344 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

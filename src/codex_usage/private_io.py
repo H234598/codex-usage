@@ -45,6 +45,26 @@ def _require_private_directory(path: Path, *, label: str) -> None:
         raise ValueError(f"{label} must be a private user-owned directory: {path}")
 
 
+def _chmod_private_directory(path: Path, *, label: str) -> None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    fd = -1
+    try:
+        fd = os.open(path, flags)
+        item = os.fstat(fd)
+        if not stat.S_ISDIR(item.st_mode) or item.st_uid != os.getuid():
+            raise ValueError(f"{label} must be a private user-owned directory: {path}")
+        os.fchmod(fd, 0o700)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def assert_no_symlink_ancestors(path: Path, *, label: str) -> None:
     raw_path = _require_path(path, label=label)
     absolute = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
@@ -104,10 +124,10 @@ def ensure_private_directory(
             item = candidate.lstat()
             created_paths.append((candidate, item.st_dev, item.st_ino))
         _require_private_directory(candidate, label=label)
-        candidate.chmod(0o700)
+        _chmod_private_directory(candidate, label=label)
 
     _require_private_directory(raw_path, label=label)
-    raw_path.chmod(0o700)
+    _chmod_private_directory(raw_path, label=label)
     return raw_path
 
 

@@ -2291,14 +2291,15 @@ def test_remove_account_state_fails_closed_when_generation_directory_cannot_be_s
     save_current_usage(usage)
     save_usage_snapshot(usage)
     generation_dir = tmp_path / "data" / "codex-usage" / "generations"
-    original_chmod = Path.chmod
+    original_fchmod = os.fchmod
 
-    def fail_generation_chmod(path, mode):
+    def fail_generation_fchmod(fd, mode):
+        path = Path(os.readlink(f"/proc/self/fd/{fd}"))
         if path == generation_dir:
             raise OSError("simulated generation chmod failure")
-        return original_chmod(path, mode)
+        return original_fchmod(fd, mode)
 
-    monkeypatch.setattr(Path, "chmod", fail_generation_chmod)
+    monkeypatch.setattr("codex_usage.private_io.os.fchmod", fail_generation_fchmod)
 
     with pytest.raises(ValueError, match="secure state generation directory"):
         remove_account_state("privat")
@@ -4837,14 +4838,15 @@ def test_concurrent_current_writes_keep_the_newest_capture(tmp_path):
 def test_save_current_usage_fails_when_directory_chmod_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     current_dir = tmp_path / "current"
-    original_chmod = Path.chmod
+    original_fchmod = os.fchmod
 
-    def fail_target_chmod(path, mode):
+    def fail_target_fchmod(fd, mode):
+        path = Path(os.readlink(f"/proc/self/fd/{fd}"))
         if path == current_dir:
             raise PermissionError("state directory chmod blocked")
-        return original_chmod(path, mode)
+        return original_fchmod(fd, mode)
 
-    monkeypatch.setattr(Path, "chmod", fail_target_chmod)
+    monkeypatch.setattr("codex_usage.private_io.os.fchmod", fail_target_fchmod)
 
     with pytest.raises(PermissionError, match="state directory chmod blocked"):
         save_current_usage(
