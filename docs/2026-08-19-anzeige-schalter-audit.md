@@ -3676,3 +3676,14 @@ Service installiert/aktiv, Timer aktiv und geplant. Der letzte Lauf endet
 weiterhin ausschließlich wegen fehlender Firefox-Playwright-Executable bei
 Exit 2; `app-server`-Pfade bleiben unverändert. Kein Fallback und keine
 Netzwerkinstallation ausgeführt.
+
+## Runde 383: Terminal-Argumentpfade
+
+`terminal.py` nutzt je Terminal-Emulator unterschiedliche Arbeitsverzeichnis-
+und Kommandooptionen. Ein parametrischer Test deckt jetzt alle zehn
+Argumentpfade (`gnome-terminal` bis `xterm`) ab und schützt die Account-Codex-
+Home-Startgrenzen. Kein neuer reproduzierbarer Fehler.
+
+`pytest -q tests/test_terminal.py`: 23/23 bestanden; Modul-Coverage 87%.
+Offene Zeilen sind ausschließlich Start-/Fehler- und Resolver-Sonderzweige.
+Ruff, Mypy und `git diff --check` sauber.

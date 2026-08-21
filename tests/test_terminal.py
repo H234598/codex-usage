@@ -90,6 +90,45 @@ def test_terminal_candidates_prefer_ghostty(monkeypatch):
     assert seen[0] == "ghostty"
 
 
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (
+            "gnome-terminal",
+            ["terminal", "--working-directory", "/tmp/profile", "--", "codex"],
+        ),
+        (
+            "mate-terminal",
+            ["terminal", "--working-directory", "/tmp/profile", "--", "codex"],
+        ),
+        ("konsole", ["terminal", "--workdir", "/tmp/profile", "-e", "codex"]),
+        (
+            "xfce4-terminal",
+            [
+                "terminal",
+                "--working-directory",
+                "/tmp/profile",
+                "--command",
+                "codex",
+            ],
+        ),
+        ("ghostty", ["terminal", "--working-directory", "/tmp/profile", "-e", "codex"]),
+        ("kitty", ["terminal", "--directory", "/tmp/profile", "codex"]),
+        ("alacritty", ["terminal", "--working-directory", "/tmp/profile", "-e", "codex"]),
+        ("wezterm", ["terminal", "start", "--cwd", "/tmp/profile", "--", "codex"]),
+        ("foot", ["terminal", "--working-directory", "/tmp/profile", "codex"]),
+        ("xterm", ["terminal", "-e", "codex"]),
+    ],
+)
+def test_terminal_argv_uses_kind_specific_working_directory_flags(kind, expected):
+    assert terminal_module._terminal_argv(
+        "terminal",
+        kind,
+        profile_dir=Path("/tmp/profile"),
+        codex="codex",
+    ) == expected
+
+
 @pytest.mark.parametrize("explicit", ["", [], {}, 0])
 def test_executable_resolver_rejects_invalid_explicit_value(monkeypatch, explicit):
     monkeypatch.setattr(terminal_module.shutil, "which", lambda _: "/usr/bin/codex")
