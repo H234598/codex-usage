@@ -3994,3 +3994,14 @@ Writes und Locks, und bestehende Pfade bleiben unverändert.
 
 `pytest -q tests/test_private_io.py`: 36/36 bestanden; Modul-Coverage 75 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 414: Profile-Job-Selektoren
+
+`profile_jobs._validate_create_arguments()` prüfte Browser-, Backend- und
+Reaktivierungs-Selektoren bisher direkt per Set-Mitgliedschaft. Unhashbare
+Direktaufruf-Werte wie Liste oder Dict lösten daher rohes `TypeError` statt
+kontrolliertem `ValueError` aus. Die drei Grenzen prüfen jetzt zuerst den
+String-Typ; gültige Selektoren und Manifest-/Worker-Fluss bleiben unverändert.
+
+`pytest -q tests/test_profile_jobs.py`: 81/81 bestanden; Modul-Coverage 78 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.

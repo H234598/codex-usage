@@ -576,11 +576,14 @@ def _validate_create_arguments(
         raise ValueError("label is invalid")
     if any(ord(character) < 32 or ord(character) == 127 for character in label):
         raise ValueError("label is invalid")
-    if browser not in SUPPORTED_BROWSERS:
+    if not isinstance(browser, str) or browser not in SUPPORTED_BROWSERS:
         raise ValueError("browser is invalid")
-    if backend not in SUPPORTED_BACKENDS:
+    if not isinstance(backend, str) or backend not in SUPPORTED_BACKENDS:
         raise ValueError("backend is invalid")
-    if reactivation_browser not in SUPPORTED_REACTIVATION_BROWSERS:
+    if (
+        not isinstance(reactivation_browser, str)
+        or reactivation_browser not in SUPPORTED_REACTIVATION_BROWSERS
+    ):
         raise ValueError("reactivation browser is invalid")
     if not isinstance(series, str) or (
         series and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,15}", series)
