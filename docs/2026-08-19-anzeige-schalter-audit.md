@@ -4171,3 +4171,10 @@ ungültigen Eingaben. `pytest -q tests/test_browser_profile.py
 tests/test_browser_diagnose.py`: 174/174 bestanden; Modul-Coverage 81 %
 (Branch). Die aufrufenden Scheduler-/CLI-Tests bestanden mit 319/319.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 429: Service-Reload nach Browser-Config-Fix
+
+`codex-usage service enable --format json` nach `8d94464` erfolgreich:
+Units installiert, Timer aktiviert/geplant. Der letzte One-Shot-Lauf endet
+weiterhin mit Exit 2 ausschließlich wegen fehlender Firefox-Playwright-
+Executable; Journal zeigt keinen neuen Config- oder Browser-Validierungsfehler.
