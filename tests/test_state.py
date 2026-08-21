@@ -112,6 +112,16 @@ def test_usage_from_dict_rejects_non_object_payload(payload):
         usage_from_dict(payload)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("usage", [None, [], "invalid", 1, True, object()])
+def test_state_entrypoints_reject_non_usage_input(tmp_path, usage):
+    with pytest.raises(ValueError, match="usage is invalid"):
+        expire_reset_windows(usage, reference_at=datetime.now(UTC))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="usage is invalid"):
+        save_usage_snapshot(usage, tmp_path / "snapshots")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="usage is invalid"):
+        save_current_usage(usage, tmp_path / "current")  # type: ignore[arg-type]
+
+
 def test_usage_state_invalidates_model_pool_without_exhausted_flag():
     usage = AccountUsage(
         account_id="missing-exhausted",

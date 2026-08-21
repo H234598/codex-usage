@@ -2174,3 +2174,13 @@ Tabellenaufbereitung gelangen. Account-Container werden jetzt bounded und
 typgeprüft; malformed Usage-Mapping-Werte fallen in Übersichtsspalten
 fail-closed auf `-`. `tests/test_render.py`: 50/50 bestanden; Mypy für Source
 und Ruff für betroffene Dateien sauber.
+
+## Runde 217: State-Write-/Expiry-Entry-Points validieren Usage-Typ
+
+`save_usage_snapshot()`, `save_current_usage()` und
+`expire_reset_windows()` griffen bei Fremdtypen vor Typvalidierung auf
+Account-/Pool-Felder zu. Direkte Fehlaufrufe konnten mit rohem
+`AttributeError` abbrechen. Alle drei Entry-Points weisen ungültige Werte
+jetzt kontrolliert als `ValueError("usage is invalid")` zurück.
+`tests/test_state.py`: 247/247 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.

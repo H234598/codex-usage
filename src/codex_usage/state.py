@@ -196,6 +196,8 @@ def _load_state_generation_unlocked(
 
 
 def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -> Path:
+    if not isinstance(usage, AccountUsage):
+        raise ValueError("usage is invalid")
     _validate_snapshot_account_id(usage.account_id)
     directory = snapshot_dir or default_snapshot_dir()
     assert_no_symlink_ancestors(directory, label="snapshot directory")
@@ -204,6 +206,8 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
 
 
 def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> Path:
+    if not isinstance(usage, AccountUsage):
+        raise ValueError("usage is invalid")
     _validate_snapshot_account_id(usage.account_id)
     directory = current_dir or default_current_dir()
     assert_no_symlink_ancestors(directory, label="snapshot directory")
@@ -654,6 +658,8 @@ def expire_reset_windows(
     *,
     reference_at: datetime,
 ) -> AccountUsage:
+    if not isinstance(usage, AccountUsage):
+        raise ValueError("usage is invalid")
     if not isinstance(usage.models, tuple) or len(usage.models) > MAX_MODEL_POOLS:
         return replace(
             usage,
