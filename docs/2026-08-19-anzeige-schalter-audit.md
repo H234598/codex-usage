@@ -4293,3 +4293,15 @@ EMA-Prognosen.
 `pytest -q tests/test_consumption.py`: 32/32 bestanden; Modul-Coverage 84 %
 (Branch). Aufrufende History-/CLI-/Integrations-Tests: 309/309 bestanden.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 441: Integration-Snapshot-Entry-Point
+
+`integration_entrypoint.py` auf exakte Argumente, XDG-Pfadgrenzen,
+Attestierung vor/nach dem Lesen, Producer-Lock, UTC-Zeitbereich,
+bounded History-Abfragen, Cost-Window-Projektion, Credits und
+fehlerfreie stderr-Tokens geprüft. Keine neue reproduzierbare Fehlfunktion;
+ungültige Quelle, Drift, fehlende Historie und externe Attestierungsfehler
+bleiben fail-closed ohne Details.
+
+`pytest -q tests/test_integration_entrypoint.py`: 27/27 bestanden;
+Modul-Coverage 91 % (Branch). Ruff, Mypy und `git diff --check` sauber.
