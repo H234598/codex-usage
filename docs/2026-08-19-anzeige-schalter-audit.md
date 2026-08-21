@@ -3779,3 +3779,11 @@ jetzt kontrolliert; parametrischer Regressionstest deckt beide ab.
 
 `pytest -q tests/test_history.py`: 78/78 bestanden; Modul-Coverage 81%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 393: Service-Reload nach History-/Entrypoint-Fixes
+
+`codex-usage service enable --format json` nach `f0ee977` erfolgreich:
+Service installiert/aktiv, Timer aktiv und geplant. Der Lauf endet weiterhin
+mit Exit 2 ausschließlich wegen fehlender Firefox-Playwright-Executable bei
+Browser-Konten; Journal zeigt keinen neuen History-/Entrypoint-Fehler. Keine
+Netzwerkinstallation und kein Fallback ausgeführt.
