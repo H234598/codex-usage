@@ -1343,3 +1343,11 @@ bestanden; Mypy und Ruff sauber.
 `dict[str, object]` ist. Explizite Ergebnisannotation behebt den
 Invarianzfehler ohne Laufzeitänderung. `tests/test_profile_migration.py`:
 24/24 bestanden; Mypy und Ruff sauber.
+
+## Runde 117: Usage-Limit-Typen
+
+`usage_limits.py` hatte vier Mypy-Fehler durch implizite Wechsel zwischen
+`UsagePool` und `None`, Tuple und veränderlicher Liste sowie `bool` und
+`bool | None`. Explizite lokale Typen halten diese Zustände korrekt fest;
+Verarbeitungslogik bleibt unverändert. `tests/test_usage_limits.py`: 112/112
+bestanden; Mypy und Ruff sauber.

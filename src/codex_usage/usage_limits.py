@@ -141,6 +141,7 @@ def parse_app_server_usage_pools(
             main_payload = merged_payload
     if not isinstance(main_payload, dict):
         main_payload = payload.get("rateLimits")
+    main: UsagePool | None
     if malformed_by_id or malformed_main_bucket:
         main = UsagePool(
             key=MAIN_POOL_KEY,
@@ -340,13 +341,12 @@ def _app_server_pool(
     if not isinstance(snapshot, dict):
         return None
     raw_windows = tuple(snapshot.get(slot) for slot in ("primary", "secondary"))
-    fallback_durations = (
+    fallback_durations: list[int | None] = list(
         (FIVE_HOUR_SECONDS, WEEKLY_SECONDS)
         if key == MAIN_POOL_KEY
         else (None, None)
     )
     if key == MAIN_POOL_KEY:
-        fallback_durations = list(fallback_durations)
         ignored_missing_duration = [False, False]
         for index, fallback_duration in enumerate(fallback_durations):
             current = raw_windows[index]
@@ -391,6 +391,8 @@ def _app_server_pool(
     )
     window_identity_valid = bool(windows) and _window_identities_are_unique(windows)
     raw_limit_reached = snapshot.get("rateLimitReachedType")
+    limit_reached: bool | None
+    control_flag_valid: bool
     if isinstance(raw_limit_reached, bool):
         limit_reached = raw_limit_reached
         control_flag_valid = True
