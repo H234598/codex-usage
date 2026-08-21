@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 503: Profile-Layout-Account-ID validiert
+
+`profile_layout.layout_for_account()` akzeptierte bisher ungültige oder
+reservierte `account.id`-Werte und erzeugte dafür Layout-/Metadatenpfade.
+Gemeinsamer `_validate_account_id()`-Guard ergänzt; direkte Aufrufer bleiben
+damit unabhängig von vorgelagerter Config-Validierung sicher.
+
+Regression ergänzt. `pytest -q tests/test_profile_layout.py`: 25/25,
+`tests/test_profile_migration.py`: 42/42 sowie Profile-Login/Terminal: 72/72
+bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 502: Consumption-Kernfunktionen direkt getestet
 
 `ConsumptionWindow.as_dict()`, `consumption_lookback_seconds()` und

@@ -6,6 +6,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import _validate_account_id
 from .models import Account
 from .private_io import (
     assert_no_symlink_ancestors,
@@ -29,6 +30,10 @@ class ProfileLayout:
 def layout_for_account(account: Account) -> ProfileLayout:
     if not isinstance(account, Account):
         raise ValueError("account is invalid")
+    try:
+        _validate_account_id(account.id)
+    except ValueError as exc:
+        raise ValueError("account id is invalid") from exc
     if not isinstance(account.profile_dir, str) or not account.profile_dir:
         raise ValueError("profile dir is invalid")
     try:

@@ -85,6 +85,18 @@ def test_profile_layout_rejects_invalid_profile_directory_type(profile_dir):
         )
 
 
+@pytest.mark.parametrize("account_id", ["../", "__all_accounts__", "", None])
+def test_profile_layout_rejects_invalid_account_id(tmp_path, account_id):
+    with pytest.raises(ValueError, match="account id"):
+        layout_for_account(
+            Account(
+                id=account_id,
+                label="Account",
+                profile_dir=str(tmp_path / "profile"),
+            )  # type: ignore[arg-type]
+        )
+
+
 def test_profile_layout_rejects_unknown_home_user():
     account = Account(
         id="work",
