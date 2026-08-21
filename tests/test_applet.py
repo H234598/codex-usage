@@ -315,6 +315,20 @@ def test_format_and_display_sections_use_new_labels() -> None:
         "account-time-styles",
         "account-duration-styles",
         "account-delta-styles",
+        "account-panel-resets-styles",
+        "account-panel-tag-styles",
+        "account-panel-label-styles",
+        "account-panel-id-styles",
+        "account-panel-backend-styles",
+        "account-panel-routing-styles",
+        "account-panel-credit-active-styles",
+        "account-panel-credit-hourly-styles",
+        "account-panel-credit-weekly-styles",
+        "account-panel-credit-monthly-styles",
+        "account-panel-warning-styles",
+        "account-panel-error-styles",
+        "account-panel-login-styles",
+        "account-panel-status-styles",
         "account-display-settings",
         "account-style-targets",
     ]
@@ -327,6 +341,10 @@ def test_format_and_display_sections_use_new_labels() -> None:
     assert layout["duration-style-section"]["title"] == (
         "OpenAI - Reset: Restlaufzeit in Tagen bis Limitreset"
     )
+    assert layout["help-page"]["title"] == "Hilfe"
+    assert layout["help-page"]["sections"] == ["help-section"]
+    assert settings["help-content"]["file"] == "help_page.py"
+    assert settings["help-content"]["widget"] == "HelpPage"
 
 
 def test_formatting_tables_are_isolated_and_have_editable_rows() -> None:
@@ -342,6 +360,11 @@ def test_formatting_tables_are_isolated_and_have_editable_rows() -> None:
         assert "edit" not in table["hidden-buttons"]
         assert table["height"] >= (420 if key == "account-style-targets" else 300)
     assert len(expected_tables) == len(set(expected_tables))
+    panel_tables = [key for key in expected_tables if key.startswith("account-panel-")]
+    assert len(panel_tables) == 14
+    for key in panel_tables:
+        assert settings[key]["format-copy-of"] == "account-percent-styles"
+        assert settings[key]["tooltip"]
 
     # Old combined containers must stay out of the active page.
     assert "style-target-section" not in layout
@@ -694,6 +717,7 @@ def test_installer_and_uninstaller_round_trip(tmp_path: Path) -> None:
         "dynamic_series_list.py",
         "fast_mode_icon_selector.py",
         "format_table_selector.py",
+        "help_page.py",
         "panel_settings_list.py",
     ):
         assert (installed / name).is_file()

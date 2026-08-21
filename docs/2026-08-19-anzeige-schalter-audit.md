@@ -4047,6 +4047,26 @@ malformed Antworten und übergroße Inhalte bleiben fail-closed.
 `pytest -q tests/test_direct.py`: 183/183 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Ergänzung 2026-08-22: Kopierte Leistenwert-Formatierungen und Hilfe
+
+Die bisher unformatierbaren Leistenquellen `Resets`, `Kürzel`, `Label`,
+`Account-ID`, `Abrufweg`, `Routing`, `Creditverbrauch aktiv`, die drei
+Creditlimits, `Warnungen`, `Fehler`, `Login erfolgreich` und `Status` haben
+jetzt je ein eigenes Formatierungsziel unter `Formatierungen`. Jede Tabelle
+ist eine eigenständige Kopie der normalen Formatierungstabelle und wird je
+Account gespeichert. Tokendelta, Prozent-, Datums-, Uhrzeit- und
+Restlaufzeitwerte behalten ihre vorhandenen spezialisierten Tabellen.
+
+Die neue Seite `Hilfe` rendert alle Beschreibungen und Tooltips des
+Settings-Schemas in einer scrollbaren, gruppierten und aufklappbaren Ansicht.
+Tabellenfelder, Auswahloptionen, Defaults und Grenzen werden dort ebenfalls
+aufgeführt. Neue Schema-Felder erscheinen automatisch in dieser Sammlung.
+
+`node --test tests/applet_runtime.test.js`: 406/406 bestanden.
+`pytest -q tests/test_help_page.py tests/test_format_table_selector.py tests/test_applet.py`:
+37/37 bestanden. `make applet-check` und `make install-local` erfolgreich;
+Installer-Migration aktualisiert, laufendes Applet reload erfolgreich.
+
 ## Runde 450: Konfigurierbare Leistenwerte und Tokendelta
 
 Die Leiste verwendet jetzt frei konfigurierbare, einzeln auswählbare

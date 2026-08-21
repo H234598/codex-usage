@@ -8,7 +8,8 @@
       "status-page",
       "accounts-page",
       "routing-page",
-      "alerts-page"
+      "alerts-page",
+      "help-page"
     ],
     "general-page": {
       "type": "page",
@@ -55,6 +56,13 @@
       "title": "Warnungen",
       "sections": [
         "alerts-section"
+      ]
+    },
+    "help-page": {
+      "type": "page",
+      "title": "Hilfe",
+      "sections": [
+        "help-section"
       ]
     },
     "routing-page": {
@@ -228,6 +236,13 @@
         "routing-credit-weekly-limit",
         "routing-credit-monthly-limit"
       ]
+    },
+    "help-section": {
+      "type": "section",
+      "title": "Gesammelte Hilfe",
+      "keys": [
+        "help-content"
+      ]
     }
   },
   "format-table-selector": {
@@ -235,6 +250,7 @@
     "file": "format_table_selector.py",
     "widget": "FormatTableSelector",
     "description": "Formatierungstabelle",
+    "tooltip": "Wähle oben genau eine Tabelle. Jede Tabelle zeigt nur ihren eigenen Formatierungszweck; Änderungen werden sofort pro Account gespeichert. Die Hilfe-Seite erklärt alle Felder und Wirkungen ausführlich.",
     "tables": [
       {
         "key": "account-percent-styles",
@@ -262,6 +278,76 @@
         "heading": "account-delta-styles-heading"
       },
       {
+        "key": "account-panel-resets-styles",
+        "label": "Resets",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-tag-styles",
+        "label": "Kürzel",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-label-styles",
+        "label": "Label",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-id-styles",
+        "label": "Account-ID",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-backend-styles",
+        "label": "Abrufweg",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-routing-styles",
+        "label": "Routing",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-credit-active-styles",
+        "label": "Creditverbrauch aktiv",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-credit-hourly-styles",
+        "label": "Credit Stundenlimit",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-credit-weekly-styles",
+        "label": "Credit Wochenlimit",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-credit-monthly-styles",
+        "label": "Credit Monatslimit",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-warning-styles",
+        "label": "Warnungen",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-error-styles",
+        "label": "Fehler",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-login-styles",
+        "label": "Login erfolgreich",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
+        "key": "account-panel-status-styles",
+        "label": "Status",
+        "heading": "account-panel-values-styles-heading"
+      },
+      {
         "key": "account-display-settings",
         "label": "Account-Anzeige",
         "heading": "account-display-settings-heading"
@@ -273,6 +359,14 @@
       }
     ],
     "default": "account-percent-styles"
+  },
+  "help-content": {
+    "type": "custom",
+    "file": "help_page.py",
+    "widget": "HelpPage",
+    "description": "Alle GUI-Hilfetexte",
+    "tooltip": "Diese Seite sammelt Beschreibungen und Tooltips aus allen anderen Seiten, Tabellen und Feldern. Sie wird automatisch aus dem aktuellen Schema aufgebaut.",
+    "default": ""
   },
   "panel-value-count": {
     "type": "entry",
@@ -315,6 +409,10 @@
   "account-delta-styles-heading": {
     "type": "label",
     "description": "Tokendelta. Dynamisch markiert hochgerechneten Verbrauch, der bis zum nächsten Reset das verbleibende Limit erreicht."
+  },
+  "account-panel-values-styles-heading": {
+    "type": "label",
+    "description": "Neue Leistenwerte. Jede Tabelle ist eine eigenständige Kopie der normalen Formatierungstabelle und gilt nur für den ausgewählten Wert. Die Schwelle ist bei Textwerten kein Messwert: Modus Immer formatiert immer, Modus Aus deaktiviert die Formatierung; die Unter-Schwelle-Formate werden für den Textwert verwendet, damit auch diese kopierten Felder vollständig nutzbar bleiben. Änderungen wirken nur, wenn der jeweilige Wert als Wertfeld in der Leiste ausgewählt ist."
   },
   "account-display-settings-heading": {
     "type": "label",
@@ -651,6 +749,146 @@
         "tooltip": "Aktiviert, wenn das aktuelle Delta bis zum nächsten Reset statistisch das verbleibende Limit aufbraucht."
       }
     ],
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-resets-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Resets",
+    "tooltip": "Formatierung der Anzahl verfügbarer Usage-Resets oder der unbekannten Resets-Anzeige. Die Reset-Berechnung und Einlösefunktion bleiben unverändert.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-tag-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Kürzel",
+    "tooltip": "Formatierung des Kürzel-Textes, zum Beispiel A oder BP. Die Tabelle enthält eine unabhängige Kopie aller Schrift-, Farb- und Hintergrundoptionen.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-label-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Label",
+    "tooltip": "Formatierung des konfigurierten Account-Labels. Jede Kontozeile ist unabhängig von Kürzel und Account-ID.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-id-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Account-ID",
+    "tooltip": "Formatierung der technischen Account-ID in der Leiste. Das ändert weder Account-Konfiguration noch Abrufweg.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-backend-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Abrufweg",
+    "tooltip": "Formatierung des tatsächlich verwendeten Abrufwegs, zum Beispiel Direktabruf oder Codex App Server. Die Anzeige ist rein informativ.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-routing-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Routing",
+    "tooltip": "Formatierung der Routingentscheidung des Accounts. Das Format ändert keine Routingregel und erlaubt keine Credits.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-credit-active-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Creditverbrauch aktiv",
+    "tooltip": "Formatierung des Status an oder aus für aktive Creditverbrauch-Nutzung. Der Status wird aus der Routingentscheidung gelesen.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-credit-hourly-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Credit Stundenlimit",
+    "tooltip": "Formatierung des konfigurierten Credit-Stundenlimits. Aus bedeutet deaktiviert; der Wert ist keine aktuelle Nutzung.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-credit-weekly-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Credit Wochenlimit",
+    "tooltip": "Formatierung des konfigurierten Credit-Wochenlimits. Aus bedeutet deaktiviert; das Feld zeigt nur die Richtlinie.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-credit-monthly-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Credit Monatslimit",
+    "tooltip": "Formatierung des konfigurierten Credit-Monatslimits. Aus bedeutet deaktiviert; das Feld zeigt nur die Richtlinie.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-warning-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Warnungen",
+    "tooltip": "Formatierung des Warnungen-Status an oder aus. Benachrichtigungen selbst werden separat unter Warnungen gesteuert.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-error-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Fehler",
+    "tooltip": "Formatierung des Fehler-Status an oder aus. Der Status wird nicht durch die Formatierung verändert.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-login-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Login erfolgreich",
+    "tooltip": "Formatierung des Login-Status ja oder nein. Ein teilweiser Datenstatus gilt als erfolgreich.",
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-panel-status-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Leiste — Status",
+    "tooltip": "Formatierung des technischen Status, zum Beispiel ok, unvollständig, Anmeldung erforderlich oder Fehler.",
     "height": 300,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],

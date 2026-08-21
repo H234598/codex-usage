@@ -20,20 +20,28 @@ class _BoundFormatList(List, JSONSettingsBackend):
         self.backend = "json"
         self.key = key
         self.settings = settings
-        if key == "account-delta-styles":
-            base = settings.settings.get("account-percent-styles", {})
+        copy_from = definition.get("format-copy-of")
+        if key == "account-delta-styles" or isinstance(copy_from, str):
+            base_key = "account-percent-styles" if key == "account-delta-styles" else copy_from
+            base = settings.settings.get(base_key, {})
+            overrides = {
+                name: value for name, value in definition.items()
+                if name not in ("columns", "format-copy-of")
+            }
             definition = copy.deepcopy(base)
-            definition["description"] = "Tokendelta"
-            definition["columns"].append({
-                "id": "dynamic",
-                "title": "Dynamisch",
-                "type": "boolean",
-                "default": False,
-                "tooltip": (
-                    "Markiert, wenn hochgerechneter Verbrauch bis zum Reset "
-                    "das verbleibende Limit erreicht."
-                ),
-            })
+            definition.update(overrides)
+            if key == "account-delta-styles":
+                definition["description"] = "Tokendelta"
+                definition["columns"].append({
+                    "id": "dynamic",
+                    "title": "Dynamisch",
+                    "type": "boolean",
+                    "default": False,
+                    "tooltip": (
+                        "Markiert, wenn hochgerechneter Verbrauch bis zum Reset "
+                        "das verbleibende Limit erreicht."
+                    ),
+                })
         super().__init__(
             label=definition.get("description"),
             columns=definition.get("columns", []),

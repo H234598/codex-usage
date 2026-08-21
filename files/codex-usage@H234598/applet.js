@@ -92,6 +92,22 @@ const PANEL_SOURCE_LABELS = {
     50: "Login",
     51: "Status"
 };
+const PANEL_FORMATTING_TARGETS = {
+    11: {key: "account-panel-resets-styles", property: "accountPanelResetsStyles"},
+    14: {key: "account-panel-tag-styles", property: "accountPanelTagStyles"},
+    15: {key: "account-panel-label-styles", property: "accountPanelLabelStyles"},
+    16: {key: "account-panel-id-styles", property: "accountPanelIdStyles"},
+    17: {key: "account-panel-backend-styles", property: "accountPanelBackendStyles"},
+    43: {key: "account-panel-routing-styles", property: "accountPanelRoutingStyles"},
+    44: {key: "account-panel-credit-active-styles", property: "accountPanelCreditActiveStyles"},
+    45: {key: "account-panel-credit-hourly-styles", property: "accountPanelCreditHourlyStyles"},
+    46: {key: "account-panel-credit-weekly-styles", property: "accountPanelCreditWeeklyStyles"},
+    47: {key: "account-panel-credit-monthly-styles", property: "accountPanelCreditMonthlyStyles"},
+    48: {key: "account-panel-warning-styles", property: "accountPanelWarningStyles"},
+    49: {key: "account-panel-error-styles", property: "accountPanelErrorStyles"},
+    50: {key: "account-panel-login-styles", property: "accountPanelLoginStyles"},
+    51: {key: "account-panel-status-styles", property: "accountPanelStatusStyles"}
+};
 const PANEL_CLASSES = [
     "codex-usage-panel-warning",
     "codex-usage-panel-critical",
@@ -147,6 +163,11 @@ CodexUsageApplet.prototype = {
         this.accountTimeStyles = [];
         this.accountDurationStyles = [];
         this.accountDeltaStyles = [];
+        for (let source in PANEL_FORMATTING_TARGETS) {
+            if (Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
+                this[PANEL_FORMATTING_TARGETS[source].property] = [];
+            }
+        }
         this.accountDisplaySettings = [];
         this.accountStyleTargets = [];
         this.routingGlobalPaidCredits = false;
@@ -240,6 +261,7 @@ CodexUsageApplet.prototype = {
         this._timeStyles = Object.create(null);
         this._durationStyles = Object.create(null);
         this._deltaStyles = Object.create(null);
+        this._panelValueStyles = Object.create(null);
         this._displaySettings = Object.create(null);
         this._styleTargets = Object.create(null);
         this._routingPolicy = null;
@@ -402,6 +424,19 @@ CodexUsageApplet.prototype = {
         bind("account-time-styles", "accountTimeStyles", this._onTimeStylesChanged);
         bind("account-duration-styles", "accountDurationStyles", this._onDurationStylesChanged);
         bind("account-delta-styles", "accountDeltaStyles", this._onDeltaStylesChanged);
+        for (let source in PANEL_FORMATTING_TARGETS) {
+            if (!Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
+                continue;
+            }
+            let target = PANEL_FORMATTING_TARGETS[source];
+            this._bindCustomSetting(
+                target.key,
+                target.property,
+                Lang.bind(this, function() {
+                    this._onPanelValueStylesChanged(Number(source));
+                })
+            );
+        }
         bind("account-display-settings", "accountDisplaySettings", this._onDisplaySettingsChanged);
         bind("account-style-targets", "accountStyleTargets", this._onStyleTargetsChanged);
         bind(
@@ -3533,6 +3568,17 @@ CodexUsageApplet.prototype = {
         let timeRows = this._mergedStyleRows(accounts, this.accountTimeStyles, "time");
         let durationRows = this._mergedStyleRows(accounts, this.accountDurationStyles, "duration");
         let deltaRows = this._mergedStyleRows(accounts, this.accountDeltaStyles, "delta");
+        let panelRows = Object.create(null);
+        let panelChanged = Object.create(null);
+        for (let source in PANEL_FORMATTING_TARGETS) {
+            if (!Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
+                continue;
+            }
+            let target = PANEL_FORMATTING_TARGETS[source];
+            let rows = this._mergedStyleRows(accounts, this[target.property], "percent");
+            panelRows[source] = rows;
+            panelChanged[source] = !this._styleRowsEqual(this[target.property], rows);
+        }
         let displayRows = this._mergedDisplayRows(accounts, this.accountDisplaySettings);
         let targetRows = this._mergedTargetRows(accounts, this.accountStyleTargets);
         let percentChanged = !this._styleRowsEqual(this.accountPercentStyles, percentRows);
@@ -3547,6 +3593,12 @@ CodexUsageApplet.prototype = {
         this._timeStyles = this._styleMap(timeRows);
         this._durationStyles = this._styleMap(durationRows);
         this._deltaStyles = this._styleMap(deltaRows);
+        this._panelValueStyles = Object.create(null);
+        for (let source in PANEL_FORMATTING_TARGETS) {
+            if (Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
+                this._panelValueStyles[source] = this._styleMap(panelRows[source]);
+            }
+        }
         this._displaySettings = this._displaySettingsMap(displayRows);
         this._styleTargets = this._targetMap(targetRows);
         this._syncingStyleRows = true;
@@ -3555,6 +3607,11 @@ CodexUsageApplet.prototype = {
         this.accountTimeStyles = timeRows;
         this.accountDurationStyles = durationRows;
         this.accountDeltaStyles = deltaRows;
+        for (let source in PANEL_FORMATTING_TARGETS) {
+            if (Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
+                this[PANEL_FORMATTING_TARGETS[source].property] = panelRows[source];
+            }
+        }
         this.accountDisplaySettings = displayRows;
         this.accountStyleTargets = targetRows;
         try {
@@ -3572,6 +3629,16 @@ CodexUsageApplet.prototype = {
             }
             if (deltaChanged) {
                 this.settings.setValue("account-delta-styles", deltaRows);
+            }
+            for (let source in PANEL_FORMATTING_TARGETS) {
+                if (!Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source) ||
+                    !panelChanged[source]) {
+                    continue;
+                }
+                this.settings.setValue(
+                    PANEL_FORMATTING_TARGETS[source].key,
+                    panelRows[source]
+                );
             }
             if (displayChanged) {
                 this.settings.setValue("account-display-settings", displayRows);
@@ -4009,6 +4076,39 @@ CodexUsageApplet.prototype = {
 
     _onDeltaStylesChanged: function() {
         this._onStyleRowsChanged("delta");
+    },
+
+    _onPanelValueStylesChanged: function(source) {
+        let target = PANEL_FORMATTING_TARGETS[source];
+        if (!target || !this._backendRowsReady || this._syncingStyleRows ||
+            this._removed || this._safeMode) {
+            return;
+        }
+        let rows = this[target.property];
+        let expected = Object.keys(this._backendAccounts).length;
+        if (!Array.isArray(rows) || rows.length !== expected) {
+            this._loadAccountBackends();
+            return;
+        }
+        let normalized = [];
+        let seen = Object.create(null);
+        for (let i = 0; i < rows.length; i++) {
+            let account = this._configuredAccountId(rows[i] && rows[i].account);
+            if (!account || seen[account] || !this._backendAccounts[account]) {
+                this._loadAccountBackends();
+                return;
+            }
+            let item = this._normalizeStyleRow(rows[i], account, "percent");
+            if (!item) {
+                this._loadAccountBackends();
+                return;
+            }
+            seen[account] = true;
+            normalized.push(item);
+        }
+        this._panelValueStyles[source] = this._styleMap(normalized);
+        this[target.property] = normalized;
+        this._refreshFormattedSurfaces();
     },
 
     _onStyleRowsChanged: function(kind) {
@@ -8287,6 +8387,24 @@ CodexUsageApplet.prototype = {
     },
 
     _panelSlotContent: function(item, slot) {
+        let result = this._panelSlotContentRaw(item, slot);
+        if (!result || !PANEL_FORMATTING_TARGETS[slot.source]) {
+            return result;
+        }
+        let styles = this._panelValueStyles && this._panelValueStyles[slot.source];
+        let style = styles && styles[item.usage && item.usage.account];
+        if (!style) {
+            return result;
+        }
+        // Text-only values have no remaining-percent metric.  Treat them as
+        // below threshold so copied style modes remain useful and predictable.
+        return {
+            plain: result.plain,
+            markup: this._styleSpan(result.plain, style, 0, "panel")
+        };
+    },
+
+    _panelSlotContentRaw: function(item, slot) {
         if (slot.source === 9) {
             let credits = this._creditParts(item.usage, "panel", true, "CR");
             return credits || { plain: "CR –", markup: "CR –" };

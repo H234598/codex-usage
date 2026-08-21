@@ -222,6 +222,7 @@ function makeApplet(onReady) {
   applet._dateStyles = {};
   applet._timeStyles = {};
   applet._durationStyles = {};
+  applet._panelValueStyles = {};
   applet._styleTargets = {};
   applet._routingPolicy = null;
   applet._routingDecisions = {};
@@ -2762,6 +2763,52 @@ test("extended panel sources render resets, identity, routing and account state"
   assert.match(values[13], /Fehler aus/);
   assert.match(values[14], /Login ja/);
   assert.match(values[15], /Status ok/);
+});
+
+test("new panel value copies format each text value independently", () => {
+  const applet = makeApplet();
+  applet._usages[0].usage_resets = {known: true, available: 2};
+  applet._resetSettings = {
+    alpha: {
+      account: "alpha", "show-panel": true, "show-tooltip": true,
+      "hide-when-zero": false, "show-unknown": true, format: "compact",
+    },
+  };
+  const item = {usage: applet._usages[0], settings: {account: "alpha"}};
+  applet._panelValueStyles = {
+    11: {alpha: {mode: 0, italic: true}},
+    14: {alpha: {mode: 0, color: 3}},
+    15: {alpha: {mode: 0, bold: true}},
+    16: {alpha: {mode: 3, bold: true}},
+  };
+
+  const resets = applet._panelSlotContent(item, {source: 11, value: null, window: null});
+  const tag = applet._panelSlotContent(item, {source: 14, value: null, window: null});
+  const label = applet._panelSlotContent(item, {source: 15, value: null, window: null});
+  const accountId = applet._panelSlotContent(item, {source: 16, value: null, window: null});
+  assert.match(resets.markup, /style="italic"/);
+  assert.match(tag.markup, /foreground="#dc2626"/);
+  assert.match(label.markup, /weight="bold"/);
+  assert.doesNotMatch(accountId.markup, /weight="bold"/);
+  assert.equal(tag.plain, "Kürzel A");
+  assert.equal(label.plain, "Label Alpha");
+});
+
+test("panel value style setting rows validate and map per account", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {alpha: {}};
+  applet.accountPanelTagStyles = [{account: "alpha", mode: 0, color: 3}];
+  let refreshes = 0;
+  applet._refreshFormattedSurfaces = () => { refreshes += 1; };
+
+  applet._onPanelValueStylesChanged(14);
+
+  assert.equal(applet.accountPanelTagStyles.length, 1);
+  assert.equal(applet._panelValueStyles[14].alpha.color, 3);
+  assert.equal(refreshes, 1);
+  applet._onPanelValueStylesChanged(999);
+  assert.equal(refreshes, 1);
 });
 
 test("long-limit exhaustion masks 5h on panel, click and hover only when enabled", () => {

@@ -9,7 +9,7 @@ sys.path.insert(0, str(APPLET_DIR))
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
-from format_table_selector import FormatTableSelector, Gtk  # noqa: E402
+from format_table_selector import FormatTableSelector, Gtk, _BoundFormatList  # noqa: E402
 
 
 class _Combo:
@@ -151,3 +151,36 @@ def test_setting_reload_keeps_selected_table_without_writing() -> None:
     assert selector.combo.set_values == ["account-date-styles"]
     assert selector.table_stack.visible == "account-date-styles"
     assert selector.saved == []
+
+
+def test_copy_table_reuses_percent_columns_but_keeps_own_description() -> None:
+    settings = _Settings()
+    settings.settings = {
+        "account-percent-styles": {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "bold", "title": "Fett", "type": "boolean"},
+            ],
+            "value": [],
+        },
+        "account-panel-tag-styles": {
+            "type": "list",
+            "format-copy-of": "account-percent-styles",
+            "description": "Leiste — Kürzel",
+            "tooltip": "Kürzel-Hilfe",
+            "height": 300,
+            "show-buttons": True,
+            "hidden-buttons": ["+"],
+            "value": [],
+        },
+    }
+
+    widget = _BoundFormatList(
+        "account-panel-tag-styles",
+        settings.settings["account-panel-tag-styles"],
+        settings,
+    )
+    try:
+        assert [column["id"] for column in widget.columns] == ["account", "bold"]
+    finally:
+        widget.destroy()
