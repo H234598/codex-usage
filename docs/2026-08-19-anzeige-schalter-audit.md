@@ -3877,3 +3877,13 @@ Service installiert/aktiv, Timer aktiv und geplant. Exit 2 bleibt der bekannte
 Firefox-Playwright-Executable-Fehler der Browser-Konten; Journal zeigt keinen
 neuen Model-/Serialisierungsfehler. Keine Netzwerkinstallation und kein
 Fallback ausgeführt.
+
+## Runde 403: Config-Pfade und Account-Validierung
+
+`config.py` erneut auf XDG-/Tilde-/`file:`-Pfade, private Konfigurationsdatei,
+Account-/Ressourcen-Duplikate, Backend-/Browser-/Serienwerte, Test-Home-
+Rollback und Analytics-URL geprüft. Keine neue reproduzierbare Fehlfunktion;
+ungültige Pfade und Account-Daten bleiben vor Seiteneffekten abgewiesen.
+
+`pytest -q tests/test_config.py`: 116/116 bestanden; Modul-Coverage 83%.
+Ruff, Mypy und `git diff --check` sauber.
