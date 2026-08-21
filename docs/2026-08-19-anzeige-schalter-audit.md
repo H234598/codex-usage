@@ -3960,3 +3960,15 @@ malformed Antworten und übergroße Inhalte bleiben fail-closed.
 
 `pytest -q tests/test_direct.py`: 183/183 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 411: Browser-Diagnose-Outputpfade
+
+`browser.py` setzte Account-IDs bei Diagnose-Screenshots und Probe-Dateien
+direkt in Dateinamen ein. Obwohl geladene Configs IDs validieren, konnten
+direkte Entry-Point-Aufrufe mit `../...` so den Zielordner verlassen. Beide
+Output-Grenzen verwenden jetzt die bestehende Config-ID-Validierung; gültige
+Account-Dateien bleiben unverändert.
+
+`pytest -q tests/test_browser_profile.py tests/test_browser_diagnose.py`:
+169/169 bestanden; Modul-Coverage 80 % (Branch). Ruff, Mypy und
+`git diff --check` sauber.

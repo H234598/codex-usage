@@ -16,7 +16,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from .config import AppConfig
+from .config import AppConfig, _validate_account_id
 from .direct import (
     DirectAuthError,
     _auth_plan_type_changed,
@@ -1222,6 +1222,7 @@ def _save_diagnostic_screenshot(
 ) -> str | None:
     if screenshot_dir is None:
         return None
+    _validate_account_id(account.id)
     _prepare_private_output_dir(screenshot_dir, label="diagnose screenshot directory")
     path = screenshot_dir / f"{account.id}-diagnose.png"
     _validate_private_output_path(path, label="diagnose screenshot path")
@@ -1466,6 +1467,7 @@ def _save_probe_payloads_transaction(
     candidates: list[JsonCandidate],
     body_text: str,
 ) -> list[str]:
+    _validate_account_id(account.id)
     files: dict[str, str] = {}
     for index, candidate in enumerate(candidates, start=1):
         payload_text = json.dumps(

@@ -463,6 +463,17 @@ def test_save_diagnostic_screenshot_rejects_symlink_output_file(tmp_path):
     assert outside.read_text(encoding="utf-8") == "keep"
 
 
+def test_save_diagnostic_screenshot_rejects_path_traversal_account_id(tmp_path):
+    account = Account(
+        id="../escape",
+        label="Escape",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    with pytest.raises(ValueError, match="account id"):
+        _save_diagnostic_screenshot(FakeScreenshotPage(), account, tmp_path)
+
+
 def test_save_probe_payloads_rejects_symlink_save_dir(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -494,3 +505,14 @@ def test_save_probe_payloads_rejects_symlink_output_file(tmp_path):
         _save_probe_payloads(save_dir, account, [], "visible body")
 
     assert outside.read_text(encoding="utf-8") == "keep"
+
+
+def test_save_probe_payloads_rejects_path_traversal_account_id(tmp_path):
+    account = Account(
+        id="../escape",
+        label="Escape",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    with pytest.raises(ValueError, match="account id"):
+        _save_probe_payloads(tmp_path, account, [], "visible body")
