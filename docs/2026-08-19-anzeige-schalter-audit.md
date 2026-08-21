@@ -4217,6 +4217,17 @@ relative Einträge per `dir_fd`.
 Parent-Swap-Regression ergänzt. `pytest -q tests/test_integration_installer.py`:
 112/112 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 471: Installer-Candidate-Cleanup per Parent-FD
+
+`_cleanup_owned_file()` prüfte bisher Parent- und Datei-Inode, löschte danach
+aber per `Path.unlink()`. Ein Parent-Swap zwischen Prüfung und Löschung konnte
+einen fremden Candidate-Eintrag treffen. Cleanup öffnet den erwarteten Parent
+mit `O_DIRECTORY|O_NOFOLLOW`, revalidiert Identität und löscht per `dir_fd`.
+
+Parent-Swap- und FD-Fehlerinjektion aktualisiert. `pytest -q
+tests/test_integration_installer.py`: 113/113 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

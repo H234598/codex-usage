@@ -1905,14 +1905,14 @@ def test_candidate_cleanup_oserror_prevents_success(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 
     data_home, state_home, temporary_root = _roots(tmp_path)
-    original_unlink = Path.unlink
+    original_unlink = os.unlink
 
     def fail_candidate_unlink(path, *args, **kwargs):
-        if path.name.startswith("candidate-"):
+        if Path(path).name.startswith("candidate-"):
             raise OSError("synthetic candidate cleanup failure")
         return original_unlink(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "unlink", fail_candidate_unlink)
+    monkeypatch.setattr(integration_installer.os, "unlink", fail_candidate_unlink)
     with pytest.raises(integration_installer.IntegrationInstallError):
         integration_installer.install_release(
             source_root=_temporary_source_copy(tmp_path),
@@ -2099,6 +2099,56 @@ def test_cleanup_does_not_delete_replaced_candidate_inode(tmp_path, monkeypatch)
     assert replacement is not None
     assert replacement.read_bytes() == b"foreign-candidate-marker"
     assert stat.S_IMODE(replacement.lstat().st_mode) == 0o600
+
+
+def test_owned_file_cleanup_rejects_parent_swap_before_unlink(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    target = parent / "candidate.json"
+    target.write_bytes(b"owned")
+    target.chmod(0o600)
+    parent_identity = integration_installer._directory_identity(parent)
+    identity = integration_installer._file_identity(target)
+    old_parent = tmp_path / "parent-old"
+    original_unlink = Path.unlink
+    original_open = os.open
+    swapped = False
+
+    def swap_parent():
+        nonlocal swapped
+        if swapped:
+            return
+        parent.rename(old_parent)
+        parent.mkdir(mode=0o700)
+        foreign = parent / target.name
+        foreign.write_bytes(b"foreign")
+        foreign.chmod(0o600)
+        swapped = True
+
+    def swap_before_unlink(path, *args, **kwargs):
+        if path == target:
+            swap_parent()
+        return original_unlink(path, *args, **kwargs)
+
+    def swap_before_open(path, flags, mode=0o777, *, dir_fd=None):
+        if path == parent and dir_fd is None:
+            swap_parent()
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(Path, "unlink", swap_before_unlink)
+    monkeypatch.setattr(integration_installer.os, "open", swap_before_open)
+    assert (
+        integration_installer._cleanup_owned_file(target, identity, parent_identity)
+        is False
+    )
+
+    assert swapped
+    assert (parent / target.name).read_bytes() == b"foreign"
+    assert (old_parent / target.name).read_bytes() == b"owned"
 
 
 def test_exclusive_write_cleans_candidate_when_parent_revalidation_fails_after_open(

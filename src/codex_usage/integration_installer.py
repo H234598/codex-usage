@@ -445,11 +445,49 @@ def _cleanup_owned_file(
 ) -> bool:
     if not _owned_file_matches(path, identity, parent_identity):
         return False
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    parent_fd = -1
     try:
-        path.unlink()
+        _no_symlink_ancestors(path.parent)
+        parent_fd = os.open(path.parent, flags)
+        parent_item = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(parent_item.st_mode)
+            or parent_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                parent_item.st_dev,
+                parent_item.st_ino,
+                stat.S_IMODE(parent_item.st_mode),
+            )
+            != parent_identity
+        ):
+            return False
+        item = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(item.st_mode)
+            or item.st_nlink != 1
+            or item.st_uid != os.getuid()
+            or _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+            != identity
+        ):
+            return False
+        os.unlink(path.name, dir_fd=parent_fd)
+        try:
+            os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return True
+        return False
     except (OSError, ValueError):
         return False
-    return not path.exists() and not path.is_symlink()
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def _cleanup_owned_directory(
