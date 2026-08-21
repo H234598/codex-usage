@@ -3897,3 +3897,10 @@ abgelaufen. Eine malformed `datetime`-Subclass konnte zuvor
 
 `pytest -q tests/test_state.py`: 266/266 bestanden; Modul-Coverage 87%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 405: Service-Reload nach State-Expiry-Fix
+
+`codex-usage service enable --format json` nach `61bb295` erfolgreich:
+Service installiert/aktiv, Timer aktiv und geplant. Exit 2 bleibt der bekannte
+Firefox-Playwright-Executable-Fehler der Browser-Konten; Journal zeigt keinen
+neuen State-Expiry-Fehler. Keine Netzwerkinstallation und kein Fallback.
