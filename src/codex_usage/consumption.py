@@ -102,7 +102,10 @@ def calculate_consumption(
     else:
         smoothing_minutes = None
 
-    sample_list = tuple(islice(samples, MAX_CONSUMPTION_SAMPLES + 1))
+    try:
+        sample_list = tuple(islice(samples, MAX_CONSUMPTION_SAMPLES + 1))
+    except TypeError:
+        raise ValueError("samples are invalid") from None
     if len(sample_list) > MAX_CONSUMPTION_SAMPLES:
         raise ValueError("too many samples")
     if not sample_list:

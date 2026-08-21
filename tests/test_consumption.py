@@ -235,6 +235,12 @@ def test_consumption_rejects_non_string_period(unit):
         calculate_consumption([], amount=1, unit=unit, now=BASE)
 
 
+@pytest.mark.parametrize("samples", [None, 1, True, object()])
+def test_consumption_rejects_non_iterable_samples(samples):
+    with pytest.raises(ValueError, match="samples are invalid"):
+        calculate_consumption(samples, amount=1, unit="hours", now=BASE)  # type: ignore[arg-type]
+
+
 def test_consumption_rejects_sample_iterators_over_cap(monkeypatch):
     monkeypatch.setattr(consumption_module, "MAX_CONSUMPTION_SAMPLES", 2)
 

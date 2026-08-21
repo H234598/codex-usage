@@ -1957,6 +1957,14 @@ echte `datetime`-Werte und fällt sonst auf aktuelle UTC-Zeit zurück.
 `tests/test_health.py`: 20/20 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
 
+## Runde 203: Consumption-Eingang validiert Sample-Iterator
+
+`consumption.calculate_consumption()` übergab nicht-iterierbare `samples`
+direkt an `itertools.islice`; API-Aufrufer erhielten rohen `TypeError` statt
+kontrollierter Eingabefehler. Der Sample-Iterator wird jetzt abgefangen und
+als `ValueError("samples are invalid")` gemeldet. `tests/test_consumption.py`:
+24/24 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.
+
 ## Runde 191: Scheduler-Reset- und Stabilisierungsguards
 
 `scheduler._watch_core_resets_current()` und `_stabilize_main_pool()` griffen
