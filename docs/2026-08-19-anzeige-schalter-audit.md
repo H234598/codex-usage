@@ -999,3 +999,11 @@ Pfadaufbau ab; `tests/test_app_server.py`: 77/77 bestanden.
 
 Ruff für `src/codex_usage/app_server.py` ist sauber. Eine bereits vorhandene
 E501-Zeile in `tests/test_app_server.py:115` bleibt unberührt.
+
+## Runde 74: OAuth-Profil-Symlinkprüfung
+
+`reactivate._assert_no_symlink_ancestors()` hatte denselben Abbruch am ersten
+fehlenden Pfadsegment. Ein fehlendes Segment vor `..` konnte einen späteren
+Symlink ungescannt lassen. Der Scanner prüft jetzt alle Segmente; der neue
+Regressionstest deckt diesen Pfadaufbau ab. `tests/test_reactivate.py`:
+43/43 bestanden; Ruff für `reactivate.py` sauber.
