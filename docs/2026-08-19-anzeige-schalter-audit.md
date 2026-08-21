@@ -3287,3 +3287,10 @@ Pools bleibt unverändert.
 
 Regressionstest ergänzt. `pytest -q tests/test_state.py`: 265/265 bestanden.
 Mypy für `state.py`, Ruff und `git diff --check` sauber.
+
+## Runde 343: Reload nach State-Fix geprüft
+
+Service-Neustart nach `990a107` lädt neuen Code; Journal zeigt weiterhin
+gültige `app-server`-Konten ohne State-/Parserfehler. Der Run endet bei den
+Browser-Konten mit dem bereits bekannten externen Fehler: Firefox-Playwright-
+Executable fehlt. Keine automatische Netzwerkinstallation ausgeführt.
