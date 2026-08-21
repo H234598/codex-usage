@@ -155,6 +155,19 @@ class PanelSettingsList(List, JSONSettingsBackend):
         except (AttributeError, KeyError, TypeError, ValueError):
             return _DEFAULT_EDIT_COLUMNS
 
+    def _remove_listener(self, key, callback) -> None:
+        listeners = getattr(self.settings, "listeners", None)
+        if not isinstance(listeners, dict):
+            return
+        callbacks = listeners.get(key)
+        if not isinstance(callbacks, list):
+            return
+        callbacks[:] = [registered for registered in callbacks if registered != callback]
+
+    def detach(self) -> None:
+        self._remove_listener(self.key, self._settings_changed_callback)
+        self._remove_listener("panel-value-count", self._on_count_changed)
+
     def open_add_edit_dialog(self, info=None):
         """Edit one account row in a bounded, multi-column scrolled grid."""
         title = _("Add new entry") if info is None else _("Edit entry")
@@ -297,3 +310,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
         self.content_widget.connect("row-activated", self.on_row_activated)
         self.content_widget.columns_autosize()
         self.show_all()
+
+    def destroy(self):
+        self.detach()
+        return super().destroy()

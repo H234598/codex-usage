@@ -72,9 +72,10 @@ class _Settings:
             "panel-value-count": "20",
             "panel-edit-columns": edit_columns,
         }
+        self.listeners = {}
 
-    def listen(self, *_args):
-        pass
+    def listen(self, key, callback):
+        self.listeners.setdefault(key, []).append(callback)
 
     def get_value(self, key):
         return self.values[key]
@@ -132,4 +133,48 @@ def test_panel_editor_returns_edited_values(monkeypatch) -> None:
         assert values[:2] == ["alpha", "beta"]
     finally:
         _Dialog.response = None
+        panel.destroy()
+
+
+def test_panel_destroy_detaches_settings_listeners() -> None:
+    settings = _Settings(3)
+    panel = PanelSettingsList(
+        {"columns": [], "show-buttons": False},
+        "account-panel-settings",
+        settings,
+    )
+
+    assert len(settings.listeners["account-panel-settings"]) == 1
+    assert len(settings.listeners["panel-value-count"]) == 1
+    panel.destroy()
+
+    assert settings.listeners["account-panel-settings"] == []
+    assert settings.listeners["panel-value-count"] == []
+
+
+def test_panel_count_change_rebuilds_slots_and_preserves_rows() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "2"
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.model.append(["alpha", 7, 8])
+        settings.values["panel-value-count"] = "4"
+        panel._on_count_changed()
+
+        assert [column["id"] for column in panel.columns] == [
+            "account", "slot1", "slot2", "slot3", "slot4",
+        ]
+        assert list(panel.model[0]) == ["alpha", 7, 8, 0, 0]
+    finally:
         panel.destroy()

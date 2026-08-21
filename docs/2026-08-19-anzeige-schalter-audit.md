@@ -5427,3 +5427,17 @@ Dateifehlern ab und lässt die Zeile ohne Vorschau weiterlaufen.
 Regression mit echtem kaputtem SVG: `pytest -q
 tests/test_fast_mode_icon_selector.py`: 5/5 bestanden. Ruff, Python-Compile
 und `git diff --check` sauber.
+
+## Runde 459: Panel-Editor gibt Settings-Listener frei
+
+`PanelSettingsList` registriert beim Aufbau einen Listener für die eigene
+Tabelle und einen zweiten für `panel-value-count`. Beim Schließen der
+Cinnamon-Settings-Seite wurden beide Callback-Referenzen bisher behalten;
+jedes erneute Öffnen hielt damit eine alte GTK-Tabelle samt Modell im Heap.
+Der Editor entfernt beide gebundenen Callbacks vor `destroy()` und bleibt bei
+wiederholtem Destroy idempotent.
+
+Zusätzliche Regressionen prüfen Listener-Abmeldung sowie den Rebuild-Pfad bei
+Änderung der Wertfeldanzahl mit erhaltener Zeile. `pytest -q
+tests/test_panel_settings_list.py`: 7/7 bestanden. Ruff, Python-Compile und
+`git diff --check` sauber.
