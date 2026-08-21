@@ -13,6 +13,7 @@ import pytest
 from codex_usage.account_lock import account_lock
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.state import (
+    _authoritative_empty_limits,
     _is_inferred_inactive_five_hour,
     _localize_datetime,
     _remove_state_transaction_dir,
@@ -3387,6 +3388,19 @@ def test_authoritative_empty_direct_limits_do_not_restore_old_values():
     merged = merge_current_with_last_success(current, last_success)
 
     assert merged == current
+
+
+@pytest.mark.parametrize("backend_used", [[], {}])
+def test_authoritative_empty_limits_rejects_unhashable_backend(backend_used):
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(UTC),
+        status=AccountStatus.PARTIAL,
+        backend_used=backend_used,
+    )
+
+    assert _authoritative_empty_limits(usage) is False
 
 
 def test_cache_invalidated_browser_limits_do_not_restore_old_values():

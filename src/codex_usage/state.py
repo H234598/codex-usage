@@ -1263,18 +1263,20 @@ def _authoritative_empty_limits(usage: AccountUsage) -> bool:
         return (
             usage.five_hour is None
             and usage.weekly is None
-            and not _has_valid_core_usage(
-                usage.five_hour,
-                usage.weekly,
-                usage.main,
+                and not _has_valid_core_usage(
+                    usage.five_hour,
+                    usage.weekly,
+                    usage.main,
+                )
+                and isinstance(usage.backend_used, str)
+                and usage.backend_used in {"direct", "app-server"}
             )
-            and usage.backend_used in {"direct", "app-server"}
-        )
     return (
         usage.status == AccountStatus.ERROR
         and usage.cache_invalidated
         and usage.five_hour is None
         and usage.weekly is None
+        and isinstance(usage.backend_used, str)
         and usage.backend_used in {"direct", "app-server"}
     )
 

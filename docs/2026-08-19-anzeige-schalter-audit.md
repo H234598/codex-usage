@@ -1600,3 +1600,11 @@ Frozenset-Schlüssel. Unhashbare Werte aus manipulierten `AccountUsage`-Objekten
 konnten dadurch `TypeError` auslösen. Beide Felder werden jetzt vor der
 Identitätsprüfung als Strings validiert; ungültige Identitäten matchen nicht.
 `tests/test_state.py`: 221/221 bestanden; Mypy und Ruff sauber.
+
+## Runde 149: Leere-Limits-Backend-Typ
+
+`state._authoritative_empty_limits()` verwendete `backend_used` in zwei
+Frozenset-Prüfungen ohne vorherige Typprüfung. Unhashbare Backend-Werte konnten
+bei Snapshot-Merges `TypeError` auslösen. Beide Zweige prüfen jetzt zuerst auf
+String; ungültige Werte sind nicht autoritativ. `tests/test_state.py`: 223/223
+bestanden; Mypy und Ruff sauber.
