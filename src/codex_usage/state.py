@@ -823,7 +823,11 @@ def _window_expiry_capture(
     window: LimitWindow | None,
     values_captured_at: datetime,
 ) -> datetime:
-    if window is not None and window.reset_at is not None:
+    if (
+        isinstance(window, LimitWindow)
+        and window.reset_at is not None
+        and isinstance(usage.captured_at, datetime)
+    ):
         # An explicit reset belongs to the current observation. The shared
         # values timestamp may point to an older counterpart restored during
         # a partial browser merge and would reject this fresh reset as too far
@@ -1606,6 +1610,8 @@ def _cached_window_expired(
 ) -> bool:
     if window is None:
         return False
+    if not isinstance(window, LimitWindow):
+        return True
     if expected_kind is not None and not _window_matches_expected_kind(window, expected_kind):
         return True
     if _is_inferred_inactive_five_hour(window) and window.reset_at is None:
@@ -1659,6 +1665,8 @@ def _values_capture_for_expiry(usage: AccountUsage) -> datetime:
         if isinstance(usage.values_captured_at, datetime)
         else None
     )
+    if not isinstance(usage.captured_at, datetime):
+        return datetime.min.replace(tzinfo=UTC)
     captured_at = _localize_datetime(usage.captured_at)
     if candidate is None:
         return captured_at

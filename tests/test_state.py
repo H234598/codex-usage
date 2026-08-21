@@ -1051,6 +1051,24 @@ def test_expire_reset_windows_drops_malformed_pool_windows():
     assert expired.stale is True
 
 
+@pytest.mark.parametrize("captured_at", [None, [], {}])
+def test_expire_reset_windows_fails_closed_on_malformed_capture(captured_at):
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="malformed-capture",
+        label="Malformed capture",
+        captured_at=captured_at,  # type: ignore[arg-type]
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=90),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.five_hour is None
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+
+
 def test_expire_reset_windows_rejects_overlong_model_catalog(monkeypatch):
     import codex_usage.state as state_module
 

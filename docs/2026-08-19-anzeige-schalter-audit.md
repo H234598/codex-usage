@@ -1916,3 +1916,11 @@ damit verfügbar oder konnten bei Attributzugriffen die Ablaufprüfung brechen.
 Ungültige Fenster werden jetzt verworfen; der Pool wird leer und nicht
 verfügbar markiert. `tests/test_state.py`: 228/228 bestanden; Mypy und Ruff
 für betroffene Dateien sauber.
+
+## Runde 188: State-Expiry für malformed Capture-Zeitstempel
+
+Die Ablaufprüfung griff bei malformed `captured_at` oder Legacy-Fenstern vor
+der Validierung auf `tzinfo`/`reset_at` zu. Beschädigte Usage konnte dadurch
+`AttributeError` auslösen. Ungültige Fenster gelten jetzt als abgelaufen;
+ungültige Capture-Zeitstempel verwenden fail-closed Minimalzeit. `tests/test_state.py`:
+231/231 bestanden; Mypy und Ruff für betroffene Dateien sauber.
