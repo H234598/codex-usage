@@ -15,6 +15,8 @@ function loadPrototype(onReady) {
     timeoutAdd: () => 2,
     timeoutAddSeconds: () => 3,
     launcherFactory: () => { throw new Error("launcher not configured"); },
+    subprocessFactory: () => ({}),
+    appInfoFactory: () => {},
     fileUriCalls: 0,
   };
   const mainloop = {
@@ -44,17 +46,54 @@ function loadPrototype(onReady) {
     SubprocessLauncher: {
       new: (...args) => runtime.launcherFactory(...args),
     },
+    SubprocessFlags: { NONE: 0, STDOUT_SILENCE: 4, STDERR_SILENCE: 8 },
+    Subprocess: {
+      new: (...args) => runtime.subprocessFactory(...args),
+    },
+    AppInfo: {
+      launch_default_for_uri: (...args) => runtime.appInfoFactory(...args),
+    },
   };
   class PopupItem {
-    constructor() {
+    constructor(text) {
       this.actor = { add_style_class_name() {} };
-      this.label = { clutter_text: { set_markup() {} } };
+      this.label = { text: text || "", clutter_text: { set_markup() {} } };
+      this._signals = {};
+      this.menu = {
+        items: [],
+        addMenuItem: (item) => this.menu.items.push(item),
+        addAction: (label, callback) => {
+          const item = new PopupItem(label);
+          item.connect("activate", callback);
+          this.menu.items.push(item);
+          return item;
+        },
+      };
+    }
+    connect(signal, callback) {
+      this._signals[signal] = callback;
+      return signal;
+    }
+    emit(signal, ...args) {
+      if (typeof this._signals[signal] === "function") {
+        return this._signals[signal](this, ...args);
+      }
+      return undefined;
+    }
+    setSensitive(value) {
+      this.sensitive = value;
     }
   }
   class PopupSeparatorItem extends PopupItem {
     constructor() {
       super();
       this.isSeparator = true;
+    }
+  }
+  class PopupSwitchItem extends PopupItem {
+    constructor(text, state) {
+      super(text);
+      this.state = state === true;
     }
   }
   const sandbox = {
@@ -65,6 +104,7 @@ function loadPrototype(onReady) {
       GLib: {},
       St: {
         ClipboardType: { CLIPBOARD: 1 },
+        IconType: { SYMBOLIC: 1 },
         Clipboard: { get_default: () => runtime.clipboard || null },
       },
     },
@@ -81,8 +121,9 @@ function loadPrototype(onReady) {
         },
         popupMenu: {
           PopupMenuItem: PopupItem,
+          PopupIconMenuItem: PopupItem,
           PopupSeparatorMenuItem: PopupSeparatorItem,
-          PopupSwitchMenuItem: PopupItem,
+          PopupSwitchMenuItem: PopupSwitchItem,
           PopupSubMenuMenuItem: PopupItem,
         },
         settings: {},
@@ -188,6 +229,7 @@ function makeApplet(onReady) {
   applet._syncingRoutingSettings = false;
   applet._routingPolicyApplying = false;
   applet.panelHeight = 24;
+  applet.refreshOnOpen = true;
   applet.panelAccountSeparator = "bar";
   applet.set_applet_label = () => {};
   applet.set_applet_tooltip = () => {};
@@ -1545,6 +1587,461 @@ test("file URIs without a path are rejected before conversion", () => {
   assert.equal(runtime.fileUriCalls, 0);
 });
 
+test("local account path helpers accept local paths and localhost URIs only", () => {
+  let runtime;
+  const applet = makeApplet((currentRuntime) => { runtime = currentRuntime; });
+
+  assert.equal(applet._localAccountPath("/tmp/alpha auth.json"), "/tmp/alpha auth.json");
+  assert.equal(applet._localAccountPath("file:///tmp/alpha%20auth.json"), "/tmp/alpha auth.json");
+  assert.equal(applet._localAccountPath("file://LOCALHOST/tmp/profile"), "/tmp/profile");
+  assert.equal(applet._accountSettingPath(null), null);
+  assert.equal(applet._accountSettingPath(""), "");
+  assert.match(applet._accountSettingPath("/tmp/profile"), /^file:\/\/\/tmp\/profile$/);
+  assert.throws(() => applet._localAccountPath("file://remote/tmp/profile"), /invalid local account path/);
+  assert.throws(() => applet._accountSettingPath("relative/profile"), /invalid local account path/);
+  assert.ok(runtime.fileUriCalls >= 2);
+});
+
+test("date, time, duration and style helpers cover all supported display modes", () => {
+  const applet = makeApplet();
+  const date = new Date(2026, 0, 2, 13, 4, 5);
+
+  assert.equal(applet._formatDatePart(date, 0), "02.01.2026");
+  assert.equal(applet._formatDatePart(date, 1), "2026-01-02");
+  assert.equal(applet._formatDatePart(date, 2), "02.01.26");
+  assert.equal(applet._formatDatePart(date, 3), "2. Januar 2026");
+  assert.equal(applet._formatDatePart(date, 99), "02.01.2026");
+  assert.equal(applet._formatTimePart(date, 0), "13:04");
+  assert.equal(applet._formatTimePart(date, 1), "13:04:05");
+  assert.equal(applet._formatTimePart(date, 2), "01:04 PM");
+  assert.equal(applet._formatDurationPart(null, 0), "–");
+  assert.equal(applet._formatDurationPart(150, 0), "2h 30m");
+  assert.equal(applet._formatDurationPart(150, 0, true), "2,5h");
+  assert.equal(applet._formatDurationPart(150, 1), "02:30");
+  assert.equal(applet._formatDurationPart(150, 2), "2 Stunden 30 Minuten");
+  assert.equal(applet._formatDurationPart(150, 3), "2h 30m");
+  assert.equal(applet._formatDurationPart(150, 4), "2h 30m");
+  assert.equal(applet._durationMinutes(null), null);
+  assert.equal(applet._durationMinutes({reset_at: "not-a-date"}), null);
+  assert.equal(applet._styleMode({mode: 2}), 2);
+  assert.equal(applet._styleMode({mode: "2"}), 2);
+  assert.equal(applet._styleMode({mode: 9, conditional: true}), 1);
+  assert.equal(applet._styleMode({conditional: false}), 0);
+  assert.equal(applet._styleIsActive({mode: 0, threshold: 100}, null), true);
+  assert.equal(applet._styleIsActive({mode: 1, threshold: 50}, 49), true);
+  assert.equal(applet._styleIsActive({mode: 1, threshold: 50}, 50), false);
+  assert.equal(applet._styleIsActive({mode: 1, threshold: 50}, null), false);
+  assert.equal(applet._styleIsActive({mode: 3, threshold: 0}, 0), false);
+});
+
+test("markup escaping preserves zero and false while escaping untrusted text", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._escapeMarkup(null), "");
+  assert.equal(applet._escapeMarkup(undefined), "");
+  assert.equal(applet._escapeMarkup(0), "0");
+  assert.equal(applet._escapeMarkup(false), "false");
+  assert.equal(applet._escapeMarkup("<&>"), "&lt;&amp;&gt;");
+  assert.equal(applet._styleSpan("0", {mode: 0}, 0, "panel"), "0");
+});
+
+test("status and capture timestamp helpers reject invalid or future provenance", () => {
+  const applet = makeApplet();
+  const now = Date.now();
+  const recent = new Date(now - 1000).toISOString();
+  const older = new Date(now - 2000).toISOString();
+  const future = new Date(now + 60 * 1000).toISOString();
+  const farFuture = new Date(now + 3 * 60 * 60 * 1000).toISOString();
+
+  assert.equal(applet._statusLabel("ok"), "ok");
+  assert.equal(applet._statusLabel("partial"), "unvollständig");
+  assert.equal(applet._statusLabel("login_required"), "Anmeldung erforderlich");
+  assert.equal(applet._statusLabel("unknown"), "Fehler");
+  assert.equal(applet._dateMillis(recent) > 0, true);
+  assert.equal(applet._dateMillis("bad"), null);
+  assert.equal(applet._captureTimestampUsable(recent), true);
+  assert.equal(applet._captureTimestampUsable(farFuture), false);
+  assert.equal(applet._captureIsTooFarInFuture(farFuture, now), true);
+  assert.equal(applet._captureIsTooFarInFuture(future, now), false);
+  assert.equal(applet._captureIsOlder(older, recent), true);
+  assert.equal(applet._captureIsOlder(recent, older), false);
+  assert.equal(applet._captureIsOlder(farFuture, recent), true);
+  assert.equal(applet._captureIsOlder(recent, farFuture), false);
+});
+
+test("usage severity ignores Spark windows from an unavailable model pool", () => {
+  const applet = makeApplet();
+  const sparkWindow = {
+    name: "5h", limit_window_seconds: 18000, remaining: 1, limit: 100,
+  };
+  const base = {
+    account: "alpha", status: "ok", stale: false,
+    five_hour: {remaining: 50}, weekly: {remaining: 50},
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: false, allowed: true, limit_reached: false, exhausted: false,
+        windows: [sparkWindow],
+      },
+    },
+  };
+  assert.equal(applet._usageSeverity(base), "");
+  base.models["gpt-5.3-codex-spark"].available = true;
+  assert.equal(applet._usageSeverity(base), "codex-usage-critical");
+});
+
+test("window identity helpers distinguish aliases, conflicts, duplicates and pool selection", () => {
+  const applet = makeApplet();
+  const five = {name: "5h", limit_window_seconds: 18000, remaining: 80, limit: 100};
+  const week = {name: "weekly", limit_window_seconds: 604800, remaining: 40, limit: 100};
+  const month = {name: "30d", limit_window_seconds: 2592000, remaining: 60, limit: 100};
+  const pool = {
+    available: true, allowed: true, limit_reached: false, exhausted: false,
+    windows: [five, week, month],
+  };
+
+  assert.equal(applet._windowIdentityIsKnown(five), true);
+  assert.equal(applet._windowIdentityKey({name: "w"}), 604800);
+  assert.equal(applet._windowIdentityIsKnown({name: "5h", duration_seconds: 604800}), false);
+  assert.equal(applet._windowIdentityKey({name: "5h", duration_seconds: 604800}), null);
+  assert.equal(applet._hasUniqueWindowIdentities(pool.windows), true);
+  assert.equal(applet._hasDuplicateWindowIdentities(pool.windows), false);
+  assert.equal(applet._hasUniqueWindowIdentities([five, {name: "5_hour"}]), false);
+  assert.equal(applet._hasDuplicateWindowIdentities([five, {name: "5_hour"}]), true);
+  assert.equal(applet._poolWindowForDuration(pool, 604800), week);
+  assert.equal(applet._poolWindowForDuration(pool, 123), null);
+  assert.equal(applet._poolAverage(pool), 60);
+  assert.equal(applet._poolOtherWindow(pool), month);
+  assert.equal(applet._poolIsUsable(pool), true);
+  pool.exhausted = true;
+  assert.equal(applet._poolIsUsable(pool), false);
+});
+
+test("monthly panel source cannot bypass an unusable main pool", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.main = {
+    available: false, allowed: true, limit_reached: false, exhausted: false,
+    windows: [{name: "30d", limit_window_seconds: 2592000, remaining: 80, limit: 100}],
+  };
+
+  assert.equal(applet._panelValueForSource(usage, 8), null);
+  assert.equal(applet._panelWindowForSource(usage, 8), null);
+});
+
+test("panel source labels map known settings and use the documented average fallback", () => {
+  const applet = makeApplet();
+  for (const [name, value] of Object.entries({
+    "five-hour": 1, weekly: 2, average: 3, "spark-five-hour": 4,
+    "spark-weekly": 5, "spark-average": 6, "spark-other": 7, "thirty-day": 8,
+  })) {
+    assert.equal(applet._panelSourceValue(name), value);
+  }
+  assert.equal(applet._panelSourceValue("unknown"), 3);
+});
+
+test("credit custom formats reject non-text values instead of silently becoming empty", () => {
+  const applet = makeApplet();
+  const valid = {
+    account: "alpha", "show-panel": false, "show-tooltip": true,
+    format: "compact", "custom-format": "", "hide-when-zero": false,
+    smoothing: "ema-20", "show-coverage-marker": true,
+    "baseline-enabled": false, "baseline-minutes": 60,
+    "consumption-show-panel": false, "consumption-show-tooltip": true,
+    "consumption-amount": 1, "consumption-unit": "hours",
+    "consumption-format": "compact", "consumption-custom-format": "",
+    "consumption-smoothing": "ema-20", "consumption-hide-when-zero": false,
+    "consumption-show-coverage-marker": true,
+    "consumption-baseline-enabled": false, "consumption-baseline-minutes": 60,
+  };
+  assert.ok(applet._normalizeCreditRow(valid, "alpha"));
+  assert.equal(applet._normalizeCreditRow(Object.assign({}, valid, {"custom-format": 0}), "alpha"), null);
+  assert.equal(applet._normalizeCreditRow(Object.assign({}, valid, {"consumption-custom-format": false}), "alpha"), null);
+  assert.equal(applet._normalizeCreditRow(Object.assign({}, valid, {"custom-format": "{value}%"}), "alpha")["custom-format"], "{value}%");
+});
+
+test("legacy consumption and forecast fields do not coerce falsey invalid values to defaults", () => {
+  const applet = makeApplet();
+  assert.throws(() => applet._normalizeForecastRow({
+    account: "alpha", "forecast-format": 0,
+  }, "alpha"), /invalid text value/);
+  assert.throws(() => applet._normalizeForecastRow({
+    account: "alpha", "forecast-limit-window": false,
+  }, "alpha"), /invalid text value/);
+  assert.throws(() => applet._normalizeCreditConsumptionRow({
+    account: "alpha", "show-panel": false, "show-tooltip": true,
+    "consumption-unit": 0,
+  }, "alpha"), /invalid text value/);
+  assert.throws(() => applet._normalizeCreditConsumptionRow({
+    account: "alpha", "show-panel": false, "show-tooltip": true,
+    "consumption-format": false,
+  }, "alpha"), /invalid text value/);
+});
+
+test("DTO sanitizers retain valid fields and fail closed on contradictory usage metadata", () => {
+  const applet = makeApplet();
+  const window = applet._safeWindow({
+    name: "5h", duration_seconds: 18000, used: 20, limit: 100, remaining: 80,
+    percent: 80, reset_at: "2026-08-19T12:00:00Z", raw: "raw", source: "api",
+  });
+  assert.equal(window.name, "5h");
+  assert.equal(window.duration_seconds, 18000);
+  assert.equal(window.used, 20);
+  assert.equal(window.limit, 100);
+  assert.equal(window.remaining, 80);
+  assert.equal(window.percent, 80);
+  assert.equal(window.source, "api");
+  const contradictory = applet._safeWindow({
+    name: "5h", used: 20, limit: 100, remaining: 80, percent: 101,
+  });
+  assert.equal(contradictory.used, null);
+  assert.equal(contradictory.limit, null);
+  assert.equal(contradictory.remaining, null);
+  assert.equal(contradictory.percent, null);
+  assert.throws(() => applet._safeWindow({name: "5h", duration_seconds: 0}), /invalid limit duration/);
+
+  const consumption = applet._safeConsumptionWindows([{
+    pool: "main", lookback_seconds: 600, limit_window_seconds: 18000,
+    consumed_percentage_points: 2.5, estimated_seconds_to_exhaustion: 3600,
+    baseline_used_percent: 20, coverage: "complete", sample_count: 4,
+  }]);
+  assert.equal(consumption.length, 1);
+  assert.equal(consumption[0].estimated_seconds_to_exhaustion, 3600);
+  assert.throws(() => applet._safeConsumptionWindows([{
+    pool: "main", lookback_seconds: 0, limit_window_seconds: 18000,
+    consumed_percentage_points: 1, coverage: "complete", sample_count: 1,
+  }]), /invalid consumption window/);
+
+  const unknownResets = applet._safeUsageResets(null);
+  assert.equal(unknownResets.available, null);
+  assert.equal(unknownResets.known, false);
+  assert.equal(unknownResets.redeem_capability, false);
+  const resets = applet._safeUsageResets({known: true, available: 12, redeem_capability: true});
+  assert.equal(resets.available, 12);
+  assert.equal(resets.known, true);
+  assert.equal(applet._safeUsageResets({known: true, available: 10001, redeem_capability: false}).known, false);
+});
+
+test("payload usage aggregation requires known windows and usable model pools", () => {
+  const applet = makeApplet();
+  const five = {name: "5h", limit_window_seconds: 18000, remaining: 80, limit: 100};
+  const week = {name: "weekly", limit_window_seconds: 604800, remaining: 60, limit: 100};
+  const usablePool = {
+    available: true, allowed: true, limit_reached: false, exhausted: false,
+    windows: [five, week],
+  };
+  assert.equal(applet._windowHasUsageValue(five), true);
+  assert.equal(applet._windowHasUsageValue({name: "5h"}), false);
+  assert.equal(applet._hasPayloadUsageValue(null, null, usablePool, {}), true);
+  assert.equal(applet._hasPayloadUsageValue(five, null, null, {}), true);
+  assert.equal(applet._hasPayloadUsageValue({name: "unknown", remaining: 80}, null, null, {}), false);
+  assert.equal(applet._hasModelPayloadUsageValue({spark: usablePool}), true);
+  assert.equal(applet._hasModelPayloadUsageValue({spark: Object.assign({}, usablePool, {available: false})}), false);
+  assert.equal(applet._poolExhaustedByFields(true, true, false, [five]), false);
+  assert.equal(applet._poolExhaustedByFields(true, true, false, [{name: "5h", remaining: 0, limit: 100}]), true);
+  assert.equal(applet._poolExhaustedByFields(false, true, false, [five]), true);
+});
+
+test("cache window matching and expiry use the declared kind and duration", () => {
+  const applet = makeApplet();
+  const current = {name: "5h", duration_seconds: 18000, remaining: 80};
+  const cached = {name: "five_hour", remaining: 70};
+  assert.equal(applet._windowDisplayLabel(current), "5h");
+  assert.equal(applet._windowDisplayLabel({name: "custom"}), "custom");
+  assert.equal(applet._windowDisplayLabel({}), "Limit");
+  assert.equal(applet._windowDurationMatches(current, cached, "five_hour"), true);
+  assert.equal(applet._windowDurationMatches(current, {name: "weekly"}, "five_hour"), false);
+  assert.equal(applet._windowDurationMatches(current, {name: "5h", duration_seconds: 604800}, null), false);
+  assert.equal(applet._windowCacheExpired(null, "bad", "bad"), false);
+  assert.equal(applet._windowCacheExpired({name: "weekly", duration_seconds: 604800,
+    reset_at: "2026-08-18T00:00:00Z"}, "2026-08-17T00:00:00Z", "2026-08-19T00:00:00Z"), true);
+  assert.equal(applet._windowCacheExpired({name: "weekly", duration_seconds: 604800,
+    reset_at: "2026-08-20T00:00:00Z"}, "2026-08-17T00:00:00Z", "2026-08-19T00:00:00Z"), false);
+  assert.equal(applet._windowCacheExpired({name: "weekly", duration_seconds: 604800},
+    "2026-08-17T00:00:00Z", "2026-08-19T00:00:00Z"), false);
+  assert.equal(applet._windowCacheExpired({name: "weekly", duration_seconds: 604800},
+    "2026-08-17T00:00:00Z", "2026-08-25T00:00:00Z"), true);
+});
+
+test("window identity helpers fail closed on malformed duration and reset metadata", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._windowDurationSeconds({
+    duration_seconds: 18000,
+    raw: '{"limit_window_seconds":604800}'
+  }), 18000);
+  assert.equal(applet._windowDurationSeconds({
+    duration_seconds: 0,
+    raw: '{"limit_window_seconds":604800}'
+  }), 604800);
+  assert.equal(applet._windowDurationSeconds({
+    raw: '{"limit_window_seconds":604800.5}'
+  }), null);
+  assert.equal(applet._windowDurationSeconds({ raw: "not-json" }), null);
+
+  assert.equal(applet._windowResetExpired({
+    reset_at: "2026-08-19T12:00:00Z"
+  }, "2026-08-19T11:59:59Z"), false);
+  assert.equal(applet._windowResetExpired({
+    reset_at: "2026-08-19T12:00:00Z"
+  }, "2026-08-19T12:00:00Z"), true);
+  assert.equal(applet._windowResetExpired({
+    reset_at: "invalid"
+  }, "2026-08-19T11:59:59Z"), true);
+  assert.equal(applet._windowResetExpired({ name: "weekly" }, "invalid"), false);
+});
+
+test("display and formatting helpers cover separators, source labels and account tags", () => {
+  const applet = makeApplet();
+
+  for (const [mode, expected] of [
+    ["bar", " | "],
+    ["dot", " · "],
+    ["slash", " // "],
+    ["brackets", " "],
+  ]) {
+    applet.panelAccountSeparator = mode;
+    assert.equal(applet._panelSeparator().plain, expected);
+    assert.equal(applet._panelSeparator().markup, expected);
+  }
+  applet.panelAccountSeparator = "unknown";
+  assert.equal(applet._panelSeparator().plain, " | ");
+
+  for (const [source, label] of Object.entries({
+    1: "5h", 2: "W", 3: "Ø", 4: "S5h", 5: "SW",
+    6: "SØ", 7: "S+", 8: "30d", 9: "CR", 10: "CV",
+  })) {
+    assert.equal(applet._panelSourceLabel(Number(source)), label);
+  }
+  assert.equal(applet._panelSourceLabel(0), "?");
+  assert.equal(applet._panelSourceLabel("1"), "5h");
+
+  assert.equal(applet._accountTag("Bernie Privat"), "BP");
+  assert.equal(applet._accountTag("A B C D"), "ABC");
+  assert.equal(applet._accountTag("Nufker"), "Nu");
+  assert.equal(applet._accountTag("---"), "?");
+  assert.equal(applet._accountTag("Ähre Öko"), "ÄÖ");
+});
+
+test("display separator and consumption selection helpers keep their scopes independent", () => {
+  const applet = makeApplet();
+  applet._displaySettings.alpha = {
+    account: "alpha",
+    hover: 1,
+    click: 1,
+    "hover-separator": true,
+    "click-separator": false,
+  };
+  assert.equal(applet._displaySeparatorEnabled("alpha", "hover"), true);
+  assert.equal(applet._displaySeparatorEnabled("alpha", "click"), false);
+  assert.equal(applet._displaySeparatorEnabled("alpha", "panel"), false);
+  assert.equal(applet._displaySeparatorEnabled("unknown", "hover"), false);
+
+  const windows = [
+    { pool: "main", limit_window_seconds: 18000, consumed_percentage_points: 1 },
+    { pool: "main", limit_window_seconds: 604800, consumed_percentage_points: 2 },
+    { pool: "main", limit_window_seconds: 2592000, consumed_percentage_points: 3 },
+    { pool: "spark", limit_window_seconds: 18000, consumed_percentage_points: 4 },
+    { pool: "main", limit_window_seconds: 18000, consumed_percentage_points: 5,
+      _consumption_query_key: "main|1|hours|ema-10|60" },
+  ];
+  assert.equal(applet._selectConsumptionWindows(windows, "short", "main").length, 2);
+  assert.equal(applet._selectConsumptionWindows(windows, "weekly", "main").length, 1);
+  assert.equal(applet._selectConsumptionWindows(windows, "monthly", "main").length, 1);
+  assert.equal(applet._selectConsumptionWindows(windows, "all", "main").length, 4);
+  assert.equal(applet._selectConsumptionWindows(windows, "spark", "spark").length, 1);
+  assert.equal(applet._selectConsumptionWindows(windows, "invalid", "main").length, 0);
+  assert.equal(applet._selectConsumptionWindows(
+    windows, "short", "main", "main|1|hours|ema-10|60"
+  ).length, 1);
+  assert.equal(applet._selectConsumptionWindows(
+    windows, "short", "main", "main|9|hours|ema-10|60"
+  ).length, 1);
+});
+
+test("mapping and primitive helpers are bounded and prototype-safe", () => {
+  const applet = makeApplet();
+  const rows = [
+    {account: "__proto__", value: 1},
+    {account: "toString", value: 2},
+  ];
+  for (const map of [
+    applet._panelSettingsMap(rows),
+    applet._alertSettingsMap(rows),
+    applet._displaySettingsMap(rows),
+    applet._styleMap(rows),
+    applet._consumptionSettingsMap(rows),
+    applet._creditSettingsMap(rows),
+    applet._resetSettingsMap(rows),
+  ]) {
+    assert.equal(Object.prototype.hasOwnProperty.call(map, "__proto__"), true);
+    assert.equal(Object.prototype.hasOwnProperty.call(map, "toString"), true);
+    assert.equal(map["__proto__"].value, 1);
+    assert.equal(map.toString.value, 2);
+  }
+  const targetMap = applet._targetMap([
+    {account: "__proto__", element: 4, value: 1},
+    {account: "toString", element: 4, value: 2},
+  ]);
+  assert.equal(Object.prototype.hasOwnProperty.call(targetMap, "__proto__:4"), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(targetMap, "toString:4"), true);
+  assert.equal(targetMap["__proto__:4"].value, 1);
+  assert.equal(targetMap["toString:4"].value, 2);
+  assert.equal(applet._styleRowsEqual(rows, rows.map((row) => Object.assign({}, row))), true);
+  assert.equal(applet._styleRowsEqual(rows, rows.slice(0, 1)), false);
+  assert.equal(applet._boundedInteger("2.6", 0, 10, 4), 3);
+  assert.equal(applet._boundedInteger("not-a-number", 0, 10, 4), 4);
+  assert.equal(applet._boundedInteger(99, 0, 10, 4), 10);
+  assert.equal(applet._strictIntegerSetting(3), 3);
+  assert.equal(applet._strictIntegerSetting("3"), null);
+  assert.equal(applet._shortText("  a\n b  ", 20), "a  b");
+  assert.match(applet._shortText("abcdefgh", 5), /…$/);
+  assert.equal(applet._accountTag("Bernie Second_Privat"), "BSP");
+  assert.equal(applet._accountTag(""), "?");
+  assert.equal(applet._statusLabel("unknown"), "Fehler");
+  assert.equal(applet._dateMillis("not-a-date"), null);
+  assert.equal(applet._dateMillis("2026-08-19T12:00:00Z"), 1787140800000);
+});
+
+test("baseline, custom credit and percent helpers preserve independent display states", () => {
+  const applet = makeApplet();
+  applet._elementTargetEnabled = () => true;
+  applet._styleSpan = (text) => text;
+
+  assert.equal(applet._baselineParts("alpha", {
+    "baseline-enabled": false,
+    "baseline-minutes": 60,
+  }, "panel", null), null);
+  assert.equal(applet._baselineParts("alpha", {
+    "baseline-enabled": true,
+    "baseline-minutes": 60,
+  }, "panel", null).plain, "AW60m=—");
+  assert.equal(applet._baselineParts("alpha", {
+    "baseline-enabled": true,
+    "baseline-minutes": 60,
+  }, "panel", { baseline_used_percent: 33.34 }).plain, "AW60m=33,3%");
+
+  assert.equal(applet._customCreditConsumptionText("{period}:{value}:{coverage}", {
+    period: "1 h", value: "2,5", coverage: "vollständig"
+  }), "1 h:2,5:vollständig");
+  assert.equal(applet._customCreditConsumptionText("", {
+    period: "1 h", value: "2,5", coverage: "vollständig"
+  }), "Δ1 h 2,5 Credit-%");
+  assert.equal(applet._customCreditText("{remaining}/{used}/{limit}/{percent}/{reset}", {
+    remaining: "8", used: "2", limit: "10", percent: "80", reset: "morgen"
+  }), "8/2/10/80/morgen");
+  assert.equal(applet._customCreditText("", { remaining: "8" }), "Credits 8");
+
+  assert.equal(applet._windowValue({ remaining: 80.4 }), "80%");
+  assert.equal(applet._windowValue({ remaining: null }), "–");
+  const missingPercent = applet._percentPartsFromValue(null, "alpha", "panel");
+  assert.equal(missingPercent.plain, "–");
+  assert.equal(missingPercent.markup, "–");
+  applet._elementTargetEnabled = () => false;
+  const hiddenPercent = applet._percentPartsFromValue(80, "alpha", "panel");
+  assert.equal(hiddenPercent.plain, "");
+  assert.equal(hiddenPercent.markup, "");
+});
+
 test("relative account paths are rejected before spawning CLI", () => {
   const applet = makeAccountSettingsApplet();
   let reloads = 0;
@@ -1796,6 +2293,212 @@ test("accounts without a Spark limit show no Spark and ignore edits", () => {
   assert.equal(normalized["spark-threshold"], "no Spark");
 });
 
+test("alert helper matrix distinguishes missing, monthly and Spark windows", () => {
+  const applet = makeAccountSettingsApplet();
+  const monthly = {
+    name: "30d",
+    duration_seconds: 2592000,
+    remaining: 74,
+  };
+  applet._usages = [{
+    account: "alpha",
+    status: "ok",
+    stale: false,
+    five_hour: { name: "5h", duration_seconds: 18000, remaining: 61 },
+    weekly: { name: "weekly", duration_seconds: 604800, remaining: 52 },
+    main: { available: true, windows: [monthly] },
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: true,
+        windows: [{
+          name: "5h",
+          duration_seconds: 18000,
+          remaining: 44,
+        }],
+      },
+    },
+  }];
+
+  assert.equal(applet._usageForAccount("alpha").account, "alpha");
+  assert.equal(applet._usageForAccount("missing"), null);
+  assert.equal(applet._alertWindowAvailable(applet._usages[0], "five"), true);
+  assert.equal(applet._alertWindowAvailable(applet._usages[0], "weekly"), true);
+  assert.equal(applet._alertWindowAvailable(applet._usages[0], "monthly"), true);
+  assert.equal(applet._alertWindowAvailable(null, "monthly"), false);
+  assert.equal(applet._sparkLimitState(applet._usages[0]), "present");
+  assert.equal(applet._sparkLimitState({account: "alpha", status: "partial", models: {}}), "unknown");
+  assert.equal(applet._sparkLimitState({account: "alpha", status: "ok", models: {}}), "none");
+
+  assert.equal(applet._alertThresholdValue(40, true, "missing"), "40");
+  assert.equal(applet._alertThresholdValue(40, false, "missing"), "missing");
+  assert.equal(applet._normalizeAlertThreshold(undefined, true, "missing", 23), "23");
+  assert.equal(applet._normalizeAlertThreshold(101, true, "missing", 23), null);
+  assert.equal(applet._normalizeAlertThreshold(101, false, "missing", 23), "missing");
+  assert.equal(applet._normalizeSparkThreshold("45", "present"), "45");
+  assert.equal(applet._normalizeSparkThreshold("45", "unknown"), "45");
+  assert.equal(applet._normalizeSparkThreshold("45", "none"), "no Spark");
+  assert.equal(applet._normalizeSparkThreshold("101", "present"), "20");
+});
+
+test("account and cache helpers keep identity and byte boundaries strict", () => {
+  const applet = makeApplet();
+
+  const account = {
+    account: "alpha",
+    label: "Alpha",
+    tag: "A",
+    "auth-json": "file:///tmp/auth",
+    "profile-dir": "file:///tmp/profile",
+    "test-home": true,
+    browser: 0,
+    "reactivation-browser": 0,
+    series: "B",
+    "series-active": true,
+    backend: 0,
+  };
+  assert.equal(applet._accountRowsEqual(account, Object.assign({}, account)), true);
+  assert.equal(applet._accountRowsEqual(
+    account,
+    Object.assign({}, account, {"test-home": 1})
+  ), false);
+  assert.equal(applet._accountRowsEqual(
+    account,
+    Object.assign({}, account, {"series-active": "true"})
+  ), false);
+  assert.equal(applet._isTestHomeProfile(""), false);
+  assert.equal(applet._isTestHomeProfile(42), false);
+
+  assert.equal(applet._staleAfterMs(), 360000);
+  applet.refreshInterval = 60;
+  assert.equal(applet._staleAfterMs(), 120000);
+  applet.refreshInterval = 9999;
+  assert.equal(applet._staleAfterMs(), 3660000);
+
+  assert.equal(applet._auxRequestKey(["codex-usage", "account", "alpha"]),
+    "codex-usage\u0000account\u0000alpha");
+  const euro = new Uint8Array(Buffer.from("€", "utf8"));
+  const first = applet._decodeLiveUtf8Chunk(new Uint8Array(0), euro.subarray(0, 2));
+  assert.equal(first.text, "");
+  const second = applet._decodeLiveUtf8Chunk(first.pending, euro.subarray(2));
+  assert.equal(second.text, "€");
+  assert.equal(second.pending.length, 0);
+});
+
+test("consumption window rendering keeps delta, coverage, baseline and token end independent", () => {
+  const applet = makeApplet();
+  const row = applet._defaultConsumptionRow("alpha");
+  row["show-panel"] = true;
+  row["show-tooltip"] = true;
+  row.format = "compact-token";
+  row["baseline-enabled"] = true;
+  row["baseline-minutes"] = 60;
+  row["show-coverage-marker"] = true;
+  row["forecast-show-panel"] = true;
+  row["forecast-show-tooltip"] = true;
+  applet.showConsumptionDelta = true;
+
+  const rendered = applet._consumptionWindowPart({
+    pool: "main",
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 3.25,
+    coverage: "complete",
+    baseline_used_percent: 2.5,
+    estimated_seconds_to_exhaustion: 3540,
+  }, row, "panel", null);
+
+  assert.match(rendered.plain, /Δ1S3,3P/);
+  assert.match(rendered.plain, /vollständig/);
+  assert.match(rendered.plain, /TE=/);
+
+  applet._consumptionSettings.alpha = row;
+  const usage = {
+    account: "alpha",
+    cost_windows: [{
+      pool: "main",
+      limit_window_seconds: 18000,
+      consumed_percentage_points: 3.25,
+      coverage: "complete",
+      baseline_used_percent: 2.5,
+      estimated_seconds_to_exhaustion: 3540,
+    }],
+  };
+  const parentRendered = applet._consumptionParts(usage, "panel");
+  assert.match(parentRendered.plain, /AW60m=2,5%/);
+
+  applet.showConsumptionDelta = false;
+  const withoutDelta = applet._consumptionWindowPart(usage.cost_windows[0], row, "panel", null);
+  assert.doesNotMatch(withoutDelta.plain, /Δ1S/);
+  row.format = "custom";
+  row["custom-format"] = "C {value} {window} {coverage}";
+  const custom = applet._consumptionWindowPart(usage.cost_windows[0], row, "panel", null);
+  assert.match(custom.plain, /^C 3,3 5h vollständig/);
+
+  row["hide-when-zero"] = true;
+  assert.equal(applet._consumptionWindowPart({
+    pool: "main",
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 0,
+    coverage: "complete",
+  }, row, "panel", null), null);
+
+  row["hide-when-zero"] = false;
+  const insufficient = applet._consumptionWindowPart({
+    pool: "main",
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 3,
+    coverage: "insufficient",
+  }, row, "panel", null);
+  assert.match(insufficient.plain, /nicht genügend Messdaten/);
+});
+
+test("process cleanup clears generations, timers, live login state and reactivations", () => {
+  const applet = makeApplet();
+  let primaryForced = 0;
+  applet._process = { force_exit: () => { primaryForced += 1; } };
+  applet._primaryRequest = {kind: "fresh"};
+  applet._generation = 4;
+  applet._setSource("_timeoutId", 10);
+  applet._cancelProcess();
+  assert.equal(primaryForced, 1);
+  assert.equal(applet._generation, 5);
+  assert.equal(applet._process, null);
+  assert.equal(applet._primaryRequest, null);
+  assert.equal(applet._timeoutId, 0);
+
+  let auxForced = 0;
+  applet._auxProcess = { force_exit: () => { auxForced += 1; } };
+  applet._auxCommand = "device-login";
+  applet._auxGeneration = 2;
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginActive.alpha = true;
+  applet._deviceLoginJobs = {};
+  applet._deviceLoginLiveText.alpha = {stdout: "partial", stderr: "error"};
+  applet._setSource("_auxTimeoutId", 11);
+  applet._cancelAuxProcess();
+  assert.equal(auxForced, 1);
+  assert.equal(applet._auxGeneration, 3);
+  assert.equal(applet._auxProcess, null);
+  assert.equal(applet._auxCommand, "");
+  assert.equal(applet._deviceLoginLiveAccount, "");
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._deviceLoginLiveText)), {});
+  assert.equal(applet._deviceLoginActive.alpha, undefined);
+  assert.equal(applet._auxTimeoutId, 0);
+
+  let reactivationForced = 0;
+  applet._reactivations.alpha = {
+    done: false,
+    timeoutId: 12,
+    process: {force_exit: () => { reactivationForced += 1; }},
+  };
+  applet._reactivationErrors.alpha = "old error";
+  applet._cancelReactivation("alpha");
+  assert.equal(reactivationForced, 1);
+  assert.equal(applet._reactivations.alpha, undefined);
+  assert.equal(applet._reactivationErrors.alpha, undefined);
+  applet._cancelReactivations();
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._reactivations)), {});
+});
+
 test("usage refresh re-normalizes Spark threshold after backend overview", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
@@ -1999,6 +2702,26 @@ test("panel slots can render credits and calculated credit consumption", () => {
   );
 });
 
+test("custom credit consumption retains the enabled coverage marker", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:12"] = {panel: true, hover: true, click: true};
+  applet._creditSettings = {alpha: {
+    account: "alpha", "consumption-show-panel": true,
+    "consumption-show-tooltip": true, "consumption-amount": 1,
+    "consumption-unit": "hours", "consumption-format": "custom",
+    "consumption-custom-format": "CV {period}: {value}%",
+    "consumption-hide-when-zero": false,
+    "consumption-show-coverage-marker": true,
+    "consumption-baseline-enabled": false,
+  }};
+  applet._usages[0].cost_windows = [{
+    pool: "credits", lookback_seconds: 3600, limit_window_seconds: 2592000,
+    consumed_percentage_points: 12.3, coverage: "partial", sample_count: 2,
+  }];
+  const rendered = applet._creditConsumptionParts(applet._usages[0], "panel");
+  assert.equal(rendered.plain, "CV 1 h: 12,3% (mindestens)");
+});
+
 test("credit balances are displayed as whole numbers", () => {
   const applet = makeApplet();
   const alpha = applet._usages[0];
@@ -2020,6 +2743,20 @@ test("credit balances are displayed as whole numbers", () => {
     applet._panelContent(items.filter((item) => item.visible)).plain,
     "A CR: 794 / 999 (Verbrauch 20, –%)"
   );
+});
+
+test("credit hide-when-zero does not hide a positive balance with zero usage", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:11"] = {panel: true, hover: true, click: true};
+  applet._creditSettings = {alpha: {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    format: "compact", "hide-when-zero": true,
+    "show-coverage-marker": false, "baseline-enabled": false,
+  }};
+  applet._usages[0].credits = {remaining: 794, limit: 1000, used: 0, percent: 0};
+  const rendered = applet._creditParts(applet._usages[0], "panel");
+  assert.ok(rendered);
+  assert.equal(rendered.plain, "CR 794");
 });
 
 test("credit hover omits credit consumption when its hover setting is disabled", () => {
@@ -2165,7 +2902,7 @@ test("consumption forecast is rendered from backend DTO", () => {
   const rendered = applet._consumptionParts(usage, "panel");
 
   assert.match(rendered.plain, /TE=/);
-  assert.match(rendered.plain, /50m/);
+  assert.match(rendered.plain, /0,8h/);
 });
 
 test("own baseline does not hide delta or token end", () => {
@@ -2180,16 +2917,537 @@ test("own baseline does not hide delta or token end", () => {
     "baseline-minutes": 60,
   };
   const usage = applet._usages[0];
-  usage.cost_windows = [{
+  usage.cost_windows = applet._safeConsumptionWindows([{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 12.5, baseline_used_percent: 40,
+    estimated_seconds_to_exhaustion: 600, coverage: "complete", sample_count: 3,
+  }]);
+
+  const rendered = applet._consumptionParts(usage, "panel");
+  assert.match(rendered.plain, /Δ1 h 12,5%/);
+  assert.match(rendered.plain, /TE=0,2h/);
+  assert.match(rendered.plain, /AW60m=40,0%/);
+});
+
+test("enabled own baseline remains visible when the legacy baseline target is disabled", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:13"] = {panel: false, hover: false, click: false};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", "hide-when-zero": false,
+    "show-coverage-marker": false, "baseline-enabled": true,
+    "baseline-minutes": 60,
+  };
+  applet._usages[0].cost_windows = [{
     pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
     consumed_percentage_points: 12.5, baseline_used_percent: 40,
     estimated_seconds_to_exhaustion: 600, coverage: "complete", sample_count: 3,
   }];
+  const rendered = applet._consumptionParts(applet._usages[0], "panel");
+  assert.match(rendered.plain, /AW60m=40,0%/);
+});
+
+test("token end keeps its own baseline and compact duration is decimal hours", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short",
+    format: "compact", "custom-format": "", "hide-when-zero": false,
+    "show-coverage-marker": false, "baseline-enabled": false,
+    "baseline-minutes": 60, "forecast-show-panel": true,
+    "forecast-show-tooltip": true, "forecast-limit-window": "short",
+    "forecast-format": "compact", "forecast-custom-format": "",
+    "forecast-show-coverage-marker": false, "forecast-baseline-enabled": true,
+    "forecast-baseline-minutes": 30, "forecast-hide-when-zero": false,
+    "forecast-smoothing": "ema-20", "forecast-warn-amount": 2,
+    "forecast-warn-unit": "hours", "forecast-warn-format": "none"
+  };
+  const usage = applet._usages[0];
+  usage.cost_windows = applet._safeConsumptionWindows([{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 12.56, baseline_used_percent: 33.3,
+    estimated_seconds_to_exhaustion: 354 * 60, coverage: "complete", sample_count: 3,
+  }]);
 
   const rendered = applet._consumptionParts(usage, "panel");
-  assert.match(rendered.plain, /Δ1 h 12,5%/);
-  assert.match(rendered.plain, /TE=10m/);
-  assert.match(rendered.plain, /AW60m=40,0%/);
+  assert.match(rendered.plain, /Δ1 h 12,6%/);
+  assert.match(rendered.plain, /TE=5,9h/);
+  assert.match(rendered.plain, /AW30m=33,3%/);
+  assert.equal(applet._formatDurationPart(354, 0, true), "5,9h");
+  assert.equal(applet._formatDurationPart(354, 0, false), "5h 54m");
+  assert.equal(applet._formatDurationPart(150, 0), "2h 30m");
+});
+
+test("custom token-end format is preserved in visible markup", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  const rendered = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 354 * 60, coverage: "complete",
+  }, {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    format: "custom", "custom-format": "Ende in {duration}",
+    "show-coverage-marker": false, "baseline-enabled": false,
+    "forecast-warn-amount": 0, "forecast-warn-unit": "hours",
+  }, "panel", 50);
+  assert.equal(rendered.plain, "Ende in 5h 54m");
+  assert.match(rendered.markup, /Ende in 5h 54m/);
+  assert.doesNotMatch(rendered.markup, /Zeit bis Tokenende/);
+});
+
+test("missing token-end estimate does not duplicate its configured baseline in markup", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  const rendered = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: null, coverage: "stale", baseline_used_percent: 42,
+  }, {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    format: "compact", "show-coverage-marker": false,
+    "baseline-enabled": true, "baseline-minutes": 60,
+    "forecast-warn-amount": 0, "forecast-warn-unit": "hours",
+  }, "panel", 50);
+  assert.equal(rendered.plain, "TE=— AW60m=42,0%");
+  assert.equal((rendered.markup.match(/AW60m=42,0%/g) || []).length, 1);
+});
+
+test("emergency display override enables delta and selects its window without mutating settings", () => {
+  const applet = makeApplet();
+  applet.showConsumptionDelta = false;
+  applet._readEmergencyDisplayOverride = () => ({limit_window: "weekly"});
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": false, "show-tooltip": false,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", "hide-when-zero": false,
+    "show-coverage-marker": false, "baseline-enabled": false,
+    "baseline-minutes": 60
+  };
+  const usage = applet._usages[0];
+  usage.cost_windows = [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 604800,
+    consumed_percentage_points: 4.25, estimated_seconds_to_exhaustion: null,
+    coverage: "complete", sample_count: 3
+  }];
+  const rendered = applet._consumptionParts(usage, "panel");
+  assert.match(rendered.plain, /Δ1 h 4,3%/);
+  assert.equal(applet._consumptionSettings.alpha["limit-window"], "short");
+});
+
+test("fast-mode state helpers report active accounts, flex events and safe defaults", () => {
+  const applet = makeApplet();
+  applet._fastModeState = {
+    modes: {
+      beta: {state: "active"},
+      alpha: {state: "idle"},
+      malformed: "active",
+    },
+    last_event: {mode: "flex", account: "old", reason: "Reset"},
+  };
+  assert.equal(applet._fastModeIsActive(), true);
+  assert.equal(
+    applet._fastModeStatusText(),
+    "⚠ Fast-Modus aktiv · beta · Hinweis alle 15 Minuten"
+  );
+
+  applet._fastModeState = {
+    modes: {alpha: {state: "idle"}},
+    last_event: {mode: "flex", account: "alpha", reason: "Reset"},
+  };
+  assert.equal(applet._fastModeIsActive(), false);
+  assert.equal(applet._fastModeStatusText(), "⚠ Flex-Modus · alpha · Reset");
+
+  applet._fastModeState = null;
+  assert.equal(applet._fastModeIsActive(), false);
+  assert.equal(applet._fastModeStatusText(), "");
+  applet._readFastModeState = () => ({modes: {gamma: {state: "active"}}, last_event: null});
+  applet._refreshFastModeState();
+  assert.equal(applet._fastModeIsActive(), true);
+  assert.equal(applet._readEmergencyDisplayOverride(""), null);
+  assert.equal(applet._readEmergencyDisplayOverride(42), null);
+});
+
+test("error notification persistence retries failed writes and menu markup stays bounded", () => {
+  const applet = makeApplet();
+  const writes = [];
+  let fail = true;
+  applet.settings = {
+    setValue: (key, value) => {
+      writes.push([key, value]);
+      if (fail) {
+        throw new Error("settings unavailable");
+      }
+    },
+  };
+  applet._persistErrorNotificationState("{\"x\":1}");
+  assert.equal(applet._errorNotificationStateWritePending, "{\"x\":1}");
+  assert.equal(writes.length, 1);
+  fail = false;
+  applet._retryErrorNotificationStateWrite();
+  assert.equal(applet._errorNotificationStateWritePending, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(writes)), [
+    ["error-notification-state", "{\"x\":1}"],
+    ["error-notification-state", "{\"x\":1}"],
+  ]);
+
+  const menu = {items: [], addMenuItem: (item) => menu.items.push(item)};
+  const disabled = applet._addDisabled(menu, "x".repeat(400), "codex-usage-detail");
+  assert.equal(menu.items.length, 1);
+  assert.equal(disabled.label.text.length, 240);
+  assert.equal(disabled.label.text.endsWith("…"), true);
+  let markup = null;
+  applet._setItemMarkup({
+    label: {clutter_text: {set_markup: (value) => { markup = value; }}},
+  }, "<b>safe</b>");
+  assert.equal(markup, "<b>safe</b>");
+});
+
+test("account control and terminal menu actions dispatch their guarded callbacks", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  applet._panelSettings.alpha = {
+    account: "alpha", muted: false, order: 1, slot1: 1, slot2: 0,
+  };
+  applet._alertSettings.alpha = {
+    account: "alpha", warnings: true, errors: true,
+    "five-threshold": "20", "weekly-threshold": "20",
+    "monthly-threshold": "20", "spark-threshold": "no Spark",
+  };
+  const calls = [];
+  applet._updateAccountPanelSetting = (account, changes) => calls.push([account, "panel", changes]);
+  applet._updateAccountAlertSetting = (account, changes) => calls.push([account, "alert", changes]);
+  applet._startDeviceLogin = (value) => calls.push([value.account, "login"]);
+  applet._manageAccount = (value) => calls.push([value.account, "manage"]);
+  applet._startAccountTerminal = (value) => calls.push([value.account, "terminal"]);
+
+  const target = {items: [], addMenuItem: (item) => target.items.push(item)};
+  applet._addAccountControls(usage, target);
+  applet._addAccountTerminalAction(usage, target);
+  const submenu = target.items[0];
+  assert.equal(submenu.label.text, "Alpha steuern");
+
+  const [visible, warnings, errors, login, manage] = submenu.menu.items;
+  visible.state = false;
+  visible.emit("toggled");
+  warnings.state = false;
+  warnings.emit("toggled");
+  errors.state = false;
+  errors.emit("toggled");
+  login.emit("activate");
+  manage.emit("activate");
+  target.items[1].emit("activate");
+
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ["alpha", "panel", {muted: true}],
+    ["alpha", "alert", {warnings: false}],
+    ["alpha", "alert", {errors: false}],
+    ["alpha", "login"],
+    ["alpha", "manage"],
+    ["alpha", "terminal"],
+  ]);
+
+  const activeTarget = {items: [], addMenuItem: (item) => activeTarget.items.push(item)};
+  applet._deviceLoginActive.alpha = true;
+  applet._cancelDeviceLogin = (account) => calls.push([account, "cancel"]);
+  applet._addAccountControls(usage, activeTarget);
+  const cancel = activeTarget.items[0].menu.items.find((item) => item.label.text === "Device-Login abbrechen");
+  cancel.emit("activate");
+  assert.deepEqual(calls[calls.length - 1], ["alpha", "cancel"]);
+});
+
+test("account menu adds reset and dynamic limit details without mixing windows", () => {
+  const applet = makeApplet();
+  const target = {items: [], addMenuItem: (item) => target.items.push(item)};
+  const usage = {
+    account: "alpha",
+    five_hour: {name: "5h", duration_seconds: 18000, remaining: 88},
+    weekly: {name: "weekly", duration_seconds: 604800, remaining: 77},
+    main: {
+      windows: [
+        {name: "weekly", duration_seconds: 604800, remaining: 71},
+        {name: "monthly", duration_seconds: 2592000, remaining: 63},
+      ],
+    },
+    models: {
+      "gpt-5.3-codex-spark": {
+        windows: [
+          {name: "5h", duration_seconds: 18000, remaining: 42},
+          {name: "weekly", duration_seconds: 604800, remaining: 37},
+        ],
+      },
+    },
+  };
+  applet._routingDecisions = {
+    alpha: {decision: "spark", policy_source: "account"},
+  };
+  applet._backendSummary = () => "Direkt";
+  applet._windowResetParts = (window) => window ? {
+    plain: "in 1h",
+    markup: "in 1h",
+  } : {plain: "", markup: ""};
+  applet._percentParts = (window) => window ? {
+    plain: `${window.remaining}%`,
+    markup: `${window.remaining}%`,
+  } : {plain: "", markup: ""};
+
+  applet._addResetDetail(usage, target);
+  applet._addDynamicLimitDetails(usage, target);
+
+  assert.equal(target.items.length, 4);
+  assert.match(target.items[0].label.text, /5h Reset/);
+  assert.match(target.items[0].label.text, /Woche Reset/);
+  assert.match(target.items[0].label.text, /30d Reset/);
+  assert.match(target.items[0].label.text, /Abruf Direkt/);
+  assert.equal(target.items[1].label.text, "Monat 63% (in 1h)");
+  assert.equal(target.items[2].label.text, "Spark 5h 42% (in 1h) · Woche 37% (in 1h)");
+  assert.equal(target.items[3].label.text, "Routing Spark · Regel account");
+});
+
+test("reactivation menu reports running and failed states and starts only once", () => {
+  const applet = makeApplet();
+  const usage = {account: "alpha", label: "Alpha"};
+  const target = {items: [], addMenuItem: (item) => target.items.push(item)};
+  applet._reactivations.alpha = {process: {}};
+  applet._addReactivationAction(usage, target);
+  assert.equal(target.items.length, 1);
+  assert.match(target.items[0].label.text, /Login läuft/);
+
+  delete applet._reactivations.alpha;
+  applet._reactivationErrors.alpha = "Browser nicht verfügbar";
+  let starts = 0;
+  applet._reactivateAccount = () => {
+    if (applet._reactivations.alpha) {
+      return;
+    }
+    starts += 1;
+    applet._reactivations.alpha = {process: {}};
+  };
+  const retryTarget = {items: [], addMenuItem: (item) => retryTarget.items.push(item)};
+  applet._addReactivationAction(usage, retryTarget);
+  assert.equal(retryTarget.items.length, 2);
+  assert.equal(retryTarget.items[0].label.text, "Alpha reaktivieren");
+  assert.equal(retryTarget.items[1].label.text, "Browser nicht verfügbar");
+  retryTarget.items[0].emit("activate");
+  retryTarget.items[0].emit("activate");
+  assert.equal(starts, 1);
+});
+
+test("health and common action menu callbacks use guarded commands", () => {
+  const applet = makeApplet();
+  const menu = {
+    items: [],
+    addMenuItem: (item) => menu.items.push(item),
+    addAction: (label, callback) => {
+      const item = {label: {text: label}, _signals: {}, connect(signal, handler) {
+        this._signals[signal] = handler;
+      }, emit(signal) {
+        return this._signals[signal](this);
+      }, setSensitive(value) { this.sensitive = value; }};
+      menu.items.push(item);
+      item.connect("activate", callback);
+      return item;
+    },
+  };
+  applet.menu = menu;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  const calls = [];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv.slice(1));
+    callback({healthy: true}, null);
+  };
+  applet._addHealthAction(menu);
+  menu.items[0].emit("activate");
+  assert.deepEqual(calls, [["health", "--format", "json"]]);
+  assert.equal(menu.items[1].label.text, '{"healthy":true}');
+
+  let refreshes = 0;
+  let analytics = 0;
+  let settings = 0;
+  applet._refreshFresh = () => { refreshes += 1; };
+  applet._openAnalytics = () => { analytics += 1; };
+  applet._openSettings = () => { settings += 1; };
+  applet._refreshing = false;
+  applet._addActions();
+  menu.items.slice(2).forEach((item) => item.emit("activate"));
+  assert.equal(refreshes, 1);
+  assert.equal(analytics, 1);
+  assert.equal(settings, 1);
+});
+
+test("settings launcher uses the applet instance and schedules bounded maximization", () => {
+  const subprocessCalls = [];
+  const scheduleCalls = [];
+  const applet = makeApplet((runtime) => {
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {};
+    };
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      runtime.settingsCallbacks.push(callback);
+      return runtime.settingsCallbacks.length;
+    };
+    runtime.settingsCallbacks = [];
+  });
+  const scheduleSettingsMaximize = applet._scheduleSettingsMaximize;
+  applet._scheduleSettingsMaximize = () => { scheduleCalls.push("scheduled"); };
+  applet.instanceId = 17;
+  applet._openSettings();
+  assert.deepEqual(scheduleCalls, ["scheduled"]);
+  assert.equal(JSON.stringify(subprocessCalls[0]), JSON.stringify([
+    ["xlet-settings", "applet", "codex-usage@H234598", "-i", "17"],
+    0,
+  ]));
+
+  applet._scheduleSettingsMaximize = scheduleSettingsMaximize;
+  applet._scheduleSettingsMaximize();
+  assert.equal(applet._settingsMaximizeId, 1);
+});
+
+test("settings maximization retries up to twelve times and stops after removal", () => {
+  const callbacks = [];
+  const subprocessCalls = [];
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {};
+    };
+  });
+  applet._scheduleSettingsMaximize();
+  assert.equal(callbacks.length, 1);
+  for (let index = 0; index < 12; index += 1) {
+    assert.equal(callbacks[0](), index < 11);
+  }
+  assert.equal(subprocessCalls.length, 12);
+  assert.equal(subprocessCalls[0][0][0], "wmctrl");
+  assert.deepEqual(
+    Array.from(subprocessCalls[0][0].slice(1)),
+    ["-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz"]
+  );
+  assert.equal(applet._settingsMaximizeId, 0);
+
+  applet._removed = false;
+  applet._scheduleSettingsMaximize();
+  applet._removed = true;
+  assert.equal(callbacks[1](), false);
+  assert.equal(subprocessCalls.length, 12);
+  assert.equal(applet._settingsMaximizeId, 0);
+});
+
+test("health action reports command and backend failures without retaining work", () => {
+  const applet = makeApplet();
+  const menu = {
+    items: [],
+    addMenuItem: (item) => menu.items.push(item),
+    addAction: (label, callback) => {
+      const item = {label: {text: label}, _signals: {}, connect(signal, handler) {
+        this._signals[signal] = handler;
+      }, emit(signal) {
+        return this._signals[signal](this);
+      }};
+      menu.items.push(item);
+      item.connect("activate", callback);
+      return item;
+    },
+  };
+  let error = "";
+  applet._showCommandError = (value) => { error = value; };
+  applet._baseCommandArgv = () => { throw new Error("health command missing"); };
+  applet._addHealthAction(menu);
+  menu.items[0].emit("activate");
+  assert.match(error, /health command missing/);
+
+  error = "";
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (_argv, callback) => callback(null, "health backend failed");
+  menu.items[0].emit("activate");
+  assert.equal(error, "health backend failed");
+  assert.equal(menu.items.length, 1);
+});
+
+test("common actions disable refresh and expose systemd repair only when needed", () => {
+  const applet = makeApplet();
+  const menu = {
+    items: [],
+    addMenuItem: (item) => menu.items.push(item),
+    addAction: (label, callback) => {
+      const item = {label: {text: label}, _signals: {}, connect(signal, handler) {
+        this._signals[signal] = handler;
+      }, emit(signal) {
+        return this._signals[signal](this);
+      }, setSensitive(value) { this.sensitive = value; }};
+      menu.items.push(item);
+      item.connect("activate", callback);
+      return item;
+    },
+  };
+  applet.menu = menu;
+  applet._refreshing = true;
+  applet.pollOwner = "systemd";
+  applet._serviceChecked = true;
+  applet._systemdActive = false;
+  let enabled = 0;
+  applet._enableBackgroundService = () => { enabled += 1; };
+  applet._addActions();
+  assert.equal(menu.items[0].sensitive, false);
+  assert.equal(menu.items[1].label.text, "Hintergrunddienst aktivieren");
+  menu.items[1].emit("activate");
+  assert.equal(enabled, 1);
+});
+
+test("panel click opens the menu and refreshes only when it was closed", () => {
+  const applet = makeApplet();
+  let toggles = 0;
+  let builds = 0;
+  let refreshes = 0;
+  applet.menu = {
+    isOpen: false,
+    toggle() { toggles += 1; },
+  };
+  applet._menuDirty = true;
+  applet._buildUsageMenu = () => { builds += 1; };
+  applet._usesAppletPolling = () => true;
+  applet._refreshFresh = () => { refreshes += 1; };
+  applet.on_applet_clicked();
+  assert.equal(toggles, 1);
+  assert.equal(builds, 1);
+  assert.equal(refreshes, 1);
+
+  applet.menu.isOpen = true;
+  applet._menuDirty = false;
+  applet.on_applet_clicked();
+  assert.equal(toggles, 2);
+  assert.equal(builds, 1);
+  assert.equal(refreshes, 1);
+
+  applet._removed = true;
+  applet.on_applet_clicked();
+  assert.equal(toggles, 2);
+});
+
+test("analytics action uses the fixed URL and reports browser failures", () => {
+  const calls = [];
+  const applet = makeApplet((runtime) => {
+    runtime.appInfoFactory = (...args) => { calls.push(args); };
+  });
+  applet._openAnalytics();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "https://chatgpt.com/codex/cloud/settings/analytics");
+  assert.equal(calls[0][1], null);
+
+  let error = "";
+  applet._showCommandError = (value) => { error = value; };
+  applet._openAnalytics = Object.getPrototypeOf(applet)._openAnalytics;
+  applet._openAnalytics.call(Object.assign(applet, {
+    _analyticsFailure: true,
+  }));
+  assert.equal(error, "");
 });
 
 test("forecast table coverage is not replaced by consumption defaults", () => {
@@ -2217,6 +3475,197 @@ test("forecast table coverage is not replaced by consumption defaults", () => {
   applet._onForecastSettingsChanged();
   assert.equal(applet._consumptionSettings.alpha["show-coverage-marker"], true);
   assert.equal(applet._consumptionSettings.alpha["forecast-show-coverage-marker"], false);
+});
+
+test("incomplete forecast rows retain the disabled token-end panel default", () => {
+  const applet = makeApplet();
+  const forecast = applet._normalizeForecastRow({account: "alpha"}, "alpha");
+  assert.ok(forecast);
+  assert.equal(forecast["show-panel"], false);
+  assert.equal(forecast["show-tooltip"], true);
+});
+
+test("combined token and credit rows round-trip without crossing table fields", () => {
+  const applet = makeApplet();
+  const accounts = [{account: "alpha"}];
+  const consumption = applet._defaultConsumptionRow("alpha");
+  const forecast = Object.assign(applet._defaultForecastRow("alpha"), {
+    "show-panel": true,
+    "limit-window": "monthly",
+    format: "custom",
+    "custom-format": "TE {duration}",
+    smoothing: "ema-5",
+    "baseline-enabled": true,
+    "baseline-minutes": 90,
+  });
+  const combinedConsumption = applet._combineConsumptionRows([consumption], [forecast]);
+  assert.equal(combinedConsumption[0]["forecast-show-panel"], true);
+  assert.equal(combinedConsumption[0]["forecast-limit-window"], "monthly");
+  assert.equal(combinedConsumption[0]["forecast-custom-format"], "TE {duration}");
+  assert.equal(combinedConsumption[0].smoothing, "ema-10");
+  const storedConsumption = applet._consumptionStorageRow(combinedConsumption[0]);
+  assert.equal(storedConsumption["forecast-show-panel"], undefined);
+  assert.equal(storedConsumption["forecast-format"], undefined);
+  assert.equal(storedConsumption.smoothing, "ema-10");
+  const restoredForecast = applet._mergedForecastRows(
+    accounts,
+    null,
+    [combinedConsumption[0]]
+  )[0];
+  assert.equal(restoredForecast["show-panel"], true);
+  assert.equal(restoredForecast["limit-window"], "monthly");
+  assert.equal(restoredForecast["custom-format"], "TE {duration}");
+  assert.equal(restoredForecast.smoothing, "ema-5");
+
+  const credit = Object.assign(applet._defaultCreditRow("alpha"), {
+    "show-panel": true,
+    format: "custom",
+    "custom-format": "CR {remaining}",
+    "consumption-show-panel": true,
+    "consumption-amount": 2,
+    "consumption-format": "verbose",
+    "consumption-smoothing": "ema-5",
+  });
+  const creditConsumption = Object.assign(applet._defaultCreditConsumptionRow("alpha"), {
+    "show-panel": true,
+    amount: 2,
+    format: "verbose",
+    smoothing: "ema-5",
+  });
+  const combinedCredit = applet._combineCreditRows([credit], [creditConsumption]);
+  assert.equal(combinedCredit[0]["consumption-show-panel"], true);
+  assert.equal(combinedCredit[0]["consumption-amount"], 2);
+  assert.equal(combinedCredit[0]["consumption-smoothing"], "ema-5");
+  assert.equal(combinedCredit[0].format, "custom");
+  const storedCredit = applet._creditStorageRow(combinedCredit[0]);
+  assert.equal(storedCredit["consumption-show-panel"], undefined);
+  assert.equal(storedCredit["consumption-amount"], undefined);
+  assert.equal(storedCredit.format, "custom");
+  assert.equal(storedCredit["custom-format"], "CR {remaining}");
+});
+
+test("forecast merger preserves partial legacy fields beyond panel and format", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {alpha: {}, beta: {}};
+  const rows = applet._mergedForecastRows(
+    [{account: "alpha"}, {account: "beta"}],
+    null,
+    [{
+      account: "alpha",
+      "forecast-smoothing": "ema-5",
+      "forecast-limit-window": "monthly",
+      "forecast-show-coverage-marker": false,
+      "forecast-baseline-enabled": true,
+      "forecast-baseline-minutes": 90,
+    }]
+  );
+  assert.equal(rows[0].smoothing, "ema-5");
+  assert.equal(rows[0]["limit-window"], "monthly");
+  assert.equal(rows[0]["show-coverage-marker"], false);
+  assert.equal(rows[0]["baseline-enabled"], true);
+  assert.equal(rows[0]["baseline-minutes"], 90);
+  assert.equal(rows[1]["show-panel"], false);
+});
+
+test("credit-consumption merger preserves partial legacy fields beyond amount and format", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {alpha: {}, beta: {}};
+  const rows = applet._mergedCreditConsumptionRows(
+    [{account: "alpha"}, {account: "beta"}],
+    null,
+    [{
+      account: "alpha",
+      "consumption-smoothing": "ema-5",
+      "consumption-hide-when-zero": true,
+      "consumption-show-coverage-marker": false,
+      "consumption-baseline-enabled": true,
+      "consumption-baseline-minutes": 90,
+    }]
+  );
+  assert.equal(rows[0].smoothing, "ema-5");
+  assert.equal(rows[0]["hide-when-zero"], true);
+  assert.equal(rows[0]["show-coverage-marker"], false);
+  assert.equal(rows[0]["baseline-enabled"], true);
+  assert.equal(rows[0]["baseline-minutes"], 90);
+  assert.equal(rows[1]["show-panel"], false);
+});
+
+test("invalid current forecast rows do not fall back to stale legacy rows", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {alpha: {}};
+  const rows = applet._mergedForecastRows(
+    [{account: "alpha"}],
+    [{account: "alpha", "show-panel": "yes"}],
+    [{account: "alpha", "forecast-smoothing": "ema-5"}]
+  );
+  assert.equal(rows[0].smoothing, "ema-20");
+  assert.equal(rows[0]["show-panel"], false);
+});
+
+test("invalid current credit-consumption rows do not fall back to stale legacy rows", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {alpha: {}};
+  const rows = applet._mergedCreditConsumptionRows(
+    [{account: "alpha"}],
+    [{account: "alpha", "hide-when-zero": "yes"}],
+    [{account: "alpha", "consumption-smoothing": "ema-5"}]
+  );
+  assert.equal(rows[0].smoothing, "ema-20");
+  assert.equal(rows[0]["hide-when-zero"], false);
+});
+
+test("account row mergers fail closed on an invalid first duplicate", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {alpha: {}};
+  const validPanel = applet._defaultPanelRow("alpha", 2);
+  const panel = applet._mergedPanelRows(
+    [{account: "alpha"}],
+    [{account: "alpha", order: "bad"}, validPanel]
+  );
+  assert.equal(panel[0].order, 1);
+
+  const validConsumption = Object.assign(applet._defaultConsumptionRow("alpha"), {amount: 2});
+  const consumption = applet._mergedConsumptionRows(
+    [{account: "alpha"}],
+    [{account: "alpha", amount: 0}, validConsumption]
+  );
+  assert.equal(consumption[0].amount, 1);
+
+  const validReset = Object.assign(applet._defaultResetRow("alpha"), {"show-panel": true});
+  const reset = applet._mergedResetRows(
+    [{account: "alpha"}],
+    [{account: "alpha", "show-panel": "yes"}, validReset]
+  );
+  assert.equal(reset[0]["show-panel"], false);
+
+  const validAlert = Object.assign(applet._defaultAlertRow("alpha"), {warnings: false});
+  const alerts = applet._mergedAlertRows(
+    [{account: "alpha"}],
+    [{account: "alpha", warnings: "yes"}, validAlert]
+  );
+  assert.equal(alerts[0].warnings, true);
+
+  const validDisplay = Object.assign(applet._defaultDisplayRow("alpha"), {panel: 0});
+  const display = applet._mergedDisplayRows(
+    [{account: "alpha"}],
+    [{account: "alpha", panel: "bad"}, validDisplay]
+  );
+  assert.equal(display[0].panel, 2);
+
+  const validStyle = Object.assign(applet._defaultStyleRow("alpha", "percent"), {threshold: 5});
+  const styles = applet._mergedStyleRows(
+    [{account: "alpha"}],
+    [{account: "alpha", threshold: "bad"}, validStyle],
+    "percent"
+  );
+  assert.equal(styles[0].threshold, 20);
+
+  const validTarget = {account: "alpha", element: 4, panel: false, hover: true, click: true};
+  const targets = applet._mergedTargetRows(
+    [{account: "alpha"}],
+    [{account: "alpha", element: 4, panel: "bad", hover: true, click: true}, validTarget]
+  );
+  assert.equal(targets.find((row) => row.element === 4).panel, false);
 });
 
 test("all four metric tables keep AW, token end, credits and coverage independent", () => {
@@ -2270,7 +3719,7 @@ test("all four metric tables keep AW, token end, credits and coverage independen
       const credits = applet._creditParts(usage, "panel", true, "CR").plain;
       const creditConsumption = applet._creditConsumptionParts(usage, "panel", true, "CV").plain;
       assert.match(token, /Δ1 h 12,5%/);
-      assert.match(token, /TE=10m/);
+  assert.match(token, /TE=0,2h/);
       assert.equal(token.includes("AW60m="), baselineEnabled);
       assert.equal(token.includes("(mindestens)"), coverageEnabled);
       assert.equal(credits.includes("AW60m="), baselineEnabled);
@@ -2459,7 +3908,228 @@ test("token end can use a different configured limit than token consumption", ()
   ];
   const rendered = applet._consumptionParts(usage, "panel");
   assert.match(rendered.plain, /Δ1 h 10,0%/);
-  assert.match(rendered.plain, /TE=10m/);
+  assert.match(rendered.plain, /TE=0,2h/);
+});
+
+test("separate same-pool refreshes preserve consumption and token-end windows", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short",
+    "forecast-limit-window": "weekly", format: "compact", "custom-format": "",
+    "forecast-format": "compact", "forecast-custom-format": "",
+    "hide-when-zero": false, "show-coverage-marker": true,
+    "forecast-baseline-enabled": true, "forecast-baseline-minutes": 30,
+  };
+  applet._usages = [{account: "alpha", cost_windows: []}];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._updatePanel = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    const limitWindow = argv[argv.indexOf("--limit-window") + 1];
+    const weekly = limitWindow === "weekly";
+    callback({
+      account_id: "alpha",
+      windows: [{
+        lookback_seconds: weekly ? 3600 : 1800,
+        pool: "main",
+        limit_window_seconds: weekly ? 604800 : 18000,
+        consumed_percentage_points: weekly ? 20 : 10,
+        estimated_seconds_to_exhaustion: weekly ? 600 : 300,
+        baseline_used_percent: weekly ? 33.3 : 12.5,
+        coverage: "complete",
+        sample_count: 3,
+      }],
+    }, null);
+  };
+
+  applet._refreshConsumption();
+  assert.equal(
+    Array.from(applet._usages[0].cost_windows, window => window.limit_window_seconds).sort((a, b) => a - b).join(","),
+    "18000,604800"
+  );
+  const rendered = applet._consumptionParts(applet._usages[0], "panel");
+  assert.match(rendered.plain, /Δ1 h 10,0%/);
+  assert.match(rendered.plain, /TE=0,2h/);
+  assert.match(rendered.plain, /AW30m=33,3%/);
+});
+
+test("same-window consumption and token-end queries retain their own smoothing results", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", smoothing: "ema-10", "hide-when-zero": false,
+    "show-coverage-marker": false, "baseline-enabled": true, "baseline-minutes": 60,
+    "forecast-show-panel": true, "forecast-show-tooltip": true,
+    "forecast-limit-window": "short", "forecast-format": "compact",
+    "forecast-smoothing": "ema-20", "forecast-show-coverage-marker": false,
+    "forecast-baseline-enabled": true, "forecast-baseline-minutes": 30,
+  };
+  applet._usages = [{account: "alpha", cost_windows: []}];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._updatePanel = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    const smoothing = argv[argv.indexOf("--smoothing") + 1];
+    const forecast = smoothing === "ema-20";
+    callback({account_id: "alpha", windows: [{
+      pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+      consumed_percentage_points: forecast ? 20 : 10,
+      estimated_seconds_to_exhaustion: forecast ? 600 : 300,
+      baseline_used_percent: forecast ? 33.3 : 12.5,
+      coverage: "complete", sample_count: 3,
+    }]}, null);
+  };
+
+  applet._refreshConsumption();
+  const rendered = applet._consumptionParts(applet._usages[0], "panel");
+  assert.match(rendered.plain, /Δ1 h 10,0%/);
+  assert.match(rendered.plain, /TE=0,2h/);
+  assert.match(rendered.plain, /AW30m=33,3%/);
+});
+
+test("failed consumption refresh preserves the last validated window", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", "hide-when-zero": false,
+    "show-coverage-marker": true,
+  };
+  applet._usages[0].cost_windows = [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 12.3, coverage: "complete", sample_count: 3,
+  }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._updatePanel = () => {};
+  applet._spawnAuxJson = (_argv, callback) => callback(null, "temporary failure");
+
+  applet._refreshConsumption();
+  assert.equal(applet._usages[0].cost_windows.length, 1);
+  assert.equal(applet._usages[0].cost_windows[0].consumed_percentage_points, 12.3);
+});
+
+test("late consumption response from an older generation cannot replace newer settings", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", smoothing: "ema-10", "hide-when-zero": false,
+    "show-coverage-marker": true,
+  };
+  applet._usages = [{account: "alpha", cost_windows: []}];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._updatePanel = () => {};
+  const callbacks = [];
+  applet._spawnAuxJson = (_argv, callback) => callbacks.push(callback);
+
+  applet._refreshConsumption();
+  applet._consumptionSettings.alpha.smoothing = "ema-20";
+  applet._refreshConsumption();
+  callbacks.shift()({account_id: "alpha", windows: [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 10, coverage: "complete", sample_count: 3,
+  }]}, null);
+  callbacks.shift()({account_id: "alpha", windows: [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 20, coverage: "complete", sample_count: 3,
+  }]}, null);
+
+  assert.equal(applet._usages[0].cost_windows.length, 1);
+  assert.equal(applet._usages[0].cost_windows[0].consumed_percentage_points, 20);
+});
+
+test("fully disabled credit-consumption targets do not start a consumption request", () => {
+  const applet = makeApplet();
+  applet._consumptionSettings = Object.create(null);
+  applet._creditSettings = {alpha: {
+    account: "alpha", "consumption-show-panel": true,
+    "consumption-show-tooltip": true, "consumption-amount": 1,
+    "consumption-unit": "hours", "consumption-smoothing": "ema-20",
+    "consumption-baseline-enabled": false,
+  }};
+  applet._styleTargets["alpha:12"] = {panel: false, hover: false, click: false};
+  applet._panelSettings.alpha = {account: "alpha", order: 1, muted: false, slot1: 0, slot2: 0, slot3: 0, slot4: 0};
+  let requests = 0;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = () => { requests += 1; };
+
+  applet._refreshConsumption();
+  assert.equal(requests, 0);
+});
+
+test("consumption refresh prunes obsolete tagged query results but retains legacy data", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", smoothing: "ema-10", "hide-when-zero": false,
+    "show-coverage-marker": true,
+  };
+  applet._usages[0].cost_windows = [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 1, coverage: "complete", sample_count: 1,
+    _consumption_query_key: applet._consumptionQueryKey("main", 2, "hours", "ema-20", null),
+  }, {
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 604800,
+    consumed_percentage_points: 2, coverage: "complete", sample_count: 1,
+  }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._updatePanel = () => {};
+  applet._spawnAuxJson = (_argv, callback) => callback(null, "temporary failure");
+
+  applet._refreshConsumption();
+  assert.equal(applet._usages[0].cost_windows.length, 1);
+  assert.equal(applet._usages[0].cost_windows[0].consumed_percentage_points, 2);
+});
+
+test("token-end AW, coverage and delta remain independent across every TE format and surface", () => {
+  const formats = ["compact", "compact-minutes", "verbose", "custom"];
+  for (const format of formats) {
+    for (const surface of ["panel", "hover"]) {
+      for (const coverage of [false, true]) {
+        for (const baseline of [false, true]) {
+          const applet = makeApplet();
+          applet.showConsumptionDelta = true;
+          applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+          applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+          applet._consumptionSettings.alpha = {
+            account: "alpha", "show-panel": true, "show-tooltip": true,
+            amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+            "custom-format": "", "hide-when-zero": false, "show-coverage-marker": false,
+            "forecast-show-panel": true, "forecast-show-tooltip": true,
+            "forecast-limit-window": "short", "forecast-format": format,
+            "forecast-custom-format": "TE={duration}",
+            "forecast-show-coverage-marker": coverage,
+            "forecast-baseline-enabled": baseline, "forecast-baseline-minutes": 30,
+          };
+          const usage = applet._usages[0];
+          usage.cost_windows = applet._safeConsumptionWindows([{
+            pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+            consumed_percentage_points: 12.5, baseline_used_percent: 33.3,
+            estimated_seconds_to_exhaustion: 354 * 60, coverage: "partial", sample_count: 3,
+          }]);
+          const rendered = applet._consumptionParts(usage, surface);
+          assert.ok(rendered, `${format}/${surface}/${coverage}/${baseline} unexpectedly blank`);
+          assert.match(rendered.plain, /Δ1 h 12,5%/);
+          if (baseline) {
+            assert.match(rendered.plain, /AW30m=33,3%/);
+          } else {
+            assert.doesNotMatch(rendered.plain, /AW30m=/);
+          }
+          assert.ok(rendered.plain.includes("TE=") || rendered.plain.includes("Zeit bis Tokenende"),
+            `${format}/${surface}/${coverage}/${baseline} lost token end`);
+          assert.equal(rendered.plain.includes("(mindestens)"), coverage);
+        }
+      }
+    }
+  }
 });
 
 test("consumption display asks CLI for configured account query", () => {
@@ -3543,6 +5213,208 @@ test("routing policy changes preserve scope precedence inputs", () => {
   );
 });
 
+test("routing policy validator preserves every scope and credit limit override", () => {
+  const applet = makeApplet();
+  const policy = applet._validateRoutingPolicy({
+    schema_version: 1,
+    global: true,
+    account: {alpha: true},
+    group: {build: false},
+    agent: {},
+    job: {release: true},
+    credit_limits: {hourly: 1.5, weekly: 0, monthly: 30},
+    credit_limit_overrides: {
+      account: {alpha: {hourly: 2, weekly: null, monthly: 3}},
+      group: {build: {hourly: null, weekly: 4, monthly: null}},
+      agent: {},
+      job: {},
+    },
+  });
+
+  assert.equal(policy.global, true);
+  assert.equal(policy.credit_limits.hourly, 1.5);
+  assert.equal(policy.credit_limits.weekly, 0);
+  assert.equal(policy.credit_limit_overrides.account.alpha.hourly, 2);
+  assert.equal(policy.credit_limit_overrides.account.alpha.weekly, null);
+  assert.equal(policy.credit_limit_overrides.group.build.weekly, 4);
+  assert.equal(Object.getPrototypeOf(policy.account), null);
+  assert.equal(Object.getPrototypeOf(policy.credit_limit_overrides.account), null);
+});
+
+test("routing policy validator rejects malformed scopes, identifiers and overrides", () => {
+  const applet = makeApplet();
+  const base = () => ({
+    schema_version: 1,
+    global: false,
+    account: {},
+    group: {},
+    agent: {},
+    job: {},
+  });
+  const invalidCases = [
+    ["missing scope", (value) => { delete value.agent; }],
+    ["invalid rule", (value) => { value.account = {alpha: "true"}; }],
+    ["invalid identifier", (value) => { value.account = {"bad id": true}; }],
+    ["negative global limit", (value) => { value.credit_limits = {hourly: -1}; }],
+    ["invalid override value", (value) => {
+      value.credit_limit_overrides = {account: {alpha: {hourly: "2", weekly: null, monthly: null}}};
+    }],
+    ["empty override", (value) => {
+      value.credit_limit_overrides = {account: {alpha: {hourly: null, weekly: null, monthly: null}}};
+    }],
+  ];
+  for (const [label, mutate] of invalidCases) {
+    const value = base();
+    mutate(value);
+    assert.throws(() => applet._validateRoutingPolicy(value), label);
+  }
+});
+
+test("routing limit helpers distinguish disabled values and produce scoped commands", () => {
+  const applet = makeApplet();
+  assert.equal(applet._routingLimitValue(null), null);
+  assert.equal(applet._routingLimitValue(0), null);
+  assert.equal(applet._routingLimitValue(-1), null);
+  assert.equal(applet._routingLimitValue("2.5"), 2.5);
+  assert.equal(applet._routingLimitValue("bad"), null);
+  assert.equal(applet._routingLimitValue(Infinity), null);
+
+  const current = {
+    credit_limits: {hourly: 1, weekly: 2, monthly: 3},
+    credit_limit_overrides: {
+      account: {alpha: {hourly: 4, weekly: 0, monthly: 6}},
+      group: {}, agent: {}, job: {},
+    },
+  };
+  const desired = {
+    credit_limits: {hourly: 1, weekly: 5, monthly: 0},
+    credit_limit_overrides: {
+      account: {alpha: {hourly: 4, weekly: 7, monthly: null}},
+      group: {build: {hourly: null, weekly: 1, monthly: null}},
+      agent: {}, job: {},
+    },
+  };
+  assert.equal(JSON.stringify(applet._routingCreditLimitCommands(current, desired)), JSON.stringify([
+    {scope: "global", identifier: null, limits: desired.credit_limits},
+    {scope: "account", identifier: "alpha", limits: desired.credit_limit_overrides.account.alpha},
+    {scope: "group", identifier: "build", limits: desired.credit_limit_overrides.group.build},
+  ]));
+  assert.equal(applet._routingCreditLimitCommandApplied(
+    {credit_limits: desired.credit_limits},
+    {scope: "global", identifier: null, limits: desired.credit_limits}
+  ), true);
+  assert.equal(applet._routingCreditLimitCommandApplied(
+    {credit_limit_overrides: {account: {alpha: desired.credit_limit_overrides.account.alpha}}},
+    {scope: "account", identifier: "alpha", limits: desired.credit_limit_overrides.account.alpha}
+  ), true);
+  assert.equal(applet._routingCreditLimitCommandApplied(
+    {credit_limits: {hourly: 0, weekly: 0, monthly: 0}},
+    {scope: "global", identifier: null, limits: {hourly: 1, weekly: 0, monthly: 0}}
+  ), false);
+});
+
+test("routing policy command application recognizes allow, deny and inheritance", () => {
+  const applet = makeApplet();
+  const policy = {
+    global: true,
+    account: {alpha: true},
+    group: {build: false},
+    agent: {},
+    job: {},
+  };
+  assert.equal(applet._routingPolicyCommandApplied(policy, ["global", "allow"]), true);
+  assert.equal(applet._routingPolicyCommandApplied(policy, ["global", "deny"]), false);
+  assert.equal(applet._routingPolicyCommandApplied(policy, ["account", "allow", "alpha"]), true);
+  assert.equal(applet._routingPolicyCommandApplied(policy, ["group", "deny", "build"]), true);
+  assert.equal(applet._routingPolicyCommandApplied(policy, ["account", "inherit", "missing"]), true);
+  assert.equal(applet._routingPolicyCommandApplied(policy, ["account", "inherit", "alpha"]), false);
+  for (const command of [null, [], ["unknown", "allow"], ["account", "maybe", "alpha"]]) {
+    assert.equal(applet._routingPolicyCommandApplied(policy, command), false);
+  }
+});
+
+test("malformed routing settings reload authoritative state instead of throwing", () => {
+  const applet = makeApplet();
+  applet._routingSettingsReady = true;
+  applet.routingCreditOverrides = [{
+    scope: 0,
+    identifier: "bad id",
+    enabled: true,
+    allow: true,
+  }];
+  let reloads = 0;
+  applet._loadRoutingState = () => { reloads += 1; };
+
+  assert.doesNotThrow(() => applet._onRoutingSettingsChanged());
+  assert.equal(reloads, 1);
+  assert.equal(applet._routingPolicyApplying, false);
+});
+
+test("routing policy synchronization rebuilds sorted rows and clears stale state", () => {
+  const applet = makeApplet();
+  const writes = [];
+  let guardReleases = 0;
+  applet.settings = { setValue: (key, value) => writes.push([key, value]) };
+  applet._deferGuardRelease = (property) => {
+    assert.equal(property, "_syncingRoutingSettings");
+    guardReleases += 1;
+  };
+  applet._syncRoutingSettings({
+    schema_version: 1,
+    global: true,
+    credit_limits: { hourly: 3, weekly: 7, monthly: 11 },
+    account: { beta: false, alpha: true },
+    group: {},
+    agent: {},
+    job: {},
+    credit_limit_overrides: {
+      account: { alpha: { hourly: 0, weekly: null, monthly: 5 }, gamma: { hourly: 2 } },
+      group: {},
+      agent: {},
+      job: {},
+    },
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet.routingCreditOverrides)), [
+    {scope: 0, identifier: "alpha", enabled: true, allow: true, "hourly-limit": 0, "weekly-limit": 0, "monthly-limit": 5},
+    {scope: 0, identifier: "beta", enabled: true, allow: false, "hourly-limit": 0, "weekly-limit": 0, "monthly-limit": 0},
+    {scope: 0, identifier: "gamma", enabled: false, allow: false, "hourly-limit": 2, "weekly-limit": 0, "monthly-limit": 0},
+  ]);
+  assert.equal(applet.routingGlobalPaidCredits, true);
+  assert.equal(applet.routingCreditHourlyLimit, 3);
+  assert.equal(applet.routingCreditWeeklyLimit, 7);
+  assert.equal(applet.routingCreditMonthlyLimit, 11);
+  assert.equal(guardReleases, 1);
+  assert.equal(writes.length, 5);
+
+  applet._routingPolicy = {schema_version: 1};
+  applet._routingSettingsReady = true;
+  applet._routingDecisions = {alpha: {decision: "main"}};
+  let refreshed = 0;
+  applet._refreshFormattedSurfaces = () => { refreshed += 1; };
+  applet._clearRoutingState();
+  assert.equal(applet._routingPolicy, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._routingDecisions)), {});
+  assert.equal(applet._routingSettingsReady, false);
+  assert.equal(refreshed, 1);
+  applet._clearRoutingState();
+  assert.equal(refreshed, 1);
+});
+
+test("series validation allows inactive reservations but rejects active duplicates", () => {
+  const applet = makeApplet();
+  const inactiveReservation = [
+    {account: "alpha", series: "C", "series-active": true},
+    {account: "beta", series: "C", "series-active": false},
+  ];
+  assert.doesNotThrow(() => applet._validateSeriesAssignments(inactiveReservation));
+
+  assert.throws(() => applet._validateSeriesAssignments([
+    {account: "alpha", series: "C", "series-active": true},
+    {account: "beta", series: "C", "series-active": true},
+  ]), /Serie C ist bereits Account alpha zugeordnet/);
+});
+
 test("routing status validation keeps bounded decisions", () => {
   const applet = makeApplet();
   const state = applet._validateRoutingState({
@@ -3750,6 +5622,198 @@ test("browser values do not merge with unknown provenance", () => {
     }),
     true
   );
+});
+
+test("backend identity helpers distinguish incomplete, matching and compatible identities", () => {
+  const applet = makeApplet();
+  const known = { backend_user_id: "user-1", backend_account_id: "account-1" };
+
+  assert.equal(applet._backendIdentityPresent(known), true);
+  assert.equal(applet._backendIdentityPresent({}), false);
+  assert.equal(applet._backendIdentityIsIncomplete({ backend_user_id: "user-1" }, known), true);
+  assert.equal(applet._backendIdentityIsIncomplete({ backend_account_id: "account-1" }, known), false);
+  assert.equal(applet._backendIdentityIsIncomplete({ backend_user_id: "other" }, known), false);
+  assert.equal(applet._backendIdentityIsIncomplete({}, {}), false);
+
+  assert.equal(applet._backendIdentityMatches(known, known), true);
+  assert.equal(applet._backendIdentityMatches(
+    { backend_account_id: "account-1" },
+    known
+  ), true);
+  assert.equal(applet._backendIdentityMatches(
+    { backend_account_id: "other" },
+    known
+  ), false);
+  assert.equal(applet._backendIdentityMatches(
+    { backend_user_id: "user-1" },
+    { backend_user_id: "user-1" }
+  ), true);
+  assert.equal(applet._backendIdentityMatches(
+    { backend_user_id: "user-1" },
+    { backend_user_id: "other" }
+  ), false);
+
+  assert.equal(applet._backendIdentityCompatible(known, {
+    backend_account_id: "account-1",
+    backend_user_id: "user-2"
+  }), false);
+  assert.equal(applet._backendIdentityCompatible(known, {
+    backend_account_id: "account-1",
+    backend_user_id: "user-1"
+  }), true);
+  assert.equal(applet._backendIdentityCompatible(
+    { backend_user_id: "user-1" },
+    { backend_user_id: "user-1" }
+  ), true);
+  assert.equal(applet._backendIdentityCompatible(known, {
+    backend_user_id: "user-1"
+  }), false);
+});
+
+test("backend fallback proof requires a known reason and matching backend direction", () => {
+  const applet = makeApplet();
+  const fallback = {
+    backend_configured: "app-server",
+    backend_used: "direct",
+    fallback_reason: "app-server unavailable: installed Codex does not support rate-limit RPC"
+  };
+
+  assert.equal(applet._hasBackendFallbackProof(fallback), true);
+  assert.equal(applet._hasBackendFallbackProof({
+    ...fallback,
+    fallback_reason: "app-server unavailable: made-up reason"
+  }), false);
+  assert.equal(applet._hasBackendFallbackProof({
+    ...fallback,
+    backend_used: "browser"
+  }), false);
+  assert.equal(applet._hasBackendFallbackProof({
+    backend_configured: "direct",
+    backend_used: "direct",
+    fallback_reason: fallback.fallback_reason
+  }), false);
+  assert.equal(applet._hasBackendFallbackProof({
+    backend_configured: "direct",
+    backend_used: "direct",
+    fallback_reason: "previous authenticated limits retained after reset transition"
+  }), true);
+});
+
+test("model pool lookup is own-property and object-only", () => {
+  const applet = makeApplet();
+  const pool = { available: true };
+
+  assert.equal(applet._modelPool({ models: { main: pool } }, "main"), pool);
+  assert.equal(applet._modelPool({ models: { main: null } }, "main"), null);
+  assert.equal(applet._modelPool({ models: { main: [] } }, "main"), null);
+  assert.equal(applet._modelPool({ models: {} }, "toString"), null);
+  assert.equal(applet._modelPool({ models: Object.create(null) }, "toString"), null);
+  assert.equal(applet._modelPool({}, "main"), null);
+});
+
+test("backend state helpers distinguish configured, cached and empty usage", () => {
+  const applet = makeApplet();
+  const direct = {
+    backend_configured: "direct",
+    backend_used: "direct",
+    five_hour: { remaining: 80 },
+  };
+  const empty = {
+    backend_configured: "direct",
+    backend_used: "",
+    five_hour: null,
+    weekly: null,
+    main: null,
+    models: Object.create(null),
+  };
+
+  assert.equal(applet._backendMatchesConfigured(direct, "direct"), true);
+  assert.equal(applet._backendMatchesConfigured(direct, "app-server"), false);
+  assert.equal(applet._backendMatchesConfigured(empty, "app-server"), false);
+  assert.equal(applet._backendMatchesConfigured({
+    backend_configured: "app-server",
+    backend_used: "direct",
+    fallback_reason: "app-server unavailable: installed Codex does not support rate-limit RPC"
+  }, "app-server"), true);
+  assert.equal(applet._backendMatchesConfigured({
+    backend_configured: "app-server",
+    backend_used: "browser",
+    five_hour: { remaining: 50 }
+  }, "app-server"), false);
+
+  assert.equal(applet._authoritativeEmptyLimits({
+    status: "partial", backend_used: "direct",
+    five_hour: null, weekly: null, main: null, models: {}
+  }), true);
+  assert.equal(applet._authoritativeEmptyLimits({
+    status: "partial", backend_used: "browser",
+  }), false);
+  assert.equal(applet._authenticatedPartial({
+    status: "partial", backend_used: "app-server"
+  }), true);
+  assert.equal(applet._authenticatedPartial({
+    status: "partial", backend_used: "browser"
+  }), false);
+  assert.equal(applet._hasCachedWindows({ five_hour: {} }), true);
+  assert.equal(applet._hasCachedWindows({ main: { windows: [] } }), false);
+  assert.equal(applet._hasDynamicWindows({
+    models: { spark: { windows: [{ name: "5h" }] } }
+  }), true);
+  assert.equal(applet._hasDynamicWindows({ models: { spark: { windows: [] } } }), false);
+  assert.equal(applet._hasResetlessBrowserUsage({
+    backend_used: "browser",
+    main: { windows: [{ remaining: 80 }] }
+  }), true);
+  assert.equal(applet._hasResetlessBrowserUsage({
+    backend_used: "direct",
+    main: { windows: [{ remaining: 80 }] }
+  }), false);
+});
+
+test("pool reset merge fills matching missing resets without touching invalid pools", () => {
+  const applet = makeApplet();
+  const freshPool = {
+    available: true,
+    windows: [{ name: "5h", duration_seconds: 18000, remaining: 80 }]
+  };
+  const cachedPool = {
+    available: true,
+    windows: [{
+      name: "five_hour",
+      duration_seconds: 18000,
+      remaining: 70,
+      reset_at: "2026-08-19T15:00:00Z"
+    }]
+  };
+  assert.equal(applet._windowIdentityKey(freshPool.windows[0]), 18000);
+  assert.equal(applet._windowIdentityKey(cachedPool.windows[0]), 18000);
+  assert.equal(applet._hasUniqueWindowIdentities(freshPool.windows), true);
+  assert.equal(applet._hasUniqueWindowIdentities(cachedPool.windows), true);
+  assert.equal(applet._windowHasUsageValue(freshPool.windows[0]), true);
+  assert.equal(applet._windowDurationMatches(
+    freshPool.windows[0], cachedPool.windows[0], undefined
+  ), true);
+  assert.equal(applet._windowCacheExpired(
+    cachedPool.windows[0], "2026-08-19T10:00:00Z", "2026-08-19T10:00:00Z"
+  ), false);
+  assert.equal(applet._mergeMissingPoolResetsForPool(
+    freshPool, cachedPool,
+    "2026-08-19T10:00:00Z",
+    "2026-08-19T10:00:00Z"
+  ), true);
+  assert.equal(freshPool.windows[0].remaining, 80);
+  assert.equal(freshPool.windows[0].reset_at, "2026-08-19T15:00:00Z");
+
+  const unavailable = {
+    available: false,
+    windows: [{ name: "5h", duration_seconds: 18000, remaining: 80 }]
+  };
+  assert.equal(applet._mergeMissingPoolResetsForPool(
+    unavailable, cachedPool,
+    "2026-08-19T10:00:00Z",
+    "2026-08-19T09:00:00Z"
+  ), false);
+  assert.equal(unavailable.windows[0].reset_at, undefined);
 });
 
 test("backend summary does not invent missing backend usage", () => {
@@ -4094,6 +6158,73 @@ test("idle scheduling does not retain an invalid zero source", () => {
   });
   assert.equal(applet._addIdle(() => {}), 0);
   assert.deepEqual(applet._idleSources, {});
+});
+
+test("source and guard lifecycle helpers release stale references", () => {
+  const callbacks = [];
+  const applet = makeApplet((runtime) => {
+    runtime.idleAdd = (callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+  });
+  let called = 0;
+  const idleId = applet._addIdle(() => { called += 1; });
+  assert.equal(idleId, 1);
+  assert.equal(applet._idleSources[1], true);
+  callbacks[0]();
+  assert.equal(called, 1);
+  assert.equal(applet._idleSources[1], undefined);
+
+  applet._setSource("_timerId", 17);
+  assert.equal(applet._timerId, 17);
+  assert.equal(applet._sources._timerId, 17);
+  applet._clearSource("_timerId");
+  assert.equal(applet._timerId, 0);
+  assert.equal(applet._sources._timerId, undefined);
+  applet._setSource("_timerId", 18);
+  applet._removeSource("_timerId");
+  assert.equal(applet._timerId, 0);
+  assert.equal(applet._sources._timerId, undefined);
+
+  applet._guard = true;
+  applet._deferGuardRelease("_guard", "test guard");
+  applet._deferGuardRelease("_guard", "test guard");
+  assert.equal(applet._guard, true);
+  callbacks[1]();
+  assert.equal(applet._guard, true);
+  callbacks[2]();
+  assert.equal(applet._guard, false);
+
+  applet._idleSources[99] = true;
+  applet._removeIdleSources();
+  assert.deepEqual(Object.keys(applet._idleSources), []);
+});
+
+test("safe execution and refresh circuit helpers have bounded failure state", () => {
+  const applet = makeApplet();
+  let failures = 0;
+  applet._recordInternalFailure = () => { failures += 1; };
+  assert.equal(applet._runSafely("test", () => { throw new Error("broken"); }, "fallback"), "fallback");
+  assert.equal(failures, 1);
+  applet._removed = true;
+  assert.equal(applet._runSafely("removed", () => "wrong", "fallback"), "fallback");
+  applet._removed = false;
+
+  let panelUpdates = 0;
+  applet._updatePanel = () => { panelUpdates += 1; };
+  applet._recordRefreshFailure("one");
+  applet._recordRefreshFailure("two");
+  applet._recordRefreshFailure("three");
+  assert.equal(applet._refreshFailures, 3);
+  assert.equal(applet._circuitOpen(), true);
+  assert.equal(panelUpdates, 1);
+  applet._recordRefreshSuccess();
+  assert.equal(applet._refreshFailures, 0);
+  assert.equal(applet._lastRefreshError, "");
+  assert.equal(applet._commandError, "");
+  applet._circuitOpenUntil = Date.now() - 1;
+  assert.equal(applet._circuitOpen(), false);
 });
 
 test("internal failures enter safe mode after the configured limit", () => {
@@ -4937,6 +7068,228 @@ test("malformed numeric settings are rejected instead of coerced", () => {
     hover: true,
     click: true,
   }, "alpha"), null);
+  assert.equal(applet._normalizeTargetRow({
+    element: 13,
+    panel: true,
+    hover: true,
+    click: true,
+  }, "alpha"), null);
+});
+
+test("legacy global baseline style targets are discarded during migration", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  const rows = applet._mergedTargetRows([{account: "alpha"}], [{
+    account: "alpha", element: 13, panel: false, hover: false, click: false,
+  }]);
+
+  assert.equal(rows.some(row => row.element === 13), false);
+  assert.equal(rows.length, 13);
+});
+
+test("style target rows cover exactly every editable element once per account", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {
+    alpha: {account: "alpha"},
+    beta: {account: "beta"},
+  };
+  const rows = applet._mergedTargetRows([
+    {account: "alpha"},
+    {account: "beta"},
+  ], []);
+
+  assert.equal(rows.length, 26);
+  for (const account of ["alpha", "beta"]) {
+    const elements = rows
+      .filter(row => row.account === account)
+      .map(row => row.element);
+    assert.equal(
+      JSON.stringify(elements),
+      JSON.stringify(Array.from({length: 13}, (_value, index) => index))
+    );
+  }
+  assert.equal(rows.some(row => row.element === 13), false);
+});
+
+test("legacy global baseline style target is removed from persisted settings", () => {
+  const applet = makeApplet();
+  const writes = [];
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  applet.accountPercentStyles = [];
+  applet.accountDateStyles = [];
+  applet.accountTimeStyles = [];
+  applet.accountDurationStyles = [];
+  applet.accountDisplaySettings = [];
+  applet.accountStyleTargets = [{
+    account: "alpha", element: 13, panel: false, hover: false, click: false,
+  }];
+  applet.settings = {setValue: (key, value) => writes.push([key, value])};
+  applet._addIdle = () => 0;
+
+  applet._syncStyleRows([{account: "alpha"}]);
+
+  assert.equal(applet.accountStyleTargets.length, 13);
+  assert.equal(applet.accountStyleTargets.some(row => row.element === 13), false);
+  const persisted = writes.find(([key]) => key === "account-style-targets");
+  assert.ok(persisted);
+  assert.equal(persisted[1].some(row => row.element === 13), false);
+});
+
+test("a legacy global baseline target cannot keep an otherwise empty panel row alive", () => {
+  const applet = makeApplet();
+  applet._panelSettings.alpha = {
+    account: "alpha", order: 1, muted: false, slot1: 0, slot2: 0, slot3: 0, slot4: 0,
+  };
+  applet._styleTargets["alpha:13"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": false, "show-tooltip": false,
+    "baseline-enabled": true,
+  };
+
+  const alpha = applet._panelItems().find(item => item.usage.account === "alpha");
+  assert.equal(alpha.visible, false);
+});
+
+test("unknown display targets fail closed even when a legacy visibility value is true", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._elementTargetEnabled("alpha", "baseline", "panel", true), false);
+  assert.equal(applet._targetEnabled("alpha", "baseline", "click"), false);
+  assert.equal(applet._elementTargetEnabled("alpha", "unexpected", "hover", true), false);
+});
+
+test("duration, numeric and limit-window helpers enforce their documented bounds", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._safeDuration(null), null);
+  assert.equal(applet._safeDuration(1), 1);
+  assert.equal(applet._safeDuration(315360000), 315360000);
+  for (const invalid of [0, -1, 1.5, Infinity, 315360001, "60"]) {
+    assert.throws(() => applet._safeDuration(invalid), /invalid limit duration/);
+  }
+  assert.equal(applet._safeNumber(null), null);
+  assert.equal(applet._safeNumber(-12.5), -12.5);
+  for (const invalid of [Infinity, -Infinity, NaN, 1000000001, "12"]) {
+    assert.throws(() => applet._safeNumber(invalid), /invalid numeric value/);
+  }
+  assert.equal(applet._limitWindowSeconds("short"), 18000);
+  assert.equal(applet._limitWindowSeconds("weekly"), 604800);
+  assert.equal(applet._limitWindowSeconds("monthly"), 2592000);
+  assert.equal(applet._limitWindowSeconds("spark"), null);
+  assert.equal(applet._boundedInteger("2.6", 0, 5, 0), 3);
+  assert.equal(applet._boundedInteger(-1, 0, 5, 0), 0);
+  assert.equal(applet._boundedInteger(Infinity, 0, 5, 2), 2);
+});
+
+test("consumption and forecast formatting helpers preserve their supported placeholders", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._coverageMarker("complete", true), " (vollständig)");
+  assert.equal(applet._coverageMarker("partial", true), " (mindestens)");
+  assert.equal(applet._coverageMarker("stale", true), " (veraltet)");
+  assert.equal(applet._coverageMarker("insufficient", true), " (nicht genügend Messdaten)");
+  assert.equal(applet._coverageMarker("future", true), " (unbekannt)");
+  assert.equal(applet._coverageMarker("complete", false), "");
+  assert.equal(applet._customConsumptionText("{period}|{value}|{window}|{coverage}|{other}", {
+    period: "1 h", value: "2,5", window: "5h", coverage: "vollständig",
+  }), "1 h|2,5|5h|vollständig|{other}");
+  assert.equal(applet._customConsumptionText("", {
+    period: "1 h", value: "2,5", window: "5h", coverage: "",
+  }), "Δ1 h 2,5%");
+  assert.equal(applet._customForecastText("{value}|{duration}|{coverage}|{period}", {
+    value: "0,2h", duration: "12 Minuten", coverage: "", period: "ignored",
+  }), "0,2h|12 Minuten||{period}");
+  assert.equal(applet._customForecastText(null, {
+    value: "0,2h", duration: "12 Minuten", coverage: "",
+  }), "Zeit bis Tokenende 0,2h");
+  assert.equal(applet._formatConsumptionValue(12.56), "12,6");
+  assert.equal(applet._formatConsumptionValue(-0.04), "0,0");
+  assert.equal(applet._consumptionPeriod(1, "hours"), "1 h");
+  assert.equal(applet._consumptionPeriod(2, "days"), "2 Tage");
+  assert.equal(applet._consumptionPeriod(3, "unknown"), "3 unknown");
+});
+
+test("forecast warning formats apply only their documented Pango attributes", () => {
+  const applet = makeApplet();
+  const markup = "<b>Rest</b>";
+
+  assert.equal(applet._forecastWarningMarkup(markup, "none"), markup);
+  assert.equal(applet._forecastWarningMarkup(markup, "unknown"), markup);
+  assert.equal(applet._forecastWarningMarkup(markup, "red"),
+    '<span foreground="#ff5555"><b>Rest</b></span>');
+  assert.equal(applet._forecastWarningMarkup(markup, "red-yellow"),
+    '<span foreground="#ff5555" background="#e5c07b"><b>Rest</b></span>');
+  assert.equal(applet._forecastWarningMarkup(markup, "blink-red-yellow"),
+    '<span foreground="#ff5555" background="#e5c07b" font_weight="bold"><b>Rest</b></span>');
+  assert.equal(applet._forecastWarningMarkup(markup, "yellow"),
+    '<span foreground="#e5c07b"><b>Rest</b></span>');
+  assert.equal(applet._forecastWarningMarkup(markup, "red-green"),
+    '<span foreground="#ff5555" background="#98c379"><b>Rest</b></span>');
+  assert.equal(applet._forecastWarningMarkup(markup, "red-red"),
+    '<span foreground="#ff5555" background="#a83232"><b>Rest</b></span>');
+});
+
+test("text and strict-integer helpers distinguish sanitizing display text from trusted settings", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._safeText(null, 10), "");
+  assert.equal(applet._safeText("  a\u0000b\n  ", 10), "a b");
+  assert.equal(applet._safeText("abcdef", 3), "abc");
+  assert.throws(() => applet._safeText(4, 10), /invalid text value/);
+  assert.equal(applet._strictText(null, 10), "");
+  assert.equal(applet._strictText("exact", 5), "exact");
+  for (const invalid of [" too", "too ", "a\nb", "abcdef", 7]) {
+    assert.throws(() => applet._strictText(invalid, 5));
+  }
+  assert.equal(applet._strictIntegerSetting(3), 3);
+  assert.equal(applet._strictIntegerSetting(-2), -2);
+  assert.equal(applet._strictIntegerSetting(3.1), null);
+  assert.equal(applet._strictIntegerSetting("3"), null);
+  assert.equal(applet._shortText(" a\u0000b ", 10), "a b");
+  assert.equal(applet._shortText("abcdef", 4), "abc…");
+  assert.equal(applet._shortText("abcdef", 0), "…");
+});
+
+test("backend provenance and routing identifiers are validated without normalization", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = {
+    direct: {account: "direct", backend: 0, label: "Direct"},
+    app: {account: "app", backend: 1, label: "App"},
+  };
+
+  assert.equal(applet._safeStatus(" ok "), "ok");
+  assert.equal(applet._safeStatus("unknown"), "error");
+  assert.equal(applet._safeStatus(null), "error");
+  assert.equal(applet._safeBackend(" direct ", false), "direct");
+  assert.equal(applet._safeBackend("browser", false), "");
+  assert.equal(applet._safeBackend("browser", true), "browser");
+  assert.equal(applet._validatedBackend(null, false), "");
+  assert.equal(applet._validatedBackend("direct", false), "direct");
+  assert.equal(applet._validatedBackend("browser", true), "browser");
+  for (const invalid of [" direct", "browser", "unknown", "app\nserver"]) {
+    assert.throws(() => applet._validatedBackend(invalid, false), /invalid backend provenance/);
+  }
+  assert.equal(applet._routingIdentifier("team:alpha+one@example.org"), "team:alpha+one@example.org");
+  for (const invalid of [" team", "team space", "team/alpha", "", "x".repeat(129)]) {
+    assert.throws(() => applet._routingIdentifier(invalid), /invalid routing policy identifier/);
+  }
+  assert.equal(applet._backendConfiguredForAccount("direct"), "direct");
+  assert.equal(applet._backendConfiguredForAccount("app"), "app-server");
+  assert.equal(applet._backendConfiguredForAccount("missing"), "direct");
+  const fresh = applet._newBackendUsageRow("app", "app-server");
+  assert.equal(fresh.account, "app");
+  assert.equal(fresh.label, "App");
+  assert.equal(fresh.backend_configured, "app-server");
+  assert.equal(fresh.status, "partial");
+  assert.equal(fresh.stale, true);
+  assert.equal(fresh.five_hour, null);
+  assert.equal(fresh.weekly, null);
+  assert.equal(fresh.usage_resets.available, null);
+  assert.equal(fresh.usage_resets.known, false);
+  assert.equal(fresh.usage_resets.redeem_capability, false);
+  assert.equal(Object.getPrototypeOf(fresh.models), null);
+  assert.equal(Array.isArray(fresh.cost_windows), true);
+  assert.equal(fresh.cost_windows.length, 0);
 });
 
 test("account setting identities are not normalized", () => {
@@ -5497,6 +7850,44 @@ test("stale periodic timer callbacks stop without touching newer timers", () => 
   assert.equal(displayUpdates, 1);
 });
 
+test("timer scheduling separates display cadence from optional usage polling", () => {
+  const noPollingCallbacks = [];
+  const noPollingSeconds = [];
+  const noPolling = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = (seconds, callback) => {
+      noPollingSeconds.push(seconds);
+      noPollingCallbacks.push(callback);
+      return noPollingCallbacks.length;
+    };
+  });
+  noPolling.autoRefresh = false;
+  noPolling.refreshInterval = 1;
+  noPolling._refreshFastModeState = () => {};
+  noPolling._updatePanel = () => {};
+  noPolling._scheduleTimer();
+  assert.deepEqual(noPollingSeconds, [60]);
+  assert.equal(noPolling._displayTimerId, 1);
+  assert.equal(noPolling._timerId, 0);
+  assert.equal(noPollingCallbacks[0](), true);
+
+  const pollingSeconds = [];
+  const polling = makeApplet((runtime) => {
+    runtime.timeoutAddSeconds = (seconds, callback) => {
+      pollingSeconds.push(seconds);
+      return pollingSeconds.length;
+    };
+  });
+  polling.autoRefresh = true;
+  polling.refreshInterval = 90;
+  polling._scheduleDisplayTimer = () => true;
+  polling._scheduleTimer();
+  assert.deepEqual(pollingSeconds, [90]);
+  assert.equal(polling._timerId, 1);
+  polling._removed = true;
+  polling._scheduleTimer();
+  assert.equal(polling._timerId, 0);
+});
+
 test("safe mode invalidates already queued periodic timer callbacks", () => {
   const callbacks = [];
   const applet = makeApplet((runtime) => {
@@ -5723,6 +8114,58 @@ test("browser fresh resetless usage does not restore an older counterpart", () =
   assert.equal(merged[0].values_captured_at, undefined);
 });
 
+test("browser dynamic resetless usage does not restore a cached reset", () => {
+  const applet = makeApplet();
+  applet._usages = [{
+    account: "alpha",
+    backend_configured: "direct",
+    backend_used: "browser",
+    captured_at: "2026-07-10T10:00:00.000Z",
+    main: {
+      key: "main",
+      available: true,
+      allowed: true,
+      limit_reached: false,
+      exhausted: false,
+      windows: [{
+        name: "5h",
+        duration_seconds: 18000,
+        remaining: 70,
+        reset_at: "2026-07-10T15:00:00.000Z"
+      }]
+    },
+    five_hour: null,
+    weekly: null
+  }];
+
+  const merged = applet._mergeFreshPayload([{
+    account: "alpha",
+    backend_configured: "direct",
+    backend_used: "browser",
+    status: "partial",
+    captured_at: "2026-07-10T10:05:00.000Z",
+    main: {
+      key: "main",
+      available: true,
+      allowed: true,
+      limit_reached: false,
+      exhausted: false,
+      windows: [{
+        name: "5h",
+        duration_seconds: 18000,
+        remaining: 80
+      }]
+    },
+    five_hour: null,
+    weekly: null,
+    stale: false
+  }]);
+
+  assert.equal(merged[0].main.windows[0].remaining, 80);
+  assert.equal(merged[0].main.windows[0].reset_at, undefined);
+  assert.equal(merged[0].values_captured_at, undefined);
+});
+
 
 test("partial fresh window does not inherit a cached value from another duration", () => {
   const applet = makeApplet();
@@ -5835,6 +8278,140 @@ test("legacy inferred inactive five hour reset is still allowed to expire", () =
     ),
     true
   );
+});
+
+test("cache provenance helpers recognize only the two trusted inactive-five-hour sources", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._isInferredInactiveFiveHour({
+    source: "inferred:inactive-five-hour:direct"
+  }), true);
+  assert.equal(applet._isInferredInactiveFiveHour({
+    source: "inferred:inactive-five-hour:app-server"
+  }), true);
+  assert.equal(applet._isInferredInactiveFiveHour({
+    source: "inferred:inactive-five-hour:browser"
+  }), false);
+  assert.equal(applet._isInferredInactiveFiveHour(null), false);
+});
+
+test("values capture timestamp is used only when it is valid and not newer than capture", () => {
+  const applet = makeApplet();
+
+  assert.equal(
+    applet._valuesCaptureForExpiry({
+      captured_at: "2026-07-10T10:05:00.000Z",
+      values_captured_at: "2026-07-10T10:00:00.000Z"
+    }),
+    "2026-07-10T10:00:00.000Z"
+  );
+  assert.equal(
+    applet._valuesCaptureForExpiry({
+      captured_at: "2026-07-10T10:05:00.000Z",
+      values_captured_at: "2026-07-10T10:06:00.000Z"
+    }),
+    "2026-07-10T10:05:00.000Z"
+  );
+  assert.equal(
+    applet._valuesCaptureForExpiry({ captured_at: "invalid-capture", values_captured_at: "2026-07-10T10:00:00.000Z" }),
+    "invalid-capture"
+  );
+});
+
+test("cache merge preserves a valid cached value but adopts a fresh reset", () => {
+  const applet = makeApplet();
+  const cached = {
+    name: "5h",
+    duration_seconds: 18000,
+    remaining: 70,
+    reset_at: "2026-07-10T15:00:00.000Z",
+    source: "cache"
+  };
+  const fresh = {
+    name: "5h",
+    duration_seconds: 18000,
+    remaining: 80,
+    reset_at: "2026-07-10T16:00:00.000Z",
+    source: "direct"
+  };
+
+  const merged = applet._mergeCachedWindow(
+    fresh,
+    cached,
+    "2026-07-10T10:05:00.000Z",
+    "2026-07-10T10:00:00.000Z",
+    "five_hour"
+  );
+
+  assert.equal(merged.remaining, 70);
+  assert.equal(merged.source, "cache");
+  assert.equal(merged.reset_at, "2026-07-10T16:00:00.000Z");
+  assert.equal(cached.reset_at, "2026-07-10T15:00:00.000Z");
+});
+
+test("cache merge returns fresh data for expired or mismatched cached windows", () => {
+  const applet = makeApplet();
+  const fresh = {
+    name: "5h",
+    duration_seconds: 18000,
+    remaining: 80,
+    reset_at: "2026-07-10T16:00:00.000Z"
+  };
+  const expired = {
+    name: "5h",
+    duration_seconds: 18000,
+    remaining: 70,
+    reset_at: "2026-07-10T09:00:00.000Z"
+  };
+  const weekly = {
+    name: "weekly",
+    duration_seconds: 604800,
+    remaining: 70,
+    reset_at: "2026-07-16T10:00:00.000Z"
+  };
+
+  assert.equal(applet._mergeCachedWindow(
+    fresh,
+    expired,
+    "2026-07-10T10:05:00.000Z",
+    "2026-07-10T10:00:00.000Z",
+    "five_hour"
+  ), fresh);
+  assert.equal(applet._mergeCachedWindow(
+    fresh,
+    weekly,
+    "2026-07-10T10:05:00.000Z",
+    "2026-07-10T10:00:00.000Z",
+    "five_hour"
+  ), fresh);
+});
+
+test("missing reset merge fills only a valid same-window fresh value", () => {
+  const applet = makeApplet();
+  const fresh = {
+    name: "weekly",
+    duration_seconds: 604800,
+    remaining: 80
+  };
+  const cached = {
+    name: "weekly",
+    duration_seconds: 604800,
+    remaining: 70,
+    reset_at: "2026-07-16T10:00:00.000Z"
+  };
+
+  const merged = applet._mergeMissingReset(
+    fresh,
+    cached,
+    "2026-07-10T10:05:00.000Z",
+    "2026-07-10T10:00:00.000Z",
+    "weekly"
+  );
+
+  assert.notEqual(merged, fresh);
+  assert.equal(merged.remaining, 80);
+  assert.equal(merged.reset_at, "2026-07-16T10:00:00.000Z");
+  assert.equal(fresh.reset_at, undefined);
 });
 
 test("fresh inferred inactive five hour value does not inherit an old reset", () => {
@@ -7399,7 +9976,7 @@ test("old three-surface target rows migrate with a duration row", () => {
       { account: "alpha", element: 2, panel: false, hover: false, click: true },
     ]
   );
-  assert.equal(rows.length, 28);
+  assert.equal(rows.length, 26);
   assert.equal(rows[3].element, 3);
   assert.equal(rows[3].click, true);
   assert.equal(rows[3].panel, false);

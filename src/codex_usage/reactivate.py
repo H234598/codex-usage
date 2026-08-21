@@ -457,8 +457,8 @@ def _manage_browser_profile(account: Account, browser_kind: str) -> Path:
     """Reuse the account's authenticated collection profile when compatible."""
     account_browser = account.browser
     compatible = (
-        browser_kind == account_browser or
-        browser_kind == "vivaldi" and account_browser == "chromium"
+        browser_kind == account_browser
+        or (browser_kind == "vivaldi" and account_browser == "chromium")
     )
     if compatible:
         root = Path(account.profile_dir).expanduser()

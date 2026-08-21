@@ -817,6 +817,36 @@ def test_oauth_browser_rejects_non_private_marker(tmp_path, monkeypatch):
     assert oauth_browser.main(["https://auth.openai.com/login"]) == 1
 
 
+@pytest.mark.parametrize("symlink_marker", [OAUTH_PROFILE_MARKER, ".codex-usage-browser-profile"])
+def test_oauth_browser_rejects_any_symlinked_marker(tmp_path, monkeypatch, symlink_marker):
+    executable = Path(_executable(tmp_path / "vivaldi-stable"))
+    profile = tmp_path / "oauth-profile"
+    profile.mkdir()
+    profile.chmod(0o700)
+    outside = tmp_path / "outside-marker"
+    outside.write_text("keep\n", encoding="utf-8")
+    symlink = profile / symlink_marker
+    symlink.symlink_to(outside)
+    regular_marker = profile / (
+        ".codex-usage-browser-profile"
+        if symlink_marker == OAUTH_PROFILE_MARKER
+        else OAUTH_PROFILE_MARKER
+    )
+    regular_marker.write_text("{}\n", encoding="utf-8")
+    regular_marker.chmod(0o600)
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_EXECUTABLE", str(executable))
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_KIND", "vivaldi")
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_PROFILE", str(profile))
+    monkeypatch.setattr(
+        oauth_browser.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("browser must not start"),
+    )
+
+    assert oauth_browser.main(["https://auth.openai.com/login"]) == 1
+    assert outside.read_text(encoding="utf-8") == "keep\n"
+
+
 def test_oauth_browser_rejects_profile_symlink_ancestor(tmp_path, monkeypatch):
     executable = Path(_executable(tmp_path / "vivaldi-stable"))
     real_parent = tmp_path / "real-parent"

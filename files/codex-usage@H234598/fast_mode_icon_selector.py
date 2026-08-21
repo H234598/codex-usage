@@ -3,8 +3,12 @@
 
 from pathlib import Path
 
-from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget
-from gi.repository import GdkPixbuf, Gtk
+import gi
+
+gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("Gtk", "3.0")
+from gi.repository import GdkPixbuf, Gtk  # noqa: E402
+from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
 
 
 class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
@@ -74,8 +78,12 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
         return True
 
     def on_setting_changed(self, *_args):
-        value = self.get_value()
-        self.set_widget_value(value)
+        saving = getattr(self, "_saving", False)
+        self._saving = True
+        try:
+            self.set_widget_value(self.get_value())
+        finally:
+            self._saving = saving
 
     def connect_widget_handlers(self, *_args):
         pass

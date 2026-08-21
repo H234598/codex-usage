@@ -32,6 +32,7 @@ const ERROR_NOTIFICATION_SUPPRESSION_MS = 48 * 60 * 60 * 1000;
 const MAX_ERROR_NOTIFICATION_STATES = 128;
 const MAX_ERROR_NOTIFICATION_STATE_CHARS = 16 * 1024;
 const FAST_MODE_STATE_PATH = "/home/teladi/.local/state/codex-master-mcp/fast-mode.json";
+const EMERGENCY_DISPLAY_OVERRIDE_PATH = "/home/teladi/.local/state/codex-master-mcp/codex-usage-emergency-overrides.json";
 const FAST_MODE_ICON = "fast-mode-warning-shield-outline.svg";
 const MAX_CAPTURE_FUTURE_MS = 5 * 60 * 1000;
 const MENU_SPACER = "────────";
@@ -1800,7 +1801,12 @@ CodexUsageApplet.prototype = {
     },
 
     _routingIdentifier: function(value) {
-        let identifier = this._strictText(value, 128);
+        let identifier;
+        try {
+            identifier = this._strictText(value, 128);
+        } catch (e) {
+            throw new Error("invalid routing policy identifier");
+        }
         if (!/^[A-Za-z0-9_.:@+\-]{1,128}$/.test(identifier)) {
             throw new Error("invalid routing policy identifier");
         }
@@ -1859,7 +1865,16 @@ CodexUsageApplet.prototype = {
         ) {
             return;
         }
-        let rows = this._normalizeRoutingRows(this.routingCreditOverrides);
+        let rows;
+        try {
+            rows = this._normalizeRoutingRows(this.routingCreditOverrides);
+        } catch (e) {
+            // Settings are externally writable. Never let a malformed row
+            // escape from the callback; restore the authoritative MCP state.
+            global.log("[" + UUID + "] invalid routing settings: " + this._shortText(e, 180));
+            this._loadRoutingState();
+            return;
+        }
         let desired = {
             schema_version: 1,
             global: this.routingGlobalPaidCredits === true,
@@ -2319,12 +2334,14 @@ CodexUsageApplet.prototype = {
 
     _mergedPanelRows: function(accounts, currentRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._configuredAccountId(currentRows[i] && currentRows[i].account);
-                if (!account || current[account] || !this._backendAccounts[account]) {
+                if (!account || seen[account] || !this._backendAccounts[account]) {
                     continue;
                 }
+                seen[account] = true;
                 let normalized = this._normalizePanelRow(currentRows[i], account);
                 if (normalized) {
                     current[account] = normalized;
@@ -2372,14 +2389,16 @@ CodexUsageApplet.prototype = {
 
     _mergedConsumptionRows: function(accounts, currentRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._configuredAccountId(
                     currentRows[i] && currentRows[i].account
                 );
-                if (!account || current[account] || !this._backendAccounts[account]) {
+                if (!account || seen[account] || !this._backendAccounts[account]) {
                     continue;
                 }
+                seen[account] = true;
                 let normalized = this._normalizeConsumptionRow(currentRows[i], account);
                 if (normalized) {
                     current[account] = normalized;
@@ -2393,17 +2412,35 @@ CodexUsageApplet.prototype = {
 
     _mergedForecastRows: function(accounts, currentRows, legacyRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
+        let legacyForecastFields = [
+            "forecast-show-panel", "forecast-show-tooltip", "forecast-limit-window",
+            "forecast-format", "forecast-custom-format", "forecast-smoothing",
+            "forecast-hide-when-zero", "forecast-warn-amount", "forecast-warn-unit",
+            "forecast-warn-format", "forecast-show-coverage-marker",
+            "forecast-baseline-enabled", "forecast-baseline-minutes"
+        ];
         let sources = [];
         if (Array.isArray(currentRows)) sources.push(currentRows);
         if (Array.isArray(legacyRows)) sources.push(legacyRows);
         for (let source of sources) {
             for (let row of source) {
                 let account = this._configuredAccountId(row && row.account);
-                if (!account || current[account] || !this._backendAccounts[account]) continue;
+                if (!account || seen[account] || !this._backendAccounts[account]) continue;
                 let isCurrentForecastTable = source === currentRows;
                 if (isCurrentForecastTable ||
-                    row["forecast-show-panel"] !== undefined || row["forecast-format"] !== undefined) {
-                    current[account] = this._normalizeForecastRow(row, account);
+                    legacyForecastFields.some(function(key) { return row[key] !== undefined; })) {
+                    seen[account] = true;
+                    let normalizationRow = row;
+                    if (!isCurrentForecastTable) {
+                        normalizationRow = {account: account};
+                        legacyForecastFields.forEach(function(key) {
+                            if (row[key] !== undefined) {
+                                normalizationRow[key.slice("forecast-".length)] = row[key];
+                            }
+                        });
+                    }
+                    current[account] = this._normalizeForecastRow(normalizationRow, account);
                 }
             }
         }
@@ -2423,7 +2460,9 @@ CodexUsageApplet.prototype = {
     _normalizeForecastRow: function(row, account) {
         let fallback = this._defaultForecastRow(account);
         let source = row || {};
-        let format = source.format === undefined ? (source["forecast-format"] || fallback.format) : source.format;
+        let format = source.format === undefined
+            ? (source["forecast-format"] === undefined ? fallback.format : source["forecast-format"])
+            : source.format;
         let customFormat = source["custom-format"] === undefined
             ? (source["forecast-custom-format"] === undefined ? "" : source["forecast-custom-format"])
             : source["custom-format"];
@@ -2431,9 +2470,11 @@ CodexUsageApplet.prototype = {
             ? (source["forecast-smoothing"] === undefined ? fallback.smoothing : source["forecast-smoothing"])
             : source.smoothing;
         let limitWindow = source["limit-window"] === undefined
-            ? (source["forecast-limit-window"] || fallback["limit-window"]) : source["limit-window"];
+            ? (source["forecast-limit-window"] === undefined
+                ? fallback["limit-window"] : source["forecast-limit-window"])
+            : source["limit-window"];
         let showPanel = source["show-panel"] === undefined
-            ? (source["forecast-show-panel"] === undefined ? true : source["forecast-show-panel"]) : source["show-panel"];
+            ? (source["forecast-show-panel"] === undefined ? fallback["show-panel"] : source["forecast-show-panel"]) : source["show-panel"];
         let showTooltip = source["show-tooltip"] === undefined
             ? (source["forecast-show-tooltip"] === undefined ? true : source["forecast-show-tooltip"]) : source["show-tooltip"];
         let hideWhenZero = source["hide-when-zero"] === undefined
@@ -2469,7 +2510,7 @@ CodexUsageApplet.prototype = {
             baselineMinutes < 0 || baselineMinutes > 9999 || !Number.isInteger(warnAmount) ||
             warnAmount < 0 || warnAmount > 365 ||
             ["short", "weekly", "monthly", "spark"].indexOf(limitWindow) === -1 ||
-            ["compact", "verbose", "custom"].indexOf(format) === -1 ||
+            ["compact", "compact-minutes", "verbose", "custom"].indexOf(format) === -1 ||
             ["none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"].indexOf(smoothing) === -1 ||
             ["minutes", "hours", "days", "weeks"].indexOf(warnUnit) === -1 ||
             ["none", "red", "red-yellow", "blink-red-yellow", "yellow", "red-green", "red-red"].indexOf(warnFormat) === -1
@@ -2486,15 +2527,34 @@ CodexUsageApplet.prototype = {
 
     _mergedCreditConsumptionRows: function(accounts, currentRows, legacyRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
+        let legacyConsumptionFields = [
+            "consumption-show-panel", "consumption-show-tooltip", "consumption-amount",
+            "consumption-unit", "consumption-format", "consumption-custom-format",
+            "consumption-smoothing", "consumption-hide-when-zero",
+            "consumption-show-coverage-marker", "consumption-baseline-enabled",
+            "consumption-baseline-minutes"
+        ];
         let sources = [];
         if (Array.isArray(currentRows)) sources.push(currentRows);
         if (Array.isArray(legacyRows)) sources.push(legacyRows);
         for (let source of sources) {
             for (let row of source) {
                 let account = this._configuredAccountId(row && row.account);
-                if (!account || current[account] || !this._backendAccounts[account]) continue;
-                if (row["consumption-amount"] !== undefined || row["consumption-format"] !== undefined || currentRows === source) {
-                    current[account] = this._normalizeCreditConsumptionRow(row, account);
+                if (!account || seen[account] || !this._backendAccounts[account]) continue;
+                if (currentRows === source ||
+                    legacyConsumptionFields.some(function(key) { return row[key] !== undefined; })) {
+                    seen[account] = true;
+                    let normalizationRow = row;
+                    if (currentRows !== source) {
+                        normalizationRow = {account: account};
+                        legacyConsumptionFields.forEach(function(key) {
+                            if (row[key] !== undefined) {
+                                normalizationRow[key.slice("consumption-".length)] = row[key];
+                            }
+                        });
+                    }
+                    current[account] = this._normalizeCreditConsumptionRow(normalizationRow, account);
                 }
             }
         }
@@ -2519,13 +2579,19 @@ CodexUsageApplet.prototype = {
             showTooltip = source["show-tooltip"] === undefined
                 ? (source["consumption-show-tooltip"] === undefined ? true : source["consumption-show-tooltip"]) : source["show-tooltip"];
         let amount = source.amount === undefined ? (source["consumption-amount"] === undefined ? 1 : source["consumption-amount"]) : source.amount;
-        let unit = source.unit === undefined ? (source["consumption-unit"] || fallback.unit) : source.unit;
-        let format = source.format === undefined ? (source["consumption-format"] || fallback.format) : source.format;
+        let unit = source.unit === undefined
+            ? (source["consumption-unit"] === undefined ? fallback.unit : source["consumption-unit"])
+            : source.unit;
+        let format = source.format === undefined
+            ? (source["consumption-format"] === undefined ? fallback.format : source["consumption-format"])
+            : source.format;
         let customFormat = source["custom-format"] === undefined
             ? (source["consumption-custom-format"] === undefined ? "" : source["consumption-custom-format"])
             : source["custom-format"];
         let smoothing = source.smoothing === undefined
-            ? (source["consumption-smoothing"] || fallback.smoothing) : source.smoothing;
+            ? (source["consumption-smoothing"] === undefined
+                ? fallback.smoothing : source["consumption-smoothing"])
+            : source.smoothing;
         let hideWhenZero = source["hide-when-zero"] === undefined
             ? (source["consumption-hide-when-zero"] === undefined ? false : source["consumption-hide-when-zero"]) : source["hide-when-zero"];
         let coverage = source["show-coverage-marker"] === undefined
@@ -2652,11 +2718,16 @@ CodexUsageApplet.prototype = {
 
     _mergedCreditRows: function(accounts, currentRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._configuredAccountId(currentRows[i] && currentRows[i].account);
+                if (!account || seen[account] || !this._backendAccounts[account]) {
+                    continue;
+                }
+                seen[account] = true;
                 let normalized = this._normalizeCreditRow(currentRows[i], account);
-                if (account && normalized && !current[account] && this._backendAccounts[account]) {
+                if (normalized) {
                     current[account] = normalized;
                 }
             }
@@ -2697,6 +2768,9 @@ CodexUsageApplet.prototype = {
             ? "hours" : this._strictText(row["consumption-unit"], 16);
         let consumptionFormat = row["consumption-format"] === undefined
             ? "compact" : this._strictText(row["consumption-format"], 16);
+        let customFormat = row["custom-format"] === undefined ? "" : row["custom-format"];
+        let consumptionCustomFormat = row["consumption-custom-format"] === undefined
+            ? "" : row["consumption-custom-format"];
         if (["compact", "verbose", "custom"].indexOf(format) === -1 ||
             ["none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"].indexOf(smoothing) === -1 ||
             !Number.isInteger(consumptionAmount) || consumptionAmount < 1 || consumptionAmount > 365 ||
@@ -2710,11 +2784,13 @@ CodexUsageApplet.prototype = {
             (row["consumption-hide-when-zero"] !== undefined && typeof row["consumption-hide-when-zero"] !== "boolean") ||
             (row["consumption-show-coverage-marker"] !== undefined && typeof row["consumption-show-coverage-marker"] !== "boolean") ||
             (row["consumption-baseline-enabled"] !== undefined && typeof row["consumption-baseline-enabled"] !== "boolean") ||
-            (row["consumption-baseline-minutes"] !== undefined && (!Number.isInteger(row["consumption-baseline-minutes"]) || row["consumption-baseline-minutes"] < 0 || row["consumption-baseline-minutes"] > 9999))) {
+            (row["consumption-baseline-minutes"] !== undefined && (!Number.isInteger(row["consumption-baseline-minutes"]) || row["consumption-baseline-minutes"] < 0 || row["consumption-baseline-minutes"] > 9999)) ||
+            typeof customFormat !== "string" || customFormat.length > 200 ||
+            typeof consumptionCustomFormat !== "string" || consumptionCustomFormat.length > 200) {
             return null;
         }
         return { account: account, "show-panel": row["show-panel"], "show-tooltip": row["show-tooltip"],
-            format: format, "custom-format": this._strictText(row["custom-format"] || "", 200),
+            format: format, "custom-format": this._strictText(customFormat, 200),
             smoothing: smoothing,
             "hide-when-zero": row["hide-when-zero"],
             "show-coverage-marker": row["show-coverage-marker"] !== false,
@@ -2725,7 +2801,7 @@ CodexUsageApplet.prototype = {
             "consumption-amount": consumptionAmount,
             "consumption-unit": consumptionUnit,
             "consumption-format": consumptionFormat,
-            "consumption-custom-format": this._strictText(row["consumption-custom-format"] || "", 200),
+            "consumption-custom-format": this._strictText(consumptionCustomFormat, 200),
             "consumption-hide-when-zero": row["consumption-hide-when-zero"] === true,
             "consumption-show-coverage-marker": row["consumption-show-coverage-marker"] !== false,
             "consumption-baseline-enabled": row["consumption-baseline-enabled"] === true,
@@ -2783,7 +2859,7 @@ CodexUsageApplet.prototype = {
             ["short", "weekly", "monthly", "spark", "all"].indexOf(limitWindow) === -1 ||
             ["short", "weekly", "monthly", "spark"].indexOf(forecastLimitWindow) === -1 ||
             ["compact", "compact-token", "verbose", "custom"].indexOf(format) === -1 ||
-            ["compact", "verbose", "custom"].indexOf(forecastFormat) === -1 ||
+            ["compact", "compact-minutes", "verbose", "custom"].indexOf(forecastFormat) === -1 ||
             ["none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"].indexOf(forecastSmoothing) === -1 ||
             !Number.isInteger(forecastWarnAmount) || forecastWarnAmount < 0 || forecastWarnAmount > 365 ||
             ["minutes", "hours", "days", "weeks"].indexOf(forecastWarnUnit) === -1 ||
@@ -2834,14 +2910,16 @@ CodexUsageApplet.prototype = {
 
     _mergedResetRows: function(accounts, currentRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._configuredAccountId(
                     currentRows[i] && currentRows[i].account
                 );
-                if (!account || current[account] || !this._backendAccounts[account]) {
+                if (!account || seen[account] || !this._backendAccounts[account]) {
                     continue;
                 }
+                seen[account] = true;
                 let normalized = this._normalizeResetRow(currentRows[i], account);
                 if (normalized) {
                     current[account] = normalized;
@@ -2931,12 +3009,14 @@ CodexUsageApplet.prototype = {
 
     _mergedAlertRows: function(accounts, currentRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._configuredAccountId(currentRows[i] && currentRows[i].account);
-                if (!account || current[account] || !this._backendAccounts[account]) {
+                if (!account || seen[account] || !this._backendAccounts[account]) {
                     continue;
                 }
+                seen[account] = true;
                 let normalized = this._normalizeAlertRow(currentRows[i], account);
                 if (normalized) {
                     current[account] = normalized;
@@ -3423,14 +3503,16 @@ CodexUsageApplet.prototype = {
 
     _mergedDisplayRows: function(accounts, currentRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._configuredAccountId(
                     currentRows[i] && currentRows[i].account
                 );
-                if (!account || current[account] || !this._backendAccounts[account]) {
+                if (!account || seen[account] || !this._backendAccounts[account]) {
                     continue;
                 }
+                seen[account] = true;
                 let normalized = this._normalizeDisplayRow(currentRows[i], account);
                 if (normalized) {
                     current[account] = normalized;
@@ -3476,14 +3558,16 @@ CodexUsageApplet.prototype = {
 
     _mergedStyleRows: function(accounts, currentRows, kind) {
         let current = Object.create(null);
+        let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._configuredAccountId(
                     currentRows[i] && currentRows[i].account
                 );
-                if (!account || current[account] || !this._backendAccounts[account]) {
+                if (!account || seen[account] || !this._backendAccounts[account]) {
                     continue;
                 }
+                seen[account] = true;
                 let normalized = this._normalizeStyleRow(currentRows[i], account, kind);
                 if (normalized) {
                     current[account] = normalized;
@@ -3660,6 +3744,7 @@ CodexUsageApplet.prototype = {
 
     _mergedTargetRows: function(accounts, currentRows) {
         let current = Object.create(null);
+        let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
             for (let i = 0; i < currentRows.length; i++) {
                 let account = this._configuredAccountId(currentRows[i] && currentRows[i].account);
@@ -3667,9 +3752,10 @@ CodexUsageApplet.prototype = {
                     currentRows[i] && currentRows[i].element
                 );
                 let key = account + ":" + element;
-                if (!account || current[key] || !this._backendAccounts[account]) {
+                if (!account || seen[key] || !this._backendAccounts[account]) {
                     continue;
                 }
+                seen[key] = true;
                 let normalized = this._normalizeTargetRow(currentRows[i], account);
                 if (normalized) {
                     current[key] = normalized;
@@ -3678,7 +3764,10 @@ CodexUsageApplet.prototype = {
         }
         let rows = [];
         for (let i = 0; i < accounts.length; i++) {
-            for (let element of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
+            // Element 13 (the old global "baseline" target) deliberately has
+            // no replacement here.  The own-baseline switch belongs to each
+            // metric table and must not be masked by a second style target.
+            for (let element of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
                 let key = accounts[i].account + ":" + element;
                 rows.push(
                     current[key] ||
@@ -3735,7 +3824,7 @@ CodexUsageApplet.prototype = {
         }
         let element = this._strictIntegerSetting(row.element);
         if (
-            !Number.isInteger(element) || [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].indexOf(element) === -1 ||
+            !Number.isInteger(element) || [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].indexOf(element) === -1 ||
             typeof row.panel !== "boolean" || typeof row.hover !== "boolean" ||
             typeof row.click !== "boolean"
         ) {
@@ -3887,11 +3976,13 @@ CodexUsageApplet.prototype = {
             (left.tag || "") === (right.tag || "") &&
             left["auth-json"] === right["auth-json"] &&
             left["profile-dir"] === right["profile-dir"] &&
-            Boolean(left["test-home"]) === Boolean(right["test-home"]) &&
+            (left["test-home"] === undefined ? false : left["test-home"]) ===
+                (right["test-home"] === undefined ? false : right["test-home"]) &&
             left.browser === right.browser &&
             left["reactivation-browser"] === right["reactivation-browser"] &&
             left.series === right.series &&
-            Boolean(left["series-active"]) === Boolean(right["series-active"]) &&
+            (left["series-active"] === undefined ? false : left["series-active"]) ===
+                (right["series-active"] === undefined ? false : right["series-active"]) &&
             left.backend === right.backend
         );
     },
@@ -4010,13 +4101,6 @@ CodexUsageApplet.prototype = {
                 throw new Error("Serie " + series + " ist bereits Account " + owners[series] + " zugeordnet");
             }
             owners[series] = row.account;
-        }
-        for (let i = 0; i < rows.length; i++) {
-            let row = rows[i];
-            let series = typeof row.series === "string" ? row.series.trim().toUpperCase() : "";
-            if (series && owners[series] && owners[series] !== row.account) {
-                throw new Error("Serie " + series + " ist bereits aktiv für Account " + owners[series]);
-            }
         }
     },
 
@@ -4884,9 +4968,13 @@ CodexUsageApplet.prototype = {
             let limitWindow = item.limit_window_seconds;
             let consumed = item.consumed_percentage_points;
             let estimate = item.estimated_seconds_to_exhaustion;
+            let baselineUsed = item.baseline_used_percent;
             let sampleCount = item.sample_count;
             if (estimate === undefined) {
                 estimate = null;
+            }
+            if (baselineUsed === undefined) {
+                baselineUsed = null;
             }
             if (
                 typeof lookback !== "number" || !Number.isInteger(lookback) ||
@@ -4898,6 +4986,10 @@ CodexUsageApplet.prototype = {
                 (estimate !== null && (
                     typeof estimate !== "number" || !Number.isInteger(estimate) ||
                     estimate < 0 || estimate > 31536000
+                )) ||
+                (baselineUsed !== null && (
+                    typeof baselineUsed !== "number" || !Number.isFinite(baselineUsed) ||
+                    baselineUsed < 0 || baselineUsed > 100
                 )) ||
                 typeof sampleCount !== "number" || !Number.isInteger(sampleCount) ||
                 sampleCount < 0 || sampleCount > 500000 ||
@@ -4911,6 +5003,7 @@ CodexUsageApplet.prototype = {
                 limit_window_seconds: limitWindow,
                 consumed_percentage_points: consumed,
                 estimated_seconds_to_exhaustion: estimate,
+                baseline_used_percent: baselineUsed,
                 coverage: item.coverage,
                 sample_count: sampleCount
             });
@@ -5287,7 +5380,10 @@ CodexUsageApplet.prototype = {
             let panelRow = this._panelSettings[usage.account] ||
                 this._defaultPanelRow(usage.account, i + 1);
             let panelSources = [panelRow.slot1, panelRow.slot2, panelRow.slot3, panelRow.slot4];
-            usage.cost_windows = [];
+            let activeQueryKeys = Object.create(null);
+            // Keep the last validated windows until the matching request has
+            // succeeded.  Clearing them here made one failed consumption
+            // refresh erase an otherwise usable panel/hover value.
             let tokenNeeded = row && (
                 this._elementTargetEnabled(usage.account, "consumption", "panel", row["show-panel"]) ||
                 this._elementTargetEnabled(usage.account, "consumption", "hover", row["show-tooltip"]) ||
@@ -5299,14 +5395,17 @@ CodexUsageApplet.prototype = {
                 this._elementTargetEnabled(usage.account, "forecast", "hover", row["show-tooltip"]) ||
                 this._elementTargetEnabled(usage.account, "forecast", "click", true)
             );
-            let creditTarget = this._styleTargets[usage.account + ":12"];
             let creditNeeded = creditRow && (
                 panelSources.indexOf(10) !== -1 ||
-                (usage.credits && (
-                    creditRow["consumption-show-panel"] === true ||
-                    creditRow["consumption-show-tooltip"] === true
-                )) ||
-                Boolean(creditTarget)
+                this._elementTargetEnabled(
+                    usage.account, "credit-consumption", "panel",
+                    creditRow["consumption-show-panel"]
+                ) ||
+                this._elementTargetEnabled(
+                    usage.account, "credit-consumption", "hover",
+                    creditRow["consumption-show-tooltip"]
+                ) ||
+                this._elementTargetEnabled(usage.account, "credit-consumption", "click", true)
             );
             if (tokenNeeded) {
                 let consumptionPool = row["limit-window"] === "spark"
@@ -5323,6 +5422,11 @@ CodexUsageApplet.prototype = {
                     row.smoothing !== forecastSmoothing ||
                     row["baseline-enabled"] !== forecastBaselineEnabled ||
                     (row["baseline-enabled"] && row["baseline-minutes"] !== forecastBaselineMinutes);
+                let consumptionQueryKey = this._consumptionQueryKey(
+                    consumptionPool, row.amount, row.unit, row.smoothing,
+                    row["baseline-enabled"] ? row["baseline-minutes"] : null
+                );
+                activeQueryKeys[consumptionQueryKey] = true;
                 this._consumptionQueue.push({
                     account: usage.account,
                     amount: row.amount,
@@ -5334,9 +5438,15 @@ CodexUsageApplet.prototype = {
                         row["limit-window"] !== forecastLimitWindow
                         ? "all" : row["limit-window"],
                     pool: consumptionPool,
+                    queryKey: consumptionQueryKey,
                     generation: generation
                 });
                 if (forecastNeedsSeparate) {
+                    let forecastQueryKey = this._consumptionQueryKey(
+                        forecastPool, row.amount, row.unit, forecastSmoothing,
+                        forecastBaselineMinutes
+                    );
+                    activeQueryKeys[forecastQueryKey] = true;
                     this._consumptionQueue.push({
                         account: usage.account,
                         amount: row.amount,
@@ -5346,11 +5456,19 @@ CodexUsageApplet.prototype = {
                         smoothing: forecastSmoothing,
                         limitWindow: forecastLimitWindow,
                         pool: forecastPool,
+                        queryKey: forecastQueryKey,
                         generation: generation
                     });
                 }
             }
             if (creditNeeded) {
+                let creditQueryKey = this._consumptionQueryKey(
+                    "credits", creditRow["consumption-amount"], creditRow["consumption-unit"],
+                    creditRow["consumption-smoothing"] || "none",
+                    creditRow["consumption-baseline-enabled"]
+                        ? creditRow["consumption-baseline-minutes"] : null
+                );
+                activeQueryKeys[creditQueryKey] = true;
                 this._consumptionQueue.push({
                     account: usage.account,
                     amount: creditRow["consumption-amount"],
@@ -5361,7 +5479,14 @@ CodexUsageApplet.prototype = {
                     smoothing: creditRow["consumption-smoothing"] || "none",
                     limitWindow: "monthly",
                     pool: "credits",
+                    queryKey: creditQueryKey,
                     generation: generation
+                });
+            }
+            if (Array.isArray(usage.cost_windows)) {
+                usage.cost_windows = usage.cost_windows.filter(function(window) {
+                    return !window || window._consumption_query_key === undefined ||
+                        activeQueryKeys[window._consumption_query_key] === true;
                 });
             }
         }
@@ -5418,9 +5543,22 @@ CodexUsageApplet.prototype = {
                     let usage = this._usageForAccount(request.account);
                     if (usage) {
                         let windows = this._safeConsumptionWindows(payload.windows);
+                        windows.forEach(function(window) {
+                            window._consumption_query_key = request.queryKey;
+                        });
+                        let incomingLimitWindows = Object.create(null);
+                        windows.forEach(function(window) {
+                            incomingLimitWindows[String(window.limit_window_seconds)] = true;
+                        });
                         let existing = Array.isArray(usage.cost_windows)
                             ? usage.cost_windows.filter(function(window) {
-                                return window.pool !== request.pool;
+                                // A second query for the same pool (for example
+                                // TE=Woche after TV=5h) must replace only its
+                                // matching windows, never the complete pool.
+                                return !(window.pool === request.pool &&
+                                    incomingLimitWindows[String(window.limit_window_seconds)] === true &&
+                                    (window._consumption_query_key === undefined ||
+                                        window._consumption_query_key === request.queryKey));
                             })
                             : [];
                         usage.cost_windows = existing.concat(windows);
@@ -5625,12 +5763,15 @@ CodexUsageApplet.prototype = {
                     usedCachedWindow = usedCachedWindow || mergedWeekly !== item.weekly;
                     item.weekly = mergedWeekly;
                 }
-                if (this._mergeMissingPoolResets(
-                    item,
-                    old,
-                    item.captured_at,
-                    oldValuesCapturedAt
-                )) {
+                if (
+                    !resetlessBrowserUsage &&
+                    this._mergeMissingPoolResets(
+                        item,
+                        old,
+                        item.captured_at,
+                        oldValuesCapturedAt
+                    )
+                ) {
                     usedCachedWindow = true;
                 }
                 if (usedCachedWindow) {
@@ -5938,6 +6079,19 @@ CodexUsageApplet.prototype = {
             return false;
         }
         let windows = [usage && usage.five_hour, usage && usage.weekly];
+        if (usage && usage.main && Array.isArray(usage.main.windows)) {
+            windows = windows.concat(usage.main.windows);
+        }
+        let models = usage && usage.models && typeof usage.models === "object"
+            ? usage.models
+            : {};
+        let modelKeys = Object.keys(models);
+        for (let j = 0; j < modelKeys.length; j++) {
+            let pool = models[modelKeys[j]];
+            if (pool && Array.isArray(pool.windows)) {
+                windows = windows.concat(pool.windows);
+            }
+        }
         for (let i = 0; i < windows.length; i++) {
             if (windows[i] && this._windowHasUsageValue(windows[i]) && !windows[i].reset_at) {
                 return true;
@@ -5998,7 +6152,13 @@ CodexUsageApplet.prototype = {
         if (!usage || !usage.models || typeof usage.models !== "object") {
             return null;
         }
-        return usage.models[key] || null;
+        if (!Object.prototype.hasOwnProperty.call(usage.models, key)) {
+            return null;
+        }
+        let pool = usage.models[key];
+        return pool && typeof pool === "object" && !Array.isArray(pool)
+            ? pool
+            : null;
     },
 
     _poolIsUsable: function(pool) {
@@ -7787,11 +7947,33 @@ CodexUsageApplet.prototype = {
         this._fastModeState = this._readFastModeState();
     },
 
+    _readEmergencyDisplayOverride: function(account) {
+        if (typeof account !== "string" || !account) {
+            return null;
+        }
+        try {
+            let result = GLib.file_get_contents(EMERGENCY_DISPLAY_OVERRIDE_PATH);
+            if (!result || !result[0]) {
+                return null;
+            }
+            let payload = JSON.parse(ByteArray.toString(result[1]));
+            let value = payload && payload[account];
+            if (!value || value.active !== true || value.delta_enabled !== true) {
+                return null;
+            }
+            let window = ["short", "weekly", "monthly", "spark"].indexOf(value.limit_window) !== -1
+                ? value.limit_window : "short";
+            return {limit_window: window};
+        } catch (e) {
+            return null;
+        }
+    },
+
     _fastModeIsActive: function() {
         let modes = this._fastModeState && this._fastModeState.modes;
-        return modes && Object.keys(modes).some(function(account) {
+        return Boolean(modes && Object.keys(modes).some(function(account) {
             return modes[account] && modes[account].state === "active";
-        });
+        }));
     },
 
     _fastModeStatusText: function() {
@@ -7859,13 +8041,6 @@ CodexUsageApplet.prototype = {
                         "panel",
                         this._consumptionSettings[usage.account] &&
                             this._consumptionSettings[usage.account]["show-panel"]
-                    ) ||
-                    this._elementTargetEnabled(
-                        usage.account,
-                        "baseline",
-                        "panel",
-                        this._consumptionSettings[usage.account] &&
-                            this._consumptionSettings[usage.account]["baseline-enabled"]
                     ) ||
                     this._elementTargetEnabled(
                         usage.account,
@@ -7958,15 +8133,38 @@ CodexUsageApplet.prototype = {
         if (!row) {
             return null;
         }
+        let emergencyOverride = this._readEmergencyDisplayOverride(usage.account);
+        if (emergencyOverride) {
+            row = Object.assign({}, row, {
+                "show-panel": true,
+                "show-tooltip": true,
+                "limit-window": emergencyOverride.limit_window,
+                "forecast-limit-window": emergencyOverride.limit_window,
+                "forecast-show-panel": true,
+                "forecast-show-tooltip": true,
+                "emergency-delta": true
+            });
+        }
         let rawWindows = Array.isArray(usage.cost_windows) ? usage.cost_windows : [];
         let forecastLimitWindow = row["forecast-limit-window"] || row["limit-window"];
         let requestedPool = row["limit-window"] === "spark" ? "gpt-5.3-codex-spark" : "main";
-        let windows = this._selectConsumptionWindows(rawWindows, row["limit-window"], requestedPool);
+        let consumptionQueryKey = this._consumptionQueryKey(
+            requestedPool, row.amount, row.unit, row.smoothing,
+            row["baseline-enabled"] ? row["baseline-minutes"] : null
+        );
+        let windows = this._selectConsumptionWindows(
+            rawWindows, row["limit-window"], requestedPool, consumptionQueryKey
+        );
         let forecastPool = forecastLimitWindow === "spark" ? "gpt-5.3-codex-spark" : "main";
+        let forecastQueryKey = this._consumptionQueryKey(
+            forecastPool, row.amount, row.unit, row["forecast-smoothing"] || row.smoothing,
+            row["forecast-baseline-enabled"] === true ? row["forecast-baseline-minutes"] : null
+        );
         let forecastWindow = this._selectConsumptionWindows(
             rawWindows,
             forecastLimitWindow,
-            forecastPool
+            forecastPool,
+            forecastQueryKey
         )[0] || null;
         let parts = [];
         for (let i = 0; i < windows.length; i++) {
@@ -7983,11 +8181,14 @@ CodexUsageApplet.prototype = {
     },
 
     _baselineParts: function(account, row, surface, window) {
-        if (!row || row["baseline-enabled"] !== true ||
-            !this._elementTargetEnabled(account, "baseline", surface, true)) {
+        // The table-local "Setze eigenen AW" switch controls this output.
+        // A separate formatting target used to hide an enabled AW in the
+        // panel because supplemental targets default there to disabled.
+        if (!row || row["baseline-enabled"] !== true) {
             return null;
         }
-        let baselineValue = window && Number.isFinite(Number(window.baseline_used_percent))
+        let baselineValue = window && typeof window.baseline_used_percent === "number" &&
+            Number.isFinite(window.baseline_used_percent)
             ? this._formatConsumptionValue(Number(window.baseline_used_percent)) + "%"
             : "—";
         let text = "AW" + String(row["baseline-minutes"]) + "m=" + baselineValue;
@@ -8014,11 +8215,31 @@ CodexUsageApplet.prototype = {
         }[coverage] || " (unbekannt)";
     },
 
-    _selectConsumptionWindows: function(windows, key, pool) {
+    _consumptionQueryKey: function(pool, amount, unit, smoothing, baselineMinutes) {
+        let baseline = baselineMinutes === null || baselineMinutes === undefined
+            ? "-" : String(baselineMinutes);
+        return [String(pool), String(amount), String(unit), String(smoothing || "none"), baseline].join("|");
+    },
+
+    _selectConsumptionWindows: function(windows, key, pool, queryKey) {
         if (!Array.isArray(windows)) return [];
         let candidates = windows.filter(function(window) {
             return window && window.pool === pool;
         });
+        if (typeof queryKey === "string" && queryKey) {
+            let matching = candidates.filter(function(window) {
+                return window._consumption_query_key === queryKey;
+            });
+            if (matching.length) {
+                candidates = matching;
+            } else {
+                // Legacy cached windows have no query identity. A tagged
+                // result for a different query may never stand in for one.
+                candidates = candidates.filter(function(window) {
+                    return window._consumption_query_key === undefined;
+                });
+            }
+        }
         if (key === "all") return candidates;
         if (key === "spark") return candidates;
         let seconds = this._limitWindowSeconds(key);
@@ -8086,7 +8307,7 @@ CodexUsageApplet.prototype = {
             days: "T",
             weeks: "W"
         }[row.unit] || "S";
-        let compactPrefix = this.showConsumptionDelta !== false ? "Δ" : "";
+        let compactPrefix = (row["emergency-delta"] === true || this.showConsumptionDelta !== false) ? "Δ" : "";
         let plain;
         if (coverage === "insufficient") {
             plain = "Limitverbrauch " + period + ": nicht genügend Messdaten" + marker;
@@ -8100,6 +8321,9 @@ CodexUsageApplet.prototype = {
                 window: windowLabel,
                 coverage: marker ? marker.slice(2, -1) : "vollständig"
             });
+            if (marker && String(row["custom-format"] || "").indexOf("{coverage}") === -1) {
+                plain += marker;
+            }
         } else if (row.format === "compact-token") {
             plain = compactPrefix + String(row.amount) + compactUnit + valueText + "P" + marker;
         } else {
@@ -8171,7 +8395,7 @@ CodexUsageApplet.prototype = {
         let used = creditText(usedValue);
         let percent = credit.percent !== null && credit.percent !== undefined
             ? String(Math.round(credit.percent * 10) / 10) : "–";
-        if (row["hide-when-zero"] && (credit.remaining === 0 || credit.percent === 0)) return null;
+        if (row["hide-when-zero"] && credit.remaining === 0) return null;
         if (!forceVisible && !this._elementTargetEnabled(usage.account, "credits", surface,
             surface === "panel" ? row["show-panel"] : surface === "hover" ? row["show-tooltip"] : true)) {
             return null;
@@ -8183,7 +8407,8 @@ CodexUsageApplet.prototype = {
             row["show-coverage-marker"] === true
         );
         let baselineText = row["baseline-enabled"] === true &&
-            Number.isFinite(Number(credit.baseline_used_percent))
+            typeof credit.baseline_used_percent === "number" &&
+            Number.isFinite(credit.baseline_used_percent)
             ? "AW" + String(row["baseline-minutes"]) + "m=" +
                 this._formatConsumptionValue(Number(credit.baseline_used_percent)) + "%"
             : "";
@@ -8227,9 +8452,16 @@ CodexUsageApplet.prototype = {
         if (!visible) {
             return null;
         }
-        let windows = Array.isArray(usage.cost_windows)
-            ? usage.cost_windows.filter(function(window) { return window && window.pool === "credits"; })
-            : [];
+        let windows = this._selectConsumptionWindows(
+            Array.isArray(usage.cost_windows) ? usage.cost_windows : [],
+            "all",
+            "credits",
+            this._consumptionQueryKey(
+                "credits", row["consumption-amount"], row["consumption-unit"],
+                row["consumption-smoothing"], row["consumption-baseline-enabled"] === true
+                    ? row["consumption-baseline-minutes"] : null
+            )
+        );
         if (!windows.length) {
             return null;
         }
@@ -8250,7 +8482,8 @@ CodexUsageApplet.prototype = {
                 row["consumption-show-coverage-marker"] === true
             );
             let baselineText = row["consumption-baseline-enabled"] === true &&
-                Number.isFinite(Number(window.baseline_used_percent))
+                typeof window.baseline_used_percent === "number" &&
+                Number.isFinite(window.baseline_used_percent)
                 ? "AW" + String(row["consumption-baseline-minutes"]) + "m=" +
                     this._formatConsumptionValue(Number(window.baseline_used_percent)) + "%"
                 : "";
@@ -8265,6 +8498,9 @@ CodexUsageApplet.prototype = {
                     period: period,
                     coverage: marker ? marker.slice(2, -1) : "vollständig"
                 });
+                if (marker && String(row["consumption-custom-format"] || "").indexOf("{coverage}") === -1) {
+                    text += marker;
+                }
             } else {
                 let prefix = this.showConsumptionDelta !== false ? "Δ" : "";
                 text = (panelPrefix || "") + (panelPrefix ? " " : "") + prefix +
@@ -8325,9 +8561,11 @@ CodexUsageApplet.prototype = {
         }
         let durationStyle = this._durationStyles[row.account] ||
             this._defaultStyleRow(row.account, "duration");
+        let forecastFormat = row.format || row["forecast-format"] || "compact";
+        let decimalCompact = forecastFormat === "compact";
         let duration = estimate === null || estimate === undefined
             ? "—"
-            : this._formatDurationPart(Math.ceil(estimate / 60), durationStyle.format);
+            : this._formatDurationPart(Math.ceil(estimate / 60), durationStyle.format, decimalCompact);
         let marker = this._coverageMarker(
             window.coverage,
             row["show-coverage-marker"] === true
@@ -8336,29 +8574,33 @@ CodexUsageApplet.prototype = {
             ? "—"
             : "≈ " + duration + marker;
         let baselineText = row["baseline-enabled"] === true &&
-            Number.isFinite(Number(window.baseline_used_percent))
+            typeof window.baseline_used_percent === "number" &&
+            Number.isFinite(window.baseline_used_percent)
             ? "AW" + String(row["baseline-minutes"]) + "m=" +
                 this._formatConsumptionValue(Number(window.baseline_used_percent)) + "%"
             : "";
-        let forecastFormat = row.format || row["forecast-format"] || "compact";
-        let plain = forecastFormat === "verbose"
+        let plainWithoutBaseline = forecastFormat === "verbose"
             ? "Zeit bis Tokenende: " + forecastText
             : (forecastFormat === "custom"
                 ? this._customForecastText(row["custom-format"] || row["forecast-custom-format"], {
                     value: forecastText,
-                    duration: duration
-                })
+                    duration: duration,
+                    coverage: marker ? marker.slice(2, -1) : "vollständig"
+                }) + (marker && String(row["custom-format"] || row["forecast-custom-format"] || "").indexOf("{coverage}") === -1 ? marker : "")
                 : "TE=" + (estimate === null || estimate === undefined ? "—" : duration + marker));
+        let plain = plainWithoutBaseline;
         if (baselineText) {
             plain += " " + baselineText;
         }
         let markup;
-        if (forecastFormat === "compact") {
+        if (forecastFormat === "compact" || forecastFormat === "compact-minutes") {
             markup = estimate === null || estimate === undefined
-                ? this._escapeMarkup(plain)
+                ? this._escapeMarkup(plainWithoutBaseline)
                 : this._escapeMarkup("TE=") + this._styleSpan(duration + marker, durationStyle, remaining, surface);
         } else if (estimate === null || estimate === undefined) {
-            markup = this._escapeMarkup(plain);
+            markup = this._escapeMarkup(plainWithoutBaseline);
+        } else if (forecastFormat === "custom") {
+            markup = this._escapeMarkup(plainWithoutBaseline);
         } else {
             markup = this._escapeMarkup("Zeit bis Tokenende: ") +
                 this._styleSpan(forecastText, durationStyle, remaining, surface);
@@ -8402,7 +8644,7 @@ CodexUsageApplet.prototype = {
 
     _customForecastText: function(template, values) {
         let text = typeof template === "string" && template ? template : "Zeit bis Tokenende {value}";
-        return text.replace(/\{(value|duration)\}/g, function(_match, key) {
+        return text.replace(/\{(value|duration|coverage)\}/g, function(_match, key) {
             return values[key];
         });
     },
@@ -8455,7 +8697,8 @@ CodexUsageApplet.prototype = {
         }
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
-        if (source >= 1 && source <= 3 && usage.main && !this._poolIsUsable(usage.main)) {
+        if ((source >= 1 && source <= 3 || source === 8) &&
+            usage.main && !this._poolIsUsable(usage.main)) {
             return null;
         }
         if (source === 1) {
@@ -9168,9 +9411,11 @@ CodexUsageApplet.prototype = {
             tag: 9,
             credits: 11,
             "credit-consumption": 12
-            ,baseline: 13
         };
         let elementId = elements[element];
+        if (elementId === undefined) {
+            return false;
+        }
         let target = this._styleTargets[account + ":" + elementId];
         if (!target && legacyVisible !== undefined) {
             return legacyVisible === true;
@@ -9193,9 +9438,11 @@ CodexUsageApplet.prototype = {
             tag: 9,
             credits: 11,
             "credit-consumption": 12
-            ,baseline: 13
         };
         let elementId = elements[element];
+        if (elementId === undefined) {
+            return false;
+        }
         let target = this._styleTargets[account + ":" + elementId];
         if (!target) {
             return element === "percent" || surface === "click";
@@ -9252,7 +9499,7 @@ CodexUsageApplet.prototype = {
         return Math.max(0, Math.ceil((millis - Date.now()) / 60000));
     },
 
-    _formatDurationPart: function(minutes, format) {
+    _formatDurationPart: function(minutes, format, decimalCompact) {
         if (minutes === null || !Number.isFinite(minutes)) {
             return "–";
         }
@@ -9261,6 +9508,9 @@ CodexUsageApplet.prototype = {
         let hours = Math.floor((total % 1440) / 60);
         let rest = total % 60;
         let pad = function(number) { return String(number).padStart(2, "0"); };
+        if (decimalCompact && format === 0) {
+            return (total / 60).toFixed(1).replace(".", ",") + "h";
+        }
         if (format === 1) {
             return (days ? days + "d " : "") + pad(hours) + ":" + pad(rest);
         }
@@ -9405,7 +9655,7 @@ CodexUsageApplet.prototype = {
     },
 
     _escapeMarkup: function(value) {
-        return String(value || "")
+        return String(value === null || value === undefined ? "" : value)
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
@@ -9419,7 +9669,7 @@ CodexUsageApplet.prototype = {
         let week = this._remainingPercent(usage.weekly);
         let monthly = this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000));
         let sparkPool = this._modelPool(usage, "gpt-5.3-codex-spark");
-        let sparkValues = sparkPool && Array.isArray(sparkPool.windows)
+        let sparkValues = this._poolIsUsable(sparkPool) && Array.isArray(sparkPool.windows)
             ? sparkPool.windows.map(Lang.bind(this, function(window) {
                 return this._remainingPercent(window);
             })).filter(function(value) { return value !== null; })

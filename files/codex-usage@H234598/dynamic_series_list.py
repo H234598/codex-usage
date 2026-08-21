@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import select
 import signal
 import subprocess
@@ -23,7 +24,9 @@ class DynamicSeriesList(List, JSONSettingsBackend):
     _ACTIVE_COLUMN = "series-active"
     _MAX_MASTERJET_OUTPUT = 128 * 1024
     _MAX_SERIES = 256
+    _MASTERJET_TIMEOUT_SECONDS = 2.0
     _MASTERJET_CACHE_SECONDS = 30.0
+    _SERIES_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,15}")
     _masterjet_cache = None
     _masterjet_cache_at = 0.0
 
@@ -52,7 +55,10 @@ class DynamicSeriesList(List, JSONSettingsBackend):
 
     def _masterjet_series(self):
         now = time.monotonic()
-        if self._masterjet_cache is not None and now - self._masterjet_cache_at < self._MASTERJET_CACHE_SECONDS:
+        if (
+            self._masterjet_cache is not None
+            and now - self._masterjet_cache_at < self._MASTERJET_CACHE_SECONDS
+        ):
             return self._masterjet_cache
 
         command = os.environ.get("CODEX_MASTER_MCP", "").strip()
@@ -71,7 +77,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-            deadline = time.monotonic() + 2.0
+            deadline = time.monotonic() + self._MASTERJET_TIMEOUT_SECONDS
             stream = process.stdout
             while stream is not None:
                 remaining = deadline - time.monotonic()
@@ -80,7 +86,10 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 ready, _, _ = select.select([stream], [], [], remaining)
                 if not ready:
                     raise TimeoutError("Masterjet-Serienabfrage timeout")
-                chunk = os.read(stream.fileno(), min(8192, self._MAX_MASTERJET_OUTPUT + 1 - len(output)))
+                chunk = os.read(
+                    stream.fileno(),
+                    min(8192, self._MAX_MASTERJET_OUTPUT + 1 - len(output)),
+                )
                 if not chunk:
                     break
                 output.extend(chunk)
@@ -98,10 +107,18 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 if item.get("provider") != "openai_chatgpt":
                     continue
                 prefix = item.get("prefix")
-                if isinstance(prefix, str) and len(prefix) <= 16 and prefix.isalnum():
+                if isinstance(prefix, str) and self._SERIES_PREFIX_RE.fullmatch(prefix):
                     result.append(prefix.upper())
             result = tuple(sorted(set(result)))
-        except (OSError, UnicodeError, ValueError, RuntimeError, TimeoutError, json.JSONDecodeError):
+        except (
+            OSError,
+            UnicodeError,
+            ValueError,
+            RuntimeError,
+            TimeoutError,
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+        ):
             result = ()
         finally:
             if process is not None and process.poll() is None:
@@ -125,7 +142,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
         for row in self.model:
             series = row[self._series_column_index]
             active = row[self._active_column_index]
-            if isinstance(series, str) and series.strip() and active:
+            if isinstance(series, str) and series.strip() and active is True:
                 owners[series.strip().upper()] = row[0]
         return owners
 
@@ -146,7 +163,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 options[series] = series
         # Preserve an existing legacy/current assignment (notably A) for its owner,
         # but do not expose it to any other account.
-        if current and (owners.get(current) in (None, account)):
+        if current and current not in options and (owners.get(current) in (None, account)):
             options.setdefault(current + " (aktuell)", current)
         return options
 

@@ -117,20 +117,6 @@
         "show-reactivation-actions"
       ]
     },
-    "formatting-section": {
-      "type": "section",
-      "title": "Hervorhebungen und Design:",
-      "keys": [
-        "account-percent-styles-heading",
-        "account-percent-styles",
-        "account-date-styles-heading",
-        "account-date-styles",
-        "account-time-styles-heading",
-        "account-time-styles",
-        "account-duration-styles-heading",
-        "account-duration-styles"
-      ]
-    },
     "display-settings-section": {
       "type": "section",
       "title": "Account-Anzeige",
@@ -177,14 +163,6 @@
       "keys": [
         "account-duration-styles-heading",
         "account-duration-styles"
-      ]
-    },
-    "style-target-section": {
-      "type": "section",
-      "title": "Anzeige:",
-      "keys": [
-        "account-display-settings",
-        "account-style-targets"
       ]
     },
     "alerts-section": {
@@ -553,7 +531,7 @@
         "default": 0
       }
     ],
-    "height": 240,
+    "height": 300,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -756,7 +734,7 @@
         "default": 0
       }
     ],
-    "height": 240,
+    "height": 300,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -958,7 +936,7 @@
         "default": 0
       }
     ],
-    "height": 240,
+    "height": 300,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -1162,7 +1140,7 @@
         "default": 0
       }
     ],
-    "height": 240,
+    "height": 300,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -1170,7 +1148,7 @@
   "account-style-targets": {
     "type": "list",
     "description": "Anzeigeziele für Account-ID, Label, Reset, Verbrauch und Prognose",
-    "tooltip": "Jede Zeile ist genau ein Element. Oberfläche und Element werden getrennt gespeichert; die Liste enthält keine Sammelwerte.",
+    "tooltip": "Jede Zeile ist genau eines von 13 Elementen pro Account. Oberfläche und Element werden getrennt gespeichert; die Liste enthält keine Sammelwerte. Eine Zeile wird per Doppelklick oder über das Stift-Symbol bearbeitet; die Checkboxen können direkt umgeschaltet werden.",
     "columns": [
       {
         "id": "account",
@@ -1195,7 +1173,6 @@
           ,"Verbrauch Woche": 10
           ,"Credits": 11
           ,"Creditverbrauch": 12
-          ,"Delta-Ausgangswert": 13
         }
       },
       {
@@ -1217,7 +1194,7 @@
         "default": true
       }
     ],
-    "height": 300,
+    "height": 420,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
@@ -1596,7 +1573,7 @@
       {"id": "show-panel", "title": "Tokenende Leiste", "type": "boolean", "default": false},
       {"id": "show-tooltip", "title": "Tokenende Hover", "type": "boolean", "default": true},
       {"id": "limit-window", "title": "Tokenende Limit", "type": "string", "options": {"5h": "short", "Woche": "weekly", "30 Tage": "monthly", "Spark": "spark"}, "default": "short"},
-      {"id": "format", "title": "Tokenende Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
+      {"id": "format", "title": "Tokenende Format", "type": "string", "options": {"Kompakt (Dezimalstunden)": "compact", "Kompakt (Stunden/Minuten)": "compact-minutes", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "tooltip": "Kompakt (Dezimalstunden) zeigt die Restzeit mit einer Nachkommastelle in Stunden, z. B. 5,9h. Kompakt (Stunden/Minuten) zeigt die bisherige Stunden-/Minutendarstellung.", "default": "compact"},
       {"id": "custom-format", "title": "Tokenende Eigenes Format", "type": "string", "tooltip": "{value}=Restlaufzeit, {duration}=formatierte Dauer. Beispiel: Tokenende {value}.", "default": ""},
       {"id": "smoothing", "title": "Glättung", "type": "string", "options": {"Keine": "none", "EMA – 5 Minuten": "ema-5", "EMA – 10 Minuten": "ema-10", "EMA – 20 Minuten": "ema-20", "EMA – 40 Minuten": "ema-40", "EMA – 80 Minuten": "ema-80", "EMA – 160 Minuten": "ema-160", "EMA – 320 Minuten": "ema-320", "EMA – 640 Minuten": "ema-640"}, "tooltip": "Glättet die Tokenende-Prognose mit einer EMA.", "default": "ema-20"},
       {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false},
@@ -1750,7 +1727,7 @@
         "default": false
       }
     ],
-    "height": 260,
+    "height": 300,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],
     "default": []

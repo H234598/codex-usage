@@ -262,6 +262,57 @@ def test_format_and_display_sections_use_new_labels() -> None:
     )
 
 
+def test_formatting_tables_are_isolated_and_have_editable_rows() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+    layout = settings["layout"]
+    expected_sections = {
+        "percent-style-section": ("account-percent-styles-heading", "account-percent-styles"),
+        "date-style-section": ("account-date-styles-heading", "account-date-styles"),
+        "time-style-section": ("account-time-styles-heading", "account-time-styles"),
+        "duration-style-section": ("account-duration-styles-heading", "account-duration-styles"),
+        "display-settings-section": ("account-display-settings-heading", "account-display-settings"),
+        "display-target-section": ("account-style-targets-heading", "account-style-targets"),
+    }
+
+    for section_name, keys in expected_sections.items():
+        assert layout[section_name]["keys"] == list(keys)
+        table = settings[keys[1]]
+        assert table["type"] == "list"
+        assert table["show-buttons"] is True
+        assert "edit" not in table["hidden-buttons"]
+        assert table["height"] >= (420 if keys[1] == "account-style-targets" else 300)
+    table_keys = [keys[1] for keys in expected_sections.values()]
+    assert len(table_keys) == len(set(table_keys))
+    assert all(
+        sum(table_key in layout[section_name]["keys"] for section_name in expected_sections) == 1
+        for table_key in table_keys
+    )
+
+    # These were old combined containers. Keeping them in the schema makes it
+    # too easy for a Cinnamon settings renderer to attach a table twice.
+    assert "formatting-section" not in layout
+    assert "style-target-section" not in layout
+
+    target_options = settings["account-style-targets"]["columns"][1]["options"]
+    assert target_options == {
+        "Prozent": 0,
+        "Datum": 1,
+        "Uhrzeit": 2,
+        "Reset-Restlaufzeit": 3,
+        "Verbrauchszeitraum": 4,
+        "Zeit bis Tokenende": 5,
+        "Usage-Resets": 6,
+        "Account-ID": 7,
+        "Label": 8,
+        "Kürzel": 9,
+        "Verbrauch Woche": 10,
+        "Credits": 11,
+        "Creditverbrauch": 12,
+    }
+    assert "Doppelklick" in settings["account-style-targets"]["tooltip"]
+    assert "13 Elemente" in settings["account-style-targets"]["tooltip"]
+
+
 def test_alert_table_has_editable_spark_column() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     table = settings["account-alert-settings"]
@@ -451,7 +502,6 @@ def test_applet_metadata_and_settings_remainder() -> None:
             "Verbrauch Woche": 10,
                 "Credits": 11,
                 "Creditverbrauch": 12,
-                "Delta-Ausgangswert": 13,
         }
     assert targets["show-buttons"] is True
     assert set(targets["hidden-buttons"]) == {"+", "-", "up", "down"}
