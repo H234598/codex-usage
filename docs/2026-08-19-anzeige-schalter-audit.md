@@ -1879,3 +1879,13 @@ Snapshot konnte den JSON-Überblick dadurch weiterhin mit `AttributeError`
 abbrechen. Der Überblick übernimmt diese Felder jetzt ausschließlich aus der
 normalisierten Serializer-Ausgabe. `tests/test_cli.py`: 110/110 bestanden;
 Mypy und Ruff für betroffene Dateien sauber.
+
+## Runde 184: History-Sampler überspringt malformed Usage-Container
+
+`history._iter_usage_samples()` iterierte `models` und Pool-`windows` ohne
+Laufzeitprüfung und griff auf malformed `main`, `credits` oder Zeitstempel
+direkt zu. Beschädigte In-Memory-Usage konnte History-Aufzeichnung mit
+`AttributeError` oder `TypeError` abbrechen. Nicht-iterierbare Container und
+ungültige Pools/Fenster werden jetzt übersprungen; lazy Modell-Iteratoren und
+Sample-Bound bleiben erhalten. `tests/test_history.py`: 50/50 bestanden; Mypy
+und Ruff für betroffene Dateien sauber.

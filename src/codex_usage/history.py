@@ -11,7 +11,7 @@ from itertools import chain, islice
 from pathlib import Path
 
 from .config import default_state_dir
-from .models import AccountStatus, AccountUsage, UsagePool
+from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import ensure_private_directory, private_path_lock
 
 MAX_HISTORY_SAMPLES = 500_000
@@ -478,54 +478,117 @@ def _iter_usage_samples(usage: AccountUsage):
         raise ValueError("usage is invalid")
     if usage.status != AccountStatus.OK or usage.stale or usage.cache_invalidated:
         return
-    captured_at = usage.values_captured_at or usage.captured_at
-    pools: tuple[UsagePool, ...] = (usage.main,) if usage.main is not None else ()
-    for pool in chain(pools, usage.models):
-        if not getattr(pool, "available", False):
+    if not isinstance(usage.account_id, str) or not usage.account_id:
+        return
+    values_captured_at = usage.values_captured_at
+    captured_at = (
+        values_captured_at
+        if isinstance(values_captured_at, datetime)
+        and values_captured_at.tzinfo is not None
+        and values_captured_at.utcoffset() is not None
+        else usage.captured_at
+    )
+    if (
+        not isinstance(captured_at, datetime)
+        or captured_at.tzinfo is None
+        or captured_at.utcoffset() is None
+    ):
+        return
+    source = usage.backend_used if isinstance(usage.backend_used, str) else "unknown"
+    main_pools = (usage.main,) if isinstance(usage.main, UsagePool) else ()
+    try:
+        model_pools = iter(usage.models) if usage.models is not None else iter(())
+    except TypeError:
+        model_pools = iter(())
+    for pool in chain(main_pools, model_pools):
+        if (
+            not isinstance(pool, UsagePool)
+            or pool.available is not True
+            or not isinstance(pool.windows, tuple)
+        ):
             continue
         for window in pool.windows:
-            if not window.has_known_identity or window.remaining_percent is None:
+            if not isinstance(window, LimitWindow):
                 continue
-            duration = window.duration_seconds or {
+            try:
+                if not window.has_known_identity or window.remaining_percent is None:
+                    continue
+            except (AttributeError, TypeError, ValueError, OverflowError):
+                continue
+            duration = (
+                window.duration_seconds
+                if isinstance(window.duration_seconds, int)
+                and not isinstance(window.duration_seconds, bool)
+                and window.duration_seconds > 0
+                else None
+            ) or {
                 "5h": 18_000,
                 "5_hour": 18_000,
                 "five_hour": 18_000,
                 "w": 604_800,
                 "week": 604_800,
                 "weekly": 604_800,
-            }.get(window.name.strip().casefold())
+            }.get(window.name.strip().casefold() if isinstance(window.name, str) else None)
             if duration is None:
                 continue
-            yield UsageSample(
-                account_id=usage.account_id,
-                pool=pool.key,
-                window_seconds=duration,
-                captured_at=captured_at,
-                used_percent=100.0 - float(window.remaining_percent),
-                reset_at=window.reset_at,
-                reset_generation=(
-                    window.reset_at.astimezone(UTC).isoformat()
-                    if window.reset_at is not None
-                    else None
-                ),
-                source=usage.backend_used or "unknown",
-            )
-    credit = usage.credits
-    if credit is not None and credit.remaining_percent is not None:
-        yield UsageSample(
-            account_id=usage.account_id,
-            pool="credits",
-            window_seconds=credit.duration_seconds or CREDIT_HISTORY_WINDOW_SECONDS,
-            captured_at=captured_at,
-            used_percent=100.0 - float(credit.remaining_percent),
-            reset_at=credit.reset_at,
-            reset_generation=(
-                credit.reset_at.astimezone(UTC).isoformat()
-                if credit.reset_at is not None
+            reset_at = (
+                window.reset_at
+                if isinstance(window.reset_at, datetime)
+                and window.reset_at.tzinfo is not None
+                and window.reset_at.utcoffset() is not None
                 else None
-            ),
-            source=usage.backend_used or "unknown",
-        )
+            )
+            try:
+                yield UsageSample(
+                    account_id=usage.account_id,
+                    pool=pool.key,
+                    window_seconds=duration,
+                    captured_at=captured_at,
+                    used_percent=100.0 - float(window.remaining_percent),
+                    reset_at=reset_at,
+                    reset_generation=reset_at.astimezone(UTC).isoformat()
+                    if reset_at is not None
+                    else None,
+                    source=source or "unknown",
+                )
+            except (TypeError, ValueError, OverflowError):
+                continue
+    credit = usage.credits
+    if isinstance(credit, LimitWindow):
+        try:
+            remaining_percent = credit.remaining_percent
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            remaining_percent = None
+        if remaining_percent is not None:
+            duration = (
+                credit.duration_seconds
+                if isinstance(credit.duration_seconds, int)
+                and not isinstance(credit.duration_seconds, bool)
+                and credit.duration_seconds > 0
+                else CREDIT_HISTORY_WINDOW_SECONDS
+            )
+            reset_at = (
+                credit.reset_at
+                if isinstance(credit.reset_at, datetime)
+                and credit.reset_at.tzinfo is not None
+                and credit.reset_at.utcoffset() is not None
+                else None
+            )
+            try:
+                yield UsageSample(
+                    account_id=usage.account_id,
+                    pool="credits",
+                    window_seconds=duration,
+                    captured_at=captured_at,
+                    used_percent=100.0 - float(remaining_percent),
+                    reset_at=reset_at,
+                    reset_generation=reset_at.astimezone(UTC).isoformat()
+                    if reset_at is not None
+                    else None,
+                    source=source or "unknown",
+                )
+            except (TypeError, ValueError, OverflowError):
+                return
 
 
 def record_usage_samples(usage: AccountUsage, *, path: Path | None = None) -> int:

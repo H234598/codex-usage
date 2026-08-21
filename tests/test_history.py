@@ -5,7 +5,7 @@ import pytest
 
 import codex_usage.history as history_module
 from codex_usage.consumption import calculate_consumption
-from codex_usage.history import HistoryStore, UsageSample
+from codex_usage.history import HistoryStore, UsageSample, usage_samples_from_usage
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 
 
@@ -367,6 +367,38 @@ def test_record_usage_samples_batch_commits_once(tmp_path, monkeypatch):
 
     assert history_module.record_usage_samples_batch((usage,), path=path) == 2
     assert transactions == ["BEGIN", "COMMIT"]
+
+
+def test_usage_samples_skip_malformed_usage_containers():
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=UTC),
+        main=[],  # type: ignore[arg-type]
+        models=None,  # type: ignore[arg-type]
+        credits=[],  # type: ignore[arg-type]
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_pool_with_malformed_windows():
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=UTC),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=None,  # type: ignore[arg-type]
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
 
 
 def test_history_record_many_uses_sqlite_batch_execution(tmp_path):
