@@ -3444,3 +3444,12 @@ Cross-File-Verifikation nach Routing-, Snapshot- und History-Anpassungen:
 `mypy src/codex_usage` meldet in allen 35 Quelldateien keine Fehler.
 Aggregierter Ruff auf `src/codex_usage` und `git diff --check` sind ebenfalls
 sauber.
+
+## Runde 360: Health-Event-Speicher geprüft
+
+`health.py` wurde auf Token-/Account-Redaction, Event-Limit, Retention,
+malformed JSON, strict Version, Dateirechte und Recovery geprüft. Kein neuer
+reproduzierbarer Fehler gefunden.
+
+`pytest -q tests/test_health.py`: 32/32 bestanden. Mypy für `health.py`, Ruff
+und `git diff --check` sauber.
