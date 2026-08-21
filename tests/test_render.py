@@ -601,6 +601,24 @@ def test_render_table_ignores_malformed_status_text(status, error, blocked_reaso
     assert "TypeError" not in rendered
 
 
+@pytest.mark.parametrize("field", ["five_hour", "weekly"])
+def test_render_table_hides_malformed_usage_window(field):
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        **{field: []},  # type: ignore[arg-type]
+    )
+
+    rendered = render_table([usage])
+
+    assert "Private" in rendered
+    assert "AttributeError" not in rendered
+    assert "TypeError" not in rendered
+
+
 def test_render_table_hides_unavailable_dynamic_pools():
     usage = AccountUsage(
         account_id="private",

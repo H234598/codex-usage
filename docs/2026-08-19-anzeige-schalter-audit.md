@@ -1851,3 +1851,11 @@ Typprüfung an `_shorten()`. Malformed Listen oder Dicts konnten Tabellen-
 Rendering mit `TypeError` abbrechen. Nur String-Texte werden jetzt formatiert;
 andere Werte bleiben ohne Zusatztext. `tests/test_render.py`: 39/39
 bestanden; Mypy und Ruff für betroffene Dateien sauber.
+
+## Runde 181: Render-Schutz für Usage-Fenster
+
+`render._usage_value()` und `_reset_value()` griffen bei `five_hour` oder
+`weekly` ohne Laufzeit-Typprüfung auf Fensterattribute zu. Malformed Listen
+oder Dicts konnten Tabellen-Rendering mit `AttributeError` abbrechen. Beide
+Hilfen liefern für Nicht-`LimitWindow` jetzt sicher `-`. `tests/test_render.py`:
+41/41 bestanden; Mypy und Ruff für betroffene Dateien sauber.

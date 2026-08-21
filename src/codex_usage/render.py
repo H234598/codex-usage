@@ -359,7 +359,7 @@ def _spark_value(usage: AccountUsage) -> str:
 
 
 def _usage_value(window: LimitWindow | None) -> str:
-    if window is None:
+    if not isinstance(window, LimitWindow):
         return "-"
     if window.has_invalid_usage_value:
         return "-"
@@ -461,7 +461,7 @@ def _remaining_percent(window: LimitWindow) -> float | None:
 
 
 def _reset_value(window: LimitWindow | None) -> str:
-    if window is None or window.reset_at is None:
+    if not isinstance(window, LimitWindow) or window.reset_at is None:
         return "-"
     try:
         return window.reset_at.strftime("%d.%m.%Y %H:%M")
