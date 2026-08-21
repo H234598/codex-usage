@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 496: Systemctl-Cleanup mit strikter PID-Grenze
+
+`service._terminate_systemctl_process()` übergab `process.pid` ungeprüft an
+`os.killpg()`. Ein malformed Prozessobjekt konnte damit
+`os.killpg(True, SIGKILL)` auslösen. Der Cleanup prüft PID jetzt als positive,
+nicht-boolesche Ganzzahl und nutzt sonst den bestehenden `process.kill()`-
+Fallback.
+
+Regression ergänzt. `pytest -q tests/test_service.py`: 69/69 bestanden.
+Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 495: Profile-Job-Abbruchsignal mit strikter PID-Grenze
 
 `profile_jobs.cancel_profile_job()` behandelte `bool` wegen Python-

@@ -17,6 +17,7 @@ from codex_usage.service import (
     SERVICE_NAME,
     TIMER_NAME,
     ServiceError,
+    _terminate_systemctl_process,
     _unit_directory,
     managed_service_config_path,
     service_disable,
@@ -152,6 +153,28 @@ def test_systemctl_rejects_oversized_output_before_process_finishes(tmp_path, mo
         service_module._systemctl("show", "codex-usage.service", check=False)
     time.sleep(2.2)
     assert not marker.exists()
+
+
+def test_systemctl_cleanup_rejects_boolean_pid(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = True
+
+        def kill(self):
+            calls.append("kill")
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+
+    monkeypatch.setattr(
+        "codex_usage.service.os.killpg",
+        lambda pid, signum: calls.append(("killpg", pid, signum)),
+    )
+
+    _terminate_systemctl_process(FakeProcess())
+
+    assert calls == ["kill", ("wait", 1)]
 
 
 def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
