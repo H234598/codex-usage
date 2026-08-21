@@ -2454,3 +2454,11 @@ den Zyklus verarbeiten. Beide öffentlichen APIs weisen ungültige Configs jetzt
 kontrolliert als `ValueError("config is invalid")` zurück.
 `tests/test_scheduler.py`: 192/192 bestanden; Mypy für Source und Ruff für die
 betroffenen Dateien sauber.
+
+## Runde 248: Bridge-Server validiert Bind-/Datei-Eingaben
+
+`bridge.run_bridge_server()` griff bei Fremdtypen für Config, Host, Port oder
+optionale Snapshot-/Config-/TLS-Pfade vor Handler- und Socket-Aufbau direkt auf
+Attribute zu bzw. reichte sie an I/O weiter. Guards prüfen diese Grenzen jetzt
+vor TLS und Bind. `tests/test_bridge.py`: 254/254 bestanden; Mypy für Source
+und Ruff für die betroffenen Dateien sauber.

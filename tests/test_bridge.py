@@ -237,6 +237,43 @@ def test_bridge_server_rejects_plaintext_non_loopback_before_bind(monkeypatch):
         run_bridge_server(AppConfig(accounts=()), host="0.0.0.0", port=8765)
 
 
+@pytest.mark.parametrize("config", [None, [], object()])
+def test_bridge_server_rejects_invalid_config_before_bind(config):
+    with pytest.raises(ValueError, match="config is invalid"):
+        run_bridge_server(config, host="127.0.0.1", port=8765)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("host", [None, [], 1, object()])
+def test_bridge_server_rejects_invalid_host_before_bind(host):
+    with pytest.raises(ValueError, match="bridge host is invalid"):
+        run_bridge_server(AppConfig(accounts=()), host=host, port=8765)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("port", [None, [], "8765", 0, 65536, True, object()])
+def test_bridge_server_rejects_invalid_port_before_bind(port):
+    with pytest.raises(ValueError, match="bridge port is invalid"):
+        run_bridge_server(AppConfig(accounts=()), host="127.0.0.1", port=port)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("parameter", "value", "message"),
+    [
+        ("snapshot_dir", "invalid", "snapshot directory"),
+        ("config_path", "invalid", "config path"),
+        ("tls_cert", "invalid", "TLS certificate path"),
+        ("tls_key", "invalid", "TLS key path"),
+    ],
+)
+def test_bridge_server_rejects_invalid_paths_before_bind(parameter, value, message):
+    with pytest.raises(ValueError, match=message):
+        run_bridge_server(
+            AppConfig(accounts=()),
+            host="127.0.0.1",
+            port=8765,
+            **{parameter: value},  # type: ignore[arg-type]
+        )
+
+
 def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
     with pytest.raises(ValueError, match="timezone"):
         _parse_captured_at("2026-01-15T00:15:00", strict=True)

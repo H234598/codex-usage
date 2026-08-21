@@ -1546,6 +1546,20 @@ def run_bridge_server(
     tls_cert: Path | None = None,
     tls_key: Path | None = None,
 ) -> None:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError("bridge host is invalid")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError("bridge port is invalid")
+    for value, label in (
+        (snapshot_dir, "snapshot directory"),
+        (config_path, "config path"),
+        (tls_cert, "TLS certificate path"),
+        (tls_key, "TLS key path"),
+    ):
+        if value is not None and not isinstance(value, Path):
+            raise ValueError(f"{label} is invalid")
     tls_context = _tls_context(tls_cert, tls_key)
     if _bridge_host_requires_tls(host) and tls_context is None:
         raise ValueError("non-loopback bridge bindings require TLS")
