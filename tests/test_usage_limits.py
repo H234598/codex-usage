@@ -59,6 +59,25 @@ def test_usage_pool_parsers_fail_closed_for_invalid_capture_time(captured_at):
     ) == (None, ())  # type: ignore[arg-type]
 
 
+def test_wham_parser_drops_overflowing_relative_reset_time():
+    main, _ = parse_wham_usage_pools(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18_000,
+                    "used_percent": 1,
+                    "reset_after_seconds": 60,
+                }
+            }
+        },
+        captured_at=datetime.max.replace(tzinfo=NOW.tzinfo),
+        source="test",
+    )
+
+    assert main is not None
+    assert main.windows[0].reset_at is None
+
+
 @pytest.mark.parametrize("pools", [None, 1, True, object()])
 def test_merge_model_catalog_fails_closed_for_non_iterable_pools(pools):
     assert merge_model_catalog(pools, ()) == ()  # type: ignore[arg-type]

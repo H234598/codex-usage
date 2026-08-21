@@ -540,7 +540,10 @@ def _reset_at(
     after = _nonnegative_int(relative)
     if after is None or after > MAX_WINDOW_SECONDS:
         return None
-    return captured_at.astimezone(LOCAL_TZ) + timedelta(seconds=after)
+    try:
+        return captured_at.astimezone(LOCAL_TZ) + timedelta(seconds=after)
+    except (OverflowError, TypeError, ValueError):
+        return None
 
 
 def _is_spark_limit(name: Any, metered_feature: Any) -> bool:

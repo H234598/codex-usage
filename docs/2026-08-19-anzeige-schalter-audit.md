@@ -2604,3 +2604,11 @@ aware, aber randständigen `datetime.min` und gab rohen `OverflowError` zurück.
 Der Zeitbereich wird jetzt kontrolliert geprüft und als `ValueError("now is out
 of range")` abgewiesen. `tests/test_consumption.py`: 25/25 bestanden; Mypy für
 Source und Ruff für die betroffenen Dateien sauber.
+
+## Runde 265: Usage-Limits fängt relative Reset-Zeitüberläufe
+
+`usage_limits._reset_at()` addierte relative Reset-Sekunden zu einem
+randständigen `datetime.max` und gab bei Überlauf rohen `OverflowError` zurück.
+Der Reset wird bei nicht darstellbarem Ergebnis jetzt als unbekannt verworfen;
+Usage-Werte bleiben nutzbar. `tests/test_usage_limits.py`: 123/123 bestanden;
+Mypy für Source und Ruff für die betroffenen Dateien sauber.
