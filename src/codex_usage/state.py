@@ -167,11 +167,20 @@ def default_current_dir() -> Path:
     return default_state_dir() / "current"
 
 
+def _state_directory(path: object | None, default: Path) -> Path:
+    if path is None:
+        return default
+    if not isinstance(path, Path):
+        raise ValueError("state directory is invalid")
+    return path
+
+
 def load_state_generation(
     account_id: str,
     directory: Path | None = None,
 ) -> int:
     _validate_snapshot_account_id(account_id)
+    directory = _state_directory(directory, default_snapshot_dir())
     with account_state_lock(account_id):
         return _load_state_generation_unlocked(account_id, directory)
 
@@ -188,9 +197,10 @@ def _load_state_generation_unlocked(
     directory: Path | None = None,
 ) -> int:
     _validate_snapshot_account_id(account_id)
+    directory = _state_directory(directory, default_snapshot_dir())
     generation_path = _state_generation_path(
         account_id,
-        directory or default_snapshot_dir(),
+        directory,
     )
     return _read_state_generation(generation_path, account_id)
 
@@ -199,7 +209,7 @@ def save_usage_snapshot(usage: AccountUsage, snapshot_dir: Path | None = None) -
     if not isinstance(usage, AccountUsage):
         raise ValueError("usage is invalid")
     _validate_snapshot_account_id(usage.account_id)
-    directory = snapshot_dir or default_snapshot_dir()
+    directory = _state_directory(snapshot_dir, default_snapshot_dir())
     assert_no_symlink_ancestors(directory, label="snapshot directory")
     with account_state_lock(usage.account_id):
         return _save_usage(usage, directory, preserve_existing_values=True)
@@ -209,7 +219,7 @@ def save_current_usage(usage: AccountUsage, current_dir: Path | None = None) -> 
     if not isinstance(usage, AccountUsage):
         raise ValueError("usage is invalid")
     _validate_snapshot_account_id(usage.account_id)
-    directory = current_dir or default_current_dir()
+    directory = _state_directory(current_dir, default_current_dir())
     assert_no_symlink_ancestors(directory, label="snapshot directory")
     with account_state_lock(usage.account_id):
         return _save_usage(usage, directory)
@@ -296,11 +306,11 @@ def _backend_capture_priority(usage: AccountUsage) -> int:
 
 
 def load_usage_snapshot(account_id: str, snapshot_dir: Path | None = None) -> AccountUsage | None:
-    return _load_usage(account_id, snapshot_dir or default_snapshot_dir())
+    return _load_usage(account_id, _state_directory(snapshot_dir, default_snapshot_dir()))
 
 
 def load_current_usage(account_id: str, current_dir: Path | None = None) -> AccountUsage | None:
-    return _load_usage(account_id, current_dir or default_current_dir())
+    return _load_usage(account_id, _state_directory(current_dir, default_current_dir()))
 
 
 @dataclass

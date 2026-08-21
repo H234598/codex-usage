@@ -66,6 +66,26 @@ def test_load_current_usage_rejects_non_string_account_id(tmp_path, account_id):
     assert load_current_usage(account_id, tmp_path) is None
 
 
+@pytest.mark.parametrize("directory", [[], "invalid", 1, False, object()])
+def test_state_entrypoints_reject_non_path_directory(directory):
+    for helper, args in (
+        (load_state_generation, ("account", directory)),
+        (load_usage_snapshot, ("account", directory)),
+        (load_current_usage, ("account", directory)),
+    ):
+        with pytest.raises(ValueError, match="state directory is invalid"):
+            helper(*args)  # type: ignore[arg-type]
+
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+    for helper in (save_usage_snapshot, save_current_usage):
+        with pytest.raises(ValueError, match="state directory is invalid"):
+            helper(usage, directory)  # type: ignore[arg-type]
+
+
 def test_usage_state_round_trips_dynamic_main_and_spark_pools():
     captured_at = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
     weekly = LimitWindow(

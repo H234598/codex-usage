@@ -2417,3 +2417,13 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2530 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Produktion, Scripts, Launcher und
 Tests ist ebenfalls sauber.
+
+## Runde 244: State-APIs validieren optionale Verzeichnisse
+
+`state.load_state_generation()`, `load_usage_snapshot()`,
+`load_current_usage()`, `save_usage_snapshot()` und `save_current_usage()`
+übernahmen Fremdtypen für Snapshot-/Current-Verzeichnisse bis zur rohen
+Pfadkombination. Ein gemeinsamer Resolver weist ungültige Verzeichnisse jetzt
+kontrolliert als `ValueError("state directory is invalid")` zurück.
+`tests/test_state.py`: 252/252 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.
