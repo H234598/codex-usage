@@ -3266,3 +3266,13 @@ bestehenden `LOGIN_REQUIRED`-/Usage-Fehlerpfad.
 
 Regressionstest ergänzt. `pytest -q tests/test_scheduler.py`: 201/201
 bestanden. Mypy für `scheduler.py`, Ruff und `git diff --check` sauber.
+
+## Runde 341: Browser-Laufzeitpfad geprüft
+
+`browser.py` behandelt fehlende Playwright-Binaries kontrolliert als
+Account-Fehler. Ein automatischer Chromium-Fallback wäre hier falsch, weil
+Browserwahl und persistente Profile konfigurationsabhängig sind. Laufzeitcheck:
+Chromium-Binary vorhanden, Firefox-Binary fehlt weiterhin extern.
+
+`pytest -q tests/test_browser_profile.py tests/test_browser_diagnose.py`:
+166/166 bestanden. Ruff und `git diff --check` sauber.
