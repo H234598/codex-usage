@@ -2885,3 +2885,11 @@ Der Lookback wird jetzt vor Main-/Credits-Abfragen kontrolliert berechnet und
 liefert bei Überlauf `ValueError("now is out of range")`.
 `tests/test_integration_entrypoint.py`: 26/26 fokussierte Tests bestanden;
 Mypy für Source, Ruff und `git diff --check` sauber.
+
+## Runde 296: Vollsuite nach Integration-Lookback-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2671 bestanden, 1 übersprungen,
+1 Warnung` in 89,33 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
+`git diff --check` sind sauber.
