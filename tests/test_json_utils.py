@@ -21,3 +21,9 @@ def test_loads_strict_ignores_structural_characters_inside_strings():
 def test_loads_strict_rejects_duplicate_object_keys():
     with pytest.raises(ValueError, match="duplicate JSON key: usage"):
         loads_strict('{"usage": 97, "usage": 55}')
+
+
+@pytest.mark.parametrize("value", [None, [], 1, object(), memoryview(b"{}")])
+def test_loads_strict_rejects_invalid_input_type(value):
+    with pytest.raises(ValueError, match="JSON input is invalid"):
+        loads_strict(value)  # type: ignore[arg-type]

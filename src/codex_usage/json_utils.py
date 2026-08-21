@@ -7,6 +7,8 @@ MAX_JSON_NESTING = 128
 
 
 def loads_strict(value: str | bytes | bytearray) -> Any:
+    if not isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("JSON input is invalid")
     _reject_deep_nesting(value)
     try:
         return json.loads(

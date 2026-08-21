@@ -24,6 +24,12 @@ def default_history_path() -> Path:
     return default_state_dir() / "usage-history.sqlite3"
 
 
+def _validated_history_path(path: Path | None) -> Path | None:
+    if path is not None and not isinstance(path, Path):
+        raise ValueError("history path is invalid")
+    return path
+
+
 def _validate_history_key(
     *,
     account_id: object,
@@ -117,7 +123,8 @@ def _validated_millis(value: object) -> int:
 
 class HistoryStore:
     def __init__(self, path: Path | None = None):
-        self.path = path or default_history_path()
+        path = _validated_history_path(path)
+        self.path = default_history_path() if path is None else path
         self._connection: sqlite3.Connection | None = None
 
     def __enter__(self) -> HistoryStore:
@@ -411,6 +418,8 @@ class HistoryStore:
         return tuple(samples)
 
     def prune(self, before: datetime, *, dry_run: bool = False) -> int:
+        if not isinstance(dry_run, bool):
+            raise ValueError("dry_run must be boolean")
         _require_aware(before, "before")
         connection = self._connect()
         if dry_run:
@@ -614,6 +623,7 @@ def record_usage_samples(usage: AccountUsage, *, path: Path | None = None) -> in
 def record_usage_samples_batch(
     usages: tuple[AccountUsage, ...], *, path: Path | None = None
 ) -> int:
+    path = _validated_history_path(path)
     if not isinstance(usages, tuple):
         raise ValueError("usages are invalid")
     if any(not isinstance(usage, AccountUsage) for usage in usages):

@@ -22,6 +22,18 @@ def _sample(*, captured_at: datetime, used_percent: float, account_id: str = "al
     )
 
 
+@pytest.mark.parametrize("path", [[], "", "history.sqlite3", 1, object()])
+def test_history_store_rejects_invalid_path_type(path):
+    with pytest.raises(ValueError, match="history path is invalid"):
+        HistoryStore(path)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("path", [[], "", "history.sqlite3", 1, object()])
+def test_record_usage_samples_batch_rejects_invalid_path_before_empty_shortcut(path):
+    with pytest.raises(ValueError, match="history path is invalid"):
+        history_module.record_usage_samples_batch((), path=path)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("method", ("samples", "samples_for_consumption"))
 @pytest.mark.parametrize(
     ("account_id", "pool", "window_seconds", "error"),
@@ -659,6 +671,13 @@ def test_history_prune_is_dry_run_then_applies(tmp_path):
         assert len(store.samples("alpha", pool="main", window_seconds=18_000)) == 2
         assert store.prune(cutoff) == 1
         assert store.samples("alpha", pool="main", window_seconds=18_000)[0].captured_at == new
+
+
+@pytest.mark.parametrize("dry_run", [[], "false", 1, object()])
+def test_history_prune_rejects_invalid_dry_run_type(tmp_path, dry_run):
+    with HistoryStore(tmp_path / "history.sqlite3") as store:
+        with pytest.raises(ValueError, match="dry_run must be boolean"):
+            store.prune(datetime(2026, 8, 16, tzinfo=UTC), dry_run=dry_run)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

@@ -2492,3 +2492,22 @@ nichtleeren URL-String wie `http://[::1` bis `urlsplit()` und brachen roh mit
 Priorisierung; solche Kandidaten werden wie andere unbrauchbare Kandidaten
 verworfen. `tests/test_identity.py`: 28/28 bestanden; Mypy für Source und
 Ruff für die betroffenen Dateien sauber.
+
+## Runde 252: Strict-JSON validiert Eingabetyp
+
+`json_utils.loads_strict()` reichte Fremdtypen an `memoryview()` bzw.
+`json.loads()` weiter und lieferte dadurch rohen `TypeError`. Der Parser weist
+Werte außerhalb `str | bytes | bytearray` jetzt kontrolliert als
+`ValueError("JSON input is invalid")` zurück. `tests/test_json_utils.py`:
+8/8 bestanden; Mypy für Source und Ruff für die betroffenen Dateien sauber.
+
+## Runde 253: History-Store validiert Pfad und Dry-Run-Flag
+
+`HistoryStore.__init__()` interpretierte falsche, falsy Pfade wie `[]` oder
+`""` wegen `path or default_history_path()` als globale Default-Datei.
+`record_usage_samples_batch()` konnte denselben falschen Pfad bei leerem
+Sample-Satz still akzeptieren. Beide Grenzen validieren Pfadtypen jetzt
+explizit. `HistoryStore.prune()` weist außerdem nicht-boolesche
+`dry_run`-Werte zurück, statt sie truthy/falsy zu interpretieren.
+`tests/test_history.py`: 72/72 fokussierte Tests bestanden; Mypy für Source
+und Ruff für die betroffenen Dateien sauber.
