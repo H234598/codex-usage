@@ -2998,3 +2998,12 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2687 bestanden, 1 übersprungen,
 1 Warnung` in 87,57 s. Die Warnung bleibt externe PyGObject-Deprecation
 außerhalb des Repositories. Bridge-/Spark-Health-/Browser-/Consumption-
 Zeitgrenzen sowie Profiljob- und Scheduler-Pfade sind integriert grün.
+
+## Runde 309: Extractor-Resetzeit toleriert unrepräsentierbare Capture-Zeiten
+
+`extractor._parse_time_today_or_next()` normalisierte timezone-aware
+Capture-Zeiten außerhalb eines Fehlerfangs. Randwerte mit großem Offset
+konnten Reset-Ermittlung per `OverflowError` abbrechen. Lokale Zeitbildung
+und Folgetagaddition liefern jetzt `None` bei unrepräsentierbaren Werten.
+`tests/test_extractor.py`: 197/197 fokussierte Tests bestanden; Mypy für
+Extractor, Ruff und `git diff --check` sauber.

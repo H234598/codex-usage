@@ -1896,22 +1896,22 @@ def _relative_reset_at(seconds: float | None, captured_at: datetime) -> datetime
 def _parse_time_today_or_next(raw: str, captured_at: datetime) -> datetime | None:
     try:
         hour, minute = (int(part) for part in raw.split(":", 1))
-    except ValueError:
+    except (OverflowError, ValueError):
         return None
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
         return None
-    local_capture = (
-        captured_at
-        if captured_at.tzinfo is None
-        else captured_at.astimezone(_display_timezone(captured_at))
-    )
-    parsed = local_capture.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if parsed < local_capture:
-        try:
+    try:
+        local_capture = (
+            captured_at
+            if captured_at.tzinfo is None
+            else captured_at.astimezone(_display_timezone(captured_at))
+        )
+        parsed = local_capture.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if parsed < local_capture:
             parsed += timedelta(days=1)
-        except (OverflowError, ValueError):
-            return None
-    return parsed
+        return parsed
+    except (OverflowError, TypeError, ValueError):
+        return None
 
 
 def _display_timezone(captured_at: datetime):

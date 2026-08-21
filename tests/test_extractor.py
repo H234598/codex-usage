@@ -269,6 +269,19 @@ def test_parse_time_today_or_next_rejects_unrepresentable_next_day():
     assert _parse_time_today_or_next("23:59", captured_at) is None
 
 
+@pytest.mark.parametrize(
+    "captured_at",
+    [
+        datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        datetime.max.replace(tzinfo=timezone(timedelta(hours=-14))),
+    ],
+)
+def test_parse_time_today_or_next_rejects_unrepresentable_timezone_conversion(
+    captured_at,
+):
+    assert _parse_time_today_or_next("12:00", captured_at) is None
+
+
 def test_parse_datetime_rejects_boolean_timestamp_values():
     captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
 
