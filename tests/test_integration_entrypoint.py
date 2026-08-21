@@ -79,6 +79,21 @@ def test_execute_rejects_every_nonexact_argv_before_verifier_or_source(tmp_path)
     assert calls == []
 
 
+@pytest.mark.parametrize("argv", [None, 1, object()])
+def test_execute_rejects_non_sequence_argv(tmp_path, argv):
+    from codex_usage.integration_entrypoint import execute
+
+    result = execute(
+        argv,  # type: ignore[arg-type]
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: pytest.fail("verifier"),
+    )
+
+    assert result == type(result)(64, b"", b"integration_snapshot_invalid_arguments\n")
+
+
 def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
 

@@ -2329,3 +2329,12 @@ konstruierten malformed Pläne bis zu Attribut- und Pfadzugriffen. Root- und
 Plan-Validierung weisen solche Eingaben jetzt kontrolliert zurück.
 `tests/test_profile_migration.py`: 30/30 bestanden; Mypy für Source und Ruff
 für die betroffenen Dateien sauber.
+
+## Runde 234: Integration-Entry-Point validiert argv-Container
+
+`integration_entrypoint.execute()` rief `tuple(argv)` außerhalb des
+Fehlerpfads auf. `None` oder Fremdobjekte konnten dadurch statt des
+definierten Invalid-Arguments-Ergebnisses mit rohem `TypeError` abbrechen.
+Nicht-sequenzielle argv-Werte liefern jetzt kontrolliert Exit-Code 64.
+`tests/test_integration_entrypoint.py`: 25/25 bestanden; Mypy für Source und
+Ruff für die betroffenen Dateien sauber.

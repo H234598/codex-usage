@@ -126,7 +126,11 @@ def execute(
     expected_entrypoint_path: Path,
     verifier: Callable[[Path, Path, Path], object],
 ) -> CommandResult:
-    if tuple(argv) != _EXPECTED_ARGV:
+    try:
+        normalized_argv = tuple(argv)
+    except (TypeError, ValueError):
+        return _error_result(64)
+    if normalized_argv != _EXPECTED_ARGV:
         return _error_result(64)
     try:
         paths = _runtime_paths(environ)
