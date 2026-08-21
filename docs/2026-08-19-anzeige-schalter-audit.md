@@ -4056,3 +4056,15 @@ absolut sein. Config-basierte gültige Accounts bleiben unverändert.
 
 `pytest -q tests/test_reactivate.py`: 67/67 bestanden; Modul-Coverage 79 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 419: Integration-Attestierung
+
+`integration_attestation.py` auf Manifest-Schema-/Version-Bindung,
+State-/Data-/Release-Pfadcontainment, User-Owner und private Modi,
+No-Follow-/TOCTOU-Lesen, Hash-/RECORD-Konsistenz, CSV-/Entry-/Byte-Limits,
+Release-Tree-Digest und fail-closed Fehlerabbildung geprüft. Keine neue
+reproduzierbare Fehlfunktion; Attestierung repariert oder mutiert keine
+Dateien und verweigert Drift, Fremdpfade und malformed Daten.
+
+`pytest -q tests/test_integration_installer.py`: 106/106 bestanden;
+Modul-Coverage 78 % (Branch). Ruff, Mypy und `git diff --check` sauber.
