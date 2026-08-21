@@ -2129,3 +2129,11 @@ Deserializer weist solche Payloads jetzt kontrolliert als
 `ValueError("state payload must be an object")` zurück.
 `tests/test_state.py`: 241/241 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 212: Gesamtverifikation nach Usage-Limits-/State-Härtung
+
+Die Vollsuite bestätigt den aktuellen Stand: `2302 passed, 1 skipped, 1
+warning` in 87.70s. Die einzige Warnung bleibt externe PyGObject-
+Deprecation außerhalb des Repositories. `mypy src/codex_usage` meldet keine
+Fehler in 35 Quelldateien; der aggregierte Ruff-Lauf über Produktion, Scripts,
+Launcher und Tests ist sauber.
