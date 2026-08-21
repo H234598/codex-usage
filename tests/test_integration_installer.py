@@ -1620,6 +1620,37 @@ def test_postwalk_release_rejects_entry_limit_before_unbounded_rglob(
         integration_installer._postwalk_release(release)
 
 
+def test_postwalk_release_rejects_child_directory_swap_before_fd_open(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    nested = release / "nested"
+    nested.mkdir(mode=0o700)
+    (nested / "inside.txt").write_bytes(b"inside")
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    (outside / "foreign.txt").write_bytes(b"foreign")
+    moved = tmp_path / "nested-original"
+    original_open = os.open
+    swapped = False
+
+    def swap_before_child_open(candidate, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if candidate == "nested" and dir_fd is not None and not swapped:
+            nested.rename(moved)
+            outside.rename(nested)
+            swapped = True
+        return original_open(candidate, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_installer.os, "open", swap_before_child_open)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._postwalk_release(release)
+    assert swapped
+
+
 def test_installer_reader_rejects_oversized_file_before_materializing(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

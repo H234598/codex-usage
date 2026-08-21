@@ -810,7 +810,10 @@ def _temporary_source_copy(destination_root: Path) -> Path:
         if not source.is_file() or source.is_symlink():
             _fail()
         _copy_regular(source, destination / relative)
-    files = _postwalk_release(destination)
+    files = _postwalk_release(
+        destination,
+        root_identity=_directory_identity(destination),
+    )
     if files != set(SOURCE_MANIFEST_FILES):
         _fail()
     return destination
@@ -1439,45 +1442,92 @@ def _wheel_details(
         _fail()
 
 
-def _postwalk_release(root: Path) -> set[str]:
+def _postwalk_release(
+    root: Path,
+    *,
+    root_identity: _DirectoryIdentity | None = None,
+) -> set[str]:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    root_fd = -1
+    pending: list[tuple[int, str]] = []
     try:
-        root_stat = root.lstat()
-        if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+        _no_symlink_ancestors(root)
+        root_fd = os.open(root, flags)
+        root_stat = os.fstat(root_fd)
+        current_root_identity = _DirectoryIdentity(
+            root_stat.st_dev,
+            root_stat.st_ino,
+            stat.S_IMODE(root_stat.st_mode),
+        )
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or stat.S_ISLNK(root_stat.st_mode)
+            or (
+                root_identity is not None
+                and current_root_identity != root_identity
+            )
+        ):
             _fail()
         entries_seen = 1
         if entries_seen > MAX_RELEASE_TREE_ENTRIES:
             _fail()
         files: set[str] = set()
-        pending = [root]
+        pending.append((root_fd, ""))
+        root_fd = -1
         while pending:
-            directory = pending.pop()
-            with os.scandir(directory) as entries:
-                child_names = []
-                for entry in entries:
-                    if entries_seen >= MAX_RELEASE_TREE_ENTRIES:
-                        _fail()
-                    entries_seen += 1
-                    child_names.append(entry.name)
-            for name in child_names:
-                path = directory / name
-                item = path.lstat()
-                if stat.S_ISLNK(item.st_mode) or not (
-                    stat.S_ISDIR(item.st_mode) or stat.S_ISREG(item.st_mode)
-                ):
-                    _fail()
-                if stat.S_ISREG(item.st_mode) and item.st_nlink != 1:
-                    _fail()
-                if path.name == "__pycache__" or path.suffix == ".pyc":
-                    _fail()
-                if stat.S_ISDIR(item.st_mode):
-                    pending.append(path)
-                else:
-                    files.add(path.relative_to(root).as_posix())
+            directory_fd, relative_directory = pending.pop()
+            try:
+                with os.scandir(directory_fd) as entries:
+                    for entry in entries:
+                        if entries_seen >= MAX_RELEASE_TREE_ENTRIES:
+                            _fail()
+                        entries_seen += 1
+                        item = entry.stat(follow_symlinks=False)
+                        name = entry.name
+                        relative = (
+                            f"{relative_directory}/{name}"
+                            if relative_directory
+                            else name
+                        )
+                        if stat.S_ISLNK(item.st_mode) or not (
+                            stat.S_ISDIR(item.st_mode) or stat.S_ISREG(item.st_mode)
+                        ):
+                            _fail()
+                        if stat.S_ISREG(item.st_mode) and item.st_nlink != 1:
+                            _fail()
+                        if name == "__pycache__" or Path(name).suffix == ".pyc":
+                            _fail()
+                        if stat.S_ISDIR(item.st_mode):
+                            child_fd = os.open(name, flags, dir_fd=directory_fd)
+                            child_stat = os.fstat(child_fd)
+                            if (
+                                not stat.S_ISDIR(child_stat.st_mode)
+                                or child_stat.st_dev != item.st_dev
+                                or child_stat.st_ino != item.st_ino
+                            ):
+                                os.close(child_fd)
+                                _fail()
+                            pending.append((child_fd, relative))
+                        else:
+                            files.add(relative)
+            finally:
+                os.close(directory_fd)
         return files
     except IntegrationInstallError:
         raise
     except (OSError, ValueError):
         _fail()
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+        for directory_fd, _ in pending:
+            os.close(directory_fd)
 
 
 def _remove_activation_files(venv_root: Path) -> None:
@@ -1849,7 +1899,7 @@ def _install_release(
                 data_home=data_home,
                 state_home=state_home,
             )
-            _postwalk_release(staging)
+            _postwalk_release(staging, root_identity=staging_identity)
             _require_private_dir(staging, staging_identity, False)
             if _rehash_source_manifest(source_root) != source_manifest:
                 _fail()

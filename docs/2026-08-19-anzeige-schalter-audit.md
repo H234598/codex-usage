@@ -4307,6 +4307,20 @@ mit `O_DIRECTORY|O_NOFOLLOW`; Dateien werden per `dir_fd` exklusiv angelegt.
 Parent-Symlink-Regression ergänzt. `pytest -q tests/test_integration_installer.py`:
 121/121 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 479: Installer-Release-Postwalk per Directory-FD
+
+`_postwalk_release()` sammelte Directory-Namen über `scandir()` und führte
+danach Pfad-`lstat()` aus. Ein Verzeichnis konnte zwischen beiden Schritten
+ausgetauscht werden; der Postwalk hätte dann einen fremden Baum geprüft.
+Root und alle Descendant-Verzeichnisse werden jetzt per
+`O_DIRECTORY|O_NOFOLLOW` geöffnet, `DirEntry.stat()` wird direkt ausgewertet,
+und Child-Inode muss vor dem Weiterlauf identisch bleiben. Caller binden Root-
+Identität zusätzlich an.
+
+Child-Directory-Swap-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 122/122 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
