@@ -31,3 +31,19 @@ def test_account_usage_as_dict_skips_unhashable_model_pool_keys():
     payload = usage.as_dict()
 
     assert tuple(payload["models"]) == ("valid",)
+
+
+@pytest.mark.parametrize("status", [[], {}, "ok"])
+def test_account_usage_as_dict_normalizes_invalid_status(status):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        status=status,
+    )
+
+    payload = usage.as_dict()
+
+    assert payload["status"] == "error"
+    assert payload["stale"] is True
+    assert payload["cache_invalidated"] is True

@@ -357,7 +357,8 @@ class AccountUsage:
         )
 
     def as_dict(self) -> dict[str, Any]:
-        terminal_status = self.status in {
+        status = self.status if isinstance(self.status, AccountStatus) else AccountStatus.ERROR
+        terminal_status = status in {
             AccountStatus.ERROR,
             AccountStatus.LOGIN_REQUIRED,
         }
@@ -382,7 +383,7 @@ class AccountUsage:
             "credits": None if values_hidden else _window_to_dict(self.credits),
             "main": None if values_hidden else _pool_to_dict(self.main),
             "models": serialized_models,
-            "status": self.status.value,
+            "status": status.value,
             "error": self.error,
             "blocked_until": self.blocked_until.isoformat() if self.blocked_until else None,
             "blocked_reason": self.blocked_reason,

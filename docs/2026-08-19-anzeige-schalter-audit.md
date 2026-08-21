@@ -1814,3 +1814,13 @@ dadurch JSON- und Render-Ausgabe mit `TypeError` abbrechen. Der Serializer
 berücksichtigt jetzt nur echte `UsagePool`-Objekte mit String-Key; ungültige
 Modell-Pools werden verworfen. `tests/test_models.py` und `tests/test_render.py`:
 42/42 bestanden; Mypy und Ruff für betroffene Dateien sauber.
+
+## Runde 177: Serializer-Status-Typ
+
+`AccountUsage.as_dict()` verwendete einen fremden Statuswert direkt in
+Set-Mitgliedschaft und anschließend über `.value`. Listen, Dicts oder rohe
+Strings konnten deshalb die Ausgabe mit `TypeError` oder `AttributeError`
+abbrechen. Ungültige Statuswerte werden jetzt für die Serializer-Ausgabe als
+terminaler `error`-Status behandelt und Werte sicher verborgen.
+`tests/test_models.py` und `tests/test_render.py`: 45/45 bestanden; Mypy und
+Ruff für betroffene Dateien sauber.
