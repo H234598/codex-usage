@@ -1769,3 +1769,11 @@ String. `tests/test_cli.py`: 109/109 bestanden; Mypy und Ruff sauber.
 Nach Scheduler- und CLI-Provenienzschutz meldet `mypy src/codex_usage` keine
 Fehler in 35 Quelldateien. Der aggregierte Ruff-Lauf über Produktion, Scripts,
 Launcher und Tests ist ebenfalls sauber.
+
+## Runde 171: Snapshot-Pool-Key
+
+`integration_snapshot._source_limits()` setzte `pool.key` vor dessen
+Typvalidierung in ein Set. Ein unhashbarer Key konnte die Projektion mit
+`TypeError` abbrechen. Die Funktion verwirft solche Pool-Objekte jetzt über
+den normalen Invalid-Source-Pfad. `tests/test_integration_snapshot.py`:
+35/35 bestanden; Mypy und Ruff sauber.

@@ -308,6 +308,8 @@ def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
     for pool in pools:
         if not isinstance(pool, UsagePool):
             _invalid()
+        if not isinstance(pool.key, str):
+            _invalid()
         if pool.key in seen:
             _invalid()
         seen.add(pool.key)

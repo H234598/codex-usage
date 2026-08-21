@@ -175,6 +175,17 @@ def test_schema1_projection_skips_unusable_remaining_values(remaining):
     assert "limits" not in document["accounts"][0]
 
 
+def test_schema1_projection_rejects_unhashable_pool_key_without_raising():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
+
+    usage = _usage_with_pools(
+        (replace(_pool("main", (LimitWindow(name="5h", remaining=75),)), key=[]),)
+    )
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema1_document((usage,), generated_at=GENERATED)
+
+
 def test_schema1_projection_exports_sanitized_cost_windows():
     from codex_usage.consumption import ConsumptionWindow
     from codex_usage.integration_snapshot import build_schema1_document, serialize_schema1_document
