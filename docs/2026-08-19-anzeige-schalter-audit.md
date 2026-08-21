@@ -3192,3 +3192,21 @@ Die Vollsuite bestätigt den gemeinsamen Stand: `2712 bestanden, 1 übersprungen
 1 Warnung` in 95,10 s. Die Warnung bleibt externe PyGObject-Deprecation
 außerhalb des Repositories. Dynamic-Series-Settings und alle vorherigen Zeit-
 und Pfadgrenzen sind integriert grün.
+
+## Runde 334: Formatierungen als eine auswählbare Tabelle
+
+Cinnamon verwirft `custom`-Settings bei einem normalen `bindProperty`; dadurch
+blieben `fast-mode-icon` und `account-backends` ungebunden. Beide Settings lesen
+und beobachten jetzt ihre Werte über einen sicheren Custom-Binding-Pfad.
+
+Die aktive Settings-Struktur hat nun eine einzelne Page `Formatierungen`. Ein
+zentriertes Dropdown schaltet innerhalb einer `Gtk.Stack` genau eine Tabelle
+sichtbar; der zuletzt gewählte Tabellenschlüssel wird über JSON persistiert.
+Die sechs Formatierungs- und Anzeigetabellen bleiben editierbar, ohne vertikal
+ineinander zu laufen. Die Zieltabelle enthält zusätzlich `Verbrauch 5h` und
+`Verbrauch 30d`; beide Ziele werden unabhängig in Request-, Panel- und
+Renderpfaden ausgewertet. Das alte globale Baseline-Element 13 bleibt verworfen.
+
+`pytest -q tests/test_applet.py tests/test_format_table_selector.py`: 31/31
+bestanden. `node --test tests/applet_runtime.test.js`: 394/394 bestanden. Ruff,
+Python-Kompilierung, JSON-Prüfung und `git diff --check` sauber.

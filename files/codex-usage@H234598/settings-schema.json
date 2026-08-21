@@ -23,14 +23,9 @@
     },
     "format-page": {
       "type": "page",
-      "title": "Formatierung",
+      "title": "Formatierungen",
       "sections": [
-        "percent-style-section",
-        "date-style-section",
-        "time-style-section",
-        "duration-style-section",
-        "display-settings-section",
-        "display-target-section"
+        "formatting-section"
       ]
     },
     "alerts-page": {
@@ -45,6 +40,13 @@
       "title": "Routing und Credits",
       "sections": [
         "routing-section"
+      ]
+    },
+    "formatting-section": {
+      "type": "section",
+      "title": "Formatierungsziel",
+      "keys": [
+        "format-table-selector"
       ]
     },
     "command-section": {
@@ -186,6 +188,45 @@
         "routing-credit-monthly-limit"
       ]
     }
+  },
+  "format-table-selector": {
+    "type": "custom",
+    "file": "format_table_selector.py",
+    "widget": "FormatTableSelector",
+    "description": "Formatierungstabelle",
+    "tables": [
+      {
+        "key": "account-percent-styles",
+        "label": "Verbleibendes Tokenlimit in %",
+        "heading": "account-percent-styles-heading"
+      },
+      {
+        "key": "account-date-styles",
+        "label": "OpenAI - Reset: Datum des Reset",
+        "heading": "account-date-styles-heading"
+      },
+      {
+        "key": "account-time-styles",
+        "label": "OpenAI - Reset: Uhrzeit",
+        "heading": "account-time-styles-heading"
+      },
+      {
+        "key": "account-duration-styles",
+        "label": "OpenAI - Reset: Restlaufzeit",
+        "heading": "account-duration-styles-heading"
+      },
+      {
+        "key": "account-display-settings",
+        "label": "Account-Anzeige",
+        "heading": "account-display-settings-heading"
+      },
+      {
+        "key": "account-style-targets",
+        "label": "Elemente und Formatierungsorte",
+        "heading": "account-style-targets-heading"
+      }
+    ],
+    "default": "account-percent-styles"
   },
   "account-consumption-settings-heading": {
     "type": "label",
@@ -1148,7 +1189,7 @@
   "account-style-targets": {
     "type": "list",
     "description": "Anzeigeziele für Account-ID, Label, Reset, Verbrauch und Prognose",
-    "tooltip": "Jede Zeile ist genau eines von 13 Elementen pro Account. Oberfläche und Element werden getrennt gespeichert; die Liste enthält keine Sammelwerte. Eine Zeile wird per Doppelklick oder über das Stift-Symbol bearbeitet; die Checkboxen können direkt umgeschaltet werden.",
+    "tooltip": "Jede Zeile ist genau eines von 15 Elementen pro Account. Oberfläche und Element werden getrennt gespeichert; die Liste enthält keine Sammelwerte. Eine Zeile wird per Doppelklick oder über das Stift-Symbol bearbeitet; die Checkboxen können direkt umgeschaltet werden.",
     "columns": [
       {
         "id": "account",
@@ -1169,10 +1210,12 @@
           "Usage-Resets": 6,
           "Account-ID": 7,
           "Label": 8,
-          "Kürzel": 9
-          ,"Verbrauch Woche": 10
-          ,"Credits": 11
-          ,"Creditverbrauch": 12
+          "Kürzel": 9,
+          "Verbrauch Woche": 10,
+          "Credits": 11,
+          "Creditverbrauch": 12,
+          "Verbrauch 5h": 14,
+          "Verbrauch 30d": 15
         }
       },
       {

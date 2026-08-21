@@ -302,6 +302,40 @@ function makeAccountSettingsApplet() {
   return applet;
 }
 
+test("custom settings read current values and react to changed signals", () => {
+  const applet = makeApplet();
+  let value = [{ account: "alpha" }];
+  const connections = [];
+  const callbackValues = [];
+  applet.settings = {
+    getValue: (key) => {
+      assert.equal(key, "account-backends");
+      return value;
+    },
+    connect: (signal, callback) => {
+      connections.push({ signal, callback });
+      return connections.length;
+    },
+  };
+
+  applet._bindCustomSetting(
+    "account-backends",
+    "accountBackends",
+    (nextValue) => callbackValues.push(nextValue)
+  );
+
+  assert.deepEqual(applet.accountBackends, [{ account: "alpha" }]);
+  assert.equal(callbackValues.length, 0);
+  assert.equal(connections.length, 1);
+  assert.equal(connections[0].signal, "changed::account-backends");
+
+  value = [{ account: "beta" }];
+  connections[0].callback("account-backends", [{ account: "alpha" }], value);
+
+  assert.deepEqual(applet.accountBackends, [{ account: "beta" }]);
+  assert.deepEqual(callbackValues, [[{ account: "beta" }]]);
+});
+
 function usageWithoutSparkLimit(account) {
   return {
     account,
@@ -7084,7 +7118,7 @@ test("legacy global baseline style targets are discarded during migration", () =
   }]);
 
   assert.equal(rows.some(row => row.element === 13), false);
-  assert.equal(rows.length, 13);
+  assert.equal(rows.length, 15);
 });
 
 test("style target rows cover exactly every editable element once per account", () => {
@@ -7098,17 +7132,68 @@ test("style target rows cover exactly every editable element once per account", 
     {account: "beta"},
   ], []);
 
-  assert.equal(rows.length, 26);
+  assert.equal(rows.length, 30);
   for (const account of ["alpha", "beta"]) {
     const elements = rows
       .filter(row => row.account === account)
       .map(row => row.element);
     assert.equal(
       JSON.stringify(elements),
-      JSON.stringify(Array.from({length: 13}, (_value, index) => index))
+      JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15])
     );
   }
   assert.equal(rows.some(row => row.element === 13), false);
+});
+
+test("short and monthly consumption use independent style targets", () => {
+  const applet = makeApplet();
+  applet._styleTargets = {
+    "alpha:14": {panel: false, hover: true, click: true},
+    "alpha:15": {panel: true, hover: false, click: true},
+  };
+
+  assert.equal(applet._elementTargetEnabled("alpha", "consumption-short", "panel"), false);
+  assert.equal(applet._elementTargetEnabled("alpha", "consumption-short", "hover"), true);
+  assert.equal(applet._elementTargetEnabled("alpha", "consumption-monthly", "panel"), true);
+  assert.equal(applet._elementTargetEnabled("alpha", "consumption-monthly", "hover"), false);
+});
+
+test("short and monthly targets keep consumption requests and panel visibility alive", () => {
+  for (const [element, limitWindow] of [[14, "short"], [15, "monthly"]]) {
+    const applet = makeApplet();
+    applet._usages = [{account: "alpha", cost_windows: []}];
+    applet._panelSettings = {
+      alpha: {account: "alpha", muted: false, slot1: 0, slot2: 0, slot3: 0, slot4: 0},
+    };
+    applet._consumptionSettings = {
+      alpha: {
+        account: "alpha",
+        amount: 1,
+        unit: "hours",
+        smoothing: "none",
+        "limit-window": limitWindow,
+        "show-panel": false,
+        "show-tooltip": false,
+        "baseline-enabled": false,
+        "forecast-limit-window": limitWindow,
+        "forecast-smoothing": "none",
+        "forecast-baseline-enabled": false,
+      },
+    };
+    applet._styleTargets = {
+      "alpha:4": {panel: false, hover: false, click: false},
+      "alpha:5": {panel: false, hover: false, click: false},
+      "alpha:10": {panel: false, hover: false, click: false},
+      [`alpha:${element}`]: {panel: true, hover: false, click: false},
+    };
+    applet._drainConsumptionRequests = () => {};
+
+    applet._refreshConsumption();
+
+    assert.equal(applet._consumptionQueue.length, 1);
+    assert.equal(applet._consumptionQueue[0].limitWindow, limitWindow);
+    assert.equal(applet._panelItems().find(item => item.usage.account === "alpha").visible, true);
+  }
 });
 
 test("legacy global baseline style target is removed from persisted settings", () => {
@@ -7128,7 +7213,7 @@ test("legacy global baseline style target is removed from persisted settings", (
 
   applet._syncStyleRows([{account: "alpha"}]);
 
-  assert.equal(applet.accountStyleTargets.length, 13);
+  assert.equal(applet.accountStyleTargets.length, 15);
   assert.equal(applet.accountStyleTargets.some(row => row.element === 13), false);
   const persisted = writes.find(([key]) => key === "account-style-targets");
   assert.ok(persisted);
@@ -9976,7 +10061,7 @@ test("old three-surface target rows migrate with a duration row", () => {
       { account: "alpha", element: 2, panel: false, hover: false, click: true },
     ]
   );
-  assert.equal(rows.length, 26);
+  assert.equal(rows.length, 30);
   assert.equal(rows[3].element, 3);
   assert.equal(rows[3].click, true);
   assert.equal(rows[3].panel, false);

@@ -239,6 +239,36 @@ CodexUsageApplet.prototype = {
         }
     },
 
+    _bindCustomSetting: function(key, property, callback) {
+        let readValue = Lang.bind(this, function(invokeCallback) {
+            let value;
+            try {
+                value = this.settings.getValue(key);
+            } catch (e) {
+                global.log("[" + UUID + "] custom setting read failed: " + key);
+                return;
+            }
+            this[property] = value;
+            if (invokeCallback && callback) {
+                this._runSafely("settings:" + key, Lang.bind(this, function() {
+                    return callback.call(this, value);
+                }));
+            }
+        });
+        readValue(false);
+        try {
+            this._connectTrackedSignal(
+                this.settings,
+                "changed::" + key,
+                Lang.bind(this, function() {
+                    readValue(true);
+                })
+            );
+        } catch (e) {
+            global.log("[" + UUID + "] custom setting signal unavailable: " + key);
+        }
+    },
+
     _bindSettings: function() {
         let bind = Lang.bind(this, function(key, property, callback) {
             let safeCallback = callback ? Lang.bind(this, function() {
@@ -263,7 +293,7 @@ CodexUsageApplet.prototype = {
         bind("refresh-on-open", "refreshOnOpen", null);
         bind("panel-percent-source", "panelPercentSource", this._onPanelDefaultsChanged);
         bind("panel-account-separator", "panelAccountSeparator", this._updatePanel);
-        bind("fast-mode-icon", "fastModeIcon", this._updatePanel);
+        this._bindCustomSetting("fast-mode-icon", "fastModeIcon", this._updatePanel);
         bind("warning-threshold", "warningThreshold", this._updatePanel);
         bind("notify-warnings", "notifyWarnings", null);
         bind("notify-errors", "notifyErrors", null);
@@ -275,7 +305,11 @@ CodexUsageApplet.prototype = {
         );
         bind("reactivation-browser", "reactivationBrowser", null);
         bind("reactivation-browser-migrated", "reactivationBrowserMigrated", null);
-        bind("account-backends", "accountBackends", this._onAccountBackendsChanged);
+        this._bindCustomSetting(
+            "account-backends",
+            "accountBackends",
+            this._onAccountBackendsChanged
+        );
         bind("account-panel-settings", "accountPanelSettings", this._onPanelSettingsChanged);
         bind(
             "account-consumption-settings",
@@ -3767,7 +3801,7 @@ CodexUsageApplet.prototype = {
             // Element 13 (the old global "baseline" target) deliberately has
             // no replacement here.  The own-baseline switch belongs to each
             // metric table and must not be masked by a second style target.
-            for (let element of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+            for (let element of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15]) {
                 let key = accounts[i].account + ":" + element;
                 rows.push(
                     current[key] ||
@@ -3824,7 +3858,8 @@ CodexUsageApplet.prototype = {
         }
         let element = this._strictIntegerSetting(row.element);
         if (
-            !Number.isInteger(element) || [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].indexOf(element) === -1 ||
+            !Number.isInteger(element) ||
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15].indexOf(element) === -1 ||
             typeof row.panel !== "boolean" || typeof row.hover !== "boolean" ||
             typeof row.click !== "boolean"
         ) {
@@ -3937,7 +3972,7 @@ CodexUsageApplet.prototype = {
             return;
         }
         let rows = this.accountStyleTargets;
-        let expected = Object.keys(this._backendAccounts).length * 13;
+        let expected = Object.keys(this._backendAccounts).length * 15;
         if (!Array.isArray(rows) || rows.length !== expected) {
             this._loadAccountBackends();
             return;
@@ -5391,6 +5426,12 @@ CodexUsageApplet.prototype = {
                 this._elementTargetEnabled(usage.account, "consumption-weekly", "panel", row["show-panel"]) ||
                 this._elementTargetEnabled(usage.account, "consumption-weekly", "hover", row["show-tooltip"]) ||
                 this._elementTargetEnabled(usage.account, "consumption-weekly", "click", true) ||
+                this._elementTargetEnabled(usage.account, "consumption-short", "panel", row["show-panel"]) ||
+                this._elementTargetEnabled(usage.account, "consumption-short", "hover", row["show-tooltip"]) ||
+                this._elementTargetEnabled(usage.account, "consumption-short", "click", true) ||
+                this._elementTargetEnabled(usage.account, "consumption-monthly", "panel", row["show-panel"]) ||
+                this._elementTargetEnabled(usage.account, "consumption-monthly", "hover", row["show-tooltip"]) ||
+                this._elementTargetEnabled(usage.account, "consumption-monthly", "click", true) ||
                 this._elementTargetEnabled(usage.account, "forecast", "panel", row["show-panel"]) ||
                 this._elementTargetEnabled(usage.account, "forecast", "hover", row["show-tooltip"]) ||
                 this._elementTargetEnabled(usage.account, "forecast", "click", true)
@@ -8028,6 +8069,14 @@ CodexUsageApplet.prototype = {
                         this._consumptionSettings[usage.account] && this._consumptionSettings[usage.account]["show-panel"]
                     ) ||
                     this._elementTargetEnabled(
+                        usage.account, "consumption-short", "panel",
+                        this._consumptionSettings[usage.account] && this._consumptionSettings[usage.account]["show-panel"]
+                    ) ||
+                    this._elementTargetEnabled(
+                        usage.account, "consumption-monthly", "panel",
+                        this._consumptionSettings[usage.account] && this._consumptionSettings[usage.account]["show-panel"]
+                    ) ||
+                    this._elementTargetEnabled(
                         usage.account, "credits", "panel",
                         this._creditSettings && this._creditSettings[usage.account] && this._creditSettings[usage.account]["show-panel"]
                     ) ||
@@ -8332,7 +8381,11 @@ CodexUsageApplet.prototype = {
         let account = row.account;
         let styleRow = this._percentStyles[account] || this._defaultStyleRow(account, "percent");
         let consumptionElement = Number(window.limit_window_seconds) === 604800
-            ? "consumption-weekly" : "consumption";
+            ? "consumption-weekly"
+            : (Number(window.limit_window_seconds) === 2592000
+                ? "consumption-monthly"
+                : (Number(window.limit_window_seconds) === 18000
+                    ? "consumption-short" : "consumption"));
         let visible = this._elementTargetEnabled(
             account,
             consumptionElement,
@@ -9404,6 +9457,8 @@ CodexUsageApplet.prototype = {
             duration: 3,
             consumption: 4,
             "consumption-weekly": 10,
+            "consumption-short": 14,
+            "consumption-monthly": 15,
             forecast: 5,
             "usage-resets": 6,
             "account-id": 7,
@@ -9431,6 +9486,8 @@ CodexUsageApplet.prototype = {
             duration: 3,
             consumption: 4,
             "consumption-weekly": 10,
+            "consumption-short": 14,
+            "consumption-monthly": 15,
             forecast: 5,
             "usage-resets": 6,
             "account-id": 7,

@@ -281,13 +281,21 @@ def test_format_and_display_sections_use_new_labels() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     layout = settings["layout"]
 
-    assert layout["format-page"]["sections"] == [
-        "percent-style-section",
-        "date-style-section",
-        "time-style-section",
-        "duration-style-section",
-        "display-settings-section",
-        "display-target-section",
+    assert layout["pages"][1] == "format-page"
+    assert layout["format-page"]["title"] == "Formatierungen"
+    assert layout["format-page"]["sections"] == ["formatting-section"]
+    assert layout["formatting-section"]["keys"] == ["format-table-selector"]
+    selector = settings["format-table-selector"]
+    assert selector["type"] == "custom"
+    assert selector["file"] == "format_table_selector.py"
+    assert selector["widget"] == "FormatTableSelector"
+    assert [table["key"] for table in selector["tables"]] == [
+        "account-percent-styles",
+        "account-date-styles",
+        "account-time-styles",
+        "account-duration-styles",
+        "account-display-settings",
+        "account-style-targets",
     ]
     assert layout["percent-style-section"]["title"] == "Verbleibendes Tokenlimit in %"
     assert layout["display-settings-section"]["title"] == "Account-Anzeige"
@@ -303,39 +311,20 @@ def test_format_and_display_sections_use_new_labels() -> None:
 def test_formatting_tables_are_isolated_and_have_editable_rows() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     layout = settings["layout"]
-    expected_sections = {
-        "percent-style-section": ("account-percent-styles-heading", "account-percent-styles"),
-        "date-style-section": ("account-date-styles-heading", "account-date-styles"),
-        "time-style-section": ("account-time-styles-heading", "account-time-styles"),
-        "duration-style-section": (
-            "account-duration-styles-heading",
-            "account-duration-styles",
-        ),
-        "display-settings-section": (
-            "account-display-settings-heading",
-            "account-display-settings",
-        ),
-        "display-target-section": ("account-style-targets-heading", "account-style-targets"),
-    }
+    selector = settings["format-table-selector"]
+    expected_tables = [table["key"] for table in selector["tables"]]
 
-    for section_name, keys in expected_sections.items():
-        assert layout[section_name]["keys"] == list(keys)
-        table = settings[keys[1]]
+    for key in expected_tables:
+        table = settings[key]
         assert table["type"] == "list"
         assert table["show-buttons"] is True
         assert "edit" not in table["hidden-buttons"]
-        assert table["height"] >= (420 if keys[1] == "account-style-targets" else 300)
-    table_keys = [keys[1] for keys in expected_sections.values()]
-    assert len(table_keys) == len(set(table_keys))
-    assert all(
-        sum(table_key in layout[section_name]["keys"] for section_name in expected_sections) == 1
-        for table_key in table_keys
-    )
+        assert table["height"] >= (420 if key == "account-style-targets" else 300)
+    assert len(expected_tables) == len(set(expected_tables))
 
-    # These were old combined containers. Keeping them in the schema makes it
-    # too easy for a Cinnamon settings renderer to attach a table twice.
-    assert "formatting-section" not in layout
+    # Old combined containers must stay out of the active page.
     assert "style-target-section" not in layout
+    assert layout["format-page"]["sections"] == ["formatting-section"]
 
     target_options = settings["account-style-targets"]["columns"][1]["options"]
     assert target_options == {
@@ -352,9 +341,11 @@ def test_formatting_tables_are_isolated_and_have_editable_rows() -> None:
         "Verbrauch Woche": 10,
         "Credits": 11,
         "Creditverbrauch": 12,
+        "Verbrauch 5h": 14,
+        "Verbrauch 30d": 15,
     }
     assert "Doppelklick" in settings["account-style-targets"]["tooltip"]
-    assert "13 Elemente" in settings["account-style-targets"]["tooltip"]
+    assert "15 Elemente" in settings["account-style-targets"]["tooltip"]
 
 
 def test_alert_table_has_editable_spark_column() -> None:
@@ -540,13 +531,15 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "Verbrauchszeitraum": 4,
         "Zeit bis Tokenende": 5,
         "Usage-Resets": 6,
-            "Account-ID": 7,
-            "Label": 8,
-            "Kürzel": 9,
-            "Verbrauch Woche": 10,
-                "Credits": 11,
-                "Creditverbrauch": 12,
-        }
+        "Account-ID": 7,
+        "Label": 8,
+        "Kürzel": 9,
+        "Verbrauch Woche": 10,
+        "Credits": 11,
+        "Creditverbrauch": 12,
+        "Verbrauch 5h": 14,
+        "Verbrauch 30d": 15,
+    }
     assert targets["show-buttons"] is True
     assert set(targets["hidden-buttons"]) == {"+", "-", "up", "down"}
 
@@ -556,6 +549,11 @@ def test_applet_metadata_and_settings_remainder() -> None:
         page = layout[page_name]
         for section_name in page["sections"]:
             referenced_keys.update(layout[section_name]["keys"])
+    selector = settings["format-table-selector"]
+    referenced_keys.add("format-table-selector")
+    for table in selector["tables"]:
+        referenced_keys.add(table["key"])
+        referenced_keys.add(table["heading"])
     assert referenced_keys == set(settings) - {
         "layout",
         "reactivation-browser",
@@ -592,7 +590,8 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert '"system-log-in-symbolic"' in source
     assert '"reactivate"' in source
     assert "codex-usage login " not in source
-    assert 'bind("account-backends"' in source
+    assert '_bindCustomSetting("fast-mode-icon"' in source
+    assert '_bindCustomSetting(\n            "account-backends"' in source
     assert 'bind("account-panel-settings"' in source
     assert 'bind("account-alert-settings"' in source
     assert 'bind("account-percent-styles"' in source
@@ -673,6 +672,7 @@ def test_installer_and_uninstaller_round_trip(tmp_path: Path) -> None:
         "stylesheet.css",
         "dynamic_series_list.py",
         "fast_mode_icon_selector.py",
+        "format_table_selector.py",
     ):
         assert (installed / name).is_file()
 
