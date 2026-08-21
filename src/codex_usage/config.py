@@ -31,6 +31,19 @@ MAX_CONFIG_ACCOUNTS = 100
 MAX_CONFIG_LABEL_CHARS = 256
 MAX_CONFIG_PATH_CHARS = 4096
 MAX_CONFIG_URL_CHARS = 2048
+_CODEX_HELP_ENV_NAMES = frozenset(
+    {
+        "HOME",
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LANGUAGE",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -642,9 +655,15 @@ def _prepare_test_codex_home(
                 replace_existing=True,
             )
     try:
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key in _CODEX_HELP_ENV_NAMES
+        }
+        environment["CODEX_HOME"] = str(codex_home)
         subprocess.run(
             ["codex", "--help"],
-            env={**os.environ, "CODEX_HOME": str(codex_home)},
+            env=environment,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

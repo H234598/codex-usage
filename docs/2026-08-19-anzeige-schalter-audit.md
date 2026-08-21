@@ -1249,3 +1249,11 @@ drei Regressionen. `tests/test_config.py`: 95/95 bestanden; Ruff sauber.
 Listen/Dictionaries leakten `TypeError`; `False` und Gleitkommazahlen wurden
 als Position akzeptiert. Explizite strikte Integerprüfung ergänzt; vier
 Regressionen. `tests/test_config.py`: 99/99 bestanden; Ruff sauber.
+
+## Runde 106: Test-Home-Umgebung
+
+`_prepare_test_codex_home()` startete `codex --help` mit kompletter
+`os.environ`. Dadurch konnten `OPENAI_API_KEY` und andere Secrets in den
+Subprozess gelangen. Help-Probe erhält jetzt nur minimale Locale-/Pfad-/XDG-
+Variablen plus `CODEX_HOME`; Regression ergänzt. `tests/test_config.py`:
+100/100 bestanden; Ruff sauber.

@@ -80,6 +80,27 @@ def test_test_home_moves_auth_and_initializes_file_store(tmp_path, monkeypatch):
     assert calls[0][1]["env"]["CODEX_HOME"] == str(profile / "codex-home")
 
 
+def test_test_home_help_probe_does_not_forward_api_keys(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    calls = []
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setattr(
+        config_module.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs)),
+    )
+
+    add_or_update_account(
+        "test-account",
+        test_home=True,
+        path=tmp_path / "config.toml",
+    )
+
+    assert calls
+    assert "OPENAI_API_KEY" not in calls[0][1]["env"]
+
+
 def test_test_home_state_cleanup_failure_restores_auth_and_profile(
     tmp_path, monkeypatch
 ):
