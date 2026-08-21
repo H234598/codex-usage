@@ -2363,3 +2363,11 @@ optionalen Pfad roh auf `.exists()` bzw. `.parent` zu. Ein gemeinsamer Resolver
 weist ungültige Pfade jetzt kontrolliert als `ValueError` zurück.
 `tests/test_spark_health.py`: 23/23 bestanden; Mypy für Source und Ruff für die
 betroffenen Dateien sauber.
+
+## Runde 238: Abschlussverifikation nach Health-/Entrypoint-Härtung
+
+Die Vollsuite bestätigt den aktuellen lokalen HEAD: `2502 bestanden, 1
+übersprungen, 1 Warnung` in 81,27 s. Die Warnung bleibt externe PyGObject-
+Deprecation außerhalb des Repositories. `mypy src/codex_usage` ist in 35
+Quelldateien fehlerfrei; der aggregierte Ruff-Lauf über Produktion, Scripts,
+Launcher und Tests ist ebenfalls sauber.
