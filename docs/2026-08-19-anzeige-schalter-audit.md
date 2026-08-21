@@ -941,3 +941,17 @@ passender Datei-/Verzeichnisidentität. Der Regressionstest prüft Auth,
 Profil und leere Config nach fehlgeschlagenem State-Cleanup.
 `tests/test_config.py`: 75/75 bestanden; Ruff für `config.py` und den Test ist
 sauber. Vollständige Python-Suite: 1983 bestanden, 1 übersprungen, 1 Warnung.
+
+## Runde 69: Symlink-Prüfung nach fehlendem Pfadsegment
+
+`assert_no_symlink_ancestors()` brach bisher beim ersten nicht vorhandenen
+Pfadsegment ab. Ein Pfad wie `missing/../redirected/value` konnte dadurch
+zuerst `missing/` anlegen und erst danach einen späteren Symlink als ungültig
+erkennen. Die Ablehnung hinterließ dann einen Teilpfad.
+
+Die Prüfung scannt jetzt alle Pfadsegmente weiter; `..` wird weiterhin
+schrittweise verarbeitet, damit Symlink-Semantik nicht durch rein lexikalische
+Normalisierung verloren geht. Zwei Regressionstests prüfen direkte Erkennung,
+Fehlertext und fehlende Nebenartefakte. `tests/test_private_io.py`: 26/26;
+vollständige Python-Suite: 1984 bestanden, 1 übersprungen, 1 Warnung; Ruff
+sauber.

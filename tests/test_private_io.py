@@ -7,6 +7,7 @@ import pytest
 
 import codex_usage.private_io as private_io
 from codex_usage.private_io import (
+    assert_no_symlink_ancestors,
     ensure_private_directory,
     private_path_lock,
     write_private_text,
@@ -77,6 +78,35 @@ def test_ensure_private_directory_rejects_home_target_without_mutation(tmp_path,
         ensure_private_directory(home, label="private directory")
 
     assert (home.stat().st_mode & 0o777) == 0o755
+
+
+def test_ensure_private_directory_rejects_symlink_after_missing_segment_without_prefix(
+    tmp_path,
+):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(outside, target_is_directory=True)
+    target = tmp_path / "missing" / ".." / "redirected" / "new"
+
+    with pytest.raises(ValueError, match="symlink ancestors"):
+        ensure_private_directory(target, label="private directory")
+
+    assert not (tmp_path / "missing").exists()
+    assert not (outside / "new").exists()
+
+
+def test_assert_no_symlink_ancestors_scans_after_missing_segment(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(outside, target_is_directory=True)
+    target = tmp_path / "missing" / ".." / "redirected" / "value"
+
+    with pytest.raises(ValueError, match="symlink ancestors"):
+        assert_no_symlink_ancestors(target, label="private path")
+
+    assert not (tmp_path / "missing").exists()
 
 
 def test_ensure_private_directory_rejects_foreign_owner(tmp_path, monkeypatch):

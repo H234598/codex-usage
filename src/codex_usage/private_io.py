@@ -58,8 +58,6 @@ def assert_no_symlink_ancestors(path: Path, *, label: str) -> None:
         current /= part
         if current.is_symlink():
             raise ValueError(f"{label} must not contain symlink ancestors: {current}")
-        if not current.exists():
-            break
 
 
 def ensure_private_directory(
