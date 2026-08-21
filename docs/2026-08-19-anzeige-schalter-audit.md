@@ -968,3 +968,16 @@ geprüft; Symlinks und andere Dateitypen werden ebenfalls früh abgelehnt. Der
 Regressionstest stellt sicher, dass aktuelle Datei und Hardlink unverändert
 bleiben. `tests/test_state.py`: 211/211 bestanden; Ruff für `state.py` und
 Test ist sauber.
+
+## Runde 71: Credits aus invalidierten Snapshots entfernen
+
+`usage_from_dict()` sanitizierte bei `cache_invalidated` und
+`login_required` bisher Kernlimits und Pools, ließ aber ein separat
+gespeichertes `credits`-Fenster im Objekt. Damit konnte ein manipuliertes oder
+veraltetes Payload trotz Fail-Closed-Pfad noch einen Creditwert tragen.
+
+Credits werden jetzt in allen betreffenden Sanitization-Pfaden verworfen:
+ungültiger Wertezeitpunkt, invalidierter Cache, Login erforderlich und fehlende
+Kernnutzung. Drei parametrische Regressionen decken Login-, explizit
+invalidierten und implizit ungültigen `ok`-Payload ab. `tests/test_state.py`:
+214/214 bestanden; Ruff sauber.

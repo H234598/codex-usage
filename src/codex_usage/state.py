@@ -946,6 +946,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         error = f"{error}; {timestamp_error}" if error else timestamp_error
         five_hour = None
         weekly = None
+        credits = None
         main = None
         model_pools = ()
         values_captured_at = None
@@ -968,6 +969,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
     if cache_invalidated:
         five_hour = None
         weekly = None
+        credits = None
         main = None
         model_pools = ()
         values_captured_at = None
@@ -979,12 +981,13 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         # intentionally keep stale values when cache invalidation is false.
         if any(
             value is not None
-            for value in (five_hour, weekly, main)
+            for value in (five_hour, weekly, credits, main)
         ) or model_pools:
             terminal_error = "terminal usage status cannot carry limit values"
             error = f"{error}; {terminal_error}" if error else terminal_error
         five_hour = None
         weekly = None
+        credits = None
         main = None
         model_pools = ()
         values_captured_at = None
@@ -1002,6 +1005,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         cache_invalidated = True
         five_hour = None
         weekly = None
+        credits = None
         main = None
         model_pools = tuple(
             replace(pool, windows=(), available=False)

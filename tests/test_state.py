@@ -356,6 +356,28 @@ def test_usage_state_login_required_discards_limit_values():
     assert "terminal usage status cannot carry limit values" in loaded.error
 
 
+@pytest.mark.parametrize(
+    ("status", "cache_invalidated"),
+    [("login_required", False), ("ok", True), ("ok", False)],
+)
+def test_usage_state_discards_credits_for_terminal_or_invalidated_payload(
+    status, cache_invalidated
+):
+    loaded = usage_from_dict(
+        {
+            "account": "credits-terminal",
+            "label": "Credits terminal",
+            "captured_at": "2026-07-16T04:00:00+02:00",
+            "status": status,
+            "stale": cache_invalidated,
+            "cache_invalidated": cache_invalidated,
+            "credits": {"name": "credits", "remaining": 794},
+        }
+    )
+
+    assert loaded.credits is None
+
+
 @pytest.mark.parametrize("field", ["backend_user_id", "backend_account_id"])
 def test_usage_state_rejects_normalized_backend_identity(field):
     loaded = usage_from_dict(
