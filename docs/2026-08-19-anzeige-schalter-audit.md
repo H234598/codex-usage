@@ -1426,3 +1426,13 @@ gespeichert, und `reset_at` blieb optional. Direkte Aufrufe, Guards,
 Variablenverengung und `cast` beseitigen die Fehler; Clock-Subclass-Verhalten
 bleibt erhalten. `tests/test_scheduler.py`: 160/160 bestanden; Mypy und Ruff
 sauber.
+
+## Runde 127: CLI-Fehlergruppen und Eingabetypen
+
+`cli.py` hatte acht Mypy-Fehler: optionale Overview-Nutzungen wurden mehrfach
+ohne lokale Verengung gelesen, Device-Login-Ergebnis wechselte zwischen
+Dataclass und Dict, Endpoint-Port überschrieb seinen Integer-Parameter,
+Rollback-Gruppen fingen `BaseException`, und CLI-Signalfehler blieben dadurch
+statisch unsauber. Lokale Payload-Schleife, Ergebnisunion, `parsed_port` und
+`BaseExceptionGroup` beheben die Verträge. 37 fokussierte CLI-Tests bestanden;
+Mypy und Ruff sauber.

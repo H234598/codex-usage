@@ -78,7 +78,7 @@ from .profile_jobs import (
     profile_job_status,
 )
 from .profile_layout import ensure_profile_layout
-from .profile_login import DeviceLoginError, run_device_login
+from .profile_login import DeviceLoginError, DeviceLoginResult, run_device_login
 from .profile_migration import (
     apply_auth_migration,
     plan_auth_migration,
@@ -820,8 +820,10 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
     usages = {} if args.config_only else _load_overview_usages(config)
     if args.format == "json":
         usages_by_account = {usage.account_id: usage for usage in usages.values()}
-        payload = {
-            "accounts": [
+        account_payloads = []
+        for account in config.accounts:
+            usage = usages_by_account.get(account.id)
+            account_payloads.append(
                 {
                     "id": account.id,
                     "label": account.label,
@@ -833,20 +835,15 @@ def _cmd_account_overview(args: argparse.Namespace) -> int:
                     "series": account.series,
                     "series_active": account.series_active,
                     "backend": account.backend,
-                    "backend_used": usages_by_account.get(account.id).backend_used
-                    if usages_by_account.get(account.id)
-                    else None,
-                    "fallback_reason": usages_by_account.get(account.id).fallback_reason
-                    if usages_by_account.get(account.id)
-                    else None,
+                    "backend_used": usage.backend_used if usage else None,
+                    "fallback_reason": usage.fallback_reason if usage else None,
                     "usage": _overview_usage_json(
-                        usages_by_account.get(account.id),
+                        usage,
                         expected_backend=account.backend,
                     ),
                 }
-                for account in config.accounts
-            ]
-        }
+            )
+        payload = {"accounts": account_payloads}
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
         return (
             0
@@ -954,7 +951,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                 try:
                     state_transaction.rollback()
                 except Exception as rollback_error:
-                    raise ExceptionGroup(
+                    raise BaseExceptionGroup(
                         "state deletion rollback failed",
                         [revoke_error, rollback_error],
                     ) from None
@@ -962,7 +959,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                 try:
                     profile_transaction.rollback()
                 except Exception as rollback_error:
-                    raise ExceptionGroup(
+                    raise BaseExceptionGroup(
                         "profile deletion rollback failed",
                         [revoke_error, rollback_error],
                     ) from None
@@ -974,7 +971,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                 try:
                     state_transaction.rollback()
                 except Exception as rollback_error:
-                    raise ExceptionGroup(
+                    raise BaseExceptionGroup(
                         "state deletion rollback failed",
                         [cleanup_error, rollback_error],
                     ) from None
@@ -982,7 +979,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                 try:
                     profile_transaction.rollback()
                 except Exception as rollback_error:
-                    raise ExceptionGroup(
+                    raise BaseExceptionGroup(
                         "profile deletion rollback failed",
                         [cleanup_error, rollback_error],
                     ) from None
@@ -995,7 +992,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                     try:
                         profile_transaction.rollback()
                     except Exception as rollback_error:
-                        raise ExceptionGroup(
+                        raise BaseExceptionGroup(
                             "profile deletion rollback failed",
                             [primary_error, rollback_error],
                         ) from None
@@ -1007,7 +1004,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                 try:
                     profile_transaction.rollback()
                 except Exception as rollback_error:
-                    raise ExceptionGroup(
+                        raise BaseExceptionGroup(
                         "profile deletion rollback failed",
                         [primary_error, rollback_error],
                     ) from None
@@ -1270,6 +1267,7 @@ def _cmd_profile_migrate(args: argparse.Namespace) -> int:
 def _cmd_profile_device_login(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     account = resolve_account(config, args.account)
+    result: DeviceLoginResult | dict[str, object]
     try:
         result = run_device_login(
             account,
@@ -1279,7 +1277,7 @@ def _cmd_profile_device_login(args: argparse.Namespace) -> int:
         )
     except DeviceLoginError as exc:
         result = {"ok": False, "account": account.id, "events": [], "error": str(exc)}
-    payload = result.as_dict() if hasattr(result, "as_dict") else result
+    payload = result.as_dict() if isinstance(result, DeviceLoginResult) else result
     if args.format == "json":
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
     else:
@@ -2048,14 +2046,14 @@ def _bridge_endpoint(endpoint: str | None, port: int) -> str:
     try:
         parsed = urlsplit(endpoint)
         hostname = parsed.hostname
-        port = parsed.port
+        parsed_port = parsed.port
     except ValueError as exc:
         raise ValueError("--endpoint must be an absolute HTTP(S) URL") from exc
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.netloc
         or not hostname
-        or (port is not None and not 1 <= port <= 65535)
+        or (parsed_port is not None and not 1 <= parsed_port <= 65535)
         or not parsed.path.startswith("/")
         or parsed.username is not None
         or parsed.password is not None
@@ -2306,7 +2304,7 @@ def _delete_profile_dir(
         try:
             transaction.rollback()
         except BaseException as rollback_error:
-            raise ExceptionGroup(
+            raise BaseExceptionGroup(
                 "profile deletion rollback failed",
                 [primary_error, rollback_error],
             ) from None
