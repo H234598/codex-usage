@@ -4047,6 +4047,35 @@ malformed Antworten und übergroße Inhalte bleiben fail-closed.
 `pytest -q tests/test_direct.py`: 183/183 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 450: Konfigurierbare Leistenwerte und Tokendelta
+
+Die Leiste verwendet jetzt frei konfigurierbare, einzeln auswählbare
+Wertquellen. `panel-value-count` ist ein Freitextfeld mit Default 20 und
+bounded auf 1–64. Wertfelder oberhalb der bisherigen vier Slots werden
+normalisiert, dedupliziert und im Gtk-Widget dynamisch aufgebaut. Die Quellen
+umfassen Limits je Fenster, Restlaufzeit und Resetdatum je Fenster,
+Tokendelta, Identität, Abrufweg, Routing-/Creditstatus, Warnungen, Fehler,
+Loginstatus und Kontostatus. Sobald Wertfelder gesetzt sind, unterdrücken sie
+die alten automatischen Leistenanhänge; alte `show-panel`-Daten bleiben nur
+für Rückwärtskompatibilität in der Normalisierung.
+
+`Tokendelta` ist ein eigenes Formatierungsziel. Die zusätzliche Option
+`Dynamisch` extrapoliert das aktuelle Delta über den verbleibenden
+Limit-/Reset-Horizont und aktiviert das Schwellenformat nur, wenn die
+statistische Projektion das verbleibende Limit erreicht. Ohne belastbares
+Fenster bleibt die Option fail-closed.
+
+Die Settings-Seiten sind getrennt: `Einstellungen`, `Formatierungen`,
+`Prognosen`, `Status` und `Accounts`. Prognosen enthält Tokenverbrauch,
+Tokenende und Creditverbrauch; Status enthält Credits und Resets; Accounts
+enthält Abrufwege und Reaktivierungsoptionen. Die alten
+`show-panel`-Spalten sind nicht mehr editierbar.
+
+`node --test tests/applet_runtime.test.js`: 404/404 bestanden.
+`pytest -q tests/test_panel_settings_list.py tests/test_format_table_selector.py tests/test_applet.py`:
+34/34 bestanden. Ruff, JSON-Parse, Python-Compile und `git diff --check`
+sauber; verbleibende GTK-/PyGObject-Deprecation-Warnungen sind extern.
+
 ## Runde 458: Usage-Reset-Vertrag und Redemption-Gate
 
 `usage_resets.py` erneut gegen den kanonischen/Legacy-Payload-Vertrag, die

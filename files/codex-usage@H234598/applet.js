@@ -36,6 +36,62 @@ const EMERGENCY_DISPLAY_OVERRIDE_PATH = "/home/teladi/.local/state/codex-master-
 const FAST_MODE_ICON = "fast-mode-warning-shield-outline.svg";
 const MAX_CAPTURE_FUTURE_MS = 5 * 60 * 1000;
 const MENU_SPACER = "────────";
+const PANEL_VALUE_DEFAULT_COUNT = 20;
+const PANEL_VALUE_MAX_COUNT = 64;
+const PANEL_SOURCE_LABELS = {
+    0: "?",
+    1: "5h",
+    2: "W",
+    3: "Ø",
+    4: "S5h",
+    5: "SW",
+    6: "SØ",
+    7: "S+",
+    8: "30d",
+    9: "CR",
+    10: "CV",
+    11: "Resets",
+    12: "TE",
+    13: "Δ",
+    14: "Kürzel",
+    15: "Label",
+    16: "Acc ID",
+    17: "Abrufweg",
+    18: "sonstiges",
+    19: "S sonst.",
+    20: "Rest 5h",
+    21: "Rest W",
+    22: "Rest M",
+    23: "Rest S5h",
+    24: "Rest SW",
+    25: "Rest S+",
+    26: "Reset 5h",
+    27: "Reset W",
+    28: "Reset M",
+    29: "Reset S5h",
+    30: "Reset SW",
+    31: "Reset S+",
+    32: "Δ5h",
+    33: "ΔW",
+    34: "ΔM",
+    35: "ΔSpark",
+    36: "Δsonst.",
+    37: "Limit 5h",
+    38: "Limit W",
+    39: "Limit M",
+    40: "Limit S5h",
+    41: "Limit SW",
+    42: "Limit S+",
+    43: "Routing",
+    44: "CV aktiv",
+    45: "Credit h",
+    46: "Credit W",
+    47: "Credit M",
+    48: "Warnung",
+    49: "Fehler",
+    50: "Login",
+    51: "Status"
+};
 const PANEL_CLASSES = [
     "codex-usage-panel-warning",
     "codex-usage-panel-critical",
@@ -67,6 +123,7 @@ CodexUsageApplet.prototype = {
         this.refreshOnOpen = true;
         this.panelPercentSource = "average";
         this.panelAccountSeparator = "bar";
+        this.panelValueCount = String(PANEL_VALUE_DEFAULT_COUNT);
         this.hideAccountWhenLongLimitExhausted = false;
         this.fastModeIcon = "fast-mode-warning-shield-outline.svg";
         this.warningThreshold = 20;
@@ -89,6 +146,7 @@ CodexUsageApplet.prototype = {
         this.accountDateStyles = [];
         this.accountTimeStyles = [];
         this.accountDurationStyles = [];
+        this.accountDeltaStyles = [];
         this.accountDisplaySettings = [];
         this.accountStyleTargets = [];
         this.routingGlobalPaidCredits = false;
@@ -181,6 +239,7 @@ CodexUsageApplet.prototype = {
         this._dateStyles = Object.create(null);
         this._timeStyles = Object.create(null);
         this._durationStyles = Object.create(null);
+        this._deltaStyles = Object.create(null);
         this._displaySettings = Object.create(null);
         this._styleTargets = Object.create(null);
         this._routingPolicy = null;
@@ -294,6 +353,7 @@ CodexUsageApplet.prototype = {
         bind("refresh-on-open", "refreshOnOpen", null);
         bind("panel-percent-source", "panelPercentSource", this._onPanelDefaultsChanged);
         bind("panel-account-separator", "panelAccountSeparator", this._updatePanel);
+        bind("panel-value-count", "panelValueCount", this._updatePanel);
         bind(
             "hide-5h-when-long-limit-exhausted",
             "hideFiveHourWhenLongLimitExhausted",
@@ -341,6 +401,7 @@ CodexUsageApplet.prototype = {
         bind("account-date-styles", "accountDateStyles", this._onDateStylesChanged);
         bind("account-time-styles", "accountTimeStyles", this._onTimeStylesChanged);
         bind("account-duration-styles", "accountDurationStyles", this._onDurationStylesChanged);
+        bind("account-delta-styles", "accountDeltaStyles", this._onDeltaStylesChanged);
         bind("account-display-settings", "accountDisplaySettings", this._onDisplaySettingsChanged);
         bind("account-style-targets", "accountStyleTargets", this._onStyleTargetsChanged);
         bind(
@@ -3024,32 +3085,45 @@ CodexUsageApplet.prototype = {
             return null;
         }
         let order = this._strictIntegerSetting(row.order);
-        let slot1 = this._strictIntegerSetting(row.slot1);
-        let slot2 = this._strictIntegerSetting(row.slot2);
-        let slot3 = row.slot3 === undefined ? 0 : this._strictIntegerSetting(row.slot3);
-        let slot4 = row.slot4 === undefined ? 0 : this._strictIntegerSetting(row.slot4);
+        let slots = [];
+        for (let index = 1; index <= PANEL_VALUE_MAX_COUNT; index++) {
+            let key = "slot" + index;
+            let present = index <= 4 || Object.prototype.hasOwnProperty.call(row, key);
+            let value = index <= 2 || present
+                ? (row[key] === undefined && index >= 3 ? 0 : this._strictIntegerSetting(row[key]))
+                : 0;
+            if (present && (!Number.isInteger(value) || value < 0 || value > 51)) {
+                return null;
+            }
+            slots.push({key: key, present: present, value: value});
+        }
         if (
             !Number.isInteger(order) || order < 1 || order > 100 ||
-            typeof row.muted !== "boolean" ||
-            !Number.isInteger(slot1) || slot1 < 0 || slot1 > 10 ||
-            !Number.isInteger(slot2) || slot2 < 0 || slot2 > 10 ||
-            !Number.isInteger(slot3) || slot3 < 0 || slot3 > 10 ||
-            !Number.isInteger(slot4) || slot4 < 0 || slot4 > 10
+            typeof row.muted !== "boolean"
         ) {
             return null;
         }
-        if (slot1 !== 0 && slot1 === slot2) { slot2 = 0; }
-        if (slot3 !== 0 && (slot3 === slot1 || slot3 === slot2)) { slot3 = 0; }
-        if (slot4 !== 0 && (slot4 === slot1 || slot4 === slot2 || slot4 === slot3)) { slot4 = 0; }
-        return {
+        let seen = Object.create(null);
+        let normalized = {
             account: account,
             order: order,
             muted: row.muted,
-            slot1: slot1,
-            slot2: slot2,
-            slot3: slot3,
-            slot4: slot4
         };
+        for (let i = 0; i < slots.length; i++) {
+            let slot = slots[i];
+            if (!slot.present) {
+                continue;
+            }
+            let value = slot.value;
+            if (value !== 0 && seen[value]) {
+                value = 0;
+            }
+            if (value !== 0) {
+                seen[value] = true;
+            }
+            normalized[slot.key] = value;
+        }
+        return normalized;
     },
 
     _mergedAlertRows: function(accounts, currentRows) {
@@ -3446,23 +3520,33 @@ CodexUsageApplet.prototype = {
         }[source] || 3;
     },
 
+    _panelValueCount: function() {
+        let value = Number(this.panelValueCount);
+        return Number.isInteger(value) && value >= 1 && value <= PANEL_VALUE_MAX_COUNT
+            ? value
+            : PANEL_VALUE_DEFAULT_COUNT;
+    },
+
     _syncStyleRows: function(accounts) {
         let percentRows = this._mergedStyleRows(accounts, this.accountPercentStyles, "percent");
         let dateRows = this._mergedStyleRows(accounts, this.accountDateStyles, "date");
         let timeRows = this._mergedStyleRows(accounts, this.accountTimeStyles, "time");
         let durationRows = this._mergedStyleRows(accounts, this.accountDurationStyles, "duration");
+        let deltaRows = this._mergedStyleRows(accounts, this.accountDeltaStyles, "delta");
         let displayRows = this._mergedDisplayRows(accounts, this.accountDisplaySettings);
         let targetRows = this._mergedTargetRows(accounts, this.accountStyleTargets);
         let percentChanged = !this._styleRowsEqual(this.accountPercentStyles, percentRows);
         let dateChanged = !this._styleRowsEqual(this.accountDateStyles, dateRows);
         let timeChanged = !this._styleRowsEqual(this.accountTimeStyles, timeRows);
         let durationChanged = !this._styleRowsEqual(this.accountDurationStyles, durationRows);
+        let deltaChanged = !this._styleRowsEqual(this.accountDeltaStyles, deltaRows);
         let displayChanged = !this._styleRowsEqual(this.accountDisplaySettings, displayRows);
         let targetsChanged = !this._styleRowsEqual(this.accountStyleTargets, targetRows);
         this._percentStyles = this._styleMap(percentRows);
         this._dateStyles = this._styleMap(dateRows);
         this._timeStyles = this._styleMap(timeRows);
         this._durationStyles = this._styleMap(durationRows);
+        this._deltaStyles = this._styleMap(deltaRows);
         this._displaySettings = this._displaySettingsMap(displayRows);
         this._styleTargets = this._targetMap(targetRows);
         this._syncingStyleRows = true;
@@ -3470,6 +3554,7 @@ CodexUsageApplet.prototype = {
         this.accountDateStyles = dateRows;
         this.accountTimeStyles = timeRows;
         this.accountDurationStyles = durationRows;
+        this.accountDeltaStyles = deltaRows;
         this.accountDisplaySettings = displayRows;
         this.accountStyleTargets = targetRows;
         try {
@@ -3484,6 +3569,9 @@ CodexUsageApplet.prototype = {
             }
             if (durationChanged) {
                 this.settings.setValue("account-duration-styles", durationRows);
+            }
+            if (deltaChanged) {
+                this.settings.setValue("account-delta-styles", deltaRows);
             }
             if (displayChanged) {
                 this.settings.setValue("account-display-settings", displayRows);
@@ -3647,6 +3735,10 @@ CodexUsageApplet.prototype = {
             background: 0,
             "hover-background": 0
         };
+        if (kind === "delta") {
+            row.dynamic = false;
+            return row;
+        }
         if (kind !== "percent") {
             row.format = 0;
             return {
@@ -3677,9 +3769,10 @@ CodexUsageApplet.prototype = {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
-        let format = kind === "percent"
+        let format = kind === "percent" || kind === "delta"
             ? 0
             : (row.format === undefined ? 0 : this._strictIntegerSetting(row.format));
+        let dynamic = kind === "delta" && row.dynamic === undefined ? false : row.dynamic;
         let mode = row.mode === undefined
             ? (row.conditional === true ? 1 : 0)
             : this._strictIntegerSetting(row.mode);
@@ -3715,7 +3808,7 @@ CodexUsageApplet.prototype = {
         let maxFormat = kind === "date" ? 3 : (kind === "duration" ? 3 : 2);
         let maxThreshold = 100;
         if (
-            (kind !== "percent" && (
+            (kind !== "percent" && kind !== "delta" && (
                 !Number.isInteger(format) || format < 0 || format > maxFormat
             )) ||
             !Number.isInteger(mode) || mode < 0 || mode > 3 ||
@@ -3726,6 +3819,7 @@ CodexUsageApplet.prototype = {
             !Number.isInteger(background) || background < 0 || background > 6 ||
             !Number.isInteger(hoverBackground) || hoverBackground < 0 || hoverBackground > 6 ||
             typeof bold !== "boolean" || typeof italic !== "boolean" ||
+            (kind === "delta" && typeof dynamic !== "boolean") ||
             !Number.isInteger(belowFont) || belowFont < 0 || belowFont > 3 ||
             !Number.isInteger(belowSize) || belowSize < 0 || belowSize > 48 ||
             typeof belowBold !== "boolean" || typeof belowItalic !== "boolean" ||
@@ -3755,6 +3849,10 @@ CodexUsageApplet.prototype = {
             "hover-background": hoverBackground
         };
         if (kind === "percent") {
+            return normalized;
+        }
+        if (kind === "delta") {
+            normalized.dynamic = dynamic;
             return normalized;
         }
         return {
@@ -3909,6 +4007,10 @@ CodexUsageApplet.prototype = {
         this._onStyleRowsChanged("duration");
     },
 
+    _onDeltaStylesChanged: function() {
+        this._onStyleRowsChanged("delta");
+    },
+
     _onStyleRowsChanged: function(kind) {
         if (!this._backendRowsReady || this._syncingStyleRows || this._removed || this._safeMode) {
             return;
@@ -3917,7 +4019,9 @@ CodexUsageApplet.prototype = {
             ? this.accountPercentStyles
             : (kind === "date"
                 ? this.accountDateStyles
-                : (kind === "time" ? this.accountTimeStyles : this.accountDurationStyles));
+                : (kind === "time"
+                    ? this.accountTimeStyles
+                    : (kind === "duration" ? this.accountDurationStyles : this.accountDeltaStyles)));
         let expected = Object.keys(this._backendAccounts).length;
         if (!Array.isArray(rows) || rows.length !== expected) {
             this._loadAccountBackends();
@@ -3945,8 +4049,10 @@ CodexUsageApplet.prototype = {
             this._dateStyles = this._styleMap(normalized);
         } else if (kind === "time") {
             this._timeStyles = this._styleMap(normalized);
-        } else {
+        } else if (kind === "duration") {
             this._durationStyles = this._styleMap(normalized);
+        } else {
+            this._deltaStyles = this._styleMap(normalized);
         }
         this._refreshFormattedSurfaces();
     },
@@ -8053,9 +8159,16 @@ CodexUsageApplet.prototype = {
             let usage = this._usages[i];
             let fallback = this._defaultPanelRow(usage.account, i + 1);
             let settings = this._panelSettings[usage.account] || fallback;
-            let sources = [settings.slot1, settings.slot2, settings.slot3, settings.slot4].filter(function(source, index, all) {
-                return source > 0 && all.indexOf(source) === index;
-            });
+            let sources = [];
+            let seenSources = Object.create(null);
+            for (let slotIndex = 1; slotIndex <= this._panelValueCount(); slotIndex++) {
+                let source = this._strictIntegerSetting(settings["slot" + slotIndex]);
+                if (source === null || source <= 0 || seenSources[source]) {
+                    continue;
+                }
+                seenSources[source] = true;
+                sources.push(source);
+            }
             let slots = sources.map(Lang.bind(this, function(source) {
                 let window = this._panelWindowForSource(usage, source);
                 return {
@@ -8145,12 +8258,13 @@ CodexUsageApplet.prototype = {
         let slots = item.slots.map(Lang.bind(this, function(slot) {
             return this._panelSlotContent(item, slot);
         }));
+        let legacyPanel = slots.length === 0;
         let hasCreditSlot = item.slots.some(function(slot) { return slot.source === 9; });
         let hasCreditConsumptionSlot = item.slots.some(function(slot) { return slot.source === 10; });
-        let consumption = this._consumptionParts(item.usage, "panel");
-        let creditConsumption = this._creditConsumptionParts(item.usage, "panel");
-        let credits = this._creditParts(item.usage, "panel");
-        let resets = this._usageResetParts(item.usage, "panel");
+        let consumption = legacyPanel ? this._consumptionParts(item.usage, "panel") : null;
+        let creditConsumption = legacyPanel ? this._creditConsumptionParts(item.usage, "panel") : null;
+        let credits = legacyPanel ? this._creditParts(item.usage, "panel") : null;
+        let resets = legacyPanel ? this._usageResetParts(item.usage, "panel") : null;
         let slotPlain = slots.map(function(slot) { return slot.plain; }).join(" / ");
         let slotMarkup = slots.map(function(slot) { return slot.markup; }).join(" / ");
         let plain = tag + (slotPlain ? " " + slotPlain : "") +
@@ -8181,15 +8295,249 @@ CodexUsageApplet.prototype = {
             let consumption = this._creditConsumptionParts(item.usage, "panel", true, "CV");
             return consumption || { plain: "CV –", markup: "CV –" };
         }
-        let percent = this._percentPartsFromValue(slot.value, item.usage.account, "panel");
-        let reset = this._windowResetParts(slot.window, item.usage.account, "panel", false);
+        let usage = item.usage;
+        let account = usage.account;
         let label = this._panelSourceLabel(slot.source);
+        if (slot.source === 11) {
+            return this._usageResetParts(usage, "panel", true) || {plain: label + " –", markup: label + " –"};
+        }
+        if (slot.source === 12) {
+            return this._panelForecastPart(usage, "panel") || {plain: label + " –", markup: label + " –"};
+        }
+        if (slot.source === 13 || (slot.source >= 32 && slot.source <= 36)) {
+            return this._panelDeltaPart(usage, slot.source, "panel");
+        }
+        if (slot.source === 14) {
+            let value = this._panelAccountTag(usage) || "–";
+            return {plain: label + " " + value, markup: this._escapeMarkup(label + " " + value)};
+        }
+        if (slot.source === 15) {
+            let value = this._safeText(usage.label, 120) || "–";
+            return {plain: label + " " + value, markup: this._escapeMarkup(label + " " + value)};
+        }
+        if (slot.source === 16) {
+            let value = this._safeText(usage.account, 64) || "–";
+            return {plain: label + " " + value, markup: this._escapeMarkup(label + " " + value)};
+        }
+        if (slot.source === 17) {
+            let value = this._backendSummary(usage);
+            return {plain: label + " " + value, markup: this._escapeMarkup(label + " " + value)};
+        }
+        if (slot.source === 43) {
+            let routing = this._routingDecisionParts(usage);
+            return routing || {plain: label + " –", markup: label + " –"};
+        }
+        if (slot.source === 44) {
+            let decision = this._routingDecisions && this._routingDecisions[account];
+            let active = decision && (decision.decision === "credits" || decision.paid_overage_allowed === true);
+            let text = label + " " + (active ? "an" : "aus");
+            return {plain: text, markup: this._escapeMarkup(text)};
+        }
+        if (slot.source >= 45 && slot.source <= 47) {
+            return this._panelCreditLimitPart(slot.source, label);
+        }
+        if (slot.source === 48 || slot.source === 49) {
+            let alerts = this._alertSettings[account] || this._defaultAlertRow(account);
+            let enabled = slot.source === 48 ? alerts.warnings : alerts.errors;
+            let text = label + " " + (enabled ? "an" : "aus");
+            return {plain: text, markup: this._escapeMarkup(text)};
+        }
+        if (slot.source === 50) {
+            let loginOk = usage.status === "ok" || usage.status === "partial";
+            let text = label + " " + (loginOk ? "ja" : "nein");
+            return {plain: text, markup: this._escapeMarkup(text)};
+        }
+        if (slot.source === 51) {
+            let text = label + " " + this._statusLabel(usage.status);
+            return {plain: text, markup: this._escapeMarkup(text)};
+        }
+        let percentSource = slot.source >= 37 && slot.source <= 42
+            ? slot.source - 36
+            : slot.source;
+        let percentWindow = slot.source >= 37 && slot.source <= 42
+            ? this._panelWindowForSource(usage, percentSource)
+            : slot.window;
+        if (slot.source === 18 || slot.source === 19) {
+            percentWindow = this._panelWindowForKey(usage, slot.source === 18 ? "main-other" : "spark-other");
+        }
+        let percentValue = slot.source >= 1 && slot.source <= 8
+            ? slot.value : this._remainingPercent(percentWindow);
+        let percent = this._percentPartsFromValue(percentValue, account, "panel", true);
+        let reset = this._windowResetParts(percentWindow, account, "panel", false);
+        if (slot.source >= 20 && slot.source <= 25) {
+            let resetWindow = this._panelWindowForKey(usage, this._panelResetKey(slot.source));
+            return this._panelResetValue(resetWindow, label, account, "duration");
+        }
+        if (slot.source >= 26 && slot.source <= 31) {
+            let resetWindow = this._panelWindowForKey(usage, this._panelResetKey(slot.source));
+            return this._panelResetValue(resetWindow, label, account, "date-time");
+        }
         return {
             plain: label + (percent.plain ? " " + percent.plain : "") +
                 (reset.plain ? " " + reset.plain : ""),
             markup: this._escapeMarkup(label + (percent.markup ? " " : "")) + percent.markup +
                 (reset.markup ? " " + reset.markup : "")
         };
+    },
+
+    _panelAccountTag: function(usage) {
+        let account = usage && usage.account;
+        let backend = this._backendAccounts && this._backendAccounts[account];
+        let tag = backend && this._safeText(backend.tag, 8);
+        if (!tag && Array.isArray(this.accountBackends)) {
+            for (let i = 0; i < this.accountBackends.length; i++) {
+                if (this.accountBackends[i] && this.accountBackends[i].account === account) {
+                    tag = this._safeText(this.accountBackends[i].tag, 8);
+                    break;
+                }
+            }
+        }
+        if (!tag) {
+            let display = this._displaySettings && this._displaySettings[account];
+            tag = display && this._safeText(display.tag, 8);
+        }
+        return tag || this._accountTag(this._safeText(usage && usage.label, 120) || account);
+    },
+
+    _panelWindowForKey: function(usage, key) {
+        let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
+        return {
+            "main-5h": usage.five_hour,
+            "main-weekly": usage.weekly,
+            "main-monthly": this._poolWindowForDuration(usage.main, 2592000),
+            "main-other": this._poolOtherWindow(usage.main),
+            "spark-5h": this._poolWindowForDuration(spark, 18000),
+            "spark-weekly": this._poolWindowForDuration(spark, 604800),
+            "spark-other": this._poolOtherWindow(spark)
+        }[key] || null;
+    },
+
+    _panelResetKey: function(source) {
+        return {
+            20: "main-5h", 21: "main-weekly", 22: "main-monthly", 23: "spark-5h",
+            24: "spark-weekly", 25: "spark-other", 26: "main-5h", 27: "main-weekly",
+            28: "main-monthly", 29: "spark-5h", 30: "spark-weekly", 31: "spark-other"
+        }[source] || "main-5h";
+    },
+
+    _panelResetValue: function(window, label, account, part) {
+        let reset = this._windowResetParts(window, account, "panel", true, part);
+        let text = label + (reset.plain ? " " + reset.plain : " –");
+        let markup = this._escapeMarkup(label) + (reset.markup ? " " + reset.markup : " –");
+        return {plain: text, markup: markup};
+    },
+
+    _panelDeltaPart: function(usage, source, surface) {
+        let key = {13: undefined, 32: 18000, 33: 604800, 34: 2592000, 35: 18000, 36: null}[source];
+        let pool = source === 35 ? "gpt-5.3-codex-spark" : "main";
+        if (source === 13) {
+            let row = this._consumptionSettings && this._consumptionSettings[usage.account] || {};
+            let configured = row["limit-window"] || "short";
+            key = {short: 18000, weekly: 604800, monthly: 2592000}[configured] || 18000;
+            pool = configured === "spark" ? "gpt-5.3-codex-spark" : "main";
+        }
+        let windows = Array.isArray(usage.cost_windows) ? usage.cost_windows : [];
+        let candidate = null;
+        for (let i = 0; i < windows.length; i++) {
+            let seconds = windows[i] && Number(windows[i].limit_window_seconds);
+            let matchesOther = key === null && [18000, 604800, 2592000].indexOf(seconds) === -1;
+            if (windows[i] && windows[i].pool === pool &&
+                (key === null ? matchesOther : seconds === key)) {
+                candidate = windows[i];
+                break;
+            }
+        }
+        if (!candidate && source === 13) {
+            for (let i = 0; i < windows.length; i++) {
+                if (windows[i] && windows[i].pool === pool) {
+                    candidate = windows[i];
+                    break;
+                }
+            }
+        }
+        let value = candidate && Number(candidate.consumed_percentage_points);
+        let valueText = Number.isFinite(value) && value >= 0
+            ? this._formatConsumptionValue(value) + "%" : "–";
+        let label = this._panelSourceLabel(source);
+        let text = label + " " + valueText;
+        let style = this._deltaStyles && this._deltaStyles[usage.account];
+        let dynamic = candidate ? this._panelDeltaIsDynamic(usage, candidate) : false;
+        let markup = style && Number.isFinite(value)
+            ? this._styleSpan(text, style, value, surface, dynamic)
+            : this._escapeMarkup(text);
+        return {plain: text, markup: markup};
+    },
+
+    _panelDeltaIsDynamic: function(usage, candidate) {
+        if (!usage || typeof usage !== "object" || !candidate || typeof candidate !== "object") {
+            return false;
+        }
+        let lookback = Number(candidate.lookback_seconds);
+        let delta = Number(candidate.consumed_percentage_points);
+        if (!Number.isFinite(lookback) || lookback <= 0 || !Number.isFinite(delta) || delta < 0) {
+            return false;
+        }
+        let seconds = Number(candidate.limit_window_seconds);
+        let pool = candidate.pool === "gpt-5.3-codex-spark" ? "spark" : "main";
+        let key = pool === "spark"
+            ? ({18000: "spark-5h", 604800: "spark-weekly"}[seconds] || "spark-other")
+            : ({18000: "main-5h", 604800: "main-weekly", 2592000: "main-monthly"}[seconds] || "main-other");
+        let window = this._panelWindowForKey(usage, key);
+        if (!window) {
+            return false;
+        }
+        let now = Date.now();
+        let reset = window && this._dateMillis(window.reset_at);
+        let horizon = reset !== null && reset > now
+            ? (reset - now) / 1000
+            : Number(window && (window.duration_seconds || window.duration) || seconds);
+        if (!Number.isFinite(horizon) || horizon <= 0) {
+            return false;
+        }
+        let projected = delta * horizon / lookback;
+        if (!Number.isFinite(projected)) {
+            return false;
+        }
+        let remaining = this._remainingPercent(window);
+        return remaining === null ? projected >= 100 : projected >= remaining;
+    },
+
+    _panelForecastPart: function(usage, surface) {
+        let row = this._consumptionSettings && this._consumptionSettings[usage.account] || {
+            account: usage.account, "forecast-limit-window": "short", format: "compact",
+            "forecast-format": "compact", "show-coverage-marker": true,
+            "forecast-show-panel": true, "forecast-show-tooltip": true,
+            "forecast-hide-when-zero": false, "forecast-baseline-enabled": false
+        };
+        let key = row["forecast-limit-window"] || row["limit-window"] || "short";
+        let pool = key === "spark" ? "gpt-5.3-codex-spark" : "main";
+        let seconds = {short: 18000, weekly: 604800, monthly: 2592000}[key] || 18000;
+        let query = this._consumptionQueryKey(
+            pool, row.amount || 1, row.unit || "hours",
+            row["forecast-smoothing"] || row.smoothing || "none",
+            row["forecast-baseline-enabled"] === true ? row["forecast-baseline-minutes"] : null
+        );
+        let windows = this._selectConsumptionWindows(usage.cost_windows, key, pool, query);
+        let window = windows[0] || null;
+        let forecastRow = Object.assign({}, row, {
+            account: usage.account, "forecast-show-panel": true,
+            "forecast-show-tooltip": true, "show-panel": true,
+            "show-tooltip": true, "forecast-limit-window": key,
+            "forecast-format": row["forecast-format"] || row.format || "compact",
+            "forecast-show-coverage-marker": row["forecast-show-coverage-marker"] !== false
+        });
+        return this._forecastWindowPart(window, forecastRow, surface, 100, true);
+    },
+
+    _panelCreditLimitPart: function(source, label) {
+        let key = {45: "hourly", 46: "weekly", 47: "monthly"}[source];
+        let policy = this._routingPolicy && this._routingPolicy.credit_limits;
+        let configured = policy && policy[key] !== undefined
+            ? policy[key]
+            : ({hourly: this.routingCreditHourlyLimit, weekly: this.routingCreditWeeklyLimit,
+                monthly: this.routingCreditMonthlyLimit}[key]);
+        let text = label + " " + (Number(configured) > 0 ? String(configured) : "aus");
+        return {plain: text, markup: this._escapeMarkup(text)};
     },
 
     _consumptionParts: function(usage, surface) {
@@ -8312,7 +8660,7 @@ CodexUsageApplet.prototype = {
         });
     },
 
-    _usageResetParts: function(usage, surface) {
+    _usageResetParts: function(usage, surface, forceVisible) {
         let row = this._resetSettings && this._resetSettings[usage.account];
         if (!row) {
             row = this._defaultResetRow(usage.account);
@@ -8320,7 +8668,7 @@ CodexUsageApplet.prototype = {
         let legacyVisible = surface === "panel"
             ? row["show-panel"]
             : (surface === "hover" ? row["show-tooltip"] : true);
-        if (!this._elementTargetEnabled(usage.account, "usage-resets", surface, legacyVisible)) {
+        if (!forceVisible && !this._elementTargetEnabled(usage.account, "usage-resets", surface, legacyVisible)) {
             return null;
         }
         let state = this._safeUsageResets(usage.usage_resets);
@@ -8605,7 +8953,7 @@ CodexUsageApplet.prototype = {
         });
     },
 
-    _forecastWindowPart: function(window, row, surface, remaining) {
+    _forecastWindowPart: function(window, row, surface, remaining, forceVisible) {
         if (!window || typeof window !== "object") {
             return null;
         }
@@ -8620,12 +8968,12 @@ CodexUsageApplet.prototype = {
             : (surface === "hover"
                 ? (row["forecast-show-tooltip"] === undefined ? row["show-tooltip"] : row["forecast-show-tooltip"])
                 : true);
-        let visible = forecastVisible && this._elementTargetEnabled(
+        let visible = forceVisible === true || (forecastVisible && this._elementTargetEnabled(
             row.account,
             "forecast",
             surface,
             true
-        );
+        ));
         if (!visible) {
             return null;
         }
@@ -8744,18 +9092,7 @@ CodexUsageApplet.prototype = {
     },
 
     _panelSourceLabel: function(source) {
-        return {
-            1: "5h",
-            2: "W",
-            3: "Ø",
-            4: "S5h",
-            5: "SW",
-            6: "SØ",
-            7: "S+",
-            8: "30d",
-            9: "CR",
-            10: "CV"
-        }[source] || "?";
+        return PANEL_SOURCE_LABELS[source] || "?";
     },
 
     _fiveHourDisplayWindow: function(usage) {
@@ -9342,8 +9679,8 @@ CodexUsageApplet.prototype = {
         return this._percentPartsFromValue(this._remainingPercent(window), account, surface);
     },
 
-    _percentPartsFromValue: function(value, account, surface) {
-        if (!this._elementTargetEnabled(account, "percent", surface)) {
+    _percentPartsFromValue: function(value, account, surface, forceVisible) {
+        if (!forceVisible && !this._elementTargetEnabled(account, "percent", surface)) {
             return { plain: "", markup: "" };
         }
         let plain = value === null || !Number.isFinite(value)
@@ -9638,14 +9975,14 @@ CodexUsageApplet.prototype = {
         return rest + "m";
     },
 
-    _styleSpan: function(text, style, remaining, surface) {
+    _styleSpan: function(text, style, remaining, surface, dynamic) {
         let escaped = this._escapeMarkup(text);
-        if (!this._styleIsActive(style, remaining)) {
+        if (!this._styleIsActive(style, remaining, dynamic)) {
             return escaped;
         }
         let mode = this._styleMode(style);
-        let below = remaining !== null && Number.isFinite(remaining) &&
-            remaining < Number(style.threshold);
+        let below = dynamic === true || (remaining !== null && Number.isFinite(remaining) &&
+            remaining < Number(style.threshold));
         let useBelow = mode === 2 && below;
         let fontValue = useBelow ? style["below-font"] : style.font;
         let sizeValue = useBelow ? style["below-size"] : style.size;
@@ -9741,7 +10078,7 @@ CodexUsageApplet.prototype = {
         return style.conditional === true ? 1 : 0;
     },
 
-    _styleIsActive: function(style, remaining) {
+    _styleIsActive: function(style, remaining, dynamic) {
         let mode = this._styleMode(style);
         if (mode === 3) {
             return false;
@@ -9749,8 +10086,9 @@ CodexUsageApplet.prototype = {
         if (mode !== 1) {
             return true;
         }
-        return remaining !== null && Number.isFinite(remaining) &&
-            remaining < Number(style.threshold);
+        return (style.dynamic === true && dynamic === true) ||
+            (remaining !== null && Number.isFinite(remaining) &&
+                remaining < Number(style.threshold));
     },
 
     _escapeMarkup: function(value) {

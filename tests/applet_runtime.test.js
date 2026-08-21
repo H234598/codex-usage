@@ -2688,6 +2688,82 @@ test("panel slots honor ordering, mute and duplicate-source normalization", () =
   );
 });
 
+test("panel value count accepts free text and defaults to twenty", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._panelValueCount(), 20);
+  applet.panelValueCount = "37";
+  assert.equal(applet._panelValueCount(), 37);
+  applet.panelValueCount = "0";
+  assert.equal(applet._panelValueCount(), 20);
+  applet.panelValueCount = "not-a-number";
+  assert.equal(applet._panelValueCount(), 20);
+});
+
+test("panel rows normalize dynamic slots beyond legacy four", () => {
+  const applet = makeApplet();
+  const row = applet._normalizePanelRow({
+    order: 1,
+    muted: false,
+    slot1: 1,
+    slot2: 0,
+    slot20: 17,
+  }, "alpha");
+
+  assert.equal(row.slot20, 17);
+  assert.equal(applet._panelSourceLabel(17), "Abrufweg");
+});
+
+test("extended panel sources render resets, identity, routing and account state", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.main = {
+    available: true,
+    windows: [
+      {name: "30d", duration_seconds: 2592000, remaining: 70, reset_at: "2026-07-12T15:00:00Z"},
+      {name: "other", duration_seconds: 86400, remaining: 55, reset_at: "2026-07-11T15:00:00Z"},
+    ],
+  };
+  usage.models = {
+    "gpt-5.3-codex-spark": {
+      available: true,
+      windows: [
+        {name: "short", duration_seconds: 18000, remaining: 65, reset_at: "2026-07-10T15:00:00Z"},
+        {name: "weekly", duration_seconds: 604800, remaining: 45, reset_at: "2026-07-11T15:00:00Z"},
+        {name: "other", duration_seconds: 86400, remaining: 35, reset_at: "2026-07-11T15:00:00Z"},
+      ],
+    },
+  };
+  usage.cost_windows = [{
+    pool: "main", limit_window_seconds: 18000, consumed_percentage_points: 12.5,
+    coverage: "complete", estimated_seconds_to_exhaustion: 600,
+  }];
+  applet._routingDecisions = {alpha: {decision: "credits", paid_overage_allowed: true}};
+  applet._routingPolicy = {credit_limits: {hourly: 10, weekly: 20, monthly: 30}};
+  applet._alertSettings = {alpha: {warnings: true, errors: false}};
+
+  const item = {usage, settings: {account: "alpha"}};
+  const values = [11, 12, 13, 15, 16, 17, 20, 26, 32, 43, 44, 45, 48, 49, 50, 51]
+    .map((source) => applet._panelSlotContent(item, {source, value: null, window: null}).plain);
+
+  assert.match(values[0], /Resets/);
+  assert.match(values[1], /TE/);
+  assert.match(values[2], /Δ/);
+  assert.match(values[3], /Label Alpha/);
+  assert.match(values[4], /Acc ID alpha/);
+  assert.match(values[5], /Abrufweg Direkt/);
+  assert.match(values[6], /Rest 5h/);
+  assert.match(values[7], /Reset 5h/);
+  assert.match(values[8], /Δ5h 12,5%/);
+  assert.match(values[9], /Routing/);
+  assert.match(values[10], /CV aktiv an/);
+  assert.match(values[11], /Credit h 10/);
+  assert.match(values[12], /Warnung an/);
+  assert.match(values[13], /Fehler aus/);
+  assert.match(values[14], /Login ja/);
+  assert.match(values[15], /Status ok/);
+});
+
 test("long-limit exhaustion masks 5h on panel, click and hover only when enabled", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];
@@ -6956,6 +7032,46 @@ test("style modes control normal, threshold and disabled formatting", () => {
 
   style.mode = 3;
   assert.equal(applet._styleSpan("<80%>", style, 10, "panel"), "&lt;80%&gt;");
+});
+
+test("Tokendelta supports dynamic threshold against the next reset", () => {
+  const applet = makeApplet();
+  const row = Object.assign({}, applet._defaultStyleRow("alpha", "delta"), {
+    dynamic: true,
+  });
+  assert.equal(applet._normalizeStyleRow(row, "alpha", "delta").dynamic, true);
+  row.dynamic = "true";
+  assert.equal(applet._normalizeStyleRow(row, "alpha", "delta"), null);
+
+  const usage = applet._usages[0];
+  usage.five_hour = {
+    remaining: 40,
+    duration_seconds: 18000,
+    reset_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+  };
+  const candidate = {
+    pool: "main",
+    limit_window_seconds: 18000,
+    lookback_seconds: 1800,
+    consumed_percentage_points: 21,
+  };
+  assert.equal(applet._panelDeltaIsDynamic(usage, candidate), true);
+  candidate.consumed_percentage_points = 10;
+  assert.equal(applet._panelDeltaIsDynamic(usage, candidate), false);
+
+  applet._deltaStyles = {};
+  applet._deltaStyles.alpha = Object.assign({}, row, {
+    dynamic: true,
+    mode: 1,
+    threshold: 5,
+    color: 3,
+  });
+  assert.equal(applet._styleIsActive(applet._deltaStyles.alpha, 21, true), true);
+  usage.cost_windows = [Object.assign({}, candidate, {
+    consumed_percentage_points: 21,
+  })];
+  assert.equal(applet._panelDeltaIsDynamic(usage, usage.cost_windows[0]), true);
+  assert.match(applet._panelDeltaPart(usage, 32, "panel").markup, /<span /);
 });
 
 test("date, time and restlaufzeit styles honor all modes and font colors", () => {

@@ -22,6 +22,7 @@ REQUIRED_FILES = (
     "dynamic_series_list.py",
     "fast_mode_icon_selector.py",
     "format_table_selector.py",
+    "panel_settings_list.py",
 )
 VERSION_CHECK_ATTEMPTS = 10
 VERSION_CHECK_DELAY_SECONDS = 0.2

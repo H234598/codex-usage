@@ -74,7 +74,7 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     ]
     assert panel_table["columns"][1]["min"] == 1
     assert panel_table["columns"][1]["max"] == 100
-    assert set(panel_table["columns"][3]["options"].values()) == set(range(11))
+    assert set(panel_table["columns"][3]["options"].values()) == set(range(52))
     assert panel_table["columns"][2]["default"] is False
     assert settings["panel-account-separator"]["default"] == "bar"
     assert set(settings["panel-account-separator"]["options"].values()) == {
@@ -181,14 +181,12 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     assert settings["layout"]["consumption-periods-section"]["title"] == "Verbrauchszeiträume"
     assert settings["layout"]["credit-periods-section"]["title"] == "Credits und Creditverbrauch"
     assert [column["id"] for column in table["columns"]] == [
-        "account", "show-panel", "show-tooltip", "amount", "unit", "limit-window",
+        "account", "show-tooltip", "amount", "unit", "limit-window",
         "format", "custom-format", "smoothing", "hide-when-zero",
         "show-coverage-marker", "baseline-enabled", "baseline-minutes",
     ]
     columns = {column["id"]: column for column in table["columns"]}
-    assert columns["show-panel"]["default"] is False
     assert columns["show-tooltip"]["default"] is True
-    assert columns["show-panel"]["title"] == "Δ Tokenverbrauch Leiste"
     assert columns["show-tooltip"]["title"] == "Δ Tokenverbrauch Hover"
     assert "{value}" in table["description"] or "{value}" in table["tooltip"]
     assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days", "weeks"}
@@ -223,7 +221,7 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     assert columns["custom-format"]["title"] == "Δ Eigenes Format"
     forecast = settings["account-forecast-settings"]
     forecast_columns = {column["id"]: column for column in forecast["columns"]}
-    assert forecast_columns["show-panel"]["title"] == "Tokenende Leiste"
+    assert "show-panel" not in forecast_columns
     assert forecast_columns["show-tooltip"]["title"] == "Tokenende Hover"
     assert set(forecast_columns["limit-window"]["options"].values()) == {
         "short", "weekly", "monthly", "spark"
@@ -232,6 +230,9 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     assert forecast_columns["custom-format"]["title"] == "Tokenende Eigenes Format"
     assert "coverage" in settings["account-consumption-settings-heading"]["description"]
     assert set(table["hidden-buttons"]) == {"+", "-", "up", "down"}
+    delta_columns = {column["id"]: column for column in settings["account-delta-styles"]["columns"]}
+    assert delta_columns["dynamic"]["title"] == "Dynamisch"
+    assert delta_columns["dynamic"]["default"] is False
 
 
 def test_style_tables_group_threshold_fields() -> None:
@@ -287,6 +288,19 @@ def test_format_and_display_sections_use_new_labels() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     layout = settings["layout"]
 
+    assert layout["general-page"]["title"] == "Einstellungen"
+    assert layout["forecast-page"]["title"] == "Prognosen"
+    assert layout["forecast-page"]["sections"] == [
+        "consumption-periods-section", "credit-consumption-section"
+    ]
+    assert layout["status-page"]["title"] == "Status"
+    assert layout["status-page"]["sections"] == [
+        "credit-status-section", "reset-display-section"
+    ]
+    assert layout["accounts-page"]["title"] == "Accounts"
+    assert layout["accounts-page"]["sections"] == [
+        "backend-section", "reactivation-options-section"
+    ]
     assert layout["pages"][1] == "format-page"
     assert layout["format-page"]["title"] == "Formatierungen"
     assert layout["format-page"]["sections"] == ["formatting-section"]
@@ -300,6 +314,7 @@ def test_format_and_display_sections_use_new_labels() -> None:
         "account-date-styles",
         "account-time-styles",
         "account-duration-styles",
+        "account-delta-styles",
         "account-display-settings",
         "account-style-targets",
     ]
@@ -679,6 +694,7 @@ def test_installer_and_uninstaller_round_trip(tmp_path: Path) -> None:
         "dynamic_series_list.py",
         "fast_mode_icon_selector.py",
         "format_table_selector.py",
+        "panel_settings_list.py",
     ):
         assert (installed / name).is_file()
 

@@ -4,21 +4,19 @@
     "pages": [
       "general-page",
       "format-page",
+      "forecast-page",
+      "status-page",
+      "accounts-page",
       "routing-page",
       "alerts-page"
     ],
     "general-page": {
       "type": "page",
-      "title": "Codex Usage",
+      "title": "Einstellungen",
       "sections": [
         "command-section",
-        "backend-section",
         "refresh-section",
-        "display-section",
-        "consumption-periods-section",
-        "credit-periods-section",
-        "reset-display-section",
-        "reactivation-options-section"
+        "display-section"
       ]
     },
     "format-page": {
@@ -26,6 +24,30 @@
       "title": "Formatierungen",
       "sections": [
         "formatting-section"
+      ]
+    },
+    "forecast-page": {
+      "type": "page",
+      "title": "Prognosen",
+      "sections": [
+        "consumption-periods-section",
+        "credit-consumption-section"
+      ]
+    },
+    "status-page": {
+      "type": "page",
+      "title": "Status",
+      "sections": [
+        "credit-status-section",
+        "reset-display-section"
+      ]
+    },
+    "accounts-page": {
+      "type": "page",
+      "title": "Accounts",
+      "sections": [
+        "backend-section",
+        "reactivation-options-section"
       ]
     },
     "alerts-page": {
@@ -79,6 +101,7 @@
       "title": "Leiste",
       "keys": [
         "account-panel-settings",
+        "panel-value-count",
         "panel-account-separator",
         "panel-percent-source",
         "hide-5h-when-long-limit-exhausted",
@@ -105,6 +128,22 @@
         "account-credit-settings",
         "account-credit-consumption-settings-heading",
         "account-credit-consumption-settings"
+      ]
+    },
+    "credit-consumption-section": {
+      "type": "section",
+      "title": "Creditverbrauch",
+      "keys": [
+        "account-credit-consumption-settings-heading",
+        "account-credit-consumption-settings"
+      ]
+    },
+    "credit-status-section": {
+      "type": "section",
+      "title": "Credits",
+      "keys": [
+        "account-credit-settings-heading",
+        "account-credit-settings"
       ]
     },
     "reset-display-section": {
@@ -218,6 +257,11 @@
         "heading": "account-duration-styles-heading"
       },
       {
+        "key": "account-delta-styles",
+        "label": "Tokendelta",
+        "heading": "account-delta-styles-heading"
+      },
+      {
         "key": "account-display-settings",
         "label": "Account-Anzeige",
         "heading": "account-display-settings-heading"
@@ -229,6 +273,12 @@
       }
     ],
     "default": "account-percent-styles"
+  },
+  "panel-value-count": {
+    "type": "entry",
+    "description": "Anzahl der Wertfelder in der Leiste",
+    "tooltip": "Freitextzahl von 1 bis 64. Standard: 20. Jede Wertspalte kann pro Account einzeln angeordnet werden.",
+    "default": "20"
   },
   "account-consumption-settings-heading": {
     "type": "label",
@@ -261,6 +311,10 @@
   "account-duration-styles-heading": {
     "type": "label",
     "description": "OpenAI — Reset: Restlaufzeit in Tagen bis Limitreset"
+  },
+  "account-delta-styles-heading": {
+    "type": "label",
+    "description": "Tokendelta. Dynamisch markiert hochgerechneten Verbrauch, der bis zum nächsten Reset das verbleibende Limit erreicht."
   },
   "account-display-settings-heading": {
     "type": "label",
@@ -301,7 +355,7 @@
     "type": "custom",
     "file": "dynamic_series_list.py",
     "widget": "DynamicSeriesList",
-    "description": "Abrufwege und Accounts · Profilordner wird automatisch angelegt, wenn er noch nicht vorhanden ist.",
+    "description": "Accounts und Abrufwege · Profilordner wird automatisch angelegt, wenn er noch nicht vorhanden ist.",
     "tooltip": "Plus legt einen Account an und legt den Profilordner an. Minus löscht ihn aus der Konfiguration; vorhandene Homes, Auth-Dateien und Nutzdaten bleiben erhalten. Doppelklick oder Bearbeiten ändert die Account-Optionen. Serie ist die Masterjet-Flottenserie, zum Beispiel A, B oder C. Serie aktiv schaltet genau diese Zuordnung für Masterjet frei. Eine aktive Serie darf nur einem Account gehören; ein Konflikt wird beim Speichern abgewiesen. Wird die Serie geändert, kann der nächste Provisionierungs-/Startlauf die Authentifizierung aus diesem Account-Profil in die Homes der Serie ausrollen. Wird Serie aktiv deaktiviert, bleibt die Zuordnung gespeichert, aber Masterjet darf die Serie nicht verwenden. Eine bloß eingetragene, inaktive Serie startet daher keine Biene und verändert keine laufende Instanz. Änderungen werden in der Codex-Usage-Konfiguration gespeichert und vom Masterjet beim nächsten Einlesen/Reload berücksichtigt.",
     "columns": [
       {
@@ -572,6 +626,29 @@
           "Gelb": 6
         },
         "default": 0
+      }
+    ],
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-delta-styles": {
+    "type": "list",
+    "description": "Tokendelta",
+    "tooltip": "Wie Verbleibendes Tokenlimit in %, zusätzlich Schwelle Dynamisch.",
+    "columns": [
+      {
+        "id": "account",
+        "title": "Account-ID",
+        "type": "string"
+      },
+      {
+        "id": "dynamic",
+        "title": "Dynamisch",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Aktiviert, wenn das aktuelle Delta bis zum nächsten Reset statistisch das verbleibende Limit aufbraucht."
       }
     ],
     "height": 300,
@@ -1356,9 +1433,11 @@
     "default": true
   },
   "account-panel-settings": {
-    "type": "list",
+    "type": "custom",
+    "file": "panel_settings_list.py",
+    "widget": "PanelSettingsList",
     "description": "Panelwerte pro Account",
-    "tooltip": "Jeder Account kann bis zu drei Quellen anzeigen. Die vier Limittypen sind 5h, Woche, 30-Tage-Limit und Spark. Stumm betrifft nur die Statusleiste.",
+    "tooltip": "Jeder Account kann so viele geordnete Wertfelder wie oben konfiguriert anzeigen. Alte slot1–slot4-Werte bleiben kompatibel.",
     "columns": [
       {
         "id": "account",
@@ -1394,7 +1473,48 @@
           "Spark weiteres Limit": 7,
           "30-Tage-Limit": 8,
           "Credits": 9,
-          "Creditverbrauch": 10
+          "Creditverbrauch": 10,
+          "Resets": 11,
+          "Tokenende": 12,
+          "Tokendelta": 13,
+          "Kürzel": 14,
+          "Label": 15,
+          "Account-ID": 16,
+          "Abrufweg": 17,
+          "sonstiges": 18,
+          "Spark sonstiges": 19,
+          "Rest 5h": 20,
+          "Rest Woche": 21,
+          "Rest 30 Tage": 22,
+          "Rest Spark 5h": 23,
+          "Rest Spark Woche": 24,
+          "Rest Spark sonstiges": 25,
+          "Reset 5h": 26,
+          "Reset Woche": 27,
+          "Reset 30 Tage": 28,
+          "Reset Spark 5h": 29,
+          "Reset Spark Woche": 30,
+          "Reset Spark sonstiges": 31,
+          "Delta 5h": 32,
+          "Delta Woche": 33,
+          "Delta 30 Tage": 34,
+          "Delta Spark": 35,
+          "Delta sonstiges": 36,
+          "Limit 5h %": 37,
+          "Limit Woche %": 38,
+          "Limit 30 Tage %": 39,
+          "Limit Spark 5h %": 40,
+          "Limit Spark Woche %": 41,
+          "Limit Spark sonstiges %": 42,
+          "Routing": 43,
+          "Creditverbrauch aktiv": 44,
+          "Credit Stundenlimit": 45,
+          "Credit Wochenlimit": 46,
+          "Credit Monatslimit": 47,
+          "Warnungen": 48,
+          "Fehler": 49,
+          "Login erfolgreich": 50,
+          "Status": 51
         }
       },
       {
@@ -1462,7 +1582,6 @@
     "tooltip": "Credits werden nur angezeigt, wenn der Provider einen expliziten Creditstand liefert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}. Der Creditverbrauch wird separat in der Creditverbrauch-Tabelle konfiguriert.",
     "columns": [
       {"id": "account", "title": "Account-ID", "type": "string"},
-      {"id": "show-panel", "title": "Credit-Leiste", "type": "boolean", "default": false},
       {"id": "show-tooltip", "title": "Credits-Hover", "type": "boolean", "default": true},
       {"id": "format", "title": "Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
       {"id": "custom-format", "title": "Eigenes Format", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}.", "default": ""},
@@ -1486,12 +1605,6 @@
         "id": "account",
         "title": "Account-ID",
         "type": "string"
-      },
-      {
-        "id": "show-panel",
-        "title": "Δ Tokenverbrauch Leiste",
-        "type": "boolean",
-        "default": false
       },
       {
         "id": "show-tooltip",
@@ -1615,7 +1728,6 @@
     "tooltip": "Tokenende ist die prognostizierte Restzeit bis zum Erreichen des Limitendes. Limit, Anzeige, Format und Warnung sind unabhängig vom Tokenverbrauch konfigurierbar.",
     "columns": [
       {"id": "account", "title": "Account-ID", "type": "string"},
-      {"id": "show-panel", "title": "Tokenende Leiste", "type": "boolean", "default": false},
       {"id": "show-tooltip", "title": "Tokenende Hover", "type": "boolean", "default": true},
       {"id": "limit-window", "title": "Tokenende Limit", "type": "string", "options": {"5h": "short", "Woche": "weekly", "30 Tage": "monthly", "Spark": "spark"}, "default": "short"},
       {"id": "format", "title": "Tokenende Format", "type": "string", "options": {"Kompakt (Dezimalstunden)": "compact", "Kompakt (Stunden/Minuten)": "compact-minutes", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "tooltip": "Kompakt (Dezimalstunden) zeigt die Restzeit mit einer Nachkommastelle in Stunden, z. B. 5,9h. Kompakt (Stunden/Minuten) zeigt die bisherige Stunden-/Minutendarstellung.", "default": "compact"},
@@ -1640,7 +1752,6 @@
     "tooltip": "Creditverbrauch wird separat vom Creditstand konfiguriert. coverage beschreibt die Datenqualität: vollständig, mindestens, veraltet oder nicht genügend Messdaten.",
     "columns": [
       {"id": "account", "title": "Account-ID", "type": "string"},
-      {"id": "show-panel", "title": "Creditverbrauch Leiste", "type": "boolean", "default": false},
       {"id": "show-tooltip", "title": "Creditverbrauch Hover", "type": "boolean", "default": true},
       {"id": "amount", "title": "Creditverbrauch Menge", "type": "integer", "min": 1, "max": 365, "default": 1},
       {"id": "unit", "title": "Creditverbrauch Einheit", "type": "string", "options": {"Minuten": "minutes", "Stunden": "hours", "Tage": "days", "Wochen": "weeks"}, "default": "hours"},
@@ -1666,12 +1777,6 @@
         "id": "account",
         "title": "Account-ID",
         "type": "string"
-      },
-      {
-        "id": "show-panel",
-        "title": "Leiste anzeigen",
-        "type": "boolean",
-        "default": false
       },
       {
         "id": "show-tooltip",

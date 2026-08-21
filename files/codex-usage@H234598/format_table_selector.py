@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import gi
 
 gi.require_version("Gtk", "3.0")
@@ -18,6 +20,20 @@ class _BoundFormatList(List, JSONSettingsBackend):
         self.backend = "json"
         self.key = key
         self.settings = settings
+        if key == "account-delta-styles":
+            base = settings.settings.get("account-percent-styles", {})
+            definition = copy.deepcopy(base)
+            definition["description"] = "Tokendelta"
+            definition["columns"].append({
+                "id": "dynamic",
+                "title": "Dynamisch",
+                "type": "boolean",
+                "default": False,
+                "tooltip": (
+                    "Markiert, wenn hochgerechneter Verbrauch bis zum Reset "
+                    "das verbleibende Limit erreicht."
+                ),
+            })
         super().__init__(
             label=definition.get("description"),
             columns=definition.get("columns", []),
