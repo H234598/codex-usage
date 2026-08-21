@@ -180,7 +180,11 @@ def _service_install_unlocked(
 def _select_service_config_path(path: object | None) -> Path:
     if path is not None and not isinstance(path, Path):
         raise ValueError("config path must be a Path")
-    return default_config_path() if path is None else path
+    selected = default_config_path() if path is None else path
+    try:
+        return selected.expanduser()
+    except RuntimeError as exc:
+        raise ValueError("config path cannot be resolved") from exc
 
 
 def service_disable() -> dict[str, Any]:

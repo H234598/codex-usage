@@ -2719,3 +2719,13 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2652 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
 `git diff --check` sind sauber.
+
+## Runde 277: Service-Config-Pfade vor Seiteneffekten expandieren
+
+`service_install()` und `service_enable()` akzeptierten einen unbekannten
+`~user`-Config-Pfad zunächst, legten danach bereits das systemd-Unit-Verzeichnis
+an und ließen `Path.expanduser()` als rohes `RuntimeError` entkommen. Die
+gemeinsame Pfadauswahl expandiert jetzt vor Lock und Seiteneffekten und liefert
+kontrolliert `ValueError("config path cannot be resolved")`. `tests/test_service.py`:
+65/65 fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
+sauber.

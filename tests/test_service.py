@@ -58,6 +58,22 @@ def test_service_rejects_invalid_config_path_before_side_effects(
 
 
 @pytest.mark.parametrize("operation", (service_install, service_enable))
+def test_service_rejects_unknown_config_home_before_side_effects(
+    tmp_path, monkeypatch, operation
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    with pytest.raises(ValueError, match="config path cannot be resolved"):
+        operation(
+            AppConfig(accounts=()),
+            Path("~definitely-no-such-user-zzzz/config.toml"),
+        )
+
+    assert not (tmp_path / "config").exists()
+
+
+@pytest.mark.parametrize("operation", (service_install, service_enable))
 @pytest.mark.parametrize("interval", ("60\nExecStart=bad", True, 59, 300.5, None, []))
 def test_service_rejects_invalid_config_before_side_effects(
     tmp_path, monkeypatch, operation, interval
