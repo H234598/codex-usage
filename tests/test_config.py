@@ -492,19 +492,63 @@ def test_config_directory_rejects_existing_shared_directory_without_chmod(tmp_pa
     assert oct(config_dir.stat().st_mode & 0o777) == "0o755"
 
 
+def test_prepare_profile_dir_rejects_replacement_before_directory_open(
+    tmp_path, monkeypatch
+):
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir(mode=0o755)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    original_chmod = config_module.Path.chmod
+    original_open = os.open
+    replaced = False
+
+    def replace_target():
+        nonlocal replaced
+        if replaced:
+            return
+        profile_dir.rmdir()
+        profile_dir.symlink_to(outside, target_is_directory=True)
+        replaced = True
+
+    def replace_target_before_path_chmod(path, mode):
+        if path == profile_dir:
+            replace_target()
+        return original_chmod(path, mode)
+
+    def replace_target_before_open(path, flags, mode=0o777, *, dir_fd=None):
+        if Path(path) == profile_dir:
+            replace_target()
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(config_module.Path, "chmod", replace_target_before_path_chmod)
+    monkeypatch.setattr("codex_usage.private_io.os.open", replace_target_before_open)
+
+    with pytest.raises(ValueError):
+        config_module._prepare_profile_dir(str(profile_dir))
+
+    assert replaced
+    assert profile_dir.is_symlink()
+    assert outside.stat().st_mode & 0o777 == 0o755
+    assert not (outside / ".codex-usage-profile").exists()
+
+
 def test_add_account_fails_closed_when_config_directory_cannot_be_secured(
     tmp_path, monkeypatch
 ):
     config_dir = tmp_path / "config-dir"
     config_path = config_dir / "config.toml"
-    original_chmod = config_module.Path.chmod
+    original_fchmod = os.fchmod
 
-    def fail_config_chmod(path, mode):
+    def fail_config_fchmod(fd, mode):
+        path = Path(os.readlink(f"/proc/self/fd/{fd}"))
         if path == config_dir:
             raise OSError("simulated config chmod failure")
-        return original_chmod(path, mode)
+        return original_fchmod(fd, mode)
 
-    monkeypatch.setattr(config_module.Path, "chmod", fail_config_chmod)
+    monkeypatch.setattr("codex_usage.private_io.os.fchmod", fail_config_fchmod)
 
     with pytest.raises(ValueError, match="secure config directory"):
         add_or_update_account("work", path=config_path)
@@ -518,14 +562,15 @@ def test_add_account_fails_closed_when_profile_directory_cannot_be_secured(
     profile_dir = tmp_path / "profile"
     profile_dir.mkdir()
     config_path = tmp_path / "config" / "config.toml"
-    original_chmod = config_module.Path.chmod
+    original_fchmod = os.fchmod
 
-    def fail_profile_chmod(path, mode):
+    def fail_profile_fchmod(fd, mode):
+        path = Path(os.readlink(f"/proc/self/fd/{fd}"))
         if path == profile_dir:
             raise OSError("simulated profile chmod failure")
-        return original_chmod(path, mode)
+        return original_fchmod(fd, mode)
 
-    monkeypatch.setattr(config_module.Path, "chmod", fail_profile_chmod)
+    monkeypatch.setattr("codex_usage.private_io.os.fchmod", fail_profile_fchmod)
 
     with pytest.raises(ValueError, match="secure profile directory"):
         add_or_update_account(

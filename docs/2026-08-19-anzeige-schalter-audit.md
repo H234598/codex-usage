@@ -4171,6 +4171,18 @@ tests/test_profile_login.py tests/test_profile_layout.py
 tests/test_profile_jobs.py`: 147/147 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 467: Config-Profilverzeichnis per Directory-FD
+
+`config._prepare_profile_dir()` setzte ein bestehendes Profilverzeichnis nach
+der Prüfung per `Path.chmod()`. Ein Symlink-Race konnte danach Marker-Schreiben
+und weitere Profil-I/O in ein externes Verzeichnis umleiten. Die Sicherung
+verwendet jetzt erneut `ensure_private_directory()` mit Directory-FD und
+`O_NOFOLLOW`; der bestehende Config-Directory-Fehlerpfad wurde auf
+FD-Fehlerinjektion aktualisiert.
+
+Profil-Race und Fehlerregressionen ergänzt. `pytest -q tests/test_config.py`:
+118/118 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

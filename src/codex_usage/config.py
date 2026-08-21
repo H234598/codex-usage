@@ -875,7 +875,7 @@ def _prepare_profile_dir(
         if not path.is_dir():
             raise ValueError(f"profile path is not a directory: {path}")
         try:
-            path.chmod(0o700)
+            ensure_private_directory(path, label="profile dir")
         except OSError as exc:
             raise ValueError("could not secure profile directory") from exc
         marker = path / ".codex-usage-profile"
