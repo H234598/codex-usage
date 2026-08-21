@@ -1318,6 +1318,29 @@ def test_profile_job_create_rejects_invalid_profile_dir_type(profile_dir):
         )
 
 
+@pytest.mark.parametrize("config_path", ["", [], {}, {"path": "x"}, 0, False])
+def test_profile_job_create_rejects_invalid_config_path_type(
+    config_path, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        profile_jobs,
+        "_write_new_job",
+        lambda manifest: pytest.fail("invalid config path reached job creation"),
+    )
+
+    with pytest.raises(ValueError, match="config path is invalid"):
+        profile_jobs.create_profile_job(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir=str(tmp_path / "profile"),
+            expected_backend_account_id=None,
+            config_path=config_path,
+            json_events=False,
+        )
+
+
 @pytest.mark.parametrize("kind", [None, [], {}])
 def test_profile_job_event_rejects_non_string_kind(kind):
     with pytest.raises(ValueError, match="event kind is invalid"):

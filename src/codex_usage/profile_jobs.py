@@ -88,6 +88,8 @@ def create_profile_job(
         series=series,
         series_active=series_active,
     )
+    if config_path is not None and not isinstance(config_path, Path):
+        raise ValueError("config path is invalid")
     selected_config = (config_path or default_config_path()).expanduser()
     if not selected_config.is_absolute():
         raise ValueError("config path must be absolute")

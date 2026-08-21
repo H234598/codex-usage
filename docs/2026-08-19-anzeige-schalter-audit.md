@@ -1193,3 +1193,12 @@ sauber.
 `TypeError` statt kontrollierter Eingabeablehnung. `Path`-Konvertierung fängt
 ungültige Typen jetzt als `ValueError` ab; drei Regressionen ergänzt.
 `tests/test_profile_jobs.py`: 50/50 bestanden; Ruff sauber.
+
+## Runde 99: Profiljob-Konfigurationspfad-Typ
+
+`create_profile_job()` behandelte `""`, `[]`, `0` oder `False` bei
+`config_path` wie fehlende Angabe und ließ Dictionaries über
+`.expanduser()` mit `AttributeError` scheitern. Nur `None` oder echter
+`Path`-Wert ist jetzt zulässig; sechs Regressionen verhindern Job-/Worker-
+Seiteneffekte vor der Ablehnung. `tests/test_profile_jobs.py`: 56/56
+bestanden; Ruff sauber.
