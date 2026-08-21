@@ -835,6 +835,30 @@ def test_config_rejects_unknown_browser(tmp_path):
         add_or_update_account("privat", browser="netscape", path=tmp_path / "config.toml")
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        pytest.param("account_id", [], "account id must be a string", id="account-id"),
+        pytest.param("browser", [], "browser must be one of", id="browser"),
+        pytest.param("backend", [], "backend must be one of", id="backend"),
+        pytest.param(
+            "reactivation_browser",
+            [],
+            "reactivation browser must be one of",
+            id="reactivation-browser",
+        ),
+    ),
+)
+def test_add_account_rejects_unhashable_identity_types(
+    tmp_path, field, value, message
+):
+    kwargs = {field: value, "path": tmp_path / f"{field}.toml"}
+    account_id = kwargs.pop("account_id", "privat")
+
+    with pytest.raises(ValueError, match=message):
+        add_or_update_account(account_id, **kwargs)
+
+
 def test_load_config_rejects_loose_types(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

@@ -545,7 +545,9 @@ def _account_from_data(item: object) -> Account:
     )
 
 
-def _validate_account_id(account_id: str) -> None:
+def _validate_account_id(account_id: object) -> None:
+    if not isinstance(account_id, str):
+        raise ValueError("account id must be a string")
     if account_id == "__all_accounts__":
         raise ValueError("account id is reserved for internal coordination")
     if account_id in {".", ".."} or not re.fullmatch(

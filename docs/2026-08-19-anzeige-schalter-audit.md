@@ -1023,3 +1023,10 @@ eines truthy-Zweigs. Dadurch wurden `None`, `0`, `False` oder Listen als leere
 Serien akzeptiert und bis ins Manifest weitergereicht. Die Validierung verlangt
 jetzt zuerst einen String; leerer String bleibt erlaubt. Vier Regressionfälle
 ergänzt; `tests/test_profile_jobs.py`: 43/43 bestanden.
+
+## Runde 77: Account-ID-Typprüfung
+
+`config._validate_account_id()` prüfte Listen vor dem Format-Ausdruck mit
+Set-Mitgliedschaft. Eine unhashbare ID führte dadurch zu `TypeError` statt zu
+kontrolliertem Eingabefehler. Explizite Stringprüfung ergänzt; vier Validator-
+Regressionfälle, `tests/test_config.py`: 79/79 bestanden.
