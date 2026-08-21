@@ -50,6 +50,8 @@ def plan_auth_migration(
         raise ValueError("accounts are required")
     if len(accounts) > MAX_MIGRATION_ITEMS:
         raise ValueError(f"accounts must contain at most {MAX_MIGRATION_ITEMS} entries")
+    if not isinstance(search_roots, tuple):
+        raise ValueError("search roots are invalid")
     normalized_roots = tuple(_require_absolute(root, "search root") for root in search_roots)
     items: list[AuthMigrationItem] = []
     sources: dict[Path, str] = {}
@@ -79,10 +81,7 @@ def plan_auth_migration(
 
 
 def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[str, object]:
-    if not isinstance(plan, AuthMigrationPlan):
-        raise ValueError("migration plan is invalid")
-    if len(plan.items) > MAX_MIGRATION_ITEMS:
-        raise ValueError(f"migration plan must contain at most {MAX_MIGRATION_ITEMS} items")
+    _validate_migration_plan(plan)
     manifest_path = _require_absolute(manifest_path, "manifest path")
     _assert_manifest_path_disjoint(plan, manifest_path)
     ensure_private_directory(manifest_path.parent, label="migration manifest directory")
@@ -329,6 +328,39 @@ def _require_absolute(path: Path, label: str) -> Path:
     if not isinstance(path, Path) or not path.is_absolute():
         raise ValueError(f"{label} must be absolute")
     return path
+
+
+def _validate_migration_plan(plan: AuthMigrationPlan) -> None:
+    if not isinstance(plan, AuthMigrationPlan):
+        raise ValueError("migration plan is invalid")
+    if (
+        not isinstance(plan.migration_id, str)
+        or not plan.migration_id
+        or len(plan.migration_id) > 128
+    ):
+        raise ValueError("migration plan is invalid")
+    if (
+        not isinstance(plan.created_at, datetime)
+        or plan.created_at.tzinfo is None
+        or plan.created_at.utcoffset() is None
+    ):
+        raise ValueError("migration plan is invalid")
+    if not isinstance(plan.items, tuple) or len(plan.items) > MAX_MIGRATION_ITEMS:
+        raise ValueError("migration plan is invalid")
+    for item in plan.items:
+        if not isinstance(item, AuthMigrationItem):
+            raise ValueError("migration plan is invalid")
+        if (
+            not isinstance(item.account_id, str)
+            or not item.account_id
+            or not isinstance(item.target, Path)
+            or not item.target.is_absolute()
+            or (item.source is not None and (
+                not isinstance(item.source, Path) or not item.source.is_absolute()
+            ))
+            or not isinstance(item.status, str)
+        ):
+            raise ValueError("migration plan is invalid")
 
 
 def _assert_manifest_path_disjoint(

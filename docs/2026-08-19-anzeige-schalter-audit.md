@@ -2320,3 +2320,12 @@ Die Vollsuite bestätigt den aktuellen Stand: `2476 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Produktion, Scripts, Launcher und
 Tests ist ebenfalls sauber.
+
+## Runde 233: Profile-Migration validiert Roots und Plan-Felder
+
+`profile_migration.plan_auth_migration()` konnte bei `search_roots=None` mit
+rohem `TypeError` abbrechen. `apply_auth_migration()` übernahm manuell
+konstruierten malformed Pläne bis zu Attribut- und Pfadzugriffen. Root- und
+Plan-Validierung weisen solche Eingaben jetzt kontrolliert zurück.
+`tests/test_profile_migration.py`: 30/30 bestanden; Mypy für Source und Ruff
+für die betroffenen Dateien sauber.

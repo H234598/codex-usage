@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,8 @@ import pytest
 from codex_usage import profile_layout, profile_migration
 from codex_usage.models import Account
 from codex_usage.profile_migration import (
+    AuthMigrationItem,
+    AuthMigrationPlan,
     apply_auth_migration,
     plan_auth_migration,
     rollback_auth_migration,
@@ -47,6 +50,43 @@ def test_auth_migration_plan_rejects_too_many_accounts(tmp_path):
 
     with pytest.raises(ValueError, match="at most"):
         plan_auth_migration(accounts)
+
+
+@pytest.mark.parametrize("search_roots", [None, [], "invalid"])
+def test_auth_migration_plan_rejects_non_tuple_search_roots(search_roots):
+    with pytest.raises(ValueError, match="search roots"):
+        plan_auth_migration(
+            (Account(id="alpha", label="Alpha", profile_dir="/tmp/alpha"),),
+            search_roots=search_roots,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        None,
+        AuthMigrationPlan(
+            migration_id="m-test",
+            items=(None,),
+            created_at=datetime.now(UTC),
+        ),
+        AuthMigrationPlan(
+            migration_id="m-test",
+            items=(
+                AuthMigrationItem(
+                    account_id="alpha",
+                    source=None,
+                    target=Path("relative/auth.json"),
+                    status="canonical",
+                ),
+            ),
+            created_at=datetime.now(UTC),
+        ),
+    ],
+)
+def test_auth_migration_apply_rejects_malformed_plan(tmp_path, plan):
+    with pytest.raises(ValueError, match="migration plan"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")  # type: ignore[arg-type]
 
 
 def test_auth_migration_plan_rejects_existing_canonical_target(tmp_path):
