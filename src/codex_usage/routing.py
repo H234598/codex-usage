@@ -722,7 +722,11 @@ def _empty_policy() -> dict[str, Any]:
 
 
 def _validate_policy(payload: Any) -> dict[str, Any]:
-    if not isinstance(payload, dict) or payload.get("schema_version") != POLICY_SCHEMA_VERSION:
+    if (
+        not isinstance(payload, dict)
+        or type(payload.get("schema_version")) is not int
+        or payload["schema_version"] != POLICY_SCHEMA_VERSION
+    ):
         raise ValueError("unsupported routing policy schema")
     if not isinstance(payload.get("global"), bool):
         raise ValueError("routing policy global value is invalid")

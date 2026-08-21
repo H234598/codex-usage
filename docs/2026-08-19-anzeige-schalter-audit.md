@@ -1617,14 +1617,6 @@ Snapshots `TypeError` auslösen. Die Backend-Mitgliedschaft ist jetzt auf
 Stringwerte begrenzt; ungültige Werte erhalten Priorität `-1`.
 `tests/test_state.py`: 225/225 bestanden; Mypy und Ruff sauber.
 
-## Runde 155: Routing-Identitätstyp
-
-`routing._backend_identity_is_valid()` verwendete `backend_used` direkt als
-Set-Schlüssel. Unhashbare Werte konnten die Identitätsprüfung mit `TypeError`
-abbrechen. Nicht-String-Nicht-None-Backends werden jetzt vorher abgewiesen;
-unbekannte String-Backends behalten bisheriges Verhalten. `tests/test_routing.py`:
-90/90 bestanden; Mypy und Ruff sauber.
-
 ## Runde 151: Scheduler-Snapshot-Persistenztyp
 
 `scheduler._should_persist_snapshot()` prüfte `backend_used` bei partiellen
@@ -1632,6 +1624,14 @@ Snapshots direkt per Frozenset-Mitgliedschaft. Unhashbare Werte konnten den
 Watchdog-Persistenzpfad mit `TypeError` abbrechen. Der Wert wird jetzt zuerst
 als String geprüft; ungültige Snapshots werden nicht gespeichert.
 `tests/test_scheduler.py`: 165/165 bestanden; Mypy und Ruff sauber.
+
+## Runde 152: Policy-Entscheidungstyp
+
+`cli._policy_decision_exit_code()` prüfte fremde `decision`-Werte direkt per
+Set-Mitgliedschaft. Listen oder Dicts konnten den Policy-Statuspfad mit
+`TypeError` abbrechen. Der Wert wird jetzt zuerst als String geprüft; unbekannte
+oder unhashbare Entscheidungen liefern Exitcode `2`. `tests/test_cli.py`:
+108/108 bestanden; Mypy und Ruff sauber.
 
 ## Runde 153: Scheduler-Status-Typ
 
@@ -1651,10 +1651,17 @@ weist nur Nicht-String-Nicht-None-Backends zurück und erhält legitime Browser-
 Snapshots ohne Backend-Wert. `tests/test_bridge.py`: 179/179 und
 `tests/test_state.py`: 225/225 bestanden; Mypy und Ruff sauber.
 
-## Runde 152: Policy-Entscheidungstyp
+## Runde 155: Routing-Identitätstyp
 
-`cli._policy_decision_exit_code()` prüfte fremde `decision`-Werte direkt per
-Set-Mitgliedschaft. Listen oder Dicts konnten den Policy-Statuspfad mit
-`TypeError` abbrechen. Der Wert wird jetzt zuerst als String geprüft; unbekannte
-oder unhashbare Entscheidungen liefern Exitcode `2`. `tests/test_cli.py`:
-108/108 bestanden; Mypy und Ruff sauber.
+`routing._backend_identity_is_valid()` verwendete `backend_used` direkt als
+Set-Schlüssel. Unhashbare Werte konnten die Identitätsprüfung mit `TypeError`
+abbrechen. Nicht-String-Nicht-None-Backends werden jetzt vorher abgewiesen;
+unbekannte String-Backends behalten bisheriges Verhalten. `tests/test_routing.py`:
+90/90 bestanden; Mypy und Ruff sauber.
+
+## Runde 156: Routing-Policy-Schema-Version
+
+`routing._validate_policy()` verglich `schema_version` nur per Gleichheit und
+akzeptierte dadurch Bool- und Floatwerte als Integer `1`. Die Prüfung verlangt
+jetzt exakt den eingebauten Typ `int`; fremde Typen werden abgewiesen.
+`tests/test_routing.py`: 94/94 bestanden; Mypy und Ruff sauber.

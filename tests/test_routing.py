@@ -10,6 +10,7 @@ from codex_usage.routing import (
     MAIN_MODEL,
     SPARK_HEALTH_MAX_AGE_SECONDS,
     _backend_identity_is_valid,
+    _validate_policy,
     effective_credit_limits,
     effective_paid_overage,
     evaluate_routing,
@@ -67,6 +68,21 @@ def test_backend_identity_validation_rejects_unhashable_backend(backend_used):
     usage = replace(usage, backend_used=backend_used)
 
     assert _backend_identity_is_valid(usage) is False
+
+
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1", None])
+def test_policy_schema_version_requires_strict_integer(schema_version):
+    payload = {
+        "schema_version": schema_version,
+        "global": False,
+        "account": {},
+        "group": {},
+        "agent": {},
+        "job": {},
+    }
+
+    with pytest.raises(ValueError, match="unsupported routing policy schema"):
+        _validate_policy(payload)
 
 
 def test_routing_prefers_spark_with_weekly_only_limit():
