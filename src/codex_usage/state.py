@@ -697,6 +697,9 @@ def expire_reset_windows(
     model_pools: tuple[UsagePool, ...] = ()
     models_changed = False
     for pool in usage.models:
+        if not isinstance(pool, UsagePool):
+            models_changed = True
+            continue
         updated_pool, pool_expired = _expire_pool_windows(
             pool,
             usage=usage,
@@ -705,6 +708,9 @@ def expire_reset_windows(
             expired_names=expired_names,
             name_prefix=pool.key,
         )
+        if updated_pool is None:
+            models_changed = True
+            continue
         models_changed = models_changed or pool_expired
         model_pools += (updated_pool,)
     core_expired = five_hour_expired or weekly_expired or main_expired
@@ -732,6 +738,7 @@ def expire_reset_windows(
     if not models_changed and not core_expired and not clear_expired_block:
         return usage
 
+    error: str | None
     if core_expired:
         names = ", ".join(expired_names)
         error = f"cached limit window expired: {names}; refresh required"
@@ -1308,6 +1315,8 @@ def _merge_pool_windows_with_last_success(
             last_success_captured_at=last_success_captured_at,
             preserve_missing_value=preserve_missing_value,
         )
+        if merged is None:
+            return current
         if merged is not window:
             merged_windows[index] = merged
             changed = True
@@ -1343,6 +1352,8 @@ def _merge_model_pools_with_last_success(
             last_success_captured_at=last_success_captured_at,
             preserve_missing_value=preserve_missing_value,
         )
+        if merged is None:
+            return current
         merged_pools.append(merged)
         changed = changed or merged is not pool
     return tuple(merged_pools) if changed else current
@@ -1701,12 +1712,14 @@ def _window_from_dict(
         else _snapshot_datetime(raw_reset_at)
     )
     raw_source = payload.get("source")
+    source: str
     if raw_source is None or raw_source == "":
         source = "unknown"
     else:
-        source = _optional_snapshot_identity(raw_source, limit=120)
-        if source is None:
+        validated_source = _optional_snapshot_identity(raw_source, limit=120)
+        if validated_source is None:
             raise ValueError("snapshot window source is invalid")
+        source = validated_source
     window = LimitWindow(
         name=_snapshot_window_name(payload.get("name")),
         used=_optional_float(payload.get("used")),
@@ -1792,7 +1805,7 @@ def _pool_from_dict(
             return None
         windows.append(window)
     if "availability_sources" not in payload:
-        sources = ()
+        sources: tuple[str, ...] = ()
     else:
         raw_sources = payload.get("availability_sources")
         if (

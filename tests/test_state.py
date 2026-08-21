@@ -977,6 +977,21 @@ def test_expire_reset_windows_handles_dynamic_core_and_model_pools():
     assert "30d" in (expired.error or "")
 
 
+def test_expire_reset_windows_drops_malformed_none_model_pool():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="malformed-model",
+        label="Malformed model",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        models=(None,),  # type: ignore[arg-type]
+    )
+
+    expired = expire_reset_windows(usage, reference_at=captured_at)
+
+    assert expired.models == ()
+
+
 def test_expire_reset_windows_rejects_overlong_model_catalog(monkeypatch):
     import codex_usage.state as state_module
 

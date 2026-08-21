@@ -1375,3 +1375,12 @@ Bool-Flag und verwendete `secondary` für zwei inkompatible Formen. Direkte
 Dict-Prüfung und `secondary_window`-Name beseitigen vier Mypy-Fehler ohne
 Antwortauswertung zu ändern. `tests/test_app_server.py`: 77/77 bestanden;
 Mypy und Ruff sauber.
+
+## Runde 121: State-Modell- und Snapshot-Typen
+
+`state.py` ließ malformed `models`-Einträge bis zu `pool.key` durchlaufen und
+konnte `None` in Modell-/Fenster-Merges schreiben. Zusätzlich waren Fehlertext,
+Snapshot-Quelle und Quellen-Tuple statisch zu eng inferiert. Ungültige Pools
+werden jetzt verworfen, Merges bleiben bei nicht darstellbaren Werten
+unverändert; lokale Typen sind explizit. `tests/test_state.py`: 218/218
+bestanden; Mypy und Ruff sauber.
