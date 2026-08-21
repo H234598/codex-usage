@@ -3927,6 +3927,17 @@ Ressourcen werden im `finally`-Pfad geschlossen.
 `pytest -q tests/test_app_server.py`: 98/98 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 451: Bridge-Debug-Secret-Redaction
+
+`bridge._sanitize_debug_text()` redigierte bisher nur camelCase-Tokenfelder
+im doppelten JSON-Format. Snake_case-Token, Single-Quote-/Assignment-Formen
+und `Authorization: Bearer` konnten dadurch im lokalen Debug-Dump verbleiben.
+Redaction deckt jetzt diese Formen ebenfalls ab; Inhalt bleibt bounded und
+URL-/Identitätsredaction unverändert.
+
+`pytest -q tests/test_bridge.py`: 263/263 bestanden; Modul-Coverage 83 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 408: Scheduler-Account-ID-Grenze
 
 `scheduler._bounded_account_list()` akzeptierte bisher ein `Account`-Objekt

@@ -672,7 +672,13 @@ def _sanitize_debug_text(value: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
     text = re.sub(
-        r'("(?:accessToken|sessionToken|refreshToken|idToken|apiKey)"\s*:\s*")[^"]+',
+        r"((?:[\"']?\b(?:access|session|refresh|id)[_-]?token\b[\"']?|[\"']?\bapi[_-]?key\b[\"']?)\s*[:=]\s*[\"']?)[^\"'\s,};]+",
+        r"\1[redacted]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"((?:[\"']?\bauthorization\b[\"']?\s*[:=]\s*[\"']?bearer\s+))[^\"'\s,};]+",
         r"\1[redacted]",
         text,
         flags=re.IGNORECASE,

@@ -3921,6 +3921,22 @@ def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
     assert path.stat().st_mode & 0o077 == 0
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        '"access_token":"secret-access-token"',
+        "'refresh_token': 'secret-refresh-token'",
+        "Authorization: Bearer secret-header-token",
+        "api_key=secret-api-key",
+    ],
+)
+def test_debug_text_redacts_token_formats(text):
+    redacted = bridge_module._sanitize_debug_text(text)
+
+    assert "secret-" not in redacted
+    assert "[redacted]" in redacted
+
+
 def test_stale_bridge_debug_payload_cannot_recreate_removed_state(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     payload = {"bodyText": "stale debug"}
