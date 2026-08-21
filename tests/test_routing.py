@@ -9,6 +9,7 @@ from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePo
 from codex_usage.routing import (
     MAIN_MODEL,
     SPARK_HEALTH_MAX_AGE_SECONDS,
+    _backend_identity_is_valid,
     effective_credit_limits,
     effective_paid_overage,
     evaluate_routing,
@@ -58,6 +59,14 @@ def _usage(
         backend_configured="direct",
         backend_used="direct",
     )
+
+
+@pytest.mark.parametrize("backend_used", [[], {}])
+def test_backend_identity_validation_rejects_unhashable_backend(backend_used):
+    usage = _usage(backend_account_id="backend-private")
+    usage = replace(usage, backend_used=backend_used)
+
+    assert _backend_identity_is_valid(usage) is False
 
 
 def test_routing_prefers_spark_with_weekly_only_limit():

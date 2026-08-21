@@ -582,7 +582,12 @@ def _backend_identity_is_valid(usage: AccountUsage) -> bool:
         for value in identities
     ):
         return False
-    if usage.backend_used in {"direct", "app-server"}:
+    if usage.backend_used is not None and not isinstance(usage.backend_used, str):
+        return False
+    if (
+        isinstance(usage.backend_used, str)
+        and usage.backend_used in {"direct", "app-server"}
+    ):
         return any(value is not None for value in identities)
     return True
 

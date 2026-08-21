@@ -1617,6 +1617,14 @@ Snapshots `TypeError` auslösen. Die Backend-Mitgliedschaft ist jetzt auf
 Stringwerte begrenzt; ungültige Werte erhalten Priorität `-1`.
 `tests/test_state.py`: 225/225 bestanden; Mypy und Ruff sauber.
 
+## Runde 155: Routing-Identitätstyp
+
+`routing._backend_identity_is_valid()` verwendete `backend_used` direkt als
+Set-Schlüssel. Unhashbare Werte konnten die Identitätsprüfung mit `TypeError`
+abbrechen. Nicht-String-Nicht-None-Backends werden jetzt vorher abgewiesen;
+unbekannte String-Backends behalten bisheriges Verhalten. `tests/test_routing.py`:
+90/90 bestanden; Mypy und Ruff sauber.
+
 ## Runde 151: Scheduler-Snapshot-Persistenztyp
 
 `scheduler._should_persist_snapshot()` prüfte `backend_used` bei partiellen
