@@ -225,6 +225,10 @@ def add_or_update_account(
         raise ValueError("clear_auth_json cannot be combined with test_home")
     if not isinstance(_all_accounts_lock_held, bool):
         raise ValueError("_all_accounts_lock_held must be boolean")
+    if before_state_cleanup is not None and not callable(before_state_cleanup):
+        raise ValueError("before_state_cleanup must be callable")
+    if rollback_callback is not None and not callable(rollback_callback):
+        raise ValueError("rollback_callback must be callable")
     config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
     from .account_lock import account_lock

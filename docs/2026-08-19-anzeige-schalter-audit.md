@@ -2587,3 +2587,12 @@ roh mit `ValueError` ab. Eine gemeinsame Kandidatenprüfung validiert URL-Syntax
 jetzt vor JSON-Window-Priorisierung und `load_json_candidate()` verwirft solche
 URLs früh. `tests/test_extractor.py`: 195/195 bestanden; Mypy für Source und
 Ruff für die betroffenen Dateien sauber.
+
+## Runde 263: Config validiert optionale Callbacks
+
+`config.add_or_update_account()` übernahm nicht-aufrufbare
+`before_state_cleanup`-/`rollback_callback`-Werte bis zur tatsächlichen
+Verwendung. Ein Listenwert brach dadurch roh mit `TypeError` ab. Beide
+Callbacks werden jetzt vor Config-/Profil-I/O als aufrufbar geprüft.
+`tests/test_config.py`: 110/110 bestanden; Mypy für Source und Ruff für die
+betroffene Datei sauber.

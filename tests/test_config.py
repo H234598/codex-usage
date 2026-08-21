@@ -179,6 +179,22 @@ def test_internal_all_accounts_lock_name_is_not_a_valid_account_id():
         config_module._validate_account_id("__all_accounts__")
 
 
+@pytest.mark.parametrize(
+    ("argument", "message"),
+    (
+        ("before_state_cleanup", "before_state_cleanup must be callable"),
+        ("rollback_callback", "rollback_callback must be callable"),
+    ),
+)
+def test_add_or_update_rejects_non_callable_callbacks(tmp_path, argument, message):
+    with pytest.raises(ValueError, match=message):
+        add_or_update_account(
+            "callback-test",
+            path=tmp_path / "config.toml",
+            **{argument: []},  # type: ignore[arg-type]
+        )
+
+
 def test_account_paths_expand_tilde_to_absolute_paths(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
