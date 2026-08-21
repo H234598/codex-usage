@@ -475,6 +475,8 @@ def restore_account(
 
 
 def get_account(config: AppConfig, account_id: str) -> Account:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config must be an AppConfig")
     for account in config.accounts:
         if account.id == account_id:
             return account
@@ -482,6 +484,8 @@ def get_account(config: AppConfig, account_id: str) -> Account:
 
 
 def resolve_account(config: AppConfig, account_ref: str) -> Account:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config must be an AppConfig")
     for account in config.accounts:
         if account.id == account_ref:
             return account

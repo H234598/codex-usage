@@ -2256,3 +2256,12 @@ Fehlaufrufe konnten dadurch mit rohem `AttributeError` abbrechen. Beide
 öffentlichen Entry-Points weisen ungültige Accounts jetzt kontrolliert als
 `ReactivationError("account is invalid")` zurück. `tests/test_reactivate.py`:
 56/56 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.
+
+## Runde 226: Config-Account-Resolver validieren Config-Typ
+
+`config.get_account()` und `config.resolve_account()` griffen bei Fremdtypen
+direkt auf `config.accounts` zu. Fehlaufrufe konnten dadurch mit rohem
+`AttributeError` abbrechen. Beide Resolver prüfen jetzt `AppConfig` vor der
+Iteration und melden ungültige Eingaben als `ValueError`.
+`tests/test_config.py`: 108/108 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.

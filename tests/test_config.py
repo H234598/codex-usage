@@ -14,6 +14,7 @@ from codex_usage.config import (
     MAX_CONFIG_BYTES,
     AppConfig,
     add_or_update_account,
+    get_account,
     load_config,
     remove_account,
     resolve_account,
@@ -1228,6 +1229,14 @@ def test_resolve_account_accepts_id_or_unique_label(tmp_path):
 
     assert resolve_account(config, "privat").id == "privat"
     assert resolve_account(config, "BW_Privat").id == "privat"
+
+
+@pytest.mark.parametrize("config", [None, [], "invalid", 1, True, object()])
+def test_account_resolvers_reject_non_config_input(config):
+    with pytest.raises(ValueError, match="config must be an AppConfig"):
+        get_account(config, "privat")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="config must be an AppConfig"):
+        resolve_account(config, "privat")  # type: ignore[arg-type]
 
 
 def test_resolve_account_rejects_ambiguous_label():
