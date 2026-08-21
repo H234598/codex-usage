@@ -1725,3 +1725,11 @@ und Ruff sauber.
 Policy-Payload als `OverflowError` aus `float()` entweichen. Die Konvertierung
 wandelt solche Werte jetzt in den erwarteten `ValueError` für ungültige Limits
 um. `tests/test_routing.py`: 95/95 bestanden; Mypy und Ruff sauber.
+
+## Runde 165: Snapshot-Float-Overflow
+
+`integration_snapshot` ließ extrem große Integer bei der Projektion von
+`remaining_percent`, kanonischen Prozentwerten und Kostenwerten ungefangen in
+`float()` laufen. Die Exportvalidierung überspringt bzw. verwirft solche Werte
+jetzt über ihren normalen Invalid-Source-Pfad. `tests/test_integration_snapshot.py`:
+34/34 bestanden; Mypy und Ruff sauber.

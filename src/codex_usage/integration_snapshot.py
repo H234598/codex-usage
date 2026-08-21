@@ -255,7 +255,10 @@ def _pool_windows(pool: UsagePool) -> list[dict[str, object]]:
             or not isinstance(remaining, (int, float))
         ):
             continue
-        remaining = float(remaining)
+        try:
+            remaining = float(remaining)
+        except (OverflowError, TypeError, ValueError):
+            continue
         if not math.isfinite(remaining) or not 0 <= remaining <= 100:
             continue
         reset_at = None
@@ -447,7 +450,10 @@ def _canonical_token(value: object, *, maximum: int) -> str:
 def _canonical_percent(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         _invalid()
-    result = float(value)
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError):
+        _invalid()
     if not math.isfinite(result) or not 0 <= result <= 100:
         _invalid()
     return result
@@ -456,7 +462,10 @@ def _canonical_percent(value: object) -> float:
 def _canonical_cost(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         _invalid()
-    result = float(value)
+    try:
+        result = float(value)
+    except (OverflowError, TypeError, ValueError):
+        _invalid()
     if not math.isfinite(result) or not 0 <= result <= 10_000:
         _invalid()
     return result

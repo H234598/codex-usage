@@ -37,6 +37,25 @@ def test_cost_window_contract_matches_history_limit_and_producer_coverages():
             _canonical_cost_window({**value, "coverage": coverage})
 
 
+@pytest.mark.parametrize(
+    ("helper", "value"),
+    [
+        pytest.param("percent", 10**10_000, id="percent-huge-int"),
+        pytest.param("cost", 10**10_000, id="cost-huge-int"),
+    ],
+)
+def test_schema1_canonical_float_helpers_reject_overflow(helper, value):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        _canonical_cost,
+        _canonical_percent,
+    )
+
+    canonicalize = _canonical_percent if helper == "percent" else _canonical_cost
+    with pytest.raises(IntegrationInvalidSource):
+        canonicalize(value)
+
+
 def _usage(
     account_id: str,
     *,
@@ -126,7 +145,16 @@ def test_schema1_projection_is_sorted_allowlisted_and_deterministic(tmp_path):
         assert marker not in encoded
 
 
-@pytest.mark.parametrize("remaining", [object(), -1.0, 101.0, float("nan")])
+@pytest.mark.parametrize(
+    "remaining",
+    [
+        object(),
+        -1.0,
+        101.0,
+        float("nan"),
+        pytest.param(10**10_000, id="huge-int"),
+    ],
+)
 def test_schema1_projection_skips_unusable_remaining_values(remaining):
     from codex_usage.integration_snapshot import build_schema1_document
 
