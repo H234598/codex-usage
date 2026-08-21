@@ -371,7 +371,10 @@ def _validate_auth_target(account: Account) -> Path:
         raise ReactivationError("account has no auth_json_path")
     if not isinstance(account.auth_json_path, str):
         raise ReactivationError("account auth_json_path is invalid")
-    path = Path(account.auth_json_path).expanduser()
+    try:
+        path = Path(account.auth_json_path).expanduser()
+    except RuntimeError as exc:
+        raise ReactivationError("account auth_json_path is invalid") from exc
     if path.name != "auth.json":
         raise ReactivationError("auth_json_path must point to auth.json")
     parent = path.parent
@@ -478,7 +481,10 @@ def _manage_browser_profile(account: Account, browser_kind: str) -> Path:
 def _account_profile_root(account: Account) -> Path:
     if not isinstance(account.profile_dir, str) or not account.profile_dir:
         raise ReactivationError("account profile_dir is invalid")
-    return Path(account.profile_dir).expanduser()
+    try:
+        return Path(account.profile_dir).expanduser()
+    except RuntimeError as exc:
+        raise ReactivationError("account profile_dir is invalid") from exc
 
 
 def _prepare_real_private_directory(path: Path, *, label: str) -> None:

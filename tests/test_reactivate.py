@@ -299,6 +299,25 @@ def test_reactivation_rejects_malformed_account_paths(tmp_path):
         reactivate_account(malformed_auth)
 
 
+def test_reactivation_rejects_unknown_home_paths(tmp_path):
+    malformed_auth = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        auth_json_path="~definitely-no-such-user-zzzz/auth.json",
+    )
+    with pytest.raises(ReactivationError, match="account auth_json_path is invalid"):
+        reactivate_module._validate_auth_target(malformed_auth)
+
+    malformed_profile = Account(
+        id="work",
+        label="Work",
+        profile_dir="~definitely-no-such-user-zzzz/profile",
+    )
+    with pytest.raises(ReactivationError, match="account profile_dir is invalid"):
+        reactivate_module._account_profile_root(malformed_profile)
+
+
 def test_reactivate_account_uses_isolated_codex_home(tmp_path, monkeypatch):
     auth_home = tmp_path / "agent-home"
     auth_home.mkdir()

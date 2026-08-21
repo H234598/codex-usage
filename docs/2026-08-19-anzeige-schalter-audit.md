@@ -2763,3 +2763,19 @@ jetzt `DirectAuthError("auth.json path is invalid")`, sodass der Fetch wie bei
 anderen ungültigen Auth-Pfaden kontrolliert `LOGIN_REQUIRED` meldet.
 `tests/test_direct.py`: 181/181 fokussierte Tests bestanden; Mypy für Source,
 Ruff und `git diff --check` sauber.
+
+## Runde 282: Browser-Profilpfad weist unbekannte Home-Namen ab
+
+`browser._prepare_profile()` ließ einen unbekannten `~user`-Profilpfad als
+rohes `RuntimeError` entkommen. Der Profilpfad wird jetzt kontrolliert als
+ungültig gemeldet, bevor Marker oder Browser-Verzeichnisse angelegt werden.
+`tests/test_browser_profile.py`: 124/124 fokussierte Tests bestanden; Mypy für
+Source, Ruff und `git diff --check` sauber.
+
+## Runde 283: Reactivation-Pfadresolver validieren Home-Expansion
+
+`reactivate._validate_auth_target()` und `_account_profile_root()` ließen
+unbekannte `~user`-Pfade ebenfalls als rohes `RuntimeError` entkommen. Beide
+Resolver liefern jetzt kontrolliert `ReactivationError`, bevor Browser- oder
+Auth-Zugriffe starten. `tests/test_reactivate.py`: 61/61 fokussierte Tests
+bestanden; Mypy für Source, Ruff und `git diff --check` sauber.

@@ -1300,7 +1300,10 @@ def _prepare_profile(account: Account) -> Path:
         "chromium",
     }:
         raise ValueError("browser is invalid")
-    root = Path(account.profile_dir).expanduser()
+    try:
+        root = Path(account.profile_dir).expanduser()
+    except RuntimeError as exc:
+        raise ValueError("profile directory is invalid") from exc
     if not root.is_absolute():
         raise ValueError("profile directory must be absolute")
     _prepare_private_output_dir(root, label="profile directory")

@@ -84,7 +84,10 @@ def test_browser_entrypoints_reject_non_account_input(entrypoint, account):
             diagnose_account(account, config)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("profile_dir", [None, "", [], 1, "relative/profile"])
+@pytest.mark.parametrize(
+    "profile_dir",
+    [None, "", [], 1, "relative/profile", "~definitely-no-such-user-zzzz/profile"],
+)
 def test_browser_profile_rejects_invalid_profile_directory(profile_dir):
     account = Account(
         id="work",
