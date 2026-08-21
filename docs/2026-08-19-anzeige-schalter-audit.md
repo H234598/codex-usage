@@ -1416,3 +1416,13 @@ Fallback-Name beseitigen 13 Mypy-Fehler ohne Extraktionsänderung.
 aber Mypy konnte die Korrelation beim Zugriff auf `tls_key` nicht ableiten.
 Explizite defensive `None`-Guard verhindert zusätzlich unklare API-Nutzung.
 `tests/test_bridge.py`: 177/177 bestanden; Mypy und Ruff sauber.
+
+## Runde 126: Scheduler-Backend- und Signaltypen
+
+`scheduler.py` hatte zehn Mypy-Fehler: optionale Backendwerte wurden ohne
+Narrowing an Provenance-Prüfungen gereicht, typunsichere Keyword-Dictionaries
+wurden an Direct-Fetch übergeben, Signal-Handler wurden als `object`
+gespeichert, und `reset_at` blieb optional. Direkte Aufrufe, Guards,
+Variablenverengung und `cast` beseitigen die Fehler; Clock-Subclass-Verhalten
+bleibt erhalten. `tests/test_scheduler.py`: 160/160 bestanden; Mypy und Ruff
+sauber.

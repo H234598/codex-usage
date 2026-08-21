@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from itertools import islice
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, cast
 
 from .account_lock import account_lock
 from .app_server import AppServerUnavailableError, fetch_account_usage_app_server
@@ -199,6 +199,7 @@ def fetch_all(
                         backend_override is not None
                         and backend_override != account.backend
                     )
+                    or not isinstance(effective_backend, str)
                     or not backend_provenance_matches_configured(
                         usage, effective_backend
                     )
@@ -437,10 +438,17 @@ def _fetch_one(
                             backend_used="app-server",
                         )
                     except AppServerUnavailableError as exc:
-                        direct_kwargs = {"auth_json_path": auth_json_path}
                         if reject_ambiguous_backend_identity:
-                            direct_kwargs["reject_ambiguous_backend_identity"] = True
-                        usage = fetch_account_usage_direct(account, **direct_kwargs)
+                            usage = fetch_account_usage_direct(
+                                account,
+                                auth_json_path=auth_json_path,
+                                reject_ambiguous_backend_identity=True,
+                            )
+                        else:
+                            usage = fetch_account_usage_direct(
+                                account,
+                                auth_json_path=auth_json_path,
+                            )
                         fallback_detail = re.sub(r"\s+", " ", str(exc)).strip()
                         return replace(
                             usage,
@@ -450,10 +458,17 @@ def _fetch_one(
                                 f"{APP_SERVER_FALLBACK_REASON_PREFIX}{fallback_detail}"
                             )[:500],
                         )
-                direct_kwargs = {"auth_json_path": auth_json_path}
                 if reject_ambiguous_backend_identity:
-                    direct_kwargs["reject_ambiguous_backend_identity"] = True
-                usage = fetch_account_usage_direct(account, **direct_kwargs)
+                    usage = fetch_account_usage_direct(
+                        account,
+                        auth_json_path=auth_json_path,
+                        reject_ambiguous_backend_identity=True,
+                    )
+                else:
+                    usage = fetch_account_usage_direct(
+                        account,
+                        auth_json_path=auth_json_path,
+                    )
                 return replace(
                     usage,
                     backend_configured=effective_backend,
@@ -936,7 +951,7 @@ def _watch_cycle_is_healthy(
                 backend_override=backend_override,
                 auth_json_path=auth_json_path,
             )
-            if account is None or not (
+            if account is None or not isinstance(configured_backend, str) or not (
                 usage.backend_configured == configured_backend
                 and usage.backend_used in AUTHENTICATED_BACKENDS | {"browser"}
                 and backend_provenance_matches_configured(
@@ -1088,7 +1103,7 @@ def watch(
         raise ValueError("interval_seconds must be a finite integer of at least 60")
     account_list = _bounded_account_list(accounts)
     stop_event = Event()
-    previous_handlers: dict[int, object] = {}
+    previous_handlers: dict[int, Any] = {}
 
     def stop(_signum, _frame) -> None:
         stop_event.set()
@@ -1163,9 +1178,9 @@ def watch(
             if stop_event.wait(delay):
                 break
     finally:
-        for signum, handler in previous_handlers.items():
+        for previous_signum, previous_handler in previous_handlers.items():
             try:
-                signal.signal(signum, handler)
+                signal.signal(previous_signum, previous_handler)
             except (OSError, RuntimeError, ValueError):
                 pass
 
@@ -1316,10 +1331,14 @@ def watchdog(
                     auth_json_path=auth_json_path,
                 )
                 if (
-                    backend_override is not None
-                    and backend_override != account.backend
-                ) or not backend_provenance_matches_configured(
-                    usage, effective_backend
+                    not isinstance(effective_backend, str)
+                    or (
+                        backend_override is not None
+                        and backend_override != account.backend
+                    )
+                    or not backend_provenance_matches_configured(
+                        usage, effective_backend
+                    )
                 ):
                     usages.append(usage)
                     continue
@@ -1555,6 +1574,13 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
         if window is None or (not pool_forces_block and not _window_is_exhausted(window)):
             continue
         reset_at = getattr(window, "reset_at", None)
+        if reset_at is None:
+            window_name = getattr(window, "name", None)
+            unknown_reset_names.append(
+                window_name if isinstance(window_name, str) and window_name.strip() else "unknown"
+            )
+            continue
+        reset_at = cast(datetime, reset_at)
         try:
             reset_timezone = reset_at.tzinfo
             reset_offset = reset_at.utcoffset()
