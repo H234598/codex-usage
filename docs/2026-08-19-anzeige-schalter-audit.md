@@ -1511,3 +1511,10 @@ Ganzzahl `1`; ein benutzerdefiniertes `1s`-Fenster konnte so durch falschen
 Aufruftyp ausgewählt werden. Der Helper akzeptiert jetzt nur positive
 Ganzzahlen. `tests/test_models.py` deckt Bool, Float, String und ungültige
 Ganzzahlen ab; Model-/Render-Tests: 41/41 bestanden; Mypy und Ruff sauber.
+
+## Runde 137: Gesamtverifikation
+
+Nach den Resolver-, Formatierungs- und Model-Änderungen lief die vollständige
+Python-Suite mit **2113 bestanden, 1 übersprungen und 1 Warnung** in 86 s.
+Der Lauf schreibt keine offenen Testfehler; die Warnung bleibt als bestehender
+Test-/Umgebungsbefund separat zu beobachten.
