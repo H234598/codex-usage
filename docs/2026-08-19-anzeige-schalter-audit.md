@@ -1608,3 +1608,11 @@ Frozenset-Prüfungen ohne vorherige Typprüfung. Unhashbare Backend-Werte konnte
 bei Snapshot-Merges `TypeError` auslösen. Beide Zweige prüfen jetzt zuerst auf
 String; ungültige Werte sind nicht autoritativ. `tests/test_state.py`: 223/223
 bestanden; Mypy und Ruff sauber.
+
+## Runde 150: Capture-Prioritäts-Typ
+
+`state._backend_capture_priority()` prüfte `backend_used` direkt per
+Frozenset-Mitgliedschaft. Unhashbare Werte konnten beim Vergleich gleichalter
+Snapshots `TypeError` auslösen. Die Backend-Mitgliedschaft ist jetzt auf
+Stringwerte begrenzt; ungültige Werte erhalten Priorität `-1`.
+`tests/test_state.py`: 225/225 bestanden; Mypy und Ruff sauber.

@@ -14,6 +14,7 @@ from codex_usage.account_lock import account_lock
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.state import (
     _authoritative_empty_limits,
+    _backend_capture_priority,
     _is_inferred_inactive_five_hour,
     _localize_datetime,
     _remove_state_transaction_dir,
@@ -589,6 +590,18 @@ def test_backend_identity_rejects_unhashable_backend_fields():
 
     assert backend_identity_matches(malformed, complete) is False
     assert backend_identity_matches(complete, malformed) is False
+
+
+@pytest.mark.parametrize("backend_used", [[], {}])
+def test_backend_capture_priority_rejects_unhashable_backend(backend_used):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_used=backend_used,
+    )
+
+    assert _backend_capture_priority(usage) == -1
 
 
 def test_backend_provenance_rejects_unknown_backend_fields():

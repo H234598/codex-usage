@@ -281,7 +281,10 @@ def _equal_capture_prefers_existing(
 def _backend_capture_priority(usage: AccountUsage) -> int:
     if usage.backend_used == "browser":
         return 0
-    if usage.backend_used in AUTHENTICATED_BACKENDS:
+    if (
+        isinstance(usage.backend_used, str)
+        and usage.backend_used in AUTHENTICATED_BACKENDS
+    ):
         if usage.backend_configured == usage.backend_used:
             return 2
         return 1
