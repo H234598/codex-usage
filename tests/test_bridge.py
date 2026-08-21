@@ -3770,6 +3770,47 @@ def test_usage_from_ingest_payload_reports_search_excerpt():
     assert 'excerpt="Codex analytics without the expected limit labels"' in usage.error
 
 
+@pytest.mark.parametrize("account_ref", [None, [], 1, "bad/id", object()])
+def test_write_bridge_extension_rejects_invalid_account_ref(tmp_path, account_ref):
+    with pytest.raises(ValueError, match="account id"):
+        write_bridge_extension(
+            account_ref,  # type: ignore[arg-type]
+            tmp_path / "extension",
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 32,
+        )
+
+
+def test_write_bridge_extension_rejects_invalid_output_dir(tmp_path):
+    with pytest.raises(ValueError, match="extension output directory"):
+        write_bridge_extension(
+            "privat",
+            [],  # type: ignore[arg-type]
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 32,
+        )
+
+
+@pytest.mark.parametrize("account_id", [None, [], 1, object()])
+def test_save_bridge_debug_payload_rejects_non_string_account_id(tmp_path, account_id):
+    with pytest.raises(ValueError, match="account id"):
+        save_bridge_debug_payload(account_id, {}, tmp_path / "snapshots")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("payload", [None, [], "invalid", 1, object()])
+def test_save_bridge_debug_payload_rejects_non_object_payload(tmp_path, payload):
+    with pytest.raises(ValueError, match="debug payload"):
+        save_bridge_debug_payload("privat", payload, tmp_path / "snapshots")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("snapshot_dir", [[], "invalid", 1, object()])
+def test_save_bridge_debug_payload_rejects_non_path(tmp_path, snapshot_dir):
+    with pytest.raises(ValueError, match="snapshot directory"):
+        save_bridge_debug_payload("privat", {}, snapshot_dir)  # type: ignore[arg-type]
+
+
 def test_save_bridge_debug_payload_redacts_url_and_locks_file(tmp_path):
     path = save_bridge_debug_payload(
         "BW/Privat",
@@ -3909,6 +3950,42 @@ def test_render_bridge_snippet_contains_account_endpoint_and_interval():
     assert "Array.from(node.childNodes" not in snippet
     assert "Array.from(node.attributes" not in snippet
     assert "Array.from(document.querySelectorAll" not in snippet
+
+
+@pytest.mark.parametrize("account_ref", [None, [], 1, "bad/id", object()])
+def test_render_bridge_snippet_rejects_invalid_account_ref(account_ref):
+    with pytest.raises(ValueError, match="account id"):
+        render_bridge_snippet(
+            account_ref,  # type: ignore[arg-type]
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 32,
+        )
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [None, [], 1, object(), "ftp://127.0.0.1:8765/ingest", "http://127.0.0.1:8765/ingest?x=1"],
+)
+def test_render_bridge_snippet_rejects_invalid_endpoint(endpoint):
+    with pytest.raises(ValueError, match="endpoint"):
+        render_bridge_snippet(
+            "privat",
+            endpoint=endpoint,  # type: ignore[arg-type]
+            interval_seconds=300,
+            token="A" * 32,
+        )
+
+
+@pytest.mark.parametrize("interval_seconds", [None, [], "300", True, 59, object()])
+def test_render_bridge_snippet_rejects_invalid_interval(interval_seconds):
+    with pytest.raises(ValueError, match="interval"):
+        render_bridge_snippet(
+            "privat",
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=interval_seconds,  # type: ignore[arg-type]
+            token="A" * 32,
+        )
 
 
 def test_render_bridge_snippet_sends_dom_fields_and_handles_fetch_failure(tmp_path):

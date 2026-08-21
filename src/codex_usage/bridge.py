@@ -325,6 +325,12 @@ def save_bridge_debug_payload(
     *,
     state_generation: int | None = None,
 ) -> Path:
+    if not isinstance(account_id, str):
+        raise ValueError("account id is invalid")
+    if not isinstance(payload, dict):
+        raise ValueError("debug payload must be an object")
+    if snapshot_dir is not None and not isinstance(snapshot_dir, Path):
+        raise ValueError("snapshot directory is invalid")
     safe_account_id = _safe_filename(account_id)
     if not safe_account_id:
         raise ValueError("account id must produce a safe debug filename")
@@ -612,6 +618,44 @@ def _safe_filename(value: str) -> str:
     return "".join(char if char.isalnum() or char in ("-", "_", ".") else "_" for char in value)
 
 
+def _validate_bridge_account_ref(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,64}", value
+    ):
+        raise ValueError("account id must be valid for bridge token storage")
+    return value
+
+
+def _validate_bridge_endpoint(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("endpoint must be an absolute HTTP(S) URL")
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise ValueError("endpoint must be an absolute HTTP(S) URL") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or (parsed_port is not None and not 1 <= parsed_port <= 65535)
+        or not parsed.path.startswith("/")
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("endpoint must be an absolute HTTP(S) URL without credentials/query")
+    return value
+
+
+def _validate_bridge_interval(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 60:
+        raise ValueError("interval must be at least 60 seconds")
+    return value
+
+
 def _sanitize_debug_text(value: str) -> str:
     text = re.sub(
         r"<script\b[^>]*>.*?</script>",
@@ -730,10 +774,7 @@ def _sanitize_debug_flags(value: Any) -> dict[str, bool] | None:
 
 
 def bridge_token_for_account(account_ref: str) -> str:
-    if not isinstance(account_ref, str) or not re.fullmatch(
-        r"[A-Za-z0-9_.-]{1,64}", account_ref
-    ):
-        raise ValueError("account id must be valid for bridge token storage")
+    account_ref = _validate_bridge_account_ref(account_ref)
     token_dir = default_state_dir() / "bridge-tokens"
     _prepare_private_directory(token_dir, label="bridge token directory")
     path = token_dir / f"{account_ref}.token"
@@ -752,10 +793,7 @@ def bridge_token_for_account(account_ref: str) -> str:
 
 
 def revoke_bridge_token(account_ref: str) -> bool:
-    if not isinstance(account_ref, str) or not re.fullmatch(
-        r"[A-Za-z0-9_.-]{1,64}", account_ref
-    ):
-        raise ValueError("account id must be valid for bridge token storage")
+    account_ref = _validate_bridge_account_ref(account_ref)
     token_dir = default_state_dir() / "bridge-tokens"
     if not token_dir.exists() and not token_dir.is_symlink():
         return False
@@ -771,9 +809,9 @@ def revoke_bridge_token(account_ref: str) -> bool:
 
 
 def bridge_token_matches(account_ref: str, supplied: str) -> bool:
-    if not isinstance(account_ref, str) or not re.fullmatch(
-        r"[A-Za-z0-9_.-]{1,64}", account_ref
-    ):
+    try:
+        account_ref = _validate_bridge_account_ref(account_ref)
+    except ValueError:
         return False
     try:
         _validate_bridge_token(supplied)
@@ -820,6 +858,9 @@ def render_bridge_snippet(
     interval_seconds: int,
     token: str | None = None,
 ) -> str:
+    account_ref = _validate_bridge_account_ref(account_ref)
+    endpoint = _validate_bridge_endpoint(endpoint)
+    interval_seconds = _validate_bridge_interval(interval_seconds)
     account_json = json.dumps(account_ref)
     endpoint_json = json.dumps(endpoint)
     token_json = json.dumps(
@@ -1311,6 +1352,11 @@ def write_bridge_extension(
     interval_seconds: int,
     token: str | None = None,
 ) -> Path:
+    account_ref = _validate_bridge_account_ref(account_ref)
+    if not isinstance(output_dir, Path):
+        raise ValueError("extension output directory is invalid")
+    endpoint = _validate_bridge_endpoint(endpoint)
+    interval_seconds = _validate_bridge_interval(interval_seconds)
     token = _validate_bridge_token(token) if token else bridge_token_for_account(account_ref)
     _prepare_private_directory(output_dir, label="extension output directory")
     with private_path_lock(

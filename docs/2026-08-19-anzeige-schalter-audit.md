@@ -2302,3 +2302,13 @@ Fehlaufrufe konnten dadurch mit rohem `AttributeError` abbrechen. Der Loader
 weist beide Eingaben jetzt kontrolliert als `ValueError` zurück.
 `tests/test_bridge.py`: 200/200 bestanden; Mypy für Source und Ruff für die
 betroffenen Dateien sauber.
+
+## Runde 231: Bridge-Generatoren validieren Account-/Endpoint-/Intervall-Typen
+
+`render_bridge_snippet()` und `write_bridge_extension()` konnten bei
+mitgeliefertem Token die Account-ID-Prüfung umgehen; fremde Endpoints oder
+Intervalle führten außerdem zu unsicheren Ausgaben oder rohen Typfehlern.
+`save_bridge_debug_payload()` griff bei Fremdtypen für Account, Payload oder
+Snapshot-Verzeichnis ebenfalls ungeprüft zu. Gemeinsame Guards weisen solche
+Eingaben jetzt kontrolliert zurück. `tests/test_bridge.py`: 236/236 bestanden;
+Mypy für Source und Ruff für die betroffenen Dateien sauber.
