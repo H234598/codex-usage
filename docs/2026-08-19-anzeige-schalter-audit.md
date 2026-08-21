@@ -4127,3 +4127,14 @@ gesichert und fehlerhafte Pfade kontrolliert abgewiesen.
 
 `pytest -q tests/test_account_lock.py`: 15/15 bestanden; Modul-Coverage 84 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 425: History-SQLite und Retention
+
+`history.py` auf absolute/private Datenbankpfade, FD-/Inode-Revalidierung,
+`O_NOFOLLOW`, WAL-/SHM-Rechte, SQLite-Schema, Locking, UTC-/Millisekunden-
+Grenzen, bounded Sample-Materialisierung, Account-/Pool-Isolation und
+Dry-Run-/Delete-Prune geprüft. Keine neue reproduzierbare Fehlfunktion;
+malformed Zeitwerte, Datenbanken und Samples bleiben fail-closed.
+
+`pytest -q tests/test_history.py tests/test_history_cli.py`: 81/81 bestanden;
+Modul-Coverage 82 % (Branch). Ruff, Mypy und `git diff --check` sauber.
