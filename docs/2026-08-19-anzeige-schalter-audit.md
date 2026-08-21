@@ -3655,3 +3655,16 @@ ein Test den bisher ungetesteten zeitgewichteten EMA-Forecast ab.
 `pytest -q tests/test_consumption.py`: 31/31 bestanden; Modul-Coverage 83%.
 Offene Zeilen sind weitere Diagnose-/Guard- und EMA-Sonderzweige. Ruff, Mypy
 und `git diff --check` sauber.
+
+## Runde 381: Direct-Response-Header-Grenze
+
+`direct._response_content_type()` griff bei einem malformed Response-Objekt
+unmittelbar auf `headers.get()` zu und konnte dadurch `AttributeError` nach
+außen geben. Die Funktion prüft jetzt den Header-Accessor und fällt sicher auf
+`getheader()` oder leeren Content-Type zurück. Regressionstest deckt beide
+Fallbacks ab.
+
+`pytest -q tests/test_direct.py tests/test_live_direct.py`: 183 bestanden,
+1 übersprungen. Modul-Coverage für `direct.py` 83%; offene Zeilen sind weitere
+Netzwerk-, Auth- und Response-Sonderzweige. Ruff, Mypy und `git diff --check`
+sauber.

@@ -24,6 +24,7 @@ from codex_usage.direct import (
     _is_spark_limit_response,
     _jwt_expiry,
     _redact_url,
+    _response_content_type,
     _select_stable_wham_usage,
     _signature_number,
     auth_email_from_file,
@@ -83,6 +84,21 @@ def test_direct_redact_url_removes_userinfo(url, expected):
 
 def test_direct_redact_url_rejects_invalid_port():
     assert _redact_url("https://user:secret@chatgpt.com:invalid/path") == ""
+
+
+def test_direct_response_content_type_falls_back_for_malformed_headers():
+    class Response:
+        headers: ClassVar[list[object]] = []
+
+    assert _response_content_type(Response()) == ""
+
+    class LegacyResponse:
+        headers: ClassVar[list[object]] = []
+
+        def getheader(self, name):
+            return "application/json" if name == "content-type" else None
+
+    assert _response_content_type(LegacyResponse()) == "application/json"
 
 
 @pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])

@@ -1553,9 +1553,14 @@ def _signature_relative_reset_phase(value: dict[str, Any]) -> str | None:
 def _response_content_type(response: Any) -> str:
     headers = getattr(response, "headers", None)
     if headers is not None:
-        value = headers.get("content-type") or headers.get("Content-Type")
-        if value:
-            return str(value)
+        get_header = getattr(headers, "get", None)
+        if callable(get_header):
+            try:
+                value = get_header("content-type") or get_header("Content-Type")
+            except (AttributeError, TypeError, ValueError):
+                value = None
+            if value:
+                return str(value)
     getheader = getattr(response, "getheader", None)
     if callable(getheader):
         return str(getheader("content-type") or "")
