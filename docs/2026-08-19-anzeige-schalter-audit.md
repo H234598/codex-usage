@@ -4317,3 +4317,16 @@ Cachepfad und bestehende Bytes bleiben bei Fehlern geschützt.
 
 `pytest -q tests/test_integration_snapshot.py`: 52/52 bestanden;
 Modul-Coverage 76 % (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 443: Formatierungsseite-UI
+
+`FormatTableSelector` und `settings-schema.json` erneut auf eine einzige
+sichtbare Gtk-Stack-Tabelle, mittig ausgerichtetes Dropdown, persistente
+Auswahl ohne Rückschreibschleife, statische Ziel-Allowlist und getrennte
+editierbare Tabellen geprüft. Die sechs Ziele (Prozent, Datum, Uhrzeit,
+Restlaufzeit, Account-Anzeige, Elemente/Formatierungsorte) bleiben isoliert;
+zusätzliche Elemente 14/15 (Verbrauch 5h/30d) sind enthalten. Keine neue
+Tabellenverschachtelung oder Auswahlregression.
+
+`pytest -q tests/test_format_table_selector.py tests/test_applet.py`:
+32/32 bestanden; bekannte GTK-/PyGObject-Deprecation-Warnungen bleiben.
