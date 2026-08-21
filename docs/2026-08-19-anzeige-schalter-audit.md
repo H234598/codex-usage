@@ -3668,3 +3668,11 @@ Fallbacks ab.
 1 übersprungen. Modul-Coverage für `direct.py` 83%; offene Zeilen sind weitere
 Netzwerk-, Auth- und Response-Sonderzweige. Ruff, Mypy und `git diff --check`
 sauber.
+
+## Runde 382: Service-Reload nach Direct-Fix
+
+`codex-usage service enable --format json` nach `9aceac3` erfolgreich:
+Service installiert/aktiv, Timer aktiv und geplant. Der letzte Lauf endet
+weiterhin ausschließlich wegen fehlender Firefox-Playwright-Executable bei
+Exit 2; `app-server`-Pfade bleiben unverändert. Kein Fallback und keine
+Netzwerkinstallation ausgeführt.
