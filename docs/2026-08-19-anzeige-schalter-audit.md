@@ -2685,3 +2685,11 @@ Zeit und ließ aware Randwerte mit nicht darstellbarer UTC-Konvertierung roh als
 UTC-Konvertierung jetzt defensiv; malformed `now` fällt auf aktuelle UTC-Zeit
 zurück. `tests/test_health.py`: 28/28 fokussierte Tests bestanden; Mypy für
 Source, Ruff und `git diff --check` sauber.
+
+## Runde 273: Vollsuite nach Snapshot-/History-/Health-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2647 bestanden, 1 übersprungen,
+1 Warnung` in 87,63 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
+`git diff --check` sind sauber.
