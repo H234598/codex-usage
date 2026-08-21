@@ -3525,3 +3525,14 @@ Kein neuer reproduzierbarer Fehler.
 Ruff und `git diff --check` sauber. Laufender Timer bleibt aktiv/geplant;
 letzter One-Shot-Service-Lauf endet weiterhin wegen fehlender Firefox-
 Playwright-Executable mit Exit 2.
+
+## Runde 368: Formatierungs-Selector und Applet-GUI erneut verifiziert
+
+Der `FormatTableSelector` zeigt über `Gtk.Stack` genau eine auswählbare Tabelle,
+persistiert das Dropdown-Ziel ohne Rückschreibschleife und verwendet keinen
+Crossfade. Das aktive Layout referenziert nur die Formatierungsseite; alte
+Einzeltabellen bleiben aus dem Seitenbaum entfernt.
+
+`pytest -q tests/test_format_table_selector.py tests/test_applet.py`: 32/32
+bestanden. `node --test tests/applet_runtime.test.js`: 395/395 bestanden.
+Keine neue reproduzierbare GUI-Regression.
