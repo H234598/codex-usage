@@ -126,6 +126,56 @@ def test_auth_migration_plan_rejects_invalid_account_id(tmp_path, account_id):
         plan_auth_migration((account,))
 
 
+def test_auth_migration_plan_rejects_duplicate_account_ids(tmp_path):
+    first_source = tmp_path / "first-auth.json"
+    second_source = tmp_path / "second-auth.json"
+    first_source.write_text("{}", encoding="utf-8")
+    second_source.write_text("{}", encoding="utf-8")
+    first_source.chmod(0o600)
+    second_source.chmod(0o600)
+    first = Account(
+        id="alpha",
+        label="First",
+        profile_dir=str(tmp_path / "first-profile"),
+        auth_json_path=str(first_source),
+    )
+    second = Account(
+        id="alpha",
+        label="Second",
+        profile_dir=str(tmp_path / "second-profile"),
+        auth_json_path=str(second_source),
+    )
+
+    with pytest.raises(ValueError, match="duplicate account id"):
+        plan_auth_migration((first, second))
+
+
+def test_auth_migration_apply_rejects_duplicate_item_account_ids(tmp_path):
+    plan = AuthMigrationPlan(
+        migration_id="m-test",
+        items=(
+            AuthMigrationItem(
+                account_id="alpha",
+                source=None,
+                target=tmp_path / "first" / "auth.json",
+                status="canonical",
+            ),
+            AuthMigrationItem(
+                account_id="alpha",
+                source=None,
+                target=tmp_path / "second" / "auth.json",
+                status="canonical",
+            ),
+        ),
+        created_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match="migration plan"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+    assert not (tmp_path / "migration" / "manifest.json").exists()
+
+
 @pytest.mark.parametrize("auth_json_path", [[], {}, 1, object()])
 def test_auth_migration_plan_rejects_invalid_auth_source_type(
     tmp_path, auth_json_path

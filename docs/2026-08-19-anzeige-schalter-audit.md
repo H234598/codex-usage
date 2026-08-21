@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 507: Doppelte Auth-Migrations-Account-IDs abgewiesen
+
+`plan_auth_migration()` und `_validate_migration_plan()` akzeptierten bisher
+mehrere Items mit derselben `account_id`. Die Konfigurationsprüfung verhindert
+das im Normalpfad, direkte Plan-/API-Aufrufer konnten aber zwei Profile für
+dieselbe Identität erzeugen oder in ein Manifest schreiben. Beide Pfade
+verlangen jetzt eindeutige IDs vor Quellenprüfung bzw. Manifest-Schreibvorgang.
+
+Regressionen für Planung und Apply ergänzt. `pytest -q
+tests/test_profile_migration.py`: 48/48 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 505: Auth-Migrationsrollback validiert Item-Felder
 
 `rollback_auth_migration()` übersprang bisher jeden unbekannten Item-Status

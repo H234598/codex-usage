@@ -55,6 +55,7 @@ def plan_auth_migration(
     normalized_roots = tuple(_require_absolute(root, "search root") for root in search_roots)
     items: list[AuthMigrationItem] = []
     sources: dict[Path, str] = {}
+    account_ids: set[str] = set()
     for account in accounts:
         if not isinstance(account, Account):
             raise ValueError("account is invalid")
@@ -62,6 +63,9 @@ def plan_auth_migration(
             _validate_account_id(account.id)
         except ValueError as exc:
             raise ValueError("account id is invalid") from exc
+        if account.id in account_ids:
+            raise ValueError(f"duplicate account id: {account.id}")
+        account_ids.add(account.id)
         layout = layout_for_account(account)
         source = _source_for_account(account, layout, normalized_roots)
         if source is not None:
@@ -366,6 +370,7 @@ def _validate_migration_plan(plan: AuthMigrationPlan) -> None:
         raise ValueError("migration plan is invalid") from exc
     if not isinstance(plan.items, tuple) or len(plan.items) > MAX_MIGRATION_ITEMS:
         raise ValueError("migration plan is invalid")
+    account_ids: set[str] = set()
     for item in plan.items:
         if not isinstance(item, AuthMigrationItem):
             raise ValueError("migration plan is invalid")
@@ -373,6 +378,9 @@ def _validate_migration_plan(plan: AuthMigrationPlan) -> None:
             _validate_account_id(item.account_id)
         except ValueError as exc:
             raise ValueError("migration plan is invalid") from exc
+        if item.account_id in account_ids:
+            raise ValueError("migration plan is invalid")
+        account_ids.add(item.account_id)
         if (
             not isinstance(item.target, Path)
             or not item.target.is_absolute()
