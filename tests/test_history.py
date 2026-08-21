@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -102,6 +102,32 @@ def test_history_store_is_private_and_idempotent(tmp_path):
 
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "captured_at",
+            datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        ),
+        (
+            "reset_at",
+            datetime.max.replace(tzinfo=timezone(-timedelta(hours=14))),
+        ),
+    ],
+)
+def test_history_rejects_aware_timestamps_outside_utc_range(field, value):
+    sample_kwargs = {
+        "account_id": "alpha",
+        "pool": "main",
+        "window_seconds": 18_000,
+        "captured_at": datetime(2026, 8, 16, 10, 0, tzinfo=UTC),
+        "used_percent": 1,
+    }
+    sample_kwargs[field] = value
+    with pytest.raises(ValueError, match=field):
+        UsageSample(**sample_kwargs)
 
 
 def test_history_store_rejects_unsupported_schema_without_rewriting_database(

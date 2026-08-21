@@ -2665,3 +2665,14 @@ kontrolliert gelesen und aufrufbar geprüft; Fehler werden als
 `IntegrationInvalidSource` behandelt. `tests/test_integration_snapshot.py`:
 48/48 fokussierte Tests bestanden; Mypy für Source, Ruff und
 `git diff --check` sauber.
+
+## Runde 271: History validiert UTC-Zeitbereich
+
+`history.UsageSample` akzeptierte aware Randzeitpunkte, deren UTC-Konvertierung
+außerhalb des darstellbaren `datetime`-Bereichs lag, etwa
+`datetime.min+14:00`. `HistoryStore.record()` konnte danach in
+`_to_millis()` roh mit `OverflowError` abbrechen. Die gemeinsame
+Aware-Zeitprüfung testet jetzt zusätzlich UTC-Konvertierbarkeit und weist solche
+Werte kontrolliert als `<label> is out of range` zurück. `tests/test_history.py`:
+74/74 fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
+sauber.

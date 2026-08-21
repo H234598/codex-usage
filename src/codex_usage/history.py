@@ -99,6 +99,10 @@ class UsageSample:
 def _require_aware(value: datetime, label: str) -> None:
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
         raise ValueError(f"{label} must be timezone-aware")
+    try:
+        value.astimezone(UTC)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError(f"{label} is out of range") from exc
 
 
 def _to_millis(value: datetime) -> int:
