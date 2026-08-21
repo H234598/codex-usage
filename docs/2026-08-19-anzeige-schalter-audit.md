@@ -1986,3 +1986,13 @@ Browser-Pfad mit resetlosen Fenstern. Die gemeinsamen Validierungs- und
 Merge-Helfer prüfen jetzt `UsagePool`/`LimitWindow` vor jedem Zugriff und
 ignorieren ungültige Werte fail-closed. `tests/test_state.py`: 235/235
 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.
+
+## Runde 196: Scheduler-Usability für malformed Core-Werte
+
+`_has_usable_core_usage()` griff bei malformed `main`-Pools oder Legacy-
+Fenstern direkt auf `.has_valid_usage` bzw. `.has_usage_value` zu. Der
+Watchdog konnte dadurch vor seiner kontrollierten Partial-/Block-Entscheidung
+mit `AttributeError` abbrechen. Die Prüfung akzeptiert jetzt nur echte
+`UsagePool`-/`LimitWindow`-Objekte; ungültige Werte führen fail-closed zu
+`False`. `tests/test_scheduler.py`: 178/178 bestanden; Mypy für Source und
+Ruff für betroffene Dateien sauber.

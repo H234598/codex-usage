@@ -18,6 +18,7 @@ from codex_usage.scheduler import (
     _apply_watchdog_block,
     _blocked_snapshot_matches_account,
     _fetch_one,
+    _has_usable_core_usage,
     _is_more_conservative_direct_usage,
     _raw_number,
     _remaining_percent,
@@ -4601,6 +4602,46 @@ def test_watchdog_rejects_ok_usage_without_core_limits(main):
     assert rejected.main is None
     assert rejected.cache_invalidated is True
     assert rejected.stale is True
+
+
+def test_watchdog_rejects_malformed_legacy_window_without_crashing():
+    usage = AccountUsage(
+        account_id="malformed-legacy-window",
+        label="Malformed legacy window",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=[],  # type: ignore[arg-type]
+    )
+
+    rejected = _apply_watchdog_block(
+        usage,
+        now=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert rejected.status == AccountStatus.BLOCKED
+    assert rejected.error == "usage limit reached: unknown; reset time unknown"
+
+
+@pytest.mark.parametrize("main", [[], {}, "malformed"])
+def test_scheduler_usable_core_usage_rejects_malformed_main(main):
+    usage = AccountUsage(
+        account_id="malformed-main",
+        label="Malformed main",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        main=main,  # type: ignore[arg-type]
+    )
+
+    assert _has_usable_core_usage(usage) is False
+
+
+def test_scheduler_usable_core_usage_rejects_malformed_legacy_window():
+    usage = AccountUsage(
+        account_id="malformed-legacy-window",
+        label="Malformed legacy window",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+        five_hour=object(),  # type: ignore[arg-type]
+    )
+
+    assert _has_usable_core_usage(usage) is False
 
 
 @pytest.mark.parametrize("availability_sources", [("model_catalog",), ("legacy_fields",), (), None])
