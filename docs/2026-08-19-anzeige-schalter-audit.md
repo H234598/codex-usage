@@ -2893,3 +2893,12 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2671 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
 `git diff --check` sind sauber.
+
+## Runde 297: Unbekannte XDG-Home-Namen fallen auf Standard zurück
+
+`config._xdg_root()` akzeptierte absolute XDG-Werte, behandelte unbekannte
+`~user`-Expansion aber nicht. `Path.expanduser()` konnte dadurch beim Aufbau
+von Default-Statepfaden roh mit `RuntimeError` abbrechen. Unauflösbare
+Expansion fällt jetzt wie relative XDG-Werte auf den Standardpfad zurück.
+`tests/test_config.py`: 113/113 fokussierte Tests bestanden; Mypy für die
+Konfigurationsdatei, Ruff und `git diff --check` sauber.

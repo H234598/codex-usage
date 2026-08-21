@@ -73,7 +73,10 @@ def _select_config_path(path: object | None) -> Path:
 def _xdg_root(variable: str, fallback: Path) -> Path:
     value = os.environ.get(variable)
     if value:
-        candidate = Path(value).expanduser()
+        try:
+            candidate = Path(value).expanduser()
+        except RuntimeError:
+            return fallback
         if candidate.is_absolute():
             return candidate
     return fallback

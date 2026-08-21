@@ -48,6 +48,14 @@ def test_relative_xdg_data_home_is_ignored_for_default_profile(tmp_path, monkeyp
     assert expected.is_dir()
 
 
+def test_unknown_xdg_data_home_is_ignored(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("XDG_DATA_HOME", "~definitely-no-such-user-zzzz/data")
+
+    assert config_module.default_state_dir() == home / ".local" / "share" / "codex-usage"
+
+
 def test_test_home_moves_auth_and_initializes_file_store(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)
