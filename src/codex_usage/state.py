@@ -783,11 +783,21 @@ def _expire_pool_windows(
     expired_names: list[str],
     name_prefix: str | None = None,
 ) -> tuple[UsagePool | None, bool]:
-    if pool is None or not pool.windows:
+    if pool is None:
+        return pool, False
+    if not isinstance(pool.windows, tuple):
+        return replace(pool, windows=(), available=False), True
+    if not pool.windows:
         return pool, False
     remaining: list[LimitWindow] = []
     expired = False
     for window in pool.windows:
+        if not isinstance(window, LimitWindow):
+            expired = True
+            name = f"{name_prefix}:invalid" if name_prefix else "invalid"
+            if name not in expired_names:
+                expired_names.append(name)
+            continue
         if _cached_window_expired(
             window,
             captured_at=_window_expiry_capture(usage, window, values_captured_at),

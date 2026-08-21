@@ -1907,3 +1907,12 @@ automatische Main-Pool-Synthese berücksichtigt jetzt nur echte
 `LimitWindow`-Objekte und übernimmt gültige Geschwisterfenster weiter.
 `tests/test_models.py`, `tests/test_render.py` und `tests/test_state.py`:
 282/282 bestanden; Mypy und Ruff für betroffene Dateien sauber.
+
+## Runde 187: State-Expiry für malformed Pool-Fenster
+
+`state._expire_pool_windows()` übernahm nicht-tupleme Fenstercontainer und
+Nicht-`LimitWindow`-Elemente in den nächsten State. Beschädigte Pools blieben
+damit verfügbar oder konnten bei Attributzugriffen die Ablaufprüfung brechen.
+Ungültige Fenster werden jetzt verworfen; der Pool wird leer und nicht
+verfügbar markiert. `tests/test_state.py`: 228/228 bestanden; Mypy und Ruff
+für betroffene Dateien sauber.

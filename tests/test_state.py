@@ -1028,6 +1028,29 @@ def test_expire_reset_windows_drops_malformed_none_model_pool():
     assert expired.models == ()
 
 
+def test_expire_reset_windows_drops_malformed_pool_windows():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="malformed-main",
+        label="Malformed main",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=[None],  # type: ignore[arg-type]
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=captured_at)
+
+    assert expired.main is not None
+    assert expired.main.windows == ()
+    assert expired.main.available is False
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+
+
 def test_expire_reset_windows_rejects_overlong_model_catalog(monkeypatch):
     import codex_usage.state as state_module
 
