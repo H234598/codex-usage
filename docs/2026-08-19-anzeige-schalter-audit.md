@@ -3978,6 +3978,18 @@ Fehlfunktion.
 `pytest -q tests/test_private_io.py`: 44/44 bestanden; Modul-Coverage 75 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 456: Konfigurations- und Account-Ressourcen
+
+`config.py` auf TOML-/Byte-/Typgrenzen, Analytics-URL-Allowlist, XDG-/Profil-
+Pfade, Account-/Label-/Serienkonflikte, eindeutige Profile und Auth-Dateien,
+private Test-CODEX_HOMEs sowie Add/Remove/Restore-Rollbacks geprüft. Relative,
+fremde, geschützte oder symlinkbasierte Ressourcen werden nicht akzeptiert;
+Konfigurations- und Zustandsänderungen bleiben unter Locks und mit kontrolliertem
+Rollback. Keine neue reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_config.py`: 117/117 bestanden; Modul-Coverage 82 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 451: Bridge-Debug-Secret-Redaction
 
 `bridge._sanitize_debug_text()` redigierte bisher nur camelCase-Tokenfelder
