@@ -1910,6 +1910,33 @@ def test_authenticated_stabilization_rejects_previous_without_configured_backend
     assert result is current
 
 
+def test_authenticated_stabilization_rejects_unhashable_previous_fallback_reason():
+    timezone = ZoneInfo("Europe/Berlin")
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 12, 0, 0, tzinfo=timezone),
+        five_hour=LimitWindow(name="5h", remaining=90),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+        fallback_reason=[],
+        stale=True,
+    )
+    current = replace(
+        previous,
+        captured_at=datetime(2026, 7, 12, 0, 1, tzinfo=timezone),
+        five_hour=replace(previous.five_hour, remaining=99),
+        fallback_reason=None,
+        stale=False,
+    )
+
+    result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
+
+    assert result is current
+
+
 def test_authenticated_app_server_absolute_reset_is_not_replaced_by_old_value():
     timezone = ZoneInfo("Europe/Berlin")
     previous = AccountUsage(
@@ -4976,6 +5003,38 @@ def test_watchdog_refuses_user_only_snapshot_when_auth_has_account_id(
         account,
         snapshot,
         auth_json_path=None,
+        configured_backend="direct",
+        authenticated_fetch=True,
+    ) is False
+
+
+def test_watchdog_rejects_unhashable_snapshot_account_identity(tmp_path, monkeypatch):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="shared-user",
+        backend_account_id=["account-current"],
+    )
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_from_file",
+        lambda path: ("shared-user", "account-current"),
+    )
+
+    assert _blocked_snapshot_matches_account(
+        account,
+        snapshot,
+        auth_json_path=tmp_path / "auth.json",
         configured_backend="direct",
         authenticated_fetch=True,
     ) is False

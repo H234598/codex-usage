@@ -530,9 +530,9 @@ def _stabilize_authenticated_usage(
         and not backend_provenance_matches(usage, previous)
     ):
         return usage
-    if (
-        previous.stale
-        and previous.fallback_reason not in REUSABLE_RESET_FALLBACK_REASONS
+    if previous.stale and (
+        not isinstance(previous.fallback_reason, str)
+        or previous.fallback_reason not in REUSABLE_RESET_FALLBACK_REASONS
     ):
         return usage
     try:

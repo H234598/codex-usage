@@ -1574,3 +1574,12 @@ Frozenset-Mitgliedschaft. Untrusted `AccountUsage`-Objekte mit Liste oder Dict
 als `fallback_reason` konnten dadurch `TypeError` auslösen. Der Wert wird jetzt
 vor allen String-/Set-Operationen geprüft; ungültige Gründe liefern sauber
 `False`. `tests/test_state.py`: 220/220 bestanden; Mypy und Ruff sauber.
+
+## Runde 146: Scheduler-Fallback-Typprüfung
+
+`scheduler._stabilize_authenticated_usage()` prüfte einen gespeicherten
+Fallback-Grund direkt per Set-Mitgliedschaft. Ein manipuliertes vorheriges
+`AccountUsage` mit Liste oder Dict als `fallback_reason` konnte beim
+Stabilisieren `TypeError` auslösen. Der Grund wird jetzt als String validiert;
+ungültige Werte verwerfen Stabilisierung sicher. `tests/test_scheduler.py`:
+162/162 bestanden; Mypy und Ruff sauber.
