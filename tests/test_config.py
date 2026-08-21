@@ -220,6 +220,24 @@ def test_concurrent_account_updates_keep_each_valid_account(tmp_path):
     assert {account.id for account in config.accounts} == {"one", "two", "three", "four"}
 
 
+def test_add_account_rejects_case_variant_active_series_conflict(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account(
+        "one",
+        series="A",
+        series_active=True,
+        path=config_path,
+    )
+
+    with pytest.raises(ValueError, match="series conflict"):
+        add_or_update_account(
+            "two",
+            series="a",
+            series_active=True,
+            path=config_path,
+        )
+
+
 def test_add_account_rejects_dot_segments(tmp_path):
     with pytest.raises(ValueError):
         add_or_update_account(".", path=tmp_path / "config.toml")

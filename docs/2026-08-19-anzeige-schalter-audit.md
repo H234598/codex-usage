@@ -913,3 +913,16 @@ explizit parenthesisiert; Browserauswahl bleibt unverändert.
 
 Ruff für `src/codex_usage/reactivate.py` ist sauber; der Reaktivierungstest
 endet mit 42/42 bestanden.
+
+## Runde 67: Groß-/Kleinschreibung aktiver Serien
+
+`add_or_update_account()` validierte neue Serienpräfixe, übernahm sie aber in
+der vom CLI gelieferten Schreibweise. Die Config-Ladefunktion normalisiert
+hingegen auf Großbuchstaben. Dadurch konnten aktive Serien `A` und `a`
+gleichzeitig gespeichert werden; der Konflikt erschien erst beim nächsten
+Reload.
+
+Neue Serien werden vor Account-/Konfliktvalidierung uppercase-normalisiert.
+Der Regressionstest reproduziert den Fall und erwartet sofortigen Konflikt.
+`tests/test_config.py`: 74/74 bestanden; Ruff für `src/codex_usage/config.py`
+ist sauber.

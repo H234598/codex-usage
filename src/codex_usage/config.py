@@ -187,6 +187,7 @@ def add_or_update_account(
         _validate_reactivation_browser(reactivation_browser)
     if series is not None:
         _validate_series(series)
+        series = series.upper()
     if series_active is not None and not isinstance(series_active, bool):
         raise ValueError("series_active must be boolean")
     if not isinstance(test_home, bool):
@@ -248,7 +249,11 @@ def add_or_update_account(
             reactivation_browser=reactivation_browser
             or (existing.reactivation_browser if existing else "auto"),
             series=series if series is not None else (existing.series if existing else ""),
-            series_active=series_active if series_active is not None else (existing.series_active if existing else False),
+            series_active=(
+                series_active
+                if series_active is not None
+                else (existing.series_active if existing else False)
+            ),
         )
 
         accounts = [item for item in config.accounts if item.id != account_id]
@@ -896,7 +901,9 @@ def _validate_series(series: str, *, allow_empty: bool = False) -> None:
     if allow_empty and series == "":
         return
     if not isinstance(series, str) or not SERIES_RE.fullmatch(series):
-        raise ValueError("series must be a letter followed by at most 15 letters, digits, dash or underscore")
+        raise ValueError(
+            "series must be a letter followed by at most 15 letters, digits, dash or underscore"
+        )
 
 
 def _strict_int(value: object, name: str) -> int:
