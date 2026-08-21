@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 516: Canonical-Auth-Datei auf Privatheit geprüft
+
+Canonical-Items wurden bisher im Apply nur ins Manifest übernommen; eine
+vorhandene Datei mit 0644, falschem Eigentümer, Hardlink oder Nicht-Regular-
+Typ konnte dadurch als gültig erscheinen. Plan-Klassifizierung und direkter
+Apply validieren Canonical-Ziel jetzt als user-owned, private reguläre
+Single-Link-Datei, bevor sie den Status `canonical` akzeptieren.
+
+Regressionen für Plan und direkten Apply mit nicht-privater Datei ergänzt.
+`pytest -q tests/test_profile_migration.py`: 62/62 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 515: Broken-Auth-Symlink im Suchroot erkannt
 
 `_source_for_account()` berücksichtigte Kandidaten bisher nur mit

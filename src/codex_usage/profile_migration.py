@@ -105,6 +105,13 @@ def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[s
         try:
             for item in plan.items:
                 if item.status == "canonical":
+                    canonical_status, canonical_reason = _classify_source(
+                        item.target, item.target
+                    )
+                    if canonical_status != "canonical":
+                        raise ValueError(
+                            canonical_reason or "canonical auth target is invalid"
+                        )
                     records.append(_record(item, "canonical", None))
                     continue
                 if item.status != "planned" or item.source is None:
@@ -283,6 +290,17 @@ def _classify_source(source: Path | None, target: Path) -> tuple[str, str | None
     except ValueError as exc:
         return "conflict", str(exc)
     if Path(os.path.normpath(str(source))) == Path(os.path.normpath(str(target))):
+        try:
+            target_stat = source.stat()
+        except OSError:
+            return "conflict", "canonical auth target cannot be inspected"
+        if (
+            not stat.S_ISREG(target_stat.st_mode)
+            or target_stat.st_nlink != 1
+            or target_stat.st_uid != os.getuid()
+            or target_stat.st_mode & 0o077
+        ):
+            return "conflict", "canonical auth target is not private"
         return "canonical", None
     if not source.is_file():
         return "missing", "auth source does not exist"
