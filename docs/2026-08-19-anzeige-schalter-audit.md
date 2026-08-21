@@ -1777,3 +1777,11 @@ Typvalidierung in ein Set. Ein unhashbarer Key konnte die Projektion mit
 `TypeError` abbrechen. Die Funktion verwirft solche Pool-Objekte jetzt über
 den normalen Invalid-Source-Pfad. `tests/test_integration_snapshot.py`:
 35/35 bestanden; Mypy und Ruff sauber.
+
+## Runde 172: Restore-Backend-Typ
+
+`state._allow_missing_window_restore()` prüfte bei partiellen Werten
+`backend_used` ohne String-Guard gegen ein Set. Unhashbare Werte führten zu
+`TypeError`; unbekannte/malformed Backends folgen jetzt kontrolliert der
+bisherigen Restore-Semantik. `tests/test_state.py`: 227/227 bestanden; Mypy
+und Ruff sauber.

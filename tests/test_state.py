@@ -13,6 +13,7 @@ import pytest
 from codex_usage.account_lock import account_lock
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.state import (
+    _allow_missing_window_restore,
     _authoritative_empty_limits,
     _backend_capture_priority,
     _is_inferred_inactive_five_hour,
@@ -3414,6 +3415,19 @@ def test_authoritative_empty_limits_rejects_unhashable_backend(backend_used):
     )
 
     assert _authoritative_empty_limits(usage) is False
+
+
+@pytest.mark.parametrize("backend_used", [[], {}])
+def test_missing_window_restore_rejects_unhashable_backend(backend_used):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        status=AccountStatus.PARTIAL,
+        backend_used=backend_used,
+    )
+
+    assert _allow_missing_window_restore(usage) is True
 
 
 def test_cache_invalidated_browser_limits_do_not_restore_old_values():

@@ -1246,6 +1246,7 @@ def _allow_missing_window_restore(usage: AccountUsage) -> bool:
         return False
     return not (
         usage.status == AccountStatus.PARTIAL
+        and isinstance(usage.backend_used, str)
         and usage.backend_used in AUTHENTICATED_BACKENDS
     )
 
