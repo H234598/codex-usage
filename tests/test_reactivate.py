@@ -891,6 +891,11 @@ def test_oauth_browser_rejects_non_openai_url(tmp_path, monkeypatch, capsys):
     assert "refusing non-OpenAI" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("url", [None, [], {}])
+def test_oauth_browser_rejects_non_string_url(url):
+    assert oauth_browser.main([url]) == 1
+
+
 @pytest.mark.parametrize(
     "url",
     [

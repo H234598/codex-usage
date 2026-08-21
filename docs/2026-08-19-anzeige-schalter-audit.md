@@ -1103,3 +1103,10 @@ Prüfung verlangt jetzt zuerst Stringtyp. `tests/test_integration_snapshot.py`:
 Backendwert direkt gegen ein `frozenset`. Unhashbare Fremdtypen leakten
 `TypeError`; sie werden jetzt als nicht passende Provenance verworfen.
 `tests/test_state.py`: 217/217 bestanden; Ruff sauber.
+
+## Runde 88: OAuth-URL-Typprüfung
+
+`oauth_browser._validate_login_url()` rief `len()` und `urlsplit()` ohne
+Stringprüfung auf. Nicht-String-CLI-Werte leakten `TypeError` aus `main()`;
+jetzt erfolgt kontrollierte Ablehnung mit Fehlercode 1. Regression ergänzt;
+`tests/test_reactivate.py`: 46/46 bestanden; Ruff sauber.

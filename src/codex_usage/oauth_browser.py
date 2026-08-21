@@ -53,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _validate_login_url(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("refusing non-OpenAI login URL")
     if len(value) > 8192:
         raise ValueError("login URL is too long")
     parts = urlsplit(value)
