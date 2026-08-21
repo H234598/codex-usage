@@ -3361,3 +3361,15 @@ Fehlerdetails bleiben aus stdout/stderr ausgeschlossen.
 
 `pytest -q tests/test_integration_entrypoint.py`: 26/26 bestanden. Mypy für
 `integration_entrypoint.py`, Ruff und `git diff --check` sauber.
+
+## Runde 351: Formatierungs-Selector und Einzeltabelle geprüft
+
+`FormatTableSelector` wurde bounded auf deklarierte Tabellen, unbekannte
+Auswahlwerte, Fallback beim Settings-Reload, persistierte Auswahl und
+`Gtk.StackTransitionType.NONE` geprüft. Aktive Schema-Seite enthält weiterhin
+eine zentrale Auswahl und genau eine sichtbare Tabelle; kein neuer GUI-Fehler
+reproduziert.
+
+`pytest -q tests/test_format_table_selector.py tests/test_applet.py`:
+32/32 bestanden. Ruff, Python-Kompilierung und `git diff --check` sauber;
+Warnungen sind bekannte PyGObject-/GTK-Deprecations.
