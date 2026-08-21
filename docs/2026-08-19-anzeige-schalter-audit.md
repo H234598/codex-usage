@@ -3995,6 +3995,16 @@ Anzeige- oder State-Fehlfunktion.
 `pytest -q tests/test_models.py`: 15/15 bestanden; Modul-Coverage 50 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 432: Strict-JSON erneut geprüft
+
+`json_utils.py` auf Typgrenze, Byte-/String-Scanner, Escapes, strukturelle
+Nesting-Grenze, Duplicate-Keys und nicht erlaubte JSON-Konstanten geprüft.
+Malformed Eingaben bleiben kontrollierte `ValueError`; kein neuer
+reproduzierbarer Fehler.
+
+`pytest -q tests/test_json_utils.py`: 8/8 bestanden; Modul-Coverage 93 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 413: Private-I/O-Grenzen
 
 `private_io.py` auf Pfadtyp-/Symlink-/Owner-/Hardlink-Prüfungen, geschützte
