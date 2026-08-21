@@ -529,7 +529,7 @@ def _copy_regular(source: Path, target: Path, *, mode: int = 0o600) -> None:
         fd = -1
         with destination:
             destination.write(_read_nofollow(source))
-        target.chmod(mode)
+            os.fchmod(destination.fileno(), mode)
     except IntegrationInstallError:
         raise
     except (OSError, ValueError):
@@ -1051,10 +1051,10 @@ def _safe_extract_wheel(
                 fd = -1
                 with handle:
                     handle.write(payload)
+                    os.fchmod(handle.fileno(), 0o600)
             finally:
                 if fd >= 0:
                     os.close(fd)
-            target.chmod(0o600)
     except _WheelMemberValidationError:
         raise
     except (OSError, ValueError):
@@ -1214,10 +1214,10 @@ def _write_exclusive(
             if written <= 0:
                 _fail()
             view = view[written:]
+        os.fchmod(fd, mode)
         os.fsync(fd)
         os.close(fd)
         fd = -1
-        path.chmod(mode)
         final_provisional = _provisional_rebased(
             path,
             provisional,

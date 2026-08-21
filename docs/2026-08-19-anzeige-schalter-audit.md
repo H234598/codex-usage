@@ -4104,6 +4104,20 @@ Schema-/Rendering-Regressionen ergänzt. `pytest -q tests/test_applet.py`:
 27/27 bestanden; `node --test tests/applet_runtime.test.js`: 397/397
 bestanden. `node --check` und `git diff --check` sauber.
 
+## Runde 462: Integration-Installer-FD-Modusbindung
+
+`integration_installer.py` setzte bei `_copy_regular()`,
+`_safe_extract_wheel()` und `_write_exclusive()` den privaten Dateimodus erst
+nach dem Schließen des Deskriptors über den Pfad. Ein Pfad-Race konnte diesen
+Pfad zwischen `close()` und `chmod()` durch einen Symlink ersetzen und damit
+den Modus eines fremden Ziels ändern. Die drei Schreibpfade verwenden jetzt
+`os.fchmod()` am noch offenen Deskriptor; Pfad-`chmod()` entfällt.
+
+Drei Race-Regressionen prüfen, dass Zieldatei und Fremddatei unverändert
+bleiben; der bestehende Cleanup-Fehlertest deckt den neuen `fchmod()`-Fehlerast
+für Kandidaten weiter ab. `pytest -q tests/test_integration_installer.py`:
+109/109 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

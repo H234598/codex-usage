@@ -908,6 +908,92 @@ def test_safe_extract_accepts_matching_regular_member(tmp_path):
     assert _tree_bytes(destination) == (("codex_usage/ok.py", 0o600, b"x"),)
 
 
+def test_copy_regular_binds_mode_change_to_open_file(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    source = tmp_path / "source"
+    source.write_bytes(b"source")
+    source.chmod(0o600)
+    parent = tmp_path / "destination"
+    parent.mkdir(mode=0o700)
+    target = parent / "target"
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"keep")
+    outside.chmod(0o644)
+    original_chmod = Path.chmod
+
+    def replace_target_before_path_chmod(path, mode):
+        if path == target:
+            target.unlink()
+            target.symlink_to(outside)
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", replace_target_before_path_chmod)
+    integration_installer._copy_regular(source, target)
+
+    assert target.is_file() and not target.is_symlink()
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o600
+    assert stat.S_IMODE(outside.lstat().st_mode) == 0o644
+
+
+def test_safe_extract_binds_mode_change_to_open_file(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    wheel = tmp_path / "candidate.whl"
+    destination = tmp_path / "destination"
+    destination.mkdir(mode=0o700)
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("codex_usage/ok.py", b"x")
+    target = destination / "codex_usage" / "ok.py"
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"keep")
+    outside.chmod(0o644)
+    original_chmod = Path.chmod
+
+    def replace_target_before_path_chmod(path, mode):
+        if path == target:
+            target.unlink()
+            target.symlink_to(outside)
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", replace_target_before_path_chmod)
+    integration_installer._safe_extract_wheel(
+        wheel_path=wheel,
+        destination=destination,
+        record_rows={"codex_usage/ok.py": (hashlib.sha256(b"x").hexdigest(), 1)},
+    )
+
+    assert target.is_file() and not target.is_symlink()
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o600
+    assert stat.S_IMODE(outside.lstat().st_mode) == 0o644
+
+
+def test_write_exclusive_binds_mode_change_to_open_file(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    target = parent / "target"
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"keep")
+    outside.chmod(0o644)
+    original_chmod = Path.chmod
+
+    def replace_target_before_path_chmod(path, mode):
+        if path == target:
+            target.unlink()
+            target.symlink_to(outside)
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", replace_target_before_path_chmod)
+    identity = integration_installer._write_exclusive(target, b"payload", mode=0o600)
+
+    assert identity.permissions == 0o600
+    assert target.is_file() and not target.is_symlink()
+    assert target.read_bytes() == b"payload"
+    assert stat.S_IMODE(outside.lstat().st_mode) == 0o644
+
+
 def test_safe_extract_rejects_oversized_member_before_materializing(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 
@@ -1844,6 +1930,7 @@ def test_post_create_chmod_failure_cleans_only_new_target(tmp_path, monkeypatch,
     data_home, state_home, temporary_root = _roots(tmp_path)
     source_root = _temporary_source_copy(tmp_path)
     original_chmod = Path.chmod
+    original_fchmod = os.fchmod
     fired = False
 
     def is_target(path: Path) -> bool:
@@ -1858,7 +1945,24 @@ def test_post_create_chmod_failure_cleans_only_new_target(tmp_path, monkeypatch,
             raise OSError("synthetic post-create chmod failure")
         return original_chmod(path, mode)
 
+    def fail_target_fchmod(fd, mode):
+        nonlocal fired
+        try:
+            path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        except OSError:
+            path = None
+        if (
+            kind == "candidate"
+            and not fired
+            and path is not None
+            and is_target(path)
+        ):
+            fired = True
+            raise OSError("synthetic post-create chmod failure")
+        return original_fchmod(fd, mode)
+
     monkeypatch.setattr(Path, "chmod", fail_target_chmod)
+    monkeypatch.setattr(os, "fchmod", fail_target_fchmod)
     with pytest.raises(integration_installer.IntegrationInstallError):
         integration_installer.install_release(
             source_root=source_root,
