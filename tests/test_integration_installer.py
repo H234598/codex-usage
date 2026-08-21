@@ -238,6 +238,49 @@ def test_remove_activation_files_removes_any_python3_minor_entry(tmp_path):
     assert (bin_dir / "python").exists()
 
 
+def test_remove_activation_files_rejects_bin_parent_swap(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    venv_root = tmp_path / "venv"
+    bin_dir = venv_root / "bin"
+    bin_dir.mkdir(parents=True, mode=0o700)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    outside_activation = outside / "activate"
+    outside_activation.write_text("keep", encoding="utf-8")
+    original_iterdir = Path.iterdir
+    original_open = os.open
+    swapped = False
+
+    def swap_bin():
+        nonlocal swapped
+        if swapped:
+            return
+        bin_dir.rmdir()
+        bin_dir.symlink_to(outside, target_is_directory=True)
+        swapped = True
+
+    def swap_before_iterdir(path):
+        if path == bin_dir:
+            swap_bin()
+        return original_iterdir(path)
+
+    def swap_before_open(path, flags, mode=0o777, *, dir_fd=None):
+        if path == "bin" and dir_fd is not None:
+            swap_bin()
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(Path, "iterdir", swap_before_iterdir)
+    monkeypatch.setattr(integration_installer.os, "open", swap_before_open)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._remove_activation_files(venv_root)
+
+    assert swapped
+    assert outside_activation.exists()
+
+
 def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path):
     root = tmp_path / "foreign"
     root.mkdir(mode=0o700)

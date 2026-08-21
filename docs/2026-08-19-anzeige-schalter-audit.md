@@ -4206,6 +4206,17 @@ Direkter Modus-Test und Installer-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 111/111 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 470: Installer-Aktivierungsdateien per Directory-FD löschen
+
+`_remove_activation_files()` iterierte `venv/bin` und löschte Treffer per
+Pfad. Ein Parent-Swap konnte dadurch Dateien aus einem Fremdverzeichnis
+entfernen; `lib64` hatte denselben Fehler. Cleanup öffnet `venv/` und `bin/`
+jetzt mit `O_DIRECTORY|O_NOFOLLOW`, scannt über den Directory-FD und löscht
+relative Einträge per `dir_fd`.
+
+Parent-Swap-Regression ergänzt. `pytest -q tests/test_integration_installer.py`:
+112/112 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

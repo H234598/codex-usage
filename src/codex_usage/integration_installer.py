@@ -1161,16 +1161,55 @@ def _postwalk_release(root: Path) -> set[str]:
 
 
 def _remove_activation_files(venv_root: Path) -> None:
-    bin_dir = venv_root / "bin"
-    for path in bin_dir.iterdir():
-        if path.name.startswith("activate") or path.name == "Activate.ps1" or re.fullmatch(
-            r"python3(?:\.\d+)?", path.name
-        ):
-            if path.is_symlink() or path.is_file():
-                path.unlink()
-    lib64 = venv_root / "lib64"
-    if lib64.is_symlink():
-        lib64.unlink()
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    venv_fd = -1
+    bin_fd = -1
+    try:
+        _no_symlink_ancestors(venv_root)
+        venv_fd = os.open(venv_root, flags)
+        venv_item = os.fstat(venv_fd)
+        if not stat.S_ISDIR(venv_item.st_mode) or venv_item.st_uid != os.getuid():
+            _fail()
+        bin_fd = os.open("bin", flags, dir_fd=venv_fd)
+        bin_item = os.fstat(bin_fd)
+        if not stat.S_ISDIR(bin_item.st_mode) or bin_item.st_uid != os.getuid():
+            _fail()
+        with os.scandir(bin_fd) as entries:
+            removable: list[str] = []
+            for entry in entries:
+                if not (
+                    entry.name.startswith("activate")
+                    or entry.name == "Activate.ps1"
+                    or re.fullmatch(r"python3(?:\.\d+)?", entry.name)
+                ):
+                    continue
+                item = entry.stat(follow_symlinks=False)
+                if stat.S_ISLNK(item.st_mode) or stat.S_ISREG(item.st_mode):
+                    removable.append(entry.name)
+        for name in removable:
+            os.unlink(name, dir_fd=bin_fd)
+        try:
+            lib64_item = os.stat("lib64", dir_fd=venv_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISLNK(lib64_item.st_mode):
+                os.unlink("lib64", dir_fd=venv_fd)
+    except IntegrationInstallError:
+        raise
+    except (OSError, ValueError):
+        _fail()
+    finally:
+        if bin_fd >= 0:
+            os.close(bin_fd)
+        if venv_fd >= 0:
+            os.close(venv_fd)
 
 
 def _write_exclusive(
