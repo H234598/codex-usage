@@ -3555,3 +3555,13 @@ User-Timer nach `f54df54` neu aktiviert. `app-server`-Konten liefern weiterhin
 valide Daten. Service bleibt wegen der zwei direkten Browser-Konten ohne
 Firefox-Playwright-Executable bei Exit 2; Timer ist aktiv und geplant. Kein
 Fallback und keine Netzwerkinstallation ausgeführt.
+
+## Runde 371: Device-Login und Backend-Identitätshelfer
+
+`profile_login.py` und `identity.py` wurden auf bounded subprocess output,
+Stream-/Event-Trennung, Timeout-Reaping, staged-auth-Validierung,
+Identitätskonsistenz und malformed Kandidaten geprüft. Kein neuer
+reproduzierbarer Fehler.
+
+`pytest -q tests/test_profile_login.py tests/test_identity.py`: 67/67
+bestanden. Mypy für beide Module, Ruff und `git diff --check` sauber.
