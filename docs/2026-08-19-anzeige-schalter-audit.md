@@ -1833,3 +1833,13 @@ Container konnten JSON-/Render-Ausgabe mit `TypeError` oder `AttributeError`
 abbrechen. Ungültige optionale Container werden jetzt als leere bzw. unbekannte
 Werte serialisiert. `tests/test_models.py` und `tests/test_render.py`: 46/46
 bestanden; Mypy und Ruff für betroffene Dateien sauber.
+
+## Runde 179: Render-Schutz für malformed Main-Pools
+
+`render._extra_main_value()` vertraute bei gültiger Provenienz blind auf den
+`main`-Pool. Ein malformed Pool-Typ oder ein Pool mit nicht-tuplem
+`windows`-Container konnte Tabellen-Rendering mit `AttributeError` oder
+`TypeError` abbrechen. Der Pfad prüft den Pool und Container jetzt vor Zugriff
+und blendet ungültige Zusatzlimits aus. `tests/test_render.py` sowie die
+relevanten CLI-Render-Tests: 45/45 bestanden; Mypy und Ruff für betroffene
+Dateien sauber.

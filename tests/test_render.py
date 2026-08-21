@@ -554,6 +554,27 @@ def test_extra_main_value_uses_name_only_core_window_identity():
     assert _extra_main_value(usage) == "30d 95% verbleibend"
 
 
+@pytest.mark.parametrize(
+    "main",
+    [[], UsagePool(key="main", display_name="Codex", windows=None)],  # type: ignore[arg-type]
+)
+def test_render_table_hides_malformed_main_pool(main):
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        main=main,
+    )
+
+    rendered = render_table([usage])
+
+    assert "Weitere Limits" in rendered
+    assert _extra_main_value(usage) == "-"
+    assert "AttributeError" not in rendered
+
+
 def test_render_table_hides_unavailable_dynamic_pools():
     usage = AccountUsage(
         account_id="private",

@@ -12,7 +12,7 @@ from typing import TypeGuard
 
 from .config import MAX_CONFIG_ACCOUNTS, AppConfig
 from .extractor import LOCAL_TZ
-from .models import Account, AccountStatus, AccountUsage, LimitWindow
+from .models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .state import backend_provenance_matches_configured
 
 ACCOUNT_CELL_MAX = 40
@@ -310,24 +310,26 @@ def _usage_provenance_is_displayable(
 
 
 def _extra_main_value(usage: AccountUsage) -> str:
+    main = usage.main
     if (
         usage.cache_invalidated
-        or usage.main is None
-        or usage.main.available is not True
-        or not usage.main.has_valid_usage
+        or not isinstance(main, UsagePool)
+        or main.available is not True
+        or not main.has_valid_usage
+        or not isinstance(main.windows, tuple)
     ):
         return "-"
     core_windows = {
         id(window)
         for window in (
-            usage.main.window_for_duration(18_000),
-            usage.main.window_for_duration(604_800),
+            main.window_for_duration(18_000),
+            main.window_for_duration(604_800),
         )
         if window is not None
     }
     values = [
         f"{window.name} {_usage_value(window)}"
-        for window in usage.main.windows
+        for window in main.windows
         if id(window) not in core_windows
     ]
     return "; ".join(values) if values else "-"
