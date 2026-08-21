@@ -3984,57 +3984,6 @@ die Overview nutzt ihn ebenfalls.
 `pytest -q tests/test_render.py`: 66/66 bestanden; Modul-Coverage 87 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
-## Runde 431: Models-DTOs und Fensteridentität
-
-`models.py` auf Fensterdauer-/Namensidentität, Prozent-/Zahlenvalidierung,
-Pool-Erschöpfung, malformed Legacy-Felder und JSON-Serialisierung geprüft.
-Ungültige optionale Container, Datetimes, Pool-Schlüssel und Fensterwerte
-bleiben serialisierbar bzw. werden verworfen; keine neue reproduzierbare
-Anzeige- oder State-Fehlfunktion.
-
-`pytest -q tests/test_models.py`: 15/15 bestanden; Modul-Coverage 50 %
-(Branch). Ruff, Mypy und `git diff --check` sauber.
-
-## Runde 432: Strict-JSON erneut geprüft
-
-`json_utils.py` auf Typgrenze, Byte-/String-Scanner, Escapes, strukturelle
-Nesting-Grenze, Duplicate-Keys und nicht erlaubte JSON-Konstanten geprüft.
-Malformed Eingaben bleiben kontrollierte `ValueError`; kein neuer
-reproduzierbarer Fehler.
-
-`pytest -q tests/test_json_utils.py`: 8/8 bestanden; Modul-Coverage 93 %
-(Branch). Ruff, Mypy und `git diff --check` sauber.
-
-## Runde 433: Test-Home-Auth-Rollback-Identität
-
-`add_or_update_account(test_home=True)` verschob Auth-Datei vor Config-/State-
-Rollback, prüfte beim Rückweg aber nur `is_file()`. Ein zwischenzeitlich
-ersetztes Ziel, insbesondere ein Symlink, konnte dadurch als neue Quelle
-zurückgeschoben werden. Verschiebevorgang merkt nun Device/Inode; Rollback
-prüft Regular-File, User-Owner, Single-Link, private Modi sowie Symlink-freie
-Elternpfade und verweigert geänderte Ziele fail-closed.
-
-Regression reproduziert Zielersetzung. `pytest -q tests/test_config.py`:
-117/117 bestanden; Modul-Coverage 82 % (Branch). Ruff, Mypy und
-`git diff --check` sauber.
-
-## Runde 434: Private-I/O-Eingabebudgets
-
-`private_io.py` erneut auf Pfad-/Symlink-/Owner-/Hardlink-Grenzen, atomare
-Writes, fsync und Locking geprüft. Ergänzt: `read_private_text()` weist
-negative, boolesche und Fremdtyp-Bytebudgets vor Dateizugriff zurück;
-`write_private_text()` weist Nicht-Strings kontrolliert zurück. Keine weitere
-Pfad- oder Lock-Fehlfunktion reproduziert.
-
-`pytest -q tests/test_private_io.py`: 44/44 bestanden; Modul-Coverage 75 %
-(Branch). Ruff, Mypy und `git diff --check` sauber.
-
-## Runde 435: Vollsuite nach Browser-/Config-/Private-I/O-Fixes
-
-Die Integrationsprüfung nach `8d94464`, `9efa94b` und `8b79535` bestätigt
-`2799 bestanden, 1 übersprungen, 3 Warnungen` in 94,43 s. Warnungen bleiben
-externe GTK-/PyGObject-Deprecations; keine Test- oder GUI-Regression.
-
 ## Runde 413: Private-I/O-Grenzen
 
 `private_io.py` auf Pfadtyp-/Symlink-/Owner-/Hardlink-Prüfungen, geschützte
@@ -4239,3 +4188,62 @@ keine neue reproduzierbare GUI-/Tabellenfehlfunktion.
 
 `pytest -q tests/test_render.py`: 66/66 bestanden; Modul-Coverage 87 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 431: Models-DTOs und Fensteridentität
+
+`models.py` auf Fensterdauer-/Namensidentität, Prozent-/Zahlenvalidierung,
+Pool-Erschöpfung, malformed Legacy-Felder und JSON-Serialisierung geprüft.
+Ungültige optionale Container, Datetimes, Pool-Schlüssel und Fensterwerte
+bleiben serialisierbar bzw. werden verworfen; keine neue reproduzierbare
+Anzeige- oder State-Fehlfunktion.
+
+`pytest -q tests/test_models.py`: 15/15 bestanden; Modul-Coverage 50 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 432: Strict-JSON erneut geprüft
+
+`json_utils.py` auf Typgrenze, Byte-/String-Scanner, Escapes, strukturelle
+Nesting-Grenze, Duplicate-Keys und nicht erlaubte JSON-Konstanten geprüft.
+Malformed Eingaben bleiben kontrollierte `ValueError`; kein neuer
+reproduzierbarer Fehler.
+
+`pytest -q tests/test_json_utils.py`: 8/8 bestanden; Modul-Coverage 93 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 433: Test-Home-Auth-Rollback-Identität
+
+`add_or_update_account(test_home=True)` verschob Auth-Datei vor Config-/State-
+Rollback, prüfte beim Rückweg aber nur `is_file()`. Ein zwischenzeitlich
+ersetztes Ziel, insbesondere ein Symlink, konnte dadurch als neue Quelle
+zurückgeschoben werden. Verschiebevorgang merkt nun Device/Inode; Rollback
+prüft Regular-File, User-Owner, Single-Link, private Modi sowie Symlink-freie
+Elternpfade und verweigert geänderte Ziele fail-closed.
+
+Regression reproduziert Zielersetzung. `pytest -q tests/test_config.py`:
+117/117 bestanden; Modul-Coverage 82 % (Branch). Ruff, Mypy und
+`git diff --check` sauber.
+
+## Runde 434: Private-I/O-Eingabebudgets
+
+`private_io.py` erneut auf Pfad-/Symlink-/Owner-/Hardlink-Grenzen, atomare
+Writes, fsync und Locking geprüft. Ergänzt: `read_private_text()` weist
+negative, boolesche und Fremdtyp-Bytebudgets vor Dateizugriff zurück;
+`write_private_text()` weist Nicht-Strings kontrolliert zurück. Keine weitere
+Pfad- oder Lock-Fehlfunktion reproduziert.
+
+`pytest -q tests/test_private_io.py`: 44/44 bestanden; Modul-Coverage 75 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 435: Vollsuite nach Browser-/Config-/Private-I/O-Fixes
+
+Die Integrationsprüfung nach `8d94464`, `9efa94b` und `8b79535` bestätigt
+`2799 bestanden, 1 übersprungen, 3 Warnungen` in 94,43 s. Warnungen bleiben
+externe GTK-/PyGObject-Deprecations; keine Test- oder GUI-Regression.
+
+## Runde 436: Cinnamon-GUI-Runtime und Formatierungsseite
+
+Die JavaScript-Runtime-Suite prüft Formatierungsziele, unabhängige
+Verbrauchs-/Tokenend-/Credit-Tabellen, Element-Zielauflösung, Guard-/Queue-
+Freigaben und wiederholtes Cleanup. `node --test tests/applet_runtime.test.js`:
+395/395 bestanden. Keine neue GUI-/Element-Regression; GTK-Python-Tests sind
+in Runde 435 enthalten.
