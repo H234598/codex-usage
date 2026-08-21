@@ -4450,6 +4450,20 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 490: Opt-in-Leistenfilter für erschöpfte Langlimits
+
+Die Leiste kann jetzt optional einen Account ausblenden, sobald dessen
+Wochen- oder 30-Tage-Limit sicher 0 % erreicht. Der neue Switch
+`hide-account-when-long-limit-exhausted` steht unter „Leiste“ und ist
+standardmäßig deaktiviert. Unbekannte, veraltete, partielle oder fehlende
+Werte bleiben sichtbar; Hover und Klick-Menü werden nicht gefiltert. Der
+bestehende Switch für die 5h-Darstellung bleibt unabhängig.
+
+`node --test tests/applet_runtime.test.js`: 399/399 bestanden.
+`pytest -q tests/test_applet.py tests/test_format_table_selector.py`: 32/32
+bestanden; die drei bekannten GTK-/PyGObject-Deprecation-Warnungen bleiben.
+Ruff, Node-Syntaxcheck, JSON-Prüfung und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

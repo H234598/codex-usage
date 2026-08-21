@@ -2759,6 +2759,39 @@ test("monthly exhaustion masks 5h when long-limit hiding is enabled", () => {
   );
 });
 
+test("opt-in long-limit exhaustion hides account from panel", () => {
+  const applet = makeApplet();
+  applet.hideAccountWhenLongLimitExhausted = true;
+  applet._usages[0].weekly.remaining = 0;
+
+  const alpha = applet._panelItems().find((item) => item.usage.account === "alpha");
+
+  assert.equal(alpha.visible, false);
+});
+
+test("account hiding ignores unknown, stale and available long limits", () => {
+  const applet = makeApplet();
+  applet.hideAccountWhenLongLimitExhausted = true;
+  const alpha = applet._usages[0];
+
+  assert.equal(applet._longLimitExhausted(alpha), false);
+
+  alpha.weekly.remaining = 0;
+  alpha.stale = true;
+  assert.equal(applet._longLimitExhausted(alpha), false);
+
+  alpha.stale = false;
+  alpha.weekly = { remaining: null };
+  assert.equal(applet._longLimitExhausted(alpha), false);
+
+  alpha.weekly = { remaining: 60 };
+  alpha.main = {
+    available: true,
+    windows: [{ name: "30d", duration_seconds: 2592000, remaining: 0 }],
+  };
+  assert.equal(applet._longLimitExhausted(alpha), true);
+});
+
 test("panel settings follow the Abrufwege account order", () => {
   const applet = makeApplet();
   applet.accountBackends = [

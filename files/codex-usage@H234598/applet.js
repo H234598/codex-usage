@@ -67,6 +67,7 @@ CodexUsageApplet.prototype = {
         this.refreshOnOpen = true;
         this.panelPercentSource = "average";
         this.panelAccountSeparator = "bar";
+        this.hideAccountWhenLongLimitExhausted = false;
         this.fastModeIcon = "fast-mode-warning-shield-outline.svg";
         this.warningThreshold = 20;
         this.notifyWarnings = false;
@@ -296,6 +297,11 @@ CodexUsageApplet.prototype = {
         bind(
             "hide-5h-when-long-limit-exhausted",
             "hideFiveHourWhenLongLimitExhausted",
+            this._refreshFormattedSurfaces
+        );
+        bind(
+            "hide-account-when-long-limit-exhausted",
+            "hideAccountWhenLongLimitExhausted",
             this._refreshFormattedSurfaces
         );
         this._bindCustomSetting("fast-mode-icon", "fastModeIcon", this._updatePanel);
@@ -8062,7 +8068,9 @@ CodexUsageApplet.prototype = {
                 usage: usage,
                 settings: settings,
                 slots: slots,
-                visible: !settings.muted && (
+                visible: !settings.muted &&
+                    !(this.hideAccountWhenLongLimitExhausted === true &&
+                        this._longLimitExhausted(usage)) && (
                     slots.length > 0 ||
                     this._elementTargetEnabled(
                         usage.account,
@@ -8757,6 +8765,18 @@ CodexUsageApplet.prototype = {
             this._poolWindowForDuration(usage.main, 2592000)
         );
         return weekly === 0 || monthly === 0 ? null : usage.five_hour;
+    },
+
+    _longLimitExhausted: function(usage) {
+        if (!usage || usage.status !== "ok" || usage.stale === true) {
+            return false;
+        }
+        let weekly = this._remainingPercent(usage.weekly);
+        let monthlyWindow = usage.main && usage.main.available === true
+            ? this._poolWindowForDuration(usage.main, 2592000)
+            : null;
+        let monthly = this._remainingPercent(monthlyWindow);
+        return weekly === 0 || monthly === 0;
     },
 
     _panelValueForSource: function(usage, source) {

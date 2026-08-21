@@ -82,6 +82,7 @@
         "panel-account-separator",
         "panel-percent-source",
         "hide-5h-when-long-limit-exhausted",
+        "hide-account-when-long-limit-exhausted",
         "fast-mode-icon"
       ]
     },
@@ -1807,6 +1808,12 @@
     "type": "switch",
     "description": "5h bei erschöpftem Wochen- oder 30-Tage-Limit als – anzeigen",
     "tooltip": "Wenn Woche oder 30-Tage-Limit eines Accounts 0 % erreichen, zeigt 5h für diesen Account –. Sobald ein Langlimit wieder verfügbar ist, wird 5h wieder angezeigt.",
+    "default": false
+  },
+  "hide-account-when-long-limit-exhausted": {
+    "type": "switch",
+    "description": "Account bei erschöpftem Wochen- oder 30-Tage-Limit aus Leiste ausblenden",
+    "tooltip": "Wenn Woche oder 30-Tage-Limit sicher 0 % erreichen, wird der Account aus der Leiste entfernt. Unbekannte oder veraltete Werte bleiben sichtbar; Hover und Klick-Menü bleiben unverändert.",
     "default": false
   },
   "warning-threshold": {
