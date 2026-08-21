@@ -39,9 +39,15 @@ def record_health_event(
 ) -> None:
     health_path = _health_path(path)
     _prepare_health_directory(health_path.parent)
-    current_time = now if isinstance(now, datetime) else datetime.now(UTC)
+    current_time = datetime.now(UTC)
+    if isinstance(now, datetime):
+        try:
+            if now.tzinfo is not None and now.utcoffset() is not None:
+                current_time = now.astimezone(UTC)
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            pass
     entry: dict[str, Any] = {
-        "at": current_time.astimezone(UTC).isoformat(),
+        "at": current_time.isoformat(),
         "component": _safe_token(component, "unknown"),
         "event": _safe_token(event, "unknown"),
     }

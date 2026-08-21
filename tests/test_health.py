@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -57,7 +57,20 @@ def test_health_redacts_non_string_account(tmp_path, account):
     assert "account" not in load_health(path)["events"][0]
 
 
-@pytest.mark.parametrize("now", [[], {}, "invalid", 1, True, object()])
+@pytest.mark.parametrize(
+    "now",
+    [
+        [],
+        {},
+        "invalid",
+        1,
+        True,
+        object(),
+        datetime(2026, 8, 16, 10, 0),
+        datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        datetime.max.replace(tzinfo=timezone(-timedelta(hours=14))),
+    ],
+)
 def test_health_uses_safe_clock_for_malformed_now(tmp_path, now):
     path = tmp_path / "health.json"
 

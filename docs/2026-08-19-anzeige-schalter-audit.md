@@ -2676,3 +2676,12 @@ Aware-Zeitprüfung testet jetzt zusätzlich UTC-Konvertierbarkeit und weist solc
 Werte kontrolliert als `<label> is out of range` zurück. `tests/test_history.py`:
 74/74 fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
 sauber.
+
+## Runde 272: Health-Safe-Clock validiert Zeitzone und UTC-Bereich
+
+`health.record_health_event()` behandelte naive `datetime`-Werte als lokale
+Zeit und ließ aware Randwerte mit nicht darstellbarer UTC-Konvertierung roh als
+`OverflowError` scheitern. Die Telemetrie prüft `tzinfo`/`utcoffset()` und
+UTC-Konvertierung jetzt defensiv; malformed `now` fällt auf aktuelle UTC-Zeit
+zurück. `tests/test_health.py`: 28/28 fokussierte Tests bestanden; Mypy für
+Source, Ruff und `git diff --check` sauber.
