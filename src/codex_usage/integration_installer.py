@@ -659,16 +659,48 @@ def _require_private_dir(
     path: Path,
     expected: _DirectoryIdentity | None,
     create: bool,
+    *,
+    parent_identity: _DirectoryIdentity | None = None,
 ) -> _DirectoryIdentity:
     path = _absolute(path)
     _no_symlink_ancestors(path.parent)
-    if create and not path.exists() and not path.is_symlink():
+    if create:
+        parent_fd = -1
         try:
-            path.mkdir(mode=0o700)
-        except FileExistsError:
-            pass
+            flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                flags |= os.O_DIRECTORY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            if hasattr(os, "O_CLOEXEC"):
+                flags |= os.O_CLOEXEC
+            if parent_identity is None:
+                parent_identity = _directory_identity(path.parent)
+            parent_fd = os.open(path.parent, flags)
+            parent_item = os.fstat(parent_fd)
+            if (
+                not stat.S_ISDIR(parent_item.st_mode)
+                or parent_item.st_uid != os.getuid()
+                or _DirectoryIdentity(
+                    parent_item.st_dev,
+                    parent_item.st_ino,
+                    stat.S_IMODE(parent_item.st_mode),
+                )
+                != parent_identity
+            ):
+                _fail()
+            try:
+                os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(path.name, mode=0o700, dir_fd=parent_fd)
+                except FileExistsError:
+                    pass
         except (OSError, ValueError):
             _fail()
+        finally:
+            if parent_fd >= 0:
+                os.close(parent_fd)
     identity = _identity(path)
     if expected is not None and identity != expected:
         _fail()
@@ -679,11 +711,21 @@ def _bootstrap_integration_dir(
     state_home: Path,
 ) -> tuple[_DirectoryIdentity, _DirectoryIdentity]:
     state_home = _absolute(state_home)
-    _require_private_dir(state_home, None, False)
+    state_identity = _require_private_dir(state_home, None, False)
     app_dir = state_home / "codex-usage"
     integration_dir = app_dir / "integration"
-    app_identity = _require_private_dir(app_dir, None, True)
-    integration_identity = _require_private_dir(integration_dir, None, True)
+    app_identity = _require_private_dir(
+        app_dir,
+        None,
+        True,
+        parent_identity=state_identity,
+    )
+    integration_identity = _require_private_dir(
+        integration_dir,
+        None,
+        True,
+        parent_identity=app_identity,
+    )
     return app_identity, integration_identity
 
 
@@ -871,9 +913,14 @@ def _resolve_python_executable(path: Path) -> Path:
 
 def _temporary_source_copy(destination_root: Path) -> Path:
     destination_root = _absolute(destination_root)
-    _require_private_dir(destination_root, None, False)
+    destination_root_identity = _require_private_dir(destination_root, None, False)
     destination = destination_root / "source"
-    _require_private_dir(destination, None, True)
+    _require_private_dir(
+        destination,
+        None,
+        True,
+        parent_identity=destination_root_identity,
+    )
     for relative_text in SOURCE_MANIFEST_FILES:
         relative = Path(relative_text)
         source = PROJECT_ROOT / relative
@@ -1067,8 +1114,13 @@ def _build_verified_wheel(
         environment=environment,
     )
     _require_private_dir(build_root, None, False)
-    _require_private_dir(wheel_dir.parent, None, False)
-    wheel_identity = _require_private_dir(wheel_dir, wheel_identity, True)
+    wheel_parent_identity = _require_private_dir(wheel_dir.parent, None, False)
+    wheel_identity = _require_private_dir(
+        wheel_dir,
+        wheel_identity,
+        True,
+        parent_identity=wheel_parent_identity,
+    )
     command = [
         str(python_executable),
         "-I",
@@ -2173,7 +2225,12 @@ def _install_release(
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             _require_private_dir(temporary_root, temporary_identity, False)
             releases = integration / "releases"
-            releases_identity = _require_private_dir(releases, None, True)
+            releases_identity = _require_private_dir(
+                releases,
+                None,
+                True,
+                parent_identity=integration_identity,
+            )
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             _require_private_dir(temporary_root, temporary_identity, False)
             _require_private_dir(releases, releases_identity, False)

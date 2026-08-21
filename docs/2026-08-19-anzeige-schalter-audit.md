@@ -4388,6 +4388,19 @@ Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 127/127 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 485: Private-Verzeichnis-Creation mit erwartetem Parent
+
+`_require_private_dir(create=True)` verwendete weiterhin Pfad-`exists()` und
+`mkdir()`. Bootstrap-, Source-Copy- und Wheel-Output-Parents waren damit nicht
+an den bereits geprüften Directory-Inode gebunden. Die Funktion akzeptiert
+jetzt erwartete Parent-Identität, prüft Parent per FD und erstellt fehlende
+Kinder relativ mit `dir_fd`; bekannte Call-Sites reichen ihre Parent-Inodes
+durch. Concurrent-`FileExistsError` bleibt konvergent.
+
+Parent-Swap- und Bootstrap-Race-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 128/128 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
