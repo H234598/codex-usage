@@ -38,6 +38,16 @@ def test_auth_migration_dry_run_finds_explicit_source_without_writing(tmp_path):
     assert plan.items[0].secret_marker is None
 
 
+def test_auth_migration_rejects_unknown_auth_home(tmp_path):
+    account = _account(
+        tmp_path,
+        Path("~definitely-no-such-user-zzzz/auth.json"),
+    )
+
+    with pytest.raises(ValueError, match="auth source cannot be resolved"):
+        plan_auth_migration((account,))
+
+
 def test_auth_migration_plan_rejects_too_many_accounts(tmp_path):
     accounts = tuple(
         Account(

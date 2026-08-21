@@ -224,7 +224,10 @@ def _source_for_account(
     search_roots: tuple[Path, ...],
 ) -> Path | None:
     if account.auth_json_path:
-        return Path(account.auth_json_path).expanduser()
+        try:
+            return Path(account.auth_json_path).expanduser()
+        except RuntimeError as exc:
+            raise ValueError("auth source cannot be resolved") from exc
     candidates = [layout.profile_dir / "auth.json"]
     if len(search_roots) == 1:
         candidates.append(search_roots[0] / "auth.json")

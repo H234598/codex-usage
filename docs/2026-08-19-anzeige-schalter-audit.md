@@ -2823,6 +2823,15 @@ expandiert; unbekannte Home-Namen liefern kontrolliert
 fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
 sauber.
 
+## Runde 290: Profil-Migration validiert explizite Auth-Quelle
+
+`profile_migration._source_for_account()` ließ einen unbekannten `~user`-
+Auth-Pfad als rohes `RuntimeError` entkommen. Explizite Auth-Quellen werden
+jetzt kontrolliert expandiert; unbekannte Home-Namen liefern
+`ValueError("auth source cannot be resolved")` vor Quellenklassifizierung und
+Schreibzugriff. `tests/test_profile_migration.py`: 31/31 fokussierte Tests
+bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
+
 ## Runde 289: Vollsuite nach App-Server-/Bridge-/Scheduler-Härtung
 
 Die Vollsuite bestätigt den aktuellen HEAD: `2667 bestanden, 1 übersprungen,
