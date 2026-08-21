@@ -135,6 +135,11 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _RaisingAstimezone(datetime):
+    def astimezone(self, _tz=None):
+        raise RuntimeError("synthetic astimezone marker")
+
+
 def test_history_rejects_timezone_callbacks_that_raise():
     with pytest.raises(ValueError, match="captured_at"):
         UsageSample(
@@ -174,6 +179,39 @@ def test_usage_samples_skip_invalid_timezone_callbacks():
     assert len(samples) == 1
     assert samples[0].captured_at == captured
     assert samples[0].reset_at is None
+
+
+@pytest.mark.parametrize("field", ["main", "credits"])
+def test_usage_samples_skip_reset_astimezone_callbacks_that_raise(field):
+    from codex_usage.history import usage_samples_from_usage
+
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    broken_window = LimitWindow(
+        name="5h" if field == "main" else "credits",
+        percent=75,
+        reset_at=_RaisingAstimezone(2026, 8, 16, 11, 0, tzinfo=UTC),
+    )
+    kwargs = {
+        "main": UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(broken_window,),
+            availability_sources=("usage",),
+        )
+        if field == "main"
+        else None,
+        "credits": broken_window if field == "credits" else None,
+    }
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_used="direct",
+        **kwargs,
+    )
+
+    assert usage_samples_from_usage(usage) == ()
 
 
 def test_history_store_rejects_unsupported_schema_without_rewriting_database(

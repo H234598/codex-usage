@@ -3769,3 +3769,13 @@ Aufrufer begrenzen ihre Rohdaten separat.
 
 `pytest -q tests/test_json_utils.py`: 8/8 bestanden; Modul-Coverage 93%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 392: History-Reset-Zeitzonenfehler
+
+`history._iter_usage_samples()` behandelte `utcoffset()`-Fehler defensiv, ließ
+aber eine Exception aus `reset_at.astimezone()` aus dem Main- oder Credit-Pfad
+entkommen. Beide Fensterpfade überspringen solche malformed Reset-Zeitzonen
+jetzt kontrolliert; parametrischer Regressionstest deckt beide ab.
+
+`pytest -q tests/test_history.py`: 78/78 bestanden; Modul-Coverage 81%.
+Ruff, Mypy und `git diff --check` sauber.

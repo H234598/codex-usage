@@ -582,7 +582,7 @@ def _iter_usage_samples(usage: AccountUsage):
                     else None,
                     source=source or "unknown",
                 )
-            except (TypeError, ValueError, OverflowError):
+            except Exception:
                 continue
     credit = usage.credits
     if isinstance(credit, LimitWindow):
@@ -616,7 +616,7 @@ def _iter_usage_samples(usage: AccountUsage):
                     else None,
                     source=source or "unknown",
                 )
-            except (TypeError, ValueError, OverflowError):
+            except Exception:
                 return
 
 
