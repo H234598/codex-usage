@@ -3427,3 +3427,13 @@ Create-Only-Rollback und fsync geprüft. Kein neuer reproduzierbarer Fehler.
 
 `pytest -q tests/test_private_io.py`: 32/32 bestanden. Mypy für
 `private_io.py`, Ruff und `git diff --check` sauber.
+
+## Runde 358: Strict-JSON-Parser geprüft
+
+`json_utils.py` wurde auf Eingabetypen, Bytearray-Verarbeitung, Duplicate Keys,
+NaN/Infinity-Konstanten, String-Escapes und maximale Verschachtelung geprüft.
+Auch ungültige UTF-8-Bytes werden als `ValueError` (UnicodeDecodeError-
+Untertyp) behandelt; kein neuer reproduzierbarer Fehler.
+
+`pytest -q tests/test_json_utils.py`: 8/8 bestanden. Mypy für `json_utils.py`,
+Ruff und `git diff --check` sauber.
