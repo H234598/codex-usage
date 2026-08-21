@@ -91,7 +91,10 @@ def create_profile_job(
     )
     if config_path is not None and not isinstance(config_path, Path):
         raise ValueError("config path is invalid")
-    selected_config = (config_path or default_config_path()).expanduser()
+    try:
+        selected_config = (config_path or default_config_path()).expanduser()
+    except RuntimeError as exc:
+        raise ValueError("config path is invalid") from exc
     if not selected_config.is_absolute():
         raise ValueError("config path must be absolute")
     assert_no_symlink_ancestors(selected_config.parent, label="profile job config")
@@ -593,7 +596,7 @@ def _validate_create_arguments(
         raise ValueError("profile job json_events is invalid")
     try:
         profile_path = Path(profile_dir).expanduser()
-    except (TypeError, ValueError) as exc:
+    except (RuntimeError, TypeError, ValueError) as exc:
         raise ValueError("profile dir is invalid") from exc
     if not profile_path.is_absolute():
         raise ValueError("profile dir must be absolute")

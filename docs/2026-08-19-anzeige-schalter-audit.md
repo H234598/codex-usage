@@ -2702,3 +2702,12 @@ Telemetrie mit rohem `RuntimeError` abbrechen. String-Konvertierung läuft jetzt
 kontrolliert; bei Fehler oder ungültigem Inhalt bleibt der jeweilige sichere
 Fallback erhalten. `tests/test_health.py`: 31/31 fokussierte Tests bestanden;
 Mypy für Source, Ruff und `git diff --check` sauber.
+
+## Runde 275: Profiljob-Pfade weisen unbekannte Home-Namen kontrolliert ab
+
+`profile_jobs` ließ `Path.expanduser()` bei einem unbekannten `~user`-Namen als
+rohes `RuntimeError` aus `_validate_create_arguments()` und bei `config_path`
+aus `create_profile_job()` entkommen. Beide Eingaben liefern jetzt kontrolliert
+`ValueError` und schreiben keinen Job. `tests/test_profile_jobs.py`: 71/71
+fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
+sauber.

@@ -1445,6 +1445,35 @@ def test_profile_job_create_rejects_invalid_profile_dir_type(profile_dir):
         )
 
 
+def test_profile_job_create_rejects_unknown_profile_home():
+    with pytest.raises(ValueError, match="profile dir is invalid"):
+        profile_jobs._validate_create_arguments(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir="~definitely-no-such-user-zzzz",
+            expected_backend_account_id=None,
+            json_events=False,
+            reactivation_browser="auto",
+            check_profile_path=False,
+        )
+
+
+def test_profile_job_create_rejects_unknown_config_home(tmp_path):
+    with pytest.raises(ValueError, match="config path is invalid"):
+        profile_jobs.create_profile_job(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir=str(tmp_path / "profile"),
+            expected_backend_account_id=None,
+            config_path=Path("~definitely-no-such-user-zzzz/config.toml"),
+            json_events=False,
+        )
+
+
 @pytest.mark.parametrize("config_path", ["", [], {}, {"path": "x"}, 0, False])
 def test_profile_job_create_rejects_invalid_config_path_type(
     config_path, tmp_path, monkeypatch
