@@ -4079,6 +4079,18 @@ reproduziert jetzt `ServiceError` statt Roh-Exception; der Handler fängt
 `OSError` und `RuntimeError` gemeinsam. `pytest -q tests/test_service.py`:
 67/67 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 460: Profile-Job-Status ohne Worker
+
+`profile_job_status()` ließ ein Manifest mit `status="running"` und fehlender
+oder ungültiger Worker-PID unverändert. Solche Jobs konnten dadurch dauerhaft
+als laufend erscheinen, obwohl kein Worker mehr identifizierbar ist. Der
+Status wird jetzt wie ein verlorener Worker kontrolliert auf `failed` mit
+`profile_job_worker_lost` gesetzt; `queued` ohne PID bleibt weiterhin gültig,
+und `cancel_requested` ohne PID wird weiterhin als `cancelled` abgeschlossen.
+
+Regressionstest ergänzt. `pytest -q tests/test_profile_jobs.py`: 82/82
+bestanden; Mypy, Ruff und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

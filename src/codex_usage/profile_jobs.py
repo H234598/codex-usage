@@ -208,16 +208,26 @@ def profile_job_status(job_id: str) -> dict[str, object]:
     job = _read_job(job_id)
     if job["status"] in {"queued", "running", "cancel_requested"}:
         pid = job["worker_pid"]
-        if job["status"] == "cancel_requested" and not (
-            isinstance(pid, int) and pid > 0
-        ):
+        valid_pid = (
+            pid
+            if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
+            else None
+        )
+        if job["status"] == "cancel_requested" and valid_pid is None:
             job = _update_job(
                 job_id,
                 expected_status="cancel_requested",
                 status="cancelled",
                 error=None,
             )
-        elif isinstance(pid, int) and pid > 0 and not _worker_matches(pid, job_id):
+        elif job["status"] == "running" and valid_pid is None:
+            job = _update_job(
+                job_id,
+                expected_status="running",
+                status="failed",
+                error="profile_job_worker_lost",
+            )
+        elif valid_pid is not None and not _worker_matches(valid_pid, job_id):
             lost_status = "cancelled" if job["status"] == "cancel_requested" else "failed"
             job = _update_job(
                 job_id,

@@ -864,6 +864,42 @@ def test_profile_job_status_reconciles_lost_worker(tmp_path, monkeypatch):
     }
 
 
+def test_profile_job_status_reconciles_running_without_worker(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
+
+    class FakeProcess:
+        pid = 4321
+
+    monkeypatch.setattr(profile_jobs.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+    created = profile_jobs.create_profile_job(
+        account_id="alpha",
+        label="Alpha",
+        browser="firefox",
+        backend="direct",
+        profile_dir=str(tmp_path / "profile"),
+        expected_backend_account_id=None,
+        config_path=tmp_path / "config.toml",
+        json_events=False,
+    )
+    profile_jobs._update_job(
+        created["job_id"],
+        expected_status="queued",
+        status="running",
+        worker_pid=None,
+    )
+
+    result = profile_jobs.profile_job_status(created["job_id"])
+
+    assert result == {
+        "account": "alpha",
+        "error": "profile_job_worker_lost",
+        "job_id": created["job_id"],
+        "ok": False,
+        "status": "failed",
+    }
+
+
 def test_profile_job_status_reconciles_lost_queued_worker(tmp_path, monkeypatch):
     state = tmp_path / "state"
     monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
