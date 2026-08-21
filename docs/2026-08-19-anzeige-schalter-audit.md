@@ -1937,3 +1937,13 @@ Testfehler.
 
 `mypy src/codex_usage` meldet keine Fehler in 35 Quelldateien. Der aggregierte
 Ruff-Lauf über Produktion, Scripts, Launcher und Tests ist ebenfalls sauber.
+
+## Runde 191: Scheduler-Reset- und Stabilisierungsguards
+
+`scheduler._watch_core_resets_current()` und `_stabilize_main_pool()` griffen
+bei malformed Main-Pools/Fenstercontainern direkt auf Iteration und Attribute
+zu. Health-Prüfung oder Auth-Stabilisierung konnte dadurch `TypeError` bzw.
+`AttributeError` auslösen. Beide Pfade prüfen jetzt `UsagePool`, tuple-Container
+und `LimitWindow`; malformed Daten führen fail-closed zu `False` bzw. werden
+unverändert weitergereicht. `tests/test_scheduler.py`: 171/171 bestanden;
+Mypy für Source und Ruff für betroffene Dateien sauber.

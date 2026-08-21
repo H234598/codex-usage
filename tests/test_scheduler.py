@@ -23,6 +23,7 @@ from codex_usage.scheduler import (
     _remaining_percent,
     _should_persist_snapshot,
     _stabilize_authenticated_usage,
+    _stabilize_main_pool,
     _usage_map_for_accounts,
     _watch_core_resets_current,
     _watch_cycle_is_healthy,
@@ -2737,6 +2738,47 @@ def test_scheduler_rejects_named_dynamic_reset_without_timestamp():
     )
 
     assert _watch_core_resets_current(usage) is False
+
+
+@pytest.mark.parametrize("windows", [None, [None]])
+def test_scheduler_rejects_malformed_core_reset_windows(windows):
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=windows,  # type: ignore[arg-type]
+        ),
+    )
+
+    assert _watch_core_resets_current(usage) is False
+
+
+def test_scheduler_stabilization_skips_malformed_main_pool():
+    previous = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=datetime.now().astimezone(),
+        five_hour=LimitWindow(name="5h", remaining=90),
+    )
+    current = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=None,  # type: ignore[arg-type]
+    )
+
+    assert (
+        _stabilize_main_pool(
+            current,
+            previous,
+            retain_five_hour=True,
+            retain_weekly=False,
+        )
+        is current
+    )
 
 
 @pytest.mark.parametrize(

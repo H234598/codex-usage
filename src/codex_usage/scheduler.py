@@ -31,7 +31,7 @@ from .direct import (
 from .extractor import LOCAL_TZ
 from .health import record_health_event
 from .history import record_usage_samples_batch
-from .models import Account, AccountStatus, AccountUsage
+from .models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .render import render_json, render_table
 from .routing import _pool_has_usage_evidence
 from .state import (
@@ -598,12 +598,17 @@ def _stabilize_main_pool(
     retain_five_hour: bool,
     retain_weekly: bool,
 ) -> Any:
-    if current is None:
-        return None
+    if current is None or not isinstance(current, UsagePool):
+        return current
+    if not isinstance(current.windows, tuple):
+        return current
     current_windows = list(current.windows)
     previous_windows = (
         tuple(previous.main.windows)
-        if previous.main is not None
+        if (
+            isinstance(previous.main, UsagePool)
+            and isinstance(previous.main.windows, tuple)
+        )
         else ()
     )
     replacements = (
@@ -1015,15 +1020,18 @@ def _watch_core_resets_current(
 ) -> bool:
     if now is None:
         now = datetime.now(tz=LOCAL_TZ)
-    windows = (
-        usage.main.windows
-        if usage.main is not None
-        else tuple(
+    if usage.main is not None:
+        if not isinstance(usage.main, UsagePool) or not isinstance(usage.main.windows, tuple):
+            return False
+        windows = usage.main.windows
+    else:
+        windows = tuple(
             window
             for window in (usage.five_hour, usage.weekly)
-            if window is not None
+            if isinstance(window, LimitWindow)
         )
-    )
+    if any(not isinstance(window, LimitWindow) for window in windows):
+        return False
     for window in windows:
         reset_at = window.reset_at
         if reset_at is None:
