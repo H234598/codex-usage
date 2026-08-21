@@ -11,7 +11,7 @@ from itertools import chain, islice
 from pathlib import Path
 
 from .config import default_state_dir
-from .models import AccountStatus, AccountUsage
+from .models import AccountStatus, AccountUsage, UsagePool
 from .private_io import ensure_private_directory, private_path_lock
 
 MAX_HISTORY_SAMPLES = 500_000
@@ -476,10 +476,7 @@ def _iter_usage_samples(usage: AccountUsage):
     if usage.status != AccountStatus.OK or usage.stale or usage.cache_invalidated:
         return
     captured_at = usage.values_captured_at or usage.captured_at
-    if usage.main is not None:
-        pools = (usage.main,)
-    else:
-        pools = ()
+    pools: tuple[UsagePool, ...] = (usage.main,) if usage.main is not None else ()
     for pool in chain(pools, usage.models):
         if not getattr(pool, "available", False):
             continue

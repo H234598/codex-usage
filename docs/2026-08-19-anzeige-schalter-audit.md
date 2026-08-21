@@ -1351,3 +1351,10 @@ Invarianzfehler ohne Laufzeitänderung. `tests/test_profile_migration.py`:
 `bool | None`. Explizite lokale Typen halten diese Zustände korrekt fest;
 Verarbeitungslogik bleibt unverändert. `tests/test_usage_limits.py`: 112/112
 bestanden; Mypy und Ruff sauber.
+
+## Runde 118: History-Pool-Typ
+
+`history._iter_usage_samples()` inferierte `pools` zunächst als
+`tuple[UsagePool]`; der leere Zweig wurde dadurch als inkompatibel gemeldet.
+Explizite Tuple-Annotation erlaubt Main-Pool oder leere Poolmenge korrekt.
+`tests/test_history.py`: 47/47 bestanden; Mypy und Ruff sauber.
