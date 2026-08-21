@@ -2966,3 +2966,12 @@ per `astimezone()`. Randwerte außerhalb des `datetime`-Bereichs ließen dabei
 `ValueError("invalid capture timestamp")`; nicht-strikte Eingabe fällt auf
 Empfangszeit zurück. `tests/test_bridge.py`: 258/258 fokussierte Tests
 bestanden; Mypy für Bridge, Ruff und `git diff --check` sauber.
+
+## Runde 305: Spark-Health-Status fängt unrepräsentierbare Zeitstempel
+
+`spark_health_status()` berechnete das Alter eines gespeicherten Health-
+Zeitstempels ohne Fehlergrenze. Randständige Offset-Werte konnten bei UTC-
+Normalisierung roh mit `OverflowError` abbrechen. Der Status fällt jetzt auf
+`invalid_spark_health_record` zurück. `tests/test_spark_health.py`: 25/25
+fokussierte Tests bestanden; Mypy für Spark Health, Ruff und
+`git diff --check` sauber.

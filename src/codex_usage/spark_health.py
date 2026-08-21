@@ -65,7 +65,10 @@ def spark_health_status(
         }
     if state != "healthy" or timestamp is None:
         return _unknown_health("invalid_spark_health_record")
-    age = (checked_at.astimezone(UTC) - timestamp.astimezone(UTC)).total_seconds()
+    try:
+        age = (checked_at.astimezone(UTC) - timestamp.astimezone(UTC)).total_seconds()
+    except (OverflowError, TypeError, ValueError):
+        return _unknown_health("invalid_spark_health_record")
     if age < -300 or age > max_age_seconds:
         return {
             "state": "unknown",

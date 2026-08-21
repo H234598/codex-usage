@@ -165,6 +165,25 @@ def test_spark_health_rejects_naive_checked_at(tmp_path):
     assert result["reason"] == "invalid_spark_health_record"
 
 
+@pytest.mark.parametrize(
+    "checked_at",
+    ["0001-01-01T00:00:00+14:00", "9999-12-31T23:59:59-14:00"],
+)
+def test_spark_health_rejects_unrepresentable_checked_at(tmp_path, checked_at):
+    path = tmp_path / "health.json"
+    set_spark_health("backend-nufker", "healthy", path=path, now=NOW)
+    payload = json.loads(path.read_text())
+    record = next(iter(payload["records"].values()))
+    record["checked_at"] = checked_at
+    path.write_text(json.dumps(payload))
+    path.chmod(0o600)
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["state"] == "unknown"
+    assert result["reason"] == "invalid_spark_health_record"
+
+
 def test_spark_health_fails_closed_for_invalid_clock(tmp_path):
     path = tmp_path / "health.json"
     set_spark_health("backend-nufker", "healthy", path=path, now=NOW)
