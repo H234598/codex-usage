@@ -250,7 +250,9 @@ def test_auth_migration_apply_rejects_duplicate_item_account_ids(tmp_path):
     assert not (tmp_path / "migration" / "manifest.json").exists()
 
 
-@pytest.mark.parametrize("duplicate_field", ["source", "target"])
+@pytest.mark.parametrize(
+    "duplicate_field", ["source", "source-alias", "target", "target-alias"]
+)
 def test_auth_migration_apply_rejects_duplicate_item_resources(
     tmp_path, duplicate_field
 ):
@@ -258,18 +260,28 @@ def test_auth_migration_apply_rejects_duplicate_item_resources(
     source.write_text("{}", encoding="utf-8")
     source.chmod(0o600)
     first_source = source
-    second_source = source if duplicate_field == "source" else tmp_path / "second.json"
+    source_is_duplicate = duplicate_field.startswith("source")
+    second_source = source if source_is_duplicate else tmp_path / "second.json"
     if second_source != source:
         second_source.write_text("{}", encoding="utf-8")
         second_source.chmod(0o600)
+    if duplicate_field == "source-alias":
+        source_alias_parent = tmp_path / "source-alias"
+        source_alias_parent.mkdir()
+        second_source = source_alias_parent / ".." / "source.json"
     first_target = tmp_path / "first" / "auth.json"
+    target_is_duplicate = duplicate_field.startswith("target")
     second_target = (
         first_target
-        if duplicate_field == "target"
+        if target_is_duplicate and duplicate_field == "target"
+        else tmp_path / "target-alias" / ".." / "first" / "auth.json"
+        if duplicate_field == "target-alias"
         else tmp_path / "second" / "auth.json"
     )
     first_target.parent.mkdir(parents=True)
-    if second_target != first_target:
+    if duplicate_field == "target-alias":
+        (tmp_path / "target-alias").mkdir()
+    if second_target != first_target and duplicate_field != "target-alias":
         second_target.parent.mkdir(parents=True)
     plan = AuthMigrationPlan(
         migration_id="m-test",
@@ -811,6 +823,24 @@ def test_auth_migration_rejects_same_source_for_two_accounts(tmp_path):
         label="Beta",
         profile_dir=str(tmp_path / "beta"),
         auth_json_path=str(source),
+    )
+
+    with pytest.raises(ValueError, match="multiple accounts"):
+        plan_auth_migration((one, two))
+
+
+def test_auth_migration_rejects_alias_source_for_two_accounts(tmp_path):
+    source = tmp_path / "auth.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    alias_parent = tmp_path / "nested"
+    alias_parent.mkdir()
+    one = _account(tmp_path, source)
+    two = Account(
+        id="beta",
+        label="Beta",
+        profile_dir=str(tmp_path / "beta"),
+        auth_json_path=str(alias_parent / ".." / "auth.json"),
     )
 
     with pytest.raises(ValueError, match="multiple accounts"):

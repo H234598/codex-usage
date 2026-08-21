@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 514: Ressourcen-Aliase in Auth-Migration abgewiesen
+
+Planner und Plan-Validator verglichen Quellen/Ziele bisher als rohe
+`Path`-Objekte. `auth.json` oder Canonical-Ziel mit `..`-Alias konnte deshalb
+mehrfach in einem Plan erscheinen. Beide Eindeutigkeitsprüfungen verwenden
+jetzt lexikalisch normalisierte Keys; Symlink-Auflösung bleibt weiterhin
+ausgeschlossen.
+
+Regressionen für Alias-Quelle in zwei Accounts sowie Alias-Quelle/-Ziel im
+direkten Plan ergänzt. `pytest -q tests/test_profile_migration.py`: 59/59
+bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 513: Canonical-Auth-Pfadalias erkannt
 
 `_classify_source()` verglich Quelle und Ziel bisher byteweise. Absolute

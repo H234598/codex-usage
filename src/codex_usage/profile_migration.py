@@ -70,10 +70,11 @@ def plan_auth_migration(
         layout = layout_for_account(account)
         source = _source_for_account(account, layout, normalized_roots)
         if source is not None:
-            previous = sources.get(source)
+            source_key = Path(os.path.normpath(str(source)))
+            previous = sources.get(source_key)
             if previous is not None and previous != account.id:
                 raise ValueError("auth source is assigned to multiple accounts")
-            sources[source] = account.id
+            sources[source_key] = account.id
         status, reason = _classify_source(source, layout.auth_json)
         items.append(
             AuthMigrationItem(
@@ -410,13 +411,15 @@ def _validate_migration_plan(plan: AuthMigrationPlan) -> None:
             or not isinstance(item.status, str)
         ):
             raise ValueError("migration plan is invalid")
-        if item.target in targets:
+        target_key = Path(os.path.normpath(str(item.target)))
+        if target_key in targets:
             raise ValueError("migration plan is invalid")
-        targets.add(item.target)
+        targets.add(target_key)
         if item.source is not None:
-            if item.source in sources:
+            source_key = Path(os.path.normpath(str(item.source)))
+            if source_key in sources:
                 raise ValueError("migration plan is invalid")
-            sources.add(item.source)
+            sources.add(source_key)
 
 
 def _assert_manifest_path_disjoint(
