@@ -1186,10 +1186,10 @@ def merge_current_with_last_success(
 
 def _has_complete_usage_windows(usage: AccountUsage) -> bool:
     if usage.main is not None:
-        return usage.main.has_valid_usage
+        return isinstance(usage.main, UsagePool) and usage.main.has_valid_usage
     return bool(
-        usage.five_hour is not None
-        and usage.weekly is not None
+        isinstance(usage.five_hour, LimitWindow)
+        and isinstance(usage.weekly, LimitWindow)
         and usage.five_hour.has_usage_value
         and usage.weekly.has_usage_value
     )
@@ -1269,7 +1269,7 @@ def _allow_missing_window_restore(usage: AccountUsage) -> bool:
 
 def _has_resetless_usage_window(usage: AccountUsage) -> bool:
     return any(
-        window is not None
+        isinstance(window, LimitWindow)
         and window.has_usage_value
         and window.reset_at is None
         for window in (usage.five_hour, usage.weekly)
@@ -1313,6 +1313,8 @@ def _merge_pool_windows_with_last_success(
     if (
         current is None
         or last_success is None
+        or not isinstance(current, UsagePool)
+        or not isinstance(last_success, UsagePool)
         or not isinstance(current.windows, tuple)
         or not isinstance(last_success.windows, tuple)
         or not current.windows
@@ -1811,10 +1813,10 @@ def _has_valid_core_usage(
 ) -> bool:
     if main is None:
         return any(
-            window is not None and window.has_usage_value
+            isinstance(window, LimitWindow) and window.has_usage_value
             for window in (five_hour, weekly)
         )
-    return main.has_valid_usage
+    return isinstance(main, UsagePool) and main.has_valid_usage
 
 
 def _pool_from_dict(

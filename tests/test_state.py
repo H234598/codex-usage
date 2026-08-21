@@ -1086,6 +1086,109 @@ def test_expire_reset_windows_drops_malformed_main_pool():
     assert expired.stale is True
 
 
+def test_merge_current_with_last_success_ignores_malformed_main_pool():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="malformed-main",
+        label="Malformed main",
+        captured_at=captured_at,
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-malformed-main",
+        main=[],  # type: ignore[arg-type]
+    )
+    last_success = AccountUsage(
+        account_id="malformed-main",
+        label="Malformed main",
+        captured_at=captured_at - timedelta(minutes=1),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-malformed-main",
+        five_hour=LimitWindow(name="5h", remaining=80),
+        weekly=LimitWindow(name="weekly", remaining=90),
+    )
+
+    merged = merge_current_with_last_success(usage, last_success)
+
+    assert merged is usage
+
+
+def test_merge_current_with_last_success_ignores_malformed_last_main_pool():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    current = AccountUsage(
+        account_id="malformed-last-main",
+        label="Malformed last main",
+        captured_at=captured_at,
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-malformed-last-main",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="5h", remaining=80),),
+            availability_sources=("usage",),
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="malformed-last-main",
+        label="Malformed last main",
+        captured_at=captured_at - timedelta(minutes=1),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-malformed-last-main",
+        main=[],  # type: ignore[arg-type]
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+
+
+def test_merge_current_with_last_success_ignores_malformed_browser_window():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    current = AccountUsage(
+        account_id="malformed-browser-window",
+        label="Malformed browser window",
+        captured_at=captured_at,
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-malformed-browser-window",
+        backend_account_id="account-malformed-browser-window",
+        five_hour=[],  # type: ignore[arg-type]
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="5h", remaining=80),),
+            availability_sources=("usage",),
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="malformed-browser-window",
+        label="Malformed browser window",
+        captured_at=captured_at - timedelta(minutes=1),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-malformed-browser-window",
+        backend_account_id="account-malformed-browser-window",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="5h", remaining=70),),
+            availability_sources=("usage",),
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+
+
 def test_expire_reset_windows_rejects_overlong_model_catalog(monkeypatch):
     import codex_usage.state as state_module
 

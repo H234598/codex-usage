@@ -1976,3 +1976,13 @@ abbrechen. Nicht-`UsagePool`-Werte werden jetzt entfernt und als Änderung
 markiert; der übergeordnete State fällt dadurch kontrolliert auf `PARTIAL`
 und `stale`. `tests/test_state.py`: 232/232 bestanden; Mypy für Source und
 Ruff für betroffene Dateien sauber.
+
+## Runde 195: State-Merge für malformed Core-Pools und Legacy-Fenster
+
+`merge_current_with_last_success()` vertraute bei malformed `main`-Pools und
+`five_hour`/`weekly`-Feldern auf `.has_valid_usage` oder `.windows`. Beschädigte
+Snapshots konnten Cache-Merge mit `AttributeError` abbrechen, besonders im
+Browser-Pfad mit resetlosen Fenstern. Die gemeinsamen Validierungs- und
+Merge-Helfer prüfen jetzt `UsagePool`/`LimitWindow` vor jedem Zugriff und
+ignorieren ungültige Werte fail-closed. `tests/test_state.py`: 235/235
+bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.
