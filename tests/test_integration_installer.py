@@ -145,6 +145,38 @@ def test_create_private_directory_secures_mode_without_path_chmod(
     assert not target.is_symlink()
 
 
+def test_create_private_directory_binds_creation_to_parent_descriptor(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    target = parent / "target"
+    old_parent = tmp_path / "parent-old"
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    parent_identity = integration_installer._directory_identity(parent)
+    original_mkdir = os.mkdir
+    swapped = False
+
+    def swap_before_mkdir(candidate, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if candidate == "target" and dir_fd is not None and not swapped:
+            parent.rename(old_parent)
+            outside.rename(parent)
+            swapped = True
+        if dir_fd is None:
+            return original_mkdir(candidate, mode)
+        return original_mkdir(candidate, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_installer.os, "mkdir", swap_before_mkdir)
+    identity = integration_installer._create_private_directory(target, parent_identity)
+
+    assert swapped
+    assert not target.exists()
+    assert (old_parent / "target").is_dir()
+    assert identity == integration_installer._directory_identity(old_parent / "target")
+
+
 def _tree_bytes(root: Path) -> tuple[tuple[str, int, bytes], ...]:
     return tuple(
         (
@@ -2212,21 +2244,27 @@ def test_wheel_create_failure_cleans_already_owned_build(tmp_path, monkeypatch):
 
     data_home, state_home, temporary_root = _roots(tmp_path)
     source_root = _temporary_source_copy(tmp_path)
-    original_mkdir = Path.mkdir
+    original_mkdir = os.mkdir
     build_created = False
 
-    def fail_wheel_mkdir(path, *args, **kwargs):
+    def fail_wheel_mkdir(path, mode=0o777, *, dir_fd=None):
         nonlocal build_created
-        if path.name.startswith("producer-build-"):
-            result = original_mkdir(path, *args, **kwargs)
+        name = Path(path).name
+        if name.startswith("producer-build-"):
+            if dir_fd is None:
+                result = original_mkdir(path, mode)
+            else:
+                result = original_mkdir(path, mode, dir_fd=dir_fd)
             build_created = True
             return result
-        if path.name.startswith("producer-wheel-"):
+        if name.startswith("producer-wheel-"):
             assert build_created
             raise OSError("synthetic wheel create failure")
-        return original_mkdir(path, *args, **kwargs)
+        if dir_fd is None:
+            return original_mkdir(path, mode)
+        return original_mkdir(path, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr(Path, "mkdir", fail_wheel_mkdir)
+    monkeypatch.setattr(integration_installer.os, "mkdir", fail_wheel_mkdir)
     with pytest.raises(integration_installer.IntegrationInstallError):
         integration_installer.install_release(
             source_root=source_root,

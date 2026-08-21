@@ -516,31 +516,63 @@ def _create_private_directory(
 ) -> _DirectoryIdentity:
     path = _absolute(path)
     _no_symlink_ancestors(path.parent)
-    if path.exists() or path.is_symlink():
-        _fail()
     provisional: _ProvisionalIdentity | None = None
+    parent_fd = -1
+    child_fd = -1
     try:
-        if _identity(path.parent) != parent_identity:
-            _fail()
-        path.mkdir(mode=0o700)
-        provisional = _provisional_path_identity(path, directory=True)
-        if _identity(path.parent) != parent_identity:
-            _fail()
-        ensure_private_directory(path, label="integration private directory")
-        final_provisional = _provisional_rebased(
-            path,
-            provisional,
-            parent_identity,
-            directory=True,
-        )
-        if final_provisional is None:
-            _fail()
-        final = _require_private_dir(path, None, False)
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        parent_fd = os.open(path.parent, flags)
+        parent_item = os.fstat(parent_fd)
         if (
-            _identity(path.parent) != parent_identity
-            or final.device != final_provisional.device
-            or final.inode != final_provisional.inode
+            not stat.S_ISDIR(parent_item.st_mode)
+            or parent_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                parent_item.st_dev,
+                parent_item.st_ino,
+                stat.S_IMODE(parent_item.st_mode),
+            )
+            != parent_identity
         ):
+            _fail()
+        try:
+            os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            _fail()
+        os.mkdir(path.name, mode=0o700, dir_fd=parent_fd)
+        child_fd = os.open(path.name, flags, dir_fd=parent_fd)
+        child_item = os.fstat(child_fd)
+        provisional = _provisional_from_stat(child_item)
+        if not stat.S_ISDIR(child_item.st_mode) or child_item.st_uid != os.getuid():
+            _fail()
+        os.fchmod(child_fd, 0o700)
+        final_item = os.fstat(child_fd)
+        final = _DirectoryIdentity(
+            final_item.st_dev,
+            final_item.st_ino,
+            stat.S_IMODE(final_item.st_mode),
+        )
+        if (
+            not stat.S_ISDIR(final_item.st_mode)
+            or final_item.st_uid != os.getuid()
+            or final.permissions != 0o700
+            or final.device != provisional.device
+            or final.inode != provisional.inode
+        ):
+            _fail()
+        parent_final = os.fstat(parent_fd)
+        if _DirectoryIdentity(
+            parent_final.st_dev,
+            parent_final.st_ino,
+            stat.S_IMODE(parent_final.st_mode),
+        ) != parent_identity:
             _fail()
         return final
     except IntegrationInstallError:
@@ -561,6 +593,11 @@ def _create_private_directory(
         ):
             _fail()
         _fail()
+    finally:
+        if child_fd >= 0:
+            os.close(child_fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def _owned_file_matches(

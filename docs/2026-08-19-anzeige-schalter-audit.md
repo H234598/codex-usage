@@ -4348,6 +4348,19 @@ Target-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 124/124 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 482: Private Installer-Verzeichnisse per Parent-FD
+
+`_create_private_directory()` prüfte Parent-Identität und legte das Ziel
+danach per Pfad-`mkdir()` an. Ein Parent-Swap konnte ein neues Staging-, Build-
+oder Wheel-Verzeichnis im falschen Baum erzeugen. Creation öffnet und
+revalidiert den erwarteten Parent mit `O_DIRECTORY|O_NOFOLLOW`, erstellt relativ
+per `dir_fd`, setzt den Modus am geöffneten Child-FD und prüft Inode/Parent vor
+Rückgabe.
+
+Parent-Swap- und Fehler-Injection-Tests aktualisiert. `pytest -q
+tests/test_integration_installer.py`: 125/125 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
