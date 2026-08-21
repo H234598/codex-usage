@@ -3914,3 +3914,15 @@ Ruff, Mypy und `git diff --check` sauber.
 Service installiert/aktiv, Timer aktiv und geplant. Exit 2 bleibt der bekannte
 Firefox-Playwright-Executable-Fehler der Browser-Konten; Journal zeigt keinen
 neuen State-Expiry-Fehler. Keine Netzwerkinstallation und kein Fallback.
+
+## Runde 407: App-Server-RPC und Prozessgrenzen erneut geprüft
+
+`app_server.py` erneut auf Auth-Kontext, JSON-RPC-IDs/-Fehler, Rate-Limit-
+Fenster, Modellkatalog, Deadline-/Write-Grenzen, bounded stdout/stderr-Reader
+und Prozessgruppen-Cleanup geprüft. Keine neue reproduzierbare Fehlfunktion;
+malformed oder unklassifizierbare Antworten bleiben Fehler beziehungsweise
+partiell, Zeitüberschreitungen teilen dieselbe Deadline, und Reader-/Prozess-
+Ressourcen werden im `finally`-Pfad geschlossen.
+
+`pytest -q tests/test_app_server.py`: 98/98 bestanden; Modul-Coverage 83 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
