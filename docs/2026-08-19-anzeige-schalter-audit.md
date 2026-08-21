@@ -2738,3 +2738,11 @@ ließen `Path.expanduser()` bei unbekannten `~user`-Namen als rohes
 kontrolliert `ValueError` für Profil- und Auth-Pfade. `tests/test_config.py`:
 112/112 fokussierte Tests bestanden; Mypy für Source, Ruff und
 `git diff --check` sauber.
+
+## Runde 279: Browser-Diagnose ignoriert unbekannte CODEX_HOME-Namen
+
+`browser._diagnose_auth_json()` ließ einen unbekannten `CODEX_HOME=~user/...`
+als rohes `RuntimeError` entkommen, obwohl relative Homes bereits sicher auf
+`~/.codex` zurückfallen. Nicht expandierbare Umgebungswerte werden jetzt wie
+relative Werte ignoriert. `tests/test_browser_diagnose.py`: 39/39 fokussierte
+Tests bestanden; Mypy für Source, Ruff und `git diff --check` sauber.

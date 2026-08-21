@@ -183,6 +183,18 @@ def test_diagnose_auth_json_ignores_relative_codex_home(tmp_path, monkeypatch):
     assert result["exists"] is False
 
 
+def test_diagnose_auth_json_ignores_unknown_user_codex_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("CODEX_HOME", "~definitely-no-such-user-zzzz/.codex")
+
+    result = _diagnose_auth_json(None)
+
+    assert result["path"] == str(home / ".codex" / "auth.json")
+    assert result["exists"] is False
+
+
 def test_diagnose_auth_json_rejects_symlink_auth_file(tmp_path):
     target = tmp_path / "target-auth.json"
     target.write_text(

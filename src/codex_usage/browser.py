@@ -634,7 +634,10 @@ def _capture_json_response(
 def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
     configured_home = os.environ.get("CODEX_HOME")
     if configured_home:
-        candidate = Path(configured_home).expanduser()
+        try:
+            candidate = Path(configured_home).expanduser()
+        except RuntimeError:
+            candidate = Path()
         codex_home = candidate if candidate.is_absolute() else Path.home() / ".codex"
     else:
         codex_home = Path.home() / ".codex"
