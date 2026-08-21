@@ -3798,3 +3798,13 @@ deckt fremde Lockdatei ab.
 
 `pytest -q tests/test_account_lock.py`: 15/15 bestanden; Modul-Coverage 84%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 395: Spark-Health-Datei
+
+`spark_health.py` auf Backend-ID-/Reason-Validierung, private Datei, Record-
+Rotation, Timestamp-/Stale-Grenzen und JSON-Fehlerpfade geprüft. Keine neue
+reproduzierbare Fehlfunktion; fremde, gruppenlesbare, hardgelinkte und
+übergroße/verschachtelte Health-Daten fallen auf `unknown` zurück.
+
+`pytest -q tests/test_spark_health.py`: 28/28 bestanden; Modul-Coverage 89%.
+Ruff, Mypy und `git diff --check` sauber.
