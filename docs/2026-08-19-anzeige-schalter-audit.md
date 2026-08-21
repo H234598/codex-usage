@@ -2991,3 +2991,10 @@ Mypy für Browser, Ruff und `git diff --check` sauber.
 Bereichsprüfung liefert jetzt `ValueError("now is out of range")`.
 `tests/test_consumption.py`: 28/28 fokussierte Tests bestanden; Mypy für
 Consumption, Ruff und `git diff --check` sauber.
+
+## Runde 308: Vollsuite nach Boundary-Härtungen
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2687 bestanden, 1 übersprungen,
+1 Warnung` in 87,57 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. Bridge-/Spark-Health-/Browser-/Consumption-
+Zeitgrenzen sowie Profiljob- und Scheduler-Pfade sind integriert grün.
