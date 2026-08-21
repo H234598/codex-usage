@@ -2850,6 +2850,16 @@ mit `OverflowError` abbrechen. Die Validierung prüft UTC-Konvertierbarkeit jetz
 vor Seiteneffekten. `tests/test_profile_migration.py`: 32/32 fokussierte Tests
 bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
 
+## Runde 293: Consumption validiert Baseline-Value-Zeitbereich
+
+`consumption.calculate_consumption()` prüfte zunächst nur den normalen
+Lookback. Die separate `baseline_value_minutes`-Subtraktion konnte bei
+`datetime.min`-nahen Werten danach roh mit `OverflowError` abbrechen. Beide
+Zeitpunkte werden jetzt gemeinsam validiert; ungültiger Bereich liefert
+`ValueError("now is out of range")`. `tests/test_consumption.py`: 26/26
+fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
+sauber.
+
 ## Runde 291: Vollsuite nach Pfad-Expansion-Härtung
 
 Die Vollsuite bestätigt den aktuellen HEAD: `2668 bestanden, 1 übersprungen,

@@ -151,6 +151,11 @@ def calculate_consumption(
     )
     try:
         start = now - timedelta(seconds=baseline_seconds)
+        baseline_value_start = (
+            None
+            if baseline_value_seconds is None
+            else now - timedelta(seconds=baseline_value_seconds)
+        )
     except (OverflowError, ValueError) as exc:
         raise ValueError("now is out of range") from exc
     baseline = None
@@ -158,9 +163,7 @@ def calculate_consumption(
     for sample in ordered:
         if sample.captured_at <= start:
             baseline = sample
-        if baseline_value_seconds is not None and sample.captured_at <= now - timedelta(
-            seconds=baseline_value_seconds
-        ):
+        if baseline_value_start is not None and sample.captured_at <= baseline_value_start:
             baseline_value = sample
         if sample.captured_at > now:
             break
