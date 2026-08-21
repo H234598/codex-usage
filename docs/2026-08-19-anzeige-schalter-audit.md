@@ -3462,3 +3462,12 @@ Auth-Pfade und Rollback-Grenzen geprüft. Kein neuer reproduzierbarer Fehler.
 
 `pytest -q tests/test_config.py`: 116/116 bestanden. Mypy für `config.py`,
 Ruff und `git diff --check` sauber.
+
+## Runde 362: Auth-Profile-Migration geprüft
+
+`profile_migration.py` wurde auf Source-Klassifikation, Manifest-/Target-
+Disjointness, JSON-/Secret-Validierung, private Rechte, Atomic Apply und
+Rollback-Identitäten geprüft. Kein neuer reproduzierbarer Fehler gefunden.
+
+`pytest -q tests/test_profile_migration.py`: 33/33 bestanden. Mypy für
+`profile_migration.py`, Ruff und `git diff --check` sauber.
