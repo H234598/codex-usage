@@ -4247,3 +4247,13 @@ Verbrauchs-/Tokenend-/Credit-Tabellen, Element-Zielauflösung, Guard-/Queue-
 Freigaben und wiederholtes Cleanup. `node --test tests/applet_runtime.test.js`:
 395/395 bestanden. Keine neue GUI-/Element-Regression; GTK-Python-Tests sind
 in Runde 435 enthalten.
+
+## Runde 437: Health-Event-Speicher
+
+`health.py` auf Token-/Account-Redaction, Event-/Byte-Limits, Retention,
+malformed JSON, strikte Version, private Datei-/Verzeichnisrechte und
+Recovery geprüft. Veraltete oder ungültige Events bleiben ausgeschlossen;
+keine neue reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_health.py`: 32/32 bestanden; Modul-Coverage 83 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
