@@ -498,7 +498,12 @@ def _canonical_cost_window(value: object) -> dict[str, object]:
     if any(name not in value for name in required):
         _invalid()
     coverage = value["coverage"]
-    if coverage not in {"complete", "partial", "insufficient", "stale"}:
+    if not isinstance(coverage, str) or coverage not in {
+        "complete",
+        "partial",
+        "insufficient",
+        "stale",
+    }:
         _invalid()
     sample_count = value["sample_count"]
     if (

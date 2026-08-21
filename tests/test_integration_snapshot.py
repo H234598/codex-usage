@@ -32,7 +32,7 @@ def test_cost_window_contract_matches_history_limit_and_producer_coverages():
         "sample_count": 500_000,
     }
     assert _canonical_cost_window(value)["sample_count"] == 500_000
-    for coverage in ("invalid", "unknown"):
+    for coverage in ("invalid", "unknown", None, [], {}):
         with pytest.raises(IntegrationInvalidSource):
             _canonical_cost_window({**value, "coverage": coverage})
 

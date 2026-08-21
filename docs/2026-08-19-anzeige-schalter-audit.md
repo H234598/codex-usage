@@ -1089,3 +1089,10 @@ erzeugten dadurch `TypeError`; sie werden jetzt als ungültige Einheit mit
 Unhashbare Eventtypen leakten dadurch `TypeError`; sie werden jetzt wie andere
 ungültige Eventdaten mit `ValueError` abgewiesen. `tests/test_profile_jobs.py`:
 46/46 bestanden; Ruff ohne bestehende E501-Zeilen sauber.
+
+## Runde 86: Integration-Cost-Window-Typprüfung
+
+`integration_snapshot._canonical_cost_window()` prüfte `coverage` direkt per
+Set. Unhashbare Werte leakten beim direkten Contract-Check `TypeError`; die
+Prüfung verlangt jetzt zuerst Stringtyp. `tests/test_integration_snapshot.py`:
+29/29 bestanden; Ruff sauber.
