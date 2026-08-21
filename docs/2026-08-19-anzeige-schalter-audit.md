@@ -1319,3 +1319,11 @@ Explizite `cast()`-Verengungen nutzen jetzt den bereits durch
 `_validate_manifest()` garantierten Vertrag; Laufzeitvalidierung bleibt
 unverändert. `tests/test_profile_jobs.py`: 59/59 bestanden; Mypy und Ruff
 sauber.
+
+## Runde 114: Usage-Reset-Typen
+
+`usage_resets.parse_usage_resets()` inferierte `legacy_keys` zunächst als
+zweielementiges Tuple und überschattete `candidates` mit einer inkompatiblen
+Liste im Legacy-Zweig. Typannotation und eindeutiger Variablenname beheben die
+zwei Mypy-Fehler ohne Parseränderung. `tests/test_usage_resets.py`: 5/5
+bestanden; Mypy und Ruff sauber.

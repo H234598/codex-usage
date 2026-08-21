@@ -62,7 +62,7 @@ def parse_usage_resets(payload: object) -> UsageResetState:
         except (TypeError, ValueError):
             return UsageResetState(None, False, False)
         candidates: list[int] = []
-        legacy_keys = ("resets", "available_resets")
+        legacy_keys: tuple[str, ...] = ("resets", "available_resets")
         if not canonical_nested:
             legacy_keys += ("usage_resets",)
         for key in legacy_keys:
@@ -80,7 +80,7 @@ def parse_usage_resets(payload: object) -> UsageResetState:
         ):
             return UsageResetState(None, False, False)
         return state
-    candidates: list[int] = []
+    legacy_candidates: list[int] = []
     for key in ("resets", "usage_resets", "available_resets"):
         if key not in payload:
             continue
@@ -89,15 +89,15 @@ def parse_usage_resets(payload: object) -> UsageResetState:
             value = value.get("available")
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10_000:
             return UsageResetState(None, False, False)
-        candidates.append(value)
-    if not candidates:
+        legacy_candidates.append(value)
+    if not legacy_candidates:
         return UsageResetState(None, False, False)
-    if len(set(candidates)) != 1:
+    if len(set(legacy_candidates)) != 1:
         return UsageResetState(None, False, False)
     capability = payload.get("redeem_capability", False)
     if not isinstance(capability, bool):
         return UsageResetState(None, False, False)
-    return UsageResetState(candidates[0], True, capability)
+    return UsageResetState(legacy_candidates[0], True, capability)
 
 
 def format_usage_resets(state: UsageResetState, *, hide_zero: bool = True) -> str:
