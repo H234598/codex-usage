@@ -4257,3 +4257,13 @@ keine neue reproduzierbare Fehlfunktion.
 
 `pytest -q tests/test_health.py`: 32/32 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 438: Usage-Resets-State
+
+`usage_resets.py` auf kanonische/legacy Payloads, Unknown-vs-Zero-Semantik,
+Konfliktauflösung, Bounded Counts und Redemption-Gate geprüft. Ungültige oder
+widersprüchliche Werte werden unbekannt; Redemption bleibt ohne positive,
+bekannte Capability blockiert. Keine neue reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_usage_resets.py`: 5/5 bestanden; Modul-Coverage 79 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
