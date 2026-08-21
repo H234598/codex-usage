@@ -177,6 +177,14 @@ def add_or_update_account(
     _all_accounts_lock_held: bool = False,
 ) -> tuple[AppConfig, Account]:
     _validate_account_id(account_id)
+    if label is not None and not isinstance(label, str):
+        raise ValueError("account label must be a string")
+    if profile_dir is not None and not isinstance(profile_dir, str):
+        raise ValueError("profile_dir must be a string")
+    if auth_json_path is not None and not isinstance(auth_json_path, str):
+        raise ValueError("auth_json_path must be a string")
+    if path is not None and not isinstance(path, Path):
+        raise ValueError("config path must be a Path")
     if browser is not None:
         _validate_browser(browser)
     if tag is not None:

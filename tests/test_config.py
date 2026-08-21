@@ -869,6 +869,27 @@ def test_add_account_rejects_non_boolean_clear_auth_json(tmp_path, clear_auth_js
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        pytest.param("label", [], "account label must be a string", id="label"),
+        pytest.param("profile_dir", [], "profile_dir must be a string", id="profile-dir"),
+        pytest.param(
+            "auth_json_path", [], "auth_json_path must be a string", id="auth-json"
+        ),
+        pytest.param("path", [], "config path must be a Path", id="config-path"),
+    ),
+)
+def test_add_account_rejects_invalid_optional_argument_types(
+    tmp_path, field, value, message
+):
+    kwargs = {"path": tmp_path / "config.toml"}
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        add_or_update_account("privat", **kwargs)
+
+
 def test_load_config_rejects_loose_types(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

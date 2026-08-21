@@ -1110,3 +1110,11 @@ Backendwert direkt gegen ein `frozenset`. Unhashbare Fremdtypen leakten
 Stringprüfung auf. Nicht-String-CLI-Werte leakten `TypeError` aus `main()`;
 jetzt erfolgt kontrollierte Ablehnung mit Fehlercode 1. Regression ergänzt;
 `tests/test_reactivate.py`: 46/46 bestanden; Ruff sauber.
+
+## Runde 89: Account-Update-Argumenttypen
+
+`config.add_or_update_account()` ließ falsy Fremdtypen bei `label` und
+`profile_dir` als „nicht gesetzt“ durch, ignorierte falsches `path` und ließ
+`auth_json_path=[]` als `TypeError` leaken. Optionale API-Argumente werden jetzt
+vor jeder Seiteneffekt-Phase typgeprüft; leere Strings bleiben kompatibel.
+`tests/test_config.py`: 88/88 bestanden; Ruff sauber.
