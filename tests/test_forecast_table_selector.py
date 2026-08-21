@@ -124,3 +124,14 @@ def test_setting_reload_falls_back_to_first_table_without_writing() -> None:
         assert settings.writes == []
     finally:
         selector.destroy()
+
+
+def test_destroy_detaches_active_table_listener() -> None:
+    settings = _Settings()
+    selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
+
+    assert len(settings.listeners[_TABLE_KEYS[0]]) == 1
+    selector.destroy()
+
+    assert selector._tables == {}
+    assert settings.listeners[_TABLE_KEYS[0]] == []

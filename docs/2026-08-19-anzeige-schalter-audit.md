@@ -5401,3 +5401,16 @@ tests/test_panel_settings_list.py tests/test_dynamic_series_list.py`:
 Installation ohne Traceback und bleibt als GUI-Prozess offen; der Testlauf
 wurde nach 8 Sekunden kontrolliert beendet. Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 457: Selector-Lifecycle explizit abgesichert
+
+Der lazy Selector-Lifecycle wurde nach dem Loader-Fix nochmals isoliert
+geprüft. Beim Destroy und beim Wechsel zwischen Tabellen muss genau der aktive
+JSON-Listener verschwinden; sonst halten Cinnamon-Callbacks bereits zerstörte
+GTK-TreeViews fest. Beide Selector-Implementierungen entfernen die Listener
+und zerstören ihre letzte Tabelle idempotent.
+
+Neue Regressionen prüfen Listener-Abmeldung und leeren Tabellenbestand nach
+`destroy()`. `pytest -q tests/test_forecast_table_selector.py
+tests/test_format_table_selector.py`: 13/13 bestanden; bekannte GTK- und
+PyGObject-Deprecation-Warnungen bleiben extern.

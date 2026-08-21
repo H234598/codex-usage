@@ -188,6 +188,23 @@ def test_setting_reload_keeps_selected_table_without_writing() -> None:
     assert selector.saved == []
 
 
+def test_destroy_detaches_active_table_listener() -> None:
+    settings = _Settings()
+    selector = FormatTableSelector(
+        {
+            "tables": [{"key": "table-a", "label": "A"}],
+        },
+        "format-table-selector",
+        settings,
+    )
+
+    assert len(settings.listeners["table-a"]) == 1
+    selector.destroy()
+
+    assert selector._tables == {}
+    assert settings.listeners["table-a"] == []
+
+
 def test_copy_table_reuses_percent_columns_but_keeps_own_description() -> None:
     settings = _Settings()
     settings.settings = {
