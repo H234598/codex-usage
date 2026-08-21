@@ -4285,6 +4285,17 @@ Descriptor-Scan-Regression ergänzt und Install-Aufruf an gespeicherte
 Wheel-Identität gebunden. `pytest -q tests/test_integration_installer.py`:
 119/119 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 477: Wheel-Datei bis Lesen und Staging binden
+
+Der Wheel-Directory-FD-Scan lieferte bisher nur einen Pfad; zwischen Scan,
+`_wheel_details()` und Staging-Copy konnte die Datei ersetzt werden.
+`_build_verified_wheel()` liefert jetzt Pfad plus Datei-Inode. `_read_nofollow`,
+`_wheel_details` und `_copy_regular` akzeptieren und prüfen Parent- sowie
+Datei-Identität über geöffnete Deskriptoren.
+
+Datei-Austausch-Regression ergänzt. `pytest -q tests/test_integration_installer.py`:
+120/120 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

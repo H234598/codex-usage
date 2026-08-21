@@ -667,12 +667,31 @@ def _revalidate_bootstrap(
             _fail()
 
 
-def _copy_regular(source: Path, target: Path, *, mode: int = 0o600) -> None:
+def _copy_regular(
+    source: Path,
+    target: Path,
+    *,
+    mode: int = 0o600,
+    source_parent_identity: _DirectoryIdentity | None = None,
+    source_identity: _FileIdentity | None = None,
+) -> None:
     fd = -1
     try:
         _no_symlink_ancestors(source.parent)
         source_stat = source.lstat()
-        if not stat.S_ISREG(source_stat.st_mode) or source_stat.st_nlink != 1:
+        if (
+            not stat.S_ISREG(source_stat.st_mode)
+            or source_stat.st_nlink != 1
+            or (
+                source_identity is not None
+                and _FileIdentity(
+                    source_stat.st_dev,
+                    source_stat.st_ino,
+                    stat.S_IMODE(source_stat.st_mode),
+                )
+                != source_identity
+            )
+        ):
             _fail()
         ensure_private_directory(target.parent, label="integration target directory")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
@@ -680,7 +699,13 @@ def _copy_regular(source: Path, target: Path, *, mode: int = 0o600) -> None:
         destination = os.fdopen(fd, "wb")
         fd = -1
         with destination:
-            destination.write(_read_nofollow(source))
+            destination.write(
+                _read_nofollow(
+                    source,
+                    expected_parent_identity=source_parent_identity,
+                    expected_file_identity=source_identity,
+                )
+            )
             os.fchmod(destination.fileno(), mode)
     except IntegrationInstallError:
         raise
@@ -691,16 +716,54 @@ def _copy_regular(source: Path, target: Path, *, mode: int = 0o600) -> None:
             os.close(fd)
 
 
-def _read_nofollow(path: Path) -> bytes:
+def _read_nofollow(
+    path: Path,
+    *,
+    expected_parent_identity: _DirectoryIdentity | None = None,
+    expected_file_identity: _FileIdentity | None = None,
+) -> bytes:
     fd = -1
+    parent_fd = -1
     try:
         _no_symlink_ancestors(path.parent)
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        if expected_parent_identity is None and expected_file_identity is None:
+            fd = os.open(path, file_flags)
+        else:
+            parent_flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                parent_flags |= os.O_DIRECTORY
+            if hasattr(os, "O_NOFOLLOW"):
+                parent_flags |= os.O_NOFOLLOW
+            if hasattr(os, "O_CLOEXEC"):
+                parent_flags |= os.O_CLOEXEC
+            parent_fd = os.open(path.parent, parent_flags)
+            parent_item = os.fstat(parent_fd)
+            if (
+                not stat.S_ISDIR(parent_item.st_mode)
+                or parent_item.st_uid != os.getuid()
+                or (
+                    expected_parent_identity is not None
+                    and _DirectoryIdentity(
+                        parent_item.st_dev,
+                        parent_item.st_ino,
+                        stat.S_IMODE(parent_item.st_mode),
+                    )
+                    != expected_parent_identity
+                )
+            ):
+                _fail()
+            fd = os.open(path.name, file_flags, dir_fd=parent_fd)
         item = os.fstat(fd)
         if (
             not stat.S_ISREG(item.st_mode)
             or item.st_nlink != 1
             or item.st_uid != os.getuid()
+        ):
+            _fail()
+        if expected_file_identity is not None and (
+            _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+            != expected_file_identity
         ):
             _fail()
         if item.st_size > MAX_INSTALL_FILE_BYTES:
@@ -718,6 +781,8 @@ def _read_nofollow(path: Path) -> bytes:
     finally:
         if fd >= 0:
             os.close(fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def _resolve_python_executable(path: Path) -> Path:
@@ -923,7 +988,7 @@ def _build_verified_wheel(
     build_root: Path,
     wheel_dir: Path,
     wheel_identity: _DirectoryIdentity | None = None,
-) -> Path:
+) -> tuple[Path, _FileIdentity]:
     _require_offline_builder(
         python_executable=python_executable,
         environment=environment,
@@ -955,7 +1020,7 @@ def _build_verified_wheel(
         _fail()
     if result.returncode != 0:
         _fail()
-    wheels: list[Path] = []
+    wheels: list[tuple[Path, _FileIdentity]] = []
     entries_seen = 0
     flags = os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
@@ -991,7 +1056,16 @@ def _build_verified_wheel(
                     and item.st_nlink == 1
                     and entry.name.endswith(".whl")
                 ):
-                    wheels.append(wheel_dir / entry.name)
+                    wheels.append(
+                        (
+                            wheel_dir / entry.name,
+                            _FileIdentity(
+                                item.st_dev,
+                                item.st_ino,
+                                stat.S_IMODE(item.st_mode),
+                            ),
+                        )
+                    )
     except IntegrationInstallError:
         raise
     except (OSError, ValueError):
@@ -999,8 +1073,8 @@ def _build_verified_wheel(
     finally:
         if wheel_fd >= 0:
             os.close(wheel_fd)
-    wheels.sort()
-    if len(wheels) != 1 or wheels[0].name != EXPECTED_WHEEL_NAME:
+    wheels.sort(key=lambda candidate: candidate[0])
+    if len(wheels) != 1 or wheels[0][0].name != EXPECTED_WHEEL_NAME:
         _fail()
     return wheels[0]
 
@@ -1250,9 +1324,18 @@ def _safe_extract_wheel(
         raise IntegrationInstallError() from None
 
 
-def _wheel_details(wheel_path: Path) -> tuple[dict[str, bytes], dict[str, tuple[str, int]]]:
+def _wheel_details(
+    wheel_path: Path,
+    *,
+    parent_identity: _DirectoryIdentity | None = None,
+    file_identity: _FileIdentity | None = None,
+) -> tuple[dict[str, bytes], dict[str, tuple[str, int]]]:
     try:
-        wheel_payload = _read_nofollow(wheel_path)
+        wheel_payload = _read_nofollow(
+            wheel_path,
+            expected_parent_identity=parent_identity,
+            expected_file_identity=file_identity,
+        )
         with zipfile.ZipFile(io.BytesIO(wheel_payload), "r") as archive:
             infos = _bounded_wheel_infos(archive)
             names = tuple(info.filename for info in infos)
@@ -1660,7 +1743,7 @@ def _install_release(
             )
             _require_private_dir(build_root, build_identity, False)
             _require_private_dir(temporary_root, temporary_identity, False)
-            wheel_path = _build_verified_wheel(
+            wheel_path, wheel_file_identity = _build_verified_wheel(
                 python_executable=python_executable,
                 environment=environment,
                 build_root=build_root,
@@ -1672,11 +1755,20 @@ def _install_release(
             _require_private_dir(wheel_root, wheel_identity, False)
             if _rehash_source_manifest(source_root) != source_manifest:
                 _fail()
-            package, record_rows = _wheel_details(wheel_path)
+            package, record_rows = _wheel_details(
+                wheel_path,
+                parent_identity=wheel_identity,
+                file_identity=wheel_file_identity,
+            )
             _ = package
             staged_wheel = staging / "producer.whl"
             _require_private_dir(staging, staging_identity, False)
-            _copy_regular(wheel_path, staged_wheel)
+            _copy_regular(
+                wheel_path,
+                staged_wheel,
+                source_parent_identity=wheel_identity,
+                source_identity=wheel_file_identity,
+            )
             _require_private_dir(staging, staging_identity, False)
             venv_root = staging / "venv"
             venv.EnvBuilder(

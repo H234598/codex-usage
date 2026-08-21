@@ -1602,6 +1602,42 @@ def test_installer_reader_rejects_foreign_owner(tmp_path, monkeypatch):
         integration_installer._read_nofollow(path)
 
 
+def test_installer_reader_rejects_replaced_file_after_parent_open(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "wheel-parent"
+    parent.mkdir(mode=0o700)
+    path = parent / "candidate.whl"
+    path.write_bytes(b"original")
+    path.chmod(0o600)
+    parent_identity = integration_installer._directory_identity(parent)
+    file_identity = integration_installer._file_identity(path)
+    original_open = os.open
+    replaced = False
+
+    def replace_before_file_open(candidate, flags, mode=0o777, *, dir_fd=None):
+        nonlocal replaced
+        if candidate == path.name and dir_fd is not None and not replaced:
+            path.unlink()
+            path.write_bytes(b"foreign")
+            path.chmod(0o600)
+            replaced = True
+        if dir_fd is None:
+            return original_open(candidate, flags, mode)
+        return original_open(candidate, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_installer.os, "open", replace_before_file_open)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._read_nofollow(
+            path,
+            expected_parent_identity=parent_identity,
+            expected_file_identity=file_identity,
+        )
+
+    assert replaced
+    assert path.read_bytes() == b"foreign"
+
+
 def test_final_release_collision_is_immutable_and_staging_never_leaks_into_manifest_or_launcher(
     tmp_path,
 ):
@@ -2821,13 +2857,20 @@ def test_builder_scans_wheel_directory_by_descriptor(tmp_path, monkeypatch):
         return original_iterdir(path)
 
     monkeypatch.setattr(Path, "iterdir", reject_wheel_path_iterdir)
-    assert integration_installer._build_verified_wheel(
+    wheel_path, wheel_file_identity = integration_installer._build_verified_wheel(
         python_executable=Path(sys.executable),
         environment=integration_installer._sanitized_build_environment(),
         build_root=build_root,
         wheel_dir=wheel_dir,
         wheel_identity=wheel_identity,
-    ) == wheel_dir / integration_installer.EXPECTED_WHEEL_NAME
+    )
+    assert wheel_path == wheel_dir / integration_installer.EXPECTED_WHEEL_NAME
+    wheel_item = wheel_path.lstat()
+    assert wheel_file_identity == integration_installer._FileIdentity(
+        wheel_item.st_dev,
+        wheel_item.st_ino,
+        stat.S_IMODE(wheel_item.st_mode),
+    )
 
 
 def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monkeypatch):
