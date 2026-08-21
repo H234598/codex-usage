@@ -4450,6 +4450,19 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 505: Auth-Migrationsrollback validiert Item-Felder
+
+`rollback_auth_migration()` übersprang bisher jeden unbekannten Item-Status
+und prüfte `account_id` nicht. Ein manipuliertes Manifest konnte dadurch als
+gültig markiert werden; bei einem ungültigen ID-Wert wurde ein passendes Ziel
+vor der Fehlererkennung gelöscht. Rollback validiert jetzt jede Item-ID mit
+der zentralen Account-Regel und akzeptiert nur `canonical` oder `applied`;
+fehlerhafte Manifeste bleiben unverändert.
+
+Regression für ungültige ID und unbekannten Status ergänzt. `pytest -q
+tests/test_profile_migration.py`: 45/45 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 504: Auth-Migrationsplan-IDs validiert
 
 `profile_migration._validate_migration_plan()` akzeptierte bisher ungültige

@@ -530,6 +530,30 @@ def test_auth_migration_rollback_rejects_manifest_item_without_target(tmp_path):
         rollback_auth_migration(manifest_path)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("account_id", "../escape"), ("status", "unexpected")],
+)
+def test_auth_migration_rollback_rejects_invalid_manifest_item_fields(
+    tmp_path, field, value
+):
+    source = tmp_path / "auth.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    plan = plan_auth_migration((_account(tmp_path, source),))
+    manifest_path = tmp_path / "migration" / "manifest.json"
+    manifest = apply_auth_migration(plan, manifest_path)
+    manifest["items"][0][field] = value
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="manifest is invalid"):
+        rollback_auth_migration(manifest_path)
+
+    assert (tmp_path / "profile" / "codex-home" / "auth.json").exists()
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["status"] == "applied"
+
+
 @pytest.mark.parametrize("items", [{}, "invalid", [None]])
 def test_auth_migration_rollback_rejects_invalid_item_collection(tmp_path, items):
     manifest_path = tmp_path / "migration" / "manifest.json"

@@ -193,8 +193,15 @@ def rollback_auth_migration(manifest_path: Path) -> None:
         for item in items:
             if not isinstance(item, dict):
                 raise ValueError("migration manifest is invalid")
-            if item.get("status") != "applied":
+            try:
+                _validate_account_id(item.get("account_id"))
+            except ValueError as exc:
+                raise ValueError("migration manifest is invalid") from exc
+            status = item.get("status")
+            if status == "canonical":
                 continue
+            if status != "applied":
+                raise ValueError("migration manifest is invalid")
             target_text = item.get("target")
             if not isinstance(target_text, str) or not target_text:
                 raise ValueError("migration manifest is invalid")
