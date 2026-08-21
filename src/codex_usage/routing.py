@@ -220,6 +220,8 @@ def evaluate_routing(
     max_age_seconds: int = DEFAULT_MAX_USAGE_AGE_SECONDS,
     spark_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if not isinstance(usage, AccountUsage):
+        raise ValueError("usage is invalid")
     if not isinstance(role, str) or not role.strip():
         raise ValueError("role must be a non-empty string")
     if not isinstance(paid_overage_allowed, bool):

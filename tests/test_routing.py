@@ -64,6 +64,17 @@ def _usage(
     )
 
 
+@pytest.mark.parametrize("usage", [None, [], "invalid", 1, True, object()])
+def test_evaluate_routing_rejects_non_usage_input(usage):
+    with pytest.raises(ValueError, match="usage is invalid"):
+        evaluate_routing(  # type: ignore[arg-type]
+            usage,
+            role="user",
+            paid_overage_allowed=False,
+            now=NOW,
+        )
+
+
 @pytest.mark.parametrize("backend_used", [[], {}])
 def test_backend_identity_validation_rejects_unhashable_backend(backend_used):
     usage = _usage(backend_account_id="backend-private")

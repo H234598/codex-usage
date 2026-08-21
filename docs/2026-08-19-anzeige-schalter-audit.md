@@ -2146,3 +2146,12 @@ Auth-Metadaten, State-Deserializer sowie Usage-Limits-Parser ein. Alle sechs
 Varianten wurden kontrolliert zurückgewiesen bzw. als sichere Leerwerte
 behandelt; kein roher `TypeError` oder `AttributeError` blieb an diesen
 öffentlichen Eingangsgrenzen.
+
+## Runde 214: Routing-Entry-Point validiert Usage-Typ
+
+`routing.evaluate_routing()` griff bei Fremdtypen für `usage` vor jeder
+Validierung auf Account-Felder zu. Direkte Fehlaufrufe konnten dadurch mit
+rohem `AttributeError` abbrechen. Der Entscheidungs-Entry-Point weist
+Nicht-`AccountUsage` jetzt kontrolliert als `ValueError("usage is invalid")`
+zurück. `tests/test_routing.py`: 102/102 bestanden; Mypy für Source und Ruff
+für betroffene Dateien sauber.
