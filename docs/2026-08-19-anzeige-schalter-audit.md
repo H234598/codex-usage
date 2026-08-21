@@ -1409,3 +1409,10 @@ Mypy und Ruff sauber.
 den vorherigen Set-Namen `values`. Typed Candidate-Liste und eindeutiger
 Fallback-Name beseitigen 13 Mypy-Fehler ohne Extraktionsänderung.
 `tests/test_extractor.py`: 175/175 bestanden; Mypy und Ruff sauber.
+
+## Runde 125: Bridge-TLS-Optionalität
+
+`bridge._tls_context()` validiert Zertifikat und Schlüssel bereits paarweise,
+aber Mypy konnte die Korrelation beim Zugriff auf `tls_key` nicht ableiten.
+Explizite defensive `None`-Guard verhindert zusätzlich unklare API-Nutzung.
+`tests/test_bridge.py`: 177/177 bestanden; Mypy und Ruff sauber.

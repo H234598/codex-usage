@@ -1542,6 +1542,8 @@ def _tls_context(
         raise ValueError("TLS requires both certificate and key")
     if tls_cert is None:
         return None
+    if tls_key is None:
+        raise ValueError("TLS requires both certificate and key")
     certificate = tls_cert.expanduser()
     key = tls_key.expanduser()
     assert_no_symlink_ancestors(certificate, label="TLS certificate")
