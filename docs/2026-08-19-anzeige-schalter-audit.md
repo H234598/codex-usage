@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 495: Profile-Job-Abbruchsignal mit strikter PID-Grenze
+
+`profile_jobs.cancel_profile_job()` behandelte `bool` wegen Python-
+Integer-Vererbung als gültige Worker-PID und konnte damit
+`os.killpg(True, SIGTERM)` aufrufen, wenn der aktualisierte Prozessdatensatz
+malformed war. Der Guard weist Boolesche Werte jetzt ab; Manifestvalidierung
+und normale Eigentümerprüfung bleiben unverändert.
+
+Regression ergänzt. `pytest -q tests/test_profile_jobs.py`: 84/84 bestanden.
+Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 494: Device-Login-Prozesssignal mit strikter PID-Grenze
 
 `profile_login._terminate_bounded_process()` behandelte `bool` wegen Python-

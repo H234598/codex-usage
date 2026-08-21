@@ -285,7 +285,12 @@ def cancel_profile_job(job_id: str) -> dict[str, object]:
         error=None,
     )
     pid = updated.get("worker_pid")
-    if isinstance(pid, int) and pid > 0 and _worker_matches(pid, job_id):
+    if (
+        isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and pid > 0
+        and _worker_matches(pid, job_id)
+    ):
         try:
             os.killpg(pid, signal.SIGTERM)
         except (OSError, ValueError):

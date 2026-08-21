@@ -637,6 +637,49 @@ def test_profile_job_cancel_signals_only_owned_worker(tmp_path, monkeypatch):
     assert signals == [(4321, profile_jobs.signal.SIGTERM)]
 
 
+def test_profile_job_cancel_rejects_boolean_worker_pid(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
+
+    class FakeProcess:
+        pid = 4321
+
+    monkeypatch.setattr(
+        profile_jobs.subprocess, "Popen", lambda *args, **kwargs: FakeProcess()
+    )
+    created = profile_jobs.create_profile_job(
+        account_id="alpha",
+        label="Alpha",
+        browser="firefox",
+        backend="direct",
+        profile_dir=str(tmp_path / "profile"),
+        expected_backend_account_id=None,
+        config_path=tmp_path / "config.toml",
+        json_events=False,
+    )
+    original_update = profile_jobs._update_job
+
+    def return_boolean_worker_pid(job_id, **changes):
+        result = original_update(job_id, **changes)
+        if changes.get("status") == "cancel_requested":
+            return {**result, "worker_pid": True}
+        return result
+
+    monkeypatch.setattr(profile_jobs, "_update_job", return_boolean_worker_pid)
+    monkeypatch.setattr(profile_jobs, "_worker_matches", lambda pid, job_id: True)
+    signals = []
+    monkeypatch.setattr(
+        profile_jobs.os,
+        "killpg",
+        lambda pid, signum: signals.append((pid, signum)),
+    )
+
+    result = profile_jobs.cancel_profile_job(created["job_id"])
+
+    assert result["status"] == "cancel_requested"
+    assert signals == []
+
+
 def test_profile_job_status_finishes_cancel_without_worker(tmp_path, monkeypatch):
     state = tmp_path / "state"
     monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
