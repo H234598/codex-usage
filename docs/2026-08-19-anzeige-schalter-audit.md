@@ -4305,3 +4305,15 @@ bleiben fail-closed ohne Details.
 
 `pytest -q tests/test_integration_entrypoint.py`: 27/27 bestanden;
 Modul-Coverage 91 % (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 442: Integration-Snapshot-Sanitizing
+
+`integration_snapshot.py` auf Current-Reader-Races, private Eigentümer-/Mode-/
+Linkgrenzen, Pool-/Fenster-Allowlist, Account-/Cost-Window-/Model-Budgets,
+Secret-Scan, UTC-Normalisierung, Duplicate-Identitäten, Strict-JSON und
+atomaren Cache-Publish geprüft. Keine neue reproduzierbare Fehlfunktion;
+malformed Quellen und nicht kanonische DTOs bleiben `IntegrationInvalidSource`,
+Cachepfad und bestehende Bytes bleiben bei Fehlern geschützt.
+
+`pytest -q tests/test_integration_snapshot.py`: 52/52 bestanden;
+Modul-Coverage 76 % (Branch). Ruff, Mypy und `git diff --check` sauber.
