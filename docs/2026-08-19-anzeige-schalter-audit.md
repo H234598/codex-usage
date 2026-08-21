@@ -2391,3 +2391,11 @@ betroffenen Dateien sauber.
 Resolver weist ungültige Pfade jetzt kontrolliert als `ValueError` zurück,
 bevor Sicherheits-I/O beginnt. `tests/test_private_io.py`: 32/32 bestanden;
 Mypy für Source und Ruff für die betroffenen Dateien sauber.
+
+## Runde 241: OAuth-Browser validiert argv-Container
+
+`oauth_browser.main()` wandelte ein nicht-iterierbares `argv` vor dem
+Fehlerpfad direkt mit `list()` um. Fremdobjekte konnten dadurch roh mit
+`TypeError` abbrechen. Ungültige argv-Container liefern jetzt kontrolliert
+Exit-Code 2. `tests/test_reactivate.py`: 58/58 bestanden; Mypy für Source und
+Ruff für die betroffenen Dateien sauber.

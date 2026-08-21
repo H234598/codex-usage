@@ -29,7 +29,11 @@ PASSTHROUGH_ENV_NAMES = {
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
+    try:
+        args = list(sys.argv[1:] if argv is None else argv)
+    except (TypeError, ValueError):
+        print("error: expected exactly one login URL", file=sys.stderr)
+        return 2
     if len(args) != 1:
         print("error: expected exactly one login URL", file=sys.stderr)
         return 2

@@ -918,6 +918,11 @@ def test_oauth_browser_rejects_non_string_url(url):
     assert oauth_browser.main([url]) == 1
 
 
+@pytest.mark.parametrize("argv", [1, object()])
+def test_oauth_browser_rejects_non_sequence_argv(argv):
+    assert oauth_browser.main(argv) == 2  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "url",
     [
