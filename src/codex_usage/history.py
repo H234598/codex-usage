@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import chain, islice
 from pathlib import Path
+from typing import TypeGuard
 
 from .config import default_state_dir
 from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
@@ -97,12 +98,21 @@ class UsageSample:
 
 
 def _require_aware(value: datetime, label: str) -> None:
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+    if not _is_aware(value):
         raise ValueError(f"{label} must be timezone-aware")
     try:
         value.astimezone(UTC)
-    except (OverflowError, TypeError, ValueError) as exc:
+    except Exception as exc:
         raise ValueError(f"{label} is out of range") from exc
+
+
+def _is_aware(value: object) -> TypeGuard[datetime]:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return False
+    try:
+        return value.utcoffset() is not None
+    except Exception:
+        return False
 
 
 def _to_millis(value: datetime) -> int:
@@ -512,16 +522,10 @@ def _iter_usage_samples(usage: AccountUsage):
     values_captured_at = usage.values_captured_at
     captured_at = (
         values_captured_at
-        if isinstance(values_captured_at, datetime)
-        and values_captured_at.tzinfo is not None
-        and values_captured_at.utcoffset() is not None
+        if _is_aware(values_captured_at)
         else usage.captured_at
     )
-    if (
-        not isinstance(captured_at, datetime)
-        or captured_at.tzinfo is None
-        or captured_at.utcoffset() is None
-    ):
+    if not _is_aware(captured_at):
         return
     source = usage.backend_used if isinstance(usage.backend_used, str) else "unknown"
     main_pools = (usage.main,) if isinstance(usage.main, UsagePool) else ()
@@ -562,9 +566,7 @@ def _iter_usage_samples(usage: AccountUsage):
                 continue
             reset_at = (
                 window.reset_at
-                if isinstance(window.reset_at, datetime)
-                and window.reset_at.tzinfo is not None
-                and window.reset_at.utcoffset() is not None
+                if _is_aware(window.reset_at)
                 else None
             )
             try:
@@ -598,9 +600,7 @@ def _iter_usage_samples(usage: AccountUsage):
             )
             reset_at = (
                 credit.reset_at
-                if isinstance(credit.reset_at, datetime)
-                and credit.reset_at.tzinfo is not None
-                and credit.reset_at.utcoffset() is not None
+                if _is_aware(credit.reset_at)
                 else None
             )
             try:

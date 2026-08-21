@@ -3066,3 +3066,14 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2695 bestanden, 1 übersprungen,
 1 Warnung` in 95,07 s. Die Warnung bleibt externe PyGObject-Deprecation
 außerhalb des Repositories. Die Reactivation-Executable-Grenze ist integriert
 grün.
+
+## Runde 317: History-Zeitwerte schützen fehlerhafte Zeitzonen-Callbacks
+
+`history._iter_usage_samples()` rief `tzinfo.utcoffset()` bei Capture- und
+Reset-Zeitwerten ungefangen auf. Ein fehlerhaftes `tzinfo` konnte History-
+Erzeugung mit einem beliebigen Callback-Fehler abbrechen. Eine zentrale
+`_is_aware()`-Prüfung fängt solche Callbacks; ungültige `values_captured_at`
+fallen auf `captured_at` zurück, ungültige Reset-Zeiten werden verworfen und
+`UsageSample` normalisiert den Fehler zu `ValueError`. `tests/test_history.py`:
+76/76 fokussierte Tests bestanden; Vollsuite: `2697 bestanden, 1 übersprungen,
+1 Warnung` in 91,03 s. Ruff, Mypy und `git diff --check` sauber.

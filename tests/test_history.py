@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -128,6 +128,52 @@ def test_history_rejects_aware_timestamps_outside_utc_range(field, value):
     sample_kwargs[field] = value
     with pytest.raises(ValueError, match=field):
         UsageSample(**sample_kwargs)
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
+
+
+def test_history_rejects_timezone_callbacks_that_raise():
+    with pytest.raises(ValueError, match="captured_at"):
+        UsageSample(
+            account_id="alpha",
+            pool="main",
+            window_seconds=18_000,
+            captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=_RaisingTimezone()),
+            used_percent=1,
+        )
+
+
+def test_usage_samples_skip_invalid_timezone_callbacks():
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        values_captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=_RaisingTimezone()),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(
+                    name="5h",
+                    percent=75,
+                    reset_at=datetime(2026, 8, 16, 11, 0, tzinfo=_RaisingTimezone()),
+                ),
+            ),
+            availability_sources=("usage",),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    samples = usage_samples_from_usage(usage)
+
+    assert len(samples) == 1
+    assert samples[0].captured_at == captured
+    assert samples[0].reset_at is None
 
 
 def test_history_store_rejects_unsupported_schema_without_rewriting_database(
