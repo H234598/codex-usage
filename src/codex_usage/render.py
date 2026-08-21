@@ -211,14 +211,14 @@ def _format_row(row: list[str], widths: list[int]) -> str:
 def _display_path(value: str) -> str:
     try:
         return str(Path(value).expanduser())
-    except RuntimeError:
-        return value
+    except (OSError, TypeError, ValueError, RuntimeError):
+        return str(value)
 
 
 def _profile_state(profile_dir: str) -> str:
     try:
         path = Path(profile_dir).expanduser()
-    except RuntimeError:
+    except (OSError, TypeError, ValueError, RuntimeError):
         return "ungültig"
     if path.is_dir():
         return "vorhanden"
@@ -232,7 +232,7 @@ def _auth_state(auth_json_path: str | None) -> str:
         return "-"
     try:
         path = Path(auth_json_path).expanduser()
-    except RuntimeError:
+    except (OSError, TypeError, ValueError, RuntimeError):
         return "ungültig"
     if path.is_file():
         return "vorhanden"

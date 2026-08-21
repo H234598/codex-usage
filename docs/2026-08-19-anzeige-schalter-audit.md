@@ -3294,3 +3294,13 @@ Service-Neustart nach `990a107` lädt neuen Code; Journal zeigt weiterhin
 gültige `app-server`-Konten ohne State-/Parserfehler. Der Run endet bei den
 Browser-Konten mit dem bereits bekannten externen Fehler: Firefox-Playwright-
 Executable fehlt. Keine automatische Netzwerkinstallation ausgeführt.
+
+## Runde 344: Render-Übersicht schützt malformed Pfade
+
+`render_account_overview()` konnte bei nicht-stringartigen `profile_dir`- oder
+`auth_json_path`-Werten mit `TypeError` aus `Path(...)` abbrechen. Die drei
+lokalen Pfad-Helfer zeigen jetzt kontrolliert `ungültig` beziehungsweise den
+rohen Wert an.
+
+Regressionstest ergänzt. `pytest -q tests/test_render.py`: 65/65 bestanden.
+Mypy für `render.py`, Ruff und `git diff --check` sauber.

@@ -526,6 +526,26 @@ def test_render_account_overview_marks_unresolvable_paths():
     assert rendered.count("ungültig") == 2
 
 
+@pytest.mark.parametrize("field", ["profile_dir", "auth_json_path"])
+def test_render_account_overview_hides_malformed_paths(field):
+    values = {
+        "id": "malformed",
+        "label": "Malformed",
+        "profile_dir": "/tmp/malformed",
+        "auth_json_path": None,
+    }
+    values[field] = 1
+    account = Account(**values)  # type: ignore[arg-type]
+
+    rendered = render_account_overview(
+        AppConfig(accounts=(account,)),
+        Path("/tmp/config"),
+    )
+
+    assert "Malformed" in rendered
+    assert "ungültig" in rendered
+
+
 @pytest.mark.parametrize("usages", [[], "invalid", object()])
 def test_render_account_overview_rejects_invalid_usage_mapping(usages):
     with pytest.raises(ValueError, match="usage mapping is invalid"):
