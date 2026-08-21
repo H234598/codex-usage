@@ -1748,3 +1748,11 @@ Die vollständige Python-Suite lief nach den Snapshot-, Routing-, Credit- und
 RECORD-Validierungen mit **2168 bestanden, 1 übersprungen und 1 externer
 PyGObject-Warnung** in 86,82 s. Die Warnung betrifft weiterhin die veraltete
 `GLib.unix_signal_add_full`-API außerhalb des Repositories; keine Testfehler.
+
+## Runde 168: Scheduler-Backend-Typ
+
+`scheduler.fetch_all()` prüfte `backend_used` direkt gegen ein Set. Ein
+fehlerhaftes Fetch-Ergebnis mit Liste oder anderem unhashbarem Wert konnte so
+`TypeError` auslösen. Der Pfad verlangt jetzt vor Set-Mitgliedschaft einen
+String und gibt fehlerhafte Ergebnisse unverändert zurück.
+`tests/test_scheduler.py`: 168/168 bestanden; Mypy und Ruff sauber.

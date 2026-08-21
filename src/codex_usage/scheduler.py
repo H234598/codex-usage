@@ -161,7 +161,11 @@ def fetch_all(
             usage,
             reference_at=usage.captured_at,
         )
-        if usage.status != AccountStatus.OK or usage.backend_used not in AUTHENTICATED_BACKENDS:
+        if (
+            usage.status != AccountStatus.OK
+            or not isinstance(usage.backend_used, str)
+            or usage.backend_used not in AUTHENTICATED_BACKENDS
+        ):
             return usage
         previous = load_usage_snapshot(account.id)
         return _stabilize_authenticated_usage(

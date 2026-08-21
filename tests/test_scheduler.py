@@ -340,6 +340,24 @@ def test_fetch_all_allows_single_account_auth_override(monkeypatch):
     }
 
 
+def test_fetch_all_rejects_unhashable_backend_before_stabilization(monkeypatch):
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+    malformed = AccountUsage(
+        account_id=account.id,
+        label=account.label,
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used=[],
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _id: 0)
+    monkeypatch.setattr("codex_usage.scheduler._fetch_one", lambda *_args, **_kwargs: malformed)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,))
+
+    assert result[0].backend_used == []
+
+
 def test_fetch_all_auth_override_forces_direct_fetch_even_without_direct_flag(
     monkeypatch,
 ):
