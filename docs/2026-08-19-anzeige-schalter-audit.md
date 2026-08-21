@@ -2803,3 +2803,12 @@ fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
 Codex-Befehl liefern jetzt kontrolliert `DirectAuthError` bzw.
 `AppServerUnavailableError`. `tests/test_app_server.py`: 98/98 fokussierte
 Tests bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
+
+## Runde 287: Bridge-TLS-Pfade validieren Home-Expansion
+
+`bridge._tls_context()` ließ unbekannte `~user`-Pfade für Zertifikat oder Key
+als rohes `RuntimeError` entkommen. Beide TLS-Pfade werden jetzt vor
+Symlink-/Datei- und SSL-Prüfung kontrolliert expandiert; Fehler liefern
+`ValueError("TLS path cannot be resolved")`. `tests/test_bridge.py`: 255/255
+fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
+sauber.

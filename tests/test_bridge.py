@@ -223,6 +223,15 @@ def test_tls_context_requires_matching_private_material(tmp_path):
         _tls_context(certificate, key)
 
 
+def test_tls_context_rejects_unknown_home_path(tmp_path):
+    key = tmp_path / "key.pem"
+    key.write_text("private key", encoding="utf-8")
+    key.chmod(0o600)
+
+    with pytest.raises(ValueError, match="TLS path cannot be resolved"):
+        _tls_context(Path("~definitely-no-such-user-zzzz/cert.pem"), key)
+
+
 def test_bridge_server_rejects_plaintext_non_loopback_before_bind(monkeypatch):
     monkeypatch.setattr(
         "codex_usage.bridge._BoundedThreadingHTTPServer",

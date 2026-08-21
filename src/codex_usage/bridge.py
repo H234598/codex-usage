@@ -1608,8 +1608,11 @@ def _tls_context(
         return None
     if tls_key is None:
         raise ValueError("TLS requires both certificate and key")
-    certificate = tls_cert.expanduser()
-    key = tls_key.expanduser()
+    try:
+        certificate = tls_cert.expanduser()
+        key = tls_key.expanduser()
+    except RuntimeError as exc:
+        raise ValueError("TLS path cannot be resolved") from exc
     assert_no_symlink_ancestors(certificate, label="TLS certificate")
     assert_no_symlink_ancestors(key, label="TLS key")
     if certificate.is_symlink() or not certificate.is_file():
