@@ -1696,3 +1696,9 @@ Nach den strikten Versions- und Payload-Prüfungen lief die vollständige
 Python-Suite mit **2159 bestanden, 1 übersprungen und 1 externer
 PyGObject-Warnung** in 88,38 s. Die Warnung betrifft die veraltete
 `GLib.unix_signal_add_full`-API außerhalb des Repositories; keine Testfehler.
+
+## Runde 161: Gesamt-Mypy und Ruff
+
+Nach dem vollständigen Testlauf meldet `mypy src/codex_usage` weiterhin keine
+Fehler in 35 Quelldateien. Der aggregierte Ruff-Lauf über Produktion, Scripts,
+Launcher und Tests ist ebenfalls sauber.
