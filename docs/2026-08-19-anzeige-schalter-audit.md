@@ -1948,6 +1948,15 @@ aktueller Zeitpunkt behandelt; gültige Quellen bleiben unverändert.
 `tests/test_extractor.py`: 195/195 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
 
+## Runde 202: Health-Event-Clock fail-closed
+
+`health.record_health_event()` übernahm truthy Nicht-datetime-Werte als
+`now` und rief darauf `.astimezone()` auf. Fehlertelemetrie konnte dadurch
+selbst mit `AttributeError` abbrechen. Der Event-Clock akzeptiert jetzt nur
+echte `datetime`-Werte und fällt sonst auf aktuelle UTC-Zeit zurück.
+`tests/test_health.py`: 20/20 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
+
 ## Runde 191: Scheduler-Reset- und Stabilisierungsguards
 
 `scheduler._watch_core_resets_current()` und `_stabilize_main_pool()` griffen

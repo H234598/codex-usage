@@ -57,6 +57,15 @@ def test_health_redacts_non_string_account(tmp_path, account):
     assert "account" not in load_health(path)["events"][0]
 
 
+@pytest.mark.parametrize("now", [[], {}, "invalid", 1, True, object()])
+def test_health_uses_safe_clock_for_malformed_now(tmp_path, now):
+    path = tmp_path / "health.json"
+
+    record_health_event("scheduler", "cycle_ok", path=path, now=now)  # type: ignore[arg-type]
+
+    assert load_health(path)["event_count"] == 1
+
+
 def test_health_discards_old_events_and_can_be_cleared(tmp_path):
     path = tmp_path / "health.json"
     now = datetime.now(UTC)

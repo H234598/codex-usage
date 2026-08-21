@@ -39,7 +39,7 @@ def record_health_event(
 ) -> None:
     health_path = path or default_health_path()
     _prepare_health_directory(health_path.parent)
-    current_time = now or datetime.now(UTC)
+    current_time = now if isinstance(now, datetime) else datetime.now(UTC)
     entry: dict[str, Any] = {
         "at": current_time.astimezone(UTC).isoformat(),
         "component": _safe_token(component, "unknown"),
