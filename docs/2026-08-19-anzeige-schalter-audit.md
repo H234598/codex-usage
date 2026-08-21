@@ -5414,3 +5414,16 @@ Neue Regressionen prüfen Listener-Abmeldung und leeren Tabellenbestand nach
 `destroy()`. `pytest -q tests/test_forecast_table_selector.py
 tests/test_format_table_selector.py`: 13/13 bestanden; bekannte GTK- und
 PyGObject-Deprecation-Warnungen bleiben extern.
+
+## Runde 458: Fast-Mode-SVG-Lader bleibt fail-safe
+
+`FastModeIconSelector` ließ `GLib.Error` aus
+`GdkPixbuf.Pixbuf.new_from_file_at_scale()` hochlaufen. Eine beschädigte oder
+unvollständige SVG-Datei konnte damit den gesamten Cinnamon-Settings-Aufbau
+abbrechen, obwohl die Auswahl selbst weiterhin als Dateiname nutzbar ist.
+Der Icon-Lader fängt `GLib.Error` jetzt zusammen mit den bisherigen lokalen
+Dateifehlern ab und lässt die Zeile ohne Vorschau weiterlaufen.
+
+Regression mit echtem kaputtem SVG: `pytest -q
+tests/test_fast_mode_icon_selector.py`: 5/5 bestanden. Ruff, Python-Compile
+und `git diff --check` sauber.

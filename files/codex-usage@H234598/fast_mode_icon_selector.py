@@ -6,9 +6,21 @@ from pathlib import Path
 import gi
 
 gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("GLib", "2.0")
 gi.require_version("Gtk", "3.0")
-from gi.repository import GdkPixbuf, Gtk  # noqa: E402
+from gi.repository import GdkPixbuf, GLib, Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
+
+
+def _load_icon(path):
+    try:
+        if path.is_file() and path.suffix == ".svg":
+            return GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                str(path), FastModeIconSelector._ICON_SIZE, FastModeIconSelector._ICON_SIZE, True
+            )
+    except (GLib.Error, OSError, TypeError):
+        pass
+    return None
 
 
 class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
@@ -50,14 +62,7 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
             if not isinstance(label, str) or not isinstance(value, str):
                 continue
             path = icon_dir / value
-            pixbuf = None
-            try:
-                if path.is_file() and path.suffix == ".svg":
-                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                        str(path), self._ICON_SIZE, self._ICON_SIZE, True
-                    )
-            except (OSError, TypeError):
-                pixbuf = None
+            pixbuf = _load_icon(path)
             self.store.append([pixbuf, label, value])
             self._values.append(value)
             self._tooltips[value] = f"{label}: {value}"

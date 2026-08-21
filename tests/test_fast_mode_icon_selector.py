@@ -9,7 +9,7 @@ sys.path.insert(0, str(APPLET_DIR))
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
-from fast_mode_icon_selector import FastModeIconSelector  # noqa: E402
+from fast_mode_icon_selector import FastModeIconSelector, _load_icon  # noqa: E402
 
 
 class _Combo:
@@ -107,3 +107,10 @@ def test_icon_selector_does_not_write_when_settings_reload_updates_combo() -> No
     selector.on_setting_changed()
 
     assert selector.saved == []
+
+
+def test_icon_loader_ignores_corrupt_svg(tmp_path: Path) -> None:
+    path = tmp_path / "broken.svg"
+    path.write_text("not an svg", encoding="utf-8")
+
+    assert _load_icon(path) is None
