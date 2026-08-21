@@ -2570,3 +2570,11 @@ vor `_default_root_command()` und konnte dadurch roh mit `TypeError` abbrechen.
 Explizites argv wird jetzt vor Parser-Aufbau geprüft und liefert Exit-Code 2.
 `tests/test_cli.py`: 114/114 bestanden; Mypy für Source und Ruff für die
 betroffene Datei sauber.
+
+## Runde 261: Abschlussverifikation nach Auth-/Profil-/CLI-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2624 bestanden, 1 übersprungen,
+1 Warnung` in 88,73 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts ist
+ebenfalls sauber.
