@@ -2229,3 +2229,13 @@ skipped, 1 warning` in 86.78s. Die externe PyGObject-Deprecation bleibt die
 einzige Warnung außerhalb des Repositories. `mypy src/codex_usage` ist in 35
 Quelldateien fehlerfrei; aggregierter Ruff über Produktion, Scripts, Launcher
 und Tests ist sauber.
+
+## Runde 223: Direct-/App-Server-Fetch validiert Account-Typ
+
+`fetch_account_usage_direct()` und `fetch_account_usage_app_server()` griffen
+bei Fremdtypen vor dem Fehlerpfad auf Account-Felder zu. Ungültige Fetch-
+Aufrufe konnten dadurch mit rohem `AttributeError` abbrechen. Beide
+öffentlichen Fetch-Entry-Points prüfen jetzt `Account` vor I/O und melden
+`ValueError("account is invalid")`. `tests/test_direct.py` und
+`tests/test_app_server.py`: 256/256 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.

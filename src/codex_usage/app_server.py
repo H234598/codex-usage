@@ -81,6 +81,8 @@ def fetch_account_usage_app_server(
     timeout_seconds: int | float = APP_SERVER_TIMEOUT_SECONDS,
     codex_command: str | None = None,
 ) -> AccountUsage:
+    if not isinstance(account, Account):
+        raise ValueError("account is invalid")
     captured_at = datetime.now(tz=LOCAL_TZ)
     try:
         (

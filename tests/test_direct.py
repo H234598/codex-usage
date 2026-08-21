@@ -80,6 +80,12 @@ def test_direct_redact_url_rejects_invalid_port():
     assert _redact_url("https://user:secret@chatgpt.com:invalid/path") == ""
 
 
+@pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
+def test_direct_fetch_rejects_non_account_input(account):
+    with pytest.raises(ValueError, match="account is invalid"):
+        fetch_account_usage_direct(account)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     "value",
     (

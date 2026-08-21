@@ -89,6 +89,12 @@ def test_app_server_symlink_check_rejects_dotdot_bypass(tmp_path):
         app_server_module._assert_no_symlink_ancestors(redirected / ".." / "target")
 
 
+@pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
+def test_app_server_fetch_rejects_non_account_input(account):
+    with pytest.raises(ValueError, match="account is invalid"):
+        fetch_account_usage_app_server(account)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("payload", [None, [], "invalid", 1, True, object()])
 def test_app_server_response_helpers_reject_non_object_payloads(payload):
     with pytest.raises(AppServerProtocolError, match="response is not an object"):

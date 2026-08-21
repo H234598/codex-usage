@@ -64,6 +64,8 @@ def fetch_account_usage_direct(
     reject_ambiguous_backend_identity: bool = False,
     timeout_seconds: int | float = 20,
 ) -> AccountUsage:
+    if not isinstance(account, Account):
+        raise ValueError("account is invalid")
     captured_at = datetime.now(tz=LOCAL_TZ)
     path = _resolve_auth_json_path(account, auth_json_path)
     auth_metadata: dict[str, datetime | None] = {}
