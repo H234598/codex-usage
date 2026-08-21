@@ -3325,3 +3325,10 @@ dadurch ein zu enges Union-Mapping und meldete beim späteren Einfügen des
 
 `pytest -q tests/test_routing.py`: 125/125 bestanden. Mypy für `routing.py`,
 Ruff und `git diff --check` sauber.
+
+## Runde 347: Reload nach Routing-Typfix
+
+Service-Neustart nach `cbdcd2a` lädt den neuen Routing-Code. Journal zeigt
+gültige `app-server`-Ergebnisse inklusive Reset-/Limitdaten; der Lauf endet
+wie zuvor ausschließlich an den Browser-Konten mit fehlender Firefox-
+Playwright-Executable. Keine automatische Netzwerkinstallation ausgeführt.
