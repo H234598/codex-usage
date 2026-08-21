@@ -399,6 +399,82 @@ def _remove_owned_entry(
             os.close(parent_fd)
 
 
+def _rename_owned_directory(
+    source: Path,
+    target: Path,
+    parent_identity: _DirectoryIdentity,
+    source_identity: _DirectoryIdentity,
+) -> None:
+    if source.parent != target.parent:
+        _fail()
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    parent_fd = -1
+    try:
+        _no_symlink_ancestors(source.parent)
+        parent_fd = os.open(source.parent, flags)
+        parent_item = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(parent_item.st_mode)
+            or parent_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                parent_item.st_dev,
+                parent_item.st_ino,
+                stat.S_IMODE(parent_item.st_mode),
+            )
+            != parent_identity
+        ):
+            _fail()
+        source_item = os.stat(source.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(source_item.st_mode)
+            or source_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                source_item.st_dev,
+                source_item.st_ino,
+                stat.S_IMODE(source_item.st_mode),
+            )
+            != source_identity
+        ):
+            _fail()
+        try:
+            os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            _fail()
+        os.rename(
+            source.name,
+            target.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        final_item = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(final_item.st_mode)
+            or final_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                final_item.st_dev,
+                final_item.st_ino,
+                stat.S_IMODE(final_item.st_mode),
+            )
+            != source_identity
+        ):
+            _fail()
+    except IntegrationInstallError:
+        raise
+    except (OSError, ValueError):
+        _fail()
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
 def _cleanup_provisional_after_failure(
     path: Path,
     identity: _ProvisionalIdentity,
@@ -1634,7 +1710,12 @@ def _install_release(
                 _fail()
             if candidate_at_seam != candidate:
                 _fail()
-            staging.rename(final_release_dir)
+            _rename_owned_directory(
+                staging,
+                final_release_dir,
+                releases_identity,
+                staging_identity,
+            )
             final_renamed = True
             _require_private_dir(final_release_dir, staging_identity, False)
             _revalidate_bootstrap(state_home, app_identity, integration_identity)

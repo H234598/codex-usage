@@ -4251,6 +4251,18 @@ Pfad-`unlink`- und Build-Replacement-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 116/116 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 474: Finaler Release-Rename per Parent-FD
+
+`_install_release()` verschob den Staging-Release zuletzt per
+`staging.rename(final_release_dir)`. Trotz vorheriger Identitätsprüfung blieb
+ein Parent-Swap bis zum Rename möglich. `_rename_owned_directory()` öffnet
+`releases/` mit `O_DIRECTORY|O_NOFOLLOW`, prüft Parent-, Quell- und Ziel-Inode
+und ruft `os.rename(..., src_dir_fd=..., dst_dir_fd=...)` auf.
+
+Parent-Swap-Regression und Rename-Seam-Tests aktualisiert. `pytest -q
+tests/test_integration_installer.py`: 117/117 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
