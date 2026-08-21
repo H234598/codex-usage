@@ -638,7 +638,7 @@ def _windows_from_response(
     else:
         raise AppServerProtocolError("app server response has no rateLimits object")
     top_level_snapshot = dict(snapshot)
-    if has_codex_buckets:
+    if has_codex_buckets and isinstance(codex_snapshot, dict):
         for key in ("primary", "secondary"):
             value = codex_snapshot.get(key)
             if isinstance(value, dict):
@@ -715,15 +715,16 @@ def _windows_from_response(
     else:
         by_key = dict(candidates)
         primary = by_key.get("primary")
-        secondary = by_key.get("secondary")
+        secondary_window = by_key.get("secondary")
         five_item = (
             ("primary", primary)
             if primary is not None and _window_duration_is_missing(primary)
             else None
         )
         weekly_item = (
-            ("secondary", secondary)
-            if secondary is not None and _window_duration_is_missing(secondary)
+            ("secondary", secondary_window)
+            if secondary_window is not None
+            and _window_duration_is_missing(secondary_window)
             else None
         )
     five = _window("five_hour", five_item[1]) if five_item else None

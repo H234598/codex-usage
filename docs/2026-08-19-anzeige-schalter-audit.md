@@ -1367,3 +1367,11 @@ Zwischengröße heißt jetzt `normalized_limits`; Validierung und Policy-Inhalt
 bleiben unverändert. `tests/test_routing.py`: 88/88 bestanden; Mypy und Ruff
 für `routing.py` sauber. Eine bestehende unsortierte Importgruppe in
 `tests/test_routing.py` blieb unberührt.
+
+## Runde 120: App-Server-Fenster-Typen
+
+`app_server._windows_from_response()` verengte `codex_snapshot` nur über ein
+Bool-Flag und verwendete `secondary` für zwei inkompatible Formen. Direkte
+Dict-Prüfung und `secondary_window`-Name beseitigen vier Mypy-Fehler ohne
+Antwortauswertung zu ändern. `tests/test_app_server.py`: 77/77 bestanden;
+Mypy und Ruff sauber.
