@@ -36,7 +36,7 @@ def parse_wham_usage_pools(
     captured_at: datetime,
     source: str,
 ) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not isinstance(captured_at, datetime):
         return None, ()
     main = _wham_pool(
         key=MAIN_POOL_KEY,
@@ -96,7 +96,7 @@ def parse_app_server_usage_pools(
     model_ids: Iterable[str] = (),
     source: str = "app-server",
 ) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not isinstance(captured_at, datetime):
         return None, ()
     raw_by_id = payload.get("rateLimitsByLimitId")
     malformed_by_id = raw_by_id is not None and not isinstance(raw_by_id, dict)
@@ -224,7 +224,10 @@ def parse_app_server_usage_pools(
 def merge_model_catalog(
     pools: Iterable[UsagePool], model_ids: Iterable[str]
 ) -> tuple[UsagePool, ...]:
-    pool_values = tuple(islice(pools, MAX_MODEL_CATALOG_IDS + 1))
+    try:
+        pool_values = tuple(islice(pools, MAX_MODEL_CATALOG_IDS + 1))
+    except (TypeError, ValueError):
+        return ()
     if len(pool_values) > MAX_MODEL_CATALOG_IDS or any(
         not isinstance(pool, UsagePool) for pool in pool_values
     ):

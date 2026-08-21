@@ -33,6 +33,37 @@ def test_usage_pool_parsers_fail_closed_for_non_object_payload(payload):
     ) == (None, ())
 
 
+@pytest.mark.parametrize("captured_at", [None, [], "invalid", 42, True, object()])
+def test_usage_pool_parsers_fail_closed_for_invalid_capture_time(captured_at):
+    wham_payload = {
+        "rate_limit": {
+            "primary_window": {"reset_after_seconds": 60},
+        }
+    }
+    app_server_payload = {
+        "rateLimitsByLimitId": {
+            "codex": {
+                "primary": {"resetsAt": 1},
+            }
+        }
+    }
+
+    assert parse_wham_usage_pools(
+        wham_payload,
+        captured_at=captured_at,
+        source="test",
+    ) == (None, ())  # type: ignore[arg-type]
+    assert parse_app_server_usage_pools(
+        app_server_payload,
+        captured_at=captured_at,
+    ) == (None, ())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("pools", [None, 1, True, object()])
+def test_merge_model_catalog_fails_closed_for_non_iterable_pools(pools):
+    assert merge_model_catalog(pools, ()) == ()  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("window", "expected"),
     [

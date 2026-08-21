@@ -2109,3 +2109,13 @@ Die Vollsuite bestätigt den Stand: `2280 passed, 1 skipped, 1 warning` in
 Repositories. `mypy src/codex_usage` ist in 35 Quelldateien fehlerfrei;
 aggregierter Ruff-Lauf über Produktion, Scripts, Launcher und Tests ist
 ebenfalls sauber.
+
+## Runde 210: Usage-Limits validieren Zeit und Pool-Iterator
+
+`usage_limits.parse_wham_usage_pools()` konnte bei relativem Reset und
+malformed `captured_at` mit rohem `AttributeError` abbrechen;
+`merge_model_catalog()` tat dasselbe bei nicht-iterierbaren Pool-Containern.
+Beide Parserfamilien akzeptieren jetzt nur echte Zeitstempel, und der
+Katalog-Helper fail-closed bei ungültigen Pool-Iterables.
+`tests/test_usage_limits.py`: 122/122 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
