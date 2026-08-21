@@ -2399,3 +2399,13 @@ Fehlerpfad direkt mit `list()` um. Fremdobjekte konnten dadurch roh mit
 `TypeError` abbrechen. Ungültige argv-Container liefern jetzt kontrolliert
 Exit-Code 2. `tests/test_reactivate.py`: 58/58 bestanden; Mypy für Source und
 Ruff für die betroffenen Dateien sauber.
+
+## Runde 242: Profile-Layout validiert Transaktionscontainer und Flag
+
+`profile_layout.ensure_profile_layout()` übernahm Fremdtypen für
+`created_directories`/`created_files` bis zum rohen `.append()`; ein nicht-
+boolesches `preserve_existing_metadata` wurde ebenfalls still interpretiert.
+Optionale Container und Flag werden jetzt vor Layout-I/O typgeprüft.
+`tests/test_profile_layout.py` und `tests/test_profile_jobs.py`: 83/83
+fokussierte Tests bestanden; Mypy für Source und Ruff für die betroffene Datei
+sauber.
