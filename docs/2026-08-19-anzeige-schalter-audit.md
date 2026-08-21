@@ -1401,3 +1401,11 @@ Returns, optionalen Identitäten und Zielpfaden. `NoReturn` korrigiert den
 zentralen Vertrag; der verbleibende Selector-Stream wird explizit als
 `IO[bytes]` verengt. `tests/test_integration_installer.py`: 103/103 bestanden;
 Mypy und Ruff sauber.
+
+## Runde 124: Extractor-Kandidaten-Typen
+
+`extractor.py` konnte nach dem Optional-Filter Tuple-Elemente weiterhin als
+`LimitWindow | None` behandeln; zusätzlich überschattete die Fallback-Liste
+den vorherigen Set-Namen `values`. Typed Candidate-Liste und eindeutiger
+Fallback-Name beseitigen 13 Mypy-Fehler ohne Extraktionsänderung.
+`tests/test_extractor.py`: 175/175 bestanden; Mypy und Ruff sauber.

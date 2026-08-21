@@ -153,7 +153,7 @@ def _extract_text_windows(
     stop_labels: tuple[str, ...],
     captured_at: datetime,
 ) -> LimitWindow | None:
-    candidates = [
+    candidate_pairs = [
         (source_index, _extract_text_window(
             text,
             name=name,
@@ -164,7 +164,11 @@ def _extract_text_windows(
         ))
         for source_index, (source, text) in enumerate(sources)
     ]
-    candidates = [item for item in candidates if item[1] is not None]
+    candidates = [
+        (source_index, window)
+        for source_index, window in candidate_pairs
+        if isinstance(window, LimitWindow)
+    ]
     usage_candidates = [item for item in candidates if item[1].has_usage_value]
     if usage_candidates:
         selected = _select_text_usage_candidate(usage_candidates)
@@ -1478,13 +1482,17 @@ def _extract_progress_width_percent(text: str) -> float | None:
     if len(matches) > MAX_PROGRESS_PARSER_ENTRIES:
         return None
     if matches:
-        values: list[float] = []
+        fallback_values: list[float] = []
         for match in matches:
             percent = _parse_percent(match.group("percent"))
             if percent is None:
                 return None
-            values.append(percent)
-        return values[0] if len(set(values)) == 1 else None
+            fallback_values.append(percent)
+        return (
+            fallback_values[0]
+            if len(set(fallback_values)) == 1
+            else None
+        )
     return None
 
 
