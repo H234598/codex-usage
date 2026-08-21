@@ -1529,3 +1529,9 @@ Der vollständige Node-Testlauf `tests/applet_runtime.test.js` endet mit
 Ruff meldete eine E501-Zeile in der Fake-App-Server-Credits-Fixture. Der
 zusammengesetzte Test-String ist jetzt mehrzeilig; Testverhalten bleibt gleich.
 `tests/test_app_server.py`: 81/81 bestanden; Ruff sauber.
+
+## Runde 140: Routing-Testimport
+
+Ruff meldete eine unsortierte Importgruppe in `test_routing.py`. Die beiden
+Policy-Setter sind jetzt alphabetisch geordnet; Verhalten bleibt unverändert.
+`tests/test_routing.py`: 88/88 bestanden; Ruff sauber.
