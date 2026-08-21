@@ -1647,8 +1647,11 @@ def _pool_forces_watchdog_block(pool: Any) -> bool:
 
 
 def _watchdog_windows(usage: AccountUsage) -> tuple[Any, ...]:
-    if usage.main is not None and usage.main.windows:
-        return usage.main.windows
+    if isinstance(usage.main, UsagePool):
+        if not isinstance(usage.main.windows, tuple):
+            return ()
+        if usage.main.windows:
+            return usage.main.windows
     return tuple(
         window
         for window in (usage.five_hour, usage.weekly)

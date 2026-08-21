@@ -27,6 +27,7 @@ from codex_usage.scheduler import (
     _usage_map_for_accounts,
     _watch_core_resets_current,
     _watch_cycle_is_healthy,
+    _watchdog_windows,
     _window_duration_seconds,
     _window_is_exhausted,
     fetch_all,
@@ -2779,6 +2780,22 @@ def test_scheduler_stabilization_skips_malformed_main_pool():
         )
         is current
     )
+
+
+@pytest.mark.parametrize("windows", [None, [None]])
+def test_scheduler_watchdog_ignores_malformed_main_windows(windows):
+    usage = AccountUsage(
+        account_id="dynamic",
+        label="Dynamic",
+        captured_at=datetime.now().astimezone(),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=windows,  # type: ignore[arg-type]
+        ),
+    )
+
+    assert _watchdog_windows(usage) == ()
 
 
 @pytest.mark.parametrize(

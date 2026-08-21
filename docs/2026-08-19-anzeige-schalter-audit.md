@@ -1947,3 +1947,13 @@ zu. Health-Prüfung oder Auth-Stabilisierung konnte dadurch `TypeError` bzw.
 und `LimitWindow`; malformed Daten führen fail-closed zu `False` bzw. werden
 unverändert weitergereicht. `tests/test_scheduler.py`: 171/171 bestanden;
 Mypy für Source und Ruff für betroffene Dateien sauber.
+
+## Runde 192: Watchdog-Fenster-Normalisierung
+
+`scheduler._watchdog_windows()` gab malformed Main-Window-Container direkt
+weiter. Ein Nicht-Tuple konnte in `_block_state()` unkontrolliert iteriert
+werden; Watchdog-Entscheidungen waren dadurch nicht zuverlässig fail-closed.
+Malformed Main-Pools liefern jetzt leere Fenster, sodass Pool-Flags den
+bekannten Unknown-Blockpfad auslösen; gültige Legacy-Fenster bleiben erhalten.
+`tests/test_scheduler.py`: 173/173 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
