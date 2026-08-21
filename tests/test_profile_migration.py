@@ -374,6 +374,20 @@ def test_auth_migration_plan_rejects_existing_canonical_target(tmp_path):
     assert plan.items[0].reason == "canonical auth target already exists"
 
 
+def test_auth_migration_plan_recognizes_canonical_dotdot_alias(tmp_path):
+    profile = tmp_path / "profile"
+    target = profile / "codex-home" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}", encoding="utf-8")
+    target.chmod(0o600)
+    alias = profile / "codex-home" / ".." / "codex-home" / "auth.json"
+
+    plan = plan_auth_migration((_account(tmp_path, alias),))
+
+    assert plan.items[0].status == "canonical"
+    assert plan.items[0].source == alias
+
+
 def test_auth_migration_apply_and_rollback_keep_source_and_never_return_secret(tmp_path):
     source = tmp_path / "auth.json"
     source.write_text('{"tokens":{"access_token":"secret"}}', encoding="utf-8")

@@ -281,7 +281,7 @@ def _classify_source(source: Path | None, target: Path) -> tuple[str, str | None
         assert_no_symlink_ancestors(target, label="migration target")
     except ValueError as exc:
         return "conflict", str(exc)
-    if source == target:
+    if Path(os.path.normpath(str(source))) == Path(os.path.normpath(str(target))):
         return "canonical", None
     if not source.is_file():
         return "missing", "auth source does not exist"

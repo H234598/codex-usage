@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 513: Canonical-Auth-Pfadalias erkannt
+
+`_classify_source()` verglich Quelle und Ziel bisher byteweise. Absolute
+Konfigurationspfade mit `..` konnten dadurch auf dasselbe Canonical-
+`auth.json` zeigen, wurden aber als vorhandener Konflikt markiert. Nach
+Symlink-Prüfung vergleicht der Klassifizierer jetzt lexikalisch normalisierte
+Pfade; Symlink-Auflösung bleibt ausgeschlossen.
+
+Regression für ein vorhandenes Canonical-Ziel über `..` ergänzt. `pytest -q
+tests/test_profile_migration.py`: 56/56 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 512: Lexikalische Suchroot-Aliase dedupliziert
 
 `_source_for_account()` deduplizierte bisher nur bytegleiche `Path`-Objekte.
