@@ -207,7 +207,10 @@ def _auth_context(
         raise DirectAuthError("account has no auth_json_path")
     if not isinstance(account.auth_json_path, str):
         raise DirectAuthError("account auth_json_path is invalid")
-    path = Path(account.auth_json_path).expanduser()
+    try:
+        path = Path(account.auth_json_path).expanduser()
+    except RuntimeError as exc:
+        raise DirectAuthError("account auth_json_path is invalid") from exc
     if path.name != "auth.json":
         raise DirectAuthError("app-server requires auth_json_path filename auth.json")
     # Preserve CODEX_HOME validation precedence before reading auth.json.
@@ -455,7 +458,10 @@ def _resolve_codex(explicit: str | None) -> str:
         if not isinstance(explicit, str) or not explicit or explicit != explicit.strip():
             raise AppServerUnavailableError("codex command is invalid")
         value = explicit
-    path = Path(value).expanduser()
+    try:
+        path = Path(value).expanduser()
+    except RuntimeError as exc:
+        raise AppServerUnavailableError("codex command is invalid") from exc
     if not path.is_file() or not os.access(path, os.X_OK):
         raise AppServerUnavailableError("codex command is not executable")
     return str(path)

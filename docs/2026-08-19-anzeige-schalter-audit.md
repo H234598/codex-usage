@@ -2795,3 +2795,11 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2662 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
 `git diff --check` sind sauber.
+
+## Runde 286: App-Server-Pfade weisen unbekannte Home-Namen ab
+
+`app_server._auth_context()` und `_resolve_codex()` ließen unbekannte
+`~user`-Pfade als rohes `RuntimeError` entkommen. Auth-Kontext und expliziter
+Codex-Befehl liefern jetzt kontrolliert `DirectAuthError` bzw.
+`AppServerUnavailableError`. `tests/test_app_server.py`: 98/98 fokussierte
+Tests bestanden; Mypy für Source, Ruff und `git diff --check` sauber.

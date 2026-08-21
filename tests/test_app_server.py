@@ -557,6 +557,21 @@ def test_app_server_rejects_invalid_auth_json_path_type(auth_json_path):
     assert usage.error == "account auth_json_path is invalid"
 
 
+def test_app_server_rejects_unknown_auth_home(tmp_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path="~definitely-no-such-user-zzzz/auth.json",
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "account auth_json_path is invalid"
+
+
 def test_app_server_rejects_nonstandard_auth_json_filename(tmp_path):
     auth_home = tmp_path / "codex-home"
     auth_home.mkdir()
@@ -739,7 +754,10 @@ def test_app_server_missing_command_is_compatibility_failure(tmp_path):
         fetch_account_usage_app_server(account, codex_command=str(tmp_path / "missing"))
 
 
-@pytest.mark.parametrize("explicit", ["", " ", [], False])
+@pytest.mark.parametrize(
+    "explicit",
+    ["", " ", [], False, "~definitely-no-such-user-zzzz/codex"],
+)
 def test_resolve_codex_rejects_explicit_invalid_values(explicit, tmp_path, monkeypatch):
     fallback = tmp_path / "codex"
     fallback.write_text("#!/bin/sh\n", encoding="utf-8")
