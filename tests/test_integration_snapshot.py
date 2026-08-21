@@ -510,6 +510,36 @@ def test_publish_schema1_cache_keeps_old_bytes_when_replace_fails(tmp_path, monk
     assert cache.read_bytes() == b'{"old":"safe"}'
 
 
+def test_publish_rejects_foreign_integration_directory(tmp_path, monkeypatch):
+    from codex_usage import integration_snapshot
+    from codex_usage.integration_snapshot import IntegrationSecureIOError
+
+    cache = _cache_path(tmp_path)
+    monkeypatch.setattr(integration_snapshot.os, "getuid", lambda: 2**31 - 1)
+    payload = integration_snapshot.serialize_schema1_document(
+        json.loads((FIXTURES / "schema1-valid.json").read_bytes())
+    )
+
+    with pytest.raises(IntegrationSecureIOError):
+        integration_snapshot.publish_schema1_cache(
+            payload,
+            cache_path=cache,
+        )
+
+
+def test_validate_existing_cache_rejects_foreign_owner(tmp_path, monkeypatch):
+    from codex_usage import integration_snapshot
+    from codex_usage.integration_snapshot import IntegrationSecureIOError
+
+    cache = _cache_path(tmp_path)
+    cache.write_bytes(b"cache")
+    cache.chmod(0o600)
+    monkeypatch.setattr(integration_snapshot.os, "getuid", lambda: 2**31 - 1)
+
+    with pytest.raises(IntegrationSecureIOError):
+        integration_snapshot._validate_existing_cache(cache)
+
+
 def test_projection_rejects_duplicate_identity_and_never_uses_label():
     from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
 

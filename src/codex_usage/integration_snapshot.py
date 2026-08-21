@@ -713,6 +713,7 @@ def _require_integration_directory(cache_path: Path) -> None:
         or directory.name != "integration"
         or not stat.S_ISDIR(item.st_mode)
         or stat.S_IMODE(item.st_mode) != 0o700
+        or item.st_uid != os.getuid()
     ):
         raise IntegrationSecureIOError()
 
@@ -728,6 +729,7 @@ def _validate_existing_cache(cache_path: Path) -> None:
         not stat.S_ISREG(item.st_mode)
         or stat.S_IMODE(item.st_mode) != 0o600
         or item.st_nlink != 1
+        or item.st_uid != os.getuid()
     ):
         raise IntegrationSecureIOError()
 

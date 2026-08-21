@@ -3726,3 +3726,14 @@ Modul-Coverage 75%; Ruff, Mypy und `git diff --check` sauber.
 Service installiert/aktiv, Timer aktiv und geplant. Exit 2 bleibt der bekannte
 Firefox-Playwright-Executable-Fehler der direkten Browser-Konten; Journal zeigt
 keinen neuen Private-I/O-Fehler. Kein Fallback und keine Netzwerkinstallation.
+
+## Runde 388: Integration-Snapshot-Eigentümergrenzen
+
+`integration_snapshot.py` prüfte bei Integrationsverzeichnis und bestehendem
+Cache bereits Pfad, Typ, Modus und Hardlink-Anzahl, verlangte aber nicht den
+Eigentümer des aktuellen Users. Beide Prüfungen verlangen jetzt zusätzlich
+`st_uid == os.getuid()`; zwei Regressionstests decken fremdes Verzeichnis und
+fremde Cache-Datei ab.
+
+`pytest -q tests/test_integration_snapshot.py`: 52/52 bestanden;
+Modul-Coverage 76%. Ruff, Mypy und `git diff --check` sauber.
