@@ -3961,6 +3961,17 @@ malformed Antworten und übergroße Inhalte bleiben fail-closed.
 `pytest -q tests/test_direct.py`: 183/183 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 450: App-Server-RPC und Identitätsgrenzen
+
+`app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
+CODEX_HOME-Symlink- und Prozessgrenzen, Auth-/Plan-/E-Mail-Konsistenz,
+Window-Duration-Klassifikation sowie Pool-Provenienz geprüft. Ungültige
+Protokollantworten, fremde Auth-Kontexte und unbrauchbare Limits bleiben
+fail-closed; keine neue reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_app_server.py`: 98/98 bestanden; Modul-Coverage 83 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 411: Browser-Diagnose-Outputpfade
 
 `browser.py` setzte Account-IDs bei Diagnose-Screenshots und Probe-Dateien
