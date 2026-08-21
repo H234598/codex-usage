@@ -2711,3 +2711,11 @@ aus `create_profile_job()` entkommen. Beide Eingaben liefern jetzt kontrolliert
 `ValueError` und schreiben keinen Job. `tests/test_profile_jobs.py`: 71/71
 fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
 sauber.
+
+## Runde 276: Vollsuite nach Profiljob-Pfad-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2652 bestanden, 1 übersprungen,
+1 Warnung` in 88,08 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
+`git diff --check` sind sauber.
