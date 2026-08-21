@@ -3939,6 +3939,20 @@ neue reproduzierbare Fehlfunktion.
 `pytest -q tests/test_identity.py`: 28/28 bestanden; Modul-Coverage 81 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 453: Browser-Kandidaten und Quellenpriorität
+
+`browser.py` auf vertrauenswürdige Response-Hosts, Body-/Kandidaten-Budgets,
+JSON-Parsing, DOM-/HTML-Quellen, Login-/Cloudflare-Erkennung, Identitäts-
+Fallback, Profil-/Lock-Grenzen und private Diagnoseausgaben geprüft. Nicht
+vertrauenswürdige oder übergroße Antworten werden verworfen; sichtbare DOM-
+Quellen und versteckte HTML-Klone bleiben durch den Extractor getrennt, und
+fehlende oder nicht bestätigte Identität autorisiert keine Nutzungswerte. Keine
+neue reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_browser_profile.py tests/test_browser_diagnose.py`:
+174/174 bestanden; Modul-Coverage 81 % (Branch). Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 451: Bridge-Debug-Secret-Redaction
 
 `bridge._sanitize_debug_text()` redigierte bisher nur camelCase-Tokenfelder
