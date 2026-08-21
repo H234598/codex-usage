@@ -415,6 +415,37 @@ def test_device_login_rechecks_auth_identity_when_staged_file_changes(
     assert not (profile / "codex-home" / "auth.json").exists()
 
 
+def test_device_login_live_events_do_not_join_output_streams(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    observed_events = []
+
+    def runner(argv, **kwargs):
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        kwargs["output_stream_sink"]("stderr", "Enter device code: ABCD")
+        kwargs["output_stream_sink"]("stdout", "-1234\n")
+        auth = Path(kwargs["env"]["CODEX_HOME"]) / "auth.json"
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
+        auth.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("codex_usage.profile_login.account_lock", lambda _account: nullcontext())
+    monkeypatch.setattr(
+        "codex_usage.profile_login.add_or_update_account",
+        lambda *args, **kwargs: None,
+    )
+
+    result = run_device_login(
+        _account(profile),
+        tmp_path / "config.toml",
+        runner=runner,
+        event_sink=observed_events.append,
+    )
+
+    assert result.events == ()
+    assert observed_events == []
+
+
 def test_device_auth_help_probe_requires_explicit_flag():
     assert device_auth_supported(
         runner=lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "login help", "")
@@ -565,6 +596,25 @@ def test_default_device_command_reader_forwards_output_chunks():
 
     assert result.returncode == 0
     assert "https://auth.openai.com/device" in "".join(chunks)
+
+
+def test_default_device_command_reader_forwards_named_output_streams():
+    chunks = {"stdout": [], "stderr": []}
+    result = _run_command(
+        [
+            sys.executable,
+            "-c",
+            "import os; os.write(1, b'out'); os.write(2, b'err')",
+        ],
+        env={},
+        timeout=10,
+        runner=None,
+        output_stream_sink=lambda name, chunk: chunks[name].append(chunk),
+    )
+
+    assert result.returncode == 0
+    assert "".join(chunks["stdout"]) == "out"
+    assert "".join(chunks["stderr"]) == "err"
 
 
 def test_default_device_command_reader_preserves_split_utf8_output():

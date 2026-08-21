@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO, cast
 
 from .account_lock import account_lock
 from .config import add_or_update_account, load_config
@@ -97,6 +98,7 @@ class DeviceLoginResult:
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+OutputStreamSink = Callable[[str, str], None]
 
 
 def _validate_codex_command(codex_bin: object) -> None:
@@ -165,7 +167,7 @@ def run_device_login(
     layout = layout_for_account(account)
     login_events: tuple[DeviceLoginEvent, ...] = ()
     observed_events: set[tuple[str, str]] = set()
-    observed_output = ""
+    observed_output = {"stdout": "", "stderr": ""}
 
     def emit_event(event: DeviceLoginEvent) -> None:
         identity = (event.kind, event.value)
@@ -175,10 +177,11 @@ def run_device_login(
         if event_sink is not None:
             event_sink(event)
 
-    def observe_output(chunk: str) -> None:
-        nonlocal observed_output
-        observed_output = (observed_output + chunk)[-DEVICE_OUTPUT_MAX_BYTES:]
-        for event in _device_events(observed_output, final=False):
+    def observe_output(stream_name: str, chunk: str) -> None:
+        observed_output[stream_name] = (
+            observed_output[stream_name] + chunk
+        )[-DEVICE_OUTPUT_MAX_BYTES:]
+        for event in _device_events(observed_output[stream_name], final=False):
             emit_event(event)
 
     with account_lock(account.id):
@@ -204,7 +207,7 @@ def run_device_login(
                 timeout=timeout_seconds,
                 runner=runner,
                 start_new_session=isolate_process_group,
-                output_sink=observe_output if event_sink is not None else None,
+                output_stream_sink=observe_output if event_sink is not None else None,
             )
             events = _device_events(
                 _bounded_output(result.stdout, result.stderr), final=True
@@ -297,10 +300,14 @@ def _run_command(
     runner: CommandRunner | None,
     start_new_session: bool = True,
     output_sink: Callable[[str], None] | None = None,
+    output_stream_sink: OutputStreamSink | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         if runner is not None:
-            result = runner(argv, env=env, timeout=timeout)
+            runner_kwargs: dict[str, object] = {"env": env, "timeout": timeout}
+            if output_stream_sink is not None:
+                runner_kwargs["output_stream_sink"] = output_stream_sink
+            result = runner(argv, **runner_kwargs)
         else:
             result = _run_subprocess_bounded(
                 argv,
@@ -308,6 +315,7 @@ def _run_command(
                 timeout=timeout,
                 start_new_session=start_new_session,
                 output_sink=output_sink,
+                output_stream_sink=output_stream_sink,
             )
     except subprocess.TimeoutExpired as exc:
         raise DeviceLoginError("device_login_timeout") from exc
@@ -325,6 +333,7 @@ def _run_subprocess_bounded(
     timeout: int,
     start_new_session: bool = True,
     output_sink: Callable[[str], None] | None = None,
+    output_stream_sink: OutputStreamSink | None = None,
 ) -> subprocess.CompletedProcess[str]:
     process = subprocess.Popen(
         argv,
@@ -335,10 +344,11 @@ def _run_subprocess_bounded(
         text=False,
         start_new_session=start_new_session,
     )
-    streams = {
-        process.stdout: "stdout",
-        process.stderr: "stderr",
-    }
+    streams: dict[IO[bytes], str] = {}
+    if process.stdout is not None:
+        streams[process.stdout] = "stdout"
+    if process.stderr is not None:
+        streams[process.stderr] = "stderr"
     selector = selectors.DefaultSelector()
     output = {"stdout": bytearray(), "stderr": bytearray()}
     decoders = {
@@ -361,23 +371,31 @@ def _run_subprocess_bounded(
                 _terminate_bounded_process(process, start_new_session=start_new_session)
                 raise subprocess.TimeoutExpired(argv, timeout)
             for key, _ in ready:
-                stream = key.fileobj
+                stream = cast(IO[bytes], key.fileobj)
                 chunk = os.read(stream.fileno(), 8192)
                 if not chunk:
-                    if output_sink is not None:
+                    if output_stream_sink is not None or output_sink is not None:
                         decoded = decoders[streams[stream]].decode(b"", final=True)
                         if decoded:
-                            output_sink(decoded)
+                            if output_stream_sink is not None:
+                                output_stream_sink(streams[stream], decoded)
+                            else:
+                                assert output_sink is not None
+                                output_sink(decoded)
                     selector.unregister(stream)
                     continue
                 total += len(chunk)
                 if total > DEVICE_OUTPUT_MAX_BYTES:
                     _terminate_bounded_process(process, start_new_session=start_new_session)
                     raise DeviceLoginError("device_login_output_too_large")
-                if output_sink is not None:
+                if output_stream_sink is not None or output_sink is not None:
                     decoded = decoders[streams[stream]].decode(chunk, final=False)
                     if decoded:
-                        output_sink(decoded)
+                        if output_stream_sink is not None:
+                            output_stream_sink(streams[stream], decoded)
+                        else:
+                            assert output_sink is not None
+                            output_sink(decoded)
                 output[streams[stream]].extend(chunk)
         try:
             returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))

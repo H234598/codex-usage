@@ -1168,3 +1168,12 @@ erneut gelesen. Ein Dateiwechsel dazwischen konnte damit fremde Auth als
 geprüften Account publizieren. Kopierpfad validiert jetzt denselben gelesenen
 Text nochmals inklusive erwarteter Backend-ID; Race-Regression ergänzt.
 `tests/test_profile_login.py`: 37/37 bestanden; Ruff sauber.
+
+## Runde 96: Device-Login-Streamgrenzen
+
+Live-Ausgabe bekam bisher keinen Streamnamen; getrennte stdout-/stderr-Chunks
+konnten dadurch zu einem falschen Device-Code verbunden werden. Neuer
+streambewusster Sink hält je Stream eigenen Parserpuffer; bestehende
+Ein-Argument-Sinks bleiben kompatibel. Mypy-Fehler im bounded reader ebenfalls
+bereinigt. Regressionen ergänzt; `tests/test_profile_login.py`: 39/39
+bestanden; Ruff und Mypy für `profile_login.py` sauber.
