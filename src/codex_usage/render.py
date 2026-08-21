@@ -23,9 +23,14 @@ AUTH_CELL_MAX = 28
 
 
 def _bounded_usage_list(usages: Iterable[AccountUsage]) -> list[AccountUsage]:
-    usage_list = list(islice(usages, MAX_CONFIG_ACCOUNTS + 1))
+    try:
+        usage_list = list(islice(usages, MAX_CONFIG_ACCOUNTS + 1))
+    except TypeError as exc:
+        raise ValueError("usage records are invalid") from exc
     if len(usage_list) > MAX_CONFIG_ACCOUNTS:
         raise ValueError("too many usage records")
+    if any(not isinstance(usage, AccountUsage) for usage in usage_list):
+        raise ValueError("usage records are invalid")
     return usage_list
 
 

@@ -2155,3 +2155,13 @@ rohem `AttributeError` abbrechen. Der Entscheidungs-Entry-Point weist
 Nicht-`AccountUsage` jetzt kontrolliert als `ValueError("usage is invalid")`
 zurück. `tests/test_routing.py`: 102/102 bestanden; Mypy für Source und Ruff
 für betroffene Dateien sauber.
+
+## Runde 215: Render-Entry-Points validieren Usage-Container
+
+`render_table()` und `render_json()` übernahmen beliebige Iterable und
+reichten Nicht-`AccountUsage`-Elemente bis zum Attributzugriff durch. Strings,
+nicht-iterierbare Werte oder Fremdobjekte konnten dadurch mit rohem
+`TypeError`/`AttributeError` abbrechen. Der gemeinsame Bounded-Helper weist
+ungültige Container und Einträge jetzt kontrolliert als
+`ValueError("usage records are invalid")` zurück. `tests/test_render.py`:
+45/45 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.

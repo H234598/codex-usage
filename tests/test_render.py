@@ -703,6 +703,14 @@ def test_render_rejects_usage_iterators_over_account_cap():
         render_json(usage for _ in range(MAX_CONFIG_ACCOUNTS + 1))
 
 
+@pytest.mark.parametrize("usages", [None, "invalid", [None], [object()]])
+def test_render_rejects_invalid_usage_records(usages):
+    with pytest.raises(ValueError, match="usage records are invalid"):
+        render_table(usages)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="usage records are invalid"):
+        render_json(usages)  # type: ignore[arg-type]
+
+
 def test_render_table_shows_blocked_state():
     usage = AccountUsage(
         account_id="privat",
