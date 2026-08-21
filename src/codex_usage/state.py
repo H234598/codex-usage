@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import stat
 import tempfile
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
@@ -399,9 +400,16 @@ def _remove_account_state_unlocked(
                 raise ValueError(f"{label} directory must be a real directory: {directory}")
             path = directory / filename
             locks.enter_context(private_path_lock(path, label=f"{label} lock"))
+            if path.is_symlink():
+                raise ValueError(f"{label} must be a regular file: {path}")
             if path.is_dir() and not path.is_symlink():
                 raise ValueError(f"{label} must be a regular file: {path}")
             if path.exists() or path.is_symlink():
+                file_stat = path.lstat()
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise ValueError(f"{label} must be a regular file: {path}")
+                if file_stat.st_nlink != 1:
+                    raise ValueError(f"{label} must not be hard-linked: {path}")
                 backup = transaction_dir / f"{len(moved):02d}-{filename}"
                 path.rename(backup)
                 moved.append((path, backup))

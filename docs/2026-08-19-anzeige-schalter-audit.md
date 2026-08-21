@@ -955,3 +955,16 @@ Normalisierung verloren geht. Zwei Regressionstests prüfen direkte Erkennung,
 Fehlertext und fehlende Nebenartefakte. `tests/test_private_io.py`: 26/26;
 vollständige Python-Suite: 1984 bestanden, 1 übersprungen, 1 Warnung; Ruff
 sauber.
+
+## Runde 70: Hardlink-Schutz bei State-Löschung
+
+`remove_account_state()` verschob bisher vorhandene State-Dateien direkt in
+sein Transaktionsverzeichnis. Bei einer nachträglich angelegten Hardlink-Kopie
+wurde dadurch nur ein Verzeichnis-Eintrag entfernt; die Kopie blieb erhalten,
+obwohl die State-Löschung erfolgreich erschien.
+
+Vor dem Verschieben werden State-Ziele jetzt als reguläre Einzel-Link-Dateien
+geprüft; Symlinks und andere Dateitypen werden ebenfalls früh abgelehnt. Der
+Regressionstest stellt sicher, dass aktuelle Datei und Hardlink unverändert
+bleiben. `tests/test_state.py`: 211/211 bestanden; Ruff für `state.py` und
+Test ist sauber.

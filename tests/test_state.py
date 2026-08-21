@@ -1554,6 +1554,26 @@ def test_remove_account_state_deletes_current_snapshot_and_debug(tmp_path, monke
     assert not (debug_dir / "privat-last-ingest.json").exists()
 
 
+def test_remove_account_state_rejects_hardlinked_current_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    usage = AccountUsage(
+        account_id="linked",
+        label="Linked",
+        captured_at=datetime.now(UTC),
+        five_hour=LimitWindow(name="5h", remaining=12),
+    )
+    save_current_usage(usage)
+    current_path = tmp_path / "data" / "codex-usage" / "current" / "linked.json"
+    hardlink_path = tmp_path / "linked-copy.json"
+    os.link(current_path, hardlink_path)
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        remove_account_state("linked")
+
+    assert current_path.exists()
+    assert hardlink_path.exists()
+
+
 def test_state_transaction_cleanup_rejects_unexpected_directory(tmp_path):
     transaction = tmp_path / "transaction"
     transaction.mkdir(mode=0o700)
