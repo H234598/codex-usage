@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 497: Installer-Prozesssignale mit strikter PID-Grenze
+
+`integration_installer` übergab Preflight-PIDs und Builder-Gruppen-IDs
+ungeprüft an `os.killpg()` bzw. `os.getpgid()`. Boolesche oder ungültige
+Prozesswerte konnten damit falsche Prozessgruppen adressieren. Preflight-
+Cleanup, Builder-Gruppenauflösung und Gruppen-Kill akzeptieren jetzt nur
+positive, nicht-boolesche Ganzzahlen; ungültige Werte fallen auf
+`process.kill()` oder werden übersprungen.
+
+Drei Regressionen ergänzt. `pytest -q tests/test_integration_installer.py`:
+133/133 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 496: Systemctl-Cleanup mit strikter PID-Grenze
 
 `service._terminate_systemctl_process()` übergab `process.pid` ungeprüft an

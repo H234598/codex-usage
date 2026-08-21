@@ -746,6 +746,85 @@ def test_installer_build_subprocess_is_no_index_and_sanitized(tmp_path, monkeypa
     assert killed == [4321]
 
 
+def test_installer_preflight_cleanup_rejects_boolean_pid(monkeypatch):
+    from codex_usage import integration_installer
+
+    calls = []
+
+    class FakeProcess:
+        pid = True
+
+        def kill(self):
+            calls.append("kill")
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+
+    monkeypatch.setattr(
+        integration_installer.os,
+        "killpg",
+        lambda pid, signum: calls.append(("killpg", pid, signum)),
+    )
+
+    integration_installer._terminate_preflight_process(FakeProcess())
+
+    assert calls == ["kill", ("wait", 1)]
+
+
+def test_installer_builder_rejects_boolean_process_pid(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    calls = []
+
+    class FakeProcess:
+        pid = True
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            return 0
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(
+        integration_installer.subprocess,
+        "Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr(
+        integration_installer.os,
+        "getpgid",
+        lambda pid: calls.append(("getpgid", pid)) or 4321,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_kill_process_group",
+        lambda process_group_id: calls.append(("killpg", process_group_id)),
+    )
+
+    result = integration_installer._run_builder_bounded(
+        ["builder"], env={}, cwd=tmp_path
+    )
+
+    assert result.returncode == 0
+    assert calls == [("wait", integration_installer.BUILDER_WHEEL_TIMEOUT_SECONDS)]
+
+
+def test_installer_group_cleanup_rejects_boolean_id(monkeypatch):
+    from codex_usage import integration_installer
+
+    calls = []
+    monkeypatch.setattr(
+        integration_installer.os,
+        "killpg",
+        lambda process_group_id, signum: calls.append((process_group_id, signum)),
+    )
+
+    integration_installer._kill_process_group(True)
+
+    assert calls == []
+
+
 def test_installer_builder_timeout_kills_descendants(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

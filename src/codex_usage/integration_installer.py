@@ -977,10 +977,12 @@ def _sanitized_build_environment() -> dict[str, str]:
 
 
 def _terminate_preflight_process(process: subprocess.Popen[bytes]) -> None:
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except (OSError, ValueError):
-        pass
+    pid = getattr(process, "pid", None)
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
     try:
         process.kill()
     except OSError:
@@ -992,6 +994,12 @@ def _terminate_preflight_process(process: subprocess.Popen[bytes]) -> None:
 
 
 def _kill_process_group(process_group_id: int) -> None:
+    if (
+        not isinstance(process_group_id, int)
+        or isinstance(process_group_id, bool)
+        or process_group_id <= 0
+    ):
+        return
     try:
         os.killpg(process_group_id, signal.SIGKILL)
     except ProcessLookupError:
@@ -1223,10 +1231,12 @@ def _run_builder_bounded(
             close_fds=True,
             start_new_session=True,
         )
-        try:
-            process_group_id = os.getpgid(process.pid)
-        except OSError:
-            process_group_id = process.pid
+        pid = getattr(process, "pid", None)
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+            try:
+                process_group_id = os.getpgid(pid)
+            except OSError:
+                process_group_id = pid
         returncode = process.wait(timeout=BUILDER_WHEEL_TIMEOUT_SECONDS)
         if process_group_id is not None:
             _kill_process_group(process_group_id)
