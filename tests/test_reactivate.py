@@ -260,6 +260,14 @@ def test_reactivate_rejects_invalid_timeout_before_account_lock(
         reactivate_account(account, timeout_seconds=timeout_seconds)
 
 
+@pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
+def test_reactivation_entrypoints_reject_non_account_input(account):
+    with pytest.raises(ReactivationError, match="account is invalid"):
+        reactivate_account(account)  # type: ignore[arg-type]
+    with pytest.raises(ReactivationError, match="account is invalid"):
+        open_account_in_reactivation_browser(account)  # type: ignore[arg-type]
+
+
 def test_reactivate_account_uses_isolated_codex_home(tmp_path, monkeypatch):
     auth_home = tmp_path / "agent-home"
     auth_home.mkdir()

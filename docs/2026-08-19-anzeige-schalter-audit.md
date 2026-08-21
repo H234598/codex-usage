@@ -2247,3 +2247,12 @@ skipped, 1 warning` in 88.31s. Die einzelne Warnung bleibt externe
 PyGObject-Deprecation außerhalb des Repositories. `mypy src/codex_usage`
 meldet keine Fehler in 35 Quelldateien; der aggregierte Ruff-Lauf über
 Produktion, Scripts, Launcher und Tests ist sauber.
+
+## Runde 225: Reactivation-Entry-Points validieren Account-Typ
+
+`reactivate_account()` und `open_account_in_reactivation_browser()` griffen
+bei Fremdtypen vor Validierung auf `account.id` bzw. Browserfelder zu.
+Fehlaufrufe konnten dadurch mit rohem `AttributeError` abbrechen. Beide
+öffentlichen Entry-Points weisen ungültige Accounts jetzt kontrolliert als
+`ReactivationError("account is invalid")` zurück. `tests/test_reactivate.py`:
+56/56 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.

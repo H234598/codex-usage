@@ -78,6 +78,8 @@ def reactivate_account(
     codex_command: str | None = None,
     browser_helper: str | None = None,
 ) -> dict[str, Any]:
+    if not isinstance(account, Account):
+        raise ReactivationError("account is invalid")
     if (
         isinstance(timeout_seconds, bool)
         or not isinstance(timeout_seconds, int)
@@ -108,6 +110,8 @@ def open_account_in_reactivation_browser(
     browser_helper: str | None = None,
 ) -> dict[str, Any]:
     """Open the account's existing isolated OAuth browser profile."""
+    if not isinstance(account, Account):
+        raise ReactivationError("account is invalid")
     _validate_manage_url(url)
     requested_browser = account.reactivation_browser if browser is None else browser
     # ``auto`` should reuse the browser in which codex-usage already collected
