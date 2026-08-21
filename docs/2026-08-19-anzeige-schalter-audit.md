@@ -1082,3 +1082,10 @@ Regression ergänzt; `tests/test_health.py`: 11/11 bestanden; Ruff sauber.
 Dictionary-Mitgliedschaft ohne Stringprüfung. Unhashbare Werte wie Listen
 erzeugten dadurch `TypeError`; sie werden jetzt als ungültige Einheit mit
 `ValueError` abgewiesen. `tests/test_consumption.py`: 19/19 bestanden.
+
+## Runde 85: Profiljob-Event-Typprüfung
+
+`profile_jobs._normalize_job_event()` prüfte `kind` direkt per Set.
+Unhashbare Eventtypen leakten dadurch `TypeError`; sie werden jetzt wie andere
+ungültige Eventdaten mit `ValueError` abgewiesen. `tests/test_profile_jobs.py`:
+46/46 bestanden; Ruff ohne bestehende E501-Zeilen sauber.

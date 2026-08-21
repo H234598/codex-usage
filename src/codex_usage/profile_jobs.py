@@ -472,7 +472,7 @@ def _normalize_job_event(event: object) -> dict[str, str]:
     else:
         kind = getattr(event, "kind", None)
         value = getattr(event, "value", None)
-    if kind not in {"url", "code"}:
+    if not isinstance(kind, str) or kind not in {"url", "code"}:
         raise ValueError("profile job event kind is invalid")
     if (
         not isinstance(value, str)

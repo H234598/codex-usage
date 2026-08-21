@@ -1273,3 +1273,9 @@ def test_profile_job_manifest_validation_does_not_require_profile_path(tmp_path)
     validated = profile_jobs._validate_manifest(manifest)
 
     assert validated["profile_dir"] == manifest["profile_dir"]
+
+
+@pytest.mark.parametrize("kind", [None, [], {}])
+def test_profile_job_event_rejects_non_string_kind(kind):
+    with pytest.raises(ValueError, match="event kind is invalid"):
+        profile_jobs._normalize_job_event({"kind": kind, "value": "https://example.com"})
