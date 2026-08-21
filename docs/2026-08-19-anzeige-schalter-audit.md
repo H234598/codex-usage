@@ -4105,3 +4105,14 @@ bleiben erhalten.
 
 `pytest -q tests/test_cli.py`: 117/117 bestanden; Modul-Coverage 71 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 423: Bridge-Token-Revoke-Grenze
+
+`revoke_bridge_token()` löschte einen vorhandenen Tokenpfad bisher ohne
+Regular-File-, User-Owner-, Linkzähler- oder Mode-Prüfung. Ein ersetzter
+Hardlink konnte so trotz fail-closed Erzeuger-/Lesepfad verändert werden. Der
+Revoke-Pfad akzeptiert Symlink-Aufräumen weiterhin, prüft reguläre Dateien
+aber jetzt auf User-Owner, genau einen Link und private Modi.
+
+`pytest -q tests/test_bridge.py`: 259/259 bestanden; Modul-Coverage 83 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.

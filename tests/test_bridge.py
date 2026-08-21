@@ -5339,6 +5339,20 @@ def test_revoke_bridge_token_forces_new_token_after_account_readd(tmp_path, monk
     assert token_path.read_text(encoding="utf-8").strip() == second
 
 
+def test_revoke_bridge_token_rejects_hardlinked_token_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    bridge_token_for_account("privat")
+    token_dir = tmp_path / "data" / "codex-usage" / "bridge-tokens"
+    token_path = token_dir / "privat.token"
+    (token_dir / "other.token").hardlink_to(token_path)
+
+    with pytest.raises(ValueError, match="regular file"):
+        revoke_bridge_token("privat")
+
+    assert token_path.exists()
+
+
 def test_generated_content_refreshes_page_usage_before_ingest(tmp_path):
     node = shutil.which("node")
     if node is None:

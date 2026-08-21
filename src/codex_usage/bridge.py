@@ -4,9 +4,11 @@ import hmac
 import ipaddress
 import json
 import math
+import os
 import re
 import secrets
 import ssl
+import stat
 import sys
 import tempfile
 from dataclasses import replace
@@ -802,7 +804,19 @@ def revoke_bridge_token(account_ref: str) -> bool:
     with private_path_lock(path, label="bridge token lock"):
         if not path.exists() and not path.is_symlink():
             return False
-        if path.is_dir() and not path.is_symlink():
+        if path.is_symlink():
+            path.unlink()
+            return True
+        try:
+            file_stat = path.lstat()
+        except OSError as exc:
+            raise ValueError(f"bridge token path cannot be inspected: {path}") from exc
+        if (
+            not stat.S_ISREG(file_stat.st_mode)
+            or file_stat.st_nlink != 1
+            or file_stat.st_uid != os.getuid()
+            or file_stat.st_mode & 0o077
+        ):
             raise ValueError(f"bridge token path must be a regular file: {path}")
         path.unlink()
         return True
