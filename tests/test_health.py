@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
@@ -15,6 +15,11 @@ from codex_usage.health import (
     load_health,
     record_health_event,
 )
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
 
 
 def test_health_is_bounded_and_redacts_invalid_account(tmp_path):
@@ -69,6 +74,7 @@ def test_health_redacts_non_string_account(tmp_path, account):
         datetime(2026, 8, 16, 10, 0),
         datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
         datetime.max.replace(tzinfo=timezone(-timedelta(hours=14))),
+        datetime(2026, 8, 16, 10, 0, tzinfo=_RaisingTimezone()),
     ],
 )
 def test_health_uses_safe_clock_for_malformed_now(tmp_path, now):

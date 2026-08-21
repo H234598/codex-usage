@@ -4,7 +4,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -54,6 +54,19 @@ def test_naive_state_times_use_dst_aware_local_zone(monkeypatch):
 
     assert _snapshot_datetime("2026-10-26T00:15:00") == expected
     assert _localize_datetime(datetime(2026, 10, 26, 0, 15)) == expected
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
+
+
+def test_state_times_with_failing_timezone_callback_use_local_zone(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr("codex_usage.state.LOCAL_TZ", berlin)
+    value = datetime(2026, 10, 26, 0, 15, tzinfo=_RaisingTimezone())
+
+    assert _localize_datetime(value) == datetime(2026, 10, 26, 0, 15, tzinfo=berlin)
 
 
 def test_snapshot_text_normalizes_and_bounds_whitespace():

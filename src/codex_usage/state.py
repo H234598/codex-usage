@@ -1684,7 +1684,13 @@ def _cached_window_expired(
 
 
 def _localize_datetime(value: datetime) -> datetime:
-    if value.tzinfo is None or value.utcoffset() is None:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=LOCAL_TZ)
+    try:
+        offset = value.utcoffset()
+    except Exception:
+        return value.replace(tzinfo=LOCAL_TZ)
+    if offset is None:
         return value.replace(tzinfo=LOCAL_TZ)
     return value
 

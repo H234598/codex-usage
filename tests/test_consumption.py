@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -272,6 +272,21 @@ def test_consumption_rejects_capture_time_out_of_range_for_baseline_value():
 def test_consumption_rejects_now_with_unrepresentable_timezone_conversion(now):
     with pytest.raises(ValueError, match="now is out of range"):
         calculate_consumption([], amount=1, unit="hours", now=now)
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
+
+
+def test_consumption_rejects_timezone_callbacks_that_raise():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        calculate_consumption(
+            [],
+            amount=1,
+            unit="hours",
+            now=datetime(2026, 8, 16, 10, 0, tzinfo=_RaisingTimezone()),
+        )
 
 
 def test_consumption_rejects_sample_iterators_over_cap(monkeypatch):

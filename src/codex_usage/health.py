@@ -44,7 +44,7 @@ def record_health_event(
         try:
             if now.tzinfo is not None and now.utcoffset() is not None:
                 current_time = now.astimezone(UTC)
-        except (AttributeError, OverflowError, TypeError, ValueError):
+        except Exception:
             pass
     entry: dict[str, Any] = {
         "at": current_time.isoformat(),

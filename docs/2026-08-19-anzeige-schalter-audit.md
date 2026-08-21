@@ -3077,3 +3077,39 @@ fallen auf `captured_at` zurück, ungültige Reset-Zeiten werden verworfen und
 `UsageSample` normalisiert den Fehler zu `ValueError`. `tests/test_history.py`:
 76/76 fokussierte Tests bestanden; Vollsuite: `2697 bestanden, 1 übersprungen,
 1 Warnung` in 91,03 s. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 318: Consumption-Zeitprüfung schützt fehlerhafte Zeitzonen
+
+`consumption._require_aware()` ließ einen Fehler aus `tzinfo.utcoffset()` als
+rohen Callback-Fehler entkommen. Die Awareness-Prüfung fängt jetzt beliebige
+Zeitzonenfehler; die API liefert kontrolliert `ValueError`. `tests/test_consumption.py`:
+29/29 fokussierte Tests bestanden; Ruff und Mypy sauber.
+
+## Runde 319: State-Lokalisierung schützt fehlerhafte Zeitzonen
+
+`state._localize_datetime()` behandelte nur `None`-Offsets, nicht aber einen
+fehlerhaften `utcoffset()`-Callback. Solche Werte werden jetzt wie naive Zeiten
+in `LOCAL_TZ` lokalisiert, damit Merge-/Expiry-Pfade fail-closed weiterlaufen.
+`tests/test_state.py`: 264/264 fokussierte Tests bestanden; Ruff und Mypy sauber.
+
+## Runde 320: Health-Clock schützt fehlerhafte Zeitzonen
+
+`health.record_health_event()` fing Fehler aus `now.utcoffset()` und
+`astimezone()` nicht vollständig ab. Die optionale Uhrzeit fällt bei jedem
+gewöhnlichen Callback-Fehler auf sichere UTC-Systemzeit zurück.
+`tests/test_health.py`: 32/32 fokussierte Tests bestanden; Ruff und Mypy sauber.
+
+## Runde 321: Routing-Zeitpfade fail-closed bei Zeitzonenfehlern
+
+Routing-Alters-, Reset- und Spark-Health-Berechnungen sowie Awareness- und
+Zeittext-Helfer fingen fehlerhafte `tzinfo`-Callbacks bisher nur teilweise.
+Die betroffenen Boundary-Fänge normalisieren jetzt solche Fehler zu
+`usage_timestamp_invalid`, `False` oder `None`. `tests/test_routing.py`:
+125/125 fokussierte Tests bestanden; Ruff und Mypy sauber.
+
+## Runde 322: Vollsuite nach Zeitzonen-Callback-Härtungen
+
+Die Vollsuite bestätigt den gemeinsamen Stand: `2702 bestanden, 1 übersprungen,
+1 Warnung` in 91,78 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. History-, Consumption-, State-, Health- und
+Routing-Zeitgrenzen sind integriert grün.

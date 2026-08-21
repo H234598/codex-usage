@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import islice, pairwise
+from typing import TypeGuard
 
 from .history import MAX_HISTORY_SAMPLES, UsageSample
 
@@ -279,10 +280,19 @@ def _confirmed_reset(previous: UsageSample, current: UsageSample) -> bool:
 
 
 def _require_aware(value: datetime) -> None:
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+    if not _is_aware(value):
         raise ValueError("now must be timezone-aware")
     if value.tzinfo is not UTC:
         try:
             value.astimezone(UTC)
-        except (OverflowError, TypeError, ValueError) as exc:
+        except Exception as exc:
             raise ValueError("now is out of range") from exc
+
+
+def _is_aware(value: object) -> TypeGuard[datetime]:
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        return False
+    try:
+        return value.utcoffset() is not None
+    except Exception:
+        return False

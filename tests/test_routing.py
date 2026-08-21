@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 
 import pytest
 
@@ -23,6 +23,11 @@ from codex_usage.routing import (
 from codex_usage.usage_limits import SPARK_MODEL
 
 NOW = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
 
 
 def _window(name: str, remaining: float, duration: int) -> LimitWindow:
@@ -315,6 +320,33 @@ def test_routing_fails_closed_for_naive_usage_timestamps(timestamp_field):
     assert result["decision"] == "blocked"
     assert result["reason"] == "usage_timestamp_invalid"
     assert result["model"] is None
+
+
+@pytest.mark.parametrize("timestamp_field", ["captured_at", "values_captured_at"])
+def test_routing_fails_closed_for_timezone_callbacks_that_raise(timestamp_field):
+    usage = _usage(main_windows=(_window("weekly", 80, 604800),))
+    usage = replace(
+        usage,
+        **{
+            timestamp_field: datetime(
+                2026,
+                7,
+                16,
+                4,
+                tzinfo=_RaisingTimezone(),
+            )
+        },
+    )
+
+    result = evaluate_routing(
+        usage,
+        role="arbeitsbiene",
+        paid_overage_allowed=False,
+        now=NOW,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["reason"] == "usage_timestamp_invalid"
 
 
 def test_routing_fails_closed_for_non_enum_usage_status():

@@ -452,7 +452,7 @@ def _invalid_usage_reason(
         return "usage_timestamp_invalid"
     try:
         age = (now.astimezone(UTC) - captured_at.astimezone(UTC)).total_seconds()
-    except (AttributeError, TypeError, ValueError):
+    except Exception:
         return "usage_timestamp_invalid"
     if age < -300:
         return "usage_timestamp_in_future"
@@ -497,7 +497,7 @@ def _has_expired_resetless_usage_window(
                 duration = _window_identity_key(window)
                 if duration is not None and elapsed >= duration:
                     return True
-    except (AttributeError, OverflowError, TypeError, ValueError):
+    except Exception:
         return False
     return False
 
@@ -533,7 +533,7 @@ def _spark_health_age_seconds(payload: dict[str, Any], *, now: datetime) -> floa
         if timestamp.tzinfo is None or timestamp.utcoffset() is None:
             return None
         return (now.astimezone(UTC) - timestamp.astimezone(UTC)).total_seconds()
-    except (TypeError, ValueError, OverflowError):
+    except Exception:
         return None
 
 
@@ -642,7 +642,7 @@ def _window_reset_is_current(window: Any, *, now: datetime) -> bool:
         return now_utc < reset_utc <= now_utc + timedelta(
             seconds=duration + MAX_RESET_FUTURE_SKEW_SECONDS
         )
-    except (AttributeError, OverflowError, TypeError, ValueError):
+    except Exception:
         return False
 
 
@@ -711,7 +711,7 @@ def _aware_datetime(value: Any) -> bool:
         return False
     try:
         return value.utcoffset() is not None
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return False
 
 
@@ -720,7 +720,7 @@ def _timestamp_text(value: Any) -> str | None:
         return None
     try:
         return value.isoformat()
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return None
 
 
