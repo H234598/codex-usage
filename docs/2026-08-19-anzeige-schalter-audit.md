@@ -1495,3 +1495,10 @@ Der globale Ruff-Lauf meldete drei E501-Zeilen in den Consumption- und
 Profile-Parsern. Choices und Argumentoptionen sind jetzt mehrzeilig formatiert;
 CLI-Vertrag und Defaults bleiben unverändert. `tests/test_cli.py`: 104/104
 bestanden; Mypy und Ruff für `cli.py` sauber.
+
+## Runde 135: Cinnamon-Installer-Formatierung
+
+Der globale Ruff-Lauf meldete zwei E501-Zeilen im Cinnamon-Installer: die
+Liste erforderlicher Dateien und den Pfad zum Settings-Schema. Beide sind
+mehrzeilig formatiert; Installations- und Migrationslogik bleiben unverändert.
+`tests/test_applet.py`: 27/27 bestanden; Ruff für das Script sauber.
