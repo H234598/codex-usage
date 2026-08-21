@@ -1235,3 +1235,10 @@ zurück; truthy Fremdwerte leakten `AttributeError`. Gemeinsame
 `_select_config_path()`-Prüfung verlangt jetzt `None` oder `Path` vor jedem
 Fallback. Vier Regressionen ergänzt; `tests/test_config.py`: 92/92 bestanden;
 Ruff sauber.
+
+## Runde 104: Config-Restore-Account-Typ
+
+`restore_account()` griff bei nicht leerer Config vor jeder Account-Prüfung auf
+`account.id` zu. `None`, Listen oder Dictionaries leakten `AttributeError` und
+konnten bereits Pfad-/Lock-Arbeit auslösen. Frühe `Account`-Prüfung ergänzt;
+drei Regressionen. `tests/test_config.py`: 95/95 bestanden; Ruff sauber.

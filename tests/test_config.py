@@ -909,6 +909,25 @@ def test_config_operations_reject_invalid_path_type(operation, tmp_path, monkeyp
         operations[operation]()
 
 
+@pytest.mark.parametrize("account", [None, [], {}])
+def test_restore_account_rejects_invalid_account_type(account, tmp_path):
+    config_path = tmp_path / "config.toml"
+    save_config(
+        AppConfig(
+            accounts=(
+                Account(
+                    id="existing",
+                    label="Existing",
+                    profile_dir=str(tmp_path / "existing"),
+                ),
+            )
+        ),
+        config_path,
+    )
+    with pytest.raises(ValueError, match="account entry must be Account"):
+        restore_account(account, path=config_path)
+
+
 def test_load_config_rejects_loose_types(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

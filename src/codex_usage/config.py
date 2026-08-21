@@ -412,6 +412,8 @@ def restore_account(
     index: int | None = None,
     expected: Account | None = None,
 ) -> AppConfig:
+    if not isinstance(account, Account):
+        raise ValueError("account entry must be Account")
     config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
     with private_path_lock(config_path, label="config lock"):
