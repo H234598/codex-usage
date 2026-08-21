@@ -3983,3 +3983,14 @@ die Overview nutzt ihn ebenfalls.
 
 `pytest -q tests/test_render.py`: 66/66 bestanden; Modul-Coverage 87 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 413: Private-I/O-Grenzen
+
+`private_io.py` auf Pfadtyp-/Symlink-/Owner-/Hardlink-Prüfungen, geschützte
+Verzeichnisse, bounded Reads, Atomic-/Create-Only-Writes, fsync, Lock-
+Deadlines und Rollback geprüft. Keine neue reproduzierbare Fehlfunktion;
+öffentliche Aufrufer sichern ihre Zielverzeichnisse vor den privaten Reads,
+Writes und Locks, und bestehende Pfade bleiben unverändert.
+
+`pytest -q tests/test_private_io.py`: 36/36 bestanden; Modul-Coverage 75 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
