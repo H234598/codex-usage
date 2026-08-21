@@ -3408,3 +3408,13 @@ malformed Records bleiben unbekannt beziehungsweise fail-closed.
 
 `pytest -q tests/test_spark_health.py`: 28/28 bestanden. Mypy für
 `spark_health.py`, Ruff und `git diff --check` sauber.
+
+## Runde 356: Model-DTOs und Serialisierung geprüft
+
+`models.py` wurde auf Fensteridentität, Prozent-/Zahlenvalidierung,
+Pool-Verfügbarkeit, Exhaustion, Legacy-Fenster, Modellauflösung und JSON-
+Serialisierung geprüft. 204 manipulierte DTO-Feldkombinationen erzeugten
+keine ungefangene Exception; kein neuer reproduzierbarer Fehler.
+
+`pytest -q tests/test_models.py`: 14/14 bestanden. Mypy für `models.py`,
+Ruff und `git diff --check` sauber.
