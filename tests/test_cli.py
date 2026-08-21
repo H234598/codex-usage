@@ -156,6 +156,37 @@ def test_cli_rejects_malformed_explicit_argv(argv, capsys):
     assert "argv is invalid" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "now",
+    [
+        "0001-01-01T00:00:00Z",
+        "0001-01-01T00:00:00+14:00",
+        "9999-12-31T23:59:59-14:00",
+    ],
+)
+def test_consumption_rejects_now_out_of_range(tmp_path, capsys, now):
+    assert (
+        main(
+            [
+                "consumption",
+                "--account",
+                "alpha",
+                "--amount",
+                "1",
+                "--unit",
+                "hours",
+                "--now",
+                now,
+                "--path",
+                str(tmp_path / "history.sqlite3"),
+            ]
+        )
+        == 1
+    )
+
+    assert "now is out of range" in capsys.readouterr().err
+
+
 def test_account_add_json_returns_all_editable_fields(tmp_path, capsys):
     assert main(
         [

@@ -2634,3 +2634,15 @@ Die Vollsuite bestätigt den aktuellen Routing-Stand: `2638 bestanden, 1
 Deprecation außerhalb des Repositories. `mypy src/codex_usage` ist in 35
 Quelldateien fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und
 Scripts sowie `git diff --check` sind sauber.
+
+## Runde 268: CLI-Consumption schützt Zeitbereich
+
+`cli._cmd_consumption()` subtrahierte Lookback-Sekunden von einem erlaubten,
+aber randständigen `--now`-Zeitpunkt und gab rohes `OverflowError`-Verhalten
+(`date value out of range`) an die CLI-Fehlerausgabe weiter. Zusätzlich konnte
+`_parse_history_datetime()` bei extremem UTC-Offset bereits in
+`astimezone()` überlaufen. Beide Grenzen liefern jetzt kontrolliert
+`<label> is out of range`; der Consumption-Befehl öffnet die Historie erst nach
+erfolgreicher Zeitbereichsprüfung. `tests/test_cli.py`: 117/117 fokussierte
+Tests bestanden; Consumption-Suite: 25/25; Mypy für Source, Ruff und
+`git diff --check` sauber.

@@ -1173,7 +1173,12 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
     baseline_value_seconds = (
         0 if args.baseline_value_minutes is None else args.baseline_value_minutes * 60
     )
-    start = now - timedelta(seconds=max(lookback_seconds, baseline_seconds, baseline_value_seconds))
+    try:
+        start = now - timedelta(
+            seconds=max(lookback_seconds, baseline_seconds, baseline_value_seconds)
+        )
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("now is out of range") from exc
     with HistoryStore(args.path) as store:
         for duration in durations:
             samples = store.samples_for_consumption(
@@ -1380,7 +1385,10 @@ def _parse_history_datetime(value: str, label: str) -> datetime:
         raise ValueError(f"{label} must be an ISO timestamp") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{label} must include a timezone")
-    return parsed.astimezone(UTC)
+    try:
+        return parsed.astimezone(UTC)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f"{label} is out of range") from exc
 
 
 def _cmd_login(args: argparse.Namespace) -> int:
