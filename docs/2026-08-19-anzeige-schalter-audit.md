@@ -2921,3 +2921,22 @@ verwalteten Unit und expandierte ihn ohne `RuntimeError`-Schutz. Ein unbekanntes
 solche nicht auflösbaren Unit-Inhalte jetzt wie ungültige Konfiguration und
 liefert `None`. `tests/test_service.py`: 66/66 fokussierte Tests bestanden;
 Mypy für Service, Ruff und `git diff --check` sauber.
+
+## Runde 300: Config-Test-Home und Profilprüfung validieren Home-Expansion
+
+`add_or_update_account(test_home=True)` expandierte eine explizite
+Auth-Quelle vor der normalen Pfadvalidierung. Zusätzlich lag die erste
+`profile_dir`-Expansion in `_validate_profile_path()` außerhalb des
+Fehlerfangs. Unbekannte `~user`-Werte liefern jetzt jeweils kontrolliertes
+`ValueError` statt rohem `RuntimeError`. `tests/test_config.py`: 115/115
+fokussierte Tests bestanden; Mypy für Config, Ruff und `git diff --check`
+sauber.
+
+## Runde 301: Account-Übersicht toleriert nicht auflösbare Pfade
+
+`render_account_overview()` expandierte Profil- und Auth-Pfade aus einem
+direkt übergebenen `AppConfig` ohne Schutz. Ein unbekanntes `~user` konnte die
+Anzeige statt Statusausgabe abbrechen; zusätzlich wurde die Pfadspalte nicht
+erreicht. Status zeigt jetzt `ungültig`, die Pfadspalte bleibt darstellbar.
+`tests/test_render.py`: 62/62 fokussierte Tests bestanden; Mypy für Render,
+Ruff und `git diff --check` sauber.

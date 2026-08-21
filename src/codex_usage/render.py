@@ -81,7 +81,7 @@ def render_account_overview(
                 expected_backend=account.backend,
             ),
             _profile_state(account.profile_dir),
-            _cell(str(Path(account.profile_dir).expanduser()), PATH_CELL_MAX),
+            _cell(_display_path(account.profile_dir), PATH_CELL_MAX),
         ]
         for account in sorted(config.accounts, key=lambda item: item.id)
     ]
@@ -208,8 +208,18 @@ def _format_row(row: list[str], widths: list[int]) -> str:
     return "  ".join(value.ljust(widths[index]) for index, value in enumerate(row))
 
 
+def _display_path(value: str) -> str:
+    try:
+        return str(Path(value).expanduser())
+    except RuntimeError:
+        return value
+
+
 def _profile_state(profile_dir: str) -> str:
-    path = Path(profile_dir).expanduser()
+    try:
+        path = Path(profile_dir).expanduser()
+    except RuntimeError:
+        return "ungültig"
     if path.is_dir():
         return "vorhanden"
     if path.exists():
@@ -220,7 +230,10 @@ def _profile_state(profile_dir: str) -> str:
 def _auth_state(auth_json_path: str | None) -> str:
     if not auth_json_path:
         return "-"
-    path = Path(auth_json_path).expanduser()
+    try:
+        path = Path(auth_json_path).expanduser()
+    except RuntimeError:
+        return "ungültig"
     if path.is_file():
         return "vorhanden"
     if path.exists():

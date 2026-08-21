@@ -90,6 +90,21 @@ def test_test_home_moves_auth_and_initializes_file_store(tmp_path, monkeypatch):
     assert calls[0][1]["env"]["CODEX_HOME"] == str(profile / "codex-home")
 
 
+def test_test_home_rejects_unknown_auth_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    with pytest.raises(ValueError, match="auth_json_path must be an absolute path"):
+        add_or_update_account(
+            "test-account",
+            auth_json_path="~definitely-no-such-user-zzzz/auth.json",
+            test_home=True,
+            path=tmp_path / "config.toml",
+        )
+
+    assert not (home / ".codex-test" / "test-account").exists()
+
+
 def test_test_home_help_probe_does_not_forward_api_keys(tmp_path, monkeypatch):
     home = tmp_path / "home"
     calls = []
@@ -288,6 +303,21 @@ def test_config_rejects_unknown_auth_home_user(tmp_path):
     )
 
     with pytest.raises(ValueError, match="auth_json_path must be an absolute path"):
+        save_config(config, tmp_path / "config.toml")
+
+
+def test_config_rejects_unknown_profile_home_user(tmp_path):
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="alpha",
+                label="Alpha",
+                profile_dir="~definitely-no-such-user-zzzz/profile",
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match="profile dir cannot be resolved"):
         save_config(config, tmp_path / "config.toml")
 
 

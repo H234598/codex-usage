@@ -497,6 +497,19 @@ def test_render_account_overview_rejects_invalid_config(config):
         render_account_overview(config, Path("/tmp/config"))  # type: ignore[arg-type]
 
 
+def test_render_account_overview_marks_unresolvable_paths():
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="~definitely-no-such-user-zzzz/profile",
+        auth_json_path="~definitely-no-such-user-zzzz/auth.json",
+    )
+
+    rendered = render_account_overview(AppConfig(accounts=(account,)), Path("/tmp/config"))
+
+    assert rendered.count("ungültig") == 2
+
+
 @pytest.mark.parametrize("usages", [[], "invalid", object()])
 def test_render_account_overview_rejects_invalid_usage_mapping(usages):
     with pytest.raises(ValueError, match="usage mapping is invalid"):

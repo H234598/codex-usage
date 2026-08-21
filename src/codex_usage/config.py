@@ -258,13 +258,16 @@ def add_or_update_account(
             if auth_json_path is not None
             else (existing.auth_json_path if existing else None)
         )
-        source_auth_json = (
-            Path(selected_auth_json_path).expanduser()
-            if test_home
+        source_auth_json: Path | None = None
+        if (
+            test_home
             and selected_auth_json_path is not None
             and selected_auth_json_path != ""
-            else None
-        )
+        ):
+            try:
+                source_auth_json = Path(selected_auth_json_path).expanduser()
+            except RuntimeError as exc:
+                raise ValueError("auth_json_path must be an absolute path") from exc
         canonical_auth_json = (
             str(Path(selected_profile_dir).expanduser() / "codex-home" / "auth.json")
             if test_home
@@ -868,8 +871,8 @@ def _prepare_profile_dir(
 
 
 def _validate_profile_path(profile_dir: str) -> Path:
-    path = Path(profile_dir).expanduser()
     try:
+        path = Path(profile_dir).expanduser()
         resolved = path.resolve(strict=False)
         home = Path.home().resolve()
         state = default_state_dir().expanduser().resolve(strict=False)
