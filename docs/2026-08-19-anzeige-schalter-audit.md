@@ -3393,3 +3393,8 @@ nutzt jetzt den semantisch identischen leeren String.
 
 `pytest -q tests/test_history.py`: 76/76 bestanden. Mypy für `history.py`,
 Ruff und `git diff --check` sauber.
+
+## Runde 354: Reload nach History-Typfix
+
+Service-Neustart nach `18183fd` ist aktiv (`codex-usage.service`, Exit 0 beim
+Start). Journal enthält im Prüfintervall keine History-/Parser-/Browserfehler.
