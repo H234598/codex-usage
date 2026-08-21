@@ -4178,3 +4178,13 @@ Ruff, Mypy und `git diff --check` sauber.
 Units installiert, Timer aktiviert/geplant. Der letzte One-Shot-Lauf endet
 weiterhin mit Exit 2 ausschließlich wegen fehlender Firefox-Playwright-
 Executable; Journal zeigt keinen neuen Config- oder Browser-Validierungsfehler.
+
+## Runde 430: Render-Tabellen und Anzeigegrenzen
+
+`render.py` auf bounded Iteratoren, Zell-/Textnormalisierung, Tabellenbreiten,
+malformed Status-/Zeit-/Fenster-/Pool-Werte, Backend-Provenienz und sichere
+Wertausgabe geprüft. Ungültige oder nicht verifizierte Werte bleiben verborgen;
+keine neue reproduzierbare GUI-/Tabellenfehlfunktion.
+
+`pytest -q tests/test_render.py`: 66/66 bestanden; Modul-Coverage 87 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
