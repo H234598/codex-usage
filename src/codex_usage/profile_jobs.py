@@ -752,7 +752,7 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         raise ValueError("profile job manifest id is invalid")
     if not isinstance(value["config_path"], str) or not Path(value["config_path"]).is_absolute():
         raise ValueError("profile job config path is invalid")
-    if value["status"] not in PROFILE_JOB_STATUSES:
+    if not isinstance(value["status"], str) or value["status"] not in PROFILE_JOB_STATUSES:
         raise ValueError("profile job status is invalid")
     for field in ("created_at", "updated_at"):
         if not isinstance(value[field], str) or not value[field].endswith("Z"):

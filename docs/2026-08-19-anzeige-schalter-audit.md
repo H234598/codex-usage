@@ -1177,3 +1177,11 @@ streambewusster Sink hält je Stream eigenen Parserpuffer; bestehende
 Ein-Argument-Sinks bleiben kompatibel. Mypy-Fehler im bounded reader ebenfalls
 bereinigt. Regressionen ergänzt; `tests/test_profile_login.py`: 39/39
 bestanden; Ruff und Mypy für `profile_login.py` sauber.
+
+## Runde 97: Profiljob-Status-Typ
+
+`profile_jobs._validate_manifest()` prüfte `status` direkt gegen ein
+`frozenset`. Ein manipuliertes Manifest mit Liste oder Dictionary als Status
+leakte `TypeError` aus Status-/List-Aufrufen. Explizite Stringprüfung ergänzt;
+Regression hinzugefügt. `tests/test_profile_jobs.py`: 47/47 bestanden; Ruff
+sauber.
