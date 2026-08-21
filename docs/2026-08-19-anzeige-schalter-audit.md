@@ -3304,3 +3304,14 @@ rohen Wert an.
 
 Regressionstest ergänzt. `pytest -q tests/test_render.py`: 65/65 bestanden.
 Mypy für `render.py`, Ruff und `git diff --check` sauber.
+
+## Runde 345: Usage-Reset-DTOs erneut geprüft
+
+`usage_resets.py` wurde auf widersprüchliche Legacy-/kanonische Formen,
+Grenzwerte, Boolean-als-Integer und ungültige Redemption-Zustände geprüft.
+Kein reproduzierbarer Fehler gefunden; Parser und Formatter bleiben
+fail-closed. 84 JSON-artige Einzelpayloads erzeugten keine ungefangene
+Exception.
+
+`pytest -q tests/test_usage_resets.py`: 5/5 bestanden. Mypy für
+`usage_resets.py`, Ruff und `git diff --check` sauber.
