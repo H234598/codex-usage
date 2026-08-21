@@ -301,6 +301,27 @@ def test_shared_direct_auth_accounts_handles_unknown_override_home(tmp_path):
     ) == frozenset({"alpha", "beta"})
 
 
+def test_shared_direct_auth_accounts_handles_unknown_account_home():
+    accounts = [
+        Account(
+            id="alpha",
+            label="Alpha",
+            profile_dir="/tmp/alpha",
+            auth_json_path="~definitely-no-such-user-zzzz/auth.json",
+        ),
+        Account(
+            id="beta",
+            label="Beta",
+            profile_dir="/tmp/beta",
+            auth_json_path="~definitely-no-such-user-zzzz/auth.json",
+        ),
+    ]
+
+    assert scheduler_module._shared_direct_auth_accounts(accounts) == frozenset(
+        {"alpha", "beta"}
+    )
+
+
 def test_fetch_all_rejects_oversized_config_account_iterators(monkeypatch):
     monkeypatch.setattr(scheduler_module, "MAX_SCHEDULER_ACCOUNTS", 2)
     accounts = (

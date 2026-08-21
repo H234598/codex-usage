@@ -359,7 +359,7 @@ def _shared_direct_auth_accounts(
         path = (
             auth_json_path
             if auth_json_path is not None
-            else Path(account.auth_json_path).expanduser()
+            else Path(account.auth_json_path)
             if account.auth_json_path
             else default_auth_json_path()
         )

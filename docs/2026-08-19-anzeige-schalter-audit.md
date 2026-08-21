@@ -3035,3 +3035,12 @@ unbekanntes `~user` konnte die komplette Diagnose abbrechen. Der Diagnose-
 Helper liefert jetzt strukturierten Fehler statt Exception. `tests/test_browser_diagnose.py`:
 40/40 fokussierte Tests bestanden; Mypy für Browser, Ruff und
 `git diff --check` sauber.
+
+## Runde 313: Scheduler-Account-Authpfade expandieren geschützt
+
+`_shared_direct_auth_accounts()` expandierte konfigurierte Authpfade bereits
+beim Aufbau des lokalen Pfads, bevor der Fehler-Fallback griff. Unbekanntes
+`~user` konnte die Mehrfachkonto-Prüfung roh abbrechen. Pfadobjekt bleibt jetzt
+bis zum geschützten Expand/Resolve-Block unverändert. `tests/test_scheduler.py`:
+199/199 fokussierte Tests bestanden; Mypy für Scheduler, Ruff und
+`git diff --check` sauber.
