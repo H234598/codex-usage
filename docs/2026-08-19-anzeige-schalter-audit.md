@@ -3631,3 +3631,15 @@ Reaktivierungs-Testpfad abgedeckt. `pytest -q tests/test_reactivate.py
 -k 'oauth_browser'`: 14/14 bestanden; Modul-Coverage 84%, alle sechs
 Funktionen mindestens einmal ausgeführt. Ruff, Mypy und `git diff --check`
 sauber.
+
+## Runde 379: Browser-Login-Erfolgspfad
+
+`browser.login_account()` hatte bisher nur Validierungs- und indirekte
+Fehlerpfadtests. Ein isolierter Test deckt jetzt Profilvorbereitung,
+Playwright-Start, Analytics-Navigation, interaktive Eingabe und sicheres
+Context-Schließen in Reihenfolge ab; kein echter Browser und kein Netzwerk.
+
+`pytest -q tests/test_browser_diagnose.py tests/test_browser_profile.py`:
+167/167 bestanden. Modul-Coverage für `browser.py` stieg auf 80%; offene
+Zeilen sind zusätzliche Diagnose-/Fehler- und Guard-Zweige. Ruff, Mypy und
+`git diff --check` sauber.

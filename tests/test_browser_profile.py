@@ -128,6 +128,79 @@ def test_browser_entrypoints_reject_non_config_input(entrypoint, config, tmp_pat
             diagnose_account(account, config)  # type: ignore[arg-type]
 
 
+def test_login_opens_analytics_and_closes_context(tmp_path, monkeypatch, capsys):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    config = AppConfig(
+        accounts=(account,),
+        analytics_url="https://chatgpt.com/codex/cloud/settings/analytics",
+    )
+    profile_dir = tmp_path / "profile"
+    events = []
+    calls = {}
+
+    class FakePage:
+        def goto(self, url, **kwargs):
+            events.append("goto")
+            calls["goto"] = (url, kwargs)
+
+    class FakeContext:
+        def new_page(self):
+            events.append("new_page")
+            return FakePage()
+
+        def close(self):
+            events.append("close")
+
+    context = FakeContext()
+
+    class FakePlaywright:
+        def __enter__(self):
+            events.append("playwright_enter")
+            return "playwright"
+
+        def __exit__(self, *_args):
+            events.append("playwright_exit")
+            return False
+
+    def fake_launch(playwright, launch_account, launch_profile, *, headless):
+        events.append("launch")
+        calls["launch"] = (playwright, launch_account, launch_profile, headless)
+        return context
+
+    monkeypatch.setattr(browser_module, "_prepare_profile", lambda _account: profile_dir)
+    monkeypatch.setattr(browser_module, "_profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr(browser_module, "sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(browser_module, "_launch_persistent_context", fake_launch)
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt: events.append("input") or "",
+    )
+
+    login_account(account, config)
+
+    assert calls["launch"] == ("playwright", account, profile_dir, False)
+    assert calls["goto"] == (
+        config.analytics_url,
+        {"wait_until": "domcontentloaded", "timeout": 60_000},
+    )
+    assert events == [
+        "playwright_enter",
+        "launch",
+        "new_page",
+        "goto",
+        "input",
+        "close",
+        "playwright_exit",
+    ]
+    output = capsys.readouterr().out
+    assert f"Browserprofil: {profile_dir}" in output
+    assert f"Browser: {account.browser}" in output
+
+
 def test_combined_page_text_sources_uses_one_html_evaluation() -> None:
     selectors = []
     evaluations = []
