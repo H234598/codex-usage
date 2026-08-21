@@ -1912,19 +1912,45 @@ def _write_exclusive(
     parent_identity: _DirectoryIdentity | None = None,
 ) -> _FileIdentity:
     _no_symlink_ancestors(path.parent)
-    if path.exists() or path.is_symlink():
-        _fail()
     if parent_identity is None:
         parent_identity = _directory_identity(path.parent)
     elif _directory_identity(path.parent) != parent_identity:
         _fail()
     fd = -1
+    parent_fd = -1
     provisional: _ProvisionalIdentity | None = None
     try:
+        parent_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            parent_flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            parent_flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            parent_flags |= os.O_CLOEXEC
+        parent_fd = os.open(path.parent, parent_flags)
+        parent_item = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(parent_item.st_mode)
+            or parent_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                parent_item.st_dev,
+                parent_item.st_ino,
+                stat.S_IMODE(parent_item.st_mode),
+            )
+            != parent_identity
+        ):
+            _fail()
+        try:
+            os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            _fail()
         fd = os.open(
-            path,
+            path.name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
             mode,
+            dir_fd=parent_fd,
         )
         provisional = _provisional_fd_identity(fd)
         if _directory_identity(path.parent) != parent_identity:
@@ -1947,8 +1973,6 @@ def _write_exclusive(
             view = view[written:]
         os.fchmod(fd, mode)
         os.fsync(fd)
-        os.close(fd)
-        fd = -1
         final_provisional = _provisional_rebased(
             path,
             provisional,
@@ -1957,8 +1981,21 @@ def _write_exclusive(
         )
         if final_provisional is None:
             _fail()
-        final = _file_identity_for_mode(path, mode)
-        return final
+        final_item = os.fstat(fd)
+        if (
+            not stat.S_ISREG(final_item.st_mode)
+            or final_item.st_nlink != 1
+            or final_item.st_uid != os.getuid()
+            or stat.S_IMODE(final_item.st_mode) != mode
+            or final_item.st_dev != provisional.device
+            or final_item.st_ino != provisional.inode
+        ):
+            _fail()
+        return _FileIdentity(
+            final_item.st_dev,
+            final_item.st_ino,
+            stat.S_IMODE(final_item.st_mode),
+        )
     except IntegrationInstallError:
         if provisional is not None:
             _cleanup_provisional_after_failure(
@@ -1981,6 +2018,11 @@ def _write_exclusive(
         if fd >= 0:
             try:
                 os.close(fd)
+            except OSError:
+                pass
+        if parent_fd >= 0:
+            try:
+                os.close(parent_fd)
             except OSError:
                 pass
 

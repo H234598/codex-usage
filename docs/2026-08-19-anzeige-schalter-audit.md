@@ -4375,6 +4375,19 @@ Python-Directory-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 126/126 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 484: Exklusive Manifest-/Launcher-Dateien per Parent-FD
+
+`_write_exclusive()` prüfte Ziel-Existenz per Pfad und erzeugte Manifest bzw.
+Launcher danach ebenfalls pfadbasiert. Ein Parent-Swap konnte so in einen
+fremden Candidate-/Release-Baum schreiben. Parent wird jetzt mit
+`O_DIRECTORY|O_NOFOLLOW` geöffnet und identitätsgebunden; Existenzprüfung,
+Creation, Schreiben, `fchmod()` und finale Datei-Identität laufen über diesen
+Descriptor.
+
+Parent-Swap-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 127/127 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
