@@ -97,6 +97,22 @@ def test_account_usage_as_dict_keeps_malformed_window_values_json_safe():
     assert payload["five_hour"]["reset_at"] is None
 
 
+def test_account_usage_as_dict_ignores_datetime_subclass_serialization_failure():
+    class BrokenDatetime(datetime):
+        def isoformat(self, *args, **kwargs):
+            raise RuntimeError("synthetic isoformat marker")
+
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=BrokenDatetime(2026, 8, 16, 10, tzinfo=UTC),
+    )
+
+    payload = usage.as_dict()
+
+    assert payload["captured_at"] is None
+
+
 @pytest.mark.parametrize(
     ("five_hour", "weekly", "expected_windows"),
     [

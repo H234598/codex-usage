@@ -3859,3 +3859,13 @@ Buckets bleiben unavailable bzw. werden nicht als Nutzungswert verwendet.
 
 `pytest -q tests/test_usage_limits.py`: 124/124 bestanden; Modul-Coverage 91%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 401: Model-Serialization-Grenze
+
+`models.AccountUsage.as_dict()` nutzt `_isoformat()` für alle Zeitfelder.
+Malformed `datetime`-Subklassen konnten dort bisher mit einer Exception die
+gesamte JSON-Serialisierung abbrechen. `_isoformat()` liefert bei fehlerhaftem
+`isoformat()` jetzt `None`; Regressionstest deckt den Capture-Zeitpunkt ab.
+
+`pytest -q tests/test_models.py`: 15/15 bestanden; Modul-Coverage 50% im
+isolierten Model-Test. Ruff, Mypy und `git diff --check` sauber.

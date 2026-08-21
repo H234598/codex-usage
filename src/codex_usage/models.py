@@ -486,7 +486,12 @@ def _pool_to_dict(pool: UsagePool | None) -> dict[str, Any] | None:
 
 
 def _isoformat(value: object) -> str | None:
-    return value.isoformat() if isinstance(value, datetime) else None
+    if not isinstance(value, datetime):
+        return None
+    try:
+        return value.isoformat()
+    except Exception:
+        return None
 
 
 def _safe_text(value: object) -> str | None:
