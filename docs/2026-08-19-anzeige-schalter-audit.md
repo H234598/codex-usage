@@ -2646,3 +2646,11 @@ aber randständigen `--now`-Zeitpunkt und gab rohes `OverflowError`-Verhalten
 erfolgreicher Zeitbereichsprüfung. `tests/test_cli.py`: 117/117 fokussierte
 Tests bestanden; Consumption-Suite: 25/25; Mypy für Source, Ruff und
 `git diff --check` sauber.
+
+## Runde 269: Vollsuite nach CLI-Zeitgrenzen-Fix
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2641 bestanden, 1 übersprungen,
+1 Warnung` in 87,21 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
+`git diff --check` sind sauber.
