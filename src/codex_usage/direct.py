@@ -67,12 +67,12 @@ def fetch_account_usage_direct(
     if not isinstance(account, Account):
         raise ValueError("account is invalid")
     captured_at = datetime.now(tz=LOCAL_TZ)
-    path = _resolve_auth_json_path(account, auth_json_path)
     auth_metadata: dict[str, datetime | None] = {}
     auth_user_id: str | None = None
     auth_account_id: str | None = None
     auth_plan_type: str | None = None
     try:
+        path = _resolve_auth_json_path(account, auth_json_path)
         deadline = _direct_deadline(timeout_seconds)
         (
             token,
@@ -377,10 +377,14 @@ def auth_identity_changed(
 
 def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
     if override is not None:
+        if not isinstance(override, Path):
+            raise DirectAuthError("auth.json path is invalid")
         return override.expanduser()
-    if account.auth_json_path:
-        return Path(account.auth_json_path).expanduser()
-    return default_auth_json_path()
+    if account.auth_json_path is None or account.auth_json_path == "":
+        return default_auth_json_path()
+    if not isinstance(account.auth_json_path, str):
+        raise DirectAuthError("auth.json path is invalid")
+    return Path(account.auth_json_path).expanduser()
 
 
 def _load_auth_token_and_metadata(

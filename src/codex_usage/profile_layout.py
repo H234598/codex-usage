@@ -28,6 +28,8 @@ class ProfileLayout:
 def layout_for_account(account: Account) -> ProfileLayout:
     if not isinstance(account, Account):
         raise ValueError("account is invalid")
+    if not isinstance(account.profile_dir, str) or not account.profile_dir:
+        raise ValueError("profile dir is invalid")
     profile_dir = Path(account.profile_dir).expanduser()
     if not profile_dir.is_absolute():
         raise ValueError("profile dir must be absolute")

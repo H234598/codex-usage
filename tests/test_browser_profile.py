@@ -84,6 +84,31 @@ def test_browser_entrypoints_reject_non_account_input(entrypoint, account):
             diagnose_account(account, config)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("profile_dir", [None, "", [], 1, "relative/profile"])
+def test_browser_profile_rejects_invalid_profile_directory(profile_dir):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=profile_dir,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValueError, match="profile directory"):
+        _prepare_profile(account)
+
+
+@pytest.mark.parametrize("browser", [None, "", [], 1, "vivaldi"])
+def test_browser_profile_rejects_invalid_browser(browser):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        browser=browser,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ValueError, match="browser is invalid"):
+        _prepare_profile(account)
+
+
 @pytest.mark.parametrize("entrypoint", ("login", "fetch", "probe", "diagnose"))
 @pytest.mark.parametrize("config", [None, [], "invalid", 1, True, object()])
 def test_browser_entrypoints_reject_non_config_input(entrypoint, config, tmp_path):

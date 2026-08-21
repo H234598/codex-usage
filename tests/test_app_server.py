@@ -541,6 +541,22 @@ def test_app_server_requires_configured_auth_json(tmp_path):
     assert usage.error == "account has no auth_json_path"
 
 
+@pytest.mark.parametrize("auth_json_path", [1, {}, object()])
+def test_app_server_rejects_invalid_auth_json_path_type(auth_json_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        auth_json_path=auth_json_path,  # type: ignore[arg-type]
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "account auth_json_path is invalid"
+
+
 def test_app_server_rejects_nonstandard_auth_json_filename(tmp_path):
     auth_home = tmp_path / "codex-home"
     auth_home.mkdir()

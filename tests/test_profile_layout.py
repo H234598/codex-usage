@@ -61,6 +61,14 @@ def test_profile_layout_rejects_symlink_profile(tmp_path):
         layout_for_account(Account(id="alpha", label="Alpha", profile_dir=str(link)))
 
 
+@pytest.mark.parametrize("profile_dir", [None, "", [], 1, object()])
+def test_profile_layout_rejects_invalid_profile_directory_type(profile_dir):
+    with pytest.raises(ValueError, match="profile dir is invalid"):
+        layout_for_account(  # type: ignore[arg-type]
+            Account(id="alpha", label="Alpha", profile_dir=profile_dir)
+        )
+
+
 def test_profile_directory_helper_rejects_protected_target_before_chmod(
     tmp_path, monkeypatch
 ):

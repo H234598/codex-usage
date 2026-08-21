@@ -1290,7 +1290,16 @@ def _close_context(context: Any) -> None:
 
 
 def _prepare_profile(account: Account) -> Path:
+    if not isinstance(account.profile_dir, str) or not account.profile_dir:
+        raise ValueError("profile directory is invalid")
+    if not isinstance(account.browser, str) or account.browser not in {
+        "firefox",
+        "chromium",
+    }:
+        raise ValueError("browser is invalid")
     root = Path(account.profile_dir).expanduser()
+    if not root.is_absolute():
+        raise ValueError("profile directory must be absolute")
     _prepare_private_output_dir(root, label="profile directory")
     marker = root / ".codex-usage-profile"
     if marker.exists() or marker.is_symlink():

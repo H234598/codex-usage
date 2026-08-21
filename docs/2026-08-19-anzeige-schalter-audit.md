@@ -2528,3 +2528,37 @@ Tests bestanden; Mypy für Source und Ruff für die betroffenen Dateien sauber.
 Werte jetzt als `ReactivationError` zurück. `tests/test_reactivate.py`: 60/60
 fokussierte Tests bestanden; Mypy für Source und Ruff für die betroffenen
 Dateien sauber.
+
+## Runde 256: Profile-Layout validiert Account-Profilpfad
+
+`profile_layout.layout_for_account()` übernahm malformed oder leere
+`Account.profile_dir`-Werte bis `Path()` und gab rohen `TypeError` zurück.
+Ungültige bzw. relative Profilpfade werden jetzt vor Layout-I/O kontrolliert
+abgewiesen. `tests/test_profile_layout.py`: 19/19 bestanden; Mypy für Source
+und Ruff für die betroffenen Dateien sauber.
+
+## Runde 257: App-Server validiert Account-Auth-Pfad
+
+`app_server._auth_context()` reichte einen nicht-stringförmigen
+`Account.auth_json_path` bis `Path()` weiter; `fetch_account_usage_app_server()`
+konnte dadurch roh mit `TypeError` abbrechen statt Login-Required zu liefern.
+Der Auth-Pfad wird jetzt als `DirectAuthError` fail-closed behandelt.
+`tests/test_app_server.py`: 96/96 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.
+
+## Runde 258: Browser-Profil validiert Pfad und Browser
+
+`browser._prepare_profile()` konnte malformed/relative `profile_dir`-Werte oder
+unbekannte Browser bis Marker-/Verzeichnis-I/O übernehmen. Guards prüfen
+Profilpfad und Browser jetzt vor dem ersten Schreibzugriff. `tests/test_browser_
+profile.py` und `tests/test_browser_diagnose.py`: 161/161 fokussierte Tests
+bestanden; Mypy für Source und Ruff für die betroffenen Dateien sauber.
+
+## Runde 259: Direct-Fetch validiert Auth-Pfad und Override
+
+`direct.fetch_account_usage_direct()` löste Account- und Override-
+`auth_json_path` vor dem Fehlerfang auf. Fremdtypen wie `int` oder `object`
+brachen deshalb roh mit `TypeError` ab. Auflösung liegt jetzt im kontrollierten
+Auth-Fehlerpfad; beide Varianten liefern `LOGIN_REQUIRED` mit begrenztem
+Fehlertext. `tests/test_direct.py`: 179/179 bestanden; Mypy für Source und
+Ruff für die betroffenen Dateien sauber.
