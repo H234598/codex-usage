@@ -23,6 +23,15 @@ NOW = datetime(2026, 8, 15, 10, 5, tzinfo=UTC)
 ARGV = ("integration-snapshot", "--schema", "1", "--format", "json")
 
 
+@pytest.mark.parametrize("code", [True, 69.0, "69"])
+def test_error_result_rejects_non_integer_error_codes(code):
+    from codex_usage.integration_entrypoint import _error_result
+
+    result = _error_result(code)
+
+    assert result.exit_code == 69
+
+
 def _environment(tmp_path: Path) -> dict[str, str]:
     data_home = tmp_path / "data"
     state_home = tmp_path / "state"

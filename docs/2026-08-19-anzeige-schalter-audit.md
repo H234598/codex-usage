@@ -1550,3 +1550,10 @@ Frozenset-Mitgliedschaft. Unhashbare Statuswerte aus einem Snapshot konnten
 dadurch `TypeError` leaken; sie werden jetzt vor der Mitgliedschaft als String
 geprüft und sauber als `IntegrationInvalidSource` abgewiesen.
 `tests/test_integration_snapshot.py`: 31/31 bestanden; Mypy und Ruff sauber.
+
+## Runde 143: Integration-Exitcode-Typ
+
+`integration_entrypoint._error_result()` akzeptierte Float-/Bool-Werte, die
+wegen Python-Schlüsselgleichheit als gültiger Integer-Exitcode `69` gelten
+konnten. Fehlercodes werden jetzt mit strikt-integer Prüfung normalisiert.
+`tests/test_integration_entrypoint.py`: 22/22 bestanden; Mypy und Ruff sauber.

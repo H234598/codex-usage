@@ -83,7 +83,7 @@ def _require_aware_utc(value: object) -> datetime:
 
 
 def _error_result(code: int) -> CommandResult:
-    if code not in _ERROR_TOKENS:
+    if type(code) is not int or code not in _ERROR_TOKENS:
         code = 69
     return CommandResult(code, b"", _ERROR_TOKENS[code])
 
