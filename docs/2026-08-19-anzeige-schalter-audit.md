@@ -3808,3 +3808,13 @@ reproduzierbare Fehlfunktion; fremde, gruppenlesbare, hardgelinkte und
 
 `pytest -q tests/test_spark_health.py`: 28/28 bestanden; Modul-Coverage 89%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 396: Backend-Identity-Auswahl
+
+`identity.py` auf ID-/Plan-Typ-Validierung, Kandidaten-Bounds, URL-Prüfung,
+Priorisierung und Account-Konsistenz geprüft. Keine neue reproduzierbare
+Fehlfunktion; fremde oder mehrdeutige Backend-Gruppen werden weiter verworfen
+oder als Fehler gemeldet.
+
+`pytest -q tests/test_identity.py`: 28/28 bestanden; Modul-Coverage 81%.
+Ruff, Mypy und `git diff --check` sauber.
