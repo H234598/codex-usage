@@ -2020,6 +2020,10 @@ def _snapshot_source_urls(value: Any) -> tuple[str, ...]:
     return tuple(_snapshot_text(item, limit=300) for item in value)
 
 
-def _validate_snapshot_account_id(account_id: str) -> None:
-    if account_id in {".", ".."} or not SNAPSHOT_ACCOUNT_ID_RE.fullmatch(account_id):
+def _validate_snapshot_account_id(account_id: object) -> None:
+    if (
+        not isinstance(account_id, str)
+        or account_id in {".", ".."}
+        or not SNAPSHOT_ACCOUNT_ID_RE.fullmatch(account_id)
+    ):
         raise ValueError("account id must be 1-64 chars: letters, digits, underscore, dot, dash")

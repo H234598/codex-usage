@@ -58,6 +58,11 @@ def test_snapshot_text_normalizes_and_bounds_whitespace():
     assert _snapshot_text("alpha\n beta gamma", limit=11) == "alpha be..."
 
 
+@pytest.mark.parametrize("account_id", [None, [], {}])
+def test_load_current_usage_rejects_non_string_account_id(tmp_path, account_id):
+    assert load_current_usage(account_id, tmp_path) is None
+
+
 def test_usage_state_round_trips_dynamic_main_and_spark_pools():
     captured_at = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
     weekly = LimitWindow(

@@ -1061,3 +1061,10 @@ weiter; `tests/test_applet.py`: 27/27 bestanden.
 übergebenen Wert aus. `None` oder unhashbare Werte erzeugten dadurch
 `TypeError` statt `AccountLockError`. Explizite Stringprüfung ergänzt;
 `tests/test_account_lock.py`: 14/14 bestanden; Ruff sauber.
+
+## Runde 82: Snapshot-ID-Typprüfung
+
+`state._validate_snapshot_account_id()` prüfte `account_id` direkt per Set und
+Regex. Ungültige Typen leakten deshalb `TypeError` aus `load_current_usage()`
+statt den Snapshot sauber als nicht vorhanden zu behandeln. Stringprüfung
+ergänzt; `tests/test_state.py`: 217/217 bestanden; Ruff sauber.
