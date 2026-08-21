@@ -228,8 +228,12 @@ def evaluate_routing(
     normalized_role = role.strip().casefold()
     base = {
         "schema_version": DECISION_SCHEMA_VERSION,
-        "account": usage.account_id,
-        "backend_account_id": usage.backend_account_id,
+        "account": usage.account_id if isinstance(usage.account_id, str) else None,
+        "backend_account_id": (
+            usage.backend_account_id
+            if isinstance(usage.backend_account_id, str)
+            else None
+        ),
         "role": role,
         "checked_at": _timestamp_text(checked_at),
         "captured_at": _timestamp_text(usage.captured_at),

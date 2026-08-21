@@ -1889,3 +1889,11 @@ direkt zu. Beschädigte In-Memory-Usage konnte History-Aufzeichnung mit
 ungültige Pools/Fenster werden jetzt übersprungen; lazy Modell-Iteratoren und
 Sample-Bound bleiben erhalten. `tests/test_history.py`: 50/50 bestanden; Mypy
 und Ruff für betroffene Dateien sauber.
+
+## Runde 185: Routing-Decision JSON-Schutz
+
+`routing.evaluate_routing()` übernahm `account_id` und
+`backend_account_id` ungeprüft in das Decision-Dict. Malformed In-Memory-
+Identitäten konnten den CLI-JSON-Output mit `TypeError` abbrechen. Beide
+Felder werden jetzt als String oder `null` ausgegeben. `tests/test_routing.py`:
+96/96 bestanden; Mypy und Ruff für betroffene Dateien sauber.

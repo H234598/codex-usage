@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -69,6 +70,26 @@ def test_backend_identity_validation_rejects_unhashable_backend(backend_used):
     usage = replace(usage, backend_used=backend_used)
 
     assert _backend_identity_is_valid(usage) is False
+
+
+def test_evaluate_routing_json_is_safe_for_malformed_identity_fields():
+    usage = replace(
+        _usage(),
+        account_id=datetime.now(UTC),  # type: ignore[arg-type]
+        backend_account_id=[],  # type: ignore[arg-type]
+    )
+
+    decision = evaluate_routing(
+        usage,
+        role="user",
+        paid_overage_allowed=False,
+        now=NOW,
+        spark_health={"state": "unknown", "stale": False},
+    )
+
+    json.dumps(decision, allow_nan=False)
+    assert decision["account"] is None
+    assert decision["backend_account_id"] is None
 
 
 @pytest.mark.parametrize("schema_version", [True, 1.0, "1", None])
