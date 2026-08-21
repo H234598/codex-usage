@@ -3492,3 +3492,10 @@ Single-Link, User-Owner und private Mode geprüft.
 Regressionstest ergänzt. `pytest -q tests/test_profile_layout.py
 tests/test_profile_migration.py`: 54/54 bestanden. Mypy für
 `profile_layout.py`, Ruff und `git diff --check` sauber.
+
+## Runde 365: Reload nach Profile-Metadata-Fix
+
+Service lädt `d88cada`; `app-server`-Konten liefern unverändert valide
+Ergebnisse. Exit 2 kommt weiterhin ausschließlich von den Browser-Konten mit
+fehlender Firefox-Playwright-Executable. Kein automatischer Fallback und keine
+Netzwerkinstallation ausgeführt.
