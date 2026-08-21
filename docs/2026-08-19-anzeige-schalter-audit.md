@@ -3059,3 +3059,10 @@ Pfad ohne `RuntimeError`-Schutz. Unbekanntes `~user` konnte Reaktivierung roh
 abbrechen. Der Pfad liefert jetzt kontrolliertes `ReactivationError`.
 `tests/test_reactivate.py`: 62/62 fokussierte Tests bestanden; Mypy für
 Reactivation, Ruff und `git diff --check` sauber.
+
+## Runde 316: Vollsuite nach Reactivation-Executable-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2695 bestanden, 1 übersprungen,
+1 Warnung` in 95,07 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. Die Reactivation-Executable-Grenze ist integriert
+grün.
