@@ -4093,3 +4093,15 @@ deaktiviert. Keine neue reproduzierbare Fehlfunktion.
 32/32 bestanden. `node --test tests/applet_runtime.test.js`: 395/395
 bestanden. JSON-Schema, Ruff und `git diff --check` sauber. Bekannte GTK-
 Deprecation-Warnungen bleiben extern/verhaltensneutral.
+
+## Runde 422: CLI-Dispatch und Transaktionen
+
+`cli.py` auf argv-/Default-Command-Normalisierung, Parser-Dispatch,
+Account-/Auth-Mehrfachauswahl, Policy-/Usage-Provenienz, Bridge-Host-/Endpoint-
+Grenzen, Ingest-Bytebudgets, Service-Synchronisation sowie Profile-/State-
+Löschtransaktionen mit Rollback geprüft. Kein neuer reproduzierbarer Fehler;
+malformed Eingaben bleiben kontrollierte Fehler, Identitäts- und Pfadbindung
+bleiben erhalten.
+
+`pytest -q tests/test_cli.py`: 117/117 bestanden; Modul-Coverage 71 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
