@@ -3926,3 +3926,15 @@ Ressourcen werden im `finally`-Pfad geschlossen.
 
 `pytest -q tests/test_app_server.py`: 98/98 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 408: Scheduler-Account-ID-Grenze
+
+`scheduler._bounded_account_list()` akzeptierte bisher ein `Account`-Objekt
+mit nicht-stringartiger `id`. Bei mehreren solchen Datensätzen brachen
+Ambiguitäts- oder Snapshot-Sets mit rohem `TypeError` statt kontrolliertem
+Entry-Point-Fehler ab. Die Bounded-Grenze weist solche Account-Datensätze jetzt
+als `ValueError("account records are invalid")` zurück; reguläre Konfigurations-
+IDs bleiben unverändert.
+
+`pytest -q tests/test_scheduler.py`: 202/202 bestanden; Modul-Coverage 84 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.

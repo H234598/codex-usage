@@ -78,7 +78,10 @@ def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:
         raise ValueError("account records are invalid") from exc
     if len(account_list) > MAX_SCHEDULER_ACCOUNTS:
         raise ValueError("too many accounts")
-    if any(not isinstance(account, Account) for account in account_list):
+    if any(
+        not isinstance(account, Account) or not isinstance(account.id, str)
+        for account in account_list
+    ):
         raise ValueError("account records are invalid")
     return account_list
 

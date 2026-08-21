@@ -286,6 +286,17 @@ def test_fetch_all_rejects_invalid_account_records(accounts):
         fetch_all(AppConfig(accounts=()), accounts)  # type: ignore[arg-type]
 
 
+def test_fetch_all_rejects_account_with_non_string_id():
+    account = Account(
+        id=[],  # type: ignore[arg-type]
+        label="Malformed ID",
+        profile_dir="/tmp/malformed-id",
+    )
+
+    with pytest.raises(ValueError, match="account records are invalid"):
+        fetch_all(AppConfig(accounts=()), (account,))
+
+
 def test_fetch_all_keeps_malformed_account_auth_path_as_usage_error(monkeypatch):
     account = Account(
         id="malformed-auth",
