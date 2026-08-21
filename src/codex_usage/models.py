@@ -362,6 +362,15 @@ class AccountUsage:
             AccountStatus.LOGIN_REQUIRED,
         }
         values_hidden = self.cache_invalidated or terminal_status
+        serialized_models = (
+            {
+                pool.key: _pool_to_dict(pool)
+                for pool in self.models
+                if isinstance(pool, UsagePool) and isinstance(pool.key, str)
+            }
+            if not values_hidden and isinstance(self.models, tuple)
+            else {}
+        )
         return {
             "account": self.account_id,
             "label": self.label,
@@ -372,9 +381,7 @@ class AccountUsage:
             "weekly": None if values_hidden else _window_to_dict(self.weekly),
             "credits": None if values_hidden else _window_to_dict(self.credits),
             "main": None if values_hidden else _pool_to_dict(self.main),
-            "models": {}
-            if values_hidden
-            else {pool.key: _pool_to_dict(pool) for pool in self.models},
+            "models": serialized_models,
             "status": self.status.value,
             "error": self.error,
             "blocked_until": self.blocked_until.isoformat() if self.blocked_until else None,
