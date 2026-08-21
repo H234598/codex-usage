@@ -432,6 +432,19 @@ def test_auth_migration_apply_does_not_overwrite_target_added_after_plan(tmp_pat
     assert target.read_text(encoding="utf-8") == "{\"existing\":true}"
 
 
+def test_auth_migration_apply_rejects_source_permissions_changed_after_plan(tmp_path):
+    source = tmp_path / "auth.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    plan = plan_auth_migration((_account(tmp_path, source),))
+    source.chmod(0o644)
+
+    with pytest.raises(ValueError, match="auth source permissions"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+    assert not plan.items[0].target.exists()
+
+
 def test_auth_migration_prevalidates_all_sources_before_first_write(tmp_path):
     first_source = tmp_path / "first-auth.json"
     second_source = tmp_path / "second-auth.json"

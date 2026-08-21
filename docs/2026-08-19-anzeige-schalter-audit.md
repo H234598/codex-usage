@@ -4450,6 +4450,16 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 511: Auth-Quellmodus beim Apply erneut geprüft
+
+`apply_auth_migration()` vertraute bisher auf die Modusprüfung aus dem
+Planungszeitpunkt. Wurde `auth.json` danach group-/world-lesbar, las und
+kopierte Apply die Datei trotzdem. Der Modus wird jetzt direkt nach dem
+geschützten Lesen erneut geprüft; nicht-private Quellen erzeugen kein Ziel.
+
+TOCTOU-Regression ergänzt. `pytest -q tests/test_profile_migration.py`: 54/54
+bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 510: Canonical-Ziel-Symlinks im Dry-Run fail-closed
 
 `_classify_source()` prüfte bisher Symlinks am Canonical-Ziel erst beim

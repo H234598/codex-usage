@@ -110,13 +110,15 @@ def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[s
                         f"cannot apply auth migration for {item.account_id}: "
                         f"{item.reason or item.status}"
                     )
-                text, _ = read_private_text(
+                text, source_stat = read_private_text(
                     item.source,
                     regular_label="auth source",
                     read_label="auth source",
                     max_bytes=MAX_AUTH_BYTES,
                     too_large_label="auth source",
                 )
+                if source_stat.st_mode & 0o077:
+                    raise ValueError("auth source permissions are invalid")
                 _validate_auth_json(text)
                 _assert_migration_target_available(item.target)
                 prepared.append((item, text))
