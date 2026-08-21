@@ -488,8 +488,6 @@ def _assert_no_symlink_ancestors(path: Path) -> None:
         current /= part
         if current.is_symlink():
             raise AppServerAuthError("CODEX_HOME must not contain symlinks")
-        if not current.exists():
-            break
 
 
 def _app_server_environment(codex_home: Path) -> dict[str, str]:

@@ -87,6 +87,18 @@ def test_app_server_symlink_check_rejects_dotdot_bypass(tmp_path):
         app_server_module._assert_no_symlink_ancestors(redirected / ".." / "target")
 
 
+def test_app_server_symlink_check_scans_after_missing_segment(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(AppServerAuthError, match="must not contain symlinks"):
+        app_server_module._assert_no_symlink_ancestors(
+            tmp_path / "missing" / ".." / "redirected" / "target"
+        )
+
+
 def _fake_codex(
     path: Path,
     requests_path: Path,

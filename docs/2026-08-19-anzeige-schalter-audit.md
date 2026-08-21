@@ -988,3 +988,14 @@ invalidierten und implizit ungültigen `ok`-Payload ab. `tests/test_state.py`:
 App-Server-Pfad. Direkte Tests prüfen verschachtelte absolute Guthaben sowie
 Bool-, negative, nichtnumerische und widersprüchliche Werte. Produktionscode
 unverändert; Fokus-Suite: 5/5 bestanden, Ruff sauber.
+
+## Runde 73: App-Server-CODEX_HOME-Symlinkprüfung
+
+`app_server._assert_no_symlink_ancestors()` brach ebenfalls am ersten
+fehlenden Pfadsegment ab. Ein `missing/../symlink/...`-Pfad wurde dadurch nicht
+vollständig geprüft. Die Schleife scannt jetzt alle Segmente weiter, analog
+zur zentralen Privatpfadprüfung. Regressionstest deckt den bisher fehlenden
+Pfadaufbau ab; `tests/test_app_server.py`: 77/77 bestanden.
+
+Ruff für `src/codex_usage/app_server.py` ist sauber. Eine bereits vorhandene
+E501-Zeile in `tests/test_app_server.py:115` bleibt unberührt.
