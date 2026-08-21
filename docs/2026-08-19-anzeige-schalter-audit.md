@@ -1592,3 +1592,11 @@ unhashbarer Backend-Wert konnte deshalb die Stabilisierung mit `TypeError`
 abbrechen. Der Wert wird jetzt zuerst als String geprüft; ungültige Snapshots
 werden ignoriert. `tests/test_scheduler.py`: 163/163 bestanden; Mypy und Ruff
 sauber.
+
+## Runde 148: State-Backend-Identitätstyp
+
+`state.backend_identity_matches()` verwendete `backend_used`-Werte direkt als
+Frozenset-Schlüssel. Unhashbare Werte aus manipulierten `AccountUsage`-Objekten
+konnten dadurch `TypeError` auslösen. Beide Felder werden jetzt vor der
+Identitätsprüfung als Strings validiert; ungültige Identitäten matchen nicht.
+`tests/test_state.py`: 221/221 bestanden; Mypy und Ruff sauber.

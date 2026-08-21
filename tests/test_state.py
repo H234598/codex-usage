@@ -574,6 +574,22 @@ def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
     assert backend_provenance_matches(direct, override) is False
 
 
+def test_backend_identity_rejects_unhashable_backend_fields():
+    complete = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    malformed = replace(complete, backend_used=[])
+
+    assert backend_identity_matches(malformed, complete) is False
+    assert backend_identity_matches(complete, malformed) is False
+
+
 def test_backend_provenance_rejects_unknown_backend_fields():
     unknown_used = AccountUsage(
         account_id="account",
