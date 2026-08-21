@@ -459,7 +459,7 @@ def auth_identity_from_payload(
 
 
 def auth_identity_from_file(path: Path) -> tuple[str | None, str | None]:
-    path = _require_auth_path(path).expanduser()
+    path = _expanded_auth_path(path)
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -505,7 +505,7 @@ def auth_email_from_payload(
 
 
 def auth_email_from_file(path: Path) -> str | None:
-    path = _require_auth_path(path).expanduser()
+    path = _expanded_auth_path(path)
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -548,7 +548,7 @@ def auth_plan_type_from_payload(
 
 
 def auth_plan_type_from_file(path: Path) -> str | None:
-    path = _require_auth_path(path).expanduser()
+    path = _expanded_auth_path(path)
     raw, _ = read_auth_json_file(path)
     try:
         payload = loads_strict(raw)
@@ -878,6 +878,13 @@ def _require_auth_path(path: object) -> Path:
     if not isinstance(path, Path):
         raise DirectAuthError("auth.json path is invalid")
     return path
+
+
+def _expanded_auth_path(path: object) -> Path:
+    try:
+        return _require_auth_path(path).expanduser()
+    except RuntimeError as exc:
+        raise DirectAuthError("auth.json path is invalid") from exc
 
 
 def _validate_auth_json_stat(path: Path, file_stat: os.stat_result) -> None:

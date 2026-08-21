@@ -3115,6 +3115,13 @@ def test_auth_file_helpers_reject_non_path(path):
             helper(path)  # type: ignore[arg-type]
 
 
+def test_auth_file_helpers_reject_unknown_user_home():
+    path = Path("~definitely-no-such-user-zzzz/auth.json")
+    for helper in (auth_identity_from_file, auth_email_from_file, auth_plan_type_from_file):
+        with pytest.raises(DirectAuthError, match=r"auth\.json path is invalid"):
+            helper(path)
+
+
 @pytest.mark.parametrize("account", [None, [], 1, object()])
 def test_auth_account_helpers_reject_non_account(account):
     for helper in (auth_identity_for_account, auth_plan_type_for_account):

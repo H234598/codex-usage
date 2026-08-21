@@ -2902,3 +2902,13 @@ von Default-Statepfaden roh mit `RuntimeError` abbrechen. Unauflösbare
 Expansion fällt jetzt wie relative XDG-Werte auf den Standardpfad zurück.
 `tests/test_config.py`: 113/113 fokussierte Tests bestanden; Mypy für die
 Konfigurationsdatei, Ruff und `git diff --check` sauber.
+
+## Runde 298: Direct-Auth-Dateihelfer validieren Home-Expansion
+
+`auth_identity_from_file()`, `auth_email_from_file()` und
+`auth_plan_type_from_file()` expandierten Pfade außerhalb des geschützten
+Fetch-Pfads. Ein unbekanntes `~user` konnte deshalb roh mit `RuntimeError`
+abbrechen. Gemeinsame Pfadvalidierung liefert jetzt konsistent
+`DirectAuthError("auth.json path is invalid")`. `tests/test_direct.py`:
+182/182 fokussierte Tests bestanden; Mypy für Direct, Ruff und
+`git diff --check` sauber.
