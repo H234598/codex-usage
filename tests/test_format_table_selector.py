@@ -9,7 +9,7 @@ sys.path.insert(0, str(APPLET_DIR))
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
-from format_table_selector import FormatTableSelector  # noqa: E402
+from format_table_selector import FormatTableSelector, Gtk  # noqa: E402
 
 
 class _Combo:
@@ -104,6 +104,7 @@ def test_constructor_builds_only_declared_tables_and_initial_selection() -> None
         assert set(selector._tables) == {"table-a"}
         assert selector.combo.get_active_id() == "table-a"
         assert selector.table_stack.get_visible_child_name() == "table-a"
+        assert selector.table_stack.get_transition_type() == Gtk.StackTransitionType.NONE
         assert settings.writes == []
     finally:
         selector.destroy()

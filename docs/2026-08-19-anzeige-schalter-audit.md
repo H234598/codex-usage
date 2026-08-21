@@ -3210,3 +3210,11 @@ Renderpfaden ausgewertet. Das alte globale Baseline-Element 13 bleibt verworfen.
 `pytest -q tests/test_applet.py tests/test_format_table_selector.py`: 31/31
 bestanden. `node --test tests/applet_runtime.test.js`: 394/394 bestanden. Ruff,
 Python-Kompilierung, JSON-Prüfung und `git diff --check` sauber.
+
+## Runde 335: Tabellenwechsel ohne Crossfade-Überlagerung
+
+Der Tabellen-Selector blendete beim Wechsel per `Gtk.Stack` über `CROSSFADE`
+kurz alte und neue Tabelle gleichzeitig. Das widerspricht der Vorgabe „nur eine
+Tabelle“ und erzeugt unnötige Animation. Der Stack schaltet jetzt ohne Übergang
+auf genau ein sichtbares Kind. Konstruktor-/Selector-Regressionstest prüft
+Transition-Typ und Initialauswahl; fokussierte Python-Suite: 32/32 bestanden.

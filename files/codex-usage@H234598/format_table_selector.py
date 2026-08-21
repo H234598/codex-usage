@@ -65,7 +65,7 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         self.pack_start(self.table_title, False, False, 0)
 
         self.table_stack = Gtk.Stack()
-        self.table_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.table_stack.set_transition_type(Gtk.StackTransitionType.NONE)
         self.table_stack.set_vexpand(True)
         self.pack_start(self.table_stack, True, True, 0)
 
