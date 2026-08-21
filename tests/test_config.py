@@ -928,6 +928,18 @@ def test_restore_account_rejects_invalid_account_type(account, tmp_path):
         restore_account(account, path=config_path)
 
 
+@pytest.mark.parametrize("index", [[], {}, False, 1.5])
+def test_restore_account_rejects_invalid_index_type(index, tmp_path):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    with pytest.raises(ValueError, match="restore index must be an integer"):
+        restore_account(account, path=tmp_path / "config.toml", index=index)
+
+
 def test_load_config_rejects_loose_types(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

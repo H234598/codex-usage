@@ -1242,3 +1242,10 @@ Ruff sauber.
 `account.id` zu. `None`, Listen oder Dictionaries leakten `AttributeError` und
 konnten bereits Pfad-/Lock-Arbeit auslösen. Frühe `Account`-Prüfung ergänzt;
 drei Regressionen. `tests/test_config.py`: 95/95 bestanden; Ruff sauber.
+
+## Runde 105: Config-Restore-Index-Typ
+
+`restore_account()` übergab ungeprüfte `index`-Werte an `min()`/`max()`.
+Listen/Dictionaries leakten `TypeError`; `False` und Gleitkommazahlen wurden
+als Position akzeptiert. Explizite strikte Integerprüfung ergänzt; vier
+Regressionen. `tests/test_config.py`: 99/99 bestanden; Ruff sauber.
