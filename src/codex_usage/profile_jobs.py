@@ -550,7 +550,9 @@ def _validate_create_arguments(
         raise ValueError("backend is invalid")
     if reactivation_browser not in SUPPORTED_REACTIVATION_BROWSERS:
         raise ValueError("reactivation browser is invalid")
-    if series and (not isinstance(series, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,15}", series)):
+    if not isinstance(series, str) or (
+        series and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,15}", series)
+    ):
         raise ValueError("series is invalid")
     if not isinstance(series_active, bool):
         raise ValueError("series_active is invalid")

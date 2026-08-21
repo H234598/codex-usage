@@ -227,6 +227,43 @@ def test_profile_job_creation_rejects_invalid_json_events_before_side_effects(
         )
 
 
+@pytest.mark.parametrize(
+    "series",
+    (
+        pytest.param(None, id="none"),
+        pytest.param(0, id="zero"),
+        pytest.param(False, id="false"),
+        pytest.param([], id="list"),
+    ),
+)
+def test_profile_job_creation_rejects_non_string_series_before_side_effects(
+    tmp_path, monkeypatch, series
+):
+    monkeypatch.setattr(
+        profile_jobs,
+        "_write_new_job",
+        lambda manifest: pytest.fail("manifest must not be written"),
+    )
+    monkeypatch.setattr(
+        profile_jobs.subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("worker must not start"),
+    )
+
+    with pytest.raises(ValueError, match="series is invalid"):
+        profile_jobs.create_profile_job(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir=str(tmp_path / "profile"),
+            expected_backend_account_id=None,
+            config_path=tmp_path / "config.toml",
+            json_events=False,
+            series=series,
+        )
+
+
 def test_profile_job_creation_enforces_manifest_cap_before_starting_worker(tmp_path, monkeypatch):
     state = tmp_path / "state"
     starts = []

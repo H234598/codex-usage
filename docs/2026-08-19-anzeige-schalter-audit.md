@@ -1015,3 +1015,11 @@ Abbruch bei fehlenden Pfadsegmenten. Ein `missing/../symlink/...`-Pfad konnte
 damit unvollständig geprüft werden. Der Scanner läuft jetzt über alle
 Segmente; ein direkter Regressionstest deckt den Fall ab.
 `tests/test_service.py`: 41/41 bestanden; Ruff für `service.py` sauber.
+
+## Runde 76: Profiljob-Serienvalidierung
+
+`profile_jobs._validate_create_arguments()` prüfte `series` nur innerhalb
+eines truthy-Zweigs. Dadurch wurden `None`, `0`, `False` oder Listen als leere
+Serien akzeptiert und bis ins Manifest weitergereicht. Die Validierung verlangt
+jetzt zuerst einen String; leerer String bleibt erlaubt. Vier Regressionfälle
+ergänzt; `tests/test_profile_jobs.py`: 43/43 bestanden.
