@@ -2940,3 +2940,20 @@ Anzeige statt Statusausgabe abbrechen; zusätzlich wurde die Pfadspalte nicht
 erreicht. Status zeigt jetzt `ungültig`, die Pfadspalte bleibt darstellbar.
 `tests/test_render.py`: 62/62 fokussierte Tests bestanden; Mypy für Render,
 Ruff und `git diff --check` sauber.
+
+## Runde 302: Profiljob-Abschlussprüfung fängt ungültige Home-Expansion
+
+`_verify_profile_job_completion()` verglich das gespeicherte Profilverzeichnis
+direkt nach `expanduser()`. Ein beschädigtes Job-Manifest mit unbekanntem
+`~user` lief am äußeren Fehlerfang vorbei und konnte die Worker-Prüfung
+abbrechen. `RuntimeError` wird jetzt als fehlgeschlagene Postcondition
+behandelt. `tests/test_profile_jobs.py`: 72/72 fokussierte Tests bestanden;
+Mypy für Profile Jobs, Ruff und `git diff --check` sauber.
+
+## Runde 303: Scheduler-Auth-Quellschlüssel bleibt bei Expand-Fehler stabil
+
+`_shared_direct_auth_accounts()` expandierte einen unbekannten Auth-Override
+im Fehler-Fallback ein zweites Mal. Der ursprüngliche `RuntimeError` konnte
+dadurch erneut entkommen. Fallback nutzt jetzt den rohen Pfad als stabilen
+Schlüssel. `tests/test_scheduler.py`: 198/198 fokussierte Tests bestanden;
+Mypy für Scheduler, Ruff und `git diff --check` sauber.

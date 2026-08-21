@@ -289,6 +289,18 @@ def test_scheduler_rejects_unknown_auth_home():
         )
 
 
+def test_shared_direct_auth_accounts_handles_unknown_override_home(tmp_path):
+    accounts = [
+        Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "alpha")),
+        Account(id="beta", label="Beta", profile_dir=str(tmp_path / "beta")),
+    ]
+
+    assert scheduler_module._shared_direct_auth_accounts(
+        accounts,
+        auth_json_path=Path("~definitely-no-such-user-zzzz/auth.json"),
+    ) == frozenset({"alpha", "beta"})
+
+
 def test_fetch_all_rejects_oversized_config_account_iterators(monkeypatch):
     monkeypatch.setattr(scheduler_module, "MAX_SCHEDULER_ACCOUNTS", 2)
     accounts = (

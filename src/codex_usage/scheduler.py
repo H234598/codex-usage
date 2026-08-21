@@ -365,8 +365,13 @@ def _shared_direct_auth_accounts(
         )
         try:
             source_key = str(path.expanduser().resolve(strict=False))
-        except (OSError, RuntimeError, TypeError, ValueError):
-            source_key = str(path.expanduser())
+        except (OSError, TypeError, ValueError):
+            try:
+                source_key = str(path.expanduser())
+            except RuntimeError:
+                source_key = str(path)
+        except RuntimeError:
+            source_key = str(path)
         sources.setdefault(source_key, []).append(account.id)
     return frozenset(
         account_id

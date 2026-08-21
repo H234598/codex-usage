@@ -1192,6 +1192,36 @@ def test_profile_job_completion_rejects_reactivation_browser_mismatch(
     assert profile_jobs._verify_profile_job_completion(job) is False
 
 
+def test_profile_job_completion_rejects_unknown_profile_home(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    write_private_text(auth_path, "{}\n", label="test auth")
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+        browser="firefox",
+        auth_json_path=str(auth_path),
+        backend="direct",
+        reactivation_browser="firefox",
+    )
+    monkeypatch.setattr(
+        profile_jobs,
+        "load_config",
+        lambda _path: AppConfig(accounts=(account,)),
+    )
+    job = {
+        "account_id": "alpha",
+        "label": "Alpha",
+        "profile_dir": "~definitely-no-such-user-zzzz/profile",
+        "browser": "firefox",
+        "backend": "direct",
+        "reactivation_browser": "firefox",
+        "config_path": str(tmp_path / "config.toml"),
+    }
+
+    assert profile_jobs._verify_profile_job_completion(job) is False
+
+
 def test_profile_job_completion_rejects_non_owned_auth(tmp_path, monkeypatch):
     auth_path = tmp_path / "auth.json"
     write_private_text(auth_path, "{}\n", label="test auth")

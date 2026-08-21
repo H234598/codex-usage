@@ -432,7 +432,7 @@ def _verify_profile_job_completion(job: dict[str, object]) -> bool:
         except (DirectAuthError, ValueError):
             return False
         return actual_backend_account_id == expected_backend_account_id
-    except (OSError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError):
         return False
 
 
