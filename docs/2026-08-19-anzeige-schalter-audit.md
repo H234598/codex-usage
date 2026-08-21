@@ -3233,3 +3233,15 @@ Installationsanleitung nur Chromium installierte, obwohl Firefox Standard und
 beide Browser konfigurierbar sind. README installiert jetzt beide unterstützten
 Playwright-Browser und beschreibt den Login korrekt als konfigurierten Browser.
 Keine automatische Netzwerkinstallation wurde ausgeführt.
+
+## Runde 338: App-Server-Vertrag geprüft
+
+`src/codex_usage/app_server.py` wurde bounded auf Auth-Kontext, JSON-RPC-
+Request/Response, Rate-Limit-Fenster, Modellkatalog und Prozess-/Reader-
+Cleanup geprüft. Kein reproduzierbarer Repository-Fehler gefunden; der
+laufende Service liefert für die `app-server`-Konten weiterhin gültige
+5h-/Wochenwerte und Modellkatalogdaten. Die vorhandene Fail-Closed-Behandlung
+für malformed payloads und Prozessgrenzen bleibt unverändert.
+
+`pytest -q tests/test_app_server.py`: 98/98 bestanden. Coverage für das Modul:
+83 % Branch-inklusive; Ruff, Python-Kompilierung und `git diff --check` sauber.
