@@ -2787,3 +2787,11 @@ rohes `RuntimeError` entkommen. Der kanonische Layout-Resolver liefert jetzt
 kontrolliert `ValueError`, bevor Pfadvorfahren oder Verzeichnisse geprüft
 werden. `tests/test_profile_layout.py`: 20/20 fokussierte Tests bestanden;
 Mypy für Source, Ruff und `git diff --check` sauber.
+
+## Runde 285: Vollsuite nach Browser-/Reactivation-/Layout-Pfad-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2662 bestanden, 1 übersprungen,
+1 Warnung` in 93,59 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
+`git diff --check` sind sauber.
