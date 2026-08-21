@@ -153,6 +153,24 @@ def test_auth_migration_apply_rejects_malformed_plan(tmp_path, plan):
         apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")  # type: ignore[arg-type]
 
 
+def test_auth_migration_apply_rejects_invalid_item_account_id(tmp_path):
+    plan = AuthMigrationPlan(
+        migration_id="m-test",
+        items=(
+            AuthMigrationItem(
+                account_id="../escape",
+                source=None,
+                target=tmp_path / "profile" / "codex-home" / "auth.json",
+                status="canonical",
+            ),
+        ),
+        created_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match="migration plan"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+
 def test_auth_migration_plan_rejects_existing_canonical_target(tmp_path):
     source = tmp_path / "auth.json"
     source.write_text("{\"source\":true}", encoding="utf-8")

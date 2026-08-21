@@ -362,10 +362,12 @@ def _validate_migration_plan(plan: AuthMigrationPlan) -> None:
     for item in plan.items:
         if not isinstance(item, AuthMigrationItem):
             raise ValueError("migration plan is invalid")
+        try:
+            _validate_account_id(item.account_id)
+        except ValueError as exc:
+            raise ValueError("migration plan is invalid") from exc
         if (
-            not isinstance(item.account_id, str)
-            or not item.account_id
-            or not isinstance(item.target, Path)
+            not isinstance(item.target, Path)
             or not item.target.is_absolute()
             or (item.source is not None and (
                 not isinstance(item.source, Path) or not item.source.is_absolute()

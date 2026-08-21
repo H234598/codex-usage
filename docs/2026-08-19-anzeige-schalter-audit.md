@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 504: Auth-Migrationsplan-IDs validiert
+
+`profile_migration._validate_migration_plan()` akzeptierte bisher ungültige
+oder reservierte `AuthMigrationItem.account_id`-Werte, etwa bei
+`status="canonical"`, und schrieb daraus ein Manifest. Validator nutzt jetzt
+zentrale `_validate_account_id()`-Regel; fehlerhafte Pläne scheitern vor
+Manifest-Schreibvorgang.
+
+Regression ergänzt. `pytest -q tests/test_profile_migration.py`: 43/43 und
+`tests/test_profile_layout.py`: 25/25 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 503: Profile-Layout-Account-ID validiert
 
 `profile_layout.layout_for_account()` akzeptierte bisher ungültige oder
