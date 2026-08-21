@@ -728,9 +728,15 @@ def expire_reset_windows(
             models_changed = True
             continue
         try:
-            if not isinstance(pool.windows, tuple) or any(
-                not isinstance(window, LimitWindow) or not window.has_known_identity
-                for window in pool.windows
+            if (
+                not isinstance(pool.key, str)
+                or not pool.key
+                or not isinstance(pool.windows, tuple)
+                or any(
+                    not isinstance(window, LimitWindow)
+                    or not window.has_known_identity
+                    for window in pool.windows
+                )
             ):
                 model_catalog_invalid = True
         except (AttributeError, TypeError, ValueError):
@@ -826,6 +832,8 @@ def _expire_pool_windows(
     if pool is None:
         return pool, False
     if not isinstance(pool, UsagePool):
+        return None, True
+    if not isinstance(pool.key, str) or not pool.key:
         return None, True
     if not isinstance(pool.windows, tuple):
         return replace(pool, windows=(), available=False), True

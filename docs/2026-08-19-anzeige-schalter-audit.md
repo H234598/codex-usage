@@ -4350,3 +4350,15 @@ Regressionen für unhashbare aktuelle und alte Modellpools ergänzt.
 `pytest -q tests/test_state.py`: 269/269 bestanden; Modul-Coverage 88 %
 (Branch). Aufrufende Scheduler-Suite: 202/202. Ruff, Mypy und
 `git diff --check` sauber.
+
+## Runde 446: State-Pool-Key-Invalidierung
+
+Der ergänzende Expiry-Pfad entfernte malformed Modellpool-Keys zunächst zwar,
+ließ den Accountstatus aber `OK`, weil die Kataloginvalidität nur Fensterdaten
+prüfte. Nichtleere String-Keys werden jetzt vor Ablaufprüfung verlangt;
+entfernte malformed Pools setzen kontrolliert `PARTIAL`, `stale` und den
+Katalogfehler.
+
+`pytest -q tests/test_state.py`: 271/271 bestanden; Modul-Coverage 88 %
+(Branch). Aufrufende Scheduler-Suite: 202/202. Ruff, Mypy und
+`git diff --check` sauber.

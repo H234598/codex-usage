@@ -1227,6 +1227,31 @@ def test_expire_reset_windows_drops_malformed_main_pool():
     assert expired.stale is True
 
 
+@pytest.mark.parametrize("pool_key", [[], ""])
+def test_expire_reset_windows_drops_malformed_model_pool_key(pool_key):
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="malformed-model-key",
+        label="Malformed model key",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        models=(
+            UsagePool(
+                key=pool_key,  # type: ignore[arg-type]
+                display_name="Malformed",
+                windows=(LimitWindow(name="weekly", remaining=90),),
+            ),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=captured_at)
+
+    assert expired.models == ()
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert expired.error == "model pool catalog invalid"
+
+
 def test_merge_current_with_last_success_ignores_malformed_main_pool():
     captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
     usage = AccountUsage(
