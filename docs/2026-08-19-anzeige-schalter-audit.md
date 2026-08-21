@@ -1733,3 +1733,11 @@ um. `tests/test_routing.py`: 95/95 bestanden; Mypy und Ruff sauber.
 `float()` laufen. Die Exportvalidierung überspringt bzw. verwirft solche Werte
 jetzt über ihren normalen Invalid-Source-Pfad. `tests/test_integration_snapshot.py`:
 34/34 bestanden; Mypy und Ruff sauber.
+
+## Runde 166: RECORD-Größen-Overflow
+
+`integration_installer._parse_record()` und
+`integration_attestation._record_rows()` ließen 5000-stellige CSV-Dateigrößen
+als `ValueError` aus `int()` entweichen. Beide RECORD-Parser behandeln solche
+Größen jetzt als ungültige Eingabe und brechen kontrolliert ab.
+`tests/test_integration_installer.py`: 105/105 bestanden; Mypy und Ruff sauber.

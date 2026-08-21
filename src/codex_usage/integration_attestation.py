@@ -299,7 +299,11 @@ def _record_rows(record_path: Path, release_dir: Path) -> dict[str, tuple[str, i
             if digest or size_text:
                 if not digest or not size_text or not size_text.isdecimal():
                     raise _unavailable()
-                if not _record_digest(digest, target_payload) or int(size_text) != item.st_size:
+                try:
+                    size = int(size_text)
+                except (OverflowError, ValueError):
+                    raise _unavailable() from None
+                if not _record_digest(digest, target_payload) or size != item.st_size:
                     raise _unavailable()
                 validated[relative_text] = (digest, item.st_size)
             elif target != record_path:

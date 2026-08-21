@@ -1177,6 +1177,15 @@ def test_installer_record_parser_does_not_split_all_lines():
     }
 
 
+def test_installer_record_parser_rejects_oversized_file_size_without_raising():
+    from codex_usage import integration_installer
+
+    payload = f"a,sha256=x,{'9' * 5000}\n".encode()
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._parse_record(payload)
+
+
 def test_attestation_record_parser_rejects_oversized_csv_before_materializing(
     tmp_path, monkeypatch
 ):
@@ -1220,6 +1229,33 @@ def test_attestation_record_parser_rejects_duplicate_paths(tmp_path):
         "dist-info/RECORD,,\n"
         f"codex_usage/ok.py,sha256={digest},1\n"
         f"codex_usage/ok.py,sha256={digest},1\n",
+        encoding="utf-8",
+    )
+    record.chmod(0o600)
+
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation._record_rows(record, release)
+
+
+def test_attestation_record_parser_rejects_oversized_file_size_without_raising(tmp_path):
+    from codex_usage import integration_attestation
+
+    release = tmp_path / "release"
+    site_packages = release / "site-packages"
+    dist_info = site_packages / "dist-info"
+    target_dir = site_packages / "codex_usage"
+    dist_info.mkdir(mode=0o700, parents=True)
+    target_dir.mkdir(mode=0o700)
+    release.chmod(0o700)
+    site_packages.chmod(0o700)
+    target = target_dir / "ok.py"
+    target.write_bytes(b"x")
+    target.chmod(0o600)
+    digest = base64.urlsafe_b64encode(hashlib.sha256(b"x").digest()).decode().rstrip("=")
+    record = dist_info / "RECORD"
+    record.write_text(
+        "dist-info/RECORD,,\n"
+        f"codex_usage/ok.py,sha256={digest},{'9' * 5000}\n",
         encoding="utf-8",
     )
     record.chmod(0o600)

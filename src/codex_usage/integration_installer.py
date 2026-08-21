@@ -965,7 +965,11 @@ def _parse_record(record_payload: bytes) -> dict[str, tuple[str, int]]:
             if digest or size_text:
                 if not digest or not size_text.isdecimal():
                     _fail()
-                result[path_text] = (digest, int(size_text))
+                try:
+                    size = int(size_text)
+                except (OverflowError, ValueError):
+                    _fail()
+                result[path_text] = (digest, size)
             else:
                 result[path_text] = ("", -1)
     except (UnicodeDecodeError, csv.Error):
