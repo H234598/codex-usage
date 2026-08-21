@@ -1007,3 +1007,11 @@ fehlenden Pfadsegment. Ein fehlendes Segment vor `..` konnte einen späteren
 Symlink ungescannt lassen. Der Scanner prüft jetzt alle Segmente; der neue
 Regressionstest deckt diesen Pfadaufbau ab. `tests/test_reactivate.py`:
 43/43 bestanden; Ruff für `reactivate.py` sauber.
+
+## Runde 75: Systemd-Unit-Symlinkprüfung
+
+`service._assert_no_symlink_ancestors()` verwendete ebenfalls den vorzeitigen
+Abbruch bei fehlenden Pfadsegmenten. Ein `missing/../symlink/...`-Pfad konnte
+damit unvollständig geprüft werden. Der Scanner läuft jetzt über alle
+Segmente; ein direkter Regressionstest deckt den Fall ab.
+`tests/test_service.py`: 41/41 bestanden; Ruff für `service.py` sauber.

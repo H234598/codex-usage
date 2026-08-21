@@ -429,8 +429,6 @@ def _assert_no_symlink_ancestors(path: Path) -> None:
         current /= part
         if current.is_symlink():
             raise ServiceError("systemd user unit path must not contain symlinks")
-        if not current.exists():
-            break
 
 
 def _resolve_codex_usage() -> Path:
