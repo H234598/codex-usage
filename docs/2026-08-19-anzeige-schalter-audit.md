@@ -2355,3 +2355,11 @@ rohem `AttributeError` abbrechen. Ein gemeinsamer Pfad-Resolver weist solche
 Eingaben jetzt kontrolliert als `ValueError("health path is invalid")` zurück.
 `tests/test_health.py`: 25/25 bestanden; Mypy für Source und Ruff für die
 betroffenen Dateien sauber.
+
+## Runde 237: Spark-Health-APIs validieren Pfad-Typ
+
+`spark_health_status()` und `set_spark_health()` griffen bei Fremdtypen für den
+optionalen Pfad roh auf `.exists()` bzw. `.parent` zu. Ein gemeinsamer Resolver
+weist ungültige Pfade jetzt kontrolliert als `ValueError` zurück.
+`tests/test_spark_health.py`: 23/23 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.

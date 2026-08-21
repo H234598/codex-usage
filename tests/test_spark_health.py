@@ -194,6 +194,14 @@ def test_set_spark_health_rejects_invalid_clock(tmp_path, invalid_now):
         )
 
 
+@pytest.mark.parametrize("path", [[], "invalid", 1, False, object()])
+def test_spark_health_rejects_non_path(path):
+    with pytest.raises(ValueError, match="spark health path is invalid"):
+        spark_health_status("backend-nufker", path=path)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="spark health path is invalid"):
+        set_spark_health("backend-nufker", "healthy", path=path)  # type: ignore[arg-type]
+
+
 def test_refreshing_old_account_keeps_health_record_in_bounded_rotation(tmp_path):
     path = tmp_path / "health.json"
     for index in range(SPARK_HEALTH_MAX_RECORDS):
