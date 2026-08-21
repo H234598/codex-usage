@@ -2368,9 +2368,17 @@ def _parse_captured_at(value: Any, *, strict: bool = False) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         if strict:
             raise ValueError("capture timestamp must include timezone")
-        parsed = parsed.replace(tzinfo=LOCAL_TZ)
+        try:
+            parsed = parsed.replace(tzinfo=LOCAL_TZ)
+        except (OSError, OverflowError, ValueError):
+            return received_at
     else:
-        parsed = parsed.astimezone(LOCAL_TZ)
+        try:
+            parsed = parsed.astimezone(LOCAL_TZ)
+        except (OSError, OverflowError, ValueError) as exc:
+            if strict:
+                raise ValueError("invalid capture timestamp") from exc
+            return received_at
     if parsed > received_at + timedelta(seconds=MAX_CAPTURE_FUTURE_SECONDS):
         if strict:
             raise ValueError("capture timestamp is too far in the future")

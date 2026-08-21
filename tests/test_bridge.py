@@ -307,6 +307,15 @@ def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
         _parse_captured_at("not-a-timestamp", strict=True)
 
 
+@pytest.mark.parametrize(
+    "captured_at",
+    ["0001-01-01T00:00:00+14:00", "9999-12-31T23:59:59-14:00"],
+)
+def test_parse_captured_at_rejects_unrepresentable_timezone_conversion(captured_at):
+    with pytest.raises(ValueError, match="invalid capture timestamp"):
+        _parse_captured_at(captured_at, strict=True)
+
+
 @pytest.mark.parametrize("url", [None, [], {}, "http://[malformed"])
 def test_redact_url_rejects_malformed_external_values(url):
     assert _redact_url(url) == ""

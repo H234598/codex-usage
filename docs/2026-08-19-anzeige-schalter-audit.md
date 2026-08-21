@@ -2957,3 +2957,12 @@ im Fehler-Fallback ein zweites Mal. Der ursprüngliche `RuntimeError` konnte
 dadurch erneut entkommen. Fallback nutzt jetzt den rohen Pfad als stabilen
 Schlüssel. `tests/test_scheduler.py`: 198/198 fokussierte Tests bestanden;
 Mypy für Scheduler, Ruff und `git diff --check` sauber.
+
+## Runde 304: Bridge-Capture-Zeit toleriert unrepräsentierbare Offsets
+
+`bridge._parse_captured_at()` normalisierte ISO-Zeitstempel mit Offset direkt
+per `astimezone()`. Randwerte außerhalb des `datetime`-Bereichs ließen dabei
+`OverflowError` entkommen. Strikte Eingabe liefert jetzt kontrolliert
+`ValueError("invalid capture timestamp")`; nicht-strikte Eingabe fällt auf
+Empfangszeit zurück. `tests/test_bridge.py`: 258/258 fokussierte Tests
+bestanden; Mypy für Bridge, Ruff und `git diff --check` sauber.
