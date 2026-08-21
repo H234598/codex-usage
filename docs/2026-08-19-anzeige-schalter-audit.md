@@ -1160,3 +1160,11 @@ leerer String konnten dadurch falsche Runner-Aufrufe oder rohe `TypeError`
 auslösen. Gemeinsame Prüfung verlangt jetzt nichtleeren String ohne
 Steuerzeichen vor jedem Seiteneffekt. Fünf Regressionfälle ergänzt;
 `tests/test_profile_login.py`: 36/36 bestanden; Ruff sauber.
+
+## Runde 95: Device-Login-Auth-TOCTOU
+
+Die staged Auth wurde zuerst inklusive Backend-ID geprüft und danach separat
+erneut gelesen. Ein Dateiwechsel dazwischen konnte damit fremde Auth als
+geprüften Account publizieren. Kopierpfad validiert jetzt denselben gelesenen
+Text nochmals inklusive erwarteter Backend-ID; Race-Regression ergänzt.
+`tests/test_profile_login.py`: 37/37 bestanden; Ruff sauber.

@@ -375,6 +375,46 @@ def test_device_login_rejects_auth_without_access_token(tmp_path, monkeypatch):
     assert not (profile / "codex-home" / "auth.json").exists()
 
 
+def test_device_login_rechecks_auth_identity_when_staged_file_changes(
+    tmp_path, monkeypatch
+):
+    profile = tmp_path / "profile"
+
+    def runner(argv, *, env, timeout):
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        auth = Path(env["CODEX_HOME"]) / "auth.json"
+        auth.write_text(
+            '{"tokens":{"account_id":"backend-alpha","access_token":"test-token"}}',
+            encoding="utf-8",
+        )
+        auth.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    original_copy = profile_login._copy_private_file
+
+    def race_copy(source, target, **kwargs):
+        source.write_text(
+            '{"tokens":{"account_id":"backend-other","access_token":"test-token"}}',
+            encoding="utf-8",
+        )
+        source.chmod(0o600)
+        return original_copy(source, target, **kwargs)
+
+    monkeypatch.setattr("codex_usage.profile_login.account_lock", lambda _account: nullcontext())
+    monkeypatch.setattr("codex_usage.profile_login._copy_private_file", race_copy)
+
+    with pytest.raises(DeviceLoginError, match="device_auth_identity_mismatch"):
+        run_device_login(
+            _account(profile),
+            tmp_path / "config.toml",
+            runner=runner,
+            expected_backend_account_id="backend-alpha",
+        )
+
+    assert not (profile / "codex-home" / "auth.json").exists()
+
+
 def test_device_auth_help_probe_requires_explicit_flag():
     assert device_auth_supported(
         runner=lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "login help", "")
@@ -484,11 +524,11 @@ def test_device_login_does_not_overwrite_auth_created_after_existence_check(
         staged.chmod(0o600)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    def race_copy(source, target):
+    def race_copy(source, target, **kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text('{"racing":true}', encoding="utf-8")
         target.chmod(0o600)
-        original_copy(source, target)
+        original_copy(source, target, **kwargs)
 
     monkeypatch.setattr("codex_usage.profile_login.account_lock", lambda _account: nullcontext())
     monkeypatch.setattr("codex_usage.profile_login._copy_private_file", race_copy)

@@ -225,7 +225,11 @@ def run_device_login(
             )
             if layout.auth_json.exists():
                 raise DeviceLoginError("canonical auth.json already exists")
-            _copy_private_file(staged_auth, layout.auth_json)
+            _copy_private_file(
+                staged_auth,
+                layout.auth_json,
+                expected_backend_account_id=expected_backend_account_id,
+            )
             canonical_auth_owned = True
             _write_file_store_config(layout.codex_home / "config.toml")
             try:
@@ -475,7 +479,12 @@ def _write_file_store_config(path: Path) -> None:
     write_private_text(path, 'cli_auth_credentials_store = "file"\n', label="device login config")
 
 
-def _copy_private_file(source: Path, target: Path) -> None:
+def _copy_private_file(
+    source: Path,
+    target: Path,
+    *,
+    expected_backend_account_id: str | None = None,
+) -> None:
     assert_no_symlink_ancestors(source, label="staged auth")
     text, file_stat = read_private_text(
         source,
@@ -485,6 +494,11 @@ def _copy_private_file(source: Path, target: Path) -> None:
     )
     if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
         raise DeviceLoginError("device_auth_invalid")
+    _validate_staged_auth_payload(
+        text,
+        source,
+        expected_backend_account_id=expected_backend_account_id,
+    )
     write_private_text(
         target,
         text,
@@ -506,6 +520,19 @@ def _validate_staged_auth(
     )
     if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
         raise DeviceLoginError("device_auth_invalid")
+    _validate_staged_auth_payload(
+        text,
+        path,
+        expected_backend_account_id=expected_backend_account_id,
+    )
+
+
+def _validate_staged_auth_payload(
+    text: str,
+    path: Path,
+    *,
+    expected_backend_account_id: str | None,
+) -> None:
     try:
         payload = loads_strict(text)
     except ValueError as exc:
