@@ -3453,3 +3453,12 @@ reproduzierbarer Fehler gefunden.
 
 `pytest -q tests/test_health.py`: 32/32 bestanden. Mypy für `health.py`, Ruff
 und `git diff --check` sauber.
+
+## Runde 361: Config-Pfade und Account-Identitäten geprüft
+
+`config.py` wurde auf XDG-/Tilde-/`file:`-Pfade, private Verzeichnisse,
+Account-/Label-/Series-/Browser-/Backend-Typen, Ressourcen-Duplikate,
+Auth-Pfade und Rollback-Grenzen geprüft. Kein neuer reproduzierbarer Fehler.
+
+`pytest -q tests/test_config.py`: 116/116 bestanden. Mypy für `config.py`,
+Ruff und `git diff --check` sauber.
