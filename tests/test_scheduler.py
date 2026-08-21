@@ -754,6 +754,18 @@ def test_watch_rejects_invalid_interval(interval_seconds):
         )
 
 
+@pytest.mark.parametrize("config", [None, [], object()])
+def test_watch_rejects_invalid_config(config):
+    with pytest.raises(ValueError, match="config is invalid"):
+        watch(config, (), output="table", interval_seconds=60)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("config", [None, [], object()])
+def test_watchdog_rejects_invalid_config(config):
+    with pytest.raises(ValueError, match="config is invalid"):
+        watchdog(config, (), output="json")  # type: ignore[arg-type]
+
+
 def test_watch_marks_unusable_usage_as_cycle_error(monkeypatch, capsys):
     delays: list[int] = []
     health_events: list[tuple[str, str]] = []

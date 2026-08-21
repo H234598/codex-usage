@@ -2445,3 +2445,12 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2546 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Produktion, Scripts, Launcher und
 Tests ist ebenfalls sauber.
+
+## Runde 247: Scheduler-Watch-APIs validieren Config-Typ
+
+`scheduler.watch()` griff bei Fremd-Configs direkt auf
+`config.interval_seconds` zu; `watchdog()` konnte malformed Configs bis in
+den Zyklus verarbeiten. Beide öffentlichen APIs weisen ungültige Configs jetzt
+kontrolliert als `ValueError("config is invalid")` zurück.
+`tests/test_scheduler.py`: 192/192 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.

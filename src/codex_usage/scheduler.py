@@ -1118,6 +1118,8 @@ def watch(
     auth_json_path: Path | None = None,
     interval_seconds: int | None = None,
 ) -> None:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
     interval = config.interval_seconds if interval_seconds is None else interval_seconds
     if (
         isinstance(interval, bool)
@@ -1226,6 +1228,8 @@ def watchdog(
     backend_override: str | None = None,
     auth_json_path: Path | None = None,
 ) -> list[AccountUsage]:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
     now = datetime.now(tz=LOCAL_TZ)
     account_list = _bounded_account_list(accounts)
     effective_backend = "direct" if (direct or auth_json_path is not None) else None
