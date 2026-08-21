@@ -3623,3 +3623,11 @@ Installer-/Entrypoint-Tests direkt ausgeführt. Coverage-Nachweis mit
 alle 17 Funktionen werden mindestens einmal ausgeführt, 310 Statements mit
 78% Zeilen- und 100 Branch-Messung; die offenen Zeilen sind ausschließlich
 zusätzliche Guard-/Fehlerzweige. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 378: OAuth-Browser-Testabdeckung
+
+`oauth_browser.py` hat keine eigene Testdatei, wird aber durch den
+Reaktivierungs-Testpfad abgedeckt. `pytest -q tests/test_reactivate.py
+-k 'oauth_browser'`: 14/14 bestanden; Modul-Coverage 84%, alle sechs
+Funktionen mindestens einmal ausgeführt. Ruff, Mypy und `git diff --check`
+sauber.
