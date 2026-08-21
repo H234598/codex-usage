@@ -275,6 +275,12 @@ KNOWN_COMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is not None and (
+        not isinstance(argv, list)
+        or any(not isinstance(argument, str) for argument in argv)
+    ):
+        print("Fehler: argv is invalid", file=sys.stderr)
+        return 2
     parser = _build_parser()
     normalized_argv = _default_root_command(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(normalized_argv)

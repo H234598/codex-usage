@@ -2562,3 +2562,11 @@ brachen deshalb roh mit `TypeError` ab. Auflösung liegt jetzt im kontrollierten
 Auth-Fehlerpfad; beide Varianten liefern `LOGIN_REQUIRED` mit begrenztem
 Fehlertext. `tests/test_direct.py`: 179/179 bestanden; Mypy für Source und
 Ruff für die betroffenen Dateien sauber.
+
+## Runde 260: CLI validiert explizites argv
+
+`cli.main(argv=…)` übernahm Fremdcontainer oder nicht-stringförmige Argumente
+vor `_default_root_command()` und konnte dadurch roh mit `TypeError` abbrechen.
+Explizites argv wird jetzt vor Parser-Aufbau geprüft und liefert Exit-Code 2.
+`tests/test_cli.py`: 114/114 bestanden; Mypy für Source und Ruff für die
+betroffene Datei sauber.

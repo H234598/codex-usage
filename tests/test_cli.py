@@ -150,6 +150,12 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage watchdog" in output
 
 
+@pytest.mark.parametrize("argv", [(), "once", [1], ["once", 1]])
+def test_cli_rejects_malformed_explicit_argv(argv, capsys):
+    assert main(argv) == 2  # type: ignore[arg-type]
+    assert "argv is invalid" in capsys.readouterr().err
+
+
 def test_account_add_json_returns_all_editable_fields(tmp_path, capsys):
     assert main(
         [
