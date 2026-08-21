@@ -117,6 +117,8 @@ def test_credit_window_extracts_nested_absolute_balance():
         {"credits": -1},
         {"credits": {"balance": "not-a-number"}},
         {"credits": {"remaining": 101, "limit": 100}},
+        pytest.param({"credits": 10**10_000}, id="huge-scalar"),
+        pytest.param({"credits": {"balance": 10**10_000}}, id="huge-nested"),
     ],
 )
 def test_credit_window_rejects_invalid_balances(payload):

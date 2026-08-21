@@ -1582,7 +1582,7 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
     if isinstance(candidate, (int, float, str)) and not isinstance(candidate, bool):
         try:
             numeric = float(candidate)
-        except (TypeError, ValueError):
+        except (OverflowError, TypeError, ValueError):
             numeric = math.nan
         if not math.isfinite(numeric) or numeric < 0:
             return None
@@ -1597,7 +1597,7 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
                 continue
             try:
                 numeric = float(value)
-            except (TypeError, ValueError):
+            except (OverflowError, TypeError, ValueError):
                 continue
             if math.isfinite(numeric) and numeric >= 0:
                 return numeric

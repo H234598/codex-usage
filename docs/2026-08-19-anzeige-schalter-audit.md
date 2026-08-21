@@ -1710,3 +1710,11 @@ Integerwerts ungefangen; `OverflowError` konnte die Sample-Validierung verlassen
 Die Konvertierung wird jetzt abgefangen und als normaler `ValueError` für
 ungültige Prozentwerte gemeldet. `tests/test_history.py`: 48/48 bestanden; Mypy
 und Ruff sauber.
+
+## Runde 163: Credit-Float-Overflow
+
+`direct._credit_window()` ließ bei skalarer und verschachtelter Credit-Balance
+ein `OverflowError` aus `float()` entweichen, wenn Backend-Payload einen extrem
+großen Integer enthielt. Beide Konvertierungspfade behandeln solche Werte jetzt
+wie andere ungültige Balances. `tests/test_direct.py`: 151/151 bestanden; Mypy
+und Ruff sauber.
