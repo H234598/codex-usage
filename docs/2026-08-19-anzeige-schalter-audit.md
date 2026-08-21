@@ -3787,3 +3787,14 @@ Service installiert/aktiv, Timer aktiv und geplant. Der Lauf endet weiterhin
 mit Exit 2 ausschließlich wegen fehlender Firefox-Playwright-Executable bei
 Browser-Konten; Journal zeigt keinen neuen History-/Entrypoint-Fehler. Keine
 Netzwerkinstallation und kein Fallback ausgeführt.
+
+## Runde 394: Account-Lock-Eigentümergrenze
+
+`account_lock()` prüfte bei bestehender Lockdatei bisher Typ und Hardlink-Anzahl,
+aber nicht `st_uid`. Eine fremde, schreibbare Datei konnte dadurch bis
+`fchmod()` gelangen und ein rohes `OSError` auslösen. Der Guard verlangt jetzt
+aktuellen User-Eigentümer und liefert konsistent `AccountLockError`; Regressionstest
+deckt fremde Lockdatei ab.
+
+`pytest -q tests/test_account_lock.py`: 15/15 bestanden; Modul-Coverage 84%.
+Ruff, Mypy und `git diff --check` sauber.

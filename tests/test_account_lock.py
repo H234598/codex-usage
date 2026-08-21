@@ -68,6 +68,23 @@ def test_account_lock_rejects_symlink_file(tmp_path, monkeypatch):
     assert target.read_text(encoding="utf-8") == "keep"
 
 
+def test_account_lock_rejects_foreign_owner_file(tmp_path, monkeypatch):
+    from codex_usage import account_lock as account_lock_module
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    lock_dir = tmp_path / "codex-usage" / "locks"
+    lock_dir.mkdir(parents=True, mode=0o700)
+    lock_path = lock_dir / "work.lock"
+    lock_path.write_bytes(b"")
+    lock_path.chmod(0o666)
+    monkeypatch.setattr(account_lock_module, "_prepare_lock_directory", lambda _: None)
+    monkeypatch.setattr(account_lock_module.os, "getuid", lambda: 2**31 - 1)
+
+    with pytest.raises(AccountLockError, match="private regular file"):
+        with account_lock("work"):
+            pass
+
+
 def test_account_lock_rejects_path_traversal(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 

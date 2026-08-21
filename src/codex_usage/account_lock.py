@@ -52,7 +52,11 @@ def account_lock(
         raise AccountLockError("could not open account lock") from exc
     try:
         file_stat = os.fstat(fd)
-        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+        if (
+            not stat.S_ISREG(file_stat.st_mode)
+            or file_stat.st_nlink != 1
+            or file_stat.st_uid != os.getuid()
+        ):
             raise AccountLockError("account lock must be a private regular file")
         os.fchmod(fd, 0o600)
         while True:
