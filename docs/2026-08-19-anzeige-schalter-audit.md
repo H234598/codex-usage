@@ -3332,3 +3332,15 @@ Service-Neustart nach `cbdcd2a` lädt den neuen Routing-Code. Journal zeigt
 gültige `app-server`-Ergebnisse inklusive Reset-/Limitdaten; der Lauf endet
 wie zuvor ausschließlich an den Browser-Konten mit fehlender Firefox-
 Playwright-Executable. Keine automatische Netzwerkinstallation ausgeführt.
+
+## Runde 348: Snapshot-Serializer fängt Mapping-Callback-Fehler
+
+`serialize_schema1_document()` ließ Exceptions aus einem formal gültigen, aber
+fehlerhaften `Mapping`-Callback (z. B. `RuntimeError` aus `.get()`) ungefangen
+nach außen. An dieser untrusted-DTO-Grenze werden solche Fehler jetzt in den
+vorgesehenen `IntegrationInvalidSource`-Fehler übersetzt; bestehende
+`IntegrationSnapshotError`-Typen bleiben unverändert.
+
+Regressionstest ergänzt. `pytest -q tests/test_integration_snapshot.py`:
+50/50 bestanden. Mypy für `integration_snapshot.py`, Ruff und
+`git diff --check` sauber.

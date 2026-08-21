@@ -692,7 +692,7 @@ def serialize_schema1_document(document: Mapping[str, object]) -> bytes:
         ).encode("utf-8")
     except IntegrationInvalidSource:
         raise
-    except (TypeError, ValueError, RecursionError):
+    except Exception:
         raise IntegrationInvalidSource() from None
     if len(payload) > _MAX_DOCUMENT_BYTES:
         raise IntegrationInvalidSource()

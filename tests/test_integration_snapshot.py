@@ -598,6 +598,20 @@ def test_serialization_rejects_boolean_schema_version():
         )
 
 
+def test_serialization_converts_mapping_callback_failures_to_invalid_source():
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        serialize_schema1_document,
+    )
+
+    class RaisingMapping(dict):
+        def get(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic mapping failure")
+
+    with pytest.raises(IntegrationInvalidSource):
+        serialize_schema1_document(RaisingMapping())
+
+
 def test_serialization_accepts_true_integer_schema_version():
     from codex_usage.integration_snapshot import serialize_schema1_document
 
