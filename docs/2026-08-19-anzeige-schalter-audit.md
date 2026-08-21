@@ -3499,3 +3499,18 @@ Service lädt `d88cada`; `app-server`-Konten liefern unverändert valide
 Ergebnisse. Exit 2 kommt weiterhin ausschließlich von den Browser-Konten mit
 fehlender Firefox-Playwright-Executable. Kein automatischer Fallback und keine
 Netzwerkinstallation ausgeführt.
+
+## Runde 366: Profile-Job-Manifeste und Worker-Grenzen
+
+`profile_jobs.py` wurde auf Manifest-Schema, Prozessstart/-Reaping,
+Cancel-Races, Worker-Identität, Event-Dateien, Completion-Postconditions und
+malformed Worker-DTOs geprüft. Dabei akzeptierte die Manifestvalidierung bisher
+beliebige Strings mit abschließendem `Z` als `created_at`/`updated_at`.
+Ungültige Zeitwerte konnten dadurch in Statusdaten gelangen.
+
+Die Validierung parst beide Felder jetzt als UTC-ISO-8601 und weist
+unparsebare oder timezone-lose Werte zurück. Vier Regressionstests decken beide
+Felder und beide Fehlervarianten ab.
+
+`pytest -q tests/test_profile_jobs.py`: 76/76 bestanden. Mypy für
+`profile_jobs.py`, Ruff und `git diff --check` sauber.

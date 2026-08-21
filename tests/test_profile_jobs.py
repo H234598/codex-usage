@@ -1459,6 +1459,43 @@ def test_profile_job_manifest_rejects_unhashable_status(tmp_path):
         profile_jobs._validate_manifest(manifest)
 
 
+@pytest.mark.parametrize(
+    ("field", "timestamp"),
+    [
+        ("created_at", "not-a-timestampZ"),
+        ("updated_at", "not-a-timestampZ"),
+        ("created_at", "2026-08-16Z"),
+        ("updated_at", "2026-08-16Z"),
+    ],
+)
+def test_profile_job_manifest_rejects_invalid_timestamps(tmp_path, field, timestamp):
+    manifest = {
+        "schema_version": 1,
+        "job_id": "job-" + "a" * 32,
+        "account_id": "alpha",
+        "label": "Alpha",
+        "browser": "firefox",
+        "backend": "direct",
+        "profile_dir": str(tmp_path / "profile"),
+        "reactivation_browser": "auto",
+        "tag": "",
+        "series": "",
+        "series_active": False,
+        "expected_backend_account_id": None,
+        "config_path": str(tmp_path / "config.toml"),
+        "json_events": False,
+        "status": "queued",
+        "created_at": "2026-08-16T00:00:00Z",
+        "updated_at": "2026-08-16T00:00:00Z",
+        "worker_pid": None,
+        "error": None,
+    }
+    manifest[field] = timestamp
+
+    with pytest.raises(ValueError, match="timestamp is invalid"):
+        profile_jobs._validate_manifest(manifest)
+
+
 @pytest.mark.parametrize("profile_dir", [None, [], {}])
 def test_profile_job_create_rejects_invalid_profile_dir_type(profile_dir):
     with pytest.raises(ValueError, match="profile dir is invalid"):

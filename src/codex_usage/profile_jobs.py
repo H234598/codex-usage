@@ -799,7 +799,14 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
     if not isinstance(value["status"], str) or value["status"] not in PROFILE_JOB_STATUSES:
         raise ValueError("profile job status is invalid")
     for field in ("created_at", "updated_at"):
-        if not isinstance(value[field], str) or not value[field].endswith("Z"):
+        timestamp = value[field]
+        if not isinstance(timestamp, str) or not timestamp.endswith("Z"):
+            raise ValueError("profile job timestamp is invalid")
+        try:
+            parsed_timestamp = datetime.fromisoformat(timestamp[:-1] + "+00:00")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("profile job timestamp is invalid") from exc
+        if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
             raise ValueError("profile job timestamp is invalid")
     pid = value["worker_pid"]
     if pid is not None and (not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0):
