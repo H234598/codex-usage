@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 519: Wochen-Einheit im Verbrauch durchgängig unterstützt
+
+Die Cinnamon-Einstellungen und das Applet akzeptierten `unit=weeks`, während
+`consumption.py` und der CLI-Parser die Konfiguration ablehnten. Dadurch
+führte jede Wochen-Auswahl zu einem Abruffehler. Python, CLI-Hilfe und
+Referenzdokumentation akzeptieren Wochen jetzt durchgängig.
+
+Regressionen für Lookback-Berechnung und CLI-Aufruf ergänzt.
+`pytest -q tests/test_consumption.py tests/test_history_cli.py`: 39/39
+bestanden; passender CLI-Test: 4/4. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 518: Unbekannte Verbrauchsfenster korrekt beschriftet
 
 `applet.js` beschriftete jedes Verbrauchsfenster ohne 5h-, Wochen- oder

@@ -9,8 +9,8 @@ from typing import TypeGuard
 
 from .history import MAX_HISTORY_SAMPLES, UsageSample
 
-_UNIT_SECONDS = {"minutes": 60, "hours": 3_600, "days": 86_400}
-_UNIT_LIMITS = {"minutes": 1_440, "hours": 720, "days": 365}
+_UNIT_SECONDS = {"minutes": 60, "hours": 3_600, "days": 86_400, "weeks": 604_800}
+_UNIT_LIMITS = {"minutes": 1_440, "hours": 720, "days": 365, "weeks": 365}
 MAX_CONSUMPTION_SAMPLES = MAX_HISTORY_SAMPLES
 MAX_FORECAST_SECONDS = 31_536_000
 
@@ -41,7 +41,7 @@ class ConsumptionWindow:
 
 def consumption_lookback_seconds(amount: int, unit: str) -> int:
     if not isinstance(unit, str) or unit not in _UNIT_SECONDS:
-        raise ValueError("unit must be minutes, hours or days")
+        raise ValueError("unit must be minutes, hours, days or weeks")
     if (
         isinstance(amount, bool)
         or not isinstance(amount, int)

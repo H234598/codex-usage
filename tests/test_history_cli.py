@@ -59,6 +59,34 @@ def test_consumption_cli_reads_private_history(tmp_path, capsys):
     assert payload["windows"][0]["estimated_seconds_to_exhaustion"] == 18_000
 
 
+def test_consumption_cli_accepts_week_units(tmp_path, capsys):
+    path = tmp_path / "history.sqlite3"
+    base = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    with HistoryStore(path) as store:
+        store.record(_sample(base - timedelta(hours=1), 10))
+        store.record(_sample(base, 25))
+
+    assert main(
+        [
+            "consumption",
+            "--account",
+            "alpha",
+            "--amount",
+            "1",
+            "--unit",
+            "weeks",
+            "--path",
+            str(path),
+            "--now",
+            base.isoformat(),
+            "--format",
+            "json",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["windows"][0]["lookback_seconds"] == 604_800
+
+
 def test_consumption_cli_uses_bounded_history_query(tmp_path, monkeypatch, capsys):
     path = tmp_path / "history.sqlite3"
     base = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)

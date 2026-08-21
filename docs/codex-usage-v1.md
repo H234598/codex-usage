@@ -110,7 +110,7 @@ auth files are private data. Keep profile directories at `0700`, auth files at
 Relevant checks:
 
 ```text
-codex-usage consumption --account ACCOUNT --amount N --unit minutes|hours|days --format json
+codex-usage consumption --account ACCOUNT --amount N --unit minutes|hours|days|weeks --format json
 codex-usage history status --format json
 codex-usage profile layout --account ACCOUNT --format json
 codex-usage integration-snapshot --schema 1 --format json

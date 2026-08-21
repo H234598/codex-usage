@@ -38,6 +38,7 @@ def test_consumption_lookback_seconds_converts_supported_units():
     assert consumption_lookback_seconds(5, "minutes") == 300
     assert consumption_lookback_seconds(2, "hours") == 7_200
     assert consumption_lookback_seconds(1, "days") == 86_400
+    assert consumption_lookback_seconds(1, "weeks") == 604_800
 
 
 def test_consumption_window_as_dict_preserves_optional_forecast_fields():
@@ -319,7 +320,7 @@ def test_consumption_baseline_value_does_not_replace_delta_window():
 
 def test_consumption_rejects_invalid_period():
     with pytest.raises(ValueError, match="unit"):
-        calculate_consumption([], amount=1, unit="weeks", now=BASE)
+        calculate_consumption([], amount=1, unit="fortnights", now=BASE)
 
 
 @pytest.mark.parametrize("unit", [None, [], {}])

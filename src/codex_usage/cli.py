@@ -190,7 +190,7 @@ Historie und Limitverbrauch:
   codex-usage history query --account ACCOUNT --window-seconds SECONDS
                             [--path PATH] [--format table|json]
   codex-usage history prune [--before ISO|--days N] (--dry-run|--apply)
-  codex-usage consumption --account ACCOUNT --amount N --unit minutes|hours|days
+  codex-usage consumption --account ACCOUNT --amount N --unit minutes|hours|days|weeks
                           [--limit-window short|weekly|all] [--format table|json]
   codex-usage integration-snapshot --schema 1 --format json
 
@@ -615,7 +615,9 @@ def _build_parser() -> argparse.ArgumentParser:
     consumption = sub.add_parser("consumption", help="Limitverbrauch in Prozentpunkten berechnen")
     consumption.add_argument("--account", required=True)
     consumption.add_argument("--amount", type=int, required=True)
-    consumption.add_argument("--unit", choices=("minutes", "hours", "days"), required=True)
+    consumption.add_argument(
+        "--unit", choices=("minutes", "hours", "days", "weeks"), required=True
+    )
     consumption.add_argument(
         "--baseline-minutes",
         type=int,
