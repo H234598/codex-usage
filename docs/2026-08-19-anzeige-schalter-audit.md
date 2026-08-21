@@ -4029,6 +4029,12 @@ Pfad- oder Lock-Fehlfunktion reproduziert.
 `pytest -q tests/test_private_io.py`: 44/44 bestanden; Modul-Coverage 75 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 435: Vollsuite nach Browser-/Config-/Private-I/O-Fixes
+
+Die Integrationsprüfung nach `8d94464`, `9efa94b` und `8b79535` bestätigt
+`2799 bestanden, 1 übersprungen, 3 Warnungen` in 94,43 s. Warnungen bleiben
+externe GTK-/PyGObject-Deprecations; keine Test- oder GUI-Regression.
+
 ## Runde 413: Private-I/O-Grenzen
 
 `private_io.py` auf Pfadtyp-/Symlink-/Owner-/Hardlink-Prüfungen, geschützte
