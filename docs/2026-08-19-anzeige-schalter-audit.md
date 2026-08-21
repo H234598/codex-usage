@@ -4145,3 +4145,15 @@ Die Vollsuite bestätigt den aktuellen Branch nach Terminal-, Reactivation-,
 Profile-, Bridge- und GUI-Audit-Fixes: `2785 bestanden, 1 übersprungen,
 3 Warnungen` in 94,93 s. Warnungen bleiben externe GTK-/PyGObject-
 Deprecations; keine Test- oder Integrationsregression.
+
+## Runde 427: Systemd-Service erneut geprüft
+
+`service.py` erneut auf Config-/XDG-Pfadgrenzen, Unit-Verzeichnis- und
+Unit-Ownership, Symlink-/Hardlink-Schutz, private Modi, systemd-Ausgabe- und
+Timeoutbudgets, Aktivierungs-/Installations-/Uninstall-Rollbacks sowie
+Timer-Statusauswertung geprüft. Kein neuer reproduzierbarer Fehler; doppelte
+Unit-Prüfung im Uninstall-Pfad ist redundant, verändert Verhalten aber nicht
+und bleibt außerhalb dieses fokussierten Audits.
+
+`pytest -q tests/test_service.py`: 66/66 bestanden; Modul-Coverage 86 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
