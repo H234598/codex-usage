@@ -708,6 +708,28 @@ def test_bounded_process_cleanup_does_not_signal_parent_process_group(monkeypatc
     assert signals == ["kill"]
 
 
+def test_bounded_process_cleanup_rejects_boolean_pid(monkeypatch):
+    signals = []
+
+    class FakeProcess:
+        pid = True
+
+        def kill(self):
+            signals.append("kill")
+
+        def wait(self, timeout=None):
+            signals.append(("wait", timeout))
+
+    monkeypatch.setattr(
+        "codex_usage.profile_login.os.killpg",
+        lambda pid, signum: signals.append((pid, signum)),
+    )
+
+    _terminate_bounded_process(FakeProcess())
+
+    assert signals == ["kill", ("wait", 1)]
+
+
 def test_bounded_device_login_kills_process_when_output_sink_fails(tmp_path):
     pid_path = tmp_path / "process.pid"
     script = (

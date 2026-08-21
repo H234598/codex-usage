@@ -428,7 +428,12 @@ def _terminate_bounded_process(
 ) -> None:
     pid = getattr(process, "pid", None)
     signaled_group = False
-    if start_new_session and isinstance(pid, int) and pid > 0:
+    if (
+        start_new_session
+        and isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and pid > 0
+    ):
         try:
             os.killpg(pid, signal.SIGKILL)
             signaled_group = True
