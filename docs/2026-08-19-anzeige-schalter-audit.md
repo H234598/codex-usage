@@ -4267,3 +4267,14 @@ bekannte Capability blockiert. Keine neue reproduzierbare Fehlfunktion.
 
 `pytest -q tests/test_usage_resets.py`: 5/5 bestanden; Modul-Coverage 79 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 439: Usage-Limit-Pools
+
+`usage_limits.py` auf WHAM-/App-Server-Pools, Spark-Erkennung, Fenster-
+Identität, Duration-/Reset-Budgets, malformed Control-Flags, Duplicate-Buckets
+und bounded Model-Kataloge geprüft. Ungültige oder widersprüchliche Fenster
+deaktivieren Pools; Katalog-Entitlement erfindet keine Nutzung. Keine neue
+reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_usage_limits.py`: 124/124 bestanden; Modul-Coverage 91 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
