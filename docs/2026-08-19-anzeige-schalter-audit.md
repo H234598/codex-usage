@@ -1718,3 +1718,10 @@ ein `OverflowError` aus `float()` entweichen, wenn Backend-Payload einen extrem
 großen Integer enthielt. Beide Konvertierungspfade behandeln solche Werte jetzt
 wie andere ungültige Balances. `tests/test_direct.py`: 151/151 bestanden; Mypy
 und Ruff sauber.
+
+## Runde 164: Routing-Credit-Float-Overflow
+
+`routing._validate_credit_limits()` ließ einen extrem großen Integer in einer
+Policy-Payload als `OverflowError` aus `float()` entweichen. Die Konvertierung
+wandelt solche Werte jetzt in den erwarteten `ValueError` für ungültige Limits
+um. `tests/test_routing.py`: 95/95 bestanden; Mypy und Ruff sauber.

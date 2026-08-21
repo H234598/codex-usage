@@ -771,7 +771,10 @@ def _validate_credit_limits(value: Any) -> dict[str, float | None]:
             continue
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             raise ValueError("routing credit limit is invalid")
-        number = float(raw)
+        try:
+            number = float(raw)
+        except (OverflowError, TypeError, ValueError):
+            raise ValueError("routing credit limit is invalid") from None
         if not math.isfinite(number) or number < 0:
             raise ValueError("routing credit limit is invalid")
         result[key] = number

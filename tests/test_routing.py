@@ -10,6 +10,7 @@ from codex_usage.routing import (
     MAIN_MODEL,
     SPARK_HEALTH_MAX_AGE_SECONDS,
     _backend_identity_is_valid,
+    _validate_credit_limits,
     _validate_policy,
     effective_credit_limits,
     effective_paid_overage,
@@ -83,6 +84,11 @@ def test_policy_schema_version_requires_strict_integer(schema_version):
 
     with pytest.raises(ValueError, match="unsupported routing policy schema"):
         _validate_policy(payload)
+
+
+def test_credit_limit_validation_rejects_float_overflow_without_raising():
+    with pytest.raises(ValueError, match="credit limit"):
+        _validate_credit_limits({"hourly": 10**10_000})
 
 
 def test_routing_prefers_spark_with_weekly_only_limit():
