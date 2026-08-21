@@ -646,12 +646,14 @@ def _prepare_test_codex_home(
             file_stat = config_path.lstat()
             created_files.append((config_path, file_stat.st_dev, file_stat.st_ino))
     else:
-        existing, _ = read_private_text(
+        existing, file_stat = read_private_text(
             config_path,
             regular_label="test CODEX_HOME config",
             read_label="test CODEX_HOME config",
             max_bytes=64 * 1024,
         )
+        if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+            raise ValueError("test CODEX_HOME config must be private")
         if 'cli_auth_credentials_store = "file"' not in existing:
             write_private_text(
                 config_path,

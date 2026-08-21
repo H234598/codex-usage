@@ -1265,3 +1265,10 @@ Prüfung. Hardlink-Quelle erzeugte dadurch Ziel mit `st_nlink > 1`, das Direct-
 Usage später verwirft; Alias blieb bestehen. Quelle verlangt jetzt eigenen
 Link, User-Eigentum und private Rechte; Regression ergänzt. `tests/test_config.py`:
 101/101 bestanden; Ruff sauber.
+
+## Runde 108: Test-Home-Config-Rechte
+
+`_prepare_test_codex_home()` akzeptierte vorhandene `config.toml` mit bereits
+gesetztem File-Store-Eintrag ohne Rechteprüfung. 0644-Datei blieb damit
+bestehen. Bestehende Config verlangt jetzt Einzel-Link und private Rechte;
+Regression ergänzt. `tests/test_config.py`: 102/102 bestanden; Ruff sauber.

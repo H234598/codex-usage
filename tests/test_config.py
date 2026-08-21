@@ -125,6 +125,24 @@ def test_test_home_rejects_hardlinked_auth_source(tmp_path, monkeypatch):
     assert alias.exists()
 
 
+def test_test_home_rejects_insecure_existing_codex_config(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(config_module.subprocess, "run", lambda *_args, **_kwargs: None)
+    codex_home = home / ".codex-test" / "test-account" / "codex-home"
+    codex_home.mkdir(parents=True, mode=0o700)
+    config_path = codex_home / "config.toml"
+    config_path.write_text('cli_auth_credentials_store = "file"\n', encoding="utf-8")
+    config_path.chmod(0o644)
+
+    with pytest.raises(ValueError, match="private"):
+        add_or_update_account(
+            "test-account",
+            test_home=True,
+            path=tmp_path / "config.toml",
+        )
+
+
 def test_test_home_state_cleanup_failure_restores_auth_and_profile(
     tmp_path, monkeypatch
 ):
