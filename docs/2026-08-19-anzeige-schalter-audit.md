@@ -3898,6 +3898,16 @@ abgelaufen. Eine malformed `datetime`-Subclass konnte zuvor
 `pytest -q tests/test_state.py`: 266/266 bestanden; Modul-Coverage 87%.
 Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 406: Routing-Policy und Entscheidungslogik
+
+`routing.py` auf private Policy-Datei, Scope-/Identifier-Validierung,
+Credit-Limit-Overrides, Backend-/Identity-/Timestamp-Grenzen, Spark-Health
+und Main-/Spark-/Credit-Entscheidungen geprüft. Keine neue reproduzierbare
+Fehlfunktion; unbekannte oder stale Zustände bleiben blockiert.
+
+`pytest -q tests/test_routing.py`: 125/125 bestanden; Modul-Coverage 87%.
+Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 405: Service-Reload nach State-Expiry-Fix
 
 `codex-usage service enable --format json` nach `61bb295` erfolgreich:
