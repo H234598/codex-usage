@@ -112,6 +112,7 @@ def _browser_configuration() -> tuple[str, str, Path]:
         raise ValueError("invalid isolated browser profile") from None
     if (
         not stat.S_ISDIR(profile_stat.st_mode)
+        or profile_stat.st_uid != os.getuid()
         or profile_stat.st_mode & 0o077
         or marker_is_symlink
         or browser_marker_is_symlink
@@ -119,11 +120,13 @@ def _browser_configuration() -> tuple[str, str, Path]:
         or (marker_stat is not None and (
             not stat.S_ISREG(marker_stat.st_mode)
             or marker_stat.st_nlink != 1
+            or marker_stat.st_uid != os.getuid()
             or marker_stat.st_mode & 0o077
         ))
         or (browser_marker_stat is not None and (
             not stat.S_ISREG(browser_marker_stat.st_mode)
             or browser_marker_stat.st_nlink != 1
+            or browser_marker_stat.st_uid != os.getuid()
             or browser_marker_stat.st_mode & 0o077
         ))
     ):

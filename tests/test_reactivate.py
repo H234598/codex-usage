@@ -891,6 +891,27 @@ def test_oauth_browser_rejects_non_private_profile(tmp_path, monkeypatch):
     assert oauth_browser.main(["https://auth.openai.com/login"]) == 1
 
 
+def test_oauth_browser_rejects_foreign_profile_owner(tmp_path, monkeypatch):
+    executable = Path(_executable(tmp_path / "vivaldi-stable"))
+    profile = tmp_path / "oauth-profile"
+    profile.mkdir()
+    profile.chmod(0o700)
+    marker = profile / OAUTH_PROFILE_MARKER
+    marker.write_text("{}\n", encoding="utf-8")
+    marker.chmod(0o600)
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_EXECUTABLE", str(executable))
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_KIND", "vivaldi")
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_PROFILE", str(profile))
+    monkeypatch.setattr(oauth_browser.os, "getuid", lambda: profile.stat().st_uid + 1)
+    monkeypatch.setattr(
+        oauth_browser.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("browser must not start"),
+    )
+
+    assert oauth_browser.main(["https://auth.openai.com/login"]) == 1
+
+
 def test_oauth_browser_rejects_non_private_marker(tmp_path, monkeypatch):
     executable = Path(_executable(tmp_path / "vivaldi-stable"))
     profile = tmp_path / "oauth-profile"

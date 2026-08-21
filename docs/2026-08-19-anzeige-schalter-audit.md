@@ -4032,3 +4032,15 @@ leere optionale Quelle bleiben unverändert.
 78 % (Branch). Nachbar-Tests `tests/test_profile_layout.py
 tests/test_profile_cli.py`: 25/25 bestanden. Ruff, Mypy und `git diff --check`
 sauber.
+
+## Runde 417: OAuth-Browser-Eigentümergrenze
+
+`oauth_browser._browser_configuration()` prüfte Profil und Marker bisher nur
+auf private Rechte, Regular-File-/Link-Eigenschaften und Symlink-Freiheit.
+Ein fremder Eigentümer konnte ein 0700-Profil beziehungsweise private Marker
+als isoliertes OAuth-Profil einschleusen. Profilverzeichnis und beide
+Markerarten verlangen jetzt zusätzlich aktuellen User-Owner; gültige
+Reactivation-Profile bleiben unverändert.
+
+`pytest -q tests/test_reactivate.py`: 63/63 bestanden; Modul-Coverage 84 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
