@@ -2221,3 +2221,11 @@ Schlüsselzugriff zu. Direkte Resolver-Aufrufe konnten dadurch mit rohem
 über `_validate_policy()` und weisen ungültige Policies kontrolliert zurück.
 `tests/test_routing.py`: 108/108 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 222: Abschlussverifikation nach Policy-Härtung
+
+Der vollständige Testlauf des aktuellen HEAD ist grün: `2348 passed, 1
+skipped, 1 warning` in 86.78s. Die externe PyGObject-Deprecation bleibt die
+einzige Warnung außerhalb des Repositories. `mypy src/codex_usage` ist in 35
+Quelldateien fehlerfrei; aggregierter Ruff über Produktion, Scripts, Launcher
+und Tests ist sauber.
