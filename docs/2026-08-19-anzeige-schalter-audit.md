@@ -3418,3 +3418,12 @@ keine ungefangene Exception; kein neuer reproduzierbarer Fehler.
 
 `pytest -q tests/test_models.py`: 14/14 bestanden. Mypy für `models.py`,
 Ruff und `git diff --check` sauber.
+
+## Runde 357: Private-I/O-Locks und Atomic Writes geprüft
+
+`private_io.py` wurde auf Pfadtypen, Symlink-Ancestors, geschützte Verzeichnisse,
+Owner-/Link-/Mode-Prüfungen, `O_NOFOLLOW`, Lock-Timeouts, Atomic Replace,
+Create-Only-Rollback und fsync geprüft. Kein neuer reproduzierbarer Fehler.
+
+`pytest -q tests/test_private_io.py`: 32/32 bestanden. Mypy für
+`private_io.py`, Ruff und `git diff --check` sauber.
