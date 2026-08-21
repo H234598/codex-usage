@@ -2082,3 +2082,13 @@ Response-Listen filtern nur Dicts und Usage-Checks akzeptieren nur
 `LimitWindow`. `tests/test_browser_diagnose.py` und
 `tests/test_browser_profile.py`: 103/103 bestanden; Mypy für Source und Ruff
 für betroffene Dateien sauber.
+
+## Runde 207: Bridge-Ingest validiert Payload-Objekt
+
+`bridge.usage_from_ingest_payload()` nahm Nicht-Objekte an und griff danach
+mit `.get()` oder Container-Operationen darauf zu. Manuell oder beschädigt
+eingehende Bridge-Daten konnten dadurch mit rohem `TypeError` bzw.
+`AttributeError` abbrechen. Der Parser weist Nicht-Dict-Payloads jetzt
+kontrolliert mit `ValueError("ingest payload must be an object")` zurück.
+`tests/test_bridge.py`: 185/185 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
