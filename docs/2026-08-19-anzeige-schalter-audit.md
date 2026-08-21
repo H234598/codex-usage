@@ -2807,8 +2807,8 @@ Tests bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
 ## Runde 287: Bridge-TLS-Pfade validieren Home-Expansion
 
 `bridge._tls_context()` ließ unbekannte `~user`-Pfade für Zertifikat oder Key
-als rohes `RuntimeError` entkommen. Beide TLS-Pfade werden jetzt vor
-Symlink-/Datei- und SSL-Prüfung kontrolliert expandiert; Fehler liefern
-`ValueError("TLS path cannot be resolved")`. `tests/test_bridge.py`: 255/255
-fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
-sauber.
+als rohes `RuntimeError` entkommen. Zusätzlich expandierte
+`run_bridge_server()` den Config-Pfad erst direkt vor Handler/Bind. TLS- und
+Config-Pfade werden jetzt vor Zugriffen kontrolliert expandiert; Fehler liefern
+`ValueError`. `tests/test_bridge.py`: 256/256 fokussierte Tests bestanden;
+Mypy für Source, Ruff und `git diff --check` sauber.

@@ -283,6 +283,21 @@ def test_bridge_server_rejects_invalid_paths_before_bind(parameter, value, messa
         )
 
 
+def test_bridge_server_rejects_unknown_config_home_before_bind(monkeypatch):
+    monkeypatch.setattr(
+        "codex_usage.bridge._BoundedThreadingHTTPServer",
+        lambda *_args, **_kwargs: pytest.fail("server must not bind"),
+    )
+
+    with pytest.raises(ValueError, match="config path cannot be resolved"):
+        run_bridge_server(
+            AppConfig(accounts=()),
+            host="127.0.0.1",
+            port=8765,
+            config_path=Path("~definitely-no-such-user-zzzz/config.toml"),
+        )
+
+
 def test_parse_captured_at_strict_mode_rejects_ambiguous_values():
     with pytest.raises(ValueError, match="timezone"):
         _parse_captured_at("2026-01-15T00:15:00", strict=True)

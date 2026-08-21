@@ -1563,6 +1563,10 @@ def run_bridge_server(
     tls_context = _tls_context(tls_cert, tls_key)
     if _bridge_host_requires_tls(host) and tls_context is None:
         raise ValueError("non-loopback bridge bindings require TLS")
+    try:
+        selected_config_path = config_path.expanduser() if config_path else None
+    except RuntimeError as exc:
+        raise ValueError("config path cannot be resolved") from exc
     tokens = {
         account.id: bridge_token_for_account(account.id)
         for account in config.accounts
@@ -1571,7 +1575,7 @@ def run_bridge_server(
         config,
         snapshot_dir,
         tokens,
-        config_path=config_path.expanduser() if config_path else None,
+        config_path=selected_config_path,
     )
     server = _BoundedThreadingHTTPServer(
         (host, port),
