@@ -45,6 +45,26 @@ def test_extract_windows_skips_candidate_with_invalid_url():
     assert extract_windows(body_text="", json_candidates=[candidate]) == (None, None)
 
 
+@pytest.mark.parametrize("body_text", [None, [], {}, 1, True])
+def test_extract_windows_rejects_malformed_body_text(body_text):
+    assert extract_windows(body_text=body_text) == (None, None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("json_candidates", [None, 1, True, object()])
+def test_extract_windows_rejects_non_iterable_candidates(json_candidates):
+    assert extract_windows(body_text="", json_candidates=json_candidates) == (None, None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("text_sources", ["bad", 1, True, object(), [("source",)]])
+def test_extract_windows_skips_malformed_text_sources(text_sources):
+    assert extract_windows(body_text="", text_sources=text_sources) == (None, None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("now", [None, [], {}, "invalid", 1, True])
+def test_extract_windows_falls_back_on_malformed_capture_time(now):
+    assert extract_windows(body_text="", now=now) == (None, None)  # type: ignore[arg-type]
+
+
 def test_extract_windows_bounds_arbitrary_candidate_iterators():
     def overlong_candidates():
         for _ in range(51):

@@ -109,19 +109,30 @@ def extract_windows(
     text_sources: Iterable[tuple[str, str]] | None = None,
     now: datetime | None = None,
 ) -> tuple[LimitWindow | None, LimitWindow | None]:
-    captured_at = now or datetime.now(tz=LOCAL_TZ)
-    candidates = list(islice(json_candidates, MAX_JSON_CANDIDATES + 1))
+    captured_at = now if isinstance(now, datetime) else datetime.now(tz=LOCAL_TZ)
+    normalized_body = body_text if isinstance(body_text, str) else ""
+    try:
+        candidates = list(islice(json_candidates, MAX_JSON_CANDIDATES + 1))
+    except TypeError:
+        candidates = []
     if len(candidates) > MAX_JSON_CANDIDATES:
         candidates = []
-    sources = (
-        (("dom-text", body_text),)
-        if text_sources is None
-        else tuple(
-            (source, text)
-            for source, text in text_sources
-            if isinstance(source, str) and isinstance(text, str) and text.strip()
-        )
-    )
+    sources: tuple[tuple[str, str], ...]
+    if text_sources is None:
+        sources = (("dom-text", normalized_body),)
+    else:
+        normalized_sources: list[tuple[str, str]] = []
+        try:
+            source_items = iter(text_sources)
+        except TypeError:
+            source_items = iter(())
+        for item in source_items:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                continue
+            source, text = item
+            if isinstance(source, str) and isinstance(text, str) and text.strip():
+                normalized_sources.append((source, text))
+        sources = tuple(normalized_sources)
 
     five_json = _extract_json_window(candidates, "five_hour", captured_at)
     weekly_json = _extract_json_window(candidates, "weekly", captured_at)

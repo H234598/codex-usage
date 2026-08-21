@@ -1938,6 +1938,16 @@ Testfehler.
 `mypy src/codex_usage` meldet keine Fehler in 35 Quelldateien. Der aggregierte
 Ruff-Lauf über Produktion, Scripts, Launcher und Tests ist ebenfalls sauber.
 
+## Runde 201: Extractor-Eingangsgrenzen
+
+`extractor.extract_windows()` nahm malformed `body_text`, nicht-iterierbare
+JSON-Candidates, fehlerhafte Textquellen oder ungültige Capture-Zeitpunkte
+ungeprüft an. Browser-/Parser-Aufrufe konnten dadurch mit `AttributeError` oder
+`TypeError` abbrechen. Ungültige Eingänge werden jetzt als leere Quelle bzw.
+aktueller Zeitpunkt behandelt; gültige Quellen bleiben unverändert.
+`tests/test_extractor.py`: 195/195 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
+
 ## Runde 191: Scheduler-Reset- und Stabilisierungsguards
 
 `scheduler._watch_core_resets_current()` und `_stabilize_main_pool()` griffen
