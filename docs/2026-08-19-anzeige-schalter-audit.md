@@ -1966,3 +1966,13 @@ und Float wurden akzeptiert. Die Konvertierung verlangt jetzt striktes
 Integer und meldet ungültige Werte kontrolliert als `ValueError`.
 `tests/test_history.py`: 56/56 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 194: State-Expiry für malformed Main-Pool-Typen
+
+`state._expire_pool_windows()` prüfte bisher nur `pool is None`, bevor
+`pool.windows` gelesen wurde. Ein beschädigter `usage.main`-Wert ohne
+`UsagePool`-Struktur konnte die Reset-Ablaufprüfung mit `AttributeError`
+abbrechen. Nicht-`UsagePool`-Werte werden jetzt entfernt und als Änderung
+markiert; der übergeordnete State fällt dadurch kontrolliert auf `PARTIAL`
+und `stale`. `tests/test_state.py`: 232/232 bestanden; Mypy für Source und
+Ruff für betroffene Dateien sauber.

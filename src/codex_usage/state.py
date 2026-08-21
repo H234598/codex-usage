@@ -785,6 +785,8 @@ def _expire_pool_windows(
 ) -> tuple[UsagePool | None, bool]:
     if pool is None:
         return pool, False
+    if not isinstance(pool, UsagePool):
+        return None, True
     if not isinstance(pool.windows, tuple):
         return replace(pool, windows=(), available=False), True
     if not pool.windows:

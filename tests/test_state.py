@@ -1069,6 +1069,23 @@ def test_expire_reset_windows_fails_closed_on_malformed_capture(captured_at):
     assert expired.stale is True
 
 
+def test_expire_reset_windows_drops_malformed_main_pool():
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="malformed-main",
+        label="Malformed main",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        main=[],  # type: ignore[arg-type]
+    )
+
+    expired = expire_reset_windows(usage, reference_at=captured_at)
+
+    assert expired.main is None
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+
+
 def test_expire_reset_windows_rejects_overlong_model_catalog(monkeypatch):
     import codex_usage.state as state_module
 
