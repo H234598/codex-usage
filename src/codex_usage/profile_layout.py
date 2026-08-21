@@ -30,7 +30,10 @@ def layout_for_account(account: Account) -> ProfileLayout:
         raise ValueError("account is invalid")
     if not isinstance(account.profile_dir, str) or not account.profile_dir:
         raise ValueError("profile dir is invalid")
-    profile_dir = Path(account.profile_dir).expanduser()
+    try:
+        profile_dir = Path(account.profile_dir).expanduser()
+    except RuntimeError as exc:
+        raise ValueError("profile dir is invalid") from exc
     if not profile_dir.is_absolute():
         raise ValueError("profile dir must be absolute")
     assert_no_symlink_ancestors(profile_dir, label="profile dir")

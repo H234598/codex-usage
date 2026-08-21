@@ -69,6 +69,17 @@ def test_profile_layout_rejects_invalid_profile_directory_type(profile_dir):
         )
 
 
+def test_profile_layout_rejects_unknown_home_user():
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="~definitely-no-such-user-zzzz/profile",
+    )
+
+    with pytest.raises(ValueError, match="profile dir is invalid"):
+        layout_for_account(account)
+
+
 def test_profile_directory_helper_rejects_protected_target_before_chmod(
     tmp_path, monkeypatch
 ):

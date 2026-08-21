@@ -2779,3 +2779,11 @@ unbekannte `~user`-Pfade ebenfalls als rohes `RuntimeError` entkommen. Beide
 Resolver liefern jetzt kontrolliert `ReactivationError`, bevor Browser- oder
 Auth-Zugriffe starten. `tests/test_reactivate.py`: 61/61 fokussierte Tests
 bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
+
+## Runde 284: Profil-Layout validiert unbekannte Home-Namen
+
+`profile_layout.layout_for_account()` ließ unbekannte `~user`-Profilpfade als
+rohes `RuntimeError` entkommen. Der kanonische Layout-Resolver liefert jetzt
+kontrolliert `ValueError`, bevor Pfadvorfahren oder Verzeichnisse geprüft
+werden. `tests/test_profile_layout.py`: 20/20 fokussierte Tests bestanden;
+Mypy für Source, Ruff und `git diff --check` sauber.
