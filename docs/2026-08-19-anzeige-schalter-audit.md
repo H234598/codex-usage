@@ -1300,3 +1300,13 @@ ermöglichte Unit-Inhaltsverfälschung. Die bestehende vollständige
 `_validate_config()`-Prüfung läuft jetzt vor Lock-/Verzeichnis-Seiteneffekten.
 Zwölf Regressionen decken beide Operationen und alle Fehlertypen ab;
 `tests/test_service.py`: 63/63 bestanden.
+
+## Runde 112: Config-Mypy-Narrowing
+
+`config.py` hatte 16 Mypy-Fehler in Account-Update und Restore: optionale
+Auth-Pfade wurden trotz truthy-Checks als `str | None` weitergereicht, zwei
+Rollback-Listen teilten denselben Namen mit inkompatiblen Elementtypen, und
+der Restore-Index blieb beim Listen-Zugriff optional. Explizite
+`None`-Prüfungen, getrennte Rollback-Variable und sichere Index-Verengung
+behoben die Typfehler ohne Laufzeitpfadänderung. `tests/test_config.py`:
+102/102 bestanden; Mypy und Ruff sauber.

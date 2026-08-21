@@ -253,7 +253,9 @@ def add_or_update_account(
         )
         source_auth_json = (
             Path(selected_auth_json_path).expanduser()
-            if test_home and selected_auth_json_path
+            if test_home
+            and selected_auth_json_path is not None
+            and selected_auth_json_path != ""
             else None
         )
         canonical_auth_json = (
@@ -269,7 +271,7 @@ def add_or_update_account(
             browser=browser or (existing.browser if existing else "firefox"),
             auth_json_path=(
                 _absolute_account_path(canonical_auth_json, "auth_json_path")
-                if canonical_auth_json not in (None, "")
+                if canonical_auth_json is not None and canonical_auth_json != ""
                 else canonical_auth_json
             ),
             backend=backend or (existing.backend if existing else "direct"),
@@ -308,8 +310,11 @@ def add_or_update_account(
                     created_files=created_test_home_files,
                 )
             if source_auth_json is not None:
-                _integrate_test_home_auth(source_auth_json, Path(account.auth_json_path))
-                moved_auth_json = (source_auth_json, Path(account.auth_json_path))
+                if account.auth_json_path is None:
+                    raise ValueError("test home auth path is missing")
+                target_auth_json = Path(account.auth_json_path)
+                _integrate_test_home_auth(source_auth_json, target_auth_json)
+                moved_auth_json = (source_auth_json, target_auth_json)
             _save_config_unlocked(updated, config_path)
         except Exception as original_error:
             rollback_errors: list[Exception] = []
@@ -350,27 +355,27 @@ def add_or_update_account(
 
                 remove_account_state(account.id)
         except Exception as original_error:
-            rollback_errors: list[tuple[str, Exception]] = []
+            state_rollback_errors: list[tuple[str, Exception]] = []
             try:
                 _save_config_unlocked(config, config_path)
             except Exception as exc:
-                rollback_errors.append(("config rollback", exc))
+                state_rollback_errors.append(("config rollback", exc))
             try:
                 _restore_moved_test_home_auth(moved_auth_json)
             except Exception as exc:
-                rollback_errors.append(("auth rollback", exc))
+                state_rollback_errors.append(("auth rollback", exc))
             try:
                 _cleanup_created_test_home(
                     created_test_home_directories,
                     created_test_home_files,
                 )
             except Exception as exc:
-                rollback_errors.append(("test home rollback", exc))
+                state_rollback_errors.append(("test home rollback", exc))
             if callback_started and rollback_callback is not None:
                 try:
                     rollback_callback(config)
                 except Exception as exc:
-                    rollback_errors.append(("service rollback", exc))
+                    state_rollback_errors.append(("service rollback", exc))
             if profile_created:
                 try:
                     _cleanup_created_profile_directories(
@@ -378,17 +383,17 @@ def add_or_update_account(
                         profile_created_directories,
                     )
                 except Exception as exc:
-                    rollback_errors.append(("profile rollback", exc))
-            if len(rollback_errors) == 1:
-                label, rollback_error = rollback_errors[0]
+                    state_rollback_errors.append(("profile rollback", exc))
+            if len(state_rollback_errors) == 1:
+                label, rollback_error = state_rollback_errors[0]
                 raise ValueError(
                     f"could not roll back account configuration ({label})"
                 ) from rollback_error
-            if rollback_errors:
-                labels = ", ".join(label for label, _ in rollback_errors)
+            if state_rollback_errors:
+                labels = ", ".join(label for label, _ in state_rollback_errors)
                 raise ExceptionGroup(
                     f"account update rollback failed: primary operation, {labels}",
-                    [original_error, *(error for _, error in rollback_errors)],
+                    [original_error, *(error for _, error in state_rollback_errors)],
                 ) from None
             raise original_error
     return updated, account
@@ -452,6 +457,7 @@ def restore_account(
                     f"account {account.id} was recreated with different settings"
                 )
             accounts = list(config.accounts)
+            assert existing_index is not None
             accounts[existing_index] = account
         else:
             accounts = list(config.accounts)
