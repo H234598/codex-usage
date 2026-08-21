@@ -7424,6 +7424,28 @@ test("consumption and forecast formatting helpers preserve their supported place
   assert.equal(applet._consumptionPeriod(3, "unknown"), "3 unknown");
 });
 
+test("consumption rendering labels unknown limit durations as other", () => {
+  const applet = makeApplet();
+  const part = applet._consumptionWindowPart({
+    limit_window_seconds: 123,
+    consumed_percentage_points: 4.5,
+    coverage: "complete",
+  }, {
+    account: "alpha",
+    amount: 1,
+    unit: "hours",
+    format: "verbose",
+    "custom-format": "",
+    "hide-when-zero": false,
+    "show-coverage-marker": false,
+    "show-panel": true,
+    "show-tooltip": true,
+  }, "click", null);
+
+  assert.ok(part);
+  assert.match(part.plain, /Limitverbrauch 1 h \(sonstiges\): 4,5%/);
+});
+
 test("forecast warning formats apply only their documented Pango attributes", () => {
   const applet = makeApplet();
   const markup = "<b>Rest</b>";

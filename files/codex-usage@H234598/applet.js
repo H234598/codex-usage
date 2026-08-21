@@ -8364,7 +8364,9 @@ CodexUsageApplet.prototype = {
         let marker = this._coverageMarker(coverage, row["show-coverage-marker"] === true);
         let windowLabel = Number(window.limit_window_seconds) === 604800
             ? "Woche"
-            : (Number(window.limit_window_seconds) === 2592000 ? "30d" : "5h");
+            : (Number(window.limit_window_seconds) === 2592000
+                ? "30d"
+                : (Number(window.limit_window_seconds) === 18000 ? "5h" : "sonstiges"));
         let compactUnit = {
             minutes: "m",
             hours: "S",

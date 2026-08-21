@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 518: Unbekannte Verbrauchsfenster korrekt beschriftet
+
+`applet.js` beschriftete jedes Verbrauchsfenster ohne 5h-, Wochen- oder
+30-Tage-Dauer als `5h`. Spark-„sonstiges“ und weitere gültige Fenster waren
+dadurch irreführend. Der Fallback lautet jetzt `sonstiges`; bekannte Dauern
+bleiben unverändert.
+
+Regression `consumption rendering labels unknown limit durations as other`
+ergänzt. `node --test tests/applet_runtime.test.js`: 400/400 bestanden.
+`git diff --check` sauber.
+
 ## Runde 517: Canonical-Auth-JSON validiert
 
 Canonical-Items übersprangen bisher die Strict-JSON-/Objektprüfung, die für
