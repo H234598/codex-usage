@@ -331,7 +331,7 @@ def managed_service_config_path() -> Path | None:
             argv = shlex.split(line[len("ExecStart="):])
             config_index = argv.index("--config")
             return Path(argv[config_index + 1].replace("%%", "%")).expanduser().absolute()
-        except (ValueError, IndexError):
+        except (IndexError, RuntimeError, ValueError):
             return None
     return None
 

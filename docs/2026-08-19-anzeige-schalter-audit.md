@@ -2912,3 +2912,12 @@ abbrechen. Gemeinsame Pfadvalidierung liefert jetzt konsistent
 `DirectAuthError("auth.json path is invalid")`. `tests/test_direct.py`:
 182/182 fokussierte Tests bestanden; Mypy für Direct, Ruff und
 `git diff --check` sauber.
+
+## Runde 299: Managed-Service-Config-Pfad toleriert unbekannte Home-Namen
+
+`managed_service_config_path()` las den `ExecStart --config`-Wert aus einer
+verwalteten Unit und expandierte ihn ohne `RuntimeError`-Schutz. Ein unbekanntes
+`~user` konnte Status-/Cleanup-Pfade roh abbrechen. Die Funktion behandelt
+solche nicht auflösbaren Unit-Inhalte jetzt wie ungültige Konfiguration und
+liefert `None`. `tests/test_service.py`: 66/66 fokussierte Tests bestanden;
+Mypy für Service, Ruff und `git diff --check` sauber.

@@ -73,6 +73,21 @@ def test_service_rejects_unknown_config_home_before_side_effects(
     assert not (tmp_path / "config").exists()
 
 
+def test_managed_service_config_path_ignores_unknown_user_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = _unit_directory()
+    service_path = unit_dir / SERVICE_NAME
+    service_path.write_text(
+        "[Service]\n"
+        f"{service_module.MANAGED_MARKER}\n"
+        'ExecStart=/usr/bin/codex-usage --config "~definitely-no-such-user-zzzz/config.toml"\n',
+        encoding="utf-8",
+    )
+    service_path.chmod(0o600)
+
+    assert managed_service_config_path() is None
+
+
 @pytest.mark.parametrize("operation", (service_install, service_enable))
 @pytest.mark.parametrize("interval", ("60\nExecStart=bad", True, 59, 300.5, None, []))
 def test_service_rejects_invalid_config_before_side_effects(
