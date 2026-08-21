@@ -372,6 +372,16 @@ class AccountUsage:
             if not values_hidden and isinstance(self.models, tuple)
             else {}
         )
+        serialized_source_urls = (
+            [url for url in self.source_urls if isinstance(url, str)]
+            if isinstance(self.source_urls, tuple)
+            else []
+        )
+        serialized_usage_resets = (
+            self.usage_resets.as_dict()
+            if isinstance(self.usage_resets, UsageResetState)
+            else UsageResetState(None, False, False).as_dict()
+        )
         return {
             "account": self.account_id,
             "label": self.label,
@@ -396,7 +406,7 @@ class AccountUsage:
             "auth_id_expires_at": self.auth_id_expires_at.isoformat()
             if self.auth_id_expires_at
             else None,
-            "source_urls": list(self.source_urls),
+            "source_urls": serialized_source_urls,
             "backend_configured": self.backend_configured,
             "backend_used": self.backend_used,
             "backend_user_id": self.backend_user_id,
@@ -407,7 +417,7 @@ class AccountUsage:
             else None,
             "stale": self.stale or terminal_status,
             "cache_invalidated": self.cache_invalidated or terminal_status,
-            "usage_resets": self.usage_resets.as_dict(),
+            "usage_resets": serialized_usage_resets,
         }
 
     def model_pool(self, model: str) -> UsagePool | None:

@@ -1824,3 +1824,12 @@ abbrechen. Ungültige Statuswerte werden jetzt für die Serializer-Ausgabe als
 terminaler `error`-Status behandelt und Werte sicher verborgen.
 `tests/test_models.py` und `tests/test_render.py`: 45/45 bestanden; Mypy und
 Ruff für betroffene Dateien sauber.
+
+## Runde 178: Serializer-Container-Typen
+
+`AccountUsage.as_dict()` iterierte `source_urls` und rief `as_dict()` auf
+`usage_resets` ohne Laufzeit-Typprüfung auf. `None` oder andere malformed
+Container konnten JSON-/Render-Ausgabe mit `TypeError` oder `AttributeError`
+abbrechen. Ungültige optionale Container werden jetzt als leere bzw. unbekannte
+Werte serialisiert. `tests/test_models.py` und `tests/test_render.py`: 46/46
+bestanden; Mypy und Ruff für betroffene Dateien sauber.

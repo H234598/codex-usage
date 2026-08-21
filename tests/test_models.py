@@ -47,3 +47,22 @@ def test_account_usage_as_dict_normalizes_invalid_status(status):
     assert payload["status"] == "error"
     assert payload["stale"] is True
     assert payload["cache_invalidated"] is True
+
+
+def test_account_usage_as_dict_handles_invalid_optional_containers():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        source_urls=None,
+        usage_resets=None,
+    )
+
+    payload = usage.as_dict()
+
+    assert payload["source_urls"] == []
+    assert payload["usage_resets"] == {
+        "available": None,
+        "known": False,
+        "redeem_capability": False,
+    }
