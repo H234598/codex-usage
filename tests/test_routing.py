@@ -83,6 +83,14 @@ def test_backend_identity_validation_rejects_unhashable_backend(backend_used):
     assert _backend_identity_is_valid(usage) is False
 
 
+@pytest.mark.parametrize("policy", [None, [], "invalid", 1, True, object()])
+def test_policy_resolvers_reject_non_object_policy(policy):
+    with pytest.raises(ValueError, match="policy is invalid"):
+        effective_credit_limits(policy, account="private")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="policy is invalid"):
+        effective_paid_overage(policy, account="private")  # type: ignore[arg-type]
+
+
 def test_evaluate_routing_json_is_safe_for_malformed_identity_fields():
     usage = replace(
         _usage(),

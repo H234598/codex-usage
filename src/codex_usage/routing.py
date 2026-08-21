@@ -161,6 +161,9 @@ def effective_credit_limits(
     agent: str | None = None, job: str | None = None,
 ) -> tuple[dict[str, float | None], str]:
     """Resolve each credit cap from the most specific matching scope."""
+    if not isinstance(policy, dict):
+        raise ValueError("policy is invalid")
+    policy = _validate_policy(policy)
     account = _validate_identifier(account)
     group = _validate_optional_identifier(group)
     agent = _validate_optional_identifier(agent)
@@ -194,6 +197,9 @@ def effective_paid_overage(
     agent: str | None = None,
     job: str | None = None,
 ) -> tuple[bool, str]:
+    if not isinstance(policy, dict):
+        raise ValueError("policy is invalid")
+    policy = _validate_policy(policy)
     account = _validate_identifier(account)
     group = _validate_optional_identifier(group)
     agent = _validate_optional_identifier(agent)

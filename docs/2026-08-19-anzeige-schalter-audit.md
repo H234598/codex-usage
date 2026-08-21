@@ -2211,3 +2211,13 @@ Härtung ist grün: `2342 passed, 1 skipped, 1 warning` in 93.77s. Die einzige
 Warnung bleibt externe PyGObject-Deprecation außerhalb des Repositories.
 `mypy src/codex_usage` meldet keine Fehler in 35 Quelldateien; aggregierter
 Ruff über Produktion, Scripts, Launcher und Tests ist sauber.
+
+## Runde 221: Routing-Policy-Resolver validieren Policy-Objekt
+
+`effective_credit_limits()` und `effective_paid_overage()` griffen bei
+Fremdtypen oder malformed Policy-Strukturen direkt auf `.get()` bzw.
+Schlüsselzugriff zu. Direkte Resolver-Aufrufe konnten dadurch mit rohem
+`AttributeError`/`TypeError` abbrechen. Beide Resolver normalisieren jetzt
+über `_validate_policy()` und weisen ungültige Policies kontrolliert zurück.
+`tests/test_routing.py`: 108/108 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.
