@@ -2284,3 +2284,12 @@ Account- oder Config-Felder zu. Fehlaufrufe konnten dadurch mit rohem
 Objekttypen kontrolliert. `tests/test_browser_profile.py` und
 `tests/test_browser_diagnose.py`: 151/151 bestanden; Mypy für Source und Ruff
 für betroffene Dateien sauber.
+
+## Runde 229: Bridge-Ingest validiert Account-Typ
+
+`bridge.usage_from_ingest_payload()` validierte bisher nur den Payload. Ein
+Fremdobjekt für `account` führte vor der eigentlichen Verarbeitung mit rohem
+`AttributeError` zum Abbruch. Der Ingest-Parser weist ungültige Accounts jetzt
+kontrolliert als `ValueError("account is invalid")` zurück.
+`tests/test_bridge.py`: 191/191 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.

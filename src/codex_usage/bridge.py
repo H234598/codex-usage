@@ -132,6 +132,8 @@ KNOWN_BRIDGE_RESPONSE_SOURCES = frozenset(
 
 
 def usage_from_ingest_payload(account: Account, payload: dict[str, Any]) -> AccountUsage:
+    if not isinstance(account, Account):
+        raise ValueError("account is invalid")
     if not isinstance(payload, dict):
         raise ValueError("ingest payload must be an object")
     captured_at = _parse_captured_at(_captured_at_value(payload))

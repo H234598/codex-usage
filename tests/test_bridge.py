@@ -500,6 +500,12 @@ def test_usage_from_ingest_payload_rejects_non_object_payload(payload):
         usage_from_ingest_payload(account, payload)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
+def test_usage_from_ingest_payload_rejects_non_account(account):
+    with pytest.raises(ValueError, match="account is invalid"):
+        usage_from_ingest_payload(account, {})  # type: ignore[arg-type]
+
+
 def test_usage_from_ingest_payload_reports_empty_text_context():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(
