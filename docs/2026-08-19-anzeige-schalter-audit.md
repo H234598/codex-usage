@@ -2165,3 +2165,12 @@ nicht-iterierbare Werte oder Fremdobjekte konnten dadurch mit rohem
 ungültige Container und Einträge jetzt kontrolliert als
 `ValueError("usage records are invalid")` zurück. `tests/test_render.py`:
 45/45 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.
+
+## Runde 216: Account-Render-Entry-Point validiert Container
+
+`render_account_values()` hatte dieselbe ungeprüfte Iterator-/Elementgrenze;
+ungültige Accounts konnten mit rohem `TypeError` oder `AttributeError` in die
+Tabellenaufbereitung gelangen. Account-Container werden jetzt bounded und
+typgeprüft; malformed Usage-Mapping-Werte fallen in Übersichtsspalten
+fail-closed auf `-`. `tests/test_render.py`: 50/50 bestanden; Mypy für Source
+und Ruff für betroffene Dateien sauber.

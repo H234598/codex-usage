@@ -466,6 +466,21 @@ def test_render_account_values_rejects_account_iterators_over_account_cap():
         )
 
 
+@pytest.mark.parametrize("accounts", [None, "invalid", [None], [object()]])
+def test_render_account_values_rejects_invalid_account_records(accounts):
+    with pytest.raises(ValueError, match="account records are invalid"):
+        render_account_values(accounts, {})  # type: ignore[arg-type]
+
+
+def test_render_account_values_hides_invalid_usage_mapping_values():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
+
+    rendered = render_account_values((account,), {"privat": object()})  # type: ignore[dict-item]
+
+    assert "Privat" in rendered
+    assert "Weitere Limits" in rendered
+
+
 def test_render_table_includes_dynamic_main_and_spark_limits():
     reset = datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin"))
     usage = AccountUsage(

@@ -35,9 +35,14 @@ def _bounded_usage_list(usages: Iterable[AccountUsage]) -> list[AccountUsage]:
 
 
 def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:
-    account_list = list(islice(accounts, MAX_CONFIG_ACCOUNTS + 1))
+    try:
+        account_list = list(islice(accounts, MAX_CONFIG_ACCOUNTS + 1))
+    except TypeError as exc:
+        raise ValueError("account records are invalid") from exc
     if len(account_list) > MAX_CONFIG_ACCOUNTS:
         raise ValueError("too many account records")
+    if any(not isinstance(account, Account) for account in account_list):
+        raise ValueError("account records are invalid")
     return account_list
 
 
@@ -223,6 +228,8 @@ def _overview_usage_values(
     expected_backend: str | None = None,
 ) -> list[str]:
     if usage is None:
+        return ["-", "-", "-", "-", "-", "-", "-"]
+    if not isinstance(usage, AccountUsage):
         return ["-", "-", "-", "-", "-", "-", "-"]
     usage = _safe_usage_for_display(usage, expected_backend=expected_backend)
     return [
