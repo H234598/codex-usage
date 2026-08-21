@@ -2626,3 +2626,11 @@ JSON-sichere Struktur kopiert, Zusatzfelder verworfen. Routing bleibt bei
 malformed Health-Daten fail-closed. `tests/test_routing.py`: 123/123
 fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
 sauber.
+
+## Runde 267: Vollsuite nach Routing-Härtung
+
+Die Vollsuite bestätigt den aktuellen Routing-Stand: `2638 bestanden, 1
+übersprungen, 1 Warnung` in 87,85 s. Die Warnung bleibt externe PyGObject-
+Deprecation außerhalb des Repositories. `mypy src/codex_usage` ist in 35
+Quelldateien fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und
+Scripts sowie `git diff --check` sind sauber.
