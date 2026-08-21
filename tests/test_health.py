@@ -66,6 +66,16 @@ def test_health_uses_safe_clock_for_malformed_now(tmp_path, now):
     assert load_health(path)["event_count"] == 1
 
 
+@pytest.mark.parametrize("path", [[], "invalid", 1, False, object()])
+def test_health_rejects_non_path(path):
+    with pytest.raises(ValueError, match="health path is invalid"):
+        record_health_event("scheduler", "cycle_ok", path=path)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="health path is invalid"):
+        load_health(path)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="health path is invalid"):
+        clear_health(path)  # type: ignore[arg-type]
+
+
 def test_health_discards_old_events_and_can_be_cleared(tmp_path):
     path = tmp_path / "health.json"
     now = datetime.now(UTC)

@@ -2346,3 +2346,12 @@ Elementen vor dem Fehlerpfad auf `len()` bzw. Indexzugriff zu. Der Worker weist
 ungültige argv-Form jetzt kontrolliert mit Exit-Code 2 zurück.
 `tests/test_profile_jobs.py`: 69/69 bestanden; Mypy für Source und Ruff für die
 betroffenen Dateien sauber.
+
+## Runde 236: Health-APIs validieren Pfad-Typ
+
+`health.record_health_event()`, `load_health()` und `clear_health()` übernahmen
+Fremdtypen für den optionalen Pfad bis zu `.parent`/`.exists()` und konnten mit
+rohem `AttributeError` abbrechen. Ein gemeinsamer Pfad-Resolver weist solche
+Eingaben jetzt kontrolliert als `ValueError("health path is invalid")` zurück.
+`tests/test_health.py`: 25/25 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.

@@ -37,7 +37,7 @@ def record_health_event(
     path: Path | None = None,
     now: datetime | None = None,
 ) -> None:
-    health_path = path or default_health_path()
+    health_path = _health_path(path)
     _prepare_health_directory(health_path.parent)
     current_time = now if isinstance(now, datetime) else datetime.now(UTC)
     entry: dict[str, Any] = {
@@ -64,7 +64,7 @@ def record_health_event(
 
 
 def load_health(path: Path | None = None) -> dict[str, Any]:
-    health_path = path or default_health_path()
+    health_path = _health_path(path)
     events = _trim_events(_read_events(health_path), datetime.now(UTC))
     counts: dict[str, int] = {}
     for event in events:
@@ -79,7 +79,7 @@ def load_health(path: Path | None = None) -> dict[str, Any]:
 
 
 def clear_health(path: Path | None = None) -> None:
-    health_path = path or default_health_path()
+    health_path = _health_path(path)
     _prepare_health_directory(health_path.parent)
     with private_path_lock(health_path, label="health lock"):
         _write_events(health_path, [])
@@ -87,6 +87,14 @@ def clear_health(path: Path | None = None) -> None:
 
 def _prepare_health_directory(directory: Path) -> None:
     ensure_private_directory(directory, label="health directory")
+
+
+def _health_path(path: object | None) -> Path:
+    if path is None:
+        return default_health_path()
+    if not isinstance(path, Path):
+        raise ValueError("health path is invalid")
+    return path
 
 
 def _read_events(path: Path) -> list[dict[str, Any]]:
