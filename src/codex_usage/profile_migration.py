@@ -91,7 +91,6 @@ def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[s
     manifest_path = _require_absolute(manifest_path, "manifest path")
     _assert_manifest_path_disjoint(plan, manifest_path)
     ensure_private_directory(manifest_path.parent, label="migration manifest directory")
-    manifest_path.parent.chmod(0o700)
     records: list[dict[str, object]] = []
     prepared: list[tuple[AuthMigrationItem, str]] = []
     created_files: list[tuple[Path, int, int]] = []

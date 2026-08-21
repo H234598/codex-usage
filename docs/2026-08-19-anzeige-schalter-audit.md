@@ -4145,6 +4145,19 @@ Regression für den Race-Pfad ergänzt. `pytest -q tests/test_service.py
 tests/test_private_io.py`: 113/113 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 465: Auth-Migrations-Manifest ohne Pfad-`chmod`
+
+`profile_migration.apply_auth_migration()` setzte das bereits durch
+`ensure_private_directory()` gesicherte Manifest-Verzeichnis nochmals per
+`Path.chmod()`. Ein Symlink-Race konnte dadurch das geprüfte Verzeichnis
+ersetzen und ein externes Ziel modifizieren. Redundanter Pfad-Aufruf entfernt;
+die zentrale Directory-FD-Sicherung bleibt alleiniger Moduspfad.
+
+Regression für das Manifest-Verzeichnis ergänzt. `pytest -q
+tests/test_profile_migration.py tests/test_profile_layout.py
+tests/test_profile_cli.py`: 67/67 bestanden. Ruff, Mypy und `git diff --check`
+sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

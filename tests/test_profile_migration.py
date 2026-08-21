@@ -186,6 +186,34 @@ def test_auth_migration_apply_and_rollback_keep_source_and_never_return_secret(t
     assert source.exists()
 
 
+def test_auth_migration_binds_manifest_directory_mode_to_checked_directory(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "auth.json"
+    source.write_text('{"source":true}', encoding="utf-8")
+    source.chmod(0o600)
+    plan = plan_auth_migration((_account(tmp_path, source),))
+    manifest_parent = tmp_path / "migration"
+    manifest_parent.mkdir(mode=0o755)
+    manifest = manifest_parent / "manifest.json"
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    original_chmod = Path.chmod
+
+    def replace_target_before_path_chmod(path, mode):
+        if path == manifest_parent:
+            manifest_parent.rmdir()
+            manifest_parent.symlink_to(outside, target_is_directory=True)
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", replace_target_before_path_chmod)
+    apply_auth_migration(plan, manifest)
+
+    assert manifest_parent.is_dir() and not manifest_parent.is_symlink()
+    assert manifest_parent.stat().st_mode & 0o777 == 0o700
+    assert outside.stat().st_mode & 0o777 == 0o755
+
+
 def test_auth_migration_does_not_overwrite_existing_manifest(tmp_path):
     source = tmp_path / "auth.json"
     source.write_text('{"source":true}', encoding="utf-8")
