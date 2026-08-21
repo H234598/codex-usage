@@ -1557,3 +1557,12 @@ geprüft und sauber als `IntegrationInvalidSource` abgewiesen.
 wegen Python-Schlüsselgleichheit als gültiger Integer-Exitcode `69` gelten
 konnten. Fehlercodes werden jetzt mit strikt-integer Prüfung normalisiert.
 `tests/test_integration_entrypoint.py`: 22/22 bestanden; Mypy und Ruff sauber.
+
+## Runde 144: CLI-Provenienz-Typprüfung
+
+`cli._has_valid_usage_provenance()` prüfte Backend-Felder direkt per
+Set-Mitgliedschaft. Manipulierte `AccountUsage`-Objekte mit Liste oder Dict als
+Backend-Wert konnten dadurch `TypeError` statt eines ungültigen Ergebnisses
+auslösen. Beide Felder werden jetzt vor der Mitgliedschaft als Strings geprüft;
+ungültige Provenienz liefert sauber `False`. `tests/test_cli.py`: 106/106
+bestanden; Mypy und Ruff für Quelle und Test sauber.

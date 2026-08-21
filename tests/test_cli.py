@@ -515,6 +515,27 @@ def test_successful_usage_requires_complete_backend_provenance():
     assert _is_successful_usage(usage) is False
 
 
+@pytest.mark.parametrize("field", ["backend_configured", "backend_used"])
+def test_successful_usage_rejects_unhashable_backend_provenance(field):
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            available=True,
+            windows=(LimitWindow(name="weekly", remaining=80),),
+        ),
+    )
+    object.__setattr__(usage, field, [])
+
+    assert _is_successful_usage(usage) is False
+
+
 def test_policy_commands_are_machine_readable_and_use_saved_usage(
     tmp_path, monkeypatch, capsys
 ):

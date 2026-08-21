@@ -2176,11 +2176,12 @@ def _has_valid_usage_provenance(usage: AccountUsage) -> bool:
         return False
     configured = usage.backend_configured
     used = usage.backend_used
-    if configured not in {"direct", "app-server"} or used not in {
-        "browser",
-        "direct",
-        "app-server",
-    }:
+    if (
+        not isinstance(configured, str)
+        or configured not in {"direct", "app-server"}
+        or not isinstance(used, str)
+        or used not in {"browser", "direct", "app-server"}
+    ):
         return False
     try:
         return backend_provenance_matches_configured(usage, configured)
