@@ -3839,3 +3839,13 @@ verworfen oder durch sicheren Recovery-Schreibpfad ersetzt.
 
 `pytest -q tests/test_health.py`: 32/32 bestanden; Modul-Coverage 83%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 399: Usage-Reset-State
+
+`usage_resets.py` auf kanonische/legacy Payloads, Konfliktauflösung,
+Bool-/Bereichsgrenzen, Anzeige und Redemption-Gate geprüft. Keine neue
+reproduzierbare Fehlfunktion; unbekannte oder widersprüchliche Reset-Werte
+bleiben fail-closed.
+
+`pytest -q tests/test_usage_resets.py`: 5/5 bestanden; Modul-Coverage 79%.
+Ruff, Mypy und `git diff --check` sauber.
