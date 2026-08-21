@@ -2092,3 +2092,20 @@ eingehende Bridge-Daten konnten dadurch mit rohem `TypeError` bzw.
 kontrolliert mit `ValueError("ingest payload must be an object")` zurück.
 `tests/test_bridge.py`: 185/185 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 208: Auth-Payload-Helfer validieren Objektgrenze
+
+`direct.auth_identity_from_payload()`, `auth_email_from_payload()`,
+`auth_plan_type_from_payload()` und `auth_metadata_from_payload()` griffen bei
+Nicht-Objekten direkt auf `.get()` zu. Beschädigte Parser-Aufrufe konnten damit
+mit rohem `AttributeError` abbrechen. Nicht-Dict-Payloads liefern jetzt die
+jeweiligen sicheren Leerwerte. `tests/test_direct.py`: 157/157 bestanden;
+Mypy für Source und Ruff für betroffene Dateien sauber.
+
+## Runde 209: Gesamtverifikation nach Bridge-/Auth-Härtung
+
+Die Vollsuite bestätigt den Stand: `2280 passed, 1 skipped, 1 warning` in
+88.53s. Warnung bleibt externe PyGObject-Deprecation außerhalb des
+Repositories. `mypy src/codex_usage` ist in 35 Quelldateien fehlerfrei;
+aggregierter Ruff-Lauf über Produktion, Scripts, Launcher und Tests ist
+ebenfalls sauber.

@@ -402,6 +402,8 @@ def auth_identity_from_payload(
     *,
     path: Path,
 ) -> tuple[str | None, str | None]:
+    if not isinstance(payload, dict):
+        return None, None
     tokens = payload.get("tokens")
     if not isinstance(tokens, dict):
         return None, None
@@ -467,6 +469,8 @@ def auth_email_from_payload(
     *,
     path: Path,
 ) -> str | None:
+    if not isinstance(payload, dict):
+        return None
     tokens = payload.get("tokens")
     if not isinstance(tokens, dict):
         return None
@@ -501,6 +505,8 @@ def auth_plan_type_from_payload(
     *,
     path: Path,
 ) -> str | None:
+    if not isinstance(payload, dict):
+        return None
     tokens = payload.get("tokens")
     if not isinstance(tokens, dict):
         return None
@@ -709,6 +715,12 @@ def canonical_backend_identity(
 
 
 def auth_metadata_from_payload(payload: dict[str, Any]) -> dict[str, datetime | None]:
+    if not isinstance(payload, dict):
+        return {
+            "auth_last_refresh": None,
+            "auth_access_expires_at": None,
+            "auth_id_expires_at": None,
+        }
     tokens = payload.get("tokens")
     if not isinstance(tokens, dict):
         return {

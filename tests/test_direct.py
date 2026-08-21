@@ -26,8 +26,10 @@ from codex_usage.direct import (
     _redact_url,
     _select_stable_wham_usage,
     _signature_number,
+    auth_email_from_payload,
     auth_identity_changed,
     auth_identity_from_payload,
+    auth_metadata_from_payload,
     auth_plan_type_from_payload,
     canonical_backend_identity,
     fetch_account_usage_direct,
@@ -307,6 +309,20 @@ def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
 
     with pytest.raises(DirectAuthError, match="token identities disagree"):
         auth_identity_from_payload(payload, path=path)
+
+
+@pytest.mark.parametrize("payload", [None, [], "invalid", 1, True, object()])
+def test_auth_payload_helpers_ignore_non_object_payloads(tmp_path, payload):
+    path = tmp_path / "auth.json"
+
+    assert auth_identity_from_payload(payload, path=path) == (None, None)  # type: ignore[arg-type]
+    assert auth_email_from_payload(payload, path=path) is None  # type: ignore[arg-type]
+    assert auth_plan_type_from_payload(payload, path=path) is None  # type: ignore[arg-type]
+    assert auth_metadata_from_payload(payload) == {  # type: ignore[arg-type]
+        "auth_last_refresh": None,
+        "auth_access_expires_at": None,
+        "auth_id_expires_at": None,
+    }
 
 
 @pytest.mark.parametrize(
