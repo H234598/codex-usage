@@ -1624,3 +1624,11 @@ Snapshots direkt per Frozenset-Mitgliedschaft. Unhashbare Werte konnten den
 Watchdog-Persistenzpfad mit `TypeError` abbrechen. Der Wert wird jetzt zuerst
 als String geprüft; ungültige Snapshots werden nicht gespeichert.
 `tests/test_scheduler.py`: 165/165 bestanden; Mypy und Ruff sauber.
+
+## Runde 152: Policy-Entscheidungstyp
+
+`cli._policy_decision_exit_code()` prüfte fremde `decision`-Werte direkt per
+Set-Mitgliedschaft. Listen oder Dicts konnten den Policy-Statuspfad mit
+`TypeError` abbrechen. Der Wert wird jetzt zuerst als String geprüft; unbekannte
+oder unhashbare Entscheidungen liefern Exitcode `2`. `tests/test_cli.py`:
+108/108 bestanden; Mypy und Ruff sauber.

@@ -1621,7 +1621,8 @@ def _cmd_policy_status(args: argparse.Namespace) -> int:
 
 
 def _policy_decision_exit_code(result: dict[str, Any]) -> int:
-    return 0 if result.get("decision") in {
+    decision = result.get("decision")
+    return 0 if isinstance(decision, str) and decision in {
         "spark",
         "main",
         "credits",

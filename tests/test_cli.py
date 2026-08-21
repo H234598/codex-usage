@@ -19,6 +19,7 @@ from codex_usage.cli import (
     _all_usage_results_valid,
     _is_successful_usage,
     _load_overview_usages,
+    _policy_decision_exit_code,
     _select_accounts,
     main,
 )
@@ -691,6 +692,11 @@ def test_policy_status_returns_failure_without_accounts(tmp_path, monkeypatch, c
     assert main(["--config", str(config_path), "policy", "status"]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["decisions"] == {}
+
+
+@pytest.mark.parametrize("decision", [[], {}])
+def test_policy_decision_exit_code_rejects_unhashable_decision(decision):
+    assert _policy_decision_exit_code({"decision": decision}) == 2
 
 
 def test_policy_fails_closed_for_cached_backend_mismatch(tmp_path, monkeypatch, capsys):
