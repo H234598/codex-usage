@@ -5338,3 +5338,16 @@ bestehenden Zeilen, Schlüssel, Reihenfolge und Speicherwerte bleiben gleich.
 
 Die Hilfe beschreibt die neue Einstellung. Tests prüfen ungültige Werte,
 Grenzen, echte Grid-Positionen und den Rückgabepfad geänderter Felder.
+
+## Runde 453: DynamicSeriesList akzeptiert GTK-TreeModelRow
+
+`DynamicSeriesList` prüfte Tabellenzeilen bisher zuerst auf `list` oder
+`tuple`. Cinnamon liefert beim Bearbeiten jedoch `Gtk.TreeModelRow`: indexierbar,
+aber kein `list`/`tuple` und ohne `len()`. Dadurch wurden aktive Serien in der
+Besitzerkarte übersprungen; beim Doppelklick konnte die aktuelle Serie aus dem
+Dropdown verschwinden. Besitzer- und Current-Assignment-Erkennung greifen nun
+kontrolliert per Index zu, validieren Account-/Serienstrings und ignorieren nur
+wirklich unbrauchbare Rows.
+
+Regressionen decken echte TreeModelRow-Form ab; `tests/test_dynamic_series_list.py`
+läuft mit 10/10 Tests. Ruff, Python-Compile und `git diff --check` sauber.

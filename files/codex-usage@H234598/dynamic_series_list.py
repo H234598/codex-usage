@@ -140,15 +140,20 @@ class DynamicSeriesList(List, JSONSettingsBackend):
     def _active_owners(self):
         owners = {}
         for row in self.model:
-            if not isinstance(row, (list, tuple)) or len(row) <= max(
-                self._series_column_index,
-                self._active_column_index,
-            ):
+            try:
+                account = row[0]
+                series = row[self._series_column_index]
+                active = row[self._active_column_index]
+            except (IndexError, KeyError, TypeError):
                 continue
-            series = row[self._series_column_index]
-            active = row[self._active_column_index]
-            if isinstance(series, str) and series.strip() and active is True:
-                owners[series.strip().upper()] = row[0]
+            if (
+                isinstance(account, str)
+                and account.strip()
+                and isinstance(series, str)
+                and series.strip()
+                and active is True
+            ):
+                owners[series.strip().upper()] = account
         return owners
 
     def _series_options_for(self, info):
@@ -156,12 +161,15 @@ class DynamicSeriesList(List, JSONSettingsBackend):
         available = self._masterjet_series()
         current = ""
         account = None
-        if isinstance(info, (list, tuple)) and len(info) > max(
-            self._series_column_index,
-            self._active_column_index,
-        ):
-            current = info[self._series_column_index]
-            account = info[0]
+        if info is not None and not isinstance(info, (str, bytes)):
+            try:
+                current = info[self._series_column_index]
+                account = info[0]
+            except (IndexError, KeyError, TypeError):
+                current = ""
+                account = None
+        if not isinstance(account, str) or not account.strip():
+            account = None
         current = current.strip().upper() if isinstance(current, str) else ""
 
         options = {"Keine Serie": ""}

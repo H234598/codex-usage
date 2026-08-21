@@ -27,6 +27,16 @@ class _SeriesTable:
         return self._available
 
 
+class _TreeModelRow:
+    """GTK TreeModelRow shape: indexable, but not a list/tuple and no len()."""
+
+    def __init__(self, values: list[object]):
+        self._values = values
+
+    def __getitem__(self, index):
+        return self._values[index]
+
+
 def test_active_owners_require_a_real_boolean_true() -> None:
     table = _SeriesTable([
         ["alpha", "A", True],
@@ -35,6 +45,15 @@ def test_active_owners_require_a_real_boolean_true() -> None:
     ], ("A", "B", "C"))
 
     assert DynamicSeriesList._active_owners(table) == {"A": "alpha"}
+
+
+def test_active_owners_accept_gtk_tree_model_row_shape() -> None:
+    table = _SeriesTable([
+        _TreeModelRow(["alpha", "A", True]),
+        _TreeModelRow(["beta", "B", True]),
+    ], ("A", "B"))
+
+    assert DynamicSeriesList._active_owners(table) == {"A": "alpha", "B": "beta"}
 
 
 def test_series_options_hide_other_active_owners_but_keep_current_assignment() -> None:
@@ -67,6 +86,19 @@ def test_series_options_ignore_malformed_current_row() -> None:
     assert DynamicSeriesList._series_options_for(table, ["short"]) == {
         "Keine Serie": "",
         "B": "B",
+    }
+
+
+def test_series_options_preserve_current_gtk_tree_model_assignment() -> None:
+    table = _SeriesTable([
+        _TreeModelRow(["alpha", "A", True]),
+        _TreeModelRow(["beta", "B", True]),
+    ], ("A", "B", "C"))
+
+    assert DynamicSeriesList._series_options_for(table, table.model[0]) == {
+        "Keine Serie": "",
+        "A": "A",
+        "C": "C",
     }
 
 
