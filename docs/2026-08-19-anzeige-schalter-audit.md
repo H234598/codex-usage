@@ -2841,6 +2841,15 @@ jetzt kontrolliert expandiert; unbekannte Home-Namen liefern
 Schreibzugriff. `tests/test_profile_migration.py`: 31/31 fokussierte Tests
 bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
 
+## Runde 292: Migration validiert UTC-Darstellbarkeit vor Schreiben
+
+`profile_migration._validate_migration_plan()` akzeptierte aware
+Randzeitpunkte, deren UTC-Konvertierung außerhalb des `datetime`-Bereichs lag.
+`apply_auth_migration()` konnte dadurch erst nach Profil-/Auth-Schreibvorgängen
+mit `OverflowError` abbrechen. Die Validierung prüft UTC-Konvertierbarkeit jetzt
+vor Seiteneffekten. `tests/test_profile_migration.py`: 32/32 fokussierte Tests
+bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
+
 ## Runde 291: Vollsuite nach Pfad-Expansion-Härtung
 
 Die Vollsuite bestätigt den aktuellen HEAD: `2668 bestanden, 1 übersprungen,

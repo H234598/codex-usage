@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -46,6 +46,17 @@ def test_auth_migration_rejects_unknown_auth_home(tmp_path):
 
     with pytest.raises(ValueError, match="auth source cannot be resolved"):
         plan_auth_migration((account,))
+
+
+def test_auth_migration_rejects_unrepresentable_created_at(tmp_path):
+    plan = AuthMigrationPlan(
+        migration_id="m-test",
+        items=(),
+        created_at=datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+    )
+
+    with pytest.raises(ValueError, match="migration plan"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
 
 
 def test_auth_migration_plan_rejects_too_many_accounts(tmp_path):
