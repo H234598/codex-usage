@@ -4194,6 +4194,18 @@ Regression verbietet Pfad-`chmod` für die beiden Verzeichnisse und prüft Modus
 und Symlink-Freiheit. `pytest -q tests/test_integration_installer.py`:
 110/110 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 469: Installer-Temporärverzeichnisse per Directory-FD
+
+`integration_installer._create_private_directory()` setzte den Modus neu
+angelegter Staging-, Build- und Wheel-Verzeichnisse noch per `Path.chmod()`.
+Das war derselbe Pfad-Race wie bei den Venv-Verzeichnissen. Die Funktion nutzt
+jetzt ebenfalls `ensure_private_directory()`; die Fehler-Injektionstests prüfen
+FD-Fehler für alle vier erzeugten Ziele.
+
+Direkter Modus-Test und Installer-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 111/111 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

@@ -377,7 +377,7 @@ def _create_private_directory(
         provisional = _provisional_path_identity(path, directory=True)
         if _identity(path.parent) != parent_identity:
             _fail()
-        path.chmod(0o700)
+        ensure_private_directory(path, label="integration private directory")
         final_provisional = _provisional_rebased(
             path,
             provisional,

@@ -121,6 +121,30 @@ def test_no_symlink_ancestors_scans_after_missing_segment(tmp_path):
         )
 
 
+def test_create_private_directory_secures_mode_without_path_chmod(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    target = parent / "target"
+    parent_identity = integration_installer._directory_identity(parent)
+    original_chmod = Path.chmod
+
+    def reject_target_chmod(path, mode):
+        if path == target:
+            pytest.fail("private directory requires directory-FD mode changes")
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", reject_target_chmod)
+    identity = integration_installer._create_private_directory(target, parent_identity)
+
+    assert identity == integration_installer._directory_identity(target)
+    assert stat.S_IMODE(target.lstat().st_mode) == 0o700
+    assert not target.is_symlink()
+
+
 def _tree_bytes(root: Path) -> tuple[tuple[str, int, bytes], ...]:
     return tuple(
         (
@@ -1945,7 +1969,9 @@ def test_preexisting_wheel_target_is_untouched_and_build_is_cleaned(tmp_path, mo
 
 
 @pytest.mark.parametrize("kind", ["staging", "build", "wheel", "candidate"])
-def test_post_create_chmod_failure_cleans_only_new_target(tmp_path, monkeypatch, kind):
+def test_post_create_mode_change_failure_cleans_only_new_target(
+    tmp_path, monkeypatch, kind
+):
     from codex_usage import integration_installer
 
     data_home, state_home, temporary_root = _roots(tmp_path)
@@ -1973,8 +1999,7 @@ def test_post_create_chmod_failure_cleans_only_new_target(tmp_path, monkeypatch,
         except OSError:
             path = None
         if (
-            kind == "candidate"
-            and not fired
+            not fired
             and path is not None
             and is_target(path)
         ):
