@@ -79,6 +79,23 @@ def test_health_uses_safe_clock_for_malformed_now(tmp_path, now):
     assert load_health(path)["event_count"] == 1
 
 
+@pytest.mark.parametrize(
+    ("field", "fallback"),
+    [("component", "unknown"), ("event", "unknown"), ("error_class", "Error")],
+)
+def test_health_falls_back_for_unstringifiable_tokens(tmp_path, field, fallback):
+    class BrokenToken:
+        def __str__(self):
+            raise RuntimeError("synthetic token failure")
+
+    path = tmp_path / "health.json"
+    values = {"component": "scheduler", "event": "cycle_ok"}
+    values[field] = BrokenToken()
+    record_health_event(path=path, **values)  # type: ignore[arg-type]
+
+    assert load_health(path)["events"][0][field] == fallback
+
+
 @pytest.mark.parametrize("path", [[], "invalid", 1, False, object()])
 def test_health_rejects_non_path(path):
     with pytest.raises(ValueError, match="health path is invalid"):

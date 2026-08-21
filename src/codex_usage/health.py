@@ -199,5 +199,8 @@ def _write_events(path: Path, events: list[dict[str, Any]]) -> None:
 
 
 def _safe_token(value: str, fallback: str) -> str:
-    candidate = str(value).strip()
+    try:
+        candidate = str(value).strip()
+    except Exception:
+        return fallback
     return candidate[:64] if _TOKEN_RE.fullmatch(candidate) else fallback

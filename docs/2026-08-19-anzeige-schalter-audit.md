@@ -2693,3 +2693,12 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2647 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
 `git diff --check` sind sauber.
+
+## Runde 274: Health-Token-Fallback gegen String-Konverterfehler
+
+`health._safe_token()` rief `str()` blind auf Component-, Event- und
+Error-Class-Werten auf. Ein Objekt mit fehlerwerfendem `__str__` konnte dadurch
+Telemetrie mit rohem `RuntimeError` abbrechen. String-Konvertierung läuft jetzt
+kontrolliert; bei Fehler oder ungültigem Inhalt bleibt der jeweilige sichere
+Fallback erhalten. `tests/test_health.py`: 31/31 fokussierte Tests bestanden;
+Mypy für Source, Ruff und `git diff --check` sauber.
