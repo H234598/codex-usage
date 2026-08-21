@@ -4412,6 +4412,18 @@ identitätsgebundenen Operationen.
 Install-/Preexisting-Target-Tests: `pytest -q tests/test_integration_installer.py`:
 128/128 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 487: Release-Dateien bis Hash-Lesen identitätsgebunden
+
+Nach Extraction und Launcher-Schreiben las der Installationspfad
+Entry-Point, RECORD, Wheel und Launcher wieder nur über Pfade. `_safe_extract_wheel()`
+liefert jetzt pro Member Parent-/Datei-Inode; `_write_launcher()` liefert die
+Launcher-Inode. Alle späteren `_read_nofollow()`-Aufrufe prüfen diese Identität
+zusätzlich, bevor Hashes und Manifestdaten entstehen.
+
+Extraction-Identitätsassertion ergänzt. `pytest -q
+tests/test_integration_installer.py`: 128/128 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

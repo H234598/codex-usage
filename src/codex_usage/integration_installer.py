@@ -1377,7 +1377,7 @@ def _safe_extract_wheel(
     wheel_parent_identity: _DirectoryIdentity | None = None,
     wheel_file_identity: _FileIdentity | None = None,
     destination_identity: _DirectoryIdentity | None = None,
-) -> None:
+) -> dict[str, tuple[_DirectoryIdentity, _FileIdentity]]:
     pending: list[tuple[str, bytes]] = []
     seen: set[str] = set()
     try:
@@ -1444,6 +1444,7 @@ def _safe_extract_wheel(
         directory_identities: dict[str, _DirectoryIdentity] = {
             "": destination_identity,
         }
+        extracted_identities: dict[str, tuple[_DirectoryIdentity, _FileIdentity]] = {}
         try:
             _no_symlink_ancestors(destination)
             destination_fd = os.open(destination, directory_flags)
@@ -1567,6 +1568,23 @@ def _safe_extract_wheel(
                         fd = -1
                         handle.write(payload)
                         os.fchmod(handle.fileno(), 0o600)
+                        item = os.fstat(handle.fileno())
+                        if (
+                            not stat.S_ISREG(item.st_mode)
+                            or item.st_nlink != 1
+                            or item.st_uid != os.getuid()
+                            or stat.S_IMODE(item.st_mode) != 0o600
+                        ):
+                            _fail()
+                        parent_name = "/".join(target_parts[:-1])
+                        extracted_identities[name] = (
+                            directory_identities[parent_name],
+                            _FileIdentity(
+                                item.st_dev,
+                                item.st_ino,
+                                stat.S_IMODE(item.st_mode),
+                            ),
+                        )
                 finally:
                     if fd >= 0:
                         os.close(fd)
@@ -1574,6 +1592,7 @@ def _safe_extract_wheel(
         finally:
             if destination_fd >= 0:
                 os.close(destination_fd)
+        return extracted_identities
     except _WheelMemberValidationError:
         raise
     except (OSError, ValueError):
@@ -2085,7 +2104,7 @@ def _write_launcher(
     final_release_dir: Path,
     data_home: Path,
     state_home: Path,
-) -> None:
+) -> _FileIdentity:
     interpreter = final_release_dir / "venv" / "bin" / "python"
     quoted_data = _shell_single_quote(str(data_home))
     quoted_state = _shell_single_quote(str(state_home))
@@ -2103,7 +2122,7 @@ def _write_launcher(
         f"TZ=UTC XDG_DATA_HOME={quoted_data} XDG_STATE_HOME={quoted_state} "
         f"{quoted_interpreter} -B -I -m codex_usage.integration_entrypoint \"$@\"\n"
     ).encode()
-    _write_exclusive(path, payload, mode=0o700)
+    return _write_exclusive(path, payload, mode=0o700)
 
 
 def _manifest(
@@ -2300,7 +2319,7 @@ def _install_release(
                 venv_root,
                 venv_root_identity,
             )
-            _safe_extract_wheel(
+            extracted_identities = _safe_extract_wheel(
                 wheel_path=staged_wheel,
                 destination=site_packages,
                 record_rows=record_rows,
@@ -2311,8 +2330,14 @@ def _install_release(
             _require_private_dir(staging, staging_identity, False)
             entrypoint_path = site_packages / "codex_usage" / "integration_entrypoint.py"
             record_path = site_packages / DIST_INFO_PREFIX / "RECORD"
+            entrypoint_parent_identity, entrypoint_identity = extracted_identities[
+                "codex_usage/integration_entrypoint.py"
+            ]
+            record_parent_identity, record_identity = extracted_identities[
+                f"{DIST_INFO_PREFIX}/RECORD"
+            ]
             launcher_path = venv_root / "bin" / "codex-usage"
-            _write_launcher(
+            launcher_identity = _write_launcher(
                 path=launcher_path,
                 final_release_dir=final_release_dir,
                 data_home=data_home,
@@ -2322,10 +2347,25 @@ def _install_release(
             _require_private_dir(staging, staging_identity, False)
             if _rehash_source_manifest(source_root) != source_manifest:
                 _fail()
-            entrypoint_payload = _read_nofollow(entrypoint_path)
-            wheel_payload = _read_nofollow(staged_wheel)
-            record_payload = _read_nofollow(record_path)
-            launcher_payload = _read_nofollow(launcher_path)
+            entrypoint_payload = _read_nofollow(
+                entrypoint_path,
+                expected_parent_identity=entrypoint_parent_identity,
+                expected_file_identity=entrypoint_identity,
+            )
+            wheel_payload = _read_nofollow(
+                staged_wheel,
+                expected_parent_identity=staging_identity,
+                expected_file_identity=staged_wheel_identity,
+            )
+            record_payload = _read_nofollow(
+                record_path,
+                expected_parent_identity=record_parent_identity,
+                expected_file_identity=record_identity,
+            )
+            launcher_payload = _read_nofollow(
+                launcher_path,
+                expected_file_identity=launcher_identity,
+            )
             _require_private_dir(staging, staging_identity, False)
             tree_hash = _release_tree_sha256(release_dir=staging)
             entrypoint_hash = hashlib.sha256(entrypoint_payload).hexdigest()

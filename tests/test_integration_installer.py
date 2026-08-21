@@ -1155,14 +1155,16 @@ def test_safe_extract_rejects_each_member_class_without_destination_change(
 
 
 def test_safe_extract_accepts_matching_regular_member(tmp_path):
-    from codex_usage.integration_installer import _safe_extract_wheel
+    from codex_usage import integration_installer
+
+    _safe_extract_wheel = integration_installer._safe_extract_wheel
 
     wheel = tmp_path / "candidate.whl"
     destination = tmp_path / "destination"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("codex_usage/ok.py", b"x")
     destination.mkdir(mode=0o700)
-    _safe_extract_wheel(
+    identities = _safe_extract_wheel(
         wheel_path=wheel,
         destination=destination,
         record_rows={"codex_usage/ok.py": (hashlib.sha256(b"x").hexdigest(), 1)},
@@ -1171,6 +1173,10 @@ def test_safe_extract_accepts_matching_regular_member(tmp_path):
     assert target.read_bytes() == b"x"
     assert stat.S_IMODE(target.lstat().st_mode) == 0o600
     assert _tree_bytes(destination) == (("codex_usage/ok.py", 0o600, b"x"),)
+    assert identities["codex_usage/ok.py"] == (
+        integration_installer._directory_identity(target.parent),
+        integration_installer._file_identity(target),
+    )
 
 
 def test_copy_regular_binds_mode_change_to_open_file(tmp_path, monkeypatch):
