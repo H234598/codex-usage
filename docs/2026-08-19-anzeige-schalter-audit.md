@@ -3480,3 +3480,15 @@ Kein neuer reproduzierbarer Fehler gefunden.
 
 `pytest -q tests/test_profile_layout.py`: 20/20 bestanden. Mypy für
 `profile_layout.py`, Ruff und `git diff --check` sauber.
+
+## Runde 364: Preserved Profile-Metadata bleibt privat
+
+`ensure_profile_layout(..., preserve_existing_metadata=True)` akzeptierte
+bisher ein vorhandenes `profile.json` mit Gruppen-/Weltzugriff. Das ist
+inkonsistent zur privaten Metadata-Erzeugung und konnte sensible Account-
+Labels offenlegen. Vor dem Preserve-Return werden jetzt Regular-File,
+Single-Link, User-Owner und private Mode geprüft.
+
+Regressionstest ergänzt. `pytest -q tests/test_profile_layout.py
+tests/test_profile_migration.py`: 54/54 bestanden. Mypy für
+`profile_layout.py`, Ruff und `git diff --check` sauber.

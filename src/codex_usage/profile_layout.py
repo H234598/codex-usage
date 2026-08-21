@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,8 +89,17 @@ def ensure_profile_layout(
         if preserve_existing_metadata and layout.metadata.is_symlink():
             raise ValueError("profile metadata must be a regular file")
         if preserve_existing_metadata and layout.metadata.exists():
-            if not layout.metadata.is_file():
-                raise ValueError("profile metadata must be a regular file")
+            try:
+                metadata_stat = layout.metadata.lstat()
+            except OSError as exc:
+                raise ValueError("profile metadata must be a regular file") from exc
+            if (
+                not stat.S_ISREG(metadata_stat.st_mode)
+                or metadata_stat.st_nlink != 1
+                or metadata_stat.st_uid != os.getuid()
+                or metadata_stat.st_mode & 0o077
+            ):
+                raise ValueError("profile metadata must be a private regular file")
             return layout
         metadata_missing = not layout.metadata.exists() and not layout.metadata.is_symlink()
         try:

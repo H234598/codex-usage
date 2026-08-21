@@ -52,6 +52,22 @@ def test_profile_metadata_write_uses_private_path_lock(tmp_path, monkeypatch):
     ]
 
 
+def test_profile_layout_rejects_insecure_preserved_metadata(tmp_path):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    metadata = profile / "profile.json"
+    metadata.write_text("{}\n", encoding="utf-8")
+    metadata.chmod(0o640)
+
+    with pytest.raises(ValueError, match="profile metadata"):
+        ensure_profile_layout(
+            _account(tmp_path),
+            preserve_existing_metadata=True,
+        )
+
+    assert metadata.stat().st_mode & 0o777 == 0o640
+
+
 def test_profile_layout_rejects_symlink_profile(tmp_path):
     target = tmp_path / "target"
     target.mkdir()
