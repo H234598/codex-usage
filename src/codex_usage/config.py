@@ -51,6 +51,12 @@ def default_state_dir() -> Path:
     return root / APP_NAME
 
 
+def _select_config_path(path: object | None) -> Path:
+    if path is not None and not isinstance(path, Path):
+        raise ValueError("config path must be a Path")
+    return path or default_config_path()
+
+
 def _xdg_root(variable: str, fallback: Path) -> Path:
     value = os.environ.get(variable)
     if value:
@@ -61,7 +67,7 @@ def _xdg_root(variable: str, fallback: Path) -> Path:
 
 
 def load_config(path: Path | None = None) -> AppConfig:
-    config_path = path or default_config_path()
+    config_path = _select_config_path(path)
     if not config_path.exists():
         if config_path.is_symlink():
             raise ValueError(f"config path must be a regular file: {config_path}")
@@ -115,7 +121,7 @@ def _read_config_text(config_path: Path) -> str:
 
 def save_config(config: AppConfig, path: Path | None = None) -> Path:
     _validate_config(config)
-    config_path = path or default_config_path()
+    config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
     with private_path_lock(config_path, label="config lock"):
         _save_config_unlocked(config, config_path)
@@ -183,8 +189,6 @@ def add_or_update_account(
         raise ValueError("profile_dir must be a string")
     if auth_json_path is not None and not isinstance(auth_json_path, str):
         raise ValueError("auth_json_path must be a string")
-    if path is not None and not isinstance(path, Path):
-        raise ValueError("config path must be a Path")
     if browser is not None:
         _validate_browser(browser)
     if tag is not None:
@@ -208,7 +212,7 @@ def add_or_update_account(
         raise ValueError("clear_auth_json cannot be combined with test_home")
     if not isinstance(_all_accounts_lock_held, bool):
         raise ValueError("_all_accounts_lock_held must be boolean")
-    config_path = path or default_config_path()
+    config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
     from .account_lock import account_lock
 
@@ -383,7 +387,7 @@ def remove_account(
     *,
     expected: Account | None = None,
 ) -> tuple[AppConfig, Account]:
-    config_path = path or default_config_path()
+    config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
     with private_path_lock(config_path, label="config lock"):
         config = load_config(config_path)
@@ -408,7 +412,7 @@ def restore_account(
     index: int | None = None,
     expected: Account | None = None,
 ) -> AppConfig:
-    config_path = path or default_config_path()
+    config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
     with private_path_lock(config_path, label="config lock"):
         config = load_config(config_path)

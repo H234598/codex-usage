@@ -1226,3 +1226,12 @@ Worker-Prozess. Da der Worker SIGTERM behandeln kann, blieben gestartete
 Codex-Nachkommen bestehen. Reap sendet jetzt SIGKILL an die eigene
 Prozessgruppe und fällt nur bei fehlender Gruppe auf Parent-Kill zurück.
 Regression ergänzt; `tests/test_profile_jobs.py`: 59/59 bestanden; Ruff sauber.
+
+## Runde 103: Config-Pfadtypen
+
+`load_config()`, `save_config()`, `remove_account()` und `restore_account()`
+behandelten falsy Fremdwerte als fehlenden Pfad und fielen auf den Default
+zurück; truthy Fremdwerte leakten `AttributeError`. Gemeinsame
+`_select_config_path()`-Prüfung verlangt jetzt `None` oder `Path` vor jedem
+Fallback. Vier Regressionen ergänzt; `tests/test_config.py`: 92/92 bestanden;
+Ruff sauber.

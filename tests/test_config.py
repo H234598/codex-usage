@@ -890,6 +890,25 @@ def test_add_account_rejects_invalid_optional_argument_types(
         add_or_update_account("privat", **kwargs)
 
 
+@pytest.mark.parametrize("operation", ["load", "save", "remove", "restore"])
+def test_config_operations_reject_invalid_path_type(operation, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        config_module,
+        "default_config_path",
+        lambda: pytest.fail("invalid config path reached default fallback"),
+    )
+    account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
+    operations = {
+        "load": lambda: load_config([]),
+        "save": lambda: save_config(AppConfig(accounts=()), []),
+        "remove": lambda: remove_account("privat", path=[]),
+        "restore": lambda: restore_account(account, path=[]),
+    }
+
+    with pytest.raises(ValueError, match="config path must be a Path"):
+        operations[operation]()
+
+
 def test_load_config_rejects_loose_types(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
