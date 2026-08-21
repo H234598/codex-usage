@@ -1358,3 +1358,12 @@ bestanden; Mypy und Ruff sauber.
 `tuple[UsagePool]`; der leere Zweig wurde dadurch als inkompatibel gemeldet.
 Explizite Tuple-Annotation erlaubt Main-Pool oder leere Poolmenge korrekt.
 `tests/test_history.py`: 47/47 bestanden; Mypy und Ruff sauber.
+
+## Runde 119: Routing-Credit-Limit-Typ
+
+`routing._validate_policy()` verwendete `normalized` zuerst als
+Identifier-String und danach als Credit-Limit-Dictionary. Die zweite
+Zwischengröße heißt jetzt `normalized_limits`; Validierung und Policy-Inhalt
+bleiben unverändert. `tests/test_routing.py`: 88/88 bestanden; Mypy und Ruff
+für `routing.py` sauber. Eine bestehende unsortierte Importgruppe in
+`tests/test_routing.py` blieb unberührt.

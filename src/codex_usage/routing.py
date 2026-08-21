@@ -742,10 +742,12 @@ def _validate_policy(payload: Any) -> dict[str, Any]:
             raise ValueError("routing credit limit overrides are invalid")
         for identifier, limits in source.items():
             normalized_identifier = _validate_identifier(identifier)
-            normalized = _validate_credit_limits(limits)
-            if all(value is None for value in normalized.values()):
+            normalized_limits = _validate_credit_limits(limits)
+            if all(value is None for value in normalized_limits.values()):
                 raise ValueError("empty routing credit limit override")
-            result["credit_limit_overrides"][scope][normalized_identifier] = normalized
+            result["credit_limit_overrides"][scope][normalized_identifier] = (
+                normalized_limits
+            )
     return result
 
 
