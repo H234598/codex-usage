@@ -3849,3 +3849,13 @@ bleiben fail-closed.
 
 `pytest -q tests/test_usage_resets.py`: 5/5 bestanden; Modul-Coverage 79%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 400: Usage-Limit-Pools
+
+`usage_limits.py` auf WHAM-/App-Server-Payloads, Spark-Katalog, Fenster-
+Identitäten, Dauer-/Prozent-/Reset-Grenzen und malformed Control-Flags geprüft.
+Keine neue reproduzierbare Fehlfunktion; unsupported oder widersprüchliche
+Buckets bleiben unavailable bzw. werden nicht als Nutzungswert verwendet.
+
+`pytest -q tests/test_usage_limits.py`: 124/124 bestanden; Modul-Coverage 91%.
+Ruff, Mypy und `git diff --check` sauber.
