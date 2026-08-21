@@ -3051,3 +3051,11 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2694 bestanden, 1 übersprungen,
 1 Warnung` in 89,53 s. Die Warnung bleibt externe PyGObject-Deprecation
 außerhalb des Repositories. Config-Test-Home, Browser-Auth-Diagnose und
 Scheduler-Auth-Quellpfade sind integriert grün.
+
+## Runde 315: Reactivation-Executable validiert Home-Expansion
+
+`reactivate._resolve_executable()` expandierte einen expliziten Executable-
+Pfad ohne `RuntimeError`-Schutz. Unbekanntes `~user` konnte Reaktivierung roh
+abbrechen. Der Pfad liefert jetzt kontrolliertes `ReactivationError`.
+`tests/test_reactivate.py`: 62/62 fokussierte Tests bestanden; Mypy für
+Reactivation, Ruff und `git diff --check` sauber.

@@ -109,6 +109,15 @@ def test_resolve_reactivation_executable_rejects_explicit_invalid_values(
         _resolve_executable(explicit, "codex", label="codex command")
 
 
+def test_resolve_reactivation_executable_rejects_unknown_home():
+    with pytest.raises(ReactivationError, match="codex command is invalid"):
+        _resolve_executable(
+            "~definitely-no-such-user-zzzz/codex",
+            "codex",
+            label="codex command",
+        )
+
+
 def test_reactivate_uses_account_browser_when_override_is_missing(monkeypatch, tmp_path):
     account = Account(
         id="work",
