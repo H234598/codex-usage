@@ -2184,3 +2184,12 @@ Account-/Pool-Felder zu. Direkte Fehlaufrufe konnten mit rohem
 jetzt kontrolliert als `ValueError("usage is invalid")` zurück.
 `tests/test_state.py`: 247/247 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 218: Scheduler-Entry-Point validiert Config-/Account-Container
+
+`scheduler.fetch_all()` und sein Account-Bounded-Helper übernahmen fremde
+Config-/Iterator-Typen vor Typprüfung. Ungültige Aufrufe konnten dadurch mit
+rohem `TypeError` oder späterem Attributzugriff abbrechen. Config und Accounts
+werden jetzt vor Fetch kontrolliert geprüft; ungültige Container melden
+`ValueError`. `tests/test_scheduler.py`: 186/186 bestanden; Mypy für Source
+und Ruff für betroffene Dateien sauber.

@@ -72,9 +72,14 @@ REUSABLE_RESET_FALLBACK_REASONS = frozenset(
 
 
 def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:
-    account_list = list(islice(accounts, MAX_SCHEDULER_ACCOUNTS + 1))
+    try:
+        account_list = list(islice(accounts, MAX_SCHEDULER_ACCOUNTS + 1))
+    except TypeError as exc:
+        raise ValueError("account records are invalid") from exc
     if len(account_list) > MAX_SCHEDULER_ACCOUNTS:
         raise ValueError("too many accounts")
+    if any(not isinstance(account, Account) for account in account_list):
+        raise ValueError("account records are invalid")
     return account_list
 
 
@@ -88,6 +93,8 @@ def fetch_all(
     auth_json_path: Path | None = None,
     save_snapshots: bool = False,
 ) -> list[AccountUsage]:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
     account_list = _bounded_account_list(accounts)
     # A single-account command must not bypass ambiguity detection by selecting
     # only one row from a configuration that contains a shared user identity.

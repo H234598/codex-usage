@@ -249,6 +249,18 @@ def test_fetch_all_rejects_account_iterators_over_config_cap(monkeypatch):
         fetch_all(AppConfig(accounts=()), accounts)
 
 
+@pytest.mark.parametrize("accounts", [None, "invalid", [None], [object()]])
+def test_fetch_all_rejects_invalid_account_records(accounts):
+    with pytest.raises(ValueError, match="account records are invalid"):
+        fetch_all(AppConfig(accounts=()), accounts)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("config", [None, [], "invalid", object()])
+def test_fetch_all_rejects_invalid_config(config):
+    with pytest.raises(ValueError, match="config is invalid"):
+        fetch_all(config, ())  # type: ignore[arg-type]
+
+
 def test_fetch_all_rejects_oversized_config_account_iterators(monkeypatch):
     monkeypatch.setattr(scheduler_module, "MAX_SCHEDULER_ACCOUNTS", 2)
     accounts = (
