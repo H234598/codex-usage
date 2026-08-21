@@ -1625,6 +1625,14 @@ Watchdog-Persistenzpfad mit `TypeError` abbrechen. Der Wert wird jetzt zuerst
 als String geprüft; ungültige Snapshots werden nicht gespeichert.
 `tests/test_scheduler.py`: 165/165 bestanden; Mypy und Ruff sauber.
 
+## Runde 153: Scheduler-Status-Typ
+
+`scheduler._should_persist_snapshot()` prüfte `status` partieller Snapshots
+direkt per Set-Mitgliedschaft. Unhashbare Statuswerte konnten den Watchdog mit
+`TypeError` abbrechen. Persistenzentscheid akzeptiert jetzt nur echte
+`AccountStatus`-Werte; unhashbare oder fremde Statuswerte werden verworfen.
+`tests/test_scheduler.py`: 167/167 bestanden; Mypy und Ruff sauber.
+
 ## Runde 152: Policy-Entscheidungstyp
 
 `cli._policy_decision_exit_code()` prüfte fremde `decision`-Werte direkt per

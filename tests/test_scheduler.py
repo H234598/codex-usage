@@ -2688,13 +2688,21 @@ def test_scheduler_accepts_named_dynamic_reset_without_duration():
     assert _watch_core_resets_current(usage) is True
 
 
-@pytest.mark.parametrize("backend_used", [[], {}])
-def test_scheduler_does_not_persist_unhashable_backend_snapshot(backend_used):
+@pytest.mark.parametrize(
+    ("status", "backend_used"),
+    [
+        (AccountStatus.PARTIAL, []),
+        (AccountStatus.PARTIAL, {}),
+        ([], "direct"),
+        ({}, "direct"),
+    ],
+)
+def test_scheduler_does_not_persist_unhashable_snapshot_fields(status, backend_used):
     usage = AccountUsage(
         account_id="dynamic",
         label="Dynamic",
         captured_at=datetime.now().astimezone(),
-        status=AccountStatus.PARTIAL,
+        status=status,
         backend_used=backend_used,
     )
 

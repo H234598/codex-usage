@@ -1699,9 +1699,14 @@ def _window_is_exhausted(window: Any) -> bool:
 
 
 def _should_persist_snapshot(usage: AccountUsage) -> bool:
-    if usage.status in {AccountStatus.OK, AccountStatus.BLOCKED}:
+    if isinstance(usage.status, AccountStatus) and usage.status in {
+        AccountStatus.OK,
+        AccountStatus.BLOCKED,
+    }:
         return True
     return (
+        isinstance(usage.status, AccountStatus)
+        and
         usage.status == AccountStatus.PARTIAL
         and isinstance(usage.backend_used, str)
         and usage.backend_used in AUTHENTICATED_BACKENDS
