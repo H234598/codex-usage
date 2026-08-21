@@ -27,6 +27,7 @@ from codex_usage.app_server import (
     _response_for,
     _send,
     _should_refresh,
+    _signal_process_group,
     _StderrReader,
     _stop_process,
     _unsupported_window_durations,
@@ -1436,6 +1437,27 @@ def test_stop_process_signals_group_after_parent_exit(monkeypatch):
     _stop_process(FakeProcess())
 
     assert calls == [(1234, signal.SIGTERM)]
+
+
+def test_signal_process_group_rejects_boolean_pid(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = True
+
+        def terminate(self):
+            calls.append("terminate")
+
+        def kill(self):
+            calls.append("kill")
+
+    monkeypatch.setattr(
+        "codex_usage.app_server.os.killpg",
+        lambda pid, signum: calls.append((pid, signum)),
+    )
+
+    assert _signal_process_group(FakeProcess(), signal.SIGTERM) is True
+    assert calls == ["terminate"]
 
 
 def test_stop_process_ignores_exit_races():

@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 492: App-Server-Prozesssignal mit strikter PID-Grenze
+
+`app_server._signal_process_group()` behandelte `bool` wegen Python-
+Integer-Vererbung als gültige PID und konnte damit `os.killpg(True, ...)`
+aufrufen. Der Guard weist Boolesche Werte jetzt ab und nutzt den bestehenden
+`process.terminate()`-/`process.kill()`-Fallback. Normale PIDs und bereits
+beendete Prozesse bleiben unverändert.
+
+Regression ergänzt. `pytest -q tests/test_app_server.py`: 99/99 bestanden.
+Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 491: Profile-Job-Reaping mit strikter PID-Grenze
 
 `profile_jobs._reap_untracked_worker()` behandelte `bool` wegen Python-
