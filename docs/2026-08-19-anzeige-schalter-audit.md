@@ -5466,3 +5466,18 @@ Inhalte.
 Regression prüft getrennte Beschreibung und Tooltip zusätzlich zu Optionen,
 Defaults, Grenzen und Markup-Escaping. `pytest -q tests/test_help_page.py`:
 5/5 bestanden; Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 462: Cinnamon-Installer-Migration idempotent
+
+`scripts/install_cinnamon_applet.py` setzte bei jedem Lauf der
+Schema-Aktualisierung `changed = True`, selbst wenn Cache-Schema und
+`__md5__` bereits identisch waren. Jeder erneute Installationslauf schrieb
+dadurch die Cinnamon-Settings-Datei atomar neu und meldete `updated`.
+Die Migration berechnet den Schema-Digest nur einmal und schreibt nur bei
+echter Schema-, Enum- oder Wertänderung.
+
+Neue fokussierte Suite prüft alle Installer-Funktionen: Quell-/Zielpfad-
+Validierung, atomaren Austausch, Cache-Migration, Enum-Konvertierung,
+DBus-/Versionspfade und `main --dry-run`. `pytest -q
+tests/test_install_cinnamon_applet.py`: 9/9 bestanden. Ruff, Python-Compile
+und `git diff --check` sauber.

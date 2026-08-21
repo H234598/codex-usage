@@ -189,8 +189,10 @@ def _migrate_cached_settings(path: Path | None = None) -> bool:
             / APPLET_UUID
             / "settings-schema.json"
         )
+        source_bytes = b""
         try:
-            source_payload = json.loads(source.read_text(encoding="utf-8"))
+            source_bytes = source.read_bytes()
+            source_payload = json.loads(source_bytes.decode("utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             source_payload = None
         if isinstance(source_payload, dict):
@@ -209,8 +211,10 @@ def _migrate_cached_settings(path: Path | None = None) -> bool:
                     updated["value"] = definition["default"]
                 if payload.get(key) != updated:
                     payload[key] = updated
-            payload["__md5__"] = hashlib.md5(source.read_bytes()).hexdigest()
-            changed = True
+            source_digest = hashlib.md5(source_bytes).hexdigest()
+            if payload.get("__md5__") != source_digest:
+                payload["__md5__"] = source_digest
+                changed = True
 
     if not changed:
         return False
