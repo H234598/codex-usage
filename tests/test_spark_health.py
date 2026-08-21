@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -205,6 +205,23 @@ def test_spark_health_fails_closed_for_invalid_clock(tmp_path):
 @pytest.mark.parametrize("invalid_now", [0, "now", NOW.replace(tzinfo=None)])
 def test_set_spark_health_rejects_invalid_clock(tmp_path, invalid_now):
     with pytest.raises(ValueError, match="timezone-aware"):
+        set_spark_health(
+            "backend-nufker",
+            "healthy",
+            path=tmp_path / "health.json",
+            now=invalid_now,
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_now",
+    [
+        datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        datetime.max.replace(tzinfo=timezone(timedelta(hours=-14))),
+    ],
+)
+def test_set_spark_health_rejects_unrepresentable_clock(tmp_path, invalid_now):
+    with pytest.raises(ValueError, match="timestamp is out of range"):
         set_spark_health(
             "backend-nufker",
             "healthy",

@@ -101,9 +101,13 @@ def set_spark_health(
         raise ValueError("spark health timestamp must be timezone-aware")
     health_path = _spark_health_path(path)
     _prepare_health_directory(health_path.parent)
+    try:
+        checked_at = current_time.astimezone(UTC).isoformat()
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("spark health timestamp is out of range") from exc
     record = {
         "state": state,
-        "checked_at": current_time.astimezone(UTC).isoformat(),
+        "checked_at": checked_at,
         "reason": _safe_reason(reason) or (
             "successful_spark_turn" if state == "healthy" else "spark_turn_failed"
         ),

@@ -3007,3 +3007,12 @@ konnten Reset-Ermittlung per `OverflowError` abbrechen. Lokale Zeitbildung
 und Folgetagaddition liefern jetzt `None` bei unrepräsentierbaren Werten.
 `tests/test_extractor.py`: 197/197 fokussierte Tests bestanden; Mypy für
 Extractor, Ruff und `git diff --check` sauber.
+
+## Runde 310: Spark-Health-Schreiben validiert UTC-Darstellbarkeit
+
+`set_spark_health()` prüfte timezone-awareness, serialisierte `now` aber ohne
+Bereichsfang. Randwerte mit großem Offset konnten beim Schreiben roh mit
+`OverflowError` scheitern. Das Schreiben liefert jetzt
+`ValueError("spark health timestamp is out of range")`. `tests/test_spark_health.py`:
+27/27 fokussierte Tests bestanden; Mypy für Spark Health, Ruff und
+`git diff --check` sauber.
