@@ -2012,3 +2012,12 @@ malformed SQLite-Werten. Status-Aggregate werden jetzt wie einzelne Samples
 strict typ- und bereichsgeprüft. `tests/test_history.py` und
 `tests/test_history_cli.py`: 61/61 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 199: Integration-Snapshot validiert Export-Zeitstempel
+
+`integration_snapshot._utc_text()` griff bei malformed `generated_at` oder
+Usage-`captured_at` direkt auf `tzinfo`/`utcoffset` zu. Direkte
+Schema-1-Projektion konnte dadurch mit rohem `AttributeError` abbrechen.
+Zeitstempel werden jetzt typ- und fehlergeprüft; ungültige Werte führen
+kontrolliert zu `IntegrationInvalidSource`. `tests/test_integration_snapshot.py`:
+47/47 bestanden; Mypy für Source und Ruff für betroffene Dateien sauber.

@@ -56,6 +56,25 @@ def test_schema1_canonical_float_helpers_reject_overflow(helper, value):
         canonicalize(value)
 
 
+@pytest.mark.parametrize("value", [None, [], {}, "invalid", 1, True])
+def test_schema1_projection_rejects_malformed_generated_timestamp(value):
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema1_document((), generated_at=value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [None, [], {}, "invalid", 1, True])
+def test_schema1_projection_rejects_malformed_usage_timestamp(value):
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema1_document(
+            (replace(_usage("alpha"), captured_at=value),),  # type: ignore[arg-type]
+            generated_at=GENERATED,
+        )
+
+
 def _usage(
     account_id: str,
     *,
