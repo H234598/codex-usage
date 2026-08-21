@@ -1090,6 +1090,44 @@ def test_copy_regular_binds_mode_change_to_open_file(tmp_path, monkeypatch):
     assert stat.S_IMODE(outside.lstat().st_mode) == 0o644
 
 
+def test_copy_regular_binds_target_to_parent_descriptor(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    source = tmp_path / "source"
+    source.write_bytes(b"source")
+    source.chmod(0o600)
+    parent = tmp_path / "destination"
+    parent.mkdir(mode=0o700)
+    target = parent / "target"
+    old_parent = tmp_path / "destination-old"
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    original_open = os.open
+    swapped = False
+
+    def swap_before_target_open(candidate, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if candidate == "target" and dir_fd is not None and not swapped:
+            parent.rename(old_parent)
+            outside.rename(parent)
+            swapped = True
+        if dir_fd is None:
+            return original_open(candidate, flags, mode)
+        return original_open(candidate, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_installer.os, "open", swap_before_target_open)
+    identity = integration_installer._copy_regular(source, target)
+
+    assert swapped
+    assert identity == integration_installer._FileIdentity(
+        old_parent.stat().st_dev,
+        (old_parent / "target").stat().st_ino,
+        0o600,
+    )
+    assert (old_parent / "target").read_bytes() == b"source"
+    assert not (parent / "target").exists()
+
+
 def test_safe_extract_binds_mode_change_to_open_file(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

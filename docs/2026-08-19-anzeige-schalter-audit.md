@@ -4335,6 +4335,19 @@ Ordinary-Directory-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 123/123 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 481: Copy-Targets und Staged-Wheel-Datei binden
+
+`_copy_regular()` öffnete Ziel-Dateien bisher über einen Pfad nach
+`ensure_private_directory()`. Ein Parent-Swap konnte den Inhalt in fremdes
+Verzeichnis schreiben. Ziel-Parent wird jetzt per Directory-FD und Inode
+revalidiert; die Funktion liefert Ziel-Datei-Identität. Diese Identität samt
+Staging-Parent wird bis `_safe_extract_wheel()` und `_read_nofollow()` gereicht,
+damit ein Wheel-Austausch nach Staging nicht mehr gelesen wird.
+
+Target-Parent-Swap-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 124/124 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

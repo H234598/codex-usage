@@ -674,8 +674,9 @@ def _copy_regular(
     mode: int = 0o600,
     source_parent_identity: _DirectoryIdentity | None = None,
     source_identity: _FileIdentity | None = None,
-) -> None:
+) -> _FileIdentity:
     fd = -1
+    parent_fd = -1
     try:
         _no_symlink_ancestors(source.parent)
         source_stat = source.lstat()
@@ -694,8 +695,29 @@ def _copy_regular(
         ):
             _fail()
         ensure_private_directory(target.parent, label="integration target directory")
+        target_parent_identity = _directory_identity(target.parent)
+        parent_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            parent_flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            parent_flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            parent_flags |= os.O_CLOEXEC
+        parent_fd = os.open(target.parent, parent_flags)
+        parent_item = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(parent_item.st_mode)
+            or parent_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                parent_item.st_dev,
+                parent_item.st_ino,
+                stat.S_IMODE(parent_item.st_mode),
+            )
+            != target_parent_identity
+        ):
+            _fail()
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(target, flags, mode)
+        fd = os.open(target.name, flags, mode, dir_fd=parent_fd)
         destination = os.fdopen(fd, "wb")
         fd = -1
         with destination:
@@ -707,6 +729,15 @@ def _copy_regular(
                 )
             )
             os.fchmod(destination.fileno(), mode)
+            item = os.fstat(destination.fileno())
+            if (
+                not stat.S_ISREG(item.st_mode)
+                or item.st_nlink != 1
+                or item.st_uid != os.getuid()
+                or stat.S_IMODE(item.st_mode) != mode
+            ):
+                _fail()
+            return _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
     except IntegrationInstallError:
         raise
     except (OSError, ValueError):
@@ -714,6 +745,8 @@ def _copy_regular(
     finally:
         if fd >= 0:
             os.close(fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def _read_nofollow(
@@ -1252,12 +1285,18 @@ def _safe_extract_wheel(
     wheel_path: Path,
     destination: Path,
     record_rows: Mapping[str, tuple[str, int]],
+    wheel_parent_identity: _DirectoryIdentity | None = None,
+    wheel_file_identity: _FileIdentity | None = None,
     destination_identity: _DirectoryIdentity | None = None,
 ) -> None:
     pending: list[tuple[str, bytes]] = []
     seen: set[str] = set()
     try:
-        wheel_payload = _read_nofollow(wheel_path)
+        wheel_payload = _read_nofollow(
+            wheel_path,
+            expected_parent_identity=wheel_parent_identity,
+            expected_file_identity=wheel_file_identity,
+        )
         with zipfile.ZipFile(io.BytesIO(wheel_payload), "r") as archive:
             infos = _bounded_wheel_infos(archive)
             for info in infos:
@@ -1938,7 +1977,7 @@ def _install_release(
             _ = package
             staged_wheel = staging / "producer.whl"
             _require_private_dir(staging, staging_identity, False)
-            _copy_regular(
+            staged_wheel_identity = _copy_regular(
                 wheel_path,
                 staged_wheel,
                 source_parent_identity=wheel_identity,
@@ -1964,6 +2003,8 @@ def _install_release(
                 wheel_path=staged_wheel,
                 destination=site_packages,
                 record_rows=record_rows,
+                wheel_parent_identity=staging_identity,
+                wheel_file_identity=staged_wheel_identity,
                 destination_identity=site_packages_identity,
             )
             _require_private_dir(staging, staging_identity, False)
