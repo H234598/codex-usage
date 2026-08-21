@@ -3719,3 +3719,10 @@ Gruppenbits, Bool, String und negative Werte ab.
 `pytest -q tests/test_private_io.py`: 36/36 bestanden. Abhängige
 Konfigurations-, Profil-Layout- und Reaktivierungs-Tests: 235/235 bestanden.
 Modul-Coverage 75%; Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 387: Service-Reload nach Private-I/O-Fix
+
+`codex-usage service enable --format json` nach `58e08da` erfolgreich:
+Service installiert/aktiv, Timer aktiv und geplant. Exit 2 bleibt der bekannte
+Firefox-Playwright-Executable-Fehler der direkten Browser-Konten; Journal zeigt
+keinen neuen Private-I/O-Fehler. Kein Fallback und keine Netzwerkinstallation.
