@@ -2119,3 +2119,13 @@ Beide Parserfamilien akzeptieren jetzt nur echte Zeitstempel, und der
 Katalog-Helper fail-closed bei ungültigen Pool-Iterables.
 `tests/test_usage_limits.py`: 122/122 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 211: State-Deserializer validiert Payload-Objekt
+
+`state.usage_from_dict()` griff bei Nicht-Objekten direkt auf `.get()` zu.
+Direkte Deserializer-Aufrufer bekamen dadurch rohen `AttributeError`; der
+Dateiladepfad konnte den Fehler nur außerhalb des Helpers abfangen. Der
+Deserializer weist solche Payloads jetzt kontrolliert als
+`ValueError("state payload must be an object")` zurück.
+`tests/test_state.py`: 241/241 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.

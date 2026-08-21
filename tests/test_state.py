@@ -106,6 +106,12 @@ def test_usage_state_round_trips_dynamic_main_and_spark_pools():
     assert loaded.usage_resets == usage.usage_resets
 
 
+@pytest.mark.parametrize("payload", [None, [], "invalid", 1, True, object()])
+def test_usage_from_dict_rejects_non_object_payload(payload):
+    with pytest.raises(ValueError, match="state payload must be an object"):
+        usage_from_dict(payload)  # type: ignore[arg-type]
+
+
 def test_usage_state_invalidates_model_pool_without_exhausted_flag():
     usage = AccountUsage(
         account_id="missing-exhausted",

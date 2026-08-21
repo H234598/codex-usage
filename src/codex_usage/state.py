@@ -839,6 +839,8 @@ def _window_expiry_capture(
 
 
 def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
+    if not isinstance(payload, dict):
+        raise ValueError("state payload must be an object")
     raw_five_hour = payload.get("five_hour")
     raw_weekly = payload.get("weekly")
     raw_credits = payload.get("credits")
