@@ -2203,3 +2203,11 @@ Nicht-Mappings bzw. Fremd-Configs vor Validierung auf `.get()` oder
 Container jetzt kontrolliert zurück; einzelne malformed Usage-Werte bleiben
 fail-closed. `tests/test_render.py`: 61/61 bestanden; Mypy für Source und Ruff
 für betroffene Dateien sauber.
+
+## Runde 220: Abschlussverifikation aktueller HEAD
+
+Der vollständige Testlauf nach Scheduler-, Render- und State-Entry-Point-
+Härtung ist grün: `2342 passed, 1 skipped, 1 warning` in 93.77s. Die einzige
+Warnung bleibt externe PyGObject-Deprecation außerhalb des Repositories.
+`mypy src/codex_usage` meldet keine Fehler in 35 Quelldateien; aggregierter
+Ruff über Produktion, Scripts, Launcher und Tests ist sauber.
