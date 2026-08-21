@@ -3398,3 +3398,13 @@ Ruff und `git diff --check` sauber.
 
 Service-Neustart nach `18183fd` ist aktiv (`codex-usage.service`, Exit 0 beim
 Start). Journal enthält im Prüfintervall keine History-/Parser-/Browserfehler.
+
+## Runde 355: Spark-Health-TTL und Persistenz geprüft
+
+`spark_health.py` wurde auf Backend-ID-Validierung, UTC-/DST-Zeitgrenzen,
+Stale-TTL, failed-vs-healthy-Zustände, JSON-/Dateirechte und bounded
+Record-Rotation geprüft. Kein neuer reproduzierbarer Fehler gefunden;
+malformed Records bleiben unbekannt beziehungsweise fail-closed.
+
+`pytest -q tests/test_spark_health.py`: 28/28 bestanden. Mypy für
+`spark_health.py`, Ruff und `git diff --check` sauber.
