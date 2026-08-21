@@ -7158,6 +7158,32 @@ test("short and monthly consumption use independent style targets", () => {
   assert.equal(applet._elementTargetEnabled("alpha", "consumption-monthly", "hover"), false);
 });
 
+test("short and monthly consumption rendering uses their own targets", () => {
+  const applet = makeApplet();
+  applet._styleTargets = {
+    "alpha:14": {panel: false, hover: false, click: true},
+    "alpha:15": {panel: true, hover: false, click: true},
+  };
+  applet._styleSpan = (text) => `<styled>${text}</styled>`;
+  const row = applet._defaultConsumptionRow("alpha");
+  row["show-panel"] = true;
+  row["show-tooltip"] = true;
+
+  const short = applet._consumptionWindowPart({
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 2,
+    coverage: "complete",
+  }, row, "panel", null);
+  const monthly = applet._consumptionWindowPart({
+    limit_window_seconds: 2592000,
+    consumed_percentage_points: 2,
+    coverage: "complete",
+  }, row, "panel", null);
+
+  assert.doesNotMatch(short.markup, /<styled>/);
+  assert.match(monthly.markup, /<styled>/);
+});
+
 test("short and monthly targets keep consumption requests and panel visibility alive", () => {
   for (const [element, limitWindow] of [[14, "short"], [15, "monthly"]]) {
     const applet = makeApplet();

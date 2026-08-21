@@ -3218,3 +3218,10 @@ kurz alte und neue Tabelle gleichzeitig. Das widerspricht der Vorgabe „nur ein
 Tabelle“ und erzeugt unnötige Animation. Der Stack schaltet jetzt ohne Übergang
 auf genau ein sichtbares Kind. Konstruktor-/Selector-Regressionstest prüft
 Transition-Typ und Initialauswahl; fokussierte Python-Suite: 32/32 bestanden.
+
+## Runde 336: 5h-/30d-Rendering getrennt geprüft
+
+Der Runtime-Test deckt zusätzlich ab, dass `consumption-short` und
+`consumption-monthly` bei gleicher Verbrauchszeile unabhängig stylen: ein
+deaktiviertes 5h-Ziel bleibt ungestylt, während ein aktiviertes 30d-Ziel
+Markup erhält. `node --test tests/applet_runtime.test.js`: 395/395 bestanden.
