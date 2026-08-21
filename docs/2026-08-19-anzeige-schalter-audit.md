@@ -3818,3 +3818,14 @@ oder als Fehler gemeldet.
 
 `pytest -q tests/test_identity.py`: 28/28 bestanden; Modul-Coverage 81%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 397: Extractor-Pipeline
+
+`extractor.py` auf Kandidaten-/Text-Iterator-Bounds, JSON-Walk-Tiefe,
+HTML-Hidden-Progress, Fensterpriorisierung, Prozent-/Zählerkonflikte und
+Timestamp-/Zeitzonenfehler geprüft. Keine neue reproduzierbare Fehlfunktion;
+mehrdeutige oder malformed Quellen bleiben verworfen bzw. liefern nur
+unabhängige Reset-Metadaten.
+
+`pytest -q tests/test_extractor.py`: 198/198 bestanden; Modul-Coverage 91%.
+Ruff, Mypy und `git diff --check` sauber.
