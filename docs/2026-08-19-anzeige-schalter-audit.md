@@ -2832,6 +2832,14 @@ jetzt kontrolliert expandiert; unbekannte Home-Namen liefern
 Schreibzugriff. `tests/test_profile_migration.py`: 31/31 fokussierte Tests
 bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
 
+## Runde 291: Vollsuite nach Pfad-Expansion-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2668 bestanden, 1 übersprungen,
+1 Warnung` in 88,75 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
+`git diff --check` sind sauber.
+
 ## Runde 289: Vollsuite nach App-Server-/Bridge-/Scheduler-Härtung
 
 Die Vollsuite bestätigt den aktuellen HEAD: `2667 bestanden, 1 übersprungen,
