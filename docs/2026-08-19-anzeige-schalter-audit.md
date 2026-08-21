@@ -2761,5 +2761,5 @@ fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
 Account-Auth-Pfade als rohes `RuntimeError` entkommen. Beide Varianten liefern
 jetzt `DirectAuthError("auth.json path is invalid")`, sodass der Fetch wie bei
 anderen ungültigen Auth-Pfaden kontrolliert `LOGIN_REQUIRED` meldet.
-`tests/test_direct.py`: 180/180 fokussierte Tests bestanden; Mypy für Source,
+`tests/test_direct.py`: 181/181 fokussierte Tests bestanden; Mypy für Source,
 Ruff und `git diff --check` sauber.
