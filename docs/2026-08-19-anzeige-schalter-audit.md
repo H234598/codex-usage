@@ -4385,3 +4385,14 @@ reproduzierbare Fehlfunktion.
 
 `pytest -q tests/test_routing.py`: 125/125 bestanden; Modul-Coverage 87 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 449: Direct-Auth-Identität und WHAM-Stabilisierung
+
+`direct.py` im Schwerpunkt Auth-Identität/Planbindung und stabilisierte
+WHAM-Samples erneut geprüft: Token-/Claim-Budgets, Identitätswechsel,
+Account-ID-Ambiguität, Redirect-/Host-Grenzen, Reset-/Progressionsquoren,
+Credit-Parsing und Auth-Datei-Eigentum bleiben fail-closed. Keine neue
+reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_direct.py`: 183/183 bestanden; Modul-Coverage 83 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
