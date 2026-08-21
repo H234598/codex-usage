@@ -19,6 +19,7 @@ from codex_usage.scheduler import (
     _block_state,
     _blocked_snapshot_matches_account,
     _fetch_one,
+    _has_unexpired_window_reset_discontinuity,
     _has_usable_core_usage,
     _is_more_conservative_direct_usage,
     _raw_number,
@@ -2123,6 +2124,20 @@ def test_authenticated_stabilization_rejects_unhashable_previous_backend():
     result = _stabilize_authenticated_usage(current, previous, max_age_seconds=300)
 
     assert result is current
+
+
+@pytest.mark.parametrize("malformed", [object(), [], {}])
+def test_reset_discontinuity_guard_rejects_malformed_windows(malformed):
+    captured_at = datetime.now().astimezone()
+
+    assert (
+        _has_unexpired_window_reset_discontinuity(
+            malformed,
+            malformed,
+            reference_at=captured_at,
+        )
+        is False
+    )
 
 
 def test_authenticated_app_server_absolute_reset_is_not_replaced_by_old_value():

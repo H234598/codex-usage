@@ -4362,3 +4362,15 @@ Katalogfehler.
 `pytest -q tests/test_state.py`: 271/271 bestanden; Modul-Coverage 88 %
 (Branch). Aufrufende Scheduler-Suite: 202/202. Ruff, Mypy und
 `git diff --check` sauber.
+
+## Runde 447: Scheduler-Reset-Provenienz
+
+`scheduler.py` auf Refresh-/Fallback-Entscheidungen, Reset-Discontinuity,
+relative versus absolute Reset-Metadaten, Backend-Provenienz und Watchdog-
+Gesundheitsprüfung geprüft. Ein Guard fehlte vor dem bestehenden
+Fail-Closed-`try`: malformed Window-Objekte ohne `reset_at` konnten die
+Stabilisierung mit `AttributeError` verlassen. Zugriff läuft jetzt durch
+denselben Guard; ungültige Fenster autorisieren keine Fallback-Wiederverwendung.
+
+`pytest -q tests/test_scheduler.py`: 205/205 bestanden; Modul-Coverage 84 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.

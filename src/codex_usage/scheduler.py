@@ -695,23 +695,28 @@ def _has_unexpired_window_reset_discontinuity(
     *,
     reference_at: datetime,
 ) -> bool:
-    if (
-        current is None
-        or previous is None
-        or current.reset_at is None
-        or previous.reset_at is None
-    ):
-        return False
     try:
-        if previous.reset_at <= reference_at or current.reset_at <= reference_at:
+        current_reset_at = getattr(current, "reset_at", None)
+        previous_reset_at = getattr(previous, "reset_at", None)
+        if (
+            current is None
+            or previous is None
+            or current_reset_at is None
+            or previous_reset_at is None
+        ):
             return False
-        for window in (previous, current):
+        if previous_reset_at <= reference_at or current_reset_at <= reference_at:
+            return False
+        for window, reset_at in (
+            (previous, previous_reset_at),
+            (current, current_reset_at),
+        ):
             duration = _window_duration_seconds(window)
             if duration is None:
                 duration = WINDOW_DURATIONS.get(_window_kind(window) or "")
             if duration is None:
                 return False
-            if window.reset_at > reference_at + timedelta(
+            if reset_at > reference_at + timedelta(
                 seconds=duration + RESET_FUTURE_SKEW_SECONDS
             ):
                 return False
@@ -725,7 +730,7 @@ def _has_unexpired_window_reset_discontinuity(
         if _uses_relative_reset_time(current) or _uses_relative_reset_time(previous):
             return False
         return (
-            abs((current.reset_at - previous.reset_at).total_seconds())
+            abs((current_reset_at - previous_reset_at).total_seconds())
             > DIRECT_RESET_DISCONTINUITY_SECONDS
         )
     except (AttributeError, OverflowError, TypeError, ValueError):
