@@ -1735,6 +1735,175 @@ def _remove_activation_files(venv_root: Path) -> None:
             os.close(venv_fd)
 
 
+def _find_site_packages(
+    venv_root: Path,
+    venv_identity: _DirectoryIdentity,
+) -> tuple[Path, _DirectoryIdentity]:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    venv_fd = -1
+    lib_fd = -1
+    try:
+        _no_symlink_ancestors(venv_root)
+        venv_fd = os.open(venv_root, flags)
+        venv_item = os.fstat(venv_fd)
+        if (
+            not stat.S_ISDIR(venv_item.st_mode)
+            or venv_item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                venv_item.st_dev,
+                venv_item.st_ino,
+                stat.S_IMODE(venv_item.st_mode),
+            )
+            != venv_identity
+        ):
+            _fail()
+        lib_item: os.stat_result | None = None
+        with os.scandir(venv_fd) as entries:
+            for entry in entries:
+                if entry.name == "lib":
+                    lib_item = entry.stat(follow_symlinks=False)
+                    break
+        if (
+            lib_item is None
+            or not stat.S_ISDIR(lib_item.st_mode)
+            or stat.S_ISLNK(lib_item.st_mode)
+            or lib_item.st_uid != os.getuid()
+        ):
+            _fail()
+        lib_identity = _DirectoryIdentity(
+            lib_item.st_dev,
+            lib_item.st_ino,
+            stat.S_IMODE(lib_item.st_mode),
+        )
+        lib_fd = os.open("lib", flags, dir_fd=venv_fd)
+        opened_lib = os.fstat(lib_fd)
+        if (
+            not stat.S_ISDIR(opened_lib.st_mode)
+            or opened_lib.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                opened_lib.st_dev,
+                opened_lib.st_ino,
+                stat.S_IMODE(opened_lib.st_mode),
+            )
+            != lib_identity
+        ):
+            _fail()
+        candidates: list[tuple[str, _DirectoryIdentity]] = []
+        with os.scandir(lib_fd) as python_entries:
+            for python_entry in python_entries:
+                if not python_entry.name.startswith("python"):
+                    continue
+                python_item = python_entry.stat(follow_symlinks=False)
+                if (
+                    not stat.S_ISDIR(python_item.st_mode)
+                    or stat.S_ISLNK(python_item.st_mode)
+                    or python_item.st_uid != os.getuid()
+                ):
+                    _fail()
+                python_identity = _DirectoryIdentity(
+                    python_item.st_dev,
+                    python_item.st_ino,
+                    stat.S_IMODE(python_item.st_mode),
+                )
+                python_fd = -1
+                try:
+                    python_fd = os.open(
+                        python_entry.name,
+                        flags,
+                        dir_fd=lib_fd,
+                    )
+                    opened_python = os.fstat(python_fd)
+                    if (
+                        not stat.S_ISDIR(opened_python.st_mode)
+                        or opened_python.st_uid != os.getuid()
+                        or _DirectoryIdentity(
+                            opened_python.st_dev,
+                            opened_python.st_ino,
+                            stat.S_IMODE(opened_python.st_mode),
+                        )
+                        != python_identity
+                    ):
+                        _fail()
+                    with os.scandir(python_fd) as site_entries:
+                        for site_entry in site_entries:
+                            if site_entry.name != "site-packages":
+                                continue
+                            site_item = site_entry.stat(follow_symlinks=False)
+                            if (
+                                not stat.S_ISDIR(site_item.st_mode)
+                                or stat.S_ISLNK(site_item.st_mode)
+                                or site_item.st_uid != os.getuid()
+                            ):
+                                _fail()
+                            site_identity = _DirectoryIdentity(
+                                site_item.st_dev,
+                                site_item.st_ino,
+                                stat.S_IMODE(site_item.st_mode),
+                            )
+                            site_fd = -1
+                            try:
+                                site_fd = os.open(
+                                    site_entry.name,
+                                    flags,
+                                    dir_fd=python_fd,
+                                )
+                                opened_site = os.fstat(site_fd)
+                                if (
+                                    not stat.S_ISDIR(opened_site.st_mode)
+                                    or opened_site.st_uid != os.getuid()
+                                    or _DirectoryIdentity(
+                                        opened_site.st_dev,
+                                        opened_site.st_ino,
+                                        stat.S_IMODE(opened_site.st_mode),
+                                    )
+                                    != site_identity
+                                ):
+                                    _fail()
+                                os.fchmod(site_fd, 0o700)
+                                final_site = os.fstat(site_fd)
+                                if (
+                                    not stat.S_ISDIR(final_site.st_mode)
+                                    or final_site.st_uid != os.getuid()
+                                    or stat.S_IMODE(final_site.st_mode) != 0o700
+                                ):
+                                    _fail()
+                                candidates.append(
+                                    (
+                                        python_entry.name,
+                                        _DirectoryIdentity(
+                                            final_site.st_dev,
+                                            final_site.st_ino,
+                                            stat.S_IMODE(final_site.st_mode),
+                                        ),
+                                    )
+                                )
+                            finally:
+                                if site_fd >= 0:
+                                    os.close(site_fd)
+                finally:
+                    if python_fd >= 0:
+                        os.close(python_fd)
+        if not candidates:
+            _fail()
+        python_name, site_identity = sorted(candidates)[0]
+        return venv_root / "lib" / python_name / "site-packages", site_identity
+    except IntegrationInstallError:
+        raise
+    except (OSError, ValueError):
+        _fail()
+    finally:
+        if lib_fd >= 0:
+            os.close(lib_fd)
+        if venv_fd >= 0:
+            os.close(venv_fd)
+
+
 def _write_exclusive(
     path: Path,
     payload: bytes,
@@ -2029,13 +2198,13 @@ def _install_release(
                 with_pip=False,
             ).create(venv_root)
             ensure_private_directory(venv_root, label="integration venv directory")
+            venv_root_identity = _require_private_dir(venv_root, None, False)
             _require_private_dir(staging, staging_identity, False)
             _remove_activation_files(venv_root)
-            site_packages = next(venv_root.glob("lib/python*/site-packages"), None)
-            if site_packages is None:
-                _fail()
-            ensure_private_directory(site_packages, label="integration site-packages")
-            site_packages_identity = _require_private_dir(site_packages, None, False)
+            site_packages, site_packages_identity = _find_site_packages(
+                venv_root,
+                venv_root_identity,
+            )
             _safe_extract_wheel(
                 wheel_path=staged_wheel,
                 destination=site_packages,

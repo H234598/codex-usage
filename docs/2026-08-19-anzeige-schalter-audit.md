@@ -4361,6 +4361,20 @@ Parent-Swap- und Fehler-Injection-Tests aktualisiert. `pytest -q
 tests/test_integration_installer.py`: 125/125 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 483: Venv-Site-Packages per Directory-FD finden
+
+Die Venv-Auflösung nutzte `venv_root.glob("lib/python*/site-packages")` und
+setzte danach den Modus des gefundenen Pfads. Ein Austausch von `python*`
+zwischen Enumeration und Öffnen konnte fremdes `site-packages` auswählen oder
+den Modus eines fremden Pfads ändern. `lib`, Python-Verzeichnis und
+`site-packages` werden jetzt über
+gebundene Directory-FDs gescannt, `stat()`/`fstat()`-Identitäten verglichen und
+`site-packages` direkt am FD auf 700 gesetzt.
+
+Python-Directory-Swap-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 126/126 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

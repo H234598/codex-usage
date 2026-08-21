@@ -456,6 +456,48 @@ def test_install_secures_generated_venv_directories_without_path_chmod(
     assert not site_packages.is_symlink()
 
 
+def test_find_site_packages_rejects_python_directory_swap_before_open(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    venv_root = tmp_path / "venv"
+    lib = venv_root / "lib"
+    python_dir = lib / "python3.14"
+    site_packages = python_dir / "site-packages"
+    venv_root.mkdir(mode=0o700)
+    lib.mkdir(mode=0o755)
+    python_dir.mkdir(mode=0o755)
+    site_packages.mkdir(mode=0o755)
+    venv_root.chmod(0o700)
+    lib.chmod(0o755)
+    python_dir.chmod(0o755)
+    site_packages.chmod(0o755)
+    outside = tmp_path / "outside"
+    (outside / "site-packages").mkdir(mode=0o755, parents=True)
+    outside.chmod(0o755)
+    old_python = lib / "python-old"
+    venv_identity = integration_installer._directory_identity(venv_root)
+    original_open = os.open
+    swapped = False
+
+    def swap_before_python_open(candidate, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if candidate == python_dir.name and dir_fd is not None and not swapped:
+            python_dir.rename(old_python)
+            outside.rename(python_dir)
+            swapped = True
+        if dir_fd is None:
+            return original_open(candidate, flags, mode)
+        return original_open(candidate, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_installer.os, "open", swap_before_python_open)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._find_site_packages(venv_root, venv_identity)
+    assert swapped
+    assert (old_python / "site-packages").is_dir()
+
+
 def test_attestation_requires_exact_integer_schema_version(tmp_path):
     from codex_usage.integration_attestation import (
         IntegrationAttestationUnavailable,
