@@ -1951,6 +1951,10 @@ def _usage_windows(usage: AccountUsage) -> tuple[Any, ...] | None:
 
 
 def load_latest_usages(config: AppConfig, snapshot_dir: Path | None = None) -> list[AccountUsage]:
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
+    if snapshot_dir is not None and not isinstance(snapshot_dir, Path):
+        raise ValueError("snapshot directory is invalid")
     if snapshot_dir is None:
         with account_lock("__all_accounts__"):
             return _load_latest_usages_unlocked(config, snapshot_dir)

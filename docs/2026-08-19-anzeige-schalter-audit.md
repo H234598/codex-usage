@@ -2293,3 +2293,12 @@ Fremdobjekt für `account` führte vor der eigentlichen Verarbeitung mit rohem
 kontrolliert als `ValueError("account is invalid")` zurück.
 `tests/test_bridge.py`: 191/191 bestanden; Mypy für Source und Ruff für die
 betroffenen Dateien sauber.
+
+## Runde 230: Bridge-Latest-Loader validiert Config-/Pfad-Typ
+
+`bridge.load_latest_usages()` griff bei Fremdtypen für Config oder Snapshot-
+Verzeichnis vor dem Laden direkt auf `.accounts` bzw. `.parent` zu. Direkte
+Fehlaufrufe konnten dadurch mit rohem `AttributeError` abbrechen. Der Loader
+weist beide Eingaben jetzt kontrolliert als `ValueError` zurück.
+`tests/test_bridge.py`: 200/200 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.

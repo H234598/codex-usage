@@ -457,6 +457,18 @@ def test_latest_default_cache_uses_shared_account_lock(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("config", [None, [], {}, object()])
+def test_load_latest_usages_rejects_non_config(config):
+    with pytest.raises(ValueError, match="config is invalid"):
+        load_latest_usages(config)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("snapshot_dir", [[], "invalid", 1, True, object()])
+def test_load_latest_usages_rejects_non_path(snapshot_dir):
+    with pytest.raises(ValueError, match="snapshot directory is invalid"):
+        load_latest_usages(AppConfig(accounts=()), snapshot_dir)  # type: ignore[arg-type]
+
+
 def test_usage_from_ingest_payload_extracts_visible_values():
     account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
     usage = usage_from_ingest_payload(
