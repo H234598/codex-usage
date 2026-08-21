@@ -3255,3 +3255,14 @@ Kein reproduzierbarer Parserfehler gefunden. Ein zusätzlicher Fuzz-Pass mit
 
 `pytest -q tests/test_usage_limits.py`: 124/124 bestanden. Coverage für das
 Modul: 91 % Branch-inklusive; Ruff und `git diff --check` sauber.
+
+## Runde 340: Scheduler schützt malformed Account-Authpfade
+
+`_shared_direct_auth_accounts()` rief bei einem nicht-stringartigen
+`Account.auth_json_path` ungefangen `Path(...)` auf. `fetch_all()` brach dadurch
+vor dem per-Account-Fehlerpfad mit `TypeError` ab. Solche Werte erhalten jetzt
+einen isolierten internen Quellen-Schlüssel und laufen kontrolliert in den
+bestehenden `LOGIN_REQUIRED`-/Usage-Fehlerpfad.
+
+Regressionstest ergänzt. `pytest -q tests/test_scheduler.py`: 201/201
+bestanden. Mypy für `scheduler.py`, Ruff und `git diff --check` sauber.

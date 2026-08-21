@@ -286,6 +286,21 @@ def test_fetch_all_rejects_invalid_account_records(accounts):
         fetch_all(AppConfig(accounts=()), accounts)  # type: ignore[arg-type]
 
 
+def test_fetch_all_keeps_malformed_account_auth_path_as_usage_error(monkeypatch):
+    account = Account(
+        id="malformed-auth",
+        label="Malformed auth",
+        profile_dir="/tmp/malformed-auth",
+        auth_json_path=1,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _id: 0)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,), direct=True)
+
+    assert result[0].status == AccountStatus.LOGIN_REQUIRED
+    assert result[0].error == "auth.json path is invalid"
+
+
 @pytest.mark.parametrize("config", [None, [], "invalid", object()])
 def test_fetch_all_rejects_invalid_config(config):
     with pytest.raises(ValueError, match="config is invalid"):

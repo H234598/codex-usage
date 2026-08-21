@@ -356,22 +356,31 @@ def _shared_direct_auth_accounts(
 ) -> frozenset[str]:
     sources: dict[str, list[str]] = {}
     for account in accounts:
-        path = (
-            auth_json_path
-            if auth_json_path is not None
-            else Path(account.auth_json_path)
-            if account.auth_json_path
-            else default_auth_json_path()
-        )
-        try:
-            source_key = str(path.expanduser().resolve(strict=False))
-        except (OSError, TypeError, ValueError):
+        raw_path = account.auth_json_path
+        if (
+            auth_json_path is None
+            and raw_path not in (None, "")
+            and not isinstance(raw_path, str)
+        ):
+            # Keep malformed account records inside per-account error handling.
+            source_key = f"<invalid-auth-json:{account.id}>"
+        else:
+            path = (
+                auth_json_path
+                if auth_json_path is not None
+                else Path(raw_path)
+                if raw_path
+                else default_auth_json_path()
+            )
             try:
-                source_key = str(path.expanduser())
+                source_key = str(path.expanduser().resolve(strict=False))
+            except (OSError, TypeError, ValueError):
+                try:
+                    source_key = str(path.expanduser())
+                except RuntimeError:
+                    source_key = str(path)
             except RuntimeError:
                 source_key = str(path)
-        except RuntimeError:
-            source_key = str(path)
         sources.setdefault(source_key, []).append(account.id)
     return frozenset(
         account_id
