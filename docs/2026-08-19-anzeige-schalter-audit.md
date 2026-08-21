@@ -1859,3 +1859,14 @@ bestanden; Mypy und Ruff für betroffene Dateien sauber.
 oder Dicts konnten Tabellen-Rendering mit `AttributeError` abbrechen. Beide
 Hilfen liefern für Nicht-`LimitWindow` jetzt sicher `-`. `tests/test_render.py`:
 41/41 bestanden; Mypy und Ruff für betroffene Dateien sauber.
+
+## Runde 182: JSON-sicherer Usage-Serializer
+
+`AccountUsage.as_dict()` und die verschachtelten Fenster-/Pool-Serializer
+übernahmen malformed Datums-, Zahlen- und Textfelder ungeprüft. `render_json()`
+konnte dadurch mit `AttributeError` oder `TypeError` abbrechen. Zeitstempel,
+numerische Werte, Texte, Pool-Container und Status-Metadaten werden jetzt
+typisiert normalisiert; ungültige Werte werden verborgen oder als `null`
+ausgegeben. `tests/test_models.py`, `tests/test_render.py`, `tests/test_cli.py`
+und `tests/test_state.py`: 389/389 bestanden; Mypy und Ruff für betroffene
+Dateien sauber.

@@ -362,7 +362,11 @@ class AccountUsage:
             AccountStatus.ERROR,
             AccountStatus.LOGIN_REQUIRED,
         }
-        values_hidden = self.cache_invalidated or terminal_status
+        cache_invalidated = (
+            self.cache_invalidated if isinstance(self.cache_invalidated, bool) else True
+        )
+        stale = self.stale if isinstance(self.stale, bool) else True
+        values_hidden = cache_invalidated or terminal_status
         serialized_models = (
             {
                 pool.key: _pool_to_dict(pool)
@@ -383,9 +387,9 @@ class AccountUsage:
             else UsageResetState(None, False, False).as_dict()
         )
         return {
-            "account": self.account_id,
-            "label": self.label,
-            "captured_at": self.captured_at.isoformat(),
+            "account": _safe_text(self.account_id),
+            "label": _safe_text(self.label),
+            "captured_at": _isoformat(self.captured_at),
             "five_hour": None
             if values_hidden
             else _window_to_dict(self.five_hour),
@@ -394,29 +398,23 @@ class AccountUsage:
             "main": None if values_hidden else _pool_to_dict(self.main),
             "models": serialized_models,
             "status": status.value,
-            "error": self.error,
-            "blocked_until": self.blocked_until.isoformat() if self.blocked_until else None,
-            "blocked_reason": self.blocked_reason,
-            "auth_last_refresh": self.auth_last_refresh.isoformat()
-            if self.auth_last_refresh
-            else None,
-            "auth_access_expires_at": self.auth_access_expires_at.isoformat()
-            if self.auth_access_expires_at
-            else None,
-            "auth_id_expires_at": self.auth_id_expires_at.isoformat()
-            if self.auth_id_expires_at
-            else None,
+            "error": _safe_text(self.error),
+            "blocked_until": _isoformat(self.blocked_until),
+            "blocked_reason": _safe_text(self.blocked_reason),
+            "auth_last_refresh": _isoformat(self.auth_last_refresh),
+            "auth_access_expires_at": _isoformat(self.auth_access_expires_at),
+            "auth_id_expires_at": _isoformat(self.auth_id_expires_at),
             "source_urls": serialized_source_urls,
-            "backend_configured": self.backend_configured,
-            "backend_used": self.backend_used,
-            "backend_user_id": self.backend_user_id,
-            "backend_account_id": self.backend_account_id,
-            "fallback_reason": self.fallback_reason,
-            "values_captured_at": self.values_captured_at.isoformat()
-            if self.values_captured_at and not values_hidden
-            else None,
-            "stale": self.stale or terminal_status,
-            "cache_invalidated": self.cache_invalidated or terminal_status,
+            "backend_configured": _safe_text(self.backend_configured),
+            "backend_used": _safe_text(self.backend_used),
+            "backend_user_id": _safe_text(self.backend_user_id),
+            "backend_account_id": _safe_text(self.backend_account_id),
+            "fallback_reason": _safe_text(self.fallback_reason),
+            "values_captured_at": (
+                _isoformat(self.values_captured_at) if not values_hidden else None
+            ),
+            "stale": stale or terminal_status,
+            "cache_invalidated": cache_invalidated or terminal_status,
             "usage_resets": serialized_usage_resets,
         }
 
@@ -440,35 +438,67 @@ class AccountUsage:
 
 
 def _window_to_dict(window: LimitWindow | None) -> dict[str, Any] | None:
-    if window is None:
+    if not isinstance(window, LimitWindow):
         return None
     return {
-        "name": window.name,
-        "duration_seconds": window.duration_seconds,
-        "used": window.used,
-        "limit": window.limit,
-        "remaining": window.remaining,
-        "percent": window.percent,
-        "reset_at": window.reset_at.isoformat() if window.reset_at else None,
-        "raw": window.raw,
-        "source": window.source,
+        "name": _safe_text(window.name),
+        "duration_seconds": _safe_int(window.duration_seconds),
+        "used": _safe_number(window.used),
+        "limit": _safe_number(window.limit),
+        "remaining": _safe_number(window.remaining),
+        "percent": _safe_number(window.percent),
+        "reset_at": _isoformat(window.reset_at),
+        "raw": _safe_text(window.raw),
+        "source": _safe_text(window.source),
     }
 
 
 def _pool_to_dict(pool: UsagePool | None) -> dict[str, Any] | None:
-    if pool is None:
+    if not isinstance(pool, UsagePool):
         return None
+    windows = pool.windows if isinstance(pool.windows, tuple) else ()
+    availability_sources = (
+        [source for source in pool.availability_sources if isinstance(source, str)]
+        if isinstance(pool.availability_sources, tuple)
+        else []
+    )
+    try:
+        exhausted = pool.exhausted
+    except (AttributeError, TypeError, ValueError):
+        exhausted = True
     return {
-        "key": pool.key,
-        "display_name": pool.display_name,
-        "windows": [_window_to_dict(window) for window in pool.windows],
-        "available": pool.available,
-        "allowed": pool.allowed,
-        "limit_reached": pool.limit_reached,
-        "metered_feature": pool.metered_feature,
-        "availability_sources": list(pool.availability_sources),
-        "exhausted": pool.exhausted,
+        "key": _safe_text(pool.key),
+        "display_name": _safe_text(pool.display_name),
+        "windows": [_window_to_dict(window) for window in windows],
+        "available": pool.available if isinstance(pool.available, bool) else None,
+        "allowed": pool.allowed if isinstance(pool.allowed, (bool, type(None))) else None,
+        "limit_reached": (
+            pool.limit_reached
+            if isinstance(pool.limit_reached, (bool, type(None)))
+            else None
+        ),
+        "metered_feature": _safe_text(pool.metered_feature),
+        "availability_sources": availability_sources,
+        "exhausted": exhausted if isinstance(exhausted, bool) else True,
     }
+
+
+def _isoformat(value: object) -> str | None:
+    return value.isoformat() if isinstance(value, datetime) else None
+
+
+def _safe_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _safe_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _safe_number(value: object) -> int | float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value if _finite_number(value) is not None else None
 
 
 def _finite_number(value: Any) -> float | None:

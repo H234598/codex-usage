@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -66,3 +67,31 @@ def test_account_usage_as_dict_handles_invalid_optional_containers():
         "known": False,
         "redeem_capability": False,
     }
+
+
+def test_account_usage_as_dict_keeps_malformed_window_values_json_safe():
+    malformed = datetime.now(UTC)
+    window = LimitWindow(
+        name=malformed,  # type: ignore[arg-type]
+        used=malformed,  # type: ignore[arg-type]
+        reset_at=[],  # type: ignore[arg-type]
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=[],  # type: ignore[arg-type]
+        five_hour=window,
+        blocked_until={},  # type: ignore[arg-type]
+        auth_last_refresh=[],  # type: ignore[arg-type]
+        auth_access_expires_at={},  # type: ignore[arg-type]
+        auth_id_expires_at="invalid",  # type: ignore[arg-type]
+        values_captured_at=[],  # type: ignore[arg-type]
+    )
+
+    payload = usage.as_dict()
+
+    json.dumps(payload, allow_nan=False)
+    assert payload["captured_at"] is None
+    assert payload["five_hour"]["name"] is None
+    assert payload["five_hour"]["used"] is None
+    assert payload["five_hour"]["reset_at"] is None
