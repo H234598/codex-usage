@@ -241,6 +241,16 @@ def test_consumption_rejects_non_iterable_samples(samples):
         calculate_consumption(samples, amount=1, unit="hours", now=BASE)  # type: ignore[arg-type]
 
 
+def test_consumption_rejects_capture_time_out_of_range_for_lookback():
+    with pytest.raises(ValueError, match="now is out of range"):
+        calculate_consumption(
+            [_sample(0, 1)],
+            amount=1,
+            unit="hours",
+            now=datetime.min.replace(tzinfo=UTC),
+        )
+
+
 def test_consumption_rejects_sample_iterators_over_cap(monkeypatch):
     monkeypatch.setattr(consumption_module, "MAX_CONSUMPTION_SAMPLES", 2)
 

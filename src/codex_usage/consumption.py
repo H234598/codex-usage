@@ -149,7 +149,10 @@ def calculate_consumption(
     baseline_value_seconds = (
         None if baseline_value_minutes is None else baseline_value_minutes * 60
     )
-    start = now - timedelta(seconds=baseline_seconds)
+    try:
+        start = now - timedelta(seconds=baseline_seconds)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("now is out of range") from exc
     baseline = None
     baseline_value = None
     for sample in ordered:

@@ -2596,3 +2596,11 @@ Verwendung. Ein Listenwert brach dadurch roh mit `TypeError` ab. Beide
 Callbacks werden jetzt vor Config-/Profil-I/O als aufrufbar geprüft.
 `tests/test_config.py`: 110/110 bestanden; Mypy für Source und Ruff für die
 betroffene Datei sauber.
+
+## Runde 264: Consumption validiert Zeitbereich vor Lookback-Arithmetik
+
+`consumption.calculate_consumption()` subtrahierte Lookback-Zeit von einem
+aware, aber randständigen `datetime.min` und gab rohen `OverflowError` zurück.
+Der Zeitbereich wird jetzt kontrolliert geprüft und als `ValueError("now is out
+of range")` abgewiesen. `tests/test_consumption.py`: 25/25 bestanden; Mypy für
+Source und Ruff für die betroffenen Dateien sauber.
