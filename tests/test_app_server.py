@@ -23,6 +23,7 @@ from codex_usage.app_server import (
     _auth_email_changed,
     _LineReader,
     _missing_usage_limits_error,
+    _resolve_codex,
     _response_for,
     _send,
     _should_refresh,
@@ -698,6 +699,17 @@ def test_app_server_missing_command_is_compatibility_failure(tmp_path):
 
     with pytest.raises(AppServerUnavailableError):
         fetch_account_usage_app_server(account, codex_command=str(tmp_path / "missing"))
+
+
+@pytest.mark.parametrize("explicit", ["", " ", [], False])
+def test_resolve_codex_rejects_explicit_invalid_values(explicit, tmp_path, monkeypatch):
+    fallback = tmp_path / "codex"
+    fallback.write_text("#!/bin/sh\n", encoding="utf-8")
+    fallback.chmod(0o700)
+    monkeypatch.setattr(app_server_module.shutil, "which", lambda _name: str(fallback))
+
+    with pytest.raises(AppServerUnavailableError, match="codex command is invalid"):
+        _resolve_codex(explicit)
 
 
 def test_app_server_rejects_symlinked_codex_home(tmp_path):

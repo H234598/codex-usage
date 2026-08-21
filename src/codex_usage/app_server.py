@@ -443,9 +443,14 @@ def _with_model_ids(
 
 
 def _resolve_codex(explicit: str | None) -> str:
-    value = explicit or shutil.which("codex")
-    if not value:
-        raise AppServerUnavailableError("codex command was not found")
+    if explicit is None:
+        value = shutil.which("codex")
+        if not value:
+            raise AppServerUnavailableError("codex command was not found")
+    else:
+        if not isinstance(explicit, str) or not explicit or explicit != explicit.strip():
+            raise AppServerUnavailableError("codex command is invalid")
+        value = explicit
     path = Path(value).expanduser()
     if not path.is_file() or not os.access(path, os.X_OK):
         raise AppServerUnavailableError("codex command is not executable")

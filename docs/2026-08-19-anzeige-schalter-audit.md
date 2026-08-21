@@ -1444,3 +1444,15 @@ Mypy und Ruff sauber.
 korrekt; zwei sortierte Account-Schlüssel erhalten explizite String-Casts.
 36 Mypy-Fehler verschwinden ohne Serialisierungslogik zu ändern.
 `tests/test_integration_snapshot.py`: 29/29 bestanden; Mypy und Ruff sauber.
+
+## Runde 129: Expliziter App-Server-Befehl
+
+`app_server._resolve_codex()` behandelte explizite falsy Werte wie `""`,
+`[]` oder `False` als fehlende Option und fiel dadurch still auf den
+PATH-Befehl `codex` zurück. Ein Aufrufer konnte damit trotz explizit
+ungültiger Konfiguration ein anderes Binary starten. Nur `None` aktiviert
+Fallback; alle anderen Werte müssen nichtleere, unveränderte Strings sein.
+Der Regressionstest deckt leeren, whitespace-only und nicht-string Werte ab.
+`tests/test_app_server.py`: 81/81 bestanden; Mypy und Ruff für den
+Produktionscode sauber. Die bestehende E501-Zeile im Testmodul blieb
+unberührt.
