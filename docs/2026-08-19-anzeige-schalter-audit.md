@@ -1689,3 +1689,10 @@ Gleichheit und akzeptierte Bool-/Floatwerte als Version `1`. Gesundheitsdaten
 werden jetzt nur bei exakt eingebautem `int`-Versionstyp geladen; andere
 Versionen ergeben eine leere Historie. `tests/test_health.py`: 14/14 bestanden;
 Mypy und Ruff sauber.
+
+## Runde 160: Gesamtverifikation
+
+Nach den strikten Versions- und Payload-Prüfungen lief die vollständige
+Python-Suite mit **2159 bestanden, 1 übersprungen und 1 externer
+PyGObject-Warnung** in 88,38 s. Die Warnung betrifft die veraltete
+`GLib.unix_signal_add_full`-API außerhalb des Repositories; keine Testfehler.
