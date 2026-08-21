@@ -1122,6 +1122,48 @@ def test_safe_extract_binds_mode_change_to_open_file(tmp_path, monkeypatch):
     assert stat.S_IMODE(outside.lstat().st_mode) == 0o644
 
 
+def test_safe_extract_rejects_parent_symlink_before_target_open(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    wheel = tmp_path / "candidate.whl"
+    destination = tmp_path / "destination"
+    destination.mkdir(mode=0o700)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("codex_usage/ok.py", b"x")
+    parent = destination / "codex_usage"
+    old_parent = destination / "codex_usage-old"
+    target = parent / "ok.py"
+    original_open = os.open
+    swapped = False
+
+    def swap_before_target_open(candidate, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if (
+            (candidate == target or (candidate == "codex_usage" and dir_fd is not None))
+            and not swapped
+        ):
+            parent.rename(old_parent)
+            parent.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        if dir_fd is None:
+            return original_open(candidate, flags, mode)
+        return original_open(candidate, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_installer.os, "open", swap_before_target_open)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._safe_extract_wheel(
+            wheel_path=wheel,
+            destination=destination,
+            record_rows={"codex_usage/ok.py": (hashlib.sha256(b"x").hexdigest(), 1)},
+        )
+
+    assert swapped
+    assert not (outside / "ok.py").exists()
+    assert (old_parent / "ok.py").exists() is False
+
+
 def test_write_exclusive_binds_mode_change_to_open_file(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

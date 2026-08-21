@@ -1249,6 +1249,7 @@ def _safe_extract_wheel(
     wheel_path: Path,
     destination: Path,
     record_rows: Mapping[str, tuple[str, int]],
+    destination_identity: _DirectoryIdentity | None = None,
 ) -> None:
     pending: list[tuple[str, bytes]] = []
     seen: set[str] = set()
@@ -1296,7 +1297,11 @@ def _safe_extract_wheel(
     except (OSError, ValueError, zipfile.BadZipFile, KeyError):
         raise IntegrationInstallError() from None
     try:
-        _require_private_dir(destination, None, False)
+        destination_identity = _require_private_dir(
+            destination,
+            destination_identity,
+            False,
+        )
         for name, _ in pending:
             target = destination / Path(*name.split("/"))
             parent = target.parent
@@ -1305,19 +1310,62 @@ def _safe_extract_wheel(
             _require_private_dir(parent, None, False)
             if target.exists() or target.is_symlink():
                 raise _WheelMemberValidationError("duplicate_member")
-        for name, payload in pending:
-            target = destination / Path(*name.split("/"))
-            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(target, flags, 0o600)
-            try:
-                handle = os.fdopen(fd, "wb")
+        directory_flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            directory_flags |= os.O_DIRECTORY
+        if hasattr(os, "O_NOFOLLOW"):
+            directory_flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            directory_flags |= os.O_CLOEXEC
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(
+            os, "O_NOFOLLOW", 0
+        )
+        destination_fd = -1
+        try:
+            _no_symlink_ancestors(destination)
+            destination_fd = os.open(destination, directory_flags)
+            destination_item = os.fstat(destination_fd)
+            if (
+                not stat.S_ISDIR(destination_item.st_mode)
+                or destination_item.st_uid != os.getuid()
+                or _DirectoryIdentity(
+                    destination_item.st_dev,
+                    destination_item.st_ino,
+                    stat.S_IMODE(destination_item.st_mode),
+                )
+                != destination_identity
+            ):
+                _fail()
+            for name, payload in pending:
+                parent_fd = os.dup(destination_fd)
                 fd = -1
-                with handle:
-                    handle.write(payload)
-                    os.fchmod(handle.fileno(), 0o600)
-            finally:
-                if fd >= 0:
-                    os.close(fd)
+                try:
+                    target_parts = name.split("/")
+                    for part in target_parts[:-1]:
+                        child_fd = os.open(
+                            part,
+                            directory_flags,
+                            dir_fd=parent_fd,
+                        )
+                        os.close(parent_fd)
+                        parent_fd = child_fd
+                    fd = os.open(
+                        target_parts[-1],
+                        file_flags,
+                        0o600,
+                        dir_fd=parent_fd,
+                    )
+                    with os.fdopen(fd, "wb") as handle:
+                        fd = -1
+                        handle.write(payload)
+                        os.fchmod(handle.fileno(), 0o600)
+                finally:
+                    if fd >= 0:
+                        os.close(fd)
+                    os.close(parent_fd)
+        finally:
+            if destination_fd >= 0:
+                os.close(destination_fd)
     except _WheelMemberValidationError:
         raise
     except (OSError, ValueError):
@@ -1784,10 +1832,12 @@ def _install_release(
             if site_packages is None:
                 _fail()
             ensure_private_directory(site_packages, label="integration site-packages")
+            site_packages_identity = _require_private_dir(site_packages, None, False)
             _safe_extract_wheel(
                 wheel_path=staged_wheel,
                 destination=site_packages,
                 record_rows=record_rows,
+                destination_identity=site_packages_identity,
             )
             _require_private_dir(staging, staging_identity, False)
             entrypoint_path = site_packages / "codex_usage" / "integration_entrypoint.py"

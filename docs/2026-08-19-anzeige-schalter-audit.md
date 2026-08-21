@@ -4296,6 +4296,17 @@ Datei-Identität über geöffnete Deskriptoren.
 Datei-Austausch-Regression ergänzt. `pytest -q tests/test_integration_installer.py`:
 120/120 bestanden. Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 478: Wheel-Extraction relativ zu Destination-FD
+
+`_safe_extract_wheel()` nutzte für Ziel-Dateien absolute Pfade mit
+`O_NOFOLLOW`; das schützt keine Symlink-Ancestor-Komponenten. Ein Parent-Swap
+vor `os.open()` konnte außerhalb des Release-Baums schreiben. Extraction
+öffnet `destination` identitätsgebunden und traversiert jede Parent-Komponente
+mit `O_DIRECTORY|O_NOFOLLOW`; Dateien werden per `dir_fd` exklusiv angelegt.
+
+Parent-Symlink-Regression ergänzt. `pytest -q tests/test_integration_installer.py`:
+121/121 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
