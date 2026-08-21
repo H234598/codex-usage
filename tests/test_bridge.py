@@ -5,6 +5,7 @@ import json
 import shutil
 import ssl
 import subprocess
+from dataclasses import replace
 from datetime import datetime, timedelta
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
@@ -395,6 +396,38 @@ def test_bridge_blocks_browser_when_authenticated_timestamp_is_incomparable():
         authenticated,
         300,
     )
+
+
+@pytest.mark.parametrize("field", ["backend_used", "status"])
+def test_bridge_rejects_unhashable_authenticated_fields(field):
+    browser = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        backend_used="browser",
+        backend_user_id="user",
+        backend_account_id="account",
+    )
+    authenticated = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        status=AccountStatus.PARTIAL,
+        backend_used="direct",
+        backend_user_id="user",
+        backend_account_id="account",
+        weekly=LimitWindow(name="weekly", remaining=80),
+    )
+    malformed = replace(authenticated, **{field: []})
+
+    assert _browser_payload_is_covered_by_authenticated_state(
+        AppConfig(accounts=()), browser, malformed
+    ) is False
+    assert _authenticated_snapshot_supersedes_browser_current(
+        browser,
+        malformed,
+        300,
+    ) is False
 
 
 def test_latest_default_cache_uses_shared_account_lock(monkeypatch):

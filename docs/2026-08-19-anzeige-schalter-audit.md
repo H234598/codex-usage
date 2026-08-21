@@ -1633,6 +1633,16 @@ direkt per Set-Mitgliedschaft. Unhashbare Statuswerte konnten den Watchdog mit
 `AccountStatus`-Werte; unhashbare oder fremde Statuswerte werden verworfen.
 `tests/test_scheduler.py`: 167/167 bestanden; Mypy und Ruff sauber.
 
+## Runde 154: Bridge-Status- und Backend-Typen
+
+Die Bridge-Schutzpfade prüften bekannte authentifizierte `backend_used`- und
+`status`-Werte direkt per Set-Mitgliedschaft. Unhashbare Werte konnten dadurch
+`TypeError` auslösen; beide Pfade akzeptieren jetzt nur passende String-/Enum-
+Werte und fallen sonst sicher auf `False` zurück. Die zugehörige State-Prüfung
+weist nur Nicht-String-Nicht-None-Backends zurück und erhält legitime Browser-
+Snapshots ohne Backend-Wert. `tests/test_bridge.py`: 179/179 und
+`tests/test_state.py`: 225/225 bestanden; Mypy und Ruff sauber.
+
 ## Runde 152: Policy-Entscheidungstyp
 
 `cli._policy_decision_exit_code()` prüfte fremde `decision`-Werte direkt per

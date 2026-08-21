@@ -1660,7 +1660,13 @@ def _values_capture_for_expiry(usage: AccountUsage) -> datetime:
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
-    if not isinstance(left.backend_used, str) or not isinstance(right.backend_used, str):
+    if (
+        left.backend_used is not None
+        and not isinstance(left.backend_used, str)
+    ) or (
+        right.backend_used is not None
+        and not isinstance(right.backend_used, str)
+    ):
         return False
     if (
         left.backend_used in AUTHENTICATED_BACKENDS

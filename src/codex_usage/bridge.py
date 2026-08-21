@@ -1652,9 +1652,12 @@ def _browser_payload_is_covered_by_authenticated_state(
     for known_usage in known_usages:
         if known_usage is None:
             continue
-        if known_usage.backend_used not in {"direct", "app-server"}:
+        if (
+            not isinstance(known_usage.backend_used, str)
+            or known_usage.backend_used not in {"direct", "app-server"}
+        ):
             continue
-        if known_usage.status not in {
+        if not isinstance(known_usage.status, AccountStatus) or known_usage.status not in {
             AccountStatus.OK,
             AccountStatus.PARTIAL,
             AccountStatus.BLOCKED,
@@ -1883,9 +1886,12 @@ def _authenticated_snapshot_supersedes_browser_current(
     """Prefer a fresh authoritative authenticated snapshot over browser state."""
     if current.backend_used != "browser":
         return False
-    if snapshot.backend_used not in {"direct", "app-server"}:
+    if (
+        not isinstance(snapshot.backend_used, str)
+        or snapshot.backend_used not in {"direct", "app-server"}
+    ):
         return False
-    if snapshot.status not in {
+    if not isinstance(snapshot.status, AccountStatus) or snapshot.status not in {
         AccountStatus.OK,
         AccountStatus.PARTIAL,
         AccountStatus.BLOCKED,
