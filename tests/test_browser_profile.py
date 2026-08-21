@@ -22,6 +22,8 @@ from codex_usage.browser import (
     _save_probe_payloads,
     diagnose_account,
     fetch_account_usage,
+    login_account,
+    probe_account,
 )
 from codex_usage.config import AppConfig
 from codex_usage.extractor import JsonCandidate
@@ -64,6 +66,38 @@ def test_browser_entrypoints_reject_invalid_timeout_before_profile_creation(
             fetch_account_usage(account, config, timeout_ms=timeout_ms)
         else:
             diagnose_account(account, config, timeout_ms=timeout_ms)
+
+
+@pytest.mark.parametrize("entrypoint", ("login", "fetch", "probe", "diagnose"))
+@pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
+def test_browser_entrypoints_reject_non_account_input(entrypoint, account):
+    config = AppConfig(accounts=())
+
+    with pytest.raises(ValueError, match="account is invalid"):
+        if entrypoint == "login":
+            login_account(account, config)  # type: ignore[arg-type]
+        elif entrypoint == "fetch":
+            fetch_account_usage(account, config)  # type: ignore[arg-type]
+        elif entrypoint == "probe":
+            probe_account(account, config)  # type: ignore[arg-type]
+        else:
+            diagnose_account(account, config)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("entrypoint", ("login", "fetch", "probe", "diagnose"))
+@pytest.mark.parametrize("config", [None, [], "invalid", 1, True, object()])
+def test_browser_entrypoints_reject_non_config_input(entrypoint, config, tmp_path):
+    account = Account(id="work", label="Work", profile_dir=str(tmp_path / "profile"))
+
+    with pytest.raises(ValueError, match="config is invalid"):
+        if entrypoint == "login":
+            login_account(account, config)  # type: ignore[arg-type]
+        elif entrypoint == "fetch":
+            fetch_account_usage(account, config)  # type: ignore[arg-type]
+        elif entrypoint == "probe":
+            probe_account(account, config)  # type: ignore[arg-type]
+        else:
+            diagnose_account(account, config)  # type: ignore[arg-type]
 
 
 def test_combined_page_text_sources_uses_one_html_evaluation() -> None:

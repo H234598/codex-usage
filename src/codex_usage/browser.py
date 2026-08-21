@@ -83,6 +83,10 @@ def _validate_browser_timeout_ms(timeout_ms: object) -> None:
 
 
 def login_account(account: Account, config: AppConfig) -> None:
+    if not isinstance(account, Account):
+        raise ValueError("account is invalid")
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
     profile_dir = _prepare_profile(account)
     with _profile_lock(profile_dir):
         with sync_playwright() as playwright:
@@ -121,6 +125,10 @@ def fetch_account_usage(
     headed: bool = False,
     timeout_ms: int = 45_000,
 ) -> AccountUsage:
+    if not isinstance(account, Account):
+        raise ValueError("account is invalid")
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
     _validate_browser_timeout_ms(timeout_ms)
     captured_at = datetime.now(tz=LOCAL_TZ)
     candidates: list[JsonCandidate] = []
@@ -414,6 +422,10 @@ def probe_account(
     headed: bool = True,
     save_dir: Path | None = None,
 ) -> dict[str, Any]:
+    if not isinstance(account, Account):
+        raise ValueError("account is invalid")
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
     captured_at = datetime.now(tz=LOCAL_TZ)
     candidates: list[JsonCandidate] = []
     candidate_bytes = [0]
@@ -478,6 +490,10 @@ def diagnose_account(
     auth_json_path: Path | None = None,
     timeout_ms: int = 60_000,
 ) -> dict[str, Any]:
+    if not isinstance(account, Account):
+        raise ValueError("account is invalid")
+    if not isinstance(config, AppConfig):
+        raise ValueError("config is invalid")
     _validate_browser_timeout_ms(timeout_ms)
     captured_at = datetime.now(tz=LOCAL_TZ)
     profile_dir = _prepare_profile(account)

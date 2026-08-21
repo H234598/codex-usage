@@ -2274,3 +2274,13 @@ Aufrufe mit rohem `AttributeError` abbrechen. Alle drei APIs weisen solche
 Pfade jetzt kontrolliert als `ValueError("policy path is invalid")` zurück.
 `tests/test_routing.py`: 113/113 bestanden; Mypy für Source und Ruff für
 betroffene Dateien sauber.
+
+## Runde 228: Browser-Entry-Points validieren Account-/Config-Typ
+
+`browser.login_account()`, `fetch_account_usage()`, `probe_account()` und
+`diagnose_account()` griffen bei Fremdtypen vor Browser-/I/O-Aufrufen auf
+Account- oder Config-Felder zu. Fehlaufrufe konnten dadurch mit rohem
+`AttributeError` abbrechen. Alle vier Entry-Points prüfen jetzt beide
+Objekttypen kontrolliert. `tests/test_browser_profile.py` und
+`tests/test_browser_diagnose.py`: 151/151 bestanden; Mypy für Source und Ruff
+für betroffene Dateien sauber.
