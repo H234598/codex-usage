@@ -167,10 +167,19 @@ def _reap_untracked_worker(process: subprocess.Popen[bytes]) -> None:
         return
     except (OSError, subprocess.TimeoutExpired):
         pass
-    try:
-        process.kill()
-    except OSError:
-        pass
+    pid = getattr(process, "pid", None)
+    killed_group = False
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            killed_group = True
+        except (OSError, ValueError):
+            pass
+    if not killed_group:
+        try:
+            process.kill()
+        except OSError:
+            pass
     try:
         process.wait(timeout=PROFILE_JOB_WORKER_REAP_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired):

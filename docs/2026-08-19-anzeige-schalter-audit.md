@@ -1218,3 +1218,11 @@ nicht die Identität der kanonischen Auth. Nach einem Datei-Race konnte damit
 formal private, aber fremde Auth als Erfolg gelten. Postcondition liest und
 vergleicht Backend-ID jetzt; Regression ergänzt. `tests/test_profile_jobs.py`:
 58/58 bestanden; Ruff sauber.
+
+## Runde 102: Profiljob-Workergruppen-Reap
+
+Bei Trackingfehlern killte `_reap_untracked_worker()` nach Timeout nur den
+Worker-Prozess. Da der Worker SIGTERM behandeln kann, blieben gestartete
+Codex-Nachkommen bestehen. Reap sendet jetzt SIGKILL an die eigene
+Prozessgruppe und fällt nur bei fehlender Gruppe auf Parent-Kill zurück.
+Regression ergänzt; `tests/test_profile_jobs.py`: 59/59 bestanden; Ruff sauber.

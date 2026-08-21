@@ -550,6 +550,37 @@ def test_profile_job_untracked_worker_reap_kills_after_wait_timeout():
     assert calls == [("wait", 1), ("kill",), ("wait", 1)]
 
 
+def test_profile_job_untracked_worker_reap_kills_process_group_after_timeout(
+    monkeypatch,
+):
+    calls = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            if len([item for item in calls if item[0] == "wait"]) == 1:
+                raise subprocess.TimeoutExpired(["worker"], timeout)
+
+        def kill(self):
+            calls.append(("kill",))
+
+    monkeypatch.setattr(
+        profile_jobs.os,
+        "killpg",
+        lambda pid, signum: calls.append(("killpg", pid, signum)),
+    )
+
+    profile_jobs._reap_untracked_worker(FakeProcess())
+
+    assert calls == [
+        ("wait", 1),
+        ("killpg", 4321, profile_jobs.signal.SIGKILL),
+        ("wait", 1),
+    ]
+
+
 def test_profile_job_cancel_signals_only_owned_worker(tmp_path, monkeypatch):
     state = tmp_path / "state"
     monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
