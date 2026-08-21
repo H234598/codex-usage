@@ -53,6 +53,16 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 return index
         raise ValueError("dynamic series table is missing " + column_id)
 
+    def detach(self) -> None:
+        listeners = getattr(self.settings, "listeners", None)
+        if not isinstance(listeners, dict):
+            return
+        callbacks = listeners.get(self.key)
+        if not isinstance(callbacks, list):
+            return
+        listener = self._settings_changed_callback
+        callbacks[:] = [callback for callback in callbacks if callback != listener]
+
     def _masterjet_series(self):
         now = time.monotonic()
         if (
@@ -196,3 +206,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
         finally:
             # Keep the base schema columns intact; the next dialog is filtered again.
             self.columns = original_columns
+
+    def destroy(self):
+        self.detach()
+        return super().destroy()

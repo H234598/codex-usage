@@ -5441,3 +5441,16 @@ Zusätzliche Regressionen prüfen Listener-Abmeldung sowie den Rebuild-Pfad bei
 Änderung der Wertfeldanzahl mit erhaltener Zeile. `pytest -q
 tests/test_panel_settings_list.py`: 7/7 bestanden. Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 460: DynamicSeriesList gibt Listener frei
+
+`DynamicSeriesList` registrierte über `JSONSettingsBackend.attach()` einen
+Account-Tabellen-Listener, hielt ihn beim Schließen der Seite aber weiter im
+Settings-Objekt. Wiederholtes Öffnen konnte so alte GTK-Tabellen und Modelle
+festhalten. `detach()` entfernt den gebundenen Callback; `destroy()` ruft es
+vor dem GTK-Teardown auf.
+
+Regressionen prüfen echten Widget-Aufbau, Listener-Abmeldung und die bisher
+ungetestete temporäre Serien-Spaltenfilterung samt Schema-Rücksetzung.
+`pytest -q tests/test_dynamic_series_list.py`: 12/12 bestanden. Ruff,
+Python-Compile und `git diff --check` sauber.

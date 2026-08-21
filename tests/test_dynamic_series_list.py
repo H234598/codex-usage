@@ -10,6 +10,7 @@ sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
 from dynamic_series_list import DynamicSeriesList  # noqa: E402
+from TreeListWidgets import List  # noqa: E402
 
 
 class _SeriesTable:
@@ -35,6 +36,21 @@ class _TreeModelRow:
 
     def __getitem__(self, index):
         return self._values[index]
+
+
+class _Settings:
+    def __init__(self):
+        self.values = {"account-series-settings": []}
+        self.listeners = {}
+
+    def listen(self, key, callback):
+        self.listeners.setdefault(key, []).append(callback)
+
+    def get_value(self, key):
+        return self.values[key]
+
+    def set_value(self, key, value):
+        self.values[key] = value
 
 
 def test_active_owners_require_a_real_boolean_true() -> None:
@@ -189,3 +205,46 @@ def test_column_index_rejects_missing_series_columns() -> None:
         assert str(exc) == "dynamic series table is missing series"
     else:
         raise AssertionError("missing series column was accepted")
+
+
+def test_destroy_detaches_settings_listener() -> None:
+    settings = _Settings()
+    widget = DynamicSeriesList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "series", "title": "Serie", "type": "string"},
+                {"id": "series-active", "title": "Aktiv", "type": "boolean"},
+            ],
+            "show-buttons": False,
+        },
+        "account-series-settings",
+        settings,
+    )
+
+    assert len(settings.listeners["account-series-settings"]) == 1
+    widget.destroy()
+
+    assert settings.listeners["account-series-settings"] == []
+
+
+def test_open_dialog_filters_series_column_and_restores_schema(monkeypatch) -> None:
+    widget = DynamicSeriesList.__new__(DynamicSeriesList)
+    original_columns = [
+        {"id": "account", "title": "Account", "type": "string"},
+        {"id": "series", "title": "Serie", "type": "string"},
+    ]
+    widget.columns = original_columns
+    widget._series_options_for = lambda _info: {"Keine Serie": "", "A": "A"}
+    captured = []
+
+    def fake_open_add_edit_dialog(self, info=None):
+        captured.append((self.columns, info))
+        return ["alpha", "A"]
+
+    monkeypatch.setattr(List, "open_add_edit_dialog", fake_open_add_edit_dialog)
+
+    assert DynamicSeriesList.open_add_edit_dialog(widget, ["alpha", ""]) == ["alpha", "A"]
+    assert widget.columns is original_columns
+    assert captured[0][1] == ["alpha", ""]
+    assert captured[0][0][1]["options"] == {"Keine Serie": "", "A": "A"}
