@@ -46,7 +46,7 @@ def _require_private_directory(path: Path, *, label: str) -> None:
 
 
 def assert_no_symlink_ancestors(path: Path, *, label: str) -> None:
-    raw_path = Path(path)
+    raw_path = _require_path(path, label=label)
     absolute = raw_path if raw_path.is_absolute() else Path.cwd() / raw_path
     current = Path(absolute.anchor)
     for part in absolute.parts[1:]:
@@ -67,7 +67,7 @@ def ensure_private_directory(
     created_paths: list[tuple[Path, int, int]] | None = None,
 ) -> Path:
     """Create private directory path without weakening existing parents."""
-    raw_path = Path(path)
+    raw_path = _require_path(path, label=label)
     assert_no_symlink_ancestors(raw_path, label=label)
     if raw_path.is_symlink():
         raise ValueError(f"{label} must not be a symlink: {raw_path}")
@@ -120,6 +120,7 @@ def read_private_text(
     too_large_label: str | None = None,
     invalid_utf8_label: str | None = None,
 ) -> tuple[str, os.stat_result]:
+    path = _require_path(path, label=regular_label)
     assert_no_symlink_ancestors(path, label=regular_label)
     if path.is_symlink():
         raise ValueError(f"{regular_label} must be a regular file: {path}")
@@ -176,6 +177,7 @@ def write_private_text(
     mode: int = 0o600,
     replace_existing: bool = True,
 ) -> None:
+    path = _require_path(path, label=label)
     assert_no_symlink_ancestors(path, label=label)
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
@@ -281,6 +283,7 @@ def private_path_lock(
     timeout_seconds: int | float = PRIVATE_LOCK_TIMEOUT_SECONDS,
     label: str = "private lock",
 ) -> Iterator[None]:
+    path = _require_path(path, label=label)
     deadline = _lock_deadline(timeout_seconds)
     parent = path.parent
     assert_no_symlink_ancestors(parent, label=label)
@@ -326,3 +329,9 @@ def private_path_lock(
                 pass
     finally:
         os.close(fd)
+
+
+def _require_path(path: object, *, label: str) -> Path:
+    if not isinstance(path, Path):
+        raise ValueError(f"{label} path is invalid")
+    return path

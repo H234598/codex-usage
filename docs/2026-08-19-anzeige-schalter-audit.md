@@ -2382,3 +2382,12 @@ bei Fremd-Accounts. Gemeinsame Guards liefern jetzt kontrolliert
 `DirectAuthError`.
 `tests/test_direct.py`: 173/173 bestanden; Mypy für Source und Ruff für die
 betroffenen Dateien sauber.
+
+## Runde 240: Private-IO-APIs validieren Path-Typ
+
+`private_io.assert_no_symlink_ancestors()`, `ensure_private_directory()`,
+`read_private_text()`, `write_private_text()` und `private_path_lock()`
+übernahmen Fremdtypen bis zu rohen Path-/Attributfehlern. Ein gemeinsamer
+Resolver weist ungültige Pfade jetzt kontrolliert als `ValueError` zurück,
+bevor Sicherheits-I/O beginnt. `tests/test_private_io.py`: 32/32 bestanden;
+Mypy für Source und Ruff für die betroffenen Dateien sauber.

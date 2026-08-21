@@ -10,6 +10,7 @@ from codex_usage.private_io import (
     assert_no_symlink_ancestors,
     ensure_private_directory,
     private_path_lock,
+    read_private_text,
     write_private_text,
 )
 
@@ -43,6 +44,26 @@ def test_private_path_lock_rejects_invalid_timeout_before_creating_lock(
             pass
 
     assert not (tmp_path / "config.toml.lock").exists()
+
+
+@pytest.mark.parametrize("path", [None, [], "invalid", 1, False, object()])
+def test_private_io_rejects_non_path(path):
+    with pytest.raises(ValueError, match="path is invalid"):
+        assert_no_symlink_ancestors(path, label="private")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="path is invalid"):
+        ensure_private_directory(path, label="private")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="path is invalid"):
+        write_private_text(path, "value", label="private")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="path is invalid"):
+        read_private_text(
+            path,  # type: ignore[arg-type]
+            regular_label="private",
+            read_label="private",
+            max_bytes=10,
+        )
+    with pytest.raises(ValueError, match="path is invalid"):
+        with private_path_lock(path, label="private"):  # type: ignore[arg-type]
+            pass
 
 
 def test_ensure_private_directory_secures_all_new_path_components(tmp_path):
