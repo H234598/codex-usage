@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,11 @@ from codex_usage.spark_health import (
 )
 
 NOW = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
 
 
 def test_spark_health_defaults_to_unknown(tmp_path):
@@ -211,6 +216,25 @@ def test_set_spark_health_rejects_invalid_clock(tmp_path, invalid_now):
             path=tmp_path / "health.json",
             now=invalid_now,
         )
+
+
+def test_spark_health_rejects_timezone_callbacks_that_raise(tmp_path):
+    invalid_now = datetime(2026, 7, 16, 4, 0, tzinfo=_RaisingTimezone())
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        set_spark_health(
+            "backend-nufker",
+            "healthy",
+            path=tmp_path / "health.json",
+            now=invalid_now,
+        )
+
+    result = spark_health_status(
+        "backend-nufker",
+        path=tmp_path / "health.json",
+        now=invalid_now,
+    )
+    assert result["reason"] == "invalid_health_clock"
 
 
 @pytest.mark.parametrize(

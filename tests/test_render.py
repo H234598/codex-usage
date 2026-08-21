@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -23,6 +23,11 @@ from codex_usage.render import (
     render_json,
     render_table,
 )
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
 
 
 def test_render_table_contains_values(monkeypatch):
@@ -219,6 +224,17 @@ def test_render_auth_value_localizes_naive_expiry():
     )
 
     assert _auth_value(usage) == "bis 01.01.2099 12:00"
+
+
+def test_render_auth_value_hides_failing_timezone_callback():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 1, 15, tzinfo=ZoneInfo("Europe/Berlin")),
+        auth_access_expires_at=datetime(2099, 1, 1, 12, 0, tzinfo=_RaisingTimezone()),
+    )
+
+    assert _auth_value(usage) == "-"
 
 
 def test_render_table_labels_remaining_percent_windows():

@@ -19,6 +19,7 @@ from codex_usage.state import (
     _is_inferred_inactive_five_hour,
     _localize_datetime,
     _remove_state_transaction_dir,
+    _saved_datetime,
     _snapshot_datetime,
     _snapshot_text,
     _window_duration_matches,
@@ -67,6 +68,14 @@ def test_state_times_with_failing_timezone_callback_use_local_zone(monkeypatch):
     value = datetime(2026, 10, 26, 0, 15, tzinfo=_RaisingTimezone())
 
     assert _localize_datetime(value) == datetime(2026, 10, 26, 0, 15, tzinfo=berlin)
+
+
+def test_saved_state_time_with_failing_timezone_callback_uses_local_zone(monkeypatch):
+    berlin = ZoneInfo("Europe/Berlin")
+    monkeypatch.setattr("codex_usage.state.LOCAL_TZ", berlin)
+    value = datetime(2026, 10, 26, 0, 15, tzinfo=_RaisingTimezone())
+
+    assert _saved_datetime(value) == datetime(2026, 10, 26, 0, 15, tzinfo=berlin)
 
 
 def test_snapshot_text_normalizes_and_bounds_whitespace():

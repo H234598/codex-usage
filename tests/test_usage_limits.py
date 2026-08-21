@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 import pytest
 
@@ -18,6 +18,11 @@ from codex_usage.usage_limits import (
 )
 
 NOW = datetime(2026, 7, 16, 4, 0, tzinfo=LOCAL_TZ)
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
 
 
 @pytest.mark.parametrize("payload", [None, [], "invalid", 42, True])
@@ -71,6 +76,25 @@ def test_wham_parser_drops_overflowing_relative_reset_time():
             }
         },
         captured_at=datetime.max.replace(tzinfo=NOW.tzinfo),
+        source="test",
+    )
+
+    assert main is not None
+    assert main.windows[0].reset_at is None
+
+
+def test_wham_parser_drops_relative_reset_with_failing_timezone_callback():
+    main, _ = parse_wham_usage_pools(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18_000,
+                    "used_percent": 1,
+                    "reset_after_seconds": 60,
+                }
+            }
+        },
+        captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=_RaisingTimezone()),
         source="test",
     )
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import signal
 from contextlib import nullcontext
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -16,6 +16,7 @@ from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow
 from codex_usage.scheduler import (
     _ambiguous_direct_accounts,
     _apply_watchdog_block,
+    _block_state,
     _blocked_snapshot_matches_account,
     _fetch_one,
     _has_usable_core_usage,
@@ -37,6 +38,11 @@ from codex_usage.scheduler import (
 )
 
 
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
+
+
 def _usable_main(*windows, availability_sources=("usage",)):
     return UsagePool(
         key="main",
@@ -44,6 +50,31 @@ def _usable_main(*windows, availability_sources=("usage",)):
         windows=tuple(windows),
         availability_sources=availability_sources,
     )
+
+
+def test_block_state_treats_failing_reset_timezone_as_unknown():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0),
+        main=_usable_main(
+            LimitWindow(
+                name="5h",
+                remaining=0,
+                limit=100,
+                reset_at=datetime(2026, 8, 16, 11, 0, tzinfo=_RaisingTimezone()),
+            )
+        ),
+        status=AccountStatus.OK,
+    )
+
+    blocked_until, reason = _block_state(
+        usage,
+        now=datetime(2026, 8, 16, 10, 0),
+    )
+
+    assert blocked_until is None
+    assert reason == "usage limit reached: 5h; reset time unknown"
 
 
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(

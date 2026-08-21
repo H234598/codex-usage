@@ -3113,3 +3113,66 @@ Die Vollsuite bestätigt den gemeinsamen Stand: `2702 bestanden, 1 übersprungen
 1 Warnung` in 91,78 s. Die Warnung bleibt externe PyGObject-Deprecation
 außerhalb des Repositories. History-, Consumption-, State-, Health- und
 Routing-Zeitgrenzen sind integriert grün.
+
+## Runde 323: Snapshot-Zeitwert nutzt gehärtete State-Lokalisierung
+
+`state._saved_datetime()` prüfte `tzinfo.utcoffset()` beim Snapshot-Schreiben
+ungefangen. Der Helper verwendet jetzt dieselbe sichere Lokalisierung wie
+Expiry-Pfade; fehlerhafte Zeitzonen werden lokalisiert statt roh weitergereicht.
+`tests/test_state.py`: 265/265 fokussierte Tests bestanden; Ruff und Mypy sauber.
+
+## Runde 324: Usage-Limit-Reset schützt fehlerhafte Capture-Zeitzonen
+
+`usage_limits._reset_at()` fing Fehler aus `captured_at.astimezone()` nur mit
+Standardtypen. Relative Resetwerte mit fehlerhaftem `tzinfo` werden jetzt
+kontrolliert verworfen. `tests/test_usage_limits.py`: 124/124 fokussierte Tests
+bestanden; Ruff und Mypy sauber.
+
+## Runde 325: Spark-Health-Clock schützt fehlerhafte Zeitzonen
+
+Spark-Health-Status und -Schreiben fangen jetzt beliebige Fehler aus
+`utcoffset()`/`astimezone()` der optionalen Clock. Ergebnis bleibt
+`invalid_health_clock` beziehungsweise kontrolliertes `ValueError`.
+`tests/test_spark_health.py`: 28/28 fokussierte Tests bestanden; Ruff und Mypy
+sauber.
+
+## Runde 326: Scheduler-Blockstatus verwirft fehlerhafte Reset-Zeitzonen
+
+`scheduler._block_state()` ließ einen fehlerhaften Reset-Zeitzonen-Callback
+entkommen. Der Reset gilt jetzt als unbekannt und blockiert mit erklärtem
+Fail-Closed-Grund. `tests/test_scheduler.py`: 200/200 fokussierte Tests
+bestanden; Ruff und Mypy sauber.
+
+## Runde 327: Render-Authwert schützt fehlerhafte Ablauf-Zeitzonen
+
+`render._auth_value()` fängt Fehler aus `expiry.utcoffset()` jetzt vollständig;
+ungültige Auth-Abläufe bleiben als `-` verborgen. `tests/test_render.py`:
+63/63 fokussierte Tests bestanden; Ruff und Mypy sauber.
+
+## Runde 328: Extractor-Zeitparser fail-closed bei fehlerhaften Zeitzonen
+
+Extractor-Parser und relative Resetberechnung fangen jetzt beliebige Fehler aus
+Capture-Zeitzonen; `_display_timezone()` nutzt bei fehlerhaftem Offset lokale
+Zone, und Parser geben `None` zurück. `tests/test_extractor.py`: 198/198
+fokussierte Tests bestanden; Ruff und Mypy sauber.
+
+## Runde 329: Integration-Snapshot verwirft fehlerhafte UTC-Zeitwerte
+
+`integration_snapshot._utc_text()` normalisiert Fehler aus `utcoffset()` und
+`astimezone()` jetzt zu `IntegrationInvalidSource`, statt Callback-Fehler nach
+außen zu geben. `tests/test_integration_snapshot.py`: 49/49 fokussierte Tests
+bestanden; Ruff und Mypy sauber.
+
+## Runde 330: Auth-Migrationsplan schützt fehlerhafte Erstellungszeitzonen
+
+`profile_migration._validate_migration_plan()` normalisiert beliebige Fehler
+aus der `created_at`-Zeitzone zu `ValueError("migration plan is invalid")`.
+`tests/test_profile_migration.py`: 33/33 fokussierte Tests bestanden; Ruff und
+Mypy sauber.
+
+## Runde 331: Vollsuite nach Zeit-/Zeitzonen-Boundary-Sweep
+
+Die Vollsuite bestätigt den gemeinsamen Stand: `2710 bestanden, 1 übersprungen,
+1 Warnung` in 92,74 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. Snapshot-, Usage-Limit-, Spark-Health-, Scheduler-,
+Render-, Extractor-, Integration- und Migrations-Zeitpfade sind integriert grün.

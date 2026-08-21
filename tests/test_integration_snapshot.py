@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 
 import pytest
@@ -15,6 +15,11 @@ FIXTURES = Path(__file__).parent / "fixtures" / "integration_snapshot"
 CAPTURED_ALPHA = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
 GENERATED = datetime(2026, 8, 15, 10, 5, tzinfo=UTC)
 RESET = datetime(2026, 8, 15, 15, 0, tzinfo=UTC)
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
 
 
 def test_cost_window_contract_matches_history_limit_and_producer_coverages():
@@ -62,6 +67,13 @@ def test_schema1_projection_rejects_malformed_generated_timestamp(value):
 
     with pytest.raises(IntegrationInvalidSource):
         build_schema1_document((), generated_at=value)  # type: ignore[arg-type]
+
+
+def test_schema1_projection_rejects_timezone_callbacks_that_raise():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, _utc_text
+
+    with pytest.raises(IntegrationInvalidSource):
+        _utc_text(datetime(2026, 8, 15, 10, 0, tzinfo=_RaisingTimezone()))
 
 
 @pytest.mark.parametrize("value", [None, [], {}, "invalid", 1, True])

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -20,6 +20,11 @@ from codex_usage.extractor import (
     extract_windows,
     load_json_candidate,
 )
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
 
 
 def test_numeric_coercion_rejects_integer_overflow_without_raising():
@@ -261,6 +266,12 @@ def test_parse_time_today_or_next_uses_next_day_dst_offset(monkeypatch):
     assert _parse_time_today_or_next("00:15", captured_at) == datetime(
         2026, 10, 26, 0, 15, tzinfo=berlin
     )
+
+
+def test_parse_time_today_or_next_rejects_failing_timezone_callback():
+    captured_at = datetime(2026, 10, 25, 23, 30, tzinfo=_RaisingTimezone())
+
+    assert _parse_time_today_or_next("00:15", captured_at) is None
 
 
 def test_parse_time_today_or_next_rejects_unrepresentable_next_day():

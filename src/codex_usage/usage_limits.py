@@ -542,7 +542,7 @@ def _reset_at(
         return None
     try:
         return captured_at.astimezone(LOCAL_TZ) + timedelta(seconds=after)
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return None
 
 

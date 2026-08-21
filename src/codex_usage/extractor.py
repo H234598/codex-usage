@@ -1856,7 +1856,7 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
             timestamp /= 1000
         try:
             return datetime.fromtimestamp(timestamp, tz=_display_timezone(captured_at))
-        except (OSError, OverflowError, ValueError):
+        except Exception:
             return None
     if not isinstance(value, str):
         return None
@@ -1877,7 +1877,7 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=display_timezone)
         return parsed.astimezone(display_timezone)
-    except (OSError, OverflowError, ValueError):
+    except Exception:
         return None
 
 
@@ -1889,7 +1889,7 @@ def _relative_reset_at(seconds: float | None, captured_at: datetime) -> datetime
             return captured_at + timedelta(seconds=seconds)
         target = captured_at.astimezone(UTC) + timedelta(seconds=seconds)
         return target.astimezone(_display_timezone(captured_at))
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return None
 
 
@@ -1910,7 +1910,7 @@ def _parse_time_today_or_next(raw: str, captured_at: datetime) -> datetime | Non
         if parsed < local_capture:
             parsed += timedelta(days=1)
         return parsed
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return None
 
 
@@ -1920,7 +1920,11 @@ def _display_timezone(captured_at: datetime):
         return None
     if isinstance(timezone, ZoneInfo):
         return timezone
-    if captured_at.utcoffset() == timedelta(0):
+    try:
+        offset = captured_at.utcoffset()
+    except Exception:
+        return LOCAL_TZ
+    if offset == timedelta(0):
         return timezone
     return LOCAL_TZ
 

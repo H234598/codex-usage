@@ -113,7 +113,7 @@ def _utc_text(value: datetime) -> str:
         if value.tzinfo is None or value.utcoffset() is None:
             _invalid()
         return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
-    except (AttributeError, OverflowError, TypeError, ValueError):
+    except Exception:
         _invalid()
 
 

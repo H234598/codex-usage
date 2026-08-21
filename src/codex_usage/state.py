@@ -2059,9 +2059,7 @@ def _snapshot_datetime(value: Any) -> datetime:
 def _saved_datetime(value: Any) -> datetime:
     if not isinstance(value, datetime):
         raise ValueError("captured_at must be a datetime")
-    if value.tzinfo is None or value.utcoffset() is None:
-        return value.replace(tzinfo=LOCAL_TZ)
-    return value
+    return _localize_datetime(value)
 
 
 def _snapshot_text(value: Any, *, limit: int) -> str:

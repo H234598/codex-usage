@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,11 @@ from codex_usage.profile_migration import (
     plan_auth_migration,
     rollback_auth_migration,
 )
+
+
+class _RaisingTimezone(tzinfo):
+    def utcoffset(self, _value):
+        raise RuntimeError("synthetic timezone marker")
 
 
 def _account(tmp_path: Path, auth: Path | None = None) -> Account:
@@ -53,6 +58,17 @@ def test_auth_migration_rejects_unrepresentable_created_at(tmp_path):
         migration_id="m-test",
         items=(),
         created_at=datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+    )
+
+    with pytest.raises(ValueError, match="migration plan"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+
+def test_auth_migration_rejects_timezone_callbacks_that_raise(tmp_path):
+    plan = AuthMigrationPlan(
+        migration_id="m-test",
+        items=(),
+        created_at=datetime(2026, 8, 16, 10, 0, tzinfo=_RaisingTimezone()),
     )
 
     with pytest.raises(ValueError, match="migration plan"):

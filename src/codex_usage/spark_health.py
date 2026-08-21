@@ -67,7 +67,7 @@ def spark_health_status(
         return _unknown_health("invalid_spark_health_record")
     try:
         age = (checked_at.astimezone(UTC) - timestamp.astimezone(UTC)).total_seconds()
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return _unknown_health("invalid_spark_health_record")
     if age < -300 or age > max_age_seconds:
         return {
@@ -103,7 +103,7 @@ def set_spark_health(
     _prepare_health_directory(health_path.parent)
     try:
         checked_at = current_time.astimezone(UTC).isoformat()
-    except (OverflowError, TypeError, ValueError) as exc:
+    except Exception as exc:
         raise ValueError("spark health timestamp is out of range") from exc
     record = {
         "state": state,
@@ -202,7 +202,7 @@ def _aware_datetime(value: Any) -> bool:
         return False
     try:
         return value.utcoffset() is not None
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return False
 
 

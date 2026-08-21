@@ -1631,7 +1631,7 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
         try:
             reset_timezone = reset_at.tzinfo
             reset_offset = reset_at.utcoffset()
-        except (AttributeError, OverflowError, TypeError, ValueError):
+        except Exception:
             reset_timezone = None
             reset_offset = None
         window_name = getattr(window, "name", None)

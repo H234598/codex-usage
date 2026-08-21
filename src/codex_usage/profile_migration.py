@@ -348,7 +348,7 @@ def _validate_migration_plan(plan: AuthMigrationPlan) -> None:
         if plan.created_at.tzinfo is None or plan.created_at.utcoffset() is None:
             raise ValueError("migration plan is invalid")
         plan.created_at.astimezone(UTC)
-    except (AttributeError, OverflowError, TypeError, ValueError) as exc:
+    except Exception as exc:
         raise ValueError("migration plan is invalid") from exc
     if not isinstance(plan.items, tuple) or len(plan.items) > MAX_MIGRATION_ITEMS:
         raise ValueError("migration plan is invalid")

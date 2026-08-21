@@ -537,7 +537,7 @@ def _auth_value(usage: AccountUsage | None) -> str:
         if expiry <= datetime.now(tz=LOCAL_TZ):
             return f"abgelaufen {stamp}"
         return f"bis {stamp}"
-    except (AttributeError, OverflowError, TypeError, ValueError):
+    except Exception:
         return "-"
 
 
