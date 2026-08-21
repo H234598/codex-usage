@@ -39,7 +39,7 @@ class ConsumptionWindow:
 
 
 def consumption_lookback_seconds(amount: int, unit: str) -> int:
-    if unit not in _UNIT_SECONDS:
+    if not isinstance(unit, str) or unit not in _UNIT_SECONDS:
         raise ValueError("unit must be minutes, hours or days")
     if (
         isinstance(amount, bool)

@@ -1075,3 +1075,10 @@ ergänzt; `tests/test_state.py`: 217/217 bestanden; Ruff sauber.
 `account`-Werten auf. Integerwerte leakten dadurch `TypeError`; ungültige
 Accountwerte werden jetzt wie andere nicht vertrauenswürdige Labels verworfen.
 Regression ergänzt; `tests/test_health.py`: 11/11 bestanden; Ruff sauber.
+
+## Runde 84: Consumption-Unit-Typprüfung
+
+`consumption.consumption_lookback_seconds()` prüfte `unit` per
+Dictionary-Mitgliedschaft ohne Stringprüfung. Unhashbare Werte wie Listen
+erzeugten dadurch `TypeError`; sie werden jetzt als ungültige Einheit mit
+`ValueError` abgewiesen. `tests/test_consumption.py`: 19/19 bestanden.

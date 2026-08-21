@@ -208,6 +208,12 @@ def test_consumption_rejects_invalid_period():
         calculate_consumption([], amount=1, unit="weeks", now=BASE)
 
 
+@pytest.mark.parametrize("unit", [None, [], {}])
+def test_consumption_rejects_non_string_period(unit):
+    with pytest.raises(ValueError, match="unit"):
+        calculate_consumption([], amount=1, unit=unit, now=BASE)
+
+
 def test_consumption_rejects_sample_iterators_over_cap(monkeypatch):
     monkeypatch.setattr(consumption_module, "MAX_CONSUMPTION_SAMPLES", 2)
 
