@@ -4450,6 +4450,17 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 491: Profile-Job-Reaping mit strikter PID-Grenze
+
+`profile_jobs._reap_untracked_worker()` behandelte `bool` wegen Python-
+Integer-Vererbung als gültige PID. Ein malformed Prozessobjekt konnte damit
+`os.killpg(True, SIGKILL)` statt des sicheren Prozess-Fallbacks auslösen. Die
+PID-Prüfung weist Boolesche Werte jetzt wie die übrigen Manifest-/Statuspfade
+ab; bei `pid=True` wird nur `process.kill()` verwendet.
+
+Regression ergänzt. `pytest -q tests/test_profile_jobs.py`: 83/83 bestanden.
+Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 490: Opt-in-Leistenfilter für erschöpfte Langlimits
 
 Die Leiste kann jetzt optional einen Account ausblenden, sobald dessen

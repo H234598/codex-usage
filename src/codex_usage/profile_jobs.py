@@ -172,7 +172,7 @@ def _reap_untracked_worker(process: subprocess.Popen[bytes]) -> None:
         pass
     pid = getattr(process, "pid", None)
     killed_group = False
-    if isinstance(pid, int) and pid > 0:
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
         try:
             os.killpg(pid, signal.SIGKILL)
             killed_group = True
