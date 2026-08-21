@@ -1257,3 +1257,11 @@ Regressionen. `tests/test_config.py`: 99/99 bestanden; Ruff sauber.
 Subprozess gelangen. Help-Probe erhält jetzt nur minimale Locale-/Pfad-/XDG-
 Variablen plus `CODEX_HOME`; Regression ergänzt. `tests/test_config.py`:
 100/100 bestanden; Ruff sauber.
+
+## Runde 107: Test-Home-Auth-Hardlinks
+
+`_integrate_test_home_auth()` verschob reguläre Quellen ohne Link-/Rechte-
+Prüfung. Hardlink-Quelle erzeugte dadurch Ziel mit `st_nlink > 1`, das Direct-
+Usage später verwirft; Alias blieb bestehen. Quelle verlangt jetzt eigenen
+Link, User-Eigentum und private Rechte; Regression ergänzt. `tests/test_config.py`:
+101/101 bestanden; Ruff sauber.

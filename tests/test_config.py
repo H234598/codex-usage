@@ -59,6 +59,7 @@ def test_test_home_moves_auth_and_initializes_file_store(tmp_path, monkeypatch):
     source = tmp_path / "incoming" / "auth.json"
     source.parent.mkdir()
     source.write_text('{"tokens": {}}\n', encoding="utf-8")
+    source.chmod(0o600)
 
     _, account = add_or_update_account(
         "test-account",
@@ -101,6 +102,29 @@ def test_test_home_help_probe_does_not_forward_api_keys(tmp_path, monkeypatch):
     assert "OPENAI_API_KEY" not in calls[0][1]["env"]
 
 
+def test_test_home_rejects_hardlinked_auth_source(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(config_module.subprocess, "run", lambda *_args, **_kwargs: None)
+    source = tmp_path / "incoming" / "auth.json"
+    source.parent.mkdir()
+    source.write_text('{"tokens": {}}\n', encoding="utf-8")
+    source.chmod(0o600)
+    alias = source.with_name("auth-alias.json")
+    os.link(source, alias)
+
+    with pytest.raises(ValueError, match="hard-linked"):
+        add_or_update_account(
+            "test-account",
+            auth_json_path=str(source),
+            test_home=True,
+            path=tmp_path / "config.toml",
+        )
+
+    assert source.exists()
+    assert alias.exists()
+
+
 def test_test_home_state_cleanup_failure_restores_auth_and_profile(
     tmp_path, monkeypatch
 ):
@@ -110,6 +134,7 @@ def test_test_home_state_cleanup_failure_restores_auth_and_profile(
     source = tmp_path / "incoming" / "auth.json"
     source.parent.mkdir()
     source.write_text('{"tokens": {}}\n', encoding="utf-8")
+    source.chmod(0o600)
     config_path = tmp_path / "config.toml"
 
     def fail_cleanup(*_args):

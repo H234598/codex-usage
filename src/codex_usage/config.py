@@ -609,6 +609,11 @@ def _integrate_test_home_auth(source: Path, target: Path) -> None:
     assert_no_symlink_ancestors(source, label="test auth source")
     if source.is_symlink() or not source.is_file():
         raise ValueError("test auth source must be a regular file")
+    source_stat = source.stat()
+    if source_stat.st_nlink != 1:
+        raise ValueError("test auth source must not be hard-linked")
+    if source_stat.st_uid != os.getuid() or source_stat.st_mode & 0o077:
+        raise ValueError("test auth source must be a private user-owned file")
     if target.exists() or target.is_symlink():
         raise ValueError(f"test auth target already exists: {target}")
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
