@@ -56,6 +56,11 @@ def test_help_group_builder_covers_gui_pages_and_format_copies() -> None:
     titles = {group["title"] for group in groups}
     assert "Hilfe" not in titles
     assert {"Einstellungen", "Formatierungen", "Accounts"}.issubset(titles)
+    settings_group = next(group for group in groups if group["title"] == "Einstellungen")
+    settings_entries = [
+        entry for section in settings_group["sections"] for entry in section["entries"]
+    ]
+    assert "Spalten im Leisten-Editor" in {entry["title"] for entry in settings_entries}
 
     format_group = next(group for group in groups if group["title"] == "Formatierungen")
     entries = [entry for section in format_group["sections"] for entry in section["entries"]]
@@ -118,7 +123,7 @@ def test_help_page_defers_field_widgets_until_entry_expands() -> None:
     widget = HelpPage({}, "help-content", SimpleNamespace(settings=_schema()))
     try:
         expanders = list(_expanders(widget))
-        assert len(expanders) == 54
+        assert len(expanders) == 55
         initial_count = _widget_count(widget)
         assert initial_count < 300
         assert all(expander.get_child() is None for expander in expanders)

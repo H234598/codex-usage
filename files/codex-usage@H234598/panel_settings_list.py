@@ -4,16 +4,20 @@
 from __future__ import annotations
 
 import copy
+from gettext import gettext as _
 
 import gi
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend  # noqa: E402
-from TreeListWidgets import VARIABLE_TYPE_MAP, List  # noqa: E402
+from TreeListWidgets import VARIABLE_TYPE_MAP, List, list_edit_factory  # noqa: E402
 
 _DEFAULT_COUNT = 20
 _MAX_COUNT = 64
+_DEFAULT_EDIT_COLUMNS = 3
+_MIN_EDIT_COLUMNS = 2
+_MAX_EDIT_COLUMNS = 5
 
 _SOURCE_OPTIONS = {
     "Aus": 0,
@@ -80,6 +84,19 @@ def panel_value_count(value: object) -> int:
     return count if 1 <= count <= _MAX_COUNT else _DEFAULT_COUNT
 
 
+def panel_edit_columns(value: object) -> int:
+    """Return bounded editor grid columns; malformed settings use three."""
+    try:
+        count = int(value) if not isinstance(value, bool) else 0
+    except (TypeError, ValueError, OverflowError):
+        return _DEFAULT_EDIT_COLUMNS
+    return (
+        count
+        if _MIN_EDIT_COLUMNS <= count <= _MAX_EDIT_COLUMNS
+        else _DEFAULT_EDIT_COLUMNS
+    )
+
+
 def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[dict[str, object]]:
     """Expand legacy slot columns to requested count without mutating schema."""
     columns = copy.deepcopy(base_columns)
@@ -131,6 +148,78 @@ class PanelSettingsList(List, JSONSettingsBackend):
             return panel_value_count(self.settings.get_value("panel-value-count"))
         except (AttributeError, KeyError, TypeError, ValueError):
             return _DEFAULT_COUNT
+
+    def _read_edit_columns(self) -> int:
+        try:
+            return panel_edit_columns(self.settings.get_value("panel-edit-columns"))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return _DEFAULT_EDIT_COLUMNS
+
+    def open_add_edit_dialog(self, info=None):
+        """Edit one account row in a bounded, multi-column scrolled grid."""
+        title = _("Add new entry") if info is None else _("Edit entry")
+        dialog = Gtk.Dialog(
+            title,
+            self.get_toplevel(),
+            Gtk.DialogFlags.MODAL,
+            (
+                Gtk.STOCK_CANCEL,
+                Gtk.ResponseType.CANCEL,
+                Gtk.STOCK_OK,
+                Gtk.ResponseType.OK,
+            ),
+        )
+
+        content_area = dialog.get_content_area()
+        content_area.set_margin_right(30)
+        content_area.set_margin_left(30)
+        content_area.set_margin_top(20)
+        content_area.set_margin_bottom(20)
+
+        frame = Gtk.Frame()
+        frame.set_shadow_type(Gtk.ShadowType.IN)
+        frame.get_style_context().add_class("view")
+        content_area.add(frame)
+
+        scrollbox = Gtk.ScrolledWindow()
+        scrollbox.set_size_request(-1, 420)
+        scrollbox.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        frame.add(scrollbox)
+
+        grid = Gtk.Grid()
+        grid.set_column_spacing(18)
+        grid.set_row_spacing(8)
+        grid.set_border_width(12)
+        grid.set_column_homogeneous(True)
+        scrollbox.add(grid)
+
+        widgets = []
+        edit_columns = self._read_edit_columns()
+        for index, column_definition in enumerate(self.columns):
+            widget = list_edit_factory(column_definition)
+            widgets.append(widget)
+
+            settings_box = Gtk.ListBox()
+            settings_box.set_selection_mode(Gtk.SelectionMode.NONE)
+            settings_box.set_hexpand(True)
+            settings_box.add(widget)
+            grid.attach(settings_box, index % edit_columns, index // edit_columns, 1, 1)
+
+            if info is not None and info[index] is not None:
+                widget.set_widget_value(info[index])
+            elif "default" in column_definition:
+                widget.set_widget_value(column_definition["default"])
+
+        content_area.show_all()
+        response = dialog.run()
+
+        if response == Gtk.ResponseType.OK:
+            values = [widget.get_widget_value() for widget in widgets]
+            dialog.destroy()
+            return values
+
+        dialog.destroy()
+        return None
 
     def _on_count_changed(self, *_args) -> None:
         columns = panel_columns(self._base_columns, self._read_count())

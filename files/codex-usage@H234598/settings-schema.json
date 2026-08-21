@@ -124,6 +124,7 @@
       "keys": [
         "account-panel-settings",
         "panel-value-count",
+        "panel-edit-columns",
         "panel-account-separator",
         "panel-percent-source",
         "hide-5h-when-long-limit-exhausted",
@@ -412,6 +413,18 @@
     "description": "Anzahl der Wertfelder in der Leiste",
     "tooltip": "Freitextzahl von 1 bis 64. Standard: 20. Jede Wertspalte kann pro Account einzeln angeordnet werden.",
     "default": "20"
+  },
+  "panel-edit-columns": {
+    "type": "combobox",
+    "description": "Spalten im Leisten-Editor",
+    "tooltip": "Beim Doppelklick auf einen Leisten-Eintrag werden die Felder in 2, 3, 4 oder 5 Spalten angeordnet. Die Einstellung begrenzt nur die Dialoghöhe; Daten, Reihenfolge und Speichern bleiben unverändert. Standard: 3 Spalten.",
+    "options": {
+      "2 Spalten": 2,
+      "3 Spalten": 3,
+      "4 Spalten": 4,
+      "5 Spalten": 5
+    },
+    "default": 3
   },
   "account-consumption-settings-heading": {
     "type": "label",

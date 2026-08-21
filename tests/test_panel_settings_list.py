@@ -8,7 +8,13 @@ sys.path.insert(0, str(ROOT / "files" / "codex-usage@H234598"))
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
-from panel_settings_list import panel_columns, panel_value_count
+from panel_settings_list import (  # noqa: E402
+    Gtk,
+    PanelSettingsList,
+    panel_columns,
+    panel_edit_columns,
+    panel_value_count,
+)
 
 
 def test_panel_value_count_defaults_and_bounds() -> None:
@@ -16,6 +22,16 @@ def test_panel_value_count_defaults_and_bounds() -> None:
     assert panel_value_count("64") == 64
     assert panel_value_count("0") == 20
     assert panel_value_count("not-a-number") == 20
+
+
+def test_panel_edit_columns_defaults_and_bounds() -> None:
+    assert panel_edit_columns("2") == 2
+    assert panel_edit_columns(3) == 3
+    assert panel_edit_columns("5") == 5
+    assert panel_edit_columns("1") == 3
+    assert panel_edit_columns("6") == 3
+    assert panel_edit_columns("not-a-number") == 3
+    assert panel_edit_columns(True) == 3
 
 
 def test_panel_columns_expand_legacy_schema_without_mutation() -> None:
@@ -29,3 +45,91 @@ def test_panel_columns_expand_legacy_schema_without_mutation() -> None:
     assert [column["id"] for column in columns][-1] == "slot20"
     assert base[-1]["id"] == "slot1"
     assert columns[-1]["options"]["Abrufweg"] == 17
+
+
+class _Dialog:
+    last = None
+    response = None
+
+    def __init__(self, *_args, **_kwargs):
+        self.content_area = Gtk.Box()
+        self.__class__.last = self
+
+    def get_content_area(self):
+        return self.content_area
+
+    def run(self):
+        return self.response or Gtk.ResponseType.CANCEL
+
+    def destroy(self):
+        pass
+
+
+class _Settings:
+    def __init__(self, edit_columns):
+        self.values = {
+            "account-panel-settings": [],
+            "panel-value-count": "20",
+            "panel-edit-columns": edit_columns,
+        }
+
+    def listen(self, *_args):
+        pass
+
+    def get_value(self, key):
+        return self.values[key]
+
+    def set_value(self, key, value):
+        self.values[key] = value
+
+
+def test_panel_editor_places_fields_in_selected_grid_columns(monkeypatch) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    info = {
+        "columns": [
+            {"id": f"field{index}", "title": f"Feld {index}", "type": "string"}
+            for index in range(7)
+        ],
+        "show-buttons": False,
+    }
+    panel = PanelSettingsList(info, "account-panel-settings", _Settings(3))
+
+    panel.open_add_edit_dialog([None for _ in panel.columns])
+
+    dialog = _Dialog.last
+    frame = dialog.content_area.get_children()[0]
+    scrolled = frame.get_child()
+    grid = scrolled.get_child().get_child()
+    assert isinstance(grid, Gtk.Grid)
+    assert scrolled.get_size_request()[1] == 420
+    assert grid.get_child_at(0, 0) is not None
+    assert grid.get_child_at(1, 0) is not None
+    assert grid.get_child_at(2, 0) is not None
+    assert grid.get_child_at(0, 1) is not None
+    assert grid.get_child_at(1, 1) is not None
+    assert grid.get_child_at(2, 1) is not None
+    assert grid.get_child_at(0, 2) is not None
+    assert grid.get_child_at(1, 2) is not None
+    assert grid.get_child_at(3, 0) is None
+    panel.destroy()
+
+
+def test_panel_editor_returns_edited_values(monkeypatch) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    _Dialog.response = Gtk.ResponseType.OK
+    info = {
+        "columns": [
+            {"id": "first", "title": "Erstes Feld", "type": "string"},
+            {"id": "second", "title": "Zweites Feld", "type": "string"},
+        ],
+        "show-buttons": False,
+    }
+    panel = PanelSettingsList(info, "account-panel-settings", _Settings(3))
+    try:
+        values = panel.open_add_edit_dialog(
+            ["alpha", "beta"] + [None] * (len(panel.columns) - 2)
+        )
+        assert values[:2] == ["alpha", "beta"]
+    finally:
+        _Dialog.response = None
+        panel.destroy()

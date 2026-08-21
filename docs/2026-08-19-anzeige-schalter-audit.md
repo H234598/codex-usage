@@ -5325,3 +5325,16 @@ Regressionen:
 
 - `pytest -q tests/test_forecast_table_selector.py tests/test_format_table_selector.py tests/test_help_page.py tests/test_applet.py`: 41/41 bestanden.
 - Ruff, Python-Compile, JSON-Parse und `git diff --check` sauber.
+
+## Runde 452: Leisten-Editor nebeneinander
+
+Der Leisten-Editor verwendete bisher den Cinnamon-Standarddialog mit einem
+Feld pro Zeile. Bei vielen Wertfeldern wurde der Dialog dadurch höher als der
+Monitor. `PanelSettingsList` verwendet jetzt für Doppelklick und Bearbeiten
+einen begrenzten, vertikal scrollbaren GTK-Grid. Die Einstellung `Spalten im
+Leisten-Editor` liegt auf der Seite Einstellungen unter Leiste, erlaubt 2, 3,
+4 oder 5 Spalten und hat Default 3. Der Grid ändert nur die Anordnung; die
+bestehenden Zeilen, Schlüssel, Reihenfolge und Speicherwerte bleiben gleich.
+
+Die Hilfe beschreibt die neue Einstellung. Tests prüfen ungültige Werte,
+Grenzen, echte Grid-Positionen und den Rückgabepfad geänderter Felder.
