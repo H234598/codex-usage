@@ -4116,3 +4116,14 @@ aber jetzt auf User-Owner, genau einen Link und private Modi.
 
 `pytest -q tests/test_bridge.py`: 259/259 bestanden; Modul-Coverage 83 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 424: Account-Lock erneut geprüft
+
+`account_lock.py` auf ID-/Timeout-Validierung vor Seiteneffekten,
+private Lock-Verzeichnisse, `O_NOFOLLOW`, User-Owner, Single-Link-Dateien,
+Nonblocking-Contention, Deadline und sichere Freigabe geprüft. Keine neue
+reproduzierbare Fehlfunktion; bestehende Lockdateien werden vor Nutzung
+gesichert und fehlerhafte Pfade kontrolliert abgewiesen.
+
+`pytest -q tests/test_account_lock.py`: 15/15 bestanden; Modul-Coverage 84 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
