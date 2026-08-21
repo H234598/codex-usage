@@ -3949,3 +3949,14 @@ auf den validierten Capture-Zeitpunkt zurück; der State bleibt fail-closed.
 
 `pytest -q tests/test_state.py`: 267/267 bestanden; Modul-Coverage 88 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 410: Direct-Auth- und WHAM-Pipeline
+
+`direct.py` auf Auth-Datei-/JWT-Parsing, Identitäts- und Planbindung,
+Redirect-/Host-Grenzen, HTTP-Status-/Content-Type-/Body-Budgets,
+Mehrfachantwort-Stabilisierung sowie Credit-/Fensterparser geprüft. Keine
+neue reproduzierbare Fehlfunktion; fremde Identitäten, instabile oder
+malformed Antworten und übergroße Inhalte bleiben fail-closed.
+
+`pytest -q tests/test_direct.py`: 183/183 bestanden; Modul-Coverage 83 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
