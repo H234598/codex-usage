@@ -147,12 +147,14 @@ def _has_backend_fallback_proof(usage: AccountUsage) -> bool:
         or usage.backend_used != "direct"
     ):
         return False
-    if usage.fallback_reason in KNOWN_FALLBACK_REASONS:
+    fallback_reason = usage.fallback_reason
+    if not isinstance(fallback_reason, str):
+        return False
+    if fallback_reason in KNOWN_FALLBACK_REASONS:
         return True
     return bool(
-        isinstance(usage.fallback_reason, str)
-        and usage.fallback_reason.startswith(APP_SERVER_FALLBACK_REASON_PREFIX)
-        and usage.fallback_reason[len(APP_SERVER_FALLBACK_REASON_PREFIX) :]
+        fallback_reason.startswith(APP_SERVER_FALLBACK_REASON_PREFIX)
+        and fallback_reason[len(APP_SERVER_FALLBACK_REASON_PREFIX) :]
         in KNOWN_APP_SERVER_UNAVAILABLE_DETAILS
     )
 

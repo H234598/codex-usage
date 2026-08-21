@@ -759,7 +759,12 @@ def test_backend_provenance_accepts_explicit_direct_fallback_from_app_server():
 
 @pytest.mark.parametrize(
     "fallback_reason",
-    ("arbitrary fallback text", "app-server unavailable: forged"),
+    (
+        "arbitrary fallback text",
+        "app-server unavailable: forged",
+        [],
+        {},
+    ),
 )
 def test_backend_provenance_rejects_arbitrary_app_server_fallback_reason(
     fallback_reason,

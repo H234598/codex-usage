@@ -1566,3 +1566,11 @@ Backend-Wert konnten dadurch `TypeError` statt eines ungültigen Ergebnisses
 auslösen. Beide Felder werden jetzt vor der Mitgliedschaft als Strings geprüft;
 ungültige Provenienz liefert sauber `False`. `tests/test_cli.py`: 106/106
 bestanden; Mypy und Ruff für Quelle und Test sauber.
+
+## Runde 145: Fallback-Provenienz-Typprüfung
+
+`state._has_backend_fallback_proof()` prüfte den Fallback-Grund direkt per
+Frozenset-Mitgliedschaft. Untrusted `AccountUsage`-Objekte mit Liste oder Dict
+als `fallback_reason` konnten dadurch `TypeError` auslösen. Der Wert wird jetzt
+vor allen String-/Set-Operationen geprüft; ungültige Gründe liefern sauber
+`False`. `tests/test_state.py`: 220/220 bestanden; Mypy und Ruff sauber.
