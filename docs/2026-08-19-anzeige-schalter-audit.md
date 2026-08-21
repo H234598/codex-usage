@@ -4138,3 +4138,10 @@ malformed Zeitwerte, Datenbanken und Samples bleiben fail-closed.
 
 `pytest -q tests/test_history.py tests/test_history_cli.py`: 81/81 bestanden;
 Modul-Coverage 82 % (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 426: Vollsuite nach Audit-Fixes
+
+Die Vollsuite bestätigt den aktuellen Branch nach Terminal-, Reactivation-,
+Profile-, Bridge- und GUI-Audit-Fixes: `2785 bestanden, 1 übersprungen,
+3 Warnungen` in 94,93 s. Warnungen bleiben externe GTK-/PyGObject-
+Deprecations; keine Test- oder Integrationsregression.
