@@ -4424,6 +4424,19 @@ Extraction-Identitätsassertion ergänzt. `pytest -q
 tests/test_integration_installer.py`: 128/128 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 488: Attestation-Tree-Hash per Child-FD
+
+`integration_attestation._release_tree_rows()` sammelte `DirEntry`-Namen,
+führte danach Pfad-`lstat()` aus und las Dateien erneut über Pfade. Ein
+Directory-Swap konnte so einen fremden Baum hashen. Tree-Walk öffnet Root und
+alle Kinder jetzt mit `O_DIRECTORY|O_NOFOLLOW` bzw. `O_NOFOLLOW`, vergleicht
+`stat()`/`fstat()`-Inodes und liest Dateien aus dem gebundenen FD; offene
+Deskriptoren bleiben begrenzt auf die bereits gebundene Entry-Obergrenze.
+
+Child-Directory-Swap-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 129/129 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

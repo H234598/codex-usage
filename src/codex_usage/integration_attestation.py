@@ -138,58 +138,138 @@ def _contained(path: Path, root: Path) -> None:
 
 
 def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
-    root_stat = release_dir.lstat()
-    if not stat.S_ISDIR(root_stat.st_mode) or release_dir.is_symlink():
-        raise _unavailable()
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    root_fd = -1
+    try:
+        root_fd = os.open(release_dir, directory_flags)
+        root_stat = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+            raise _unavailable()
+    except (OSError, ValueError):
+        raise _unavailable() from None
     rows: list[bytes] = []
     entries_seen = 1
     file_bytes = 0
-
-    def walk(path: Path, relative: str, item: os.stat_result) -> None:
-        nonlocal entries_seen, file_bytes
-        mode = stat.S_IMODE(item.st_mode)
-        if stat.S_ISDIR(item.st_mode):
-            rows.append(f"D {relative}\0{mode:04o}\n".encode())
+    stack: list[tuple[int, str, os.stat_result]] = [(root_fd, ".", root_stat)]
+    root_fd = -1
+    try:
+        while stack:
+            directory_fd, relative, item = stack.pop()
             try:
-                with os.scandir(path) as entries:
-                    children = []
-                    for entry in entries:
-                        if entries_seen >= MAX_RELEASE_TREE_ENTRIES:
-                            raise _unavailable()
-                        entries_seen += 1
-                        children.append(entry)
-                    children.sort(key=lambda entry: entry.name)
-                for entry in children:
-                    name = entry.name
-                    if not name or name in {".", ".."} or "\\" in name:
+                mode = stat.S_IMODE(item.st_mode)
+                if stat.S_ISDIR(item.st_mode):
+                    rows.append(f"D {relative}\0{mode:04o}\n".encode())
+                    children: list[tuple[str, int, os.stat_result]] = []
+                    try:
+                        with os.scandir(directory_fd) as entries:
+                            for entry in entries:
+                                if entries_seen >= MAX_RELEASE_TREE_ENTRIES:
+                                    raise _unavailable()
+                                entries_seen += 1
+                                name = entry.name
+                                if not name or name in {".", ".."} or "\\" in name:
+                                    raise _unavailable()
+                                child_item = entry.stat(follow_symlinks=False)
+                                if stat.S_ISLNK(child_item.st_mode) or not (
+                                    stat.S_ISDIR(child_item.st_mode)
+                                    or stat.S_ISREG(child_item.st_mode)
+                                ):
+                                    raise _unavailable()
+                                child_flags = (
+                                    directory_flags
+                                    if stat.S_ISDIR(child_item.st_mode)
+                                    else file_flags
+                                )
+                                child_fd = -1
+                                try:
+                                    child_fd = os.open(
+                                        name,
+                                        child_flags,
+                                        dir_fd=directory_fd,
+                                    )
+                                    opened_item = os.fstat(child_fd)
+                                    if (
+                                        stat.S_IFMT(opened_item.st_mode)
+                                        != stat.S_IFMT(child_item.st_mode)
+                                        or opened_item.st_dev != child_item.st_dev
+                                        or opened_item.st_ino != child_item.st_ino
+                                    ):
+                                        raise _unavailable()
+                                    children.append((name, child_fd, opened_item))
+                                    child_fd = -1
+                                finally:
+                                    if child_fd >= 0:
+                                        os.close(child_fd)
+                        children.sort(key=lambda child: child[0], reverse=True)
+                        stack.extend(
+                            (
+                                child_fd,
+                                f"{relative}/{name}",
+                                child_item,
+                            )
+                            for name, child_fd, child_item in children
+                        )
+                        children.clear()
+                    finally:
+                        for _, child_fd, _ in children:
+                            os.close(child_fd)
+                    continue
+                if stat.S_ISREG(item.st_mode):
+                    if item.st_nlink != 1:
                         raise _unavailable()
-                    child = path / name
-                    child_stat = child.lstat()
-                    walk(child, f"{relative}/{name}", child_stat)
-            except (OSError, ValueError):
-                raise _unavailable() from None
-            return
-        if stat.S_ISREG(item.st_mode):
-            if item.st_nlink != 1:
+                    if item.st_size > MAX_ATTESTATION_FILE_BYTES:
+                        raise _unavailable()
+                    if file_bytes + item.st_size > MAX_RELEASE_TREE_BYTES:
+                        raise _unavailable()
+                    file_fd = directory_fd
+                    directory_fd = -1
+                    payload = _read_nofollow_fd(file_fd)
+                    file_bytes += len(payload)
+                    if file_bytes > MAX_RELEASE_TREE_BYTES:
+                        raise _unavailable()
+                    rows.append(
+                        f"F {relative}\0{mode:04o}\0{len(payload)}\0".encode()
+                        + _sha256_bytes(payload).encode("ascii")
+                        + b"\n"
+                    )
+                    continue
                 raise _unavailable()
-            if item.st_size > MAX_ATTESTATION_FILE_BYTES:
-                raise _unavailable()
-            if file_bytes + item.st_size > MAX_RELEASE_TREE_BYTES:
-                raise _unavailable()
-            payload = _read_nofollow_bytes(path)
-            file_bytes += len(payload)
-            if file_bytes > MAX_RELEASE_TREE_BYTES:
-                raise _unavailable()
-            rows.append(
-                f"F {relative}\0{mode:04o}\0{len(payload)}\0".encode()
-                + _sha256_bytes(payload).encode("ascii")
-                + b"\n"
-            )
-            return
-        raise _unavailable()
+            finally:
+                if directory_fd >= 0:
+                    os.close(directory_fd)
+        return rows
+    except (OSError, ValueError):
+        raise _unavailable() from None
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+        for directory_fd, _, _ in stack:
+            os.close(directory_fd)
 
-    walk(release_dir, ".", root_stat)
-    return rows
+
+def _read_nofollow_fd(fd: int) -> bytes:
+    try:
+        item = os.fstat(fd)
+        if (
+            not stat.S_ISREG(item.st_mode)
+            or item.st_nlink != 1
+            or item.st_uid != os.getuid()
+            or item.st_size > MAX_ATTESTATION_FILE_BYTES
+        ):
+            raise _unavailable()
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            payload = handle.read(MAX_ATTESTATION_FILE_BYTES + 1)
+            if len(payload) > MAX_ATTESTATION_FILE_BYTES:
+                raise _unavailable()
+            return payload
+    except (OSError, ValueError):
+        raise _unavailable() from None
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def _read_nofollow_bytes(path: Path) -> bytes:

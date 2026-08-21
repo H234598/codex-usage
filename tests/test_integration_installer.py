@@ -1628,6 +1628,45 @@ def test_attestation_reader_rechecks_private_mode_after_open(tmp_path, monkeypat
         integration_attestation._file_bytes(path, mode=0o600)
 
 
+def test_attestation_tree_rejects_child_directory_swap_before_open(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_attestation
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    nested = release / "nested"
+    nested.mkdir(mode=0o700)
+    payload = nested / "payload"
+    payload.write_bytes(b"owned")
+    payload.chmod(0o600)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    foreign = outside / "foreign"
+    foreign.write_bytes(b"foreign")
+    foreign.chmod(0o600)
+    old_nested = tmp_path / "nested-old"
+    original_open = os.open
+    swapped = False
+
+    def swap_before_child_open(candidate, flags, *args, dir_fd=None):
+        nonlocal swapped
+        if candidate == "nested" and dir_fd is not None and not swapped:
+            nested.rename(old_nested)
+            outside.rename(nested)
+            swapped = True
+        if dir_fd is None:
+            return original_open(candidate, flags, *args)
+        return original_open(candidate, flags, *args, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_attestation.os, "open", swap_before_child_open)
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation._release_tree_sha256(release_dir=release)
+    assert swapped
+    assert (old_nested / "payload").read_bytes() == b"owned"
+    assert not (old_nested / "foreign").exists()
+
+
 def test_attestation_tree_rejects_aggregate_bytes_limit(tmp_path, monkeypatch):
     from codex_usage import integration_attestation
 
