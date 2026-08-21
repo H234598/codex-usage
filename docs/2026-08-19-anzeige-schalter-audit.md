@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 517: Canonical-Auth-JSON validiert
+
+Canonical-Items übersprangen bisher die Strict-JSON-/Objektprüfung, die für
+zu migrierende Quellen bereits gilt. Korrupte oder zu große vorhandene
+`auth.json` konnten deshalb als gültiges Canonical-Item im Manifest landen.
+Canonical-Klassifizierung und direkter Apply lesen und validieren die Datei
+jetzt ebenfalls; Fehler bleiben generisch und fail-closed.
+
+Regressionen für Plan und Apply mit malformed Canonical-Auth ergänzt.
+`pytest -q tests/test_profile_migration.py`: 64/64 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 516: Canonical-Auth-Datei auf Privatheit geprüft
 
 Canonical-Items wurden bisher im Apply nur ins Manifest übernommen; eine

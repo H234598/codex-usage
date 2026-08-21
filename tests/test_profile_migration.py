@@ -454,6 +454,43 @@ def test_auth_migration_apply_rejects_non_private_canonical_target(tmp_path):
     assert not (tmp_path / "migration" / "manifest.json").exists()
 
 
+def test_auth_migration_plan_rejects_malformed_canonical_target(tmp_path):
+    profile = tmp_path / "profile"
+    target = profile / "codex-home" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("not-json", encoding="utf-8")
+    target.chmod(0o600)
+
+    plan = plan_auth_migration((_account(tmp_path, target),))
+
+    assert plan.items[0].status == "conflict"
+    assert plan.items[0].reason == "canonical auth target is invalid"
+
+
+def test_auth_migration_apply_rejects_malformed_canonical_target(tmp_path):
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("not-json", encoding="utf-8")
+    target.chmod(0o600)
+    plan = AuthMigrationPlan(
+        migration_id="m-test",
+        items=(
+            AuthMigrationItem(
+                account_id="alpha",
+                source=target,
+                target=target,
+                status="canonical",
+            ),
+        ),
+        created_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match="canonical auth target is invalid"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+    assert not (tmp_path / "migration" / "manifest.json").exists()
+
+
 def test_auth_migration_apply_and_rollback_keep_source_and_never_return_secret(tmp_path):
     source = tmp_path / "auth.json"
     source.write_text('{"tokens":{"access_token":"secret"}}', encoding="utf-8")

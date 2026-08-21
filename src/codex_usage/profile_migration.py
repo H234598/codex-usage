@@ -301,6 +301,17 @@ def _classify_source(source: Path | None, target: Path) -> tuple[str, str | None
             or target_stat.st_mode & 0o077
         ):
             return "conflict", "canonical auth target is not private"
+        try:
+            text, _ = read_private_text(
+                source,
+                regular_label="canonical auth target",
+                read_label="canonical auth target",
+                max_bytes=MAX_AUTH_BYTES,
+                too_large_label="canonical auth target",
+            )
+            _validate_auth_json(text)
+        except ValueError:
+            return "conflict", "canonical auth target is invalid"
         return "canonical", None
     if not source.is_file():
         return "missing", "auth source does not exist"
