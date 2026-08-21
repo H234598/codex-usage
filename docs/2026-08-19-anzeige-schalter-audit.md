@@ -4437,6 +4437,19 @@ Child-Directory-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 129/129 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 489: Attestation-Dateilesen per Parent-FD
+
+`integration_attestation._file_bytes()` und `_read_nofollow_bytes()` prüften
+Dateien per Pfad und öffneten sie danach erneut. Parent-Swap konnte damit
+fremde Bytes in Manifest-/RECORD-Prüfungen einbringen. Beide Leser öffnen
+Parent mit `O_DIRECTORY|O_NOFOLLOW`, vergleichen Parent-Inode und Datei-Inode
+gegen die erste Prüfung und lesen erst aus dem gebundenen Datei-FD;
+`_record_rows()` reicht seine Datei-Identität weiter.
+
+Datei-Parent-Swap-Regression ergänzt. `pytest -q
+tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,

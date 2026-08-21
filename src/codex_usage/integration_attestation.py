@@ -74,18 +74,36 @@ def _private_directory(path: Path, *, mode: int = 0o700) -> os.stat_result:
 
 
 def _file_bytes(path: Path, *, mode: int) -> bytes:
-    item = _private_regular(path, mode=mode)
-    if item.st_size > MAX_ATTESTATION_FILE_BYTES:
+    initial_item = _private_regular(path, mode=mode)
+    if initial_item.st_size > MAX_ATTESTATION_FILE_BYTES:
         raise _unavailable()
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = -1
+    parent_fd = -1
     try:
-        fd = os.open(path, flags)
+        parent_item = path.parent.lstat()
+        if not stat.S_ISDIR(parent_item.st_mode) or parent_item.st_uid != os.getuid():
+            raise _unavailable()
+        parent_fd = os.open(path.parent, directory_flags)
+        opened_parent = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(opened_parent.st_mode)
+            or opened_parent.st_uid != os.getuid()
+            or opened_parent.st_dev != parent_item.st_dev
+            or opened_parent.st_ino != parent_item.st_ino
+        ):
+            raise _unavailable()
+        fd = os.open(path.name, file_flags, dir_fd=parent_fd)
         item = os.fstat(fd)
         if (
             not stat.S_ISREG(item.st_mode)
             or item.st_nlink != 1
             or item.st_uid != os.getuid()
             or stat.S_IMODE(item.st_mode) != mode
+            or item.st_dev != initial_item.st_dev
+            or item.st_ino != initial_item.st_ino
         ):
             raise _unavailable()
         if item.st_size > MAX_ATTESTATION_FILE_BYTES:
@@ -99,8 +117,10 @@ def _file_bytes(path: Path, *, mode: int) -> bytes:
     except (OSError, ValueError):
         raise _unavailable() from None
     finally:
-        if "fd" in locals() and fd >= 0:
+        if fd >= 0:
             os.close(fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def _sha256_bytes(payload: bytes) -> str:
@@ -272,16 +292,45 @@ def _read_nofollow_fd(fd: int) -> bytes:
             os.close(fd)
 
 
-def _read_nofollow_bytes(path: Path) -> bytes:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+def _read_nofollow_bytes(
+    path: Path,
+    *,
+    expected_file_identity: os.stat_result | None = None,
+) -> bytes:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     fd = -1
+    parent_fd = -1
     try:
-        fd = os.open(path, flags)
+        parent_item = path.parent.lstat()
+        if not stat.S_ISDIR(parent_item.st_mode) or parent_item.st_uid != os.getuid():
+            raise _unavailable()
+        parent_fd = os.open(path.parent, directory_flags)
+        opened_parent = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(opened_parent.st_mode)
+            or opened_parent.st_uid != os.getuid()
+            or opened_parent.st_dev != parent_item.st_dev
+            or opened_parent.st_ino != parent_item.st_ino
+        ):
+            raise _unavailable()
+        fd = os.open(path.name, file_flags, dir_fd=parent_fd)
         item = os.fstat(fd)
         if (
             not stat.S_ISREG(item.st_mode)
             or item.st_nlink != 1
+            or item.st_uid != os.getuid()
             or item.st_size > MAX_ATTESTATION_FILE_BYTES
+            or (
+                expected_file_identity is not None
+                and (
+                    item.st_dev != expected_file_identity.st_dev
+                    or item.st_ino != expected_file_identity.st_ino
+                    or stat.S_IMODE(item.st_mode)
+                    != stat.S_IMODE(expected_file_identity.st_mode)
+                )
+            )
         ):
             raise _unavailable()
         with os.fdopen(fd, "rb") as handle:
@@ -295,6 +344,8 @@ def _read_nofollow_bytes(path: Path) -> bytes:
     finally:
         if fd >= 0:
             os.close(fd)
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def _release_tree_sha256(*, release_dir: Path) -> str:
@@ -375,7 +426,10 @@ def _record_rows(record_path: Path, release_dir: Path) -> dict[str, tuple[str, i
             target = site_packages / relative_text
             _contained(target, release_dir)
             item = _private_regular(target, mode=0o600)
-            target_payload = _read_nofollow_bytes(target)
+            target_payload = _read_nofollow_bytes(
+                target,
+                expected_file_identity=item,
+            )
             if digest or size_text:
                 if not digest or not size_text or not size_text.isdecimal():
                     raise _unavailable()

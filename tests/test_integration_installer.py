@@ -1615,17 +1615,57 @@ def test_attestation_reader_rechecks_private_mode_after_open(tmp_path, monkeypat
     original_open = integration_attestation.os.open
     swapped = False
 
-    def swap_mode_before_open(candidate, flags, *args):
+    def swap_mode_before_open(candidate, flags, *args, **kwargs):
         nonlocal swapped
-        if candidate == path and not swapped:
+        if (
+            (
+                candidate == path
+                or (candidate == path.name and kwargs.get("dir_fd") is not None)
+            )
+            and not swapped
+        ):
             swapped = True
             path.chmod(0o644)
-        return original_open(candidate, flags, *args)
+        return original_open(candidate, flags, *args, **kwargs)
 
     monkeypatch.setattr(integration_attestation.os, "open", swap_mode_before_open)
 
     with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
         integration_attestation._file_bytes(path, mode=0o600)
+
+
+def test_attestation_reader_binds_file_to_parent_descriptor(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    path = parent / "payload"
+    path.write_bytes(b"owned")
+    path.chmod(0o600)
+    old_parent = tmp_path / "parent-old"
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    foreign = outside / "payload"
+    foreign.write_bytes(b"foreign")
+    foreign.chmod(0o600)
+    original_open = os.open
+    swapped = False
+
+    def swap_before_target_open(candidate, flags, *args, dir_fd=None):
+        nonlocal swapped
+        if candidate == "payload" and dir_fd is not None and not swapped:
+            parent.rename(old_parent)
+            outside.rename(parent)
+            swapped = True
+        if dir_fd is None:
+            return original_open(candidate, flags, *args)
+        return original_open(candidate, flags, *args, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_attestation.os, "open", swap_before_target_open)
+    assert integration_attestation._file_bytes(path, mode=0o600) == b"owned"
+    assert swapped
+    assert (parent / "payload").read_bytes() == b"foreign"
+    assert (old_parent / "payload").read_bytes() == b"owned"
 
 
 def test_attestation_tree_rejects_child_directory_swap_before_open(
