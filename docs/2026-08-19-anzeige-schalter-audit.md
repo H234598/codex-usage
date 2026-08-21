@@ -1481,3 +1481,10 @@ Der globale Ruff-Lauf meldete eine E501-Zeile in der Credits-Feldschleife von
 `direct.py`. Die Feldnamen sind jetzt nur auf mehrere Zeilen verteilt;
 Extraktionsreihenfolge und Fallbacklogik bleiben unverändert.
 `tests/test_direct.py`: 149/149 bestanden; Mypy und Ruff für das Modul sauber.
+
+## Runde 133: Profile-Job-Formatierung
+
+Der globale Ruff-Lauf meldete eine E501-Zeile beim Ergänzen von Legacy-Feldern
+im Profile-Job-Manifest. Das Dictionary ist jetzt mehrzeilig formatiert;
+Schema- und Migrationslogik bleiben unverändert. `tests/test_profile_jobs.py`:
+59/59 bestanden; Mypy und Ruff für das Modul sauber.

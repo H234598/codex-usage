@@ -759,7 +759,13 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
     }
     legacy_required = required - {"reactivation_browser", "tag", "series", "series_active"}
     if set(value) == legacy_required:
-        value = {**value, "reactivation_browser": "auto", "tag": "", "series": "", "series_active": False}
+        value = {
+            **value,
+            "reactivation_browser": "auto",
+            "tag": "",
+            "series": "",
+            "series_active": False,
+        }
     elif set(value) == required - {"tag", "series", "series_active"}:
         value = {**value, "tag": "", "series": "", "series_active": False}
     elif set(value) != required:
