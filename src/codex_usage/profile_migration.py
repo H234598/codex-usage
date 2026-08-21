@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .config import MAX_CONFIG_ACCOUNTS
+from .config import MAX_CONFIG_ACCOUNTS, _validate_account_id
 from .json_utils import loads_strict
 from .models import Account
 from .private_io import (
@@ -56,6 +56,12 @@ def plan_auth_migration(
     items: list[AuthMigrationItem] = []
     sources: dict[Path, str] = {}
     for account in accounts:
+        if not isinstance(account, Account):
+            raise ValueError("account is invalid")
+        try:
+            _validate_account_id(account.id)
+        except ValueError as exc:
+            raise ValueError("account id is invalid") from exc
         layout = layout_for_account(account)
         source = _source_for_account(account, layout, normalized_roots)
         if source is not None:
@@ -223,10 +229,12 @@ def _source_for_account(
     layout: ProfileLayout,
     search_roots: tuple[Path, ...],
 ) -> Path | None:
-    if account.auth_json_path:
+    if account.auth_json_path is not None and account.auth_json_path != "":
+        if not isinstance(account.auth_json_path, str):
+            raise ValueError("auth source is invalid")
         try:
             return Path(account.auth_json_path).expanduser()
-        except RuntimeError as exc:
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
             raise ValueError("auth source cannot be resolved") from exc
     candidates = [layout.profile_dir / "auth.json"]
     if len(search_roots) == 1:

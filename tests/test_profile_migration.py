@@ -98,6 +98,33 @@ def test_auth_migration_plan_rejects_non_tuple_search_roots(search_roots):
         )
 
 
+@pytest.mark.parametrize("account_id", [None, [], "../escape", "__all_accounts__"])
+def test_auth_migration_plan_rejects_invalid_account_id(tmp_path, account_id):
+    account = Account(
+        id=account_id,
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    with pytest.raises(ValueError, match="account id is invalid"):
+        plan_auth_migration((account,))
+
+
+@pytest.mark.parametrize("auth_json_path", [[], {}, 1, object()])
+def test_auth_migration_plan_rejects_invalid_auth_source_type(
+    tmp_path, auth_json_path
+):
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=auth_json_path,
+    )
+
+    with pytest.raises(ValueError, match="auth source is invalid"):
+        plan_auth_migration((account,))
+
+
 @pytest.mark.parametrize(
     "plan",
     [

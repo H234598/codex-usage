@@ -4018,3 +4018,17 @@ bleiben unverändert.
 `pytest -q tests/test_profile_login.py`: 43/43 bestanden; Modul-Coverage 85 %
 (Branch). Aufrufer-Tests `tests/test_profile_jobs.py tests/test_profile_cli.py`:
 85/85 bestanden. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 416: Auth-Migrationsplan-Account-Grenzen
+
+`plan_auth_migration()` ließ direkt konstruierte Accounts mit ungültiger ID
+bis in Layout-/Quellenlogik laufen; ein truthy nicht-string
+`auth_json_path` konnte dort außerdem rohes `TypeError` aus `Path()` liefern.
+Plan-Entry-Point validiert Account-Typ und ID jetzt vor Seiteneffekten, und
+explizite Auth-Quellen verlangen einen String; gültige Config-Accounts sowie
+leere optionale Quelle bleiben unverändert.
+
+`pytest -q tests/test_profile_migration.py`: 41/41 bestanden; Modul-Coverage
+78 % (Branch). Nachbar-Tests `tests/test_profile_layout.py
+tests/test_profile_cli.py`: 25/25 bestanden. Ruff, Mypy und `git diff --check`
+sauber.
