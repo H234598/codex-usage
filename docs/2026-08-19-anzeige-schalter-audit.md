@@ -2578,3 +2578,12 @@ Die Vollsuite bestätigt den aktuellen HEAD: `2624 bestanden, 1 übersprungen,
 außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts ist
 ebenfalls sauber.
+
+## Runde 262: Extractor verwirft malformed Kandidaten-URLs
+
+`extractor.extract_windows()` rief für einen nicht parsebaren URL-String wie
+`https://[::1` direkt `_wham_candidate_priority()`/`urlsplit()` auf und brach
+roh mit `ValueError` ab. Eine gemeinsame Kandidatenprüfung validiert URL-Syntax
+jetzt vor JSON-Window-Priorisierung und `load_json_candidate()` verwirft solche
+URLs früh. `tests/test_extractor.py`: 195/195 bestanden; Mypy für Source und
+Ruff für die betroffenen Dateien sauber.

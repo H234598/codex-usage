@@ -34,6 +34,7 @@ def test_numeric_coercion_rejects_non_scalar_values(value):
 def test_json_loader_rejects_non_string_inputs():
     assert load_json_candidate(7, "{}") is None
     assert load_json_candidate(" ", "{}") is None
+    assert load_json_candidate("https://[::1", "{}") is None
     assert load_json_candidate(
         "https://chatgpt.com/backend-api/wham/usage", []
     ) is None
@@ -41,8 +42,10 @@ def test_json_loader_rejects_non_string_inputs():
 
 def test_extract_windows_skips_candidate_with_invalid_url():
     candidate = JsonCandidate(url=7, payload={"rate_limit": {}})
+    malformed = JsonCandidate(url="https://[::1", payload={"rate_limit": {}})
 
     assert extract_windows(body_text="", json_candidates=[candidate]) == (None, None)
+    assert extract_windows(body_text="", json_candidates=[malformed]) == (None, None)
 
 
 @pytest.mark.parametrize("body_text", [None, [], {}, 1, True])

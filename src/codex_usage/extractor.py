@@ -356,8 +356,18 @@ def _merge_window_source_names(first: LimitWindow, second: LimitWindow) -> str:
     return "+".join(names) or "unknown"
 
 
+def _candidate_url_is_usable(url: Any) -> bool:
+    if not isinstance(url, str) or not url.strip():
+        return False
+    try:
+        urlsplit(url)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def load_json_candidate(url: str, payload_text: str) -> JsonCandidate | None:
-    if not isinstance(url, str) or not url.strip() or not isinstance(payload_text, str):
+    if not _candidate_url_is_usable(url) or not isinstance(payload_text, str):
         return None
     try:
         payload = loads_strict(payload_text)
@@ -380,8 +390,7 @@ def _extract_json_window(
     for candidate_index, candidate in enumerate(candidates):
         if (
             not isinstance(candidate, JsonCandidate)
-            or not isinstance(candidate.url, str)
-            or not candidate.url.strip()
+            or not _candidate_url_is_usable(candidate.url)
         ):
             continue
         candidate_priority = _wham_candidate_priority(candidate.url)
