@@ -211,9 +211,11 @@ def calculate_consumption(
         if remaining_percent == 0:
             estimate = 0
         elif rate > 0:
-            candidate = math.ceil(remaining_percent / rate)
-            if candidate <= MAX_FORECAST_SECONDS:
-                estimate = candidate
+            forecast_seconds = remaining_percent / rate
+            if math.isfinite(forecast_seconds):
+                candidate = math.ceil(forecast_seconds)
+                if candidate <= MAX_FORECAST_SECONDS:
+                    estimate = candidate
     return ConsumptionWindow(
         lookback_seconds=lookback_seconds,
         pool=pool,

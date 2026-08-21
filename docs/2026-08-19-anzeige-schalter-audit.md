@@ -1785,3 +1785,10 @@ den normalen Invalid-Source-Pfad. `tests/test_integration_snapshot.py`:
 `TypeError`; unbekannte/malformed Backends folgen jetzt kontrolliert der
 bisherigen Restore-Semantik. `tests/test_state.py`: 227/227 bestanden; Mypy
 und Ruff sauber.
+
+## Runde 173: Verbrauchsprognose-Overflow
+
+`consumption.calculate_consumption()` rief `math.ceil()` auch für eine
+unendliche Forecast-Division auf. Ein kleinster positiver Float als Rate führte
+dadurch zu `OverflowError`; nicht darstellbare Prognosen bleiben jetzt leer.
+`tests/test_consumption.py`: 20/20 bestanden; Mypy und Ruff sauber.

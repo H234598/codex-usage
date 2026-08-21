@@ -109,6 +109,27 @@ def test_consumption_forecast_is_zero_when_limit_is_exhausted():
     assert result.estimated_seconds_to_exhaustion == 0
 
 
+def test_consumption_omits_unrepresentable_forecast_without_raising():
+    result = calculate_consumption(
+        [
+            _sample(0, 0.0),
+            UsageSample(
+                account_id="alpha",
+                pool="main",
+                window_seconds=18_000,
+                captured_at=BASE + timedelta(seconds=1),
+                used_percent=5e-324,
+                source="test",
+            ),
+        ],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(seconds=1),
+    )
+
+    assert result.estimated_seconds_to_exhaustion is None
+
+
 def test_consumption_handles_confirmed_reset_without_false_partial_status():
     reset = BASE + timedelta(minutes=45)
     result = calculate_consumption(
