@@ -3938,3 +3938,14 @@ IDs bleiben unverändert.
 
 `pytest -q tests/test_scheduler.py`: 202/202 bestanden; Modul-Coverage 84 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 409: State-Expiry-Zeitvergleich
+
+`state._values_capture_for_expiry()` fing bei der Gegenüberstellung von
+`values_captured_at` und `captured_at` nur Standardvergleichsfehler. Eine
+fehlerhafte `datetime`-Subclass konnte `expire_reset_windows()` deshalb mit
+`RuntimeError` abbrechen. Der Vergleich fällt jetzt bei beliebigen Exceptions
+auf den validierten Capture-Zeitpunkt zurück; der State bleibt fail-closed.
+
+`pytest -q tests/test_state.py`: 267/267 bestanden; Modul-Coverage 88 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.

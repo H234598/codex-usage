@@ -1729,7 +1729,7 @@ def _values_capture_for_expiry(usage: AccountUsage) -> datetime:
     try:
         if candidate <= captured_at:
             return candidate
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         return captured_at
     return captured_at
 

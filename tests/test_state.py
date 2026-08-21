@@ -67,6 +67,11 @@ class _RaisingAstimezone(datetime):
         raise RuntimeError("synthetic astimezone marker")
 
 
+class _RaisingComparison(datetime):
+    def __le__(self, _other):
+        raise RuntimeError("synthetic comparison marker")
+
+
 def test_state_times_with_failing_timezone_callback_use_local_zone(monkeypatch):
     berlin = ZoneInfo("Europe/Berlin")
     monkeypatch.setattr("codex_usage.state.LOCAL_TZ", berlin)
@@ -103,6 +108,23 @@ def test_expire_reset_windows_fails_closed_for_astimezone_callback_failure():
 
     assert expired.five_hour is None
     assert expired.status == AccountStatus.PARTIAL
+
+
+def test_expire_reset_windows_fails_closed_for_values_capture_comparison_failure():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=UTC),
+        values_captured_at=_RaisingComparison(2026, 8, 16, 9, tzinfo=UTC),
+        weekly=LimitWindow(name="weekly", remaining=90),
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=datetime(2026, 8, 16, 10, 30, tzinfo=UTC),
+    )
+
+    assert expired.weekly is not None
 
 
 def test_snapshot_text_normalizes_and_bounds_whitespace():
