@@ -682,6 +682,26 @@ def test_history_rejects_malformed_millis(value):
         history_module._from_millis(value)
 
 
+@pytest.mark.parametrize("captured_at_ms", ["invalid", 1.5])
+def test_history_status_rejects_malformed_timestamp_aggregate(tmp_path, captured_at_ms):
+    path = tmp_path / "history.sqlite3"
+    with HistoryStore(path):
+        pass
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO samples("
+            "account_id, pool_key, window_seconds, captured_at_ms, used_percent, "
+            "reset_at_ms, reset_generation, source"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("alpha", "main", 18_000, captured_at_ms, 10, None, None, "test"),
+        )
+        connection.commit()
+
+    with pytest.raises(ValueError, match="history timestamp"):
+        with HistoryStore(path) as store:
+            store.status()
+
+
 def test_usage_samples_extract_only_fresh_valid_limit_windows():
     from codex_usage.history import usage_samples_from_usage
 

@@ -1996,3 +1996,19 @@ mit `AttributeError` abbrechen. Die Prüfung akzeptiert jetzt nur echte
 `UsagePool`-/`LimitWindow`-Objekte; ungültige Werte führen fail-closed zu
 `False`. `tests/test_scheduler.py`: 178/178 bestanden; Mypy für Source und
 Ruff für betroffene Dateien sauber.
+
+## Runde 197: Gesamtverifikation nach State-/Scheduler-Härtung
+
+Die vollständige Python-Suite lief nach den State- und Scheduler-Guards mit
+**2216 bestanden, 1 übersprungen und 1 externer PyGObject-Warnung** in 91,19 s.
+Die Warnung betrifft weiterhin die veraltete `GLib.unix_signal_add_full`-API
+außerhalb des Repositories; keine Testfehler.
+
+## Runde 198: History-Status validiert SQLite-Zeitstempel
+
+`HistoryStore.status()` wandelte `MIN`/`MAX(captured_at_ms)` per `int()` um und
+akzeptierte dadurch Float-Truncation oder warf rohe Konvertierungsfehler bei
+malformed SQLite-Werten. Status-Aggregate werden jetzt wie einzelne Samples
+strict typ- und bereichsgeprüft. `tests/test_history.py` und
+`tests/test_history_cli.py`: 61/61 bestanden; Mypy für Source und Ruff für
+betroffene Dateien sauber.

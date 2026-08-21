@@ -108,6 +108,13 @@ def _from_millis(value: object) -> datetime:
         raise ValueError("history timestamp is invalid") from exc
 
 
+def _validated_millis(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("history timestamp is invalid")
+    _from_millis(value)
+    return value
+
+
 class HistoryStore:
     def __init__(self, path: Path | None = None):
         self.path = path or default_history_path()
@@ -430,8 +437,12 @@ class HistoryStore:
             "path": str(self.path),
             "schema_version": HISTORY_SCHEMA_VERSION,
             "sample_count": int(row["count"]),
-            "oldest_captured_at_ms": int(row["oldest"]) if row["oldest"] is not None else 0,
-            "newest_captured_at_ms": int(row["newest"]) if row["newest"] is not None else 0,
+            "oldest_captured_at_ms": (
+                _validated_millis(row["oldest"]) if row["oldest"] is not None else 0
+            ),
+            "newest_captured_at_ms": (
+                _validated_millis(row["newest"]) if row["newest"] is not None else 0
+            ),
         }
 
 
