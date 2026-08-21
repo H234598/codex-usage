@@ -4374,3 +4374,14 @@ denselben Guard; ungültige Fenster autorisieren keine Fallback-Wiederverwendung
 
 `pytest -q tests/test_scheduler.py`: 205/205 bestanden; Modul-Coverage 84 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 448: Routing- und Pool-Auswahl
+
+`routing.py` auf Policy-/Credit-Scope-Auflösung, Spark-vor-Main-Entscheidung,
+Pool-/Fensteridentität, Nutzungsevidenz, Reset-/Age-Grenzen, Backend-
+Provenienz und fail-closed JSON-Daten geprüft. Ungültige, katalog-only,
+abgelaufene oder nicht attribuierte Nutzung bleibt blockiert; keine neue
+reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_routing.py`: 125/125 bestanden; Modul-Coverage 87 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
