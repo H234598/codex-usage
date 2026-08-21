@@ -859,6 +859,16 @@ def test_add_account_rejects_unhashable_identity_types(
         add_or_update_account(account_id, **kwargs)
 
 
+@pytest.mark.parametrize("clear_auth_json", [None, 0, "yes", [], {}])
+def test_add_account_rejects_non_boolean_clear_auth_json(tmp_path, clear_auth_json):
+    with pytest.raises(ValueError, match="clear_auth_json must be boolean"):
+        add_or_update_account(
+            "privat",
+            clear_auth_json=clear_auth_json,
+            path=tmp_path / "config.toml",
+        )
+
+
 def test_load_config_rejects_loose_types(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(

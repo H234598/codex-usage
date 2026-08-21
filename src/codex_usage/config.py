@@ -190,6 +190,8 @@ def add_or_update_account(
         series = series.upper()
     if series_active is not None and not isinstance(series_active, bool):
         raise ValueError("series_active must be boolean")
+    if not isinstance(clear_auth_json, bool):
+        raise ValueError("clear_auth_json must be boolean")
     if not isinstance(test_home, bool):
         raise ValueError("test_home must be boolean")
     if clear_auth_json and auth_json_path is not None:

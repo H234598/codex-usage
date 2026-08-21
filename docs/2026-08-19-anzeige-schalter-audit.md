@@ -1030,3 +1030,10 @@ ergänzt; `tests/test_profile_jobs.py`: 43/43 bestanden.
 Set-Mitgliedschaft. Eine unhashbare ID führte dadurch zu `TypeError` statt zu
 kontrolliertem Eingabefehler. Explizite Stringprüfung ergänzt; vier Validator-
 Regressionfälle, `tests/test_config.py`: 79/79 bestanden.
+
+## Runde 78: Boolean-Prüfung für Auth-Löschung
+
+`config.add_or_update_account()` validierte `clear_auth_json` nicht. Falsy
+Nicht-Boolean-Werte konnten dadurch stillschweigend als `False` durchlaufen,
+truthy Werte als Löschschalter wirken. Explizite Booleanprüfung ergänzt;
+fünf Regressionfälle und die Konfigurationssuite: 84/84 bestanden.
