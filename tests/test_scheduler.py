@@ -282,6 +282,13 @@ def test_scheduler_rejects_invalid_auth_json_path(auth_json_path):
         )
 
 
+def test_scheduler_rejects_unknown_auth_home():
+    with pytest.raises(ValueError, match="auth_json_path is invalid"):
+        scheduler_module._validated_auth_json_path(
+            Path("~definitely-no-such-user-zzzz/auth.json")
+        )
+
+
 def test_fetch_all_rejects_oversized_config_account_iterators(monkeypatch):
     monkeypatch.setattr(scheduler_module, "MAX_SCHEDULER_ACCOUNTS", 2)
     accounts = (

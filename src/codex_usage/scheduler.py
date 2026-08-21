@@ -86,7 +86,12 @@ def _bounded_account_list(accounts: Iterable[Account]) -> list[Account]:
 def _validated_auth_json_path(auth_json_path: Path | None) -> Path | None:
     if auth_json_path is not None and not isinstance(auth_json_path, Path):
         raise ValueError("auth_json_path is invalid")
-    return auth_json_path
+    if auth_json_path is None:
+        return None
+    try:
+        return auth_json_path.expanduser()
+    except RuntimeError as exc:
+        raise ValueError("auth_json_path is invalid") from exc
 
 
 def fetch_all(

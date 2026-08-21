@@ -2812,3 +2812,13 @@ als rohes `RuntimeError` entkommen. Zusätzlich expandierte
 Config-Pfade werden jetzt vor Zugriffen kontrolliert expandiert; Fehler liefern
 `ValueError`. `tests/test_bridge.py`: 256/256 fokussierte Tests bestanden;
 Mypy für Source, Ruff und `git diff --check` sauber.
+
+## Runde 288: Scheduler-Auth-Override expandiert vor Ambiguitätsprüfung
+
+`scheduler._validated_auth_json_path()` akzeptierte einen unbekannten
+`~user`-Override, worauf die spätere gemeinsame Auth-Quellenprüfung roh in
+`Path.expanduser()` scheitern konnte. Der Override wird jetzt zentral
+expandiert; unbekannte Home-Namen liefern kontrolliert
+`ValueError("auth_json_path is invalid")`. `tests/test_scheduler.py`: 197/197
+fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
+sauber.
