@@ -4337,3 +4337,16 @@ Die Vollsuite nach `1ec2839` bestätigt den Resetrotations-Fix und den
 aktuellen Formatierungsseitenstand: `2800 bestanden, 1 übersprungen,
 3 Warnungen` in 94,09 s. Warnungen bleiben externe GTK-/PyGObject-
 Deprecations; keine Test-, Snapshot- oder GUI-Regression.
+
+## Runde 445: State-Modellpool-Merge
+
+`state._merge_model_pools_with_last_success()` verwendete malformed
+`UsagePool.key`-Werte direkt als Dictionary-Schlüssel. Ein unhashbarer
+Modellschlüssel konnte den Current-/Last-Success-Merge mit rohem `TypeError`
+abbrechen. Beide Katalogseiten verlangen jetzt Stringschlüssel und eindeutige
+Current-Keys; ungültige Kataloge bleiben unverändert fail-closed.
+
+Regressionen für unhashbare aktuelle und alte Modellpools ergänzt.
+`pytest -q tests/test_state.py`: 269/269 bestanden; Modul-Coverage 88 %
+(Branch). Aufrufende Scheduler-Suite: 202/202. Ruff, Mypy und
+`git diff --check` sauber.

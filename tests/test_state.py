@@ -1330,6 +1330,38 @@ def test_merge_current_with_last_success_ignores_malformed_browser_window():
     assert merged is current
 
 
+@pytest.mark.parametrize("malformed_side", ["current", "last_success"])
+def test_merge_current_with_last_success_rejects_unhashable_model_pool_key(
+    malformed_side,
+):
+    captured_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    common = dict(
+        account_id="malformed-model-key",
+        label="Malformed model key",
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-malformed-model-key",
+        five_hour=LimitWindow(name="5h", remaining=80),
+    )
+    valid_pool = UsagePool(key="model", display_name="Model", windows=())
+    malformed_pool = UsagePool(key=[], display_name="Malformed", windows=())  # type: ignore[arg-type]
+    current = AccountUsage(
+        captured_at=captured_at,
+        models=(malformed_pool if malformed_side == "current" else valid_pool,),
+        **common,
+    )
+    last_success = AccountUsage(
+        captured_at=captured_at - timedelta(minutes=1),
+        models=(malformed_pool if malformed_side == "last_success" else valid_pool,),
+        **common,
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged is current
+
+
 def test_expire_reset_windows_rejects_overlong_model_catalog(monkeypatch):
     import codex_usage.state as state_module
 

@@ -1408,14 +1408,24 @@ def _merge_model_pools_with_last_success(
         return current
     previous_by_key: dict[str, UsagePool] = {}
     for pool in last_success:
-        if not isinstance(pool, UsagePool) or pool.key in previous_by_key:
+        if (
+            not isinstance(pool, UsagePool)
+            or not isinstance(pool.key, str)
+            or pool.key in previous_by_key
+        ):
             return current
         previous_by_key[pool.key] = pool
     merged_pools: list[UsagePool] = []
+    current_keys: set[str] = set()
     changed = False
     for pool in current:
-        if not isinstance(pool, UsagePool):
+        if (
+            not isinstance(pool, UsagePool)
+            or not isinstance(pool.key, str)
+            or pool.key in current_keys
+        ):
             return current
+        current_keys.add(pool.key)
         merged = _merge_pool_windows_with_last_success(
             pool,
             previous_by_key.get(pool.key),
