@@ -13,7 +13,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import IO, Any, cast
 
-from .config import AppConfig, _xdg_root, default_config_path, default_state_dir
+from .config import (
+    AppConfig,
+    _validate_config,
+    _xdg_root,
+    default_config_path,
+    default_state_dir,
+)
 from .private_io import (
     ensure_private_directory,
     private_path_lock,
@@ -67,6 +73,7 @@ def _service_operation_lock() -> Iterator[None]:
 
 
 def service_enable(config: AppConfig, config_path: Path | None = None) -> dict[str, Any]:
+    _validate_config(config)
     selected_config_path = _select_service_config_path(config_path)
     with _service_operation_lock():
         return _service_enable_unlocked(config, selected_config_path)
@@ -125,6 +132,7 @@ def _service_enable_unlocked(
 
 
 def service_install(config: AppConfig, config_path: Path | None = None) -> dict[str, Any]:
+    _validate_config(config)
     selected_config_path = _select_service_config_path(config_path)
     with _service_operation_lock():
         return _service_install_unlocked(config, selected_config_path)

@@ -1289,3 +1289,14 @@ Der bounded-`systemctl`-Reader ließ `selectors.SelectorKey.fileobj` als
 war der Wert wegen der Registrierung immer ein Pipe-Objekt, aber Mypy meldete
 zwei unsichere Union-Zugriffe. Explizite `IO[bytes]`-Verengung ergänzt;
 `tests/test_service.py`: 51/51 bestanden, Mypy für `service.py` sauber.
+
+## Runde 111: Service-Konfigurationsvalidierung
+
+`service_install()` und `service_enable()` vertrauten bisher darauf, dass
+direkt übergebene `AppConfig`-Objekte zuvor aus TOML validiert wurden. Direkt
+konstruierte Konfiguration konnte `interval_seconds` als Bool, Float, String
+oder zu kleinen Wert in `OnUnitActiveSec=` einschleusen; der String-Fall
+ermöglichte Unit-Inhaltsverfälschung. Die bestehende vollständige
+`_validate_config()`-Prüfung läuft jetzt vor Lock-/Verzeichnis-Seiteneffekten.
+Zwölf Regressionen decken beide Operationen und alle Fehlertypen ab;
+`tests/test_service.py`: 63/63 bestanden.

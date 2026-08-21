@@ -57,6 +57,29 @@ def test_service_rejects_invalid_config_path_before_side_effects(
     assert not (tmp_path / "config").exists()
 
 
+@pytest.mark.parametrize("operation", (service_install, service_enable))
+@pytest.mark.parametrize("interval", ("60\nExecStart=bad", True, 59, 300.5, None, []))
+def test_service_rejects_invalid_config_before_side_effects(
+    tmp_path, monkeypatch, operation, interval
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    executable = tmp_path / "bin" / "codex-usage"
+    executable.parent.mkdir()
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o700)
+    monkeypatch.setattr("codex_usage.service._resolve_codex_usage", lambda: executable)
+    monkeypatch.setattr(
+        "codex_usage.service._systemctl",
+        lambda *args, check=True: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+
+    with pytest.raises(ValueError, match="interval_seconds"):
+        operation(AppConfig(accounts=(), interval_seconds=interval), tmp_path / "config.toml")
+
+    assert not (tmp_path / "config").exists()
+
+
 def test_service_symlink_check_rejects_dotdot_bypass(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -596,7 +619,9 @@ def test_service_rejects_home_as_account_writable_path(tmp_path, monkeypatch, fi
 
     monkeypatch.setattr("codex_usage.service._resolve_codex_usage", lambda: executable)
 
-    with pytest.raises(ServiceError, match="home directory"):
+    with pytest.raises(
+        (ServiceError, ValueError), match=r"home directory|protected directory"
+    ):
         service_install(
             AppConfig(accounts=(account,)),
             tmp_path / "config" / "codex-usage" / "config.toml",
