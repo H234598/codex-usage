@@ -66,6 +66,27 @@ def test_private_io_rejects_non_path(path):
             pass
 
 
+@pytest.mark.parametrize("max_bytes", [None, True, -1, "10"])
+def test_read_private_text_rejects_invalid_byte_budget(tmp_path, max_bytes):
+    with pytest.raises(ValueError, match="max_bytes is invalid"):
+        read_private_text(
+            tmp_path / "value.txt",
+            regular_label="private",
+            read_label="private",
+            max_bytes=max_bytes,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("text", [None, [], 1, object()])
+def test_write_private_text_rejects_invalid_text(tmp_path, text):
+    with pytest.raises(ValueError, match="text is invalid"):
+        write_private_text(
+            tmp_path / "value.txt",
+            text,  # type: ignore[arg-type]
+            label="private",
+        )
+
+
 def test_ensure_private_directory_secures_all_new_path_components(tmp_path):
     existing = tmp_path / "existing"
     existing.mkdir()

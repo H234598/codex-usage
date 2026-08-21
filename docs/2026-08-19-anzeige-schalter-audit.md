@@ -4018,6 +4018,17 @@ Regression reproduziert Zielersetzung. `pytest -q tests/test_config.py`:
 117/117 bestanden; Modul-Coverage 82 % (Branch). Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 434: Private-I/O-Eingabebudgets
+
+`private_io.py` erneut auf Pfad-/Symlink-/Owner-/Hardlink-Grenzen, atomare
+Writes, fsync und Locking geprüft. Ergänzt: `read_private_text()` weist
+negative, boolesche und Fremdtyp-Bytebudgets vor Dateizugriff zurück;
+`write_private_text()` weist Nicht-Strings kontrolliert zurück. Keine weitere
+Pfad- oder Lock-Fehlfunktion reproduziert.
+
+`pytest -q tests/test_private_io.py`: 44/44 bestanden; Modul-Coverage 75 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 413: Private-I/O-Grenzen
 
 `private_io.py` auf Pfadtyp-/Symlink-/Owner-/Hardlink-Prüfungen, geschützte

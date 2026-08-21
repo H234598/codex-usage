@@ -120,6 +120,8 @@ def read_private_text(
     too_large_label: str | None = None,
     invalid_utf8_label: str | None = None,
 ) -> tuple[str, os.stat_result]:
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 0:
+        raise ValueError(f"{read_label} max_bytes is invalid")
     path = _require_path(path, label=regular_label)
     assert_no_symlink_ancestors(path, label=regular_label)
     if path.is_symlink():
@@ -177,6 +179,8 @@ def write_private_text(
     mode: int = 0o600,
     replace_existing: bool = True,
 ) -> None:
+    if not isinstance(text, str):
+        raise ValueError(f"{label} text is invalid")
     path = _require_path(path, label=label)
     if (
         isinstance(mode, bool)
