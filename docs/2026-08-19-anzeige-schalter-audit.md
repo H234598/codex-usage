@@ -1142,3 +1142,12 @@ Direct-Usage zwingend `tokens.access_token` benötigt. Die bestehende
 Direct-Auth-Validierung wird jetzt wiederverwendet; fehlende oder ungültige
 Tokens brechen den Login vor dem Kopieren ab. Regression ergänzt;
 `tests/test_profile_login.py`: 30/30 bestanden; Ruff sauber.
+
+## Runde 93: Device-Login-Live-Parser
+
+Der Python-Live-Parser wertete das Ende jedes Output-Chunks als Tokenende.
+Geteilte Device-Codes oder URLs konnten deshalb als unvollständiges Event
+erscheinen, bevor der nächste Chunk eintraf. `final=False` hält jetzt
+unbegrenzte Tokens am Chunkende zurück; die abschließende Gesamtausgabe wird
+weiter vollständig ausgewertet. Regression ergänzt;
+`tests/test_profile_login.py`: 31/31 bestanden; Ruff sauber.

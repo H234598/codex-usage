@@ -169,7 +169,7 @@ def run_device_login(
     def observe_output(chunk: str) -> None:
         nonlocal observed_output
         observed_output = (observed_output + chunk)[-DEVICE_OUTPUT_MAX_BYTES:]
-        for event in _device_events(observed_output):
+        for event in _device_events(observed_output, final=False):
             emit_event(event)
 
     with account_lock(account.id):
@@ -197,7 +197,9 @@ def run_device_login(
                 start_new_session=isolate_process_group,
                 output_sink=observe_output if event_sink is not None else None,
             )
-            events = _device_events(_bounded_output(result.stdout, result.stderr))
+            events = _device_events(
+                _bounded_output(result.stdout, result.stderr), final=True
+            )
             login_events = events
             for event in events:
                 emit_event(event)
@@ -422,11 +424,13 @@ def _bounded_output(stdout: object, stderr: object) -> str:
     return text[:DEVICE_OUTPUT_MAX_BYTES]
 
 
-def _device_events(output: str) -> tuple[DeviceLoginEvent, ...]:
+def _device_events(output: str, *, final: bool = True) -> tuple[DeviceLoginEvent, ...]:
     events: list[DeviceLoginEvent] = []
     seen: set[tuple[str, str]] = set()
     cleaned = ANSI_CSI_RE.sub("", output)
     for match in DEVICE_URL_RE.finditer(cleaned):
+        if not final and match.end() == len(cleaned):
+            continue
         value = match.group(0).rstrip(".,)")[:DEVICE_EVENT_MAX_CHARS]
         if len(value) > len("https://") + 480:
             continue
@@ -439,6 +443,8 @@ def _device_events(output: str) -> tuple[DeviceLoginEvent, ...]:
     for match in DEVICE_CODE_RE.finditer(cleaned):
         if len(events) >= 8:
             break
+        if not final and match.end() == len(cleaned):
+            continue
         event = ("code", match.group(1)[:DEVICE_EVENT_MAX_CHARS])
         if event not in seen:
             seen.add(event)

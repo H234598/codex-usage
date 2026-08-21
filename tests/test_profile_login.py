@@ -58,6 +58,18 @@ def test_device_events_reject_overlong_urls_without_prefix_match():
     assert profile_login._device_events(output) == ()
 
 
+def test_device_events_defer_trailing_live_tokens_until_final_chunk():
+    assert profile_login._device_events(
+        "Open https://auth.example/device", final=False
+    ) == ()
+    assert profile_login._device_events(
+        "Enter device code: ABCD-1234", final=False
+    ) == ()
+    assert [event.value for event in profile_login._device_events(
+        "Enter device code: ABCD-1234\n", final=False
+    )] == ["ABCD-1234"]
+
+
 def test_device_events_cap_unique_events_at_eight():
     output = " ".join([
         "https://auth.example/device/0",
