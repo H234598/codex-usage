@@ -314,7 +314,7 @@ def add_or_update_account(
         profile_path, profile_created, profile_created_directories = _prepare_profile_dir(
             account.profile_dir
         )
-        moved_auth_json: tuple[Path, Path] | None = None
+        moved_auth_json: tuple[Path, Path, int, int] | None = None
         created_test_home_directories: list[tuple[Path, int, int]] = []
         created_test_home_files: list[tuple[Path, int, int]] = []
         state_changed = existing is None or existing != account
@@ -329,8 +329,10 @@ def add_or_update_account(
                 if account.auth_json_path is None:
                     raise ValueError("test home auth path is missing")
                 target_auth_json = Path(account.auth_json_path)
-                _integrate_test_home_auth(source_auth_json, target_auth_json)
-                moved_auth_json = (source_auth_json, target_auth_json)
+                moved_auth_json = _integrate_test_home_auth(
+                    source_auth_json,
+                    target_auth_json,
+                )
             _save_config_unlocked(updated, config_path)
         except Exception as original_error:
             rollback_errors: list[Exception] = []
@@ -627,11 +629,14 @@ def _test_profile_root(account_id: str) -> Path:
     return Path.home() / ".codex-test" / _safe_profile_name(account_id)
 
 
-def _integrate_test_home_auth(source: Path, target: Path) -> None:
+def _integrate_test_home_auth(
+    source: Path,
+    target: Path,
+) -> tuple[Path, Path, int, int] | None:
     source = source.expanduser().absolute()
     target = target.expanduser().absolute()
     if source == target:
-        return
+        return None
     assert_no_symlink_ancestors(source, label="test auth source")
     if source.is_symlink() or not source.is_file():
         raise ValueError("test auth source must be a regular file")
@@ -646,6 +651,8 @@ def _integrate_test_home_auth(source: Path, target: Path) -> None:
     target.parent.chmod(0o700)
     shutil.move(str(source), str(target))
     target.chmod(0o600)
+    target_stat = target.lstat()
+    return source, target, target_stat.st_dev, target_stat.st_ino
 
 
 def _prepare_test_codex_home(
@@ -707,13 +714,31 @@ def _prepare_test_codex_home(
         raise ValueError("could not start Codex in test CODEX_HOME") from exc
 
 
-def _restore_moved_test_home_auth(moved_auth_json: tuple[Path, Path] | None) -> None:
+def _restore_moved_test_home_auth(
+    moved_auth_json: tuple[Path, Path, int, int] | None,
+) -> None:
     if moved_auth_json is None:
         return
-    source, target = moved_auth_json
-    if target.is_file() and not source.exists():
-        source.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        shutil.move(str(target), str(source))
+    source, target, expected_device, expected_inode = moved_auth_json
+    if source.exists() or source.is_symlink():
+        raise ValueError(f"auth rollback source already exists: {source}")
+    assert_no_symlink_ancestors(source.parent, label="auth rollback source")
+    assert_no_symlink_ancestors(target.parent, label="auth rollback target")
+    try:
+        target_stat = target.lstat()
+    except OSError as exc:
+        raise ValueError(f"auth rollback target is unavailable: {target}") from exc
+    if (
+        not stat.S_ISREG(target_stat.st_mode)
+        or target_stat.st_dev != expected_device
+        or target_stat.st_ino != expected_inode
+        or target_stat.st_nlink != 1
+        or target_stat.st_uid != os.getuid()
+        or target_stat.st_mode & 0o077
+    ):
+        raise ValueError(f"auth rollback target changed: {target}")
+    source.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    shutil.move(str(target), str(source))
 
 
 def _cleanup_created_test_home(

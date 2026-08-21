@@ -4005,6 +4005,19 @@ reproduzierbarer Fehler.
 `pytest -q tests/test_json_utils.py`: 8/8 bestanden; Modul-Coverage 93 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 433: Test-Home-Auth-Rollback-Identität
+
+`add_or_update_account(test_home=True)` verschob Auth-Datei vor Config-/State-
+Rollback, prüfte beim Rückweg aber nur `is_file()`. Ein zwischenzeitlich
+ersetztes Ziel, insbesondere ein Symlink, konnte dadurch als neue Quelle
+zurückgeschoben werden. Verschiebevorgang merkt nun Device/Inode; Rollback
+prüft Regular-File, User-Owner, Single-Link, private Modi sowie Symlink-freie
+Elternpfade und verweigert geänderte Ziele fail-closed.
+
+Regression reproduziert Zielersetzung. `pytest -q tests/test_config.py`:
+117/117 bestanden; Modul-Coverage 82 % (Branch). Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 413: Private-I/O-Grenzen
 
 `private_io.py` auf Pfadtyp-/Symlink-/Owner-/Hardlink-Prüfungen, geschützte

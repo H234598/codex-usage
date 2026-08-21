@@ -212,6 +212,28 @@ def test_test_home_state_cleanup_failure_restores_auth_and_profile(
     assert load_config(config_path).accounts == ()
 
 
+def test_test_home_auth_rollback_refuses_replaced_target(tmp_path):
+    source = tmp_path / "incoming" / "auth.json"
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    source.parent.mkdir()
+    target.parent.mkdir(parents=True)
+    source.write_text('{"tokens": {}}\n', encoding="utf-8")
+    source.chmod(0o600)
+
+    moved = config_module._integrate_test_home_auth(source, target)
+    replacement = tmp_path / "replacement.json"
+    replacement.write_text("replacement\n", encoding="utf-8")
+    replacement.chmod(0o600)
+    target.unlink()
+    target.symlink_to(replacement)
+
+    with pytest.raises(ValueError, match="auth rollback target changed"):
+        config_module._restore_moved_test_home_auth(moved)
+
+    assert not source.exists()
+    assert target.is_symlink()
+
+
 def test_internal_all_accounts_lock_name_is_not_a_valid_account_id():
     with pytest.raises(ValueError, match="reserved"):
         config_module._validate_account_id("__all_accounts__")
