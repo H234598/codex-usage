@@ -981,3 +981,10 @@ ungültiger Wertezeitpunkt, invalidierter Cache, Login erforderlich und fehlende
 Kernnutzung. Drei parametrische Regressionen decken Login-, explizit
 invalidierten und implizit ungültigen `ok`-Payload ab. `tests/test_state.py`:
 214/214 bestanden; Ruff sauber.
+
+## Runde 72: Direkter Credit-Parser-Test
+
+`direct._credit_window()` hatte bislang nur indirekte Abdeckung über den
+App-Server-Pfad. Direkte Tests prüfen verschachtelte absolute Guthaben sowie
+Bool-, negative, nichtnumerische und widersprüchliche Werte. Produktionscode
+unverändert; Fokus-Suite: 5/5 bestanden, Ruff sauber.

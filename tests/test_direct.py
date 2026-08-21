@@ -15,6 +15,7 @@ from codex_usage.direct import (
     MAX_AUTH_JSON_BYTES,
     DirectAuthError,
     DirectFetchError,
+    _credit_window,
     _current_jwt_claims,
     _extract_auth_details,
     _fetch_stable_wham_usage,
@@ -87,6 +88,45 @@ def test_direct_redact_url_rejects_invalid_port():
 )
 def test_signature_number_rejects_non_finite_values_without_raising(value):
     assert _signature_number(value) is None
+
+
+def test_credit_window_extracts_nested_absolute_balance():
+    window = _credit_window(
+        {
+            "account": {
+                "credits": {
+                    "has_credits": True,
+                    "unlimited": False,
+                    "balance": "794",
+                }
+            }
+        },
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    )
+
+    assert window is not None
+    assert window.name == "credits"
+    assert window.remaining == 794
+    assert window.source == "json:credits"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"credits": True},
+        {"credits": -1},
+        {"credits": {"balance": "not-a-number"}},
+        {"credits": {"remaining": 101, "limit": 100}},
+    ],
+)
+def test_credit_window_rejects_invalid_balances(payload):
+    assert (
+        _credit_window(
+            payload,
+            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("status", [None, True, "200", 199, 300])
