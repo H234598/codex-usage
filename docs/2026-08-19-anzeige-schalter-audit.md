@@ -1046,3 +1046,11 @@ Segment ab und behandelte `..` nicht als Pfadauflösung. Ein
 Der Scanner überspringt fehlende Segmente weiter und normalisiert
 Aufwärtssegmente; Regressionstest ergänzt. `tests/test_integration_installer.py`:
 103/103 bestanden; Ruff sauber.
+
+## Runde 80: Cinnamon-Applet-Pfadprüfung
+
+`install_cinnamon_applet.py` und `uninstall_cinnamon_applet.py` brachen ihre
+Verzeichniskettenprüfung am ersten fehlenden Segment ab und behandelten `..`
+nicht als Aufwärtssegment. Ein `missing/../symlink/...`-Pfad konnte so die
+Symlinkprüfung umgehen. Beide Scanner normalisieren jetzt `..` und prüfen
+weiter; `tests/test_applet.py`: 27/27 bestanden.

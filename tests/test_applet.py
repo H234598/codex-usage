@@ -7,6 +7,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_UUID = "codex-usage@H234598"
 APPLET_DIR = ROOT / "files" / APPLET_UUID
@@ -17,6 +19,13 @@ _INSTALLER_SPEC = importlib.util.spec_from_file_location(
 assert _INSTALLER_SPEC is not None and _INSTALLER_SPEC.loader is not None
 installer = importlib.util.module_from_spec(_INSTALLER_SPEC)
 _INSTALLER_SPEC.loader.exec_module(installer)
+_UNINSTALLER_SPEC = importlib.util.spec_from_file_location(
+    "codex_usage_uninstaller",
+    ROOT / "scripts" / "uninstall_cinnamon_applet.py",
+)
+assert _UNINSTALLER_SPEC is not None and _UNINSTALLER_SPEC.loader is not None
+uninstaller = importlib.util.module_from_spec(_UNINSTALLER_SPEC)
+_UNINSTALLER_SPEC.loader.exec_module(uninstaller)
 
 
 def test_applet_metadata_and_settings_are_consistent() -> None:
@@ -900,6 +909,21 @@ def test_installer_refuses_symlink_target(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "symlink" in result.stderr.lower()
     assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.parametrize(
+    "checker",
+    (installer._assert_real_directory_chain, uninstaller._assert_real_directory_chain),
+    ids=("installer", "uninstaller"),
+)
+def test_directory_chain_scans_after_missing_segment(tmp_path: Path, checker) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink"):
+        checker(tmp_path / "missing" / ".." / "redirected" / "target")
 
 
 def test_installer_dry_run_does_not_create_target_root(tmp_path: Path) -> None:
