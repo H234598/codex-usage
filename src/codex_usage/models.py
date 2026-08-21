@@ -281,6 +281,10 @@ class UsagePool:
 
     def window_for_duration(self, duration_seconds: int) -> LimitWindow | None:
         if (
+            isinstance(duration_seconds, bool)
+            or not isinstance(duration_seconds, int)
+            or duration_seconds <= 0
+            or
             not isinstance(self.windows, tuple)
             or not self.windows
             or any(not isinstance(window, LimitWindow) for window in self.windows)

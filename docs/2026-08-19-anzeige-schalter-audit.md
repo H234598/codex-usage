@@ -1502,3 +1502,12 @@ Der globale Ruff-Lauf meldete zwei E501-Zeilen im Cinnamon-Installer: die
 Liste erforderlicher Dateien und den Pfad zum Settings-Schema. Beide sind
 mehrzeilig formatiert; Installations- und Migrationslogik bleiben unverändert.
 `tests/test_applet.py`: 27/27 bestanden; Ruff für das Script sauber.
+
+## Runde 136: Model-Dauertyp
+
+`UsagePool.window_for_duration()` verglich den angeforderten Wert direkt mit
+Fenster-Identitäten. Python behandelt dabei `True` und `1.0` wie die gültige
+Ganzzahl `1`; ein benutzerdefiniertes `1s`-Fenster konnte so durch falschen
+Aufruftyp ausgewählt werden. Der Helper akzeptiert jetzt nur positive
+Ganzzahlen. `tests/test_models.py` deckt Bool, Float, String und ungültige
+Ganzzahlen ab; Model-/Render-Tests: 41/41 bestanden; Mypy und Ruff sauber.
