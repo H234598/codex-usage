@@ -3748,3 +3748,14 @@ fremde Datei ab.
 
 `pytest -q tests/test_integration_installer.py`: 106/106 bestanden;
 Modul-Coverage 83%. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 390: Integration-Entrypoint-Clock-Fehler
+
+`integration_entrypoint._require_aware_utc()` normalisierte Fehler aus
+`utcoffset()`, ließ aber eine Exception aus `datetime.astimezone()` als
+unbekannten Fehler bis Exit 69 durch. Beide Normalisierungsschritte liefern
+jetzt `ValueError`, damit fehlerhafte Clock-Daten konsistent Exit 70 ergeben;
+Regressionstest deckt den Astimezone-Fehler ab.
+
+`pytest -q tests/test_integration_entrypoint.py`: 27/27 bestanden;
+Modul-Coverage 91%. Ruff, Mypy und `git diff --check` sauber.

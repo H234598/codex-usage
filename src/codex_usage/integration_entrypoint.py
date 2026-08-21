@@ -78,7 +78,7 @@ def _require_aware_utc(value: object) -> datetime:
         raise ValueError() from None
     try:
         return value.astimezone(UTC)
-    except (OverflowError, TypeError, ValueError):
+    except Exception:
         raise ValueError() from None
 
 
