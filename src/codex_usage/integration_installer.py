@@ -21,6 +21,7 @@ import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import IO, NoReturn, cast
 
 from .integration_attestation import (
     MAX_ATTESTATION_FILE_BYTES,
@@ -153,7 +154,7 @@ class _WheelMemberValidationError(IntegrationInstallError):
         super().__init__(reason)
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise IntegrationInstallError()
 
 
@@ -691,12 +692,13 @@ def _run_builder_preflight(
                 _terminate_preflight_process(process)
                 raise subprocess.TimeoutExpired(command, BUILDER_PREFLIGHT_TIMEOUT_SECONDS)
             for key, _ in ready:
+                stream = cast(IO[bytes], key.fileobj)
                 chunk = os.read(
-                    key.fileobj.fileno(),
+                    stream.fileno(),
                     min(8192, BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES + 1 - len(output)),
                 )
                 if not chunk:
-                    selector.unregister(key.fileobj)
+                    selector.unregister(stream)
                     continue
                 output.extend(chunk)
                 if len(output) > BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES:

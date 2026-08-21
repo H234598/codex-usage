@@ -1392,3 +1392,12 @@ bestanden; Mypy und Ruff sauber.
 Felder nicht als Zahlen erkennen und meldete 13 `float()`-Zugriffe. Der Helper
 ist jetzt ein passender `TypeGuard[int | float]`; `tests/test_render.py`:
 35/35 bestanden; Mypy und Ruff sauber.
+
+## Runde 123: Integration-Installer-Fehlervertrag
+
+`integration_installer._fail()` wirft auf jedem Pfad, war aber als rückkehrende
+`None`-Funktion typisiert. Dadurch entstanden Folgefehler bei fehlenden
+Returns, optionalen Identitäten und Zielpfaden. `NoReturn` korrigiert den
+zentralen Vertrag; der verbleibende Selector-Stream wird explizit als
+`IO[bytes]` verengt. `tests/test_integration_installer.py`: 103/103 bestanden;
+Mypy und Ruff sauber.
