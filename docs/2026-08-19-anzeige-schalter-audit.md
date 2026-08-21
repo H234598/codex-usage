@@ -3373,3 +3373,13 @@ reproduziert.
 `pytest -q tests/test_format_table_selector.py tests/test_applet.py`:
 32/32 bestanden. Ruff, Python-Kompilierung und `git diff --check` sauber;
 Warnungen sind bekannte PyGObject-/GTK-Deprecations.
+
+## Runde 352: Verbrauchsberechnung geprüft
+
+`consumption.py` wurde auf Lookback-/Baseline-Grenzen, Reset-Erkennung,
+Lücken-/Stale-Coverage, Forecast-Obergrenze, EMA-Smoothing und ungültige
+Parameter geprüft. Kein neuer reproduzierbarer Fehler gefunden; `UsageSample`
+validiert Zeitstempel bereits beim Erzeugen.
+
+`pytest -q tests/test_consumption.py`: 29/29 bestanden. Mypy für
+`consumption.py`, Ruff und `git diff --check` sauber.
