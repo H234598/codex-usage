@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import profile_login
 from .config import (
@@ -218,7 +218,7 @@ def profile_job_status(job_id: str) -> dict[str, object]:
             lost_status = "cancelled" if job["status"] == "cancel_requested" else "failed"
             job = _update_job(
                 job_id,
-                expected_status=job["status"],
+                expected_status=cast(str, job["status"]),
                 status=lost_status,
                 error=(None if lost_status == "cancelled" else "profile_job_worker_lost"),
             )
@@ -259,10 +259,12 @@ def list_profile_jobs(account_id: str | None = None) -> list[dict[str, object]]:
 
 def cancel_profile_job(job_id: str) -> dict[str, object]:
     job = _read_job(job_id)
-    status = job["status"]
+    status = cast(str, job["status"])
     if status in PROFILE_JOB_TERMINAL_STATUSES:
         return _public_job(job)
-    expected_status = (status, "running") if status == "queued" else status
+    expected_status: str | tuple[str, ...] = (
+        (status, "running") if status == "queued" else status
+    )
     updated = _update_job(
         job_id,
         expected_status=expected_status,
@@ -310,15 +312,15 @@ def run_profile_job(job_id: str) -> int:
     if started["status"] != "running":
         return 1
     account = Account(
-        id=job["account_id"],
-        label=job["label"],
-        profile_dir=job["profile_dir"],
-        tag=job.get("tag", ""),
-        browser=job["browser"],
-        backend=job["backend"],
-        reactivation_browser=job["reactivation_browser"],
-        series=job.get("series", ""),
-        series_active=job.get("series_active", False),
+        id=cast(str, job["account_id"]),
+        label=cast(str, job["label"]),
+        profile_dir=cast(str, job["profile_dir"]),
+        tag=cast(str, job.get("tag", "")),
+        browser=cast(str, job["browser"]),
+        backend=cast(str, job["backend"]),
+        reactivation_browser=cast(str, job["reactivation_browser"]),
+        series=cast(str, job.get("series", "")),
+        series_active=cast(bool, job.get("series_active", False)),
     )
     event_sink = (
         (lambda event: _append_job_event(job_id, event))
@@ -339,8 +341,10 @@ def run_profile_job(job_id: str) -> int:
             return 0
         result = profile_login.run_device_login(
             account,
-            Path(job["config_path"]),
-            expected_backend_account_id=job["expected_backend_account_id"],
+            Path(cast(str, job["config_path"])),
+            expected_backend_account_id=cast(
+                str | None, job["expected_backend_account_id"]
+            ),
             isolate_process_group=False,
             event_sink=event_sink,
         )

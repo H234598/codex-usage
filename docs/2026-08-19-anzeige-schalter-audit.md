@@ -1310,3 +1310,12 @@ der Restore-Index blieb beim Listen-Zugriff optional. Explizite
 `None`-Prüfungen, getrennte Rollback-Variable und sichere Index-Verengung
 behoben die Typfehler ohne Laufzeitpfadänderung. `tests/test_config.py`:
 102/102 bestanden; Mypy und Ruff sauber.
+
+## Runde 113: Profiljob-Mypy-Narrowing
+
+`profile_jobs.py` reichte validierte Manifestwerte aus `dict[str, object]`
+ohne Typverengung an Statuswechsel, `Account`, `Path` und Device-Login weiter.
+Explizite `cast()`-Verengungen nutzen jetzt den bereits durch
+`_validate_manifest()` garantierten Vertrag; Laufzeitvalidierung bleibt
+unverändert. `tests/test_profile_jobs.py`: 59/59 bestanden; Mypy und Ruff
+sauber.
