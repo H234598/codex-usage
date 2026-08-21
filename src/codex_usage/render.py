@@ -479,10 +479,10 @@ def _status_value(usage: AccountUsage) -> str:
                 blocked_until = None
             if blocked_until is not None:
                 parts.append(f"bis {blocked_until}")
-        if usage.blocked_reason:
+        if isinstance(usage.blocked_reason, str) and usage.blocked_reason:
             parts.append(f": {_shorten(usage.blocked_reason, 30)}")
         status = " ".join(parts)
-    elif usage.error:
+    elif isinstance(usage.error, str) and usage.error:
         status = f"{usage.status.value}: {_shorten(usage.error, 30)}"
     else:
         status = usage.status.value

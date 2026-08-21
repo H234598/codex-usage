@@ -1843,3 +1843,11 @@ bestanden; Mypy und Ruff für betroffene Dateien sauber.
 und blendet ungültige Zusatzlimits aus. `tests/test_render.py` sowie die
 relevanten CLI-Render-Tests: 45/45 bestanden; Mypy und Ruff für betroffene
 Dateien sauber.
+
+## Runde 180: Render-Schutz für Status-Text
+
+`render._status_value()` übergab `error` und `blocked_reason` ohne
+Typprüfung an `_shorten()`. Malformed Listen oder Dicts konnten Tabellen-
+Rendering mit `TypeError` abbrechen. Nur String-Texte werden jetzt formatiert;
+andere Werte bleiben ohne Zusatztext. `tests/test_render.py`: 39/39
+bestanden; Mypy und Ruff für betroffene Dateien sauber.

@@ -575,6 +575,32 @@ def test_render_table_hides_malformed_main_pool(main):
     assert "AttributeError" not in rendered
 
 
+@pytest.mark.parametrize(
+    ("status", "error", "blocked_reason"),
+    [
+        (AccountStatus.OK, [], None),
+        (AccountStatus.BLOCKED, None, {}),
+    ],
+)
+def test_render_table_ignores_malformed_status_text(status, error, blocked_reason):
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+        status=status,
+        error=error,
+        blocked_reason=blocked_reason,
+    )
+
+    rendered = render_table([usage])
+
+    assert "Private" in rendered
+    assert "AttributeError" not in rendered
+    assert "TypeError" not in rendered
+
+
 def test_render_table_hides_unavailable_dynamic_pools():
     usage = AccountUsage(
         account_id="private",
