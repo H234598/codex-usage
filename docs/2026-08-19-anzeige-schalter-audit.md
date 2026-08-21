@@ -3383,3 +3383,13 @@ validiert Zeitstempel bereits beim Erzeugen.
 
 `pytest -q tests/test_consumption.py`: 29/29 bestanden. Mypy für
 `consumption.py`, Ruff und `git diff --check` sauber.
+
+## Runde 353: History-Exporter typisiert malformed Window-Namen
+
+`history.py` gab beim Fallback für einen nicht-stringartigen
+`LimitWindow.name`-Wert `None` an `dict.get()` weiter. Runtime war der Pfad
+bereits fail-closed, Mypy meldete aber einen echten Typfehler. Der Fallback
+nutzt jetzt den semantisch identischen leeren String.
+
+`pytest -q tests/test_history.py`: 76/76 bestanden. Mypy für `history.py`,
+Ruff und `git diff --check` sauber.
