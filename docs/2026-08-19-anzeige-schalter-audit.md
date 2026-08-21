@@ -3829,3 +3829,13 @@ unabhängige Reset-Metadaten.
 
 `pytest -q tests/test_extractor.py`: 198/198 bestanden; Modul-Coverage 91%.
 Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 398: Health-Event-Speicher
+
+`health.py` auf Token-/Account-Redaktion, private Datei, JSON-Recovery,
+Retention, Event-Limit und malformed Clock-/Version-/Hardlink-Pfade geprüft.
+Keine neue reproduzierbare Fehlfunktion; ungültige Health-Daten werden
+verworfen oder durch sicheren Recovery-Schreibpfad ersetzt.
+
+`pytest -q tests/test_health.py`: 32/32 bestanden; Modul-Coverage 83%.
+Ruff, Mypy und `git diff --check` sauber.
