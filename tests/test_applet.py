@@ -186,7 +186,12 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     assert columns["show-tooltip"]["title"] == "Δ Tokenverbrauch Hover"
     assert "{value}" in table["description"] or "{value}" in table["tooltip"]
     assert set(columns["unit"]["options"].values()) == {"minutes", "hours", "days", "weeks"}
-    assert set(columns["limit-window"]["options"].values()) == {"short", "weekly", "monthly", "spark"}
+    assert set(columns["limit-window"]["options"].values()) == {
+        "short",
+        "weekly",
+        "monthly",
+        "spark",
+    }
     assert set(columns["format"]["options"].values()) == {
         "compact", "compact-token", "verbose", "custom"
     }
@@ -197,7 +202,15 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     assert columns["baseline-minutes"]["min"] == 0
     assert columns["baseline-minutes"]["max"] == 9999
     assert set(columns["smoothing"]["options"].values()) == {
-        "none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"
+        "none",
+        "ema-5",
+        "ema-10",
+        "ema-20",
+        "ema-40",
+        "ema-80",
+        "ema-160",
+        "ema-320",
+        "ema-640",
     }
     assert columns["limit-window"]["title"] == "Δ Limit"
     assert columns["format"]["title"] == "Δ Format"
@@ -221,22 +234,38 @@ def test_style_tables_group_threshold_fields() -> None:
         "account-percent-styles": [
             "account", "mode", "font", "size", "bold", "italic",
             "color", "background", "hover-background", "threshold", "below-font", "below-size",
-            "below-bold", "below-italic", "below-color", "below-background", "below-hover-background",
+            "below-bold",
+            "below-italic",
+            "below-color",
+            "below-background",
+            "below-hover-background",
         ],
         "account-date-styles": [
             "account", "format", "mode", "font", "size", "bold", "italic",
             "color", "background", "hover-background", "threshold", "below-font", "below-size",
-            "below-bold", "below-italic", "below-color", "below-background", "below-hover-background",
+            "below-bold",
+            "below-italic",
+            "below-color",
+            "below-background",
+            "below-hover-background",
         ],
         "account-time-styles": [
             "account", "format", "mode", "font", "size", "bold", "italic",
             "color", "background", "hover-background", "threshold", "below-font", "below-size",
-            "below-bold", "below-italic", "below-color", "below-background", "below-hover-background",
+            "below-bold",
+            "below-italic",
+            "below-color",
+            "below-background",
+            "below-hover-background",
         ],
         "account-duration-styles": [
             "account", "format", "mode", "font", "size", "bold", "italic",
             "color", "background", "hover-background", "threshold", "below-font", "below-size",
-            "below-bold", "below-italic", "below-color", "below-background", "below-hover-background",
+            "below-bold",
+            "below-italic",
+            "below-color",
+            "below-background",
+            "below-hover-background",
         ],
     }
     for name, ids in expected.items():
@@ -278,8 +307,14 @@ def test_formatting_tables_are_isolated_and_have_editable_rows() -> None:
         "percent-style-section": ("account-percent-styles-heading", "account-percent-styles"),
         "date-style-section": ("account-date-styles-heading", "account-date-styles"),
         "time-style-section": ("account-time-styles-heading", "account-time-styles"),
-        "duration-style-section": ("account-duration-styles-heading", "account-duration-styles"),
-        "display-settings-section": ("account-display-settings-heading", "account-display-settings"),
+        "duration-style-section": (
+            "account-duration-styles-heading",
+            "account-duration-styles",
+        ),
+        "display-settings-section": (
+            "account-display-settings-heading",
+            "account-display-settings",
+        ),
         "display-target-section": ("account-style-targets-heading", "account-style-targets"),
     }
 
@@ -631,7 +666,14 @@ def test_installer_and_uninstaller_round_trip(tmp_path: Path) -> None:
 
     installed = target_root / APPLET_UUID
     assert installed.is_dir()
-    for name in ("applet.js", "metadata.json", "settings-schema.json", "stylesheet.css", "dynamic_series_list.py", "fast_mode_icon_selector.py"):
+    for name in (
+        "applet.js",
+        "metadata.json",
+        "settings-schema.json",
+        "stylesheet.css",
+        "dynamic_series_list.py",
+        "fast_mode_icon_selector.py",
+    ):
         assert (installed / name).is_file()
 
     uninstall = _run_script(

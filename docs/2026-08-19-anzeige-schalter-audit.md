@@ -1535,3 +1535,10 @@ zusammengesetzte Test-String ist jetzt mehrzeilig; Testverhalten bleibt gleich.
 Ruff meldete eine unsortierte Importgruppe in `test_routing.py`. Die beiden
 Policy-Setter sind jetzt alphabetisch geordnet; Verhalten bleibt unverändert.
 `tests/test_routing.py`: 88/88 bestanden; Ruff sauber.
+
+## Runde 141: Applet-Testformatierung
+
+Der vollständige Ruff-Testlauf meldete sieben E501-Zeilen in
+`test_applet.py`. Settings-Assertions, erwartete Spalten und Dateinamen sind
+jetzt mehrzeilig formatiert; Testsemantik bleibt unverändert.
+`tests/test_applet.py`: 27/27 bestanden; Ruff für alle Tests jetzt sauber.
