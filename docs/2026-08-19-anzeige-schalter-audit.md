@@ -4450,6 +4450,18 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 508: Doppelte Auth-Migrations-Ressourcen abgewiesen
+
+`_validate_migration_plan()` erlaubte bisher dieselbe Auth-Quelle oder
+dasselbe Canonical-Ziel in mehreren Items. Direkte Plan-Aufrufer konnten so
+Credentials mehrfach verteilen; bei einem geteilten Ziel trat der Fehler erst
+während des Schreibens auf. Quellen und Ziele werden jetzt vor jeder
+Quellenprüfung eindeutig verlangt.
+
+Regression für doppelte Quelle und doppeltes Ziel ergänzt. `pytest -q
+tests/test_profile_migration.py`: 50/50 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 507: Doppelte Auth-Migrations-Account-IDs abgewiesen
 
 `plan_auth_migration()` und `_validate_migration_plan()` akzeptierten bisher

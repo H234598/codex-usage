@@ -176,6 +176,54 @@ def test_auth_migration_apply_rejects_duplicate_item_account_ids(tmp_path):
     assert not (tmp_path / "migration" / "manifest.json").exists()
 
 
+@pytest.mark.parametrize("duplicate_field", ["source", "target"])
+def test_auth_migration_apply_rejects_duplicate_item_resources(
+    tmp_path, duplicate_field
+):
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    first_source = source
+    second_source = source if duplicate_field == "source" else tmp_path / "second.json"
+    if second_source != source:
+        second_source.write_text("{}", encoding="utf-8")
+        second_source.chmod(0o600)
+    first_target = tmp_path / "first" / "auth.json"
+    second_target = (
+        first_target
+        if duplicate_field == "target"
+        else tmp_path / "second" / "auth.json"
+    )
+    first_target.parent.mkdir(parents=True)
+    if second_target != first_target:
+        second_target.parent.mkdir(parents=True)
+    plan = AuthMigrationPlan(
+        migration_id="m-test",
+        items=(
+            AuthMigrationItem(
+                account_id="alpha",
+                source=first_source,
+                target=first_target,
+                status="planned",
+            ),
+            AuthMigrationItem(
+                account_id="beta",
+                source=second_source,
+                target=second_target,
+                status="planned",
+            ),
+        ),
+        created_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match="migration plan"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+    assert not first_target.exists()
+    assert not second_target.exists()
+    assert not (tmp_path / "migration" / "manifest.json").exists()
+
+
 @pytest.mark.parametrize("auth_json_path", [[], {}, 1, object()])
 def test_auth_migration_plan_rejects_invalid_auth_source_type(
     tmp_path, auth_json_path

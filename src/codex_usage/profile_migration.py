@@ -371,6 +371,8 @@ def _validate_migration_plan(plan: AuthMigrationPlan) -> None:
     if not isinstance(plan.items, tuple) or len(plan.items) > MAX_MIGRATION_ITEMS:
         raise ValueError("migration plan is invalid")
     account_ids: set[str] = set()
+    sources: set[Path] = set()
+    targets: set[Path] = set()
     for item in plan.items:
         if not isinstance(item, AuthMigrationItem):
             raise ValueError("migration plan is invalid")
@@ -390,6 +392,13 @@ def _validate_migration_plan(plan: AuthMigrationPlan) -> None:
             or not isinstance(item.status, str)
         ):
             raise ValueError("migration plan is invalid")
+        if item.target in targets:
+            raise ValueError("migration plan is invalid")
+        targets.add(item.target)
+        if item.source is not None:
+            if item.source in sources:
+                raise ValueError("migration plan is invalid")
+            sources.add(item.source)
 
 
 def _assert_manifest_path_disjoint(
