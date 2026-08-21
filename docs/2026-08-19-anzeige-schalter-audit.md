@@ -3016,3 +3016,22 @@ Bereichsfang. Randwerte mit großem Offset konnten beim Schreiben roh mit
 `ValueError("spark health timestamp is out of range")`. `tests/test_spark_health.py`:
 27/27 fokussierte Tests bestanden; Mypy für Spark Health, Ruff und
 `git diff --check` sauber.
+
+## Runde 311: Config-Test-Home validiert expliziten Profilpfad
+
+`add_or_update_account(test_home=True)` expandierte einen expliziten
+`profile_dir` beim Bau des kanonischen Auth-Pfads vor der zentralen
+Pfadvalidierung. Unbekanntes `~user` konnte dadurch roh mit `RuntimeError`
+abbrechen. Expansion liefert jetzt kontrolliertes
+`ValueError("profile_dir must be an absolute path")`. `tests/test_config.py`:
+116/116 fokussierte Tests bestanden; Mypy für Config, Ruff und
+`git diff --check` sauber.
+
+## Runde 312: Browser-Auth-Diagnose validiert unbekannte Pfade
+
+`_diagnose_auth_json()` expandierte explizite Auth-Pfade ungefangen; auch
+`diagnose_account()` expandierte konfigurierte Pfade vor der Diagnose. Ein
+unbekanntes `~user` konnte die komplette Diagnose abbrechen. Der Diagnose-
+Helper liefert jetzt strukturierten Fehler statt Exception. `tests/test_browser_diagnose.py`:
+40/40 fokussierte Tests bestanden; Mypy für Browser, Ruff und
+`git diff --check` sauber.

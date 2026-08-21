@@ -268,11 +268,17 @@ def add_or_update_account(
                 source_auth_json = Path(selected_auth_json_path).expanduser()
             except RuntimeError as exc:
                 raise ValueError("auth_json_path must be an absolute path") from exc
-        canonical_auth_json = (
-            str(Path(selected_profile_dir).expanduser() / "codex-home" / "auth.json")
-            if test_home
-            else selected_auth_json_path
-        )
+        canonical_auth_json: str | None
+        if test_home:
+            try:
+                canonical_profile_dir = Path(selected_profile_dir).expanduser()
+            except RuntimeError as exc:
+                raise ValueError("profile_dir must be an absolute path") from exc
+            canonical_auth_json = str(
+                canonical_profile_dir / "codex-home" / "auth.json"
+            )
+        else:
+            canonical_auth_json = selected_auth_json_path
         account = Account(
             id=account_id,
             label=label or (existing.label if existing else account_id),

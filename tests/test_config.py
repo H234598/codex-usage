@@ -105,6 +105,21 @@ def test_test_home_rejects_unknown_auth_home(tmp_path, monkeypatch):
     assert not (home / ".codex-test" / "test-account").exists()
 
 
+def test_test_home_rejects_unknown_profile_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    with pytest.raises(ValueError, match="profile_dir must be an absolute path"):
+        add_or_update_account(
+            "test-account",
+            profile_dir="~definitely-no-such-user-zzzz/profile",
+            test_home=True,
+            path=tmp_path / "config.toml",
+        )
+
+    assert not (home / ".codex-test" / "test-account").exists()
+
+
 def test_test_home_help_probe_does_not_forward_api_keys(tmp_path, monkeypatch):
     home = tmp_path / "home"
     calls = []

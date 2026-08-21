@@ -195,6 +195,19 @@ def test_diagnose_auth_json_ignores_unknown_user_codex_home(tmp_path, monkeypatc
     assert result["exists"] is False
 
 
+def test_diagnose_auth_json_rejects_unknown_user_auth_path():
+    result = _diagnose_auth_json(
+        Path("~definitely-no-such-user-zzzz/auth.json")
+    )
+
+    assert result == {
+        "path": "~definitely-no-such-user-zzzz/auth.json",
+        "exists": False,
+        "readable": False,
+        "error": "auth.json path is invalid",
+    }
+
+
 def test_diagnose_auth_json_rejects_symlink_auth_file(tmp_path):
     target = tmp_path / "target-auth.json"
     target.write_text(

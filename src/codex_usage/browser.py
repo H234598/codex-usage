@@ -499,7 +499,7 @@ def diagnose_account(
     profile_dir = _prepare_profile(account)
     diagnostic_auth_path = auth_json_path
     if diagnostic_auth_path is None and account.auth_json_path:
-        diagnostic_auth_path = Path(account.auth_json_path).expanduser()
+        diagnostic_auth_path = Path(account.auth_json_path)
     responses: list[dict[str, Any]] = []
     result: dict[str, Any] = {
         "account": account.id,
@@ -642,7 +642,15 @@ def _diagnose_auth_json(path: Path | None) -> dict[str, Any]:
     else:
         codex_home = Path.home() / ".codex"
     auth_path = path or codex_home / "auth.json"
-    expanded = auth_path.expanduser()
+    try:
+        expanded = auth_path.expanduser()
+    except RuntimeError:
+        return {
+            "path": str(auth_path),
+            "exists": False,
+            "readable": False,
+            "error": "auth.json path is invalid",
+        }
     exists = expanded.exists() or expanded.is_symlink()
     result: dict[str, Any] = {"path": str(expanded), "exists": exists}
     if not exists:
