@@ -3697,3 +3697,13 @@ ausgeführt; kein neuer reproduzierbarer Darstellungsfehler.
 
 `pytest -q tests/test_render.py tests/test_history_cli.py`: 68/68 bestanden;
 Modul-Coverage 87%. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 385: Profil-Layout-Grenzen
+
+`profile_layout.py` wurde auf kanonisches `CODEX_HOME`, private Metadaten,
+Symlink-/Hardlink-Grenzen, geschützte Ziele und Rollback-Erfassungen geprüft.
+Kein neuer reproduzierbarer Fehler; bestehende Metadaten werden nur nach
+strenger Eigentümer-/Mode-Prüfung bewahrt.
+
+`pytest -q tests/test_profile_layout.py`: 21/21 bestanden; Modul-Coverage
+73%. Ruff, Mypy und `git diff --check` sauber.
