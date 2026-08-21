@@ -1924,3 +1924,16 @@ der Validierung auf `tzinfo`/`reset_at` zu. Beschädigte Usage konnte dadurch
 `AttributeError` auslösen. Ungültige Fenster gelten jetzt als abgelaufen;
 ungültige Capture-Zeitstempel verwenden fail-closed Minimalzeit. `tests/test_state.py`:
 231/231 bestanden; Mypy und Ruff für betroffene Dateien sauber.
+
+## Runde 189: Gesamtverifikation nach Hardening-Runden
+
+Die vollständige Python-Suite lief nach den Model-, Render-, CLI-, History-,
+Routing- und State-Härtungen mit **2196 bestanden, 1 übersprungen und 1
+externer PyGObject-Warnung** in 87,67 s. Die Warnung betrifft weiterhin die
+veraltete `GLib.unix_signal_add_full`-API außerhalb des Repositories; keine
+Testfehler.
+
+## Runde 190: Gesamt-Mypy und Ruff
+
+`mypy src/codex_usage` meldet keine Fehler in 35 Quelldateien. Der aggregierte
+Ruff-Lauf über Produktion, Scripts, Launcher und Tests ist ebenfalls sauber.
