@@ -4330,3 +4330,10 @@ Tabellenverschachtelung oder Auswahlregression.
 
 `pytest -q tests/test_format_table_selector.py tests/test_applet.py`:
 32/32 bestanden; bekannte GTK-/PyGObject-Deprecation-Warnungen bleiben.
+
+## Runde 444: Vollsuite nach Consumption-Reset-Fix
+
+Die Vollsuite nach `1ec2839` bestätigt den Resetrotations-Fix und den
+aktuellen Formatierungsseitenstand: `2800 bestanden, 1 übersprungen,
+3 Warnungen` in 94,09 s. Warnungen bleiben externe GTK-/PyGObject-
+Deprecations; keine Test-, Snapshot- oder GUI-Regression.
