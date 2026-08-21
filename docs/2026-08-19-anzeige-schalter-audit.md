@@ -2511,3 +2511,20 @@ explizit. `HistoryStore.prune()` weist außerdem nicht-boolesche
 `dry_run`-Werte zurück, statt sie truthy/falsy zu interpretieren.
 `tests/test_history.py`: 72/72 fokussierte Tests bestanden; Mypy für Source
 und Ruff für die betroffenen Dateien sauber.
+
+## Runde 254: Reactivation validiert Manage-URL-Syntax
+
+`reactivate.open_account_in_reactivation_browser()` ließ eine syntaktisch
+kaputte URL wie `https://[::1` bis `urlsplit()` durch und gab rohen
+`ValueError` statt `ReactivationError` zurück. Die URL-Prüfung fängt Parser-
+Fehler jetzt kontrolliert ab. `tests/test_reactivate.py`: 59/59 fokussierte
+Tests bestanden; Mypy für Source und Ruff für die betroffenen Dateien sauber.
+
+## Runde 255: Reactivation validiert Account-Pfade
+
+`reactivate` und `open_account_in_reactivation_browser` übernahmen malformed
+`Account.profile_dir`/`auth_json_path` bis zu `Path()` und konnten dort roh mit
+`TypeError` abbrechen. Gemeinsame Account-Pfadguards weisen falsche oder leere
+Werte jetzt als `ReactivationError` zurück. `tests/test_reactivate.py`: 60/60
+fokussierte Tests bestanden; Mypy für Source und Ruff für die betroffenen
+Dateien sauber.

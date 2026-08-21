@@ -227,6 +227,18 @@ def test_manage_account_rejects_non_usage_urls(tmp_path, url):
         open_account_in_reactivation_browser(account, url=url)
 
 
+def test_manage_account_rejects_malformed_url(tmp_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        reactivation_browser="vivaldi",
+    )
+
+    with pytest.raises(ReactivationError, match="manage account URL is invalid"):
+        open_account_in_reactivation_browser(account, url="https://[::1")
+
+
 @pytest.mark.parametrize(
     "timeout_seconds",
     (
@@ -266,6 +278,25 @@ def test_reactivation_entrypoints_reject_non_account_input(account):
         reactivate_account(account)  # type: ignore[arg-type]
     with pytest.raises(ReactivationError, match="account is invalid"):
         open_account_in_reactivation_browser(account)  # type: ignore[arg-type]
+
+
+def test_reactivation_rejects_malformed_account_paths(tmp_path):
+    malformed_profile = Account(
+        id="work",
+        label="Work",
+        profile_dir=[],  # type: ignore[arg-type]
+    )
+    with pytest.raises(ReactivationError, match="account profile_dir is invalid"):
+        open_account_in_reactivation_browser(malformed_profile)
+
+    malformed_auth = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        auth_json_path=[],  # type: ignore[arg-type]
+    )
+    with pytest.raises(ReactivationError, match="account auth_json_path is invalid"):
+        reactivate_account(malformed_auth)
 
 
 def test_reactivate_account_uses_isolated_codex_home(tmp_path, monkeypatch):

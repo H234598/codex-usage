@@ -367,8 +367,10 @@ def _restore_auth_backup(path: Path, backup: tuple[str, int] | None) -> None:
 
 
 def _validate_auth_target(account: Account) -> Path:
-    if not account.auth_json_path:
+    if account.auth_json_path is None or account.auth_json_path == "":
         raise ReactivationError("account has no auth_json_path")
+    if not isinstance(account.auth_json_path, str):
+        raise ReactivationError("account auth_json_path is invalid")
     path = Path(account.auth_json_path).expanduser()
     if path.name != "auth.json":
         raise ReactivationError("auth_json_path must point to auth.json")
@@ -423,10 +425,10 @@ def _reactivation_environment(
 def _validate_manage_url(url: str) -> None:
     if not isinstance(url, str) or len(url) > 2048:
         raise ReactivationError("manage account URL is invalid")
-    parts = urlsplit(url)
     try:
+        parts = urlsplit(url)
         port = parts.port
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise ReactivationError("manage account URL is invalid") from exc
     if (
         parts.scheme != "https"
@@ -442,7 +444,7 @@ def _validate_manage_url(url: str) -> None:
 
 
 def _prepare_oauth_profile(account: Account, browser_kind: str) -> Path:
-    root = Path(account.profile_dir).expanduser()
+    root = _account_profile_root(account)
     _prepare_real_private_directory(root, label="account profile directory")
     oauth_root = root / "oauth"
     _prepare_real_private_directory(oauth_root, label="OAuth profile root")
@@ -465,12 +467,18 @@ def _manage_browser_profile(account: Account, browser_kind: str) -> Path:
         or (browser_kind == "vivaldi" and account_browser == "chromium")
     )
     if compatible:
-        root = Path(account.profile_dir).expanduser()
+        root = _account_profile_root(account)
         browser_dir = root / ("firefox" if account_browser == "firefox" else "chromium")
         marker = browser_dir / ".codex-usage-browser-profile"
         if browser_dir.is_dir() and marker.is_file() and not marker.is_symlink():
             return browser_dir
     return _prepare_oauth_profile(account, browser_kind)
+
+
+def _account_profile_root(account: Account) -> Path:
+    if not isinstance(account.profile_dir, str) or not account.profile_dir:
+        raise ReactivationError("account profile_dir is invalid")
+    return Path(account.profile_dir).expanduser()
 
 
 def _prepare_real_private_directory(path: Path, *, label: str) -> None:
