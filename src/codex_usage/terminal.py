@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .config import _validate_account_id
 from .models import Account
 from .profile_layout import layout_for_account
 
@@ -39,6 +40,10 @@ def start_account_terminal(
     """Start Codex in a new terminal using the account's canonical CODEX_HOME."""
     if not isinstance(account, Account):
         raise TerminalError("account is invalid")
+    try:
+        _validate_account_id(account.id)
+    except ValueError as exc:
+        raise TerminalError("account id is invalid") from exc
 
     layout = layout_for_account(account)
     if not layout.profile_dir.is_dir():
@@ -53,6 +58,8 @@ def start_account_terminal(
         codex=codex,
     )
     environment = os.environ.copy()
+    environment.pop("OPENAI_API_KEY", None)
+    environment.pop("CODEX_API_KEY", None)
     environment["CODEX_HOME"] = str(layout.codex_home)
     try:
         subprocess.Popen(

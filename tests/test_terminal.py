@@ -32,6 +32,8 @@ def test_start_account_terminal_uses_canonical_auth_home_and_cwd(monkeypatch, tm
         "Popen",
         lambda argv, **kwargs: captured.update(argv=argv, kwargs=kwargs),
     )
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-forward")
+    monkeypatch.setenv("CODEX_API_KEY", "must-not-forward")
 
     result = start_account_terminal(account)
 
@@ -46,6 +48,20 @@ def test_start_account_terminal_uses_canonical_auth_home_and_cwd(monkeypatch, tm
     ]
     assert captured["kwargs"]["cwd"] == str(profile)
     assert captured["kwargs"]["env"]["CODEX_HOME"] == str(profile / "codex-home")
+    assert "OPENAI_API_KEY" not in captured["kwargs"]["env"]
+    assert "CODEX_API_KEY" not in captured["kwargs"]["env"]
+
+
+@pytest.mark.parametrize("account_id", [None, [], "../escape", "__all_accounts__"])
+def test_start_account_terminal_rejects_invalid_account_id(tmp_path, account_id):
+    account = Account(
+        id=account_id,
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    with pytest.raises(TerminalError, match="account id is invalid"):
+        start_account_terminal(account)
 
 
 def test_start_account_terminal_rejects_missing_canonical_auth(tmp_path):

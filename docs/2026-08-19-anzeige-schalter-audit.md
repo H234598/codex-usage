@@ -4068,3 +4068,15 @@ Dateien und verweigert Drift, Fremdpfade und malformed Daten.
 
 `pytest -q tests/test_integration_installer.py`: 106/106 bestanden;
 Modul-Coverage 78 % (Branch). Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 420: Account-Terminal-Isolation
+
+`start_account_terminal()` kopierte bisher die komplette Parent-Umgebung in
+den neuen Account-Terminal. `OPENAI_API_KEY` oder `CODEX_API_KEY` konnten damit
+kanonische `CODEX_HOME`-Credentials übersteuern. Account-ID wird nun vor
+Layout-/Prozessarbeit validiert; beide API-Key-Variablen werden aus der
+Terminal-Umgebung entfernt, sonstige Desktop-/Locale-/Proxy-Variablen bleiben
+erhalten.
+
+`pytest -q tests/test_terminal.py`: 27/27 bestanden; Modul-Coverage 87 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
