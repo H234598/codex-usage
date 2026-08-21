@@ -63,6 +63,7 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         self.key = key
         self.settings = settings
         self._table_labels = {}
+        self._table_definitions = {}
         self._tables = {}
         self._saving = False
 
@@ -101,30 +102,45 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
             label = table.get("label")
             if not isinstance(label, str) or not label:
                 label = table_key
+            if table_key in self._table_labels:
+                continue
             self._table_labels[table_key] = label
+            self._table_definitions[table_key] = definitions[table_key]
             self.combo.append(table_key, label)
-            widget = _BoundFormatList(table_key, definitions[table_key], settings)
-            self._tables[table_key] = widget
-            self.table_stack.add_named(widget, table_key)
 
         self.attach()
 
     def _on_table_changed(self, *_args):
         table_key = self.combo.get_active_id()
-        if table_key not in self._tables:
+        if table_key not in self._table_labels:
             return
         self._show_table(table_key)
         if not self._saving:
             self.set_value(table_key)
 
+    def _ensure_table(self, table_key):
+        widget = self._tables.get(table_key)
+        if widget is not None:
+            return widget
+        definition = getattr(self, "_table_definitions", {}).get(table_key)
+        if definition is None:
+            return None
+        widget = _BoundFormatList(table_key, definition, self.settings)
+        self._tables[table_key] = widget
+        self.table_stack.add_named(widget, table_key)
+        widget.show_all()
+        return widget
+
     def _show_table(self, table_key):
+        if self._ensure_table(table_key) is None:
+            return
         self.table_stack.set_visible_child_name(table_key)
         self.table_title.set_markup(f"<b>{self._table_labels[table_key]}</b>")
 
     def on_setting_changed(self, *_args):
         table_key = self.get_value()
-        if table_key not in self._tables:
-            table_key = next(iter(self._tables), None)
+        if table_key not in self._table_labels:
+            table_key = next(iter(self._table_labels), None)
         if table_key is None:
             return
         self._saving = True

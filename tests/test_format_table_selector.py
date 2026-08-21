@@ -52,6 +52,13 @@ class _Settings:
                 "show-buttons": False,
                 "hidden-buttons": [],
             },
+            "table-b": {
+                "value": [],
+                "columns": [{"id": "value", "title": "Value", "type": "string"}],
+                "height": 100,
+                "show-buttons": False,
+                "hidden-buttons": [],
+            },
         }
         self.listeners = []
         self.writes = []
@@ -86,12 +93,13 @@ def _selector() -> FormatTableSelector:
     return selector
 
 
-def test_constructor_builds_only_declared_tables_and_initial_selection() -> None:
+def test_constructor_builds_only_selected_table_and_initial_selection() -> None:
     settings = _Settings()
     selector = FormatTableSelector(
         {
             "tables": [
                 {"key": "table-a", "label": "A"},
+                {"key": "table-b", "label": "B"},
                 {"key": "missing", "label": "Missing"},
             ]
         },
@@ -102,10 +110,35 @@ def test_constructor_builds_only_declared_tables_and_initial_selection() -> None
     try:
         selector.show_all()
         assert set(selector._tables) == {"table-a"}
+        assert set(selector._table_definitions) == {"table-a", "table-b"}
         assert selector.combo.get_active_id() == "table-a"
         assert selector.table_stack.get_visible_child_name() == "table-a"
         assert selector.table_stack.get_transition_type() == Gtk.StackTransitionType.NONE
         assert settings.writes == []
+    finally:
+        selector.destroy()
+
+
+def test_table_is_built_when_first_selected() -> None:
+    settings = _Settings()
+    selector = FormatTableSelector(
+        {
+            "tables": [
+                {"key": "table-a", "label": "A"},
+                {"key": "table-b", "label": "B"},
+            ]
+        },
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        selector.show_all()
+        selector.combo.set_active_id("table-b")
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        assert set(selector._tables) == {"table-a", "table-b"}
+        assert selector.table_stack.get_visible_child_name() == "table-b"
     finally:
         selector.destroy()
 

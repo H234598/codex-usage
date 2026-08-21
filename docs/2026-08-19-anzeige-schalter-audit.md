@@ -5362,3 +5362,21 @@ werden vor GTK-Markup-Escaping als Text erhalten.
 Regressionen prüfen `0` und `False` zusätzlich zum bestehenden Escaping und
 Zeilenumbruch. `tests/test_help_page.py`: 5/5 bestanden; Ruff,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 455: Selector-Tabellen lazy aufbauen
+
+`FormatTableSelector` und `ForecastTableSelector` legten beim Seitenaufbau
+bisher jede deklarierte Tabelle als vollständige GTK-`TreeView` mit Modell und
+Toolbar an. Sichtbar war nur eine Tabelle, aber alle Formatierungsziele und
+alle drei Prognoseziele blieben im Cinnamon-Heap. Die Selector-Seiten halten
+jetzt zunächst nur Allowlist, Label und Schema-Definition; die gebundene
+Tabelle entsteht erst bei Auswahl. Nachträgliches Umschalten zeigt neue
+Widgets korrekt an, ohne Stack-Animation. Doppelte deklarierte Schlüssel
+werden ignoriert.
+
+Regressionen prüfen initial genau eine erzeugte Tabelle, vollständige leichte
+Definitionen und Aufbau beim ersten Umschalten. `pytest -q
+tests/test_format_table_selector.py tests/test_forecast_table_selector.py`:
+10/10 bestanden; aufrufende Applet-, Hilfe-, Panel- und Serien-Suiten:
+47/47 bestanden. Ruff, Python-Compile, `git diff --check`, JSON-/JS-Prüfung
+und `make install-local` mit `reload=ok` sauber.

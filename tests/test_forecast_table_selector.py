@@ -55,13 +55,14 @@ def _info():
     }
 
 
-def test_constructor_builds_three_tables_and_initial_selection() -> None:
+def test_constructor_builds_only_selected_table_and_initial_selection() -> None:
     settings = _Settings()
     selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
 
     try:
         selector.show_all()
-        assert set(selector._tables) == set(_TABLE_KEYS)
+        assert set(selector._tables) == {_TABLE_KEYS[0]}
+        assert set(selector._table_definitions) == set(_TABLE_KEYS)
         assert selector.combo.get_active_id() == _TABLE_KEYS[0]
         assert selector.table_stack.get_visible_child_name() == _TABLE_KEYS[0]
         assert selector.table_stack.get_transition_type() == Gtk.StackTransitionType.NONE
