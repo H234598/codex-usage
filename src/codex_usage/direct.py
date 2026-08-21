@@ -1559,7 +1559,13 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
             if isinstance(nested, dict):
                 sources.append(nested)
     for source in sources:
-        for key in ("credits", "credit_balance", "creditBalance", "remaining_credits", "remainingCredits"):
+        for key in (
+            "credits",
+            "credit_balance",
+            "creditBalance",
+            "remaining_credits",
+            "remainingCredits",
+        ):
             if key in source:
                 candidate = source[key]
                 break

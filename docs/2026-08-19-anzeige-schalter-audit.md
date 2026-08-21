@@ -1474,3 +1474,10 @@ Baseline-Zeitbedingung und die `_ema_rate()`-Signatur. Beide sind nur auf
 mehrere Zeilen verteilt; Berechnung und API bleiben unverändert.
 `tests/test_consumption.py`: 19/19 bestanden; Mypy und Ruff für Modul und
 Test sauber.
+
+## Runde 132: Direct-Formatierung
+
+Der globale Ruff-Lauf meldete eine E501-Zeile in der Credits-Feldschleife von
+`direct.py`. Die Feldnamen sind jetzt nur auf mehrere Zeilen verteilt;
+Extraktionsreihenfolge und Fallbacklogik bleiben unverändert.
+`tests/test_direct.py`: 149/149 bestanden; Mypy und Ruff für das Modul sauber.
