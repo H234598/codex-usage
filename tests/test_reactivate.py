@@ -19,6 +19,7 @@ from codex_usage.reactivate import (
     MANAGE_ACCOUNT_URL,
     OAUTH_PROFILE_MARKER,
     ReactivationError,
+    _resolve_executable,
     _validate_refreshed_auth,
     _validate_refreshed_identity,
     open_account_in_reactivation_browser,
@@ -93,6 +94,19 @@ def test_reactivate_symlink_check_scans_after_missing_segment(tmp_path):
             tmp_path / "missing" / ".." / "redirected" / "target",
             label="profile path",
         )
+
+
+@pytest.mark.parametrize("explicit", ["", " ", [], False])
+def test_resolve_reactivation_executable_rejects_explicit_invalid_values(
+    explicit, tmp_path, monkeypatch
+):
+    fallback = tmp_path / "codex"
+    fallback.write_text("#!/bin/sh\n", encoding="utf-8")
+    fallback.chmod(0o700)
+    monkeypatch.setattr(reactivate_module.shutil, "which", lambda _name: str(fallback))
+
+    with pytest.raises(ReactivationError, match="codex command is invalid"):
+        _resolve_executable(explicit, "codex", label="codex command")
 
 
 def test_reactivate_uses_account_browser_when_override_is_missing(monkeypatch, tmp_path):

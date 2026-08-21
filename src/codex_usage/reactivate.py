@@ -497,9 +497,14 @@ def _assert_no_symlink_ancestors(path: Path, *, label: str) -> None:
 
 
 def _resolve_executable(explicit: str | None, fallback: str, *, label: str) -> str:
-    executable = explicit or shutil.which(fallback)
-    if not executable:
-        raise ReactivationError(f"{label} was not found")
+    if explicit is None:
+        executable = shutil.which(fallback)
+        if not executable:
+            raise ReactivationError(f"{label} was not found")
+    else:
+        if not isinstance(explicit, str) or not explicit or explicit != explicit.strip():
+            raise ReactivationError(f"{label} is invalid")
+        executable = explicit
     path = Path(executable).expanduser()
     if not path.is_file() or not os.access(path, os.X_OK):
         raise ReactivationError(f"{label} is not executable")

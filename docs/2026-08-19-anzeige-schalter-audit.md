@@ -1456,3 +1456,13 @@ Der Regressionstest deckt leeren, whitespace-only und nicht-string Werte ab.
 `tests/test_app_server.py`: 81/81 bestanden; Mypy und Ruff für den
 Produktionscode sauber. Die bestehende E501-Zeile im Testmodul blieb
 unberührt.
+
+## Runde 130: Expliziter Reaktivierungs-Befehl
+
+`reactivate._resolve_executable()` behandelte explizite falsy Werte ebenfalls
+als fehlende Option. Leerer `codex_command` oder `browser_helper` konnte so
+unbemerkt auf den Fallback aus `PATH` wechseln. Der Resolver prüft jetzt
+explizite Werte wie der Terminal- und App-Server-Resolver; nur `None` darf
+Fallback auslösen. Vier Regressionen für leere, whitespace-only und
+nicht-string Werte sind ergänzt. `tests/test_reactivate.py`: 50/50 bestanden;
+Mypy und Ruff sauber (bestehende E501-Testzeile ausgenommen).
