@@ -1523,3 +1523,9 @@ Test-/Umgebungsbefund separat zu beobachten.
 
 Der vollständige Node-Testlauf `tests/applet_runtime.test.js` endet mit
 **391/391 bestanden**, ohne Skip oder Fehler.
+
+## Runde 139: App-Server-Testformatierung
+
+Ruff meldete eine E501-Zeile in der Fake-App-Server-Credits-Fixture. Der
+zusammengesetzte Test-String ist jetzt mehrzeilig; Testverhalten bleibt gleich.
+`tests/test_app_server.py`: 81/81 bestanden; Ruff sauber.

@@ -113,7 +113,12 @@ def _fake_codex(
     reject_initial = str(reject_initial_account_read)
     plan_field = f", 'planType': {account_plan_type!r}" if account_plan_type else ""
     email_field = f", 'email': {account_email!r}" if account_email else ""
-    credits_field = f", 'credits': {{'has_credits': True, 'unlimited': False, 'balance': {account_credits!r}}}" if account_credits is not None else ""
+    credits_field = (
+        f", 'credits': {{'has_credits': True, 'unlimited': False, "
+        f"'balance': {account_credits!r}}}"
+        if account_credits is not None
+        else ""
+    )
     source = f"""#!/usr/bin/env python3
 import json
 import sys
