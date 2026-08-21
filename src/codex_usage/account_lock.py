@@ -22,11 +22,11 @@ class AccountLockError(Exception):
 
 @contextmanager
 def account_lock(
-    account_id: str,
+    account_id: object,
     *,
     timeout_seconds: int | float = ACCOUNT_LOCK_TIMEOUT_SECONDS,
 ) -> Iterator[None]:
-    if account_id in {".", ".."} or not re.fullmatch(
+    if not isinstance(account_id, str) or account_id in {".", ".."} or not re.fullmatch(
         r"[A-Za-z0-9_.-]{1,64}", account_id
     ):
         raise AccountLockError("invalid account id for lock")

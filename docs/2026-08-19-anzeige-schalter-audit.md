@@ -1054,3 +1054,10 @@ Verzeichniskettenprüfung am ersten fehlenden Segment ab und behandelten `..`
 nicht als Aufwärtssegment. Ein `missing/../symlink/...`-Pfad konnte so die
 Symlinkprüfung umgehen. Beide Scanner normalisieren jetzt `..` und prüfen
 weiter; `tests/test_applet.py`: 27/27 bestanden.
+
+## Runde 81: Account-Lock-ID-Typprüfung
+
+`account_lock.account_lock()` führte Set- und Regex-Prüfung direkt auf dem
+übergebenen Wert aus. `None` oder unhashbare Werte erzeugten dadurch
+`TypeError` statt `AccountLockError`. Explizite Stringprüfung ergänzt;
+`tests/test_account_lock.py`: 14/14 bestanden; Ruff sauber.

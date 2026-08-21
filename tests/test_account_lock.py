@@ -78,6 +78,17 @@ def test_account_lock_rejects_path_traversal(tmp_path, monkeypatch):
     assert not (tmp_path / "outside.lock").exists()
 
 
+@pytest.mark.parametrize("account_id", [None, [], {}])
+def test_account_lock_rejects_non_string_account_id(tmp_path, monkeypatch, account_id):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
+    with pytest.raises(AccountLockError, match="invalid account id"):
+        with account_lock(account_id):
+            pass
+
+    assert not (tmp_path / "codex-usage").exists()
+
+
 def test_account_lock_wraps_directory_io_error(monkeypatch):
     def fail_directory(*_args, **_kwargs):
         raise OSError("directory unavailable")
