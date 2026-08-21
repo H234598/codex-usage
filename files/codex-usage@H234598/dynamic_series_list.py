@@ -140,6 +140,11 @@ class DynamicSeriesList(List, JSONSettingsBackend):
     def _active_owners(self):
         owners = {}
         for row in self.model:
+            if not isinstance(row, (list, tuple)) or len(row) <= max(
+                self._series_column_index,
+                self._active_column_index,
+            ):
+                continue
             series = row[self._series_column_index]
             active = row[self._active_column_index]
             if isinstance(series, str) and series.strip() and active is True:
@@ -151,7 +156,10 @@ class DynamicSeriesList(List, JSONSettingsBackend):
         available = self._masterjet_series()
         current = ""
         account = None
-        if info is not None:
+        if isinstance(info, (list, tuple)) and len(info) > max(
+            self._series_column_index,
+            self._active_column_index,
+        ):
             current = info[self._series_column_index]
             account = info[0]
         current = current.strip().upper() if isinstance(current, str) else ""

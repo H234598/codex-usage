@@ -51,6 +51,25 @@ def test_series_options_hide_other_active_owners_but_keep_current_assignment() -
     assert gamma_options == {"Keine Serie": "", "C": "C"}
 
 
+def test_active_owners_ignore_malformed_rows() -> None:
+    table = _SeriesTable([
+        ["alpha"],
+        None,
+        ["beta", "B", True],
+    ], ("A", "B"))
+
+    assert DynamicSeriesList._active_owners(table) == {"B": "beta"}
+
+
+def test_series_options_ignore_malformed_current_row() -> None:
+    table = _SeriesTable([["alpha", "A", True]], ("A", "B"))
+
+    assert DynamicSeriesList._series_options_for(table, ["short"]) == {
+        "Keine Serie": "",
+        "B": "B",
+    }
+
+
 def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, monkeypatch) -> None:
     command = tmp_path / "masterjet-series"
     command.write_text(

@@ -3176,3 +3176,19 @@ Die Vollsuite bestätigt den gemeinsamen Stand: `2710 bestanden, 1 übersprungen
 1 Warnung` in 92,74 s. Die Warnung bleibt externe PyGObject-Deprecation
 außerhalb des Repositories. Snapshot-, Usage-Limit-, Spark-Health-, Scheduler-,
 Render-, Extractor-, Integration- und Migrations-Zeitpfade sind integriert grün.
+
+## Runde 332: Dynamic-Series-Tabelle ignoriert kaputte Settings-Rows
+
+`DynamicSeriesList._active_owners()` und `_series_options_for()` griffen bei
+gekürzten oder nicht-listartigen externen Tabellenrows ungefangen per Index zu.
+Malformed Rows werden jetzt ignoriert; gültige aktive Serien bleiben sichtbar.
+`tests/test_dynamic_series_list.py`: 8/8 Tests bestanden; Ruff sauber. Mypy ist
+für dieses Cinnamon-Modul wegen nicht installierter externer
+`JsonSettingsWidgets`-/`TreeListWidgets`-Imports nicht ausführbar.
+
+## Runde 333: Vollsuite nach Dynamic-Series-Settings-Härtung
+
+Die Vollsuite bestätigt den gemeinsamen Stand: `2712 bestanden, 1 übersprungen,
+1 Warnung` in 95,10 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. Dynamic-Series-Settings und alle vorherigen Zeit-
+und Pfadgrenzen sind integriert grün.
