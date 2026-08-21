@@ -1542,3 +1542,11 @@ Der vollständige Ruff-Testlauf meldete sieben E501-Zeilen in
 `test_applet.py`. Settings-Assertions, erwartete Spalten und Dateinamen sind
 jetzt mehrzeilig formatiert; Testsemantik bleibt unverändert.
 `tests/test_applet.py`: 27/27 bestanden; Ruff für alle Tests jetzt sauber.
+
+## Runde 142: Snapshot-Status-Typprüfung
+
+`integration_snapshot._canonical_document()` prüfte `status` direkt per
+Frozenset-Mitgliedschaft. Unhashbare Statuswerte aus einem Snapshot konnten
+dadurch `TypeError` leaken; sie werden jetzt vor der Mitgliedschaft als String
+geprüft und sauber als `IntegrationInvalidSource` abgewiesen.
+`tests/test_integration_snapshot.py`: 31/31 bestanden; Mypy und Ruff sauber.

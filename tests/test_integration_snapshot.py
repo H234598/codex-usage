@@ -518,3 +518,29 @@ def test_serialization_accepts_true_integer_schema_version():
             "accounts": [],
         }
     ) == b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":1}'
+
+
+@pytest.mark.parametrize("status", [[], {}])
+def test_canonical_document_rejects_unhashable_status(status):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        _canonical_document,
+    )
+
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_document(
+            {
+                "schema_version": 1,
+                "generated_at": "2026-08-15T10:05:00Z",
+                "accounts": [
+                    {
+                        "account_id": "alpha",
+                        "status": status,
+                        "freshness": {
+                            "captured_at": "2026-08-15T10:00:00Z",
+                            "stale": False,
+                        },
+                    }
+                ],
+            }
+        )

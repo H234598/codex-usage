@@ -564,7 +564,7 @@ def _canonical_document(document: object) -> dict[str, object]:
         if not _ACCOUNT_ID_RE.fullmatch(account_id) or account_id in seen:
             _invalid()
         status = raw_account["status"]
-        if status not in _SCHEMA_STATUSES:
+        if not isinstance(status, str) or status not in _SCHEMA_STATUSES:
             _invalid()
         freshness = raw_account["freshness"]
         if not isinstance(freshness, Mapping) or not all(
