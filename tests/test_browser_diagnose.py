@@ -294,6 +294,33 @@ def test_diagnose_detects_cloudflare_challenge_and_redacts_url():
 
 
 @pytest.mark.parametrize(
+    ("url", "title", "body_text", "responses"),
+    [
+        (None, None, None, None),
+        ([], {}, object(), "invalid"),
+        ("", "", "", [None, [], "invalid"]),
+    ],
+)
+def test_detect_page_state_rejects_malformed_diagnostic_inputs(
+    url, title, body_text, responses
+):
+    assert _detect_page_state(url, title, body_text, responses) == "unknown"  # type: ignore[arg-type]
+
+
+def test_status_for_result_rejects_malformed_usage_windows():
+    assert (
+        _status_for_result(
+            body_text=None,  # type: ignore[arg-type]
+            current_url=None,  # type: ignore[arg-type]
+            five_hour=[],  # type: ignore[arg-type]
+            weekly={},  # type: ignore[arg-type]
+            main_status=200,
+        )
+        == AccountStatus.PARTIAL
+    )
+
+
+@pytest.mark.parametrize(
     ("url", "expected"),
     [
         (

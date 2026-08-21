@@ -1155,16 +1155,24 @@ def _detect_page_state(
     *,
     main_status: int | None = None,
 ) -> str:
-    haystack = f"{url}\n{title}\n{body_text}".lower()
-    response_urls = "\n".join(str(item.get("url", "")) for item in responses or []).lower()
-    if title.strip().lower() == "just a moment...":
+    safe_url = url if isinstance(url, str) else ""
+    safe_title = title if isinstance(title, str) else ""
+    safe_body_text = body_text if isinstance(body_text, str) else ""
+    haystack = f"{safe_url}\n{safe_title}\n{safe_body_text}".lower()
+    response_items = responses if isinstance(responses, (list, tuple)) else ()
+    response_urls = "\n".join(
+        str(item.get("url", ""))
+        for item in response_items
+        if isinstance(item, dict)
+    ).lower()
+    if safe_title.strip().lower() == "just a moment...":
         return "cloudflare"
     if (
         main_status == 403
-        and "chatgpt.com/codex/cloud/settings/analytics" in url.lower()
+        and "chatgpt.com/codex/cloud/settings/analytics" in safe_url.lower()
     ):
         return "cloudflare"
-    if "auth" in url.lower() or any(hint in haystack for hint in LOGIN_HINTS):
+    if "auth" in safe_url.lower() or any(hint in haystack for hint in LOGIN_HINTS):
         return "login_required"
     if any(hint in haystack for hint in CLOUDFLARE_HINTS):
         return "cloudflare"
@@ -1207,8 +1215,10 @@ def _status_for_result(
             if main_status in {401, 407}
             else AccountStatus.ERROR
         )
-    lower = body_text.lower()
-    if "auth" in current_url.lower() or _looks_like_login_page(lower) or (
+    safe_body_text = body_text if isinstance(body_text, str) else ""
+    safe_current_url = current_url if isinstance(current_url, str) else ""
+    lower = safe_body_text.lower()
+    if "auth" in safe_current_url.lower() or _looks_like_login_page(lower) or (
         not _has_usage_value(five_hour)
         and not _has_usage_value(weekly)
         and any(hint in lower for hint in LOGIN_HINTS)
@@ -1231,7 +1241,7 @@ def _main_response_failed(status: int | None) -> bool:
 
 
 def _has_usage_value(window: LimitWindow | None) -> bool:
-    return window is not None and window.has_usage_value
+    return isinstance(window, LimitWindow) and window.has_usage_value
 
 
 def _looks_like_login_page(lower_body_text: str) -> bool:

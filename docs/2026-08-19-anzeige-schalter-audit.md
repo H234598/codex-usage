@@ -2071,3 +2071,14 @@ abbrechen. Fenster-Parsing meldet jetzt kontrolliert
 `AppServerProtocolError`; Diagnose liefert fail-closed keine unsupported
 Fenster. `tests/test_app_server.py`: 87/87 bestanden; Mypy für Source und Ruff
 für betroffene Dateien sauber.
+
+## Runde 206: Browser-Diagnose validiert Response- und Usage-Typen
+
+`browser._detect_page_state()` und `_status_for_result()` vertrauten bei
+Diagnose-Strings, Response-Containern und Usage-Fenstern auf korrekte
+Laufzeittypen. Malformed Diagnose-Daten konnten mit `AttributeError` oder
+`TypeError` abbrechen. Strings werden jetzt fail-closed normalisiert,
+Response-Listen filtern nur Dicts und Usage-Checks akzeptieren nur
+`LimitWindow`. `tests/test_browser_diagnose.py` und
+`tests/test_browser_profile.py`: 103/103 bestanden; Mypy für Source und Ruff
+für betroffene Dateien sauber.
