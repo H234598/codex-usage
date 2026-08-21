@@ -188,6 +188,16 @@ def test_write_private_text_replaces_atomically_and_keeps_mode(tmp_path):
     assert list(tmp_path.glob(".value.json.tmp-*")) == []
 
 
+@pytest.mark.parametrize("mode", [0o640, True, "600", -1])
+def test_write_private_text_rejects_non_private_mode(tmp_path, mode):
+    path = tmp_path / "value.json"
+
+    with pytest.raises(ValueError, match="mode must be private"):
+        write_private_text(path, "secret", label="value", mode=mode)  # type: ignore[arg-type]
+
+    assert not path.exists()
+
+
 def test_write_private_text_can_create_without_replacing_existing_file(tmp_path):
     path = tmp_path / "value.json"
     path.write_text("old", encoding="utf-8")

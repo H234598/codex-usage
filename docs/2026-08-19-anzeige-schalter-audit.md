@@ -3707,3 +3707,15 @@ strenger Eigentümer-/Mode-Prüfung bewahrt.
 
 `pytest -q tests/test_profile_layout.py`: 21/21 bestanden; Modul-Coverage
 73%. Ruff, Mypy und `git diff --check` sauber.
+
+## Runde 386: Private-Write-Mode-Grenze
+
+`private_io.write_private_text()` akzeptierte bisher beliebige Datei-Modi.
+Ein versehentlicher Aufruf mit `0o640` hätte private Inhalte group-lesbar
+geschrieben. Der Helper akzeptiert jetzt nur owner-only-Modi (`0o000` bis
+`0o700` ohne Gruppen-/Welt-/Sonderbits); vier Regressionstests decken
+Gruppenbits, Bool, String und negative Werte ab.
+
+`pytest -q tests/test_private_io.py`: 36/36 bestanden. Abhängige
+Konfigurations-, Profil-Layout- und Reaktivierungs-Tests: 235/235 bestanden.
+Modul-Coverage 75%; Ruff, Mypy und `git diff --check` sauber.

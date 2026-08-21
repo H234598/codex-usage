@@ -178,6 +178,13 @@ def write_private_text(
     replace_existing: bool = True,
 ) -> None:
     path = _require_path(path, label=label)
+    if (
+        isinstance(mode, bool)
+        or not isinstance(mode, int)
+        or mode < 0
+        or mode & ~0o700
+    ):
+        raise ValueError(f"{label} mode must be private")
     assert_no_symlink_ancestors(path, label=label)
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
