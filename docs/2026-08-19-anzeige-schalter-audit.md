@@ -1673,3 +1673,11 @@ per Gleichheit und akzeptierte dadurch Bool-/Floatwerte als Version `1`.
 Gesundheitsdaten werden jetzt nur bei exakt eingebautem `int`-Versionstyp
 geladen; andere Versionen bleiben unbekannt. `tests/test_spark_health.py`:
 18/18 bestanden; Mypy und Ruff sauber.
+
+## Runde 158: Profile-Job-Manifest-Version
+
+`profile_jobs._validate_manifest()` verglich die Manifest-Version nur per
+Gleichheit und akzeptierte Bool-/Floatwerte als Version `1`. Die Prüfung
+verlangt jetzt exakt `int`; fremde Versionstypen werden als ungültiges Manifest
+abgewiesen. `tests/test_profile_jobs.py`: 62/62 bestanden; Mypy und Ruff
+sauber.

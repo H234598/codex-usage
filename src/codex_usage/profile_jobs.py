@@ -770,7 +770,10 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         value = {**value, "tag": "", "series": "", "series_active": False}
     elif set(value) != required:
         raise ValueError("profile job manifest schema is invalid")
-    if value["schema_version"] != PROFILE_JOB_SCHEMA_VERSION:
+    if (
+        type(value["schema_version"]) is not int
+        or value["schema_version"] != PROFILE_JOB_SCHEMA_VERSION
+    ):
         raise ValueError("profile job manifest schema version is invalid")
     _validate_create_arguments(
         account_id=value["account_id"],

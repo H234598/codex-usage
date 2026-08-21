@@ -1374,6 +1374,34 @@ def test_profile_job_manifest_validation_does_not_require_profile_path(tmp_path)
     assert validated["profile_dir"] == manifest["profile_dir"]
 
 
+@pytest.mark.parametrize("schema_version", [True, 1.0, "1"])
+def test_profile_job_manifest_requires_strict_schema_version(tmp_path, schema_version):
+    manifest = {
+        "schema_version": schema_version,
+        "job_id": "job-" + "a" * 32,
+        "account_id": "alpha",
+        "label": "Alpha",
+        "browser": "firefox",
+        "backend": "direct",
+        "profile_dir": str(tmp_path / "profile"),
+        "reactivation_browser": "auto",
+        "tag": "",
+        "series": "",
+        "series_active": False,
+        "expected_backend_account_id": None,
+        "config_path": str(tmp_path / "config.toml"),
+        "json_events": False,
+        "status": "queued",
+        "created_at": "2026-08-16T00:00:00Z",
+        "updated_at": "2026-08-16T00:00:00Z",
+        "worker_pid": None,
+        "error": None,
+    }
+
+    with pytest.raises(ValueError, match="schema version is invalid"):
+        profile_jobs._validate_manifest(manifest)
+
+
 def test_profile_job_manifest_rejects_unhashable_status(tmp_path):
     manifest = {
         "schema_version": 1,
