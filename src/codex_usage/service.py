@@ -429,10 +429,11 @@ def _unit_directory(*, create: bool = True) -> Path:
         raise ServiceError("systemd user unit directory must be a real directory")
     if not path.exists():
         return path
-    try:
-        path.chmod(0o700)
-    except OSError as exc:
-        raise ServiceError("could not secure systemd user unit directory") from exc
+    if not create:
+        try:
+            ensure_private_directory(path, label="systemd user unit directory")
+        except (OSError, ValueError) as exc:
+            raise ServiceError("could not secure systemd user unit directory") from exc
     return path
 
 

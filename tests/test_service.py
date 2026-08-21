@@ -1298,6 +1298,29 @@ def test_service_install_restricts_existing_unit_directory(tmp_path, monkeypatch
     assert oct(unit_dir.stat().st_mode & 0o777) == "0o700"
 
 
+def test_unit_directory_binds_mode_change_to_existing_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True, mode=0o755)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    original_chmod = Path.chmod
+
+    def replace_target_before_path_chmod(path, mode):
+        if path == unit_dir:
+            unit_dir.rmdir()
+            unit_dir.symlink_to(outside, target_is_directory=True)
+        return original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", replace_target_before_path_chmod)
+    _unit_directory(create=False)
+
+    assert unit_dir.is_dir() and not unit_dir.is_symlink()
+    assert unit_dir.stat().st_mode & 0o777 == 0o700
+    assert outside.stat().st_mode & 0o777 == 0o755
+
+
 def test_service_install_rejects_symlinked_config_home(tmp_path, monkeypatch):
     outside = tmp_path / "outside"
     outside.mkdir()

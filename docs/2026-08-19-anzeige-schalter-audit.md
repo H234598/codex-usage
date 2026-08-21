@@ -4132,6 +4132,19 @@ umgestellt. `pytest -q tests/test_private_io.py tests/test_state.py
 tests/test_spark_health.py`: 344/344 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 464: Service-Unit-Verzeichnis nutzt Directory-FD-Sicherung
+
+`service._unit_directory(create=False)` setzte ein vorhandenes
+systemd-Unit-Verzeichnis nach Pfadprüfung nochmals per `Path.chmod()`. Ein
+Symlink-Race konnte dadurch ein Ziel außerhalb des geprüften Verzeichnisses
+modifizieren. Der Pfad nutzt jetzt denselben `ensure_private_directory()`-
+Vertrag mit Directory-FD und `O_NOFOLLOW`; fehlende Verzeichnisse bleiben bei
+`create=False` unverändert fehlend.
+
+Regression für den Race-Pfad ergänzt. `pytest -q tests/test_service.py
+tests/test_private_io.py`: 113/113 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 450: App-Server-RPC und Identitätsgrenzen
 
 `app_server.py` auf RPC-ID-/Result-Prüfung, bounded Line-/Message-Queues,
