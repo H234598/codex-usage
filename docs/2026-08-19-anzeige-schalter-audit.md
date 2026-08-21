@@ -2427,3 +2427,13 @@ Pfadkombination. Ein gemeinsamer Resolver weist ungültige Verzeichnisse jetzt
 kontrolliert als `ValueError("state directory is invalid")` zurück.
 `tests/test_state.py`: 252/252 bestanden; Mypy für Source und Ruff für die
 betroffenen Dateien sauber.
+
+## Runde 245: State-Provenance- und Merge-APIs validieren Usage-Typen
+
+`backend_provenance_matches_configured()`,
+`backend_provenance_matches()` und `backend_identity_matches()` griffen bei
+Fremdobjekten direkt auf Usage-Felder zu. `merge_current_with_last_success()`
+tat dasselbe für current/last-success. Predicates fail-closed; Merge weist
+ungültige Usage jetzt kontrolliert als `ValueError` zurück.
+`tests/test_state.py`: 263/263 bestanden; Mypy für Source und Ruff für die
+betroffenen Dateien sauber.

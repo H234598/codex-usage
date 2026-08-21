@@ -78,6 +78,8 @@ def backend_provenance_matches_configured(
         or configured_backend not in KNOWN_BACKENDS
     ):
         return False
+    if not isinstance(usage, AccountUsage):
+        return False
     if not _backend_provenance_fields_valid(usage):
         return False
     if not _backend_provenance_is_complete(usage):
@@ -98,6 +100,8 @@ def backend_provenance_matches_configured(
 
 def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
     """Avoid merging values across authenticated backends without fallback proof."""
+    if not isinstance(left, AccountUsage) or not isinstance(right, AccountUsage):
+        return False
     if not _backend_provenance_is_complete(left) or not _backend_provenance_is_complete(right):
         return False
     if (
@@ -1116,6 +1120,10 @@ def merge_current_with_last_success(
     current: AccountUsage,
     last_success: AccountUsage | None,
 ) -> AccountUsage:
+    if not isinstance(current, AccountUsage):
+        raise ValueError("current usage is invalid")
+    if last_success is not None and not isinstance(last_success, AccountUsage):
+        raise ValueError("last success usage is invalid")
     if last_success is None:
         return current
     if current.status == AccountStatus.LOGIN_REQUIRED:
@@ -1701,6 +1709,8 @@ def _values_capture_for_expiry(usage: AccountUsage) -> datetime:
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
+    if not isinstance(left, AccountUsage) or not isinstance(right, AccountUsage):
+        return False
     if (
         left.backend_used is not None
         and not isinstance(left.backend_used, str)

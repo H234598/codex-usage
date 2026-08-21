@@ -86,6 +86,37 @@ def test_state_entrypoints_reject_non_path_directory(directory):
             helper(usage, directory)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("usage", [None, [], 1, object()])
+def test_state_usage_predicates_fail_closed_for_non_usage(usage):
+    complete = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    assert backend_provenance_matches_configured(usage, "direct") is False  # type: ignore[arg-type]
+    assert backend_provenance_matches(usage, complete) is False  # type: ignore[arg-type]
+    assert backend_identity_matches(usage, complete) is False  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("current", [None, [], 1, object()])
+def test_state_merge_rejects_non_usage_current(current):
+    with pytest.raises(ValueError, match="current usage is invalid"):
+        merge_current_with_last_success(current, None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("last_success", [[], 1, object()])
+def test_state_merge_rejects_non_usage_last_success(last_success):
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+    with pytest.raises(ValueError, match="last success usage is invalid"):
+        merge_current_with_last_success(current, last_success)  # type: ignore[arg-type]
+
+
 def test_usage_state_round_trips_dynamic_main_and_spark_pools():
     captured_at = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
     weekly = LimitWindow(
