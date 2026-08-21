@@ -4450,6 +4450,16 @@ Datei-Parent-Swap-Regression ergänzt. `pytest -q
 tests/test_integration_installer.py`: 130/130 bestanden. Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 499: Routing-Fensteridentität explizit fail-closed getestet
+
+`routing._window_identity_is_known()` für unbekannten Fensternamen ohne
+`duration_seconds` geprüft. `_canonical_window_name(None)` liefert bereits
+kontrolliert `""`; der Pfad ergibt `False` statt Ausnahme. Direkter
+Fail-Closed-Test ergänzt, keine Produktionsänderung erforderlich.
+
+`pytest -q tests/test_routing.py`: 126/126 bestanden. Ruff, Mypy und
+`git diff --check` sauber.
+
 ## Runde 498: Profile-Job-Start-Cleanup mit strikter PID-Grenze
 
 `profile_jobs.create_profile_job()` übergab bei fehlgeschlagenem Worker-

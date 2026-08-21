@@ -13,6 +13,7 @@ from codex_usage.routing import (
     _backend_identity_is_valid,
     _validate_credit_limits,
     _validate_policy,
+    _window_identity_is_known,
     effective_credit_limits,
     effective_paid_overage,
     evaluate_routing,
@@ -37,6 +38,10 @@ def _window(name: str, remaining: float, duration: int) -> LimitWindow:
         percent=remaining,
         duration_seconds=duration,
     )
+
+
+def test_window_identity_unknown_name_without_duration_fails_closed():
+    assert _window_identity_is_known(LimitWindow(name="custom")) is False
 
 
 def _usage(
