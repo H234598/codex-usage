@@ -3514,3 +3514,14 @@ Felder und beide Fehlervarianten ab.
 
 `pytest -q tests/test_profile_jobs.py`: 76/76 bestanden. Mypy für
 `profile_jobs.py`, Ruff und `git diff --check` sauber.
+
+## Runde 367: Systemd-Service-Status und Rollback-Pfade
+
+`service.py` wurde auf Unit-Ownership, private Pfade, systemd-Ausgabegrenzen,
+Timeout/Reaping, Aktivierungs-Rollbacks, Timer-Zustand und Status-DTOs geprüft.
+Kein neuer reproduzierbarer Fehler.
+
+`pytest -q tests/test_service.py`: 66/66 bestanden. Mypy für `service.py`,
+Ruff und `git diff --check` sauber. Laufender Timer bleibt aktiv/geplant;
+letzter One-Shot-Service-Lauf endet weiterhin wegen fehlender Firefox-
+Playwright-Executable mit Exit 2.
