@@ -743,7 +743,10 @@ def _absolute_account_path(value: str, name: str) -> str:
             raise ValueError(f"{name} must be a local file URI")
     if "\x00" in raw_value:
         raise ValueError(f"{name} must be an absolute path")
-    path = Path(raw_value).expanduser()
+    try:
+        path = Path(raw_value).expanduser()
+    except RuntimeError as exc:
+        raise ValueError(f"{name} must be an absolute path") from exc
     if not path.is_absolute():
         raise ValueError(f"{name} must be an absolute path")
     return str(path)
@@ -986,7 +989,11 @@ def _validate_account(account: object) -> None:
             "auth_json_path",
             MAX_CONFIG_PATH_CHARS,
         )
-        if not Path(account.auth_json_path).expanduser().is_absolute():
+        try:
+            auth_path = Path(account.auth_json_path).expanduser()
+        except RuntimeError as exc:
+            raise ValueError("auth_json_path must be an absolute path") from exc
+        if not auth_path.is_absolute():
             raise ValueError("auth_json_path must be an absolute path")
 
 

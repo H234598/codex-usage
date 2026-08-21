@@ -2729,3 +2729,12 @@ gemeinsame Pfadauswahl expandiert jetzt vor Lock und Seiteneffekten und liefert
 kontrolliert `ValueError("config path cannot be resolved")`. `tests/test_service.py`:
 65/65 fokussierte Tests bestanden; Mypy für Source, Ruff und `git diff --check`
 sauber.
+
+## Runde 278: Account- und Auth-Pfade weisen unbekannte Home-Namen ab
+
+`config._absolute_account_path()` und die abschließende Account-Validierung
+ließen `Path.expanduser()` bei unbekannten `~user`-Namen als rohes
+`RuntimeError` entkommen. Beide zentralen Pfadprüfungen liefern jetzt
+kontrolliert `ValueError` für Profil- und Auth-Pfade. `tests/test_config.py`:
+112/112 fokussierte Tests bestanden; Mypy für Source, Ruff und
+`git diff --check` sauber.

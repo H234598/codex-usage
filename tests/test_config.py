@@ -259,6 +259,30 @@ def test_account_paths_reject_native_nul_path():
         )
 
 
+def test_account_paths_reject_unknown_home_user():
+    with pytest.raises(ValueError, match="absolute path"):
+        config_module._absolute_account_path(
+            "~definitely-no-such-user-zzzz/profile",
+            "profile_dir",
+        )
+
+
+def test_config_rejects_unknown_auth_home_user(tmp_path):
+    config = AppConfig(
+        accounts=(
+            Account(
+                id="alpha",
+                label="Alpha",
+                profile_dir=str(tmp_path / "profile"),
+                auth_json_path="~definitely-no-such-user-zzzz/auth.json",
+            ),
+        )
+    )
+
+    with pytest.raises(ValueError, match="auth_json_path must be an absolute path"):
+        save_config(config, tmp_path / "config.toml")
+
+
 @pytest.mark.parametrize(
     "value",
     (
