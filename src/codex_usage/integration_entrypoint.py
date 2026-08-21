@@ -169,6 +169,10 @@ def _load_cost_windows(
 ) -> dict[str, tuple[ConsumptionWindow, ...]]:
     if not history_path.is_file():
         return {}
+    try:
+        lookback_start = now - timedelta(hours=1)
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("now is out of range") from exc
     result: dict[str, tuple[ConsumptionWindow, ...]] = {}
     with HistoryStore(history_path) as store:
         for usage in usages:
@@ -178,7 +182,7 @@ def _load_cost_windows(
                     usage.account_id,
                     pool="main",
                     window_seconds=duration,
-                    start=now - timedelta(hours=1),
+                    start=lookback_start,
                     end=now,
                 )
                 cost = calculate_consumption(
@@ -197,7 +201,7 @@ def _load_cost_windows(
                     usage.account_id,
                     pool="credits",
                     window_seconds=duration,
-                    start=now - timedelta(hours=1),
+                    start=lookback_start,
                     end=now,
                 )
                 cost = calculate_consumption(

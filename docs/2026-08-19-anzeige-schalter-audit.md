@@ -2841,6 +2841,14 @@ jetzt kontrolliert expandiert; unbekannte Home-Namen liefern
 Schreibzugriff. `tests/test_profile_migration.py`: 31/31 fokussierte Tests
 bestanden; Mypy für Source, Ruff und `git diff --check` sauber.
 
+## Runde 291: Vollsuite nach Pfad-Expansion-Härtung
+
+Die Vollsuite bestätigt den aktuellen HEAD: `2668 bestanden, 1 übersprungen,
+1 Warnung` in 88,75 s. Die Warnung bleibt externe PyGObject-Deprecation
+außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
+fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
+`git diff --check` sind sauber.
+
 ## Runde 292: Migration validiert UTC-Darstellbarkeit vor Schreiben
 
 `profile_migration._validate_migration_plan()` akzeptierte aware
@@ -2868,10 +2876,12 @@ außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
 fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
 `git diff --check` sind sauber.
 
-## Runde 291: Vollsuite nach Pfad-Expansion-Härtung
+## Runde 295: Integration-Lookback validiert Zeitbereich vor History-Zugriff
 
-Die Vollsuite bestätigt den aktuellen HEAD: `2668 bestanden, 1 übersprungen,
-1 Warnung` in 88,75 s. Die Warnung bleibt externe PyGObject-Deprecation
-außerhalb des Repositories. `mypy src/codex_usage` ist in 35 Quelldateien
-fehlerfrei; der aggregierte Ruff-Lauf über Source, Tests und Scripts sowie
-`git diff --check` sind sauber.
+`integration_entrypoint._load_cost_windows()` zog `now - 1h` direkt vor der
+History-Abfrage ab. Bei randständigem `generated_at` konnte dadurch rohes
+`OverflowError` entstehen; `execute()` fiel dann auf falschen Exit-Code 69.
+Der Lookback wird jetzt vor Main-/Credits-Abfragen kontrolliert berechnet und
+liefert bei Überlauf `ValueError("now is out of range")`.
+`tests/test_integration_entrypoint.py`: 26/26 fokussierte Tests bestanden;
+Mypy für Source, Ruff und `git diff --check` sauber.

@@ -413,6 +413,24 @@ def test_cost_window_loader_reads_history_from_data_root(tmp_path, monkeypatch):
     assert costs["alpha"][0].sample_count == 2
 
 
+def test_cost_window_loader_rejects_out_of_range_lookback(tmp_path):
+    from types import SimpleNamespace
+
+    from codex_usage.history import HistoryStore
+    from codex_usage.integration_entrypoint import _load_cost_windows
+
+    history_path = tmp_path / "usage-history.sqlite3"
+    with HistoryStore(history_path):
+        pass
+
+    with pytest.raises(ValueError, match="now is out of range"):
+        _load_cost_windows(
+            history_path,
+            (SimpleNamespace(account_id="alpha"),),
+            datetime.min.replace(tzinfo=UTC) + timedelta(seconds=3_599),
+        )
+
+
 def test_execute_does_not_publish_when_post_verifier_detects_drift(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
 
