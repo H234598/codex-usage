@@ -3984,6 +3984,17 @@ die Overview nutzt ihn ebenfalls.
 `pytest -q tests/test_render.py`: 66/66 bestanden; Modul-Coverage 87 %
 (Branch). Ruff, Mypy und `git diff --check` sauber.
 
+## Runde 431: Models-DTOs und Fensteridentität
+
+`models.py` auf Fensterdauer-/Namensidentität, Prozent-/Zahlenvalidierung,
+Pool-Erschöpfung, malformed Legacy-Felder und JSON-Serialisierung geprüft.
+Ungültige optionale Container, Datetimes, Pool-Schlüssel und Fensterwerte
+bleiben serialisierbar bzw. werden verworfen; keine neue reproduzierbare
+Anzeige- oder State-Fehlfunktion.
+
+`pytest -q tests/test_models.py`: 15/15 bestanden; Modul-Coverage 50 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 413: Private-I/O-Grenzen
 
 `private_io.py` auf Pfadtyp-/Symlink-/Owner-/Hardlink-Prüfungen, geschützte
