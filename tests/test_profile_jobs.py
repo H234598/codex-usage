@@ -1512,6 +1512,24 @@ def test_profile_job_create_rejects_invalid_profile_dir_type(profile_dir):
         )
 
 
+@pytest.mark.parametrize("expected_backend_account_id", ["backend alpha", " backend"])
+def test_profile_job_create_rejects_whitespace_backend_account_id(
+    expected_backend_account_id,
+):
+    with pytest.raises(ValueError, match="expected backend account id is invalid"):
+        profile_jobs._validate_create_arguments(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir="/tmp/profile",
+            expected_backend_account_id=expected_backend_account_id,
+            json_events=False,
+            reactivation_browser="auto",
+            check_profile_path=False,
+        )
+
+
 def test_profile_job_create_rejects_unknown_profile_home():
     with pytest.raises(ValueError, match="profile dir is invalid"):
         profile_jobs._validate_create_arguments(

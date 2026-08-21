@@ -3536,3 +3536,15 @@ Einzeltabellen bleiben aus dem Seitenbaum entfernt.
 `pytest -q tests/test_format_table_selector.py tests/test_applet.py`: 32/32
 bestanden. `node --test tests/applet_runtime.test.js`: 395/395 bestanden.
 Keine neue reproduzierbare GUI-Regression.
+
+## Runde 369: Profile-Job-Backend-ID mit Worker-Vertrag abgeglichen
+
+`profile_jobs._validate_create_arguments()` erlaubte bisher Leerzeichen in
+`expected_backend_account_id`, obwohl `profile_login`, `identity` und
+`app_server` diese Identität ablehnen. Solche Jobs wurden erst im Worker
+fehlerhaft. Die Job-Grenze nutzt jetzt dieselbe Whitespace-Prüfung und weist
+den Auftrag vor Manifest-/Prozessstart zurück.
+
+Zwei Regressionstests ergänzt. `pytest -q tests/test_profile_jobs.py`:
+78/78 bestanden. Mypy für `profile_jobs.py`, Ruff und `git diff --check`
+sauber.

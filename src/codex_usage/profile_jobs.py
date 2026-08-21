@@ -610,7 +610,7 @@ def _validate_create_arguments(
             or not expected_backend_account_id
             or len(expected_backend_account_id) > 256
             or any(
-                ord(character) < 32 or ord(character) == 127
+                character.isspace() or ord(character) < 32 or ord(character) == 127
                 for character in expected_backend_account_id
             )
         ):
