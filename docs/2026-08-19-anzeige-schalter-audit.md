@@ -3953,6 +3953,19 @@ neue reproduzierbare Fehlfunktion.
 174/174 bestanden; Modul-Coverage 81 % (Branch). Ruff, Mypy und
 `git diff --check` sauber.
 
+## Runde 454: Limit-Extractor und Quellenkonsistenz
+
+`extractor.py` auf JSON-/DOM-Budgets, strukturelle 5h-/Wochenfenster,
+WHAM-Haupt- und Zusatzlimits, Hidden-Progressbars, absolute und relative
+Resetwerte, widersprüchliche Zähler/Prozentfelder sowie Quellenpriorität
+geprüft. Unbekannte, doppelte oder widersprüchliche Fenster werden nicht per
+Traversal-Reihenfolge autorisiert; sichtbare Werte behalten Vorrang vor
+versteckten Klonen, und ungültige Felder bleiben ohne Nutzungswert. Keine neue
+reproduzierbare Fehlfunktion.
+
+`pytest -q tests/test_extractor.py`: 198/198 bestanden; Modul-Coverage 91 %
+(Branch). Ruff, Mypy und `git diff --check` sauber.
+
 ## Runde 451: Bridge-Debug-Secret-Redaction
 
 `bridge._sanitize_debug_text()` redigierte bisher nur camelCase-Tokenfelder
