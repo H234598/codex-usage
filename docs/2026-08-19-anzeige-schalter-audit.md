@@ -7017,3 +7017,16 @@ Die Validierung verlangt jetzt zusätzlich die kanonische Schreibweise
 andere alternative Schreibweisen werden verworfen. Drei Regressionfälle
 decken die Grenze ab. `pytest -q tests/test_consumption.py`: 40/40. Ruff,
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 613: Zero-Zeit-Duplikate nicht als Verbrauch zählen
+
+`calculate_consumption()` addierte bisher auch ein Delta zwischen zwei
+Samples mit identischem Zeitstempel. Ein Sprung von 10 auf 90 Prozent am
+selben Zeitpunkt wurde dadurch als echter Verbrauch gezählt; im Beispiel
+stieg der Verbrauch fälschlich auf 90 statt 10 Prozentpunkte.
+
+Nicht-positive Zeitabstände werden jetzt übersprungen und markieren die
+Abdeckung als `partial`. Positive Deltas bleiben unverändert. Der
+Regressionstest verwendet zwei identische Zeitstempel und prüft, dass kein
+Verbrauch erfunden wird. `pytest -q tests/test_consumption.py`: 41/41.
+Ruff, Python-Kompilierung und `git diff --check` sauber.

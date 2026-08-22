@@ -340,6 +340,18 @@ def test_consumption_does_not_invent_usage_for_ambiguous_drop():
     assert result.coverage == "partial"
 
 
+def test_consumption_skips_zero_elapsed_duplicate_timestamp_delta():
+    result = calculate_consumption(
+        [_sample(0, 10), _sample(0, 90), _sample(30, 100)],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result.consumed_percentage_points == 10.0
+    assert result.coverage == "partial"
+
+
 def test_consumption_uses_baseline_before_window_and_marks_stale():
     result = calculate_consumption(
         [_sample(-90, 10), _sample(-30, 20), _sample(30, 30)],

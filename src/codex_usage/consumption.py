@@ -197,6 +197,9 @@ def calculate_consumption(
     consumed = 0.0
     for previous, current in pairwise(observations):
         gap = (current.captured_at - previous.captured_at).total_seconds()
+        if gap <= 0:
+            partial = True
+            continue
         if gap > max_gap_seconds:
             partial = True
         if _confirmed_reset(previous, current):
