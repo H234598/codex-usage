@@ -6351,3 +6351,16 @@ Safe-Mode verwirft jetzt den Routing-Schreibguard und die ausstehenden
 Limit-Kommandos. Regression erweitert den Safe-Mode-Lifecycle-Test. Fokustest
 `node --test --test-name-pattern='safe mode cancels reactivation processes|routing|safe mode|late consumption response' tests/applet_runtime.test.js`:
 28/28; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 569: Account-Schreibqueue beim Safe-Mode leeren
+
+`_accountChangeCurrent` und die Account-Schreibqueue blieben bei einem
+abgebrochenen Account-Write gesetzt. Nach dem Retry blockierte
+`_drainAccountChanges()` dadurch alle weiteren Accountänderungen; ein altes
+`_accountChangePendingRows`-Snapshot konnte zusätzlich neue Settings überdecken.
+
+Safe-Mode verwirft jetzt aktiven Account-Write, Queue und Snapshot. Die nächste
+Synchronisierung liest die persistierten Settings erneut. Regression erweitert
+den Safe-Mode-Test; Fokustest
+`node --test --test-name-pattern='safe mode cancels reactivation processes|account controls|backend synchronization|account delete cancels|new account starts' tests/applet_runtime.test.js`:
+16/16; Node-Syntaxcheck und `git diff --check` sauber.

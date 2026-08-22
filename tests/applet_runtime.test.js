@@ -7435,6 +7435,8 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   applet._consumptionQueue = [{ account: "beta" }];
   applet._routingPolicyApplying = true;
   applet._pendingRoutingLimitCommands = [{ scope: "global" }];
+  applet._accountChangeCurrent = { account: "alpha" };
+  applet._accountChangeQueue = [{ account: "beta" }];
   applet._timerId = 11;
   applet._displayTimerId = 12;
   applet._staleCheckId = 13;
@@ -7456,6 +7458,8 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   assert.deepEqual(applet._consumptionQueue, []);
   assert.equal(applet._routingPolicyApplying, false);
   assert.deepEqual(applet._pendingRoutingLimitCommands, []);
+  assert.equal(applet._accountChangeCurrent, null);
+  assert.deepEqual(applet._accountChangeQueue, []);
   assert.equal(applet._timerId, 0);
   assert.equal(applet._displayTimerId, 0);
   assert.equal(applet._staleCheckId, 0);

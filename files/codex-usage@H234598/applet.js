@@ -682,6 +682,12 @@ CodexUsageApplet.prototype = {
         this._removeSource("_staleCheckId");
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
+        this._accountChangeCurrent = null;
+        if (!Array.isArray(this._accountChangeQueue)) {
+            this._accountChangeQueue = [];
+        }
+        this._accountChangeQueue.length = 0;
+        this._accountChangePendingRows = null;
         this._backendAuxQueue = [];
         this._cancelProcess();
         this._cancelAuxProcess();
