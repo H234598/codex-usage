@@ -3931,6 +3931,28 @@ test("incomplete forecast rows retain the disabled token-end panel default", () 
   assert.equal(forecast["show-tooltip"], true);
 });
 
+test("missing forecast table does not inherit consumption panel visibility", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._syncingAccountSettings = false;
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  applet.accountConsumptionSettings = [{
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", smoothing: "ema-10", "hide-when-zero": false,
+    "show-coverage-marker": true, "baseline-enabled": false,
+    "baseline-minutes": 60,
+  }];
+  applet.accountForecastSettings = [];
+  applet._loadAccountBackends = () => { throw new Error("unexpected reload"); };
+  applet._refreshConsumption = () => {};
+  applet._refreshFormattedSurfaces = () => {};
+
+  applet._onConsumptionSettingsChanged();
+
+  assert.equal(applet._consumptionSettings.alpha["forecast-show-panel"], false);
+});
+
 test("combined token and credit rows round-trip without crossing table fields", () => {
   const applet = makeApplet();
   const accounts = [{account: "alpha"}];

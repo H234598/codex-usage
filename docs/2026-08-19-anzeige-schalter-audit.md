@@ -6010,3 +6010,18 @@ Typen, Bruchwerte und Grenzverletzungen. `node --test
 --test-name-pattern='forecast|token.end|metric-table switches|legacy consumption'
 tests/applet_runtime.test.js`: 21/21; Ruff, Node-Syntaxcheck, Python-Compile
 und `git diff --check` sauber.
+
+## Runde 544: Fehlende Prognosentabelle erbt keine Verbrauchsanzeige
+
+`_onConsumptionSettingsChanged()` übergab normalisierte Verbrauchszeilen als
+Legacy-Prognosequelle. Der Normalizer ergänzt darin `forecast-show-panel` aus
+dem Hauptschalter. Fehlt die separate Prognosentabelle, konnte Tokenende
+dadurch ungewollt im Panel erscheinen.
+
+Der Legacy-Merge nutzt jetzt die unveränderten Storage-Zeilen. Explizit
+gespeicherte alte `forecast-*`-Felder werden weiter migriert; fehlende Felder
+fallen auf den Prognose-Standard „Aus“. Regression prüft diesen Pfad sowie
+Roundtrip und Forecast-Validierung. `node --test
+--test-name-pattern='forecast|token.end|metric-table switches|legacy consumption|combined token'
+tests/applet_runtime.test.js`: 23/23; Node-Syntaxcheck und `git diff --check`
+sauber.

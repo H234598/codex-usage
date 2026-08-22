@@ -3452,7 +3452,7 @@ CodexUsageApplet.prototype = {
         let forecasts = this._mergedForecastRows(
             Object.keys(this._backendAccounts).map(function(account) { return {account: account}; }),
             this.accountForecastSettings,
-            normalized
+            this.accountConsumptionSettings
         );
         this._consumptionSettings = this._consumptionSettingsMap(
             this._combineConsumptionRows(normalized, forecasts)
