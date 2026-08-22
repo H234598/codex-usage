@@ -8875,7 +8875,8 @@ CodexUsageApplet.prototype = {
             return {plain: text, markup: this._escapeMarkup(text)};
         }
         if (slot.source === 50) {
-            let loginOk = usage.status === "ok" || usage.status === "partial";
+            let loginOk = usage.cache_invalidated !== true &&
+                (usage.status === "ok" || usage.status === "partial");
             let text = label + " " + (loginOk ? "ja" : "nein");
             return {plain: text, markup: this._escapeMarkup(text)};
         }

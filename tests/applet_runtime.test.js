@@ -4076,6 +4076,7 @@ test("invalidated credit balances are not rendered", () => {
   const usage = {
     account: "alpha",
     cache_invalidated: true,
+    status: "partial",
     five_hour: {remaining: 80},
     weekly: {remaining: 60},
     credits: {remaining: 794, limit: 1000, used: 206, percent: 79.4},
@@ -4102,6 +4103,10 @@ test("invalidated credit balances are not rendered", () => {
   assert.equal(applet._panelWindowForKey(usage, "main-5h"), null);
   assert.equal(applet._panelForecastPart(usage, "panel"), null);
   assert.equal(applet._panelDeltaPart(usage, 32, "panel").plain, "Δ5h –");
+  assert.equal(
+    applet._panelSlotContentRaw({usage}, {source: 50}).plain,
+    "Login nein"
+  );
 });
 
 test("invalidated usage does not queue consumption refreshes", () => {

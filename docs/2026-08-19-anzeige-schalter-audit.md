@@ -7387,3 +7387,14 @@ Fokus 116/116; `make applet-check`: 475/475 sauber.
 Der Credit-Renderer beendet sich jetzt bei fehlendem Usage-Objekt früh mit
 `null`. Regression ergänzt diesen direkten Nullpfad. Fokus 116/116;
 `make applet-check`: 475/475 sauber.
+
+## Runde 642: Invalidierter Loginstatus ist nicht erfolgreich
+
+Das Leistenfeld `Login erfolgreich` behandelte `status: "partial"` als
+`ja`. Der Invalidierungs-Merge verwendet genau diesen Status für verworfene
+Caches; alte oder ungültige Daten konnten dadurch einen erfolgreichen Login
+vortäuschen.
+
+Die Anzeige verlangt jetzt zusätzlich `cache_invalidated !== true` für `ja`.
+Regression prüft invalidierten `partial`-Status und erwartet `Login nein`.
+Fokus 116/116; `make applet-check`: 475/475 sauber.
