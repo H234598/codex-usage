@@ -8286,3 +8286,13 @@ Ruff und `git diff --check` sauber.
 `xlet-settings.py applet codex-usage@H234598 -i 0` lief nach den
 Formatierungsänderungen acht Sekunden ohne Importtraceback oder GTK-Fehler.
 Der erwartete Timeout beendete nur die nicht-interaktive GUI-Prüfung.
+
+## Runde 720: Reale Formatierungstabellen und Dialogtypen geprüft
+
+180 variierte Dialog-Schemata liefen nach der Sanitizing-Runde ohne Fehler für
+alle im Projekt verwendeten Widgettypen. Der künstliche `keybinding`-Typ bleibt
+Cinnamon-intern backendabhängig und wird im Format-Schema nicht verwendet.
+
+Zusätzlich wurden alle 21 realen Formatierungstabellen mit der Nutzer-
+Settingsdatei nacheinander aufgebaut und verworfen: keine Exception, kein
+GTK-Fehler.
