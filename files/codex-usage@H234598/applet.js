@@ -92,6 +92,14 @@ const PANEL_SOURCE_LABELS = {
     50: "Login",
     51: "Status"
 };
+const PANEL_LIMIT_SOURCE_MAP = {
+    37: 1,
+    38: 2,
+    39: 8,
+    40: 4,
+    41: 5,
+    42: 7
+};
 const PANEL_FORMATTING_TARGETS = {
     11: {key: "account-panel-resets-styles", property: "accountPanelResetsStyles"},
     14: {key: "account-panel-tag-styles", property: "accountPanelTagStyles"},
@@ -6570,15 +6578,19 @@ CodexUsageApplet.prototype = {
         return five === null || week === null ? null : (five + week) / 2;
     },
 
-    _poolOtherWindow: function(pool) {
+    _poolOtherWindow: function(pool, excludeMonthly) {
         if (!pool || !Array.isArray(pool.windows)) {
             return null;
+        }
+        let excludedDurations = [18000, 604800];
+        if (excludeMonthly === true) {
+            excludedDurations.push(2592000);
         }
         let selected = null;
         let selectedValue = null;
         for (let i = 0; i < pool.windows.length; i++) {
             let window = pool.windows[i];
-            if ([18000, 604800].indexOf(this._windowIdentityKey(window)) !== -1) {
+            if (excludedDurations.indexOf(this._windowIdentityKey(window)) !== -1) {
                 continue;
             }
             let value = this._remainingPercent(window);
@@ -8505,9 +8517,7 @@ CodexUsageApplet.prototype = {
             let text = label + " " + this._statusLabel(usage.status);
             return {plain: text, markup: this._escapeMarkup(text)};
         }
-        let percentSource = slot.source >= 37 && slot.source <= 42
-            ? slot.source - 36
-            : slot.source;
+        let percentSource = PANEL_LIMIT_SOURCE_MAP[slot.source] || slot.source;
         let percentWindow = slot.source >= 37 && slot.source <= 42
             ? this._panelWindowForSource(usage, percentSource)
             : slot.window;
@@ -8559,7 +8569,7 @@ CodexUsageApplet.prototype = {
             "main-5h": usage.five_hour,
             "main-weekly": usage.weekly,
             "main-monthly": this._poolWindowForDuration(usage.main, 2592000),
-            "main-other": this._poolOtherWindow(usage.main),
+            "main-other": this._poolOtherWindow(usage.main, true),
             "spark-5h": this._poolWindowForDuration(spark, 18000),
             "spark-weekly": this._poolWindowForDuration(spark, 604800),
             "spark-other": this._poolOtherWindow(spark)
@@ -9278,6 +9288,16 @@ CodexUsageApplet.prototype = {
         }
         if (source === 10) {
             return null;
+        }
+        if (source === 18) {
+            return this._remainingPercent(this._panelWindowForKey(usage, "main-other"));
+        }
+        if (source === 19) {
+            return this._remainingPercent(this._panelWindowForKey(usage, "spark-other"));
+        }
+        if (source >= 37 && source <= 42) {
+            let mappedSource = PANEL_LIMIT_SOURCE_MAP[source];
+            return this._panelValueForSource(usage, mappedSource);
         }
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);

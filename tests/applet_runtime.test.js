@@ -2765,6 +2765,52 @@ test("extended panel sources render resets, identity, routing and account state"
   assert.match(values[15], /Status ok/);
 });
 
+test("panel limit sources use their declared monthly and other windows", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.main = {
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    windows: [
+      {name: "30d", duration_seconds: 2592000, remaining: 25},
+      {name: "1d", duration_seconds: 86400, remaining: 55},
+    ],
+  };
+  usage.models = {
+    "gpt-5.3-codex-spark": {
+      available: true,
+      allowed: true,
+      limit_reached: false,
+      exhausted: false,
+      windows: [
+        {name: "5h", duration_seconds: 18000, remaining: 65},
+        {name: "weekly", duration_seconds: 604800, remaining: 45},
+        {name: "1d", duration_seconds: 86400, remaining: 35},
+      ],
+    },
+  };
+  const item = {usage, settings: {account: "alpha"}};
+
+  assert.equal(applet._poolIsUsable(usage.main), true);
+  assert.equal(applet._poolWindowForDuration(usage.main, 2592000).remaining, 25);
+  assert.equal(applet._panelValueForSource(usage, 18), 55);
+  assert.equal(applet._panelValueForSource(usage, 19), 35);
+  assert.deepEqual(
+    [37, 38, 39, 40, 41, 42].map((source) => applet._panelValueForSource(usage, source)),
+    [80, 60, 25, 65, 45, 35]
+  );
+  assert.match(
+    applet._panelSlotContent(item, {source: 39, value: null, window: null}).plain,
+    /Limit M 25%/
+  );
+  assert.match(
+    applet._panelSlotContent(item, {source: 42, value: null, window: null}).plain,
+    /Limit S\+ 35%/
+  );
+});
+
 test("new panel value copies format each text value independently", () => {
   const applet = makeApplet();
   applet._usages[0].usage_resets = {known: true, available: 2};

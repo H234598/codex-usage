@@ -5507,3 +5507,17 @@ begrenzten Prozesspfade. Regression reproduziert den Race mit einem
 beendeten Child-Doppel zuerst rot und besteht danach grün. `pytest -q
 tests/test_dynamic_series_list.py`: 13/13 bestanden; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 465: Leisten-Limitquellen nutzen deklarierte Fenster
+
+Die Quellen `Limit 30 Tage` und `Limit Spark sonstiges` wurden per einfachem
+`source - 36` auf falsche Fenster abgebildet: 30 Tage wurde als Wochenlimit,
+Spark sonstiges als Spark-Wochenlimit gelesen. Zusätzlich konnte
+`main-other` das 30-Tage-Fenster als „sonstiges“ auswählen, wenn kein kleinerer
+Wert vorlag. Explizite Quellenzuordnung und ein monatliches Ausschlussflag
+trennen jetzt 30 Tage von sonstigen Hauptfenstern; Spark behält sein
+kompatibles Other-Verhalten.
+
+Regression prüft 18/19 sowie alle sechs Limitquellen numerisch und rendert
+30-Tage-/Spark-Other-Werte. `node --test tests/applet_runtime.test.js`:
+408/408 bestanden; `node --check` und `git diff --check` sauber.
