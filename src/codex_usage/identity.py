@@ -251,7 +251,7 @@ def _candidate_is_usable(candidate: Any) -> bool:
 def _usable_candidates(candidates: Iterable[JsonCandidate]) -> list[JsonCandidate]:
     try:
         bounded = list(islice(candidates, MAX_JSON_CANDIDATES + 1))
-    except TypeError:
+    except (TypeError, ValueError):
         return []
     if len(bounded) > MAX_JSON_CANDIDATES:
         return []

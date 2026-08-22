@@ -10,6 +10,11 @@ from codex_usage.identity import (
 )
 
 
+class _ValueErrorIterator:
+    def __iter__(self):
+        raise ValueError("synthetic iterator failure")
+
+
 def test_usage_endpoint_identity_wins_over_settings_response_order():
     candidates = [
         JsonCandidate(
@@ -129,7 +134,9 @@ def test_identity_helpers_skip_candidates_with_malformed_urls():
     ) == [valid]
 
 
-@pytest.mark.parametrize("candidates", [None, 1, True, object()])
+@pytest.mark.parametrize(
+    "candidates", [None, 1, True, object(), _ValueErrorIterator()]
+)
 def test_identity_helpers_reject_non_iterable_candidates(candidates):
     assert backend_identity_from_candidates(candidates) == (None, None)  # type: ignore[arg-type]
     assert backend_plan_type_from_candidates(candidates) is None  # type: ignore[arg-type]

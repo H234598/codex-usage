@@ -9496,3 +9496,18 @@ abweichendes `known`, abweichende Fähigkeit und ungültigen Typ ab.
 Verifikation: **20 fokussierte Usage-Reset-Tests**, **376 Reset-, State-,
 Model- und Snapshot-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
 keine Settings-Fenster gestartet.
+
+## Runde 804: Fehlerhafte Candidate-Iteratoren kontrolliert verwerfen
+
+`identity._usable_candidates()` fing bei der begrenzten Iterator-Erstellung
+nur `TypeError`. Ein formal iterierbarer, aber fehlerhafter Container, dessen
+`__iter__()` `ValueError` wirft, ließ alle drei Identitäts-/Plan-Helfer roh
+abbrechen.
+
+Der Guard behandelt solche `ValueError` jetzt wie andere ungültige Candidate-
+Container und liefert eine leere Menge. Regression deckt den fehlerhaften
+Iterator über Identitäts-, Plan- und Konsistenzpfad ab.
+
+Verifikation: **29 fokussierte Identity-Tests**, **466 Identity-, Bridge- und
+Browser-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
