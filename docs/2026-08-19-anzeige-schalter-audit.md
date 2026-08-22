@@ -5966,3 +5966,16 @@ Regression deckt Leerzeichen, Dezimalstrings und gebrochene Zahlen ab.
 `pytest -q tests/test_panel_settings_list.py`: 8/8; `node --test
 tests/applet_runtime.test.js`: 416/416; Ruff, Node-Syntaxcheck, Python-Compile
 und `git diff --check` sauber.
+
+## Runde 541: Neue Leisten-Wertfelder starten mit „Aus“
+
+`panel_columns()` erzeugte zusätzliche `slot`-Spalten ohne `default`. Beim
+Aufbau des GTK-Editors wurden diese Felder dadurch als `None` angelegt; der
+Add/Edit-Dialog speicherte denselben Wert. Die JavaScript-Normalisierung
+verwirft eine solche Zeile, weil jede vorhandene Slotquelle eine ganze Zahl
+0–51 sein muss.
+
+Alle Slotspalten erhalten jetzt explizit `default: 0` („Aus“), einschließlich
+der Legacy-Spalten. Regression prüft drei erzeugte Slots. `pytest -q
+tests/test_panel_settings_list.py`: 9/9; Ruff, Python-Compile und
+`git diff --check` folgen vor Installation.

@@ -136,11 +136,12 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
     ]
     slot_template = next(
         (column for column in columns if column.get("id") == "slot1"),
-        {"id": "slot1", "title": "Wert 1", "type": "integer"},
+        {"id": "slot1", "title": "Wert 1", "type": "integer", "default": 0},
     )
     for column in columns:
         if str(column.get("id", "")).startswith("slot"):
             column["options"] = dict(_SOURCE_OPTIONS)
+            column["default"] = 0
     existing = {column.get("id") for column in columns}
     for index in range(1, requested_count + 1):
         key = f"slot{index}"

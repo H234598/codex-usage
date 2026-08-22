@@ -52,6 +52,22 @@ def test_panel_columns_expand_legacy_schema_without_mutation() -> None:
     assert columns[-1]["options"]["Abrufweg"] == 17
 
 
+def test_panel_columns_default_slots_to_disabled_source() -> None:
+    columns = panel_columns(
+        [
+            {"id": "account", "title": "Account", "type": "string"},
+            {"id": "slot1", "title": "Wert 1", "type": "integer"},
+        ],
+        3,
+    )
+
+    assert [column["default"] for column in columns if column["id"].startswith("slot")] == [
+        0,
+        0,
+        0,
+    ]
+
+
 class _Dialog:
     last = None
     response = None
