@@ -17,6 +17,7 @@ const MAX_CLEANUP_LOGS = 16;
 const MAX_ACCOUNTS = 100;
 const MAX_USAGE_POOLS = 20;
 const MAX_POOL_WINDOWS = 8;
+const MAX_CONSUMPTION_WINDOWS = 64;
 const MAX_TEXT_CHARS = 500;
 const COMMAND_TIMEOUT_MS = 120000;
 const AUX_COMMAND_TIMEOUT_MS = 30000;
@@ -5230,7 +5231,7 @@ CodexUsageApplet.prototype = {
     },
 
     _safeConsumptionWindows: function(value) {
-        if (!Array.isArray(value) || value.length > 32) {
+        if (!Array.isArray(value) || value.length > MAX_CONSUMPTION_WINDOWS) {
             throw new Error("invalid consumption windows");
         }
         let result = [];

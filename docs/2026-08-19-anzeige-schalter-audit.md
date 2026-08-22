@@ -5658,3 +5658,15 @@ History-Auflistung, ein 1-Tage-Fenster und 33 konfigurierte Fenster ab.
 
 `pytest -q tests/test_history.py tests/test_history_cli.py`: 90/90;
 Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 477: Cinnamon akzeptiert alle konfigurierbaren Verbrauchsfenster
+
+Der Backend-Query kann bis zu 64 konfigurierte Verbrauchsfenster liefern.
+`applet.js` verwarf jedoch weiterhin jede `cost_windows`-Liste mit mehr als 32
+Einträgen. Bei 33–64 Leistenwerten verschwanden damit Verbrauchs- und
+Tokendelta-Daten trotz korrekter CLI-Antwort.
+
+Der Sanitizer nutzt jetzt dieselbe Grenze 64 wie History, Panel und
+Integrationsvertrag. Regression prüft 64 akzeptierte und 65 verworfene
+Fenster. `node --test tests/applet_runtime.test.js`: 416/416; `node --check`
+und `git diff --check` sauber.

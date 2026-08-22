@@ -1946,6 +1946,12 @@ test("DTO sanitizers retain valid fields and fail closed on contradictory usage 
   }]);
   assert.equal(consumption.length, 1);
   assert.equal(consumption[0].estimated_seconds_to_exhaustion, 3600);
+  const configurableWindows = Array.from({length: 64}, (_, index) => ({
+    pool: "main", lookback_seconds: 600, limit_window_seconds: 18000 + index,
+    consumed_percentage_points: 2.5, coverage: "complete", sample_count: 4,
+  }));
+  assert.equal(applet._safeConsumptionWindows(configurableWindows).length, 64);
+  assert.throws(() => applet._safeConsumptionWindows([...configurableWindows, configurableWindows[0]]), /invalid consumption windows/);
   assert.throws(() => applet._safeConsumptionWindows([{
     pool: "main", lookback_seconds: 0, limit_window_seconds: 18000,
     consumed_percentage_points: 1, coverage: "complete", sample_count: 1,
