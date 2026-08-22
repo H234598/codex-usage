@@ -6493,3 +6493,19 @@ Poll erneut. Safe-Mode verwirft das Tracking gemeinsam mit seinen Queues.
 Regression prüft echten Cancel-Spawn und Abbruch. Fokustest `node --test
 --test-name-pattern='cancelled profile job status requeues its persistent poll|auxiliary completion resumes queued profile poll|cancelled profile job cancel request requeues target account|profile job discovery|persistent profile job|live device login cleanup|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
 14/14; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 579: Profilpoll nicht hinter Account-Write-Queue verkeilen
+
+Normale `profile job-status`-Polls wurden bei aktiver Account-/Backend-
+Schreibqueue zwar deferred, setzten aber vorher `_profileJobPollingAccount`.
+Nach Abschluss der Write-Queue sah `_pollNextProfileJob()` dadurch weiterhin
+einen aktiven Poller und startete keinen Statusabruf mehr. Auch ein bereits
+geplanter Timer konnte den Poll ohne Requeue verlieren.
+
+`_pollNextProfileJob()` wartet jetzt explizit auf leere Write-Queues.
+`_pollProfileJob()` requeued bei einem während des Timers eingetretenen Write
+den Account und leert den Poller-Guard; erzwungene Cancel-/Statuspolls bleiben
+ausgenommen. Regression prüft Warten, späteren Spawn und Timer-Requeue.
+Fokustest `node --test
+--test-name-pattern='profile polling waits for account writes before spawning status|profile job|device login live|safe mode cancels reactivation processes|auxiliary completion resumes queued profile poll' tests/applet_runtime.test.js`:
+25/25; Node-Syntaxcheck und `git diff --check` sauber.

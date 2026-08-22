@@ -7356,7 +7356,11 @@ CodexUsageApplet.prototype = {
     },
 
     _pollNextProfileJob: function() {
-        if (this._removed || this._safeMode || this._profileJobPollingAccount) {
+        if (
+            this._removed || this._safeMode || this._profileJobPollingAccount ||
+            this._backendChangeCurrent || this._backendChangeQueue.length ||
+            this._accountChangeCurrent || this._accountChangeQueue.length
+        ) {
             return;
         }
         while (this._profileJobResumeQueue.length) {
@@ -7372,6 +7376,21 @@ CodexUsageApplet.prototype = {
     _pollProfileJob: function(account, force) {
         let jobId = this._deviceLoginJobs[account];
         if (!jobId || this._removed || this._safeMode) {
+            return;
+        }
+        if (
+            force !== true &&
+            (
+                this._backendChangeCurrent || this._backendChangeQueue.length ||
+                this._accountChangeCurrent || this._accountChangeQueue.length
+            )
+        ) {
+            if (this._profileJobResumeQueue.indexOf(account) === -1) {
+                this._profileJobResumeQueue.unshift(account);
+            }
+            if (this._profileJobPollingAccount === account) {
+                this._profileJobPollingAccount = "";
+            }
             return;
         }
         if (

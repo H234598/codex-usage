@@ -824,6 +824,38 @@ test("cancelled profile job cancel request requeues target account", () => {
   assert.deepEqual(applet._profileJobResumeQueue, ["alpha"]);
 });
 
+test("profile polling waits for account writes before spawning status", () => {
+  const applet = makeApplet();
+  const calls = [];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._deviceLoginJobs.alpha = "job-1234567890abcdef1234567890abcdef";
+  applet._profileJobResumeQueue = ["alpha"];
+  applet._accountChangeCurrent = {account: "settings"};
+  applet._spawnAuxJson = (argv) => { calls.push(argv); };
+
+  applet._pollNextProfileJob();
+
+  assert.deepEqual(calls, []);
+  assert.deepEqual(applet._profileJobResumeQueue, ["alpha"]);
+  assert.equal(applet._profileJobPollingAccount, "");
+
+  applet._accountChangeCurrent = null;
+  applet._pollNextProfileJob();
+
+  assert.deepEqual(calls[0], [
+    "codex-usage", "profile", "job-status",
+    "job-1234567890abcdef1234567890abcdef", "--json",
+  ]);
+  assert.equal(applet._profileJobPollingAccount, "alpha");
+
+  applet._accountChangeCurrent = {account: "settings"};
+  applet._profileJobCommandAccount = "";
+  applet._profileJobResumeQueue = [];
+  applet._pollProfileJob("alpha");
+  assert.deepEqual(applet._profileJobResumeQueue, ["alpha"]);
+  assert.equal(applet._profileJobPollingAccount, "");
+});
+
 test("persistent profile job resume drains every active job", () => {
   const applet = makeApplet();
   const calls = [];
