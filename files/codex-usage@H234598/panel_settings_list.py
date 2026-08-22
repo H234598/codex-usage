@@ -539,7 +539,8 @@ class PanelSettingsList(List, JSONSettingsBackend):
         try:
             stored_rows = self.get_value()
         except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
-            stored_rows = []
+            # Do not overwrite hidden rows when their source cannot be read.
+            return
         previous_rows = (
             [
                 row

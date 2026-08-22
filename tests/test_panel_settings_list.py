@@ -526,7 +526,7 @@ def test_panel_edit_item_restores_row_after_invalid_widget_value() -> None:
         panel.destroy()
 
 
-def test_panel_edit_callbacks_fall_back_to_model_on_settings_read_error() -> None:
+def test_panel_edit_callbacks_skip_write_on_settings_read_error() -> None:
     class BrokenRowsSettings(_Settings):
         def get_value(self, key):
             if key == "account-panel-settings":
@@ -547,7 +547,7 @@ def test_panel_edit_callbacks_fall_back_to_model_on_settings_read_error() -> Non
     try:
         panel.model.append(["alpha", 0])
         panel.list_changed()
-        assert settings.values["account-panel-settings"] == [{"account": "alpha", "slot1": 0}]
+        assert settings.values["account-panel-settings"] == []
         settings.values["panel-value-count"] = "2"
         panel._on_count_changed()
         assert list(panel.model[0]) == ["alpha", 0, 0]

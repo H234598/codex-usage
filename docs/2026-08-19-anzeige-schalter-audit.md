@@ -8049,3 +8049,15 @@ Die Listener-Registrierung ist jetzt fehlertolerant; das Panel bleibt ohne
 Live-Updates bedienbar. Regression deckt einen fehlgeschlagenen Listener-Write
 ab; `tests/test_panel_settings_list.py`: 80/80, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 698: Leisten-Read-Fehler überschreiben keine Hidden-Slots
+
+Der leere Read-Fallback in `list_changed()` hätte bei einem temporär
+unlesbaren Backend alle nicht sichtbaren Slotwerte verworfen, sobald ein
+sichtbarer Wert geändert wurde.
+
+Der Schreib-Callback beendet sich bei Read-Fehlern jetzt vor dem Persistieren.
+Der Count-Rebuild nutzt seinen Modell-Fallback weiterhin nur für die Anzeige.
+Regression bestätigt, dass ein fehlgeschlagener Read gespeicherte Zeilen
+unverändert lässt; `tests/test_panel_settings_list.py`: 80/80,
+Python-Compile und `git diff --check` sauber.
