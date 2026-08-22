@@ -7455,6 +7455,26 @@ test("safe mode ignores settings callbacks that could start background work", ()
   assert.equal(styleSyncs, 0);
 });
 
+test("command setting changes stay inert in safe mode", () => {
+  const applet = makeApplet();
+  let cacheLoads = 0;
+  applet._loadCached = (force) => {
+    cacheLoads += force ? 1 : 10;
+  };
+
+  applet._safeMode = true;
+  applet._onCommandSettingsChanged();
+  assert.equal(cacheLoads, 0);
+
+  applet._safeMode = false;
+  applet._onCommandSettingsChanged();
+  assert.equal(cacheLoads, 1);
+
+  applet._removed = true;
+  applet._onCommandSettingsChanged();
+  assert.equal(cacheLoads, 1);
+});
+
 test("service status recovery stops when timer setup enters safe mode", () => {
   const applet = makeApplet((runtime) => {
     runtime.timeoutAddSeconds = () => 0;

@@ -6275,3 +6275,16 @@ Regression stellt sicher, dass es nicht mehr an Cinnamon-Standardbindung geht.
 Fokustest `node --test
 --test-name-pattern='panel custom setting bypasses|custom settings read|settings launcher|native Cinnamon configure action|settings maximization|panel settings' tests/applet_runtime.test.js`:
 7/7; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 563: Command-Settings im Safe-Mode sperren
+
+`_onCommandSettingsChanged()` startete bei Änderungen an `command-path` oder
+`config-path` immer `_loadCached(true)`. Während des Safe-Mode konnte eine
+Settings-Änderung dadurch trotz geöffneter Fehler-Sperre einen neuen
+Hintergrundabruf starten. Andere Settings-Callbacks hatten diese Sperre schon.
+
+Der Callback beendet sich jetzt bei `_removed` oder `_safeMode`; im normalen
+Betrieb bleibt der erzwungene Cache-Ladevorgang unverändert. Regression prüft
+Safe-Mode, normalen Betrieb und entfernte Appletinstanz. Fokustest
+`node --test --test-name-pattern='safe mode|command setting|settings|refresh-on-open|automatic refresh' tests/applet_runtime.test.js`:
+37/37; Node-Syntaxcheck und `git diff --check` sauber.

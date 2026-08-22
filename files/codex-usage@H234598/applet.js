@@ -823,6 +823,9 @@ CodexUsageApplet.prototype = {
     },
 
     _onCommandSettingsChanged: function() {
+        if (this._removed || this._safeMode) {
+            return;
+        }
         this._loadCached(true);
     },
 
