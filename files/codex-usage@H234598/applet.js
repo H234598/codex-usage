@@ -4857,9 +4857,15 @@ CodexUsageApplet.prototype = {
             let backendValue = row.backend === undefined
                 ? (canonical && canonical.backend === 1 ? 1 : 0)
                 : this._strictIntegerSetting(row.backend);
-            let seriesActive = row["series-active"] === undefined
-                ? Boolean(canonical && canonical["series-active"])
-                : row["series-active"] === true;
+            let seriesActive;
+            if (row["series-active"] === undefined) {
+                seriesActive = Boolean(canonical && canonical["series-active"]);
+            } else if (typeof row["series-active"] !== "boolean") {
+                this._loadAccountBackends();
+                return;
+            } else {
+                seriesActive = row["series-active"];
+            }
             if (
                 !account || seen[account] ||
                 (!canonical && !/^[A-Za-z0-9_.-]{1,64}$/.test(account)) ||

@@ -8916,3 +8916,20 @@ Account reparierbar. Regression deckt einen NUL-haltigen Serienwert ab.
 Verifikation: `tests/test_dynamic_series_list.py`: **25 bestanden**.
 Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 761: `series-active` im JS-Reconcile strikt boolean prüfen
+
+Der Accounts-Reconcile behandelte jeden vorhandenen Wert außer `true` als
+`false`. Ein beschädigter Settings-Wert wie `"true"` konnte dadurch eine
+aktive Serienzuordnung still deaktivieren und als legitime Änderung an die
+CLI weitergereicht werden. Andere boolesche Felder werden bei falschem Typ
+bereits verworfen.
+
+`_onAccountBackendsChanged()` akzeptiert `series-active` jetzt nur als echtes
+Boolean. Bei jedem anderen vorhandenen Typ wird der Backend-Stand neu geladen;
+kein Account-Update und keine stille Deaktivierung erfolgt. Regression deckt
+den Stringwert `"true"` ab.
+
+Verifikation: fokussierte Node-Tests für Serien-/Backend-Settings: **9
+bestanden**; Node-Syntaxcheck und `git diff --check` sauber. Keine
+Settings-Fenster gestartet.

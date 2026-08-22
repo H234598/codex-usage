@@ -12279,6 +12279,24 @@ test("backend setting rejects malformed text fields without escaping callback", 
   assert.equal(reloads, 4);
 });
 
+test("backend setting rejects a non-boolean series-active value", () => {
+  const applet = makeAccountSettingsApplet();
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Alpha",
+    backend: 0,
+    series: "A",
+    "series-active": "true",
+  }];
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._reconcileAccountChanges = () => {};
+
+  applet._onAccountBackendsChanged();
+
+  assert.equal(reloads, 1);
+});
+
 test("backend synchronization clears its guard after a settings exception", () => {
   const applet = makeApplet();
   applet._baseCommandArgv = () => ["codex-usage"];
