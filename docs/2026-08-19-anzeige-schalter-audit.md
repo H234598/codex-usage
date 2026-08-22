@@ -7741,3 +7741,15 @@ Zeilen mit nicht-leerer String-Account-ID. Regression deckt vier kaputte
 Schemas, fünf Metadatenfelder und den ungültigen Account-Fallback ab;
 `tests/test_panel_settings_list.py`: 29/29; Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 667: Leisten-Dialog toleriert verkürzte Edit-Daten
+
+`open_add_edit_dialog()` indexierte `info` blind. Verkürzte Listen, Dictionaries
+und Strings führten beim Doppelklick auf einen Eintrag zu `IndexError` oder
+`KeyError`, statt fehlende Felder mit Schema-Defaults zu öffnen.
+
+Der Dialog liest Positionswerte jetzt geschützt; nicht vorhandene oder falsch
+geformte Werte gelten als leer und verwenden vorhandene Defaults. Regression
+deckt leere, verkürzte und nicht-sequenzielle `info`-Werte ab;
+`tests/test_panel_settings_list.py`: 33/33; Python-Kompilierung und
+`git diff --check` sauber.

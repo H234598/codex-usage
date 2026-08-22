@@ -309,8 +309,14 @@ class PanelSettingsList(List, JSONSettingsBackend):
             settings_box.add(widget)
             grid.attach(settings_box, index % edit_columns, index // edit_columns, 1, 1)
 
-            if info is not None and info[index] is not None:
-                widget.set_widget_value(info[index])
+            value = None
+            if info is not None:
+                try:
+                    value = info[index]
+                except (IndexError, KeyError, TypeError):
+                    pass
+            if value is not None:
+                widget.set_widget_value(value)
             elif "default" in column_definition:
                 widget.set_widget_value(column_definition["default"])
 

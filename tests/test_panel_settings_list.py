@@ -174,6 +174,26 @@ def test_panel_editor_returns_edited_values(monkeypatch) -> None:
         panel.destroy()
 
 
+@pytest.mark.parametrize("info", [[], ["alpha"], {}, "alpha"])
+def test_panel_editor_treats_short_or_malformed_info_as_empty(monkeypatch, info) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "first", "title": "Erstes Feld", "type": "string"},
+                {"id": "second", "title": "Zweites Feld", "type": "string"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        _Settings(3),
+    )
+    try:
+        assert panel.open_add_edit_dialog(info) is None
+    finally:
+        panel.destroy()
+
+
 def test_panel_editor_uses_disabled_source_for_missing_slots(monkeypatch) -> None:
     monkeypatch.setattr(Gtk, "Dialog", _Dialog)
     _Dialog.response = Gtk.ResponseType.OK
