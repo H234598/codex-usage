@@ -8325,6 +8325,17 @@ aktuelle/erste Iconwert bleibt sichtbar. Regression deckt Read-/Write- und
 Listenerfehler ab; `tests/test_fast_mode_icon_selector.py`: 8/8,
 Python-Compile, Ruff und `git diff --check` sauber.
 
+## Runde 725: Fast-Mode-Icons bleiben auf Applet-SVGs begrenzt
+
+Optionen wurden als Pfad direkt unter `icons/` zusammengesetzt. NUL-Werte
+konnten `Path.is_file()` mit `ValueError` brechen; `../`-Pfade konnten auf
+Dateien außerhalb des Icon-Verzeichnisses zeigen.
+
+Nur NUL-freie SVG-Basenames werden jetzt akzeptiert; Loader-`ValueError` wird
+abgefangen. Regression deckt Traversal, NUL und gültiges Icon ab;
+`tests/test_fast_mode_icon_selector.py`: 9/9, Python-Compile, Ruff und
+`git diff --check` sauber.
+
 ## Runde 723: Selector-Mappings überleben fehlendes Backend-Attribut
 
 Forecast- und Format-Selector dereferenzierten `settings.settings` direkt.

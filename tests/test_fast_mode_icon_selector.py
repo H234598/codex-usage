@@ -160,6 +160,26 @@ def test_icon_loader_ignores_corrupt_svg(tmp_path: Path) -> None:
     assert _load_icon(path) is None
 
 
+def test_icon_selector_skips_invalid_icon_paths() -> None:
+    settings = _Settings()
+    selector = FastModeIconSelector(
+        {
+            "options": {
+                "Traversal": "../outside.svg",
+                "NUL": "bad\x00.svg",
+                "Valid": "fast-mode-warning.svg",
+            }
+        },
+        "fast-mode-icon",
+        settings,
+    )
+
+    try:
+        assert selector._values == ["fast-mode-warning.svg"]
+    finally:
+        selector.destroy()
+
+
 def test_destroy_detaches_settings_listener() -> None:
     settings = _Settings()
     selector = FastModeIconSelector({"options": {}}, "fast-mode-icon", settings)

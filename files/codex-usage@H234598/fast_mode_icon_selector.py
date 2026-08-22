@@ -18,7 +18,7 @@ def _load_icon(path):
             return GdkPixbuf.Pixbuf.new_from_file_at_scale(
                 str(path), FastModeIconSelector._ICON_SIZE, FastModeIconSelector._ICON_SIZE, True
             )
-    except (GLib.Error, OSError, TypeError):
+    except (GLib.Error, OSError, TypeError, ValueError):
         pass
     return None
 
@@ -59,7 +59,14 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
             options = {}
         icon_dir = Path(__file__).resolve().parent / "icons"
         for label, value in list(options.items())[: self._MAX_ICONS]:
-            if not isinstance(label, str) or not isinstance(value, str):
+            if (
+                not isinstance(label, str)
+                or not isinstance(value, str)
+                or "\x00" in label
+                or "\x00" in value
+                or Path(value).name != value
+                or not value.endswith(".svg")
+            ):
                 continue
             path = icon_dir / value
             pixbuf = _load_icon(path)
