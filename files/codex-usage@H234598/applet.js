@@ -684,6 +684,18 @@ CodexUsageApplet.prototype = {
             this._profileJobResumeQueue = [];
         }
         this._profileJobResumeQueue.length = 0;
+        if (
+            !this._profilePendingAccounts ||
+            typeof this._profilePendingAccounts !== "object" ||
+            Array.isArray(this._profilePendingAccounts)
+        ) {
+            this._profilePendingAccounts = Object.create(null);
+        } else {
+            let pendingAccounts = Object.keys(this._profilePendingAccounts);
+            for (let index = 0; index < pendingAccounts.length; index++) {
+                delete this._profilePendingAccounts[pendingAccounts[index]];
+            }
+        }
         this._profileJobPollingAccount = "";
         this._removeSource("_timerId");
         this._removeSource("_displayTimerId");

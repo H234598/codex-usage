@@ -7490,6 +7490,7 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   applet._profileJobsLoaded = true;
   applet._profileJobsResumeRequested = true;
   applet._profileJobResumeQueue = ["alpha"];
+  applet._profilePendingAccounts = { alpha: true };
   applet._profileJobPollingAccount = "alpha";
   applet._deviceLoginPollGeneration = 4;
   applet._deviceLoginPollId = 14;
@@ -7520,6 +7521,7 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   assert.equal(applet._profileJobsLoaded, false);
   assert.equal(applet._profileJobsResumeRequested, false);
   assert.deepEqual(applet._profileJobResumeQueue, []);
+  assert.deepEqual(applet._profilePendingAccounts, {});
   assert.equal(applet._profileJobPollingAccount, "");
   assert.equal(applet._deviceLoginPollGeneration, 5);
   assert.equal(applet._deviceLoginPollId, 0);

@@ -6436,3 +6436,17 @@ Discovery bleibt ohne Zusatzarbeit. Regression prüft stale Bereinigung und
 genau einen Menüaufbau. Fokustest `node --test
 --test-name-pattern='profile job discovery drops events from replaced job|profile job discovery clears locally stale completed jobs|persistent profile job|cancelled profile job discovery|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
 11/11; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 575: Profil-Pending-Accounts beim Safe-Mode verwerfen
+
+Beim Anlegen eines Accounts wird `_profilePendingAccounts` bereits vor dem
+Profiljob gesetzt. Bricht Safe-Mode diesen Account-Write ab, existiert noch
+keine Job-ID, die Discovery später bereinigen könnte. Der Account blieb lokal
+als „Profil wird erstellt“ markiert und konnte weitere Steuerung blockieren.
+
+Safe-Mode leert jetzt die Pending-Account-Map. Bereits laufende persistente
+Job-IDs bleiben separat erhalten und werden nach Retry durch `profile jobs`
+wieder eingetragen. Regression erweitert den Safe-Mode-Lifecycle-Test.
+Fokustest `node --test
+--test-name-pattern='safe mode cancels reactivation processes|profile job discovery clears locally stale completed jobs|persistent profile job|cancelled profile job discovery|device login live' tests/applet_runtime.test.js`:
+18/18; Node-Syntaxcheck und `git diff --check` sauber.
