@@ -248,6 +248,7 @@ CodexUsageApplet.prototype = {
         this._healthProcess = null;
         this._healthTimeoutId = 0;
         this._settingsMaximizeId = 0;
+        this._settingsMaximizeGeneration = 0;
         this._settingsPlacementProcess = null;
         this._healthGeneration = 0;
         this._lastHealthReportAt = 0;
@@ -10797,11 +10798,16 @@ CodexUsageApplet.prototype = {
         this._removeSource("_settingsMaximizeId");
         this._terminateChild(this._settingsPlacementProcess, "settings placement restart");
         this._settingsPlacementProcess = null;
+        let generation = (this._settingsMaximizeGeneration || 0) + 1;
+        this._settingsMaximizeGeneration = generation;
         let attempts = 0;
         let placementAttempts = 0;
         let positioned = false;
         let placementPending = false;
         let maximize = Lang.bind(this, function() {
+            if (generation !== this._settingsMaximizeGeneration) {
+                return false;
+            }
             if (this._removed) {
                 this._clearSource("_settingsMaximizeId");
                 return false;
@@ -10837,6 +10843,9 @@ CodexUsageApplet.prototype = {
                                 placementPending = true;
                                 this._settingsPlacementProcess = moveProcess;
                                 moveProcess.wait_check_async(null, Lang.bind(this, function(source, result) {
+                                    if (generation !== this._settingsMaximizeGeneration || this._removed) {
+                                        return;
+                                    }
                                     placementPending = false;
                                     if (this._settingsPlacementProcess === source) {
                                         this._settingsPlacementProcess = null;
@@ -11047,6 +11056,7 @@ CodexUsageApplet.prototype = {
 
     on_applet_removed_from_panel: function() {
         this._removed = true;
+        this._settingsMaximizeGeneration = (this._settingsMaximizeGeneration || 0) + 1;
         this._refreshing = false;
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;

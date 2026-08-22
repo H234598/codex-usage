@@ -6619,3 +6619,19 @@ Entfernung des alten Timers und Tracking der neuen ID.
 Fokustest `node --test --test-name-pattern='profile poll|profile job|device
 login|settings launcher' tests/applet_runtime.test.js`: 42/42.
 Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 587: Veraltete Settings-Maximierung invalidieren
+
+`source_remove()` verhindert nicht zuverlässig einen Callback, der bereits in
+der Cinnamon-Mainloop eingereiht wurde. Beim schnellen erneuten Öffnen der
+Einstellungen konnte ein alter Maximierungs-Callback deshalb nach dem neuen
+Scheduling noch `wmctrl` starten.
+
+Der Settings-Platzierungs-/Maximierungspfad führt jetzt eine eigene Generation.
+Timer- und `wmctrl`-Exit-Callbacks verwerfen ältere Generationen; bei
+Applet-Entfernung wird die Generation ebenfalls invalidiert. Regression prüft
+einen alten Callback nach direktem Rescheduling.
+
+Fokustest `node --test --test-name-pattern='settings|stale settings'
+tests/applet_runtime.test.js`: 29/29. Node-Syntaxcheck und `git diff --check`
+sauber.

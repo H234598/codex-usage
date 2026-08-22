@@ -4447,6 +4447,30 @@ test("settings maximization retries up to twelve times and stops after removal",
   assert.equal(applet._settingsMaximizeId, 0);
 });
 
+test("stale settings maximize callback cannot run after rescheduling", () => {
+  const callbacks = [];
+  const subprocessCalls = [];
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {};
+    };
+  });
+
+  applet._scheduleSettingsMaximize();
+  applet._scheduleSettingsMaximize();
+
+  assert.equal(callbacks[0](), false);
+  assert.equal(subprocessCalls.length, 0);
+  assert.equal(applet._settingsMaximizeId, 2);
+  assert.equal(callbacks[1](), true);
+  assert.equal(subprocessCalls.length, 1);
+});
+
 test("settings maximization moves window onto current monitor before maximizing", () => {
   const callbacks = [];
   const subprocessCalls = [];
