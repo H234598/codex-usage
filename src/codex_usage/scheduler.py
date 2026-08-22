@@ -900,7 +900,7 @@ def _is_more_conservative_direct_usage(
         ):
             try:
                 decisions.append(current_window.reset_at <= previous_window.reset_at)
-            except (AttributeError, OverflowError, TypeError, ValueError):
+            except Exception:
                 return False
     return bool(decisions) and all(decisions)
 

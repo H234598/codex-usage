@@ -7151,3 +7151,14 @@ Der Test prüft jetzt Fehlerverkettung, geleerte Limits, `stale` und
 `cache_invalidated`. Produktionslogik blieb unverändert. `pytest -q
 tests/test_scheduler.py`: 213/213; Ruff, Mypy, Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 622: Konservativer Direct-Vergleich bei fehlerhaftem Reset-Zeitpunkt fail-closed
+
+`_is_more_conservative_direct_usage()` verglich Reset-Zeitpunkte bisher nur
+gegen ausgewählte Standardfehler. Ein fehlerhafter `datetime`-Operator konnte
+die Entscheidung über konservativere Direct-Werte abbrechen.
+
+Der Vergleich verwirft jetzt jeden normalen Operatorfehler und liefert
+konservativ `False`. Regression deckt einen fehlerhaften `<=`-Vergleich ab.
+`pytest -q tests/test_scheduler.py`: 214/214; Ruff, Mypy,
+Python-Kompilierung und `git diff --check` sauber.

@@ -257,6 +257,32 @@ def test_reset_discontinuity_treats_failing_datetime_comparison_as_unknown():
     ) is False
 
 
+def test_conservative_direct_usage_treats_failing_reset_comparison_as_unknown():
+    timezone = ZoneInfo("UTC")
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            reset_at=_RaisingComparisonDatetime(
+                2026, 8, 16, 12, 0, tzinfo=timezone
+            ),
+        ),
+    )
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=timezone),
+        five_hour=LimitWindow(
+            name="5h",
+            reset_at=datetime(2026, 8, 16, 11, 0, tzinfo=timezone),
+        ),
+    )
+
+    assert _is_more_conservative_direct_usage(current, previous) is False
+
+
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(
     monkeypatch,
 ):
