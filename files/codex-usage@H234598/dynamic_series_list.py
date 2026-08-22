@@ -227,9 +227,30 @@ class DynamicSeriesList(List, JSONSettingsBackend):
             except (IndexError, KeyError, TypeError):
                 current = ""
                 account = None
-        if not isinstance(account, str) or not account.strip():
+        if isinstance(account, str):
+            account = account.strip() or None
+        else:
             account = None
         current = current.strip().upper() if isinstance(current, str) else ""
+
+        current_owned_by_account = False
+        if current and account is not None:
+            for row in self.model:
+                try:
+                    row_account = row[0]
+                    row_series = row[self._series_column_index]
+                    row_active = row[self._active_column_index]
+                except (IndexError, KeyError, TypeError):
+                    continue
+                if (
+                    isinstance(row_account, str)
+                    and row_account.strip() == account
+                    and isinstance(row_series, str)
+                    and row_series.strip().upper() == current
+                    and row_active is True
+                ):
+                    current_owned_by_account = True
+                    break
 
         options = {"Keine Serie": ""}
         for series in available:
@@ -238,7 +259,9 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 options[series] = series
         # Preserve an existing legacy/current assignment (notably A) for its owner,
         # but do not expose it to any other account.
-        if current and current not in options and (owners.get(current) in (None, account)):
+        if current and current not in options and (
+            owners.get(current) in (None, account) or current_owned_by_account
+        ):
             options.setdefault(current + " (aktuell)", current)
         return options
 

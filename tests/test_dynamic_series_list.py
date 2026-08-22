@@ -130,6 +130,19 @@ def test_series_options_preserve_current_gtk_tree_model_assignment() -> None:
     }
 
 
+def test_series_options_keep_conflicting_current_assignment_editable() -> None:
+    table = _SeriesTable([
+        ["alpha", "A", True],
+        ["beta", "A", True],
+    ], ("A", "B"))
+
+    assert DynamicSeriesList._series_options_for(table, table.model[0]) == {
+        "Keine Serie": "",
+        "B": "B",
+        "A (aktuell)": "A",
+    }
+
+
 def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, monkeypatch) -> None:
     command = tmp_path / "masterjet-series"
     command.write_text(

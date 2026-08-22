@@ -8631,3 +8631,25 @@ immer wieder her. Regression deckt Fehler und Schema-Restore ab.
 
 Verifikation: `tests/test_dynamic_series_list.py` 21/21; Python-Compile,
 Ruff und `git diff --check` sauber.
+
+## Runde 746: Konfligierende aktive Serien bleiben reparierbar
+
+Die Accounts-Tabelle kann durch alte oder extern geschriebene Einstellungen
+vorübergehend zwei aktive Accounts mit derselben Serie enthalten. Der
+Anwendungs-Sync weist diesen Konflikt beim Speichern korrekt zurück. Im
+Editor wurde die Serie des zuerst gelisteten Konflikt-Accounts jedoch aus dem
+Dropdown entfernt, weil `_active_owners()` den zuletzt gelesenen Besitzer
+führte. Das aktuelle Feld konnte dadurch nicht mehr unverändert geöffnet oder
+auf `Keine Serie` korrigiert werden.
+
+`DynamicSeriesList._series_options_for()` prüft deshalb zusätzlich, ob die
+aktuelle Serie im bearbeiteten Datensatz selbst aktiv dem aktuellen Account
+gehört. In diesem Fall bleibt sie als `A (aktuell)` auswählbar, ohne die Serie
+für andere Accounts freizugeben. Accountnamen werden für diesen Vergleich
+nur an den Rändern normalisiert; gespeicherte Tabellenwerte werden nicht
+mutiert.
+
+Regression deckt einen doppelten aktiven Serienwert ab und verlangt, dass der
+erste Konflikt-Account `A (aktuell)` behalten kann. Verifikation:
+`tests/test_dynamic_series_list.py` 22/22; Python-Compile, Ruff und
+`git diff --check` sauber.
