@@ -214,6 +214,46 @@ def test_require_private_dir_binds_creation_to_parent_descriptor(tmp_path, monke
     assert (old_parent / "target").is_dir()
 
 
+def test_require_private_dir_rejects_same_name_target_after_parent_swap(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    target = parent / "target"
+    old_parent = tmp_path / "parent-old"
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    (outside / "target").mkdir(mode=0o700)
+    parent_identity = integration_installer._directory_identity(parent)
+    original_mkdir = os.mkdir
+    swapped = False
+
+    def swap_before_mkdir(candidate, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if candidate == "target" and dir_fd is not None and not swapped:
+            parent.rename(old_parent)
+            outside.rename(parent)
+            swapped = True
+        if dir_fd is None:
+            return original_mkdir(candidate, mode)
+        return original_mkdir(candidate, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(integration_installer.os, "mkdir", swap_before_mkdir)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._require_private_dir(
+            target,
+            None,
+            True,
+            parent_identity=parent_identity,
+        )
+
+    assert swapped
+    assert (parent / "target").is_dir()
+    assert (old_parent / "target").is_dir()
+
+
 def _tree_bytes(root: Path) -> tuple[tuple[str, int, bytes], ...]:
     return tuple(
         (

@@ -696,6 +696,15 @@ def _require_private_dir(
                     os.mkdir(path.name, mode=0o700, dir_fd=parent_fd)
                 except FileExistsError:
                     pass
+            parent_final = os.fstat(parent_fd)
+            if _DirectoryIdentity(
+                parent_final.st_dev,
+                parent_final.st_ino,
+                stat.S_IMODE(parent_final.st_mode),
+            ) != parent_identity:
+                _fail()
+            if _directory_identity(path.parent) != parent_identity:
+                _fail()
         except (OSError, ValueError):
             _fail()
         finally:

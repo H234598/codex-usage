@@ -5735,7 +5735,6 @@ Regression prüft 30 Tage und ein Custom-Fenster. `pytest -q
 tests/test_integration_entrypoint.py tests/test_integration_snapshot.py
 tests/test_history.py tests/test_history_cli.py`: 170/170; Ruff,
 Python-Compile und `git diff --check` sauber.
-Python-Compile und `git diff --check` sauber.
 
 ## Runde 521: Integrationsvertrag dokumentiert Label-Allowlist korrekt
 
@@ -5747,3 +5746,15 @@ Provider-Metadaten explizit ausschließt.
 `docs/codex-usage-v1.md` beschreibt jetzt korrekt, dass Labels außerhalb des
 Cross-Process-Vertrags bleiben. Keine Produktionsänderung erforderlich;
 bestehende `tests/test_integration_snapshot.py`: 53/53 bestanden.
+
+## Runde 522: Installer-Parent nach mkdir erneut gebunden
+
+`integration_installer._require_private_dir(create=True)` erzeugte ein Ziel
+relativ zum geprüften Parent-FD, prüfte danach aber nur den gleichnamigen
+Pfad. Nach einem Parent-Swap mit einem fremden, ebenfalls privaten Ziel konnte
+dieses fremde Verzeichnis als neu erzeugtes Ziel akzeptiert werden.
+
+Nach der Creation werden Parent-Inode und aktueller Pfad-Parent erneut gegen
+die erwartete Identität geprüft. Regression deckt ein gleichnamiges fremdes
+Ziel ab. `pytest -q tests/test_integration_installer.py`: 134/134; Ruff,
+Python-Compile und `git diff --check` sauber.
