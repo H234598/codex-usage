@@ -8842,3 +8842,24 @@ Verifikation: kombinierter GTK-Fokuslauf
 tests/test_forecast_table_selector.py`: **180 bestanden**, kein Segfault.
 Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 757: Formatierungs-Selector fällt bei defekter Auswahl zurück
+
+Beim Settings-Reload wurde ein gültiger, aber nicht baubarer Tabellen-Key als
+ausgewählt behandelt. `_ensure_table()` konnte den Widget-Aufbau ablehnen,
+danach blieb die Auswahl auf der defekten Tabelle und die Formatierungsseite
+zeigte keine nutzbare Tabelle. Eine andere gültige Tabelle wurde nicht
+probiert.
+
+`on_setting_changed()` probiert jetzt zuerst den gespeicherten Key und danach
+die übrigen Tabellen in deklarierter Reihenfolge. Combo-Auswahl und sichtbare
+Tabelle werden erst nach erfolgreichem `_show_table()` gesetzt; bei einem
+Aufbaufehler bleibt die persistierte Auswahl unverändert. Regression erzwingt
+den Fehler der gespeicherten Tabelle und prüft den Wechsel auf die nächste
+funktionierende Tabelle.
+
+Verifikation: kombinierter GTK-Fokuslauf
+`tests/test_panel_settings_list.py tests/test_format_table_selector.py
+tests/test_forecast_table_selector.py`: **181 bestanden**, kein Segfault.
+Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.

@@ -552,14 +552,23 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
             table_key = self.get_value()
         except Exception:
             table_key = None
-        if not isinstance(table_key, str) or table_key not in self._table_labels:
-            table_key = next(iter(self._table_labels), None)
-        if table_key is None:
+        candidates = []
+        if isinstance(table_key, str) and table_key in self._table_labels:
+            candidates.append(table_key)
+        candidates.extend(
+            candidate
+            for candidate in self._table_labels
+            if candidate not in candidates
+        )
+        if not candidates:
             return
         self._saving = True
         try:
-            self.combo.set_active_id(table_key)
-            self._show_table(table_key)
+            for candidate in candidates:
+                if not self._show_table(candidate):
+                    continue
+                self.combo.set_active_id(candidate)
+                break
         finally:
             self._saving = False
 

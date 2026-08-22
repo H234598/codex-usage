@@ -360,6 +360,40 @@ def test_setting_reload_falls_back_when_selector_read_fails() -> None:
         selector.destroy()
 
 
+def test_setting_reload_falls_back_when_selected_table_cannot_be_built(monkeypatch) -> None:
+    settings = _Settings()
+    settings.settings["format-table-selector"]["value"] = "table-a"
+    original_bound_list = format_table_selector_module._BoundFormatList
+
+    def fail_selected_table(key, definition, table_settings):
+        if key == "table-a":
+            raise RuntimeError("selected table failed")
+        return original_bound_list(key, definition, table_settings)
+
+    monkeypatch.setattr(
+        format_table_selector_module,
+        "_BoundFormatList",
+        fail_selected_table,
+    )
+    selector = FormatTableSelector(
+        {
+            "tables": [
+                {"key": "table-a", "label": "A"},
+                {"key": "table-b", "label": "B"},
+            ]
+        },
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector.combo.get_active_id() == "table-b"
+        assert selector.table_stack.get_visible_child_name() == "table-b"
+        assert settings.writes == []
+    finally:
+        selector.destroy()
+
+
 @pytest.mark.parametrize("value", [[], {}])
 def test_setting_reload_falls_back_from_unhashable_selection(value) -> None:
     settings = _Settings()
