@@ -4254,15 +4254,17 @@ test("metric-table switches reject non-boolean values independently", () => {
   }
 });
 
-test("combined consumption rows reject malformed forecast baseline fields", () => {
+test("combined consumption rows reject malformed forecast-only fields", () => {
   const applet = makeApplet();
   const base = Object.assign(applet._defaultConsumptionRow("alpha"), {
+    "forecast-show-coverage-marker": true,
     "forecast-baseline-enabled": true,
     "forecast-baseline-minutes": 30,
   });
 
   assert.equal(applet._normalizeConsumptionRow(base, "alpha")["forecast-baseline-minutes"], 30);
   for (const [key, value] of [
+    ["forecast-show-coverage-marker", "false"],
     ["forecast-baseline-enabled", "true"],
     ["forecast-baseline-minutes", "30"],
     ["forecast-baseline-minutes", 30.5],

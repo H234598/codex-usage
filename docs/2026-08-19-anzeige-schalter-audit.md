@@ -5999,13 +5999,14 @@ und `git diff --check` sauber.
 ## Runde 543: Forecast-AW in kombinierten Verbrauchszeilen validiert
 
 `_normalizeConsumptionRow()` validierte den eigenen Ausgangswert des
-Verbrauchs, übernahm die optionalen `forecast-baseline-*`-Felder aber direkt.
+Verbrauchs, übernahm die optionalen Forecast-Felder aber teilweise direkt.
 Legacy- oder beschädigte kombinierte Zeilen konnten dadurch einen String,
 Bruchwert oder ungültige Minute bis in den Tokenende-Abfragepfad tragen.
 
-Die beiden Forecast-AW-Felder werden jetzt wie die eigenständige
-Prognosentabelle strikt als Boolean bzw. ganze Minuten `0..9999` validiert.
-Regression prüft gültige 30 Minuten sowie falsche Typen, Bruchwerte und
-Grenzverletzungen. `node --test --test-name-pattern='forecast|token.end|metric-table
-switches|legacy consumption' tests/applet_runtime.test.js`: 21/21; Ruff,
-Node-Syntaxcheck, Python-Compile und `git diff --check` sauber.
+`forecast-show-coverage-marker` sowie die beiden Forecast-AW-Felder werden
+jetzt wie die eigenständige Prognosentabelle strikt als Boolean bzw. ganze
+Minuten `0..9999` validiert. Regression prüft gültige 30 Minuten sowie falsche
+Typen, Bruchwerte und Grenzverletzungen. `node --test
+--test-name-pattern='forecast|token.end|metric-table switches|legacy consumption'
+tests/applet_runtime.test.js`: 21/21; Ruff, Node-Syntaxcheck, Python-Compile
+und `git diff --check` sauber.
