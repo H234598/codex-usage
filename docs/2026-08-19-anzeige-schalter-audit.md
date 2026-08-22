@@ -6105,3 +6105,18 @@ Die Hilfe-Materialisierung führt für Tokendelta jetzt geerbte und eigene
 Spalten in derselben Reihenfolge wie der Selector zusammen. Regression prüft
 `Formatierungsmodus` und `Dynamisch`; `pytest -q tests/test_help_page.py`: 6/6.
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 551: Native Cinnamon-Einstellungen mit Applet-Launcher verbinden
+
+Cinnamon nutzt im Rechtsklick-Kontextmenü den virtuellen `configureApplet()`-
+Pfad. Der Applet-eigene Menüpunkt verwendete bereits den geschützten Launcher
+mit Monitorpositionierung; der native Pfad umging ihn und konnte das
+Einstellungsfenster klein oder auf gespeicherter, unsichtbarer Position öffnen.
+`configureApplet()` delegiert jetzt an denselben Launcher. Optionaler Tab-Index
+wird weitergereicht.
+
+Realer Cinnamon-X11-Test: linker Menüpunkt und Rechtsklick-„Einrichten…“ öffnen
+beide `Codex Usage` maximiert auf `x=1920`, `1920×964`. Fokustest `node --test
+--test-name-pattern='native Cinnamon configure action|settings launcher|settings
+maximization' tests/applet_runtime.test.js`: 4/4; Node-Syntaxcheck und
+`git diff --check` sauber.

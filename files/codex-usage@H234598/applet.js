@@ -10551,16 +10551,21 @@ CodexUsageApplet.prototype = {
         }
     },
 
-    _openSettings: function() {
+    _openSettings: function(tab) {
+        let argv = ["xlet-settings", "applet", UUID, "-i", String(this.instanceId)];
+        if (typeof tab === "number" && Number.isInteger(tab) && tab >= 0) {
+            argv.push("-t", String(tab));
+        }
         try {
-            Gio.Subprocess.new(
-                ["xlet-settings", "applet", UUID, "-i", String(this.instanceId)],
-                Gio.SubprocessFlags.NONE
-            );
+            Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
             this._scheduleSettingsMaximize();
         } catch (e) {
             this._showCommandError(_("Einstellungen konnten nicht geöffnet werden: ") + String(e));
         }
+    },
+
+    configureApplet: function(tab) {
+        this._openSettings(tab);
     },
 
     _scheduleSettingsMaximize: function() {

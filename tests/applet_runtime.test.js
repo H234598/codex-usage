@@ -3752,9 +3752,25 @@ test("settings launcher uses the applet instance and schedules bounded maximizat
     0,
   ]));
 
+  applet._openSettings(3);
+  assert.equal(JSON.stringify(subprocessCalls[1][0]), JSON.stringify([
+    "xlet-settings", "applet", "codex-usage@H234598", "-i", "17", "-t", "3",
+  ]));
+
   applet._scheduleSettingsMaximize = scheduleSettingsMaximize;
   applet._scheduleSettingsMaximize();
   assert.equal(applet._settingsMaximizeId, 1);
+});
+
+test("native Cinnamon configure action uses the same settings launcher", () => {
+  const applet = makeApplet();
+  const calls = [];
+  applet._openSettings = (tab) => { calls.push(tab); };
+
+  applet.configureApplet();
+  applet.configureApplet(3);
+
+  assert.deepEqual(calls, [undefined, 3]);
 });
 
 test("settings maximization retries up to twelve times and stops after removal", () => {
