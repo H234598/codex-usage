@@ -180,6 +180,23 @@ def test_icon_selector_skips_invalid_icon_paths() -> None:
         selector.destroy()
 
 
+def test_icon_selector_skips_unencodable_text_and_keeps_later_valid_icons() -> None:
+    settings = _Settings()
+    options = {"bad\ud800": "fast-mode-warning.svg"}
+    options.update({f"invalid-{index}": "../outside.svg" for index in range(31)})
+    options["Valid"] = "fast-mode-warning.svg"
+    selector = FastModeIconSelector(
+        {"options": options},
+        "fast-mode-icon",
+        settings,
+    )
+
+    try:
+        assert selector._values == ["fast-mode-warning.svg"]
+    finally:
+        selector.destroy()
+
+
 def test_destroy_detaches_settings_listener() -> None:
     settings = _Settings()
     selector = FastModeIconSelector({"options": {}}, "fast-mode-icon", settings)

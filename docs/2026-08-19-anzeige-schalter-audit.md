@@ -9314,3 +9314,19 @@ dass derselbe Listener eine externe Änderung noch einliest.
 
 Verifikation: **26 fokussierte Dynamic-Series-Tests**, Ruff, Python-Compile und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 791: Fast-Mode-Icons bei fehlerhaftem Schema robust laden
+
+Unpaired Unicode-Surrogate in einem Icon-Label konnten beim Einfügen in den
+GTK-`ListStore` einen `UnicodeEncodeError` auslösen und die Einstellungsseite
+abbrechen. Außerdem begrenzte die alte Schleife die ersten 32 rohen
+Schemaeinträge statt 32 gültiger Icons; viele ungültige Einträge konnten damit
+gültige spätere Icons verstecken.
+
+Der Selector prüft Label und Dateiname jetzt auf UTF-8-Kodierbarkeit und zählt
+das Limit erst nach erfolgreicher Validierung. Eine Regression deckt beide
+Fälle ab: fehlerhafter Text wird übersprungen, ein gültiges Icon nach 32
+ungültigen Einträgen bleibt sichtbar.
+
+Verifikation: **10 fokussierte Fast-Mode-Icon-Tests**, Ruff, Python-Compile und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

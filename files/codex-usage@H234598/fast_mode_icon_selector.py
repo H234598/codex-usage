@@ -58,7 +58,9 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
         if not isinstance(options, dict):
             options = {}
         icon_dir = Path(__file__).resolve().parent / "icons"
-        for label, value in list(options.items())[: self._MAX_ICONS]:
+        for label, value in options.items():
+            if len(self._values) >= self._MAX_ICONS:
+                break
             if (
                 not isinstance(label, str)
                 or not isinstance(value, str)
@@ -67,6 +69,11 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
                 or Path(value).name != value
                 or not value.endswith(".svg")
             ):
+                continue
+            try:
+                label.encode("utf-8")
+                value.encode("utf-8")
+            except UnicodeEncodeError:
                 continue
             path = icon_dir / value
             pixbuf = _load_icon(path)
