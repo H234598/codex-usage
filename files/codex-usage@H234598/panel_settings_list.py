@@ -635,6 +635,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
             except (OverflowError, TypeError, ValueError):
                 continue
         self.content_widget.columns_autosize()
+        self.update_button_sensitivity()
 
     def detach(self) -> None:
         self._remove_listener(self.key, self._settings_changed_callback)
@@ -1013,6 +1014,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
         self.content_widget.set_activate_on_single_click(False)
         self.content_widget.connect("row-activated", self.on_row_activated)
         self.content_widget.columns_autosize()
+        self.update_button_sensitivity()
         self.show_all()
 
     def destroy(self):

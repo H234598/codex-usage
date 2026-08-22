@@ -9190,3 +9190,21 @@ Fehlstelle.
 
 Verifikation: **105 Panel-Tests** und **496 Node-Runtime-Tests** bestanden;
 Ruff und Invarianten-Fuzzing sauber. Keine Settings-Fenster gestartet.
+
+## Runde 783: Kopier-Toolbar nach Leisten-Rebuild zurücksetzen
+
+Beim Ändern der Wertanzahl ersetzt der Leisten-Editor seine `TreeView`. Die
+neue Ansicht hatte keine Auswahl, während die Kopier-/Einfüge-Toolbar ihren
+alten Sensitivitätszustand behielt. Einfügen blieb dadurch sichtbar aktiv,
+obwohl kein Zielaccount ausgewählt war; der Datenpfad blieb geschützt und
+änderte ohne Auswahl nichts.
+
+`on_setting_changed()` und `_rebuild_tree()` synchronisieren die Toolbar jetzt
+nach jedem Modell- oder TreeView-Rebuild. Kopieren und Einfügen sind nur bei
+aktueller Auswahl beziehungsweise bei Auswahl plus Snapshot aktiv.
+
+Regression deckt den Wertanzahlwechsel nach einem Kopiervorgang ab und prüft,
+dass die neue TreeView ohne Auswahl beide Aktionen deaktiviert. Ruff,
+Python-Compile und Diff-Check bleiben sauber; keine Settings-Fenster gestartet.
+
+Verifikation: **107 fokussierte Panel-Tests bestanden**.

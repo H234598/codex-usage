@@ -410,6 +410,44 @@ def test_panel_copy_paste_changes_only_selected_account_values() -> None:
         panel.destroy()
 
 
+def test_panel_rebuild_clears_stale_copy_paste_selection() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "2"
+    settings.values["account-panel-settings"] = [
+        {"account": "source", "slot1": 4, "slot2": 5},
+        {"account": "target", "slot1": 0, "slot2": 1},
+    ]
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+            ],
+            "show-buttons": True,
+            "hidden-buttons": ["+", "-", "up", "down"],
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        selection = panel.content_widget.get_selection()
+        selection.select_path("0")
+        panel.copy_value_settings()
+        assert panel.copy_button.get_sensitive() is True
+        assert panel.paste_button.get_sensitive() is True
+
+        settings.values["panel-value-count"] = "4"
+        panel._on_count_changed()
+
+        _model, tree_iter = panel.content_widget.get_selection().get_selected()
+        assert tree_iter is None
+        assert panel.copy_button.get_sensitive() is False
+        assert panel.paste_button.get_sensitive() is False
+    finally:
+        panel.destroy()
+
+
 def test_panel_editor_destroys_dialog_after_run_error(monkeypatch) -> None:
     class FailingDialog(_Dialog):
         def __init__(self, *args, **kwargs):
