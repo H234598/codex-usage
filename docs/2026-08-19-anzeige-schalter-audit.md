@@ -6509,3 +6509,22 @@ ausgenommen. Regression prüft Warten, späteren Spawn und Timer-Requeue.
 Fokustest `node --test
 --test-name-pattern='profile polling waits for account writes before spawning status|profile job|device login live|safe mode cancels reactivation processes|auxiliary completion resumes queued profile poll' tests/applet_runtime.test.js`:
 25/25; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 580: Einstellungsfenster nach langsamem Start sichtbar platzieren
+
+Der Settings-Launcher verschob das `xlet-settings`-Fenster bisher genau einmal
+250 ms nach dem Spawn. Auf diesem Cinnamon-System erscheint das Fenster erst
+nach etwa 635 ms. Der erste `wmctrl -e`-Aufruf lief deshalb ins Leere; spätere
+Maximierungsversuche konnten das Fenster auf seiner alten, unsichtbaren
+Monitorposition lassen.
+
+Der Verschiebeprozess wird jetzt per `wait_check_async()` ausgewertet. Ein
+fehlgeschlagener `wmctrl`-Aufruf requeued die Platzierung bis zu zwölf Timer-
+Ticks; erst nach erfolgreicher Platzierung (oder dem begrenzten Fallback) wird
+maximiert. Regression reproduziert ein verspätetes Fenster mit erst
+fehlgeschlagenem, dann erfolgreichem Verschiebeaufruf.
+
+Fokustest `node --test --test-name-pattern='settings launcher|native Cinnamon
+configure action|settings maximization|settings placement retries'
+tests/applet_runtime.test.js`: 5/5. Node-Syntaxcheck und `git diff --check`
+sauber.

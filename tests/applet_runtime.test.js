@@ -4401,6 +4401,56 @@ test("settings maximization moves window onto current monitor before maximizing"
   ]));
 });
 
+test("settings placement retries when xlet-settings window appears late", () => {
+  const callbacks = [];
+  const subprocesses = [];
+  const applet = makeApplet((runtime) => {
+    runtime.currentMonitor = {x: 1920, y: 0, width: 1920, height: 1080};
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      const process = {
+        argv: args[0],
+        wait_check_async(_cancellable, callback) {
+          this.waitCallback = callback;
+        },
+        wait_check_finish() {
+          if (this.throwOnFinish) {
+            throw new Error("wmctrl window not found");
+          }
+          return this.success === true;
+        },
+      };
+      subprocesses.push(process);
+      return process;
+    };
+  });
+
+  applet._scheduleSettingsMaximize();
+  assert.equal(callbacks.length, 1);
+  assert.equal(callbacks[0](), true);
+  assert.equal(subprocesses.length, 1);
+  assert.equal(JSON.stringify(subprocesses[0].argv), JSON.stringify([
+    "wmctrl", "-r", "Codex Usage", "-e", "0,1920,0,-1,-1",
+  ]));
+
+  subprocesses[0].throwOnFinish = true;
+  subprocesses[0].waitCallback(subprocesses[0], {});
+  assert.equal(callbacks[0](), true);
+  assert.equal(subprocesses.length, 2);
+  assert.equal(JSON.stringify(subprocesses[1].argv), JSON.stringify(subprocesses[0].argv));
+
+  subprocesses[1].success = true;
+  subprocesses[1].waitCallback(subprocesses[1], {});
+  assert.equal(callbacks[0](), true);
+  assert.equal(subprocesses.length, 3);
+  assert.equal(JSON.stringify(subprocesses[2].argv), JSON.stringify([
+    "wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz",
+  ]));
+});
+
 test("health action reports command and backend failures without retaining work", () => {
   const applet = makeApplet();
   const menu = {

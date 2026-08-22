@@ -10774,30 +10774,68 @@ CodexUsageApplet.prototype = {
     _scheduleSettingsMaximize: function() {
         this._removeSource("_settingsMaximizeId");
         let attempts = 0;
+        let placementAttempts = 0;
         let positioned = false;
+        let placementPending = false;
         let maximize = Lang.bind(this, function() {
             if (this._removed) {
                 this._clearSource("_settingsMaximizeId");
                 return false;
             }
             if (!positioned) {
-                positioned = true;
+                if (placementPending) {
+                    return true;
+                }
+                placementAttempts += 1;
                 try {
                     let monitor = Main.layoutManager && Main.layoutManager.currentMonitor;
                     let monitorX = monitor && Number(monitor.x);
                     let monitorY = monitor && Number(monitor.y);
                     if (Number.isFinite(monitorX) && Number.isFinite(monitorY)) {
-                        Gio.Subprocess.new(
+                        let moveProcess = Gio.Subprocess.new(
                             ["wmctrl", "-r", "Codex Usage", "-e",
                                 "0," + String(Math.round(monitorX)) + "," +
                                 String(Math.round(monitorY)) + ",-1,-1"],
                             Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
                         );
+                        if (
+                            moveProcess &&
+                            typeof moveProcess.wait_check_async === "function" &&
+                            typeof moveProcess.wait_check_finish === "function"
+                        ) {
+                            placementPending = true;
+                            moveProcess.wait_check_async(null, Lang.bind(this, function(source, result) {
+                                placementPending = false;
+                                if (this._removed) {
+                                    return;
+                                }
+                                try {
+                                    if (
+                                        source.wait_check_finish(result) === true ||
+                                        placementAttempts >= 12
+                                    ) {
+                                        positioned = true;
+                                    }
+                                } catch (e) {
+                                    if (placementAttempts >= 12) {
+                                        positioned = true;
+                                    }
+                                }
+                            }));
+                            return true;
+                        }
+                        positioned = true;
                         return true;
                     }
+                    positioned = true;
                 } catch (e) {
                     this._cleanupLog("settings window placement failed: " + this._shortText(e, 180));
+                    positioned = true;
                 }
+                if (!positioned && placementAttempts < 12) {
+                    return true;
+                }
+                positioned = true;
             }
             try {
                 Gio.Subprocess.new(
