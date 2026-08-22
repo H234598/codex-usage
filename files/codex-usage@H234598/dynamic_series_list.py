@@ -45,12 +45,23 @@ class DynamicSeriesList(List, JSONSettingsBackend):
         self._series_column_index = self._column_index(self._SERIES_COLUMN)
         self._active_column_index = self._column_index(self._ACTIVE_COLUMN)
 
-        self.attach()
+        try:
+            self.attach()
+        except Exception:
+            self.detach()
+            try:
+                self.on_setting_changed()
+            except Exception:
+                self.model.clear()
+                self.content_widget.columns_autosize()
 
     def on_setting_changed(self, *_args):
         """Load only row objects; malformed persisted values render empty."""
         self.model.clear()
-        rows = self.get_value()
+        try:
+            rows = self.get_value()
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError, OSError):
+            rows = []
         if not isinstance(rows, list):
             rows = []
         for row in rows:

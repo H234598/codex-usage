@@ -8384,3 +8384,26 @@ prüft, dass die Eingabe unverändert bleibt und nur die zurückgegebene
 Materialisierung `dynamic` enthält. `pytest -q tests/test_help_page.py`:
 11/11; Python-Compile, Ruff und `git diff --check` sauber. Applet installiert
 und mit `--reload-running` neu geladen.
+
+## Runde 729: Hilfe-Schema-Fuzz ohne weitere Abbrüche
+
+Der fokussierte Help-Builder wurde mit 5000 kleinen, gezielt malformed
+Schema-/Spalten-/Option-Kombinationen sowie nicht-stringartigen Layoutwerten
+ausgeführt. `_clean_text()`, `_option_text()`, `_field_text()`,
+`_definition_entry()`, `_help_definition()`, `build_help_groups()` und
+`_markup()` lieferten jeweils kontrollierte Ergebnisse; keine Exception und
+kein GTK-Aufbaufehler wurde reproduziert. Es war keine weitere Änderung nötig.
+
+## Runde 730: Dynamic-Series-Backend-Fehler blockieren Settings nicht
+
+`DynamicSeriesList` ließ einen Fehler aus `settings.get_value()` oder
+`settings.listen()` bis in den Cinnamon-Konstruktor steigen. Ein temporärer
+Backend-/DBus-Fehler konnte dadurch die gesamte Accounts-Seite abbrechen.
+
+Read-Fehler liefern jetzt eine leere Anzeige ohne Persistenzänderung.
+Listener-Fehler werden abgemeldet, danach wird der lokale Tabellenstand noch
+einmal ohne Live-Listener geladen; auch ein fehlerhafter Fallback räumt das
+GTK-Modell kontrolliert. Regression: `pytest -q
+tests/test_dynamic_series_list.py` 19/19; Python-Compile, Ruff und
+`git diff --check` sauber. Reale `xlet-settings`-Smoke nach Installation und
+Reload lief acht Sekunden ohne Traceback/GTK-Fehler.

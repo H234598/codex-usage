@@ -54,6 +54,16 @@ class _Settings:
         self.values[key] = value
 
 
+class _ReadErrorSettings(_Settings):
+    def get_value(self, key):
+        raise OSError("settings read failed")
+
+
+class _ListenerErrorSettings(_Settings):
+    def listen(self, key, callback):
+        raise OSError("listener registration failed")
+
+
 def test_active_owners_require_a_real_boolean_true() -> None:
     table = _SeriesTable([
         ["alpha", "A", True],
@@ -388,6 +398,50 @@ def test_malformed_account_rows_do_not_break_settings_table() -> None:
         assert len(widget.model) == 0
     finally:
         widget.destroy()
+
+
+def test_settings_read_error_keeps_series_table_open() -> None:
+    settings = _ReadErrorSettings()
+    widget = None
+    try:
+        widget = DynamicSeriesList(
+            {
+                "columns": [
+                    {"id": "account", "title": "Account", "type": "string"},
+                    {"id": "series", "title": "Serie", "type": "string"},
+                    {"id": "series-active", "title": "Aktiv", "type": "boolean"},
+                ],
+                "show-buttons": False,
+            },
+            "account-series-settings",
+            settings,
+        )
+        assert len(widget.model) == 0
+    finally:
+        if widget is not None:
+            widget.destroy()
+
+
+def test_listener_registration_error_keeps_series_table_open() -> None:
+    settings = _ListenerErrorSettings()
+    widget = None
+    try:
+        widget = DynamicSeriesList(
+            {
+                "columns": [
+                    {"id": "account", "title": "Account", "type": "string"},
+                    {"id": "series", "title": "Serie", "type": "string"},
+                    {"id": "series-active", "title": "Aktiv", "type": "boolean"},
+                ],
+                "show-buttons": False,
+            },
+            "account-series-settings",
+            settings,
+        )
+        assert len(widget.model) == 0
+    finally:
+        if widget is not None:
+            widget.destroy()
 
 
 def test_integer_overflow_in_account_row_does_not_break_settings_table() -> None:
