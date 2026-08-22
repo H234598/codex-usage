@@ -8471,17 +8471,16 @@ prüft Spawnfehler, Prozessargumente, PID-Weitergabe und dass kein falscher
 Fehlerdialog erscheint. Settings-Launcher-Block: 16/16; Node-Syntaxcheck und
 `git diff --check` sauber.
 
-## Runde 735: Launcher-Spawn-Rennen beim Settings-Start abgefangen
+## Runde 735: Launcher-Spawn-Fallback erneut verifiziert
 
-Der Fallback wurde auf das nächste Fehlerfenster geprüft: Eine vorhandene
-`Gio.SubprocessLauncher`-API kann trotz erfolgreicher Konstruktion bei
-`spawnv()` scheitern. `_openSettings()` behandelte das bisher als endgültigen
-Fehler und probierte `Gio.Subprocess.new()` nicht mehr.
+Der bereits implementierte Fallback wurde gegen das nächste Fehlerfenster
+geprüft: Eine vorhandene `Gio.SubprocessLauncher`-API kann trotz erfolgreicher
+Konstruktion bei `spawnv()` scheitern. `_openSettings()` verwendet dann
+`Gio.Subprocess.new()`; nur wenn auch dieser Pfad keinen Prozess liefert,
+erscheint der Fehler.
 
-Der `spawnv()`-Aufruf läuft jetzt in einem eigenen Guard. Bei Ausnahme oder
-leerem Prozessobjekt wird der vorhandene direkte Subprocess-Pfad verwendet;
-nur wenn auch dieser keinen Prozess liefert, erscheint der Fehler. Regression
-deckt Launcher-Spawnfehler, unveränderte Argumente, PID-Weitergabe und
-Fehlerdialog-Unterdrückung ab. Settings-Launcher-Block: 16/16; Node-Syntaxcheck
-und `git diff --check` sauber. Live-Popup-Smoke nach Reload bleibt fokussiert
-und maximiert.
+Regression deckt Launcher-Spawnfehler, unveränderte Argumente, PID-Weitergabe
+und Fehlerdialog-Unterdrückung ab. Settings-Launcher-Block: 16/16;
+Node-Syntaxcheck und `git diff --check` sauber. Live-Popup-Smoke nach Reload
+bleibt fokussiert und maximiert. In dieser Runde war kein weiterer
+Produktcode-Fix erforderlich.
