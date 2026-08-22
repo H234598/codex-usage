@@ -52,6 +52,30 @@ class _BoundFormatList(List, JSONSettingsBackend):
         )
         self.attach()
 
+    def on_setting_changed(self, *_args):
+        """Load only row objects; malformed persisted values render empty."""
+        self.model.clear()
+        rows = self.get_value()
+        if not isinstance(rows, list):
+            rows = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_info = []
+            for column in self.columns:
+                column_id = column["id"]
+                if column_id in row:
+                    row_info.append(row[column_id])
+                elif "default" in column:
+                    row_info.append(column["default"])
+                else:
+                    row_info.append(None)
+            try:
+                self.model.append(row_info)
+            except (TypeError, ValueError):
+                continue
+        self.content_widget.columns_autosize()
+
     def detach(self):
         listeners = getattr(self.settings, "listeners", None)
         if not isinstance(listeners, dict):

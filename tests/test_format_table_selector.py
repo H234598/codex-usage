@@ -237,3 +237,25 @@ def test_copy_table_reuses_percent_columns_but_keeps_own_description() -> None:
         assert [column["id"] for column in widget.columns] == ["account", "bold"]
     finally:
         widget.destroy()
+
+
+def test_malformed_table_value_does_not_break_selector() -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["value"] = None
+
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert len(selector._tables["table-a"].model) == 0
+        settings.settings["table-a"]["value"] = [None, "broken", {"name": "ok"}]
+        selector._tables["table-a"].on_setting_changed()
+        assert len(selector._tables["table-a"].model) == 1
+        settings.settings["table-a"]["value"] = [{"name": 123}]
+        selector._tables["table-a"].on_setting_changed()
+        assert len(selector._tables["table-a"].model) == 0
+    finally:
+        selector.destroy()

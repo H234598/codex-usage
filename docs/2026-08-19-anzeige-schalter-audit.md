@@ -7415,3 +7415,19 @@ anschließendes Verschieben per Fenster-ID.
 Fokustest `node --test --test-name-pattern='settings (launcher|window
 lookup|maximization|placement)|stale settings|native Cinnamon configure'
 tests/applet_runtime.test.js`: 14/14. `git diff --check` sauber.
+
+## Runde 644: Beschädigte Formatierungstabelle öffnet Settings nicht mehr kaputt
+
+`_BoundFormatList` übernahm bisher jeden gespeicherten Tabellenwert direkt an
+`TreeListWidgets.List.on_setting_changed()`. `null` löste dort beim Öffnen
+`TypeError: 'NoneType' object is not iterable` aus; nicht-dict-Zeilen oder
+falsche Zelltypen konnten ebenfalls die gesamte `xlet-settings`-GUI abbrechen.
+
+Der Formatierungslisten-Adapter akzeptiert jetzt nur Listen und
+Zeilenobjekte. Ungültige Zeilen bzw. nicht passende Zelltypen werden
+übersprungen; gültige Zeilen bleiben unverändert. Persistierte Daten werden
+nicht automatisch überschrieben, damit kein stiller Verlust entsteht.
+
+Regression deckt `null`, Nicht-Objekt-Zeilen und falsche Zelltypen ab.
+`pytest -q tests/test_format_table_selector.py`: 9/9; Ruff, Python-Compile und
+`git diff --check` sauber.
