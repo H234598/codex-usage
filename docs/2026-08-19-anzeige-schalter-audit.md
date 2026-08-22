@@ -7173,3 +7173,14 @@ Beide Gates werten normale Property-Fehler jetzt als erschöpft bzw. blockierend
 Regressionen prüfen fehlerhafte Pool- und Restwert-Properties. `pytest -q
 tests/test_scheduler.py`: 216/216; Ruff, Mypy, Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 624: Watch-Cycle-Health bei fehlerhafter Pool-Evidenz fail-closed
+
+`_watch_cycle_is_healthy()` wertete Pool-Evidenz außerhalb eines vollständig
+geschützten Fehler-Gates aus. Eine fehlerhafte `availability_sources`-Property
+konnte den Watchdog-Zyklus mit `RuntimeError` abbrechen.
+
+Der Health-Gate behandelt normale Laufzeitfehler jetzt als ungesunden Zyklus.
+Regression prüft eine fehlerhafte Pool-Evidenz-Property. `pytest -q
+tests/test_scheduler.py`: 217/217; Ruff, Mypy, Python-Kompilierung und
+`git diff --check` sauber.

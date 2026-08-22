@@ -70,6 +70,12 @@ class _RaisingPool:
     limit_reached = False
 
 
+class _RaisingEvidencePool:
+    @property
+    def availability_sources(self):
+        raise RuntimeError("synthetic evidence marker")
+
+
 class _RaisingWindow:
     has_invalid_usage_value = False
     used = None
@@ -311,6 +317,26 @@ def test_pool_forces_watchdog_block_treats_failing_property_as_exhausted():
 
 def test_window_is_exhausted_treats_failing_remaining_property_as_exhausted():
     assert _window_is_exhausted(_RaisingWindow()) is True
+
+
+def test_watch_cycle_health_treats_failing_pool_evidence_as_unhealthy():
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        backend="browser",
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        backend_configured="browser",
+        backend_used="browser",
+        main=_RaisingEvidencePool(),
+    )
+
+    assert _watch_cycle_is_healthy([usage], [account]) is False
 
 
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(

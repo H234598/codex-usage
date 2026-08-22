@@ -1016,7 +1016,7 @@ def _watch_cycle_is_healthy(
                 usage
             ):
                 return False
-    except (AttributeError, TypeError, ValueError):
+    except Exception:
         return False
     return True
 
