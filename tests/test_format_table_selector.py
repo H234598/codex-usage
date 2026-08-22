@@ -157,6 +157,27 @@ def test_constructor_ignores_non_mapping_table_definition() -> None:
         selector.destroy()
 
 
+@pytest.mark.parametrize("table_key", ["", "bad\x00key"])
+def test_constructor_ignores_empty_or_nul_table_key(table_key) -> None:
+    settings = _Settings()
+    settings.settings[table_key] = {
+        "value": [],
+        "columns": [{"id": "name", "title": "Name", "type": "string"}],
+    }
+
+    selector = FormatTableSelector(
+        {"tables": [{"key": table_key, "label": "Bad"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector._table_labels == {}
+        assert selector._tables == {}
+    finally:
+        selector.destroy()
+
+
 def test_selector_survives_listener_registration_error() -> None:
     class BrokenListenerSettings(_Settings):
         def listen(self, key, callback):

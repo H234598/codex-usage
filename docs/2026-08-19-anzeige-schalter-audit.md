@@ -8514,6 +8514,18 @@ Bereinigung. Format-/Forecast-Fokustests: 73/73; Python-Compile und
 `git diff --check` sauber. Reale `xlet-settings`-Smoke nach Reload lief ohne
 Traceback.
 
+## Runde 740: Leere/NUL-Selector-Keys verworfen
+
+`FormatTableSelector` akzeptierte bislang leere oder NUL-haltige Tabellenkeys.
+GTK kürzte etwa `bad\0key` beim ComboBox-Active-ID auf `bad`, während der
+interne Stack-Key vollständig blieb; Auswahl, sichtbare Tabelle und
+Persistenz konnten dadurch auseinanderlaufen.
+
+Leere Keys und Keys mit NUL werden beim Schemaeinlesen jetzt verworfen.
+Regression deckt beide Varianten ab. Format-/Forecast-Fokustests: 78/78;
+Python-Compile und `git diff --check` sauber. Reale `xlet-settings`-Smoke nach
+Reload lief ohne Traceback.
+
 ## Runde 738: Sequenz-Optionswerte beim Laden validiert
 
 `_BoundFormatList` unterstützte für `options` neben Dictionaries auch Listen

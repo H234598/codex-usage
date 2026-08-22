@@ -440,6 +440,8 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
             table_key = table.get("key")
             if (
                 not isinstance(table_key, str)
+                or not table_key
+                or "\x00" in table_key
                 or not isinstance(definitions.get(table_key), dict)
             ):
                 continue
