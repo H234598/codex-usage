@@ -7934,6 +7934,23 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   assert.deepEqual(applet._sources, {});
 });
 
+test("safe mode does not requeue a cancelled profile poll", () => {
+  const applet = makeApplet();
+  let forced = 0;
+  applet._deviceLoginJobs.alpha = "job-1234567890abcdef1234567890abcdef";
+  applet._profileJobPollingAccount = "alpha";
+  applet._profileJobCommandAccount = "alpha";
+  applet._auxCommand = "profile-job-status";
+  applet._auxProcess = {force_exit() { forced += 1; }};
+
+  applet._enterSafeMode("profile poll cleanup test");
+
+  assert.equal(forced, 1);
+  assert.deepEqual(applet._profileJobResumeQueue, []);
+  assert.equal(applet._profileJobPollingAccount, "");
+  assert.equal(applet._profileJobCommandAccount, "");
+});
+
 test("safe mode retry reinstates the refresh timer", () => {
   const applet = makeApplet();
   let scheduled = 0;

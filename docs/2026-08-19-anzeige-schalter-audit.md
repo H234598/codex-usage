@@ -6669,3 +6669,17 @@ werden. Damit schlagen neue Branches mit `null`- oder Ausnahmefehlern direkt
 im fokussierten Paneltest fehl.
 
 Fokustest `node --test --test-name-pattern='panel sources|panel limit sources|extended panel sources|token delta' tests/applet_runtime.test.js`: 13/13. Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 590: Safe-Mode-Profilpoll-Cleanup
+
+Der Profiljob-Statuspoll wird beim Eintritt in den Safe-Mode beendet. Dabei
+werden Poll-Account und Command-Account vor `_cancelAuxProcess()` geleert;
+damit darf der allgemeine Abbruchpfad den Job nicht erneut in die Resume-
+Warteschlange legen.
+
+Ein direkter Regressionstest deckt genau diese Reihenfolge mit aktivem
+`profile-job-status`-Prozess ab und prüft Prozessabbruch, leere Resume-Queue
+und leere Poll-Trackingfelder. Der aktuelle Produktionspfad besteht bereits;
+es war keine Codeänderung nötig.
+
+Fokustest `node --test --test-name-pattern='profile job|profile poll|auxiliary completion|safe mode' tests/applet_runtime.test.js`: 30/30. Node-Syntaxcheck und `git diff --check` sauber.
