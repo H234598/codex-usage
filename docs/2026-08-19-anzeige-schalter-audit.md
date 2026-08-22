@@ -8130,3 +8130,14 @@ Der Write-Grenzpunkt fängt jetzt `Exception` (nicht `BaseException`) ab,
 setzt `_saving` zurück und beendet den GTK-Callback kontrolliert. Regression
 deckt `OSError` und `RuntimeError` ab; `tests/test_panel_settings_list.py`:
 84/84, Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 706: Listener-Exceptions blockieren Panel-Aufbau nicht
+
+Auch `settings.listen()` liegt an einer externen Backend-Grenze und kann
+normale Runtime-/DBus-Exceptions liefern. Die bisherige Built-in-Typ-Liste
+ließ solche Fehler beim `PanelSettingsList`-Aufbau durch.
+
+Beide Listener-Registrierungen behandeln jetzt `Exception` fehlertolerant;
+das Panel bleibt ohne Live-Updates bedienbar. Regression deckt
+`OSError` und `RuntimeError` ab; `tests/test_panel_settings_list.py`: 85/85,
+Python-Compile, Ruff und `git diff --check` sauber.

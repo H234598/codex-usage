@@ -715,10 +715,11 @@ def test_panel_ignores_settings_read_overflow() -> None:
         panel.destroy()
 
 
-def test_panel_survives_settings_listener_registration_error() -> None:
+@pytest.mark.parametrize("error", [OSError, RuntimeError])
+def test_panel_survives_settings_listener_registration_error(error) -> None:
     class BrokenListenerSettings(_Settings):
         def listen(self, key, callback):
-            raise OSError(key)
+            raise error(key)
 
     settings = BrokenListenerSettings(3)
     panel = PanelSettingsList(

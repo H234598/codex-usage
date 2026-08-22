@@ -337,12 +337,12 @@ class PanelSettingsList(List, JSONSettingsBackend):
         )
         try:
             self.attach()
-        except (AttributeError, KeyError, OSError, TypeError, ValueError, OverflowError):
+        except Exception:
             # Keep the page usable when backend listener registration fails.
             self._remove_listener(self.key, self._settings_changed_callback)
         try:
             settings.listen("panel-value-count", self._on_count_changed)
-        except (AttributeError, KeyError, OSError, TypeError, ValueError, OverflowError):
+        except Exception:
             pass
 
     def _read_count(self) -> int:
