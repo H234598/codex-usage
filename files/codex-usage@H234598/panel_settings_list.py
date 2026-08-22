@@ -474,7 +474,10 @@ class PanelSettingsList(List, JSONSettingsBackend):
         columns = panel_columns(self._base_columns, self._read_count())
         if [column["id"] for column in columns] == [column["id"] for column in self.columns]:
             return
-        stored_rows = self.get_value()
+        try:
+            stored_rows = self.get_value()
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+            stored_rows = []
         rows = (
             [
                 dict(row)
@@ -529,7 +532,10 @@ class PanelSettingsList(List, JSONSettingsBackend):
 
     def list_changed(self, *args):
         """Save visible edits without discarding temporarily hidden slots."""
-        stored_rows = self.get_value()
+        try:
+            stored_rows = self.get_value()
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+            stored_rows = []
         previous_rows = (
             [
                 row

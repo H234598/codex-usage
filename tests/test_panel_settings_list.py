@@ -526,6 +526,35 @@ def test_panel_edit_item_restores_row_after_invalid_widget_value() -> None:
         panel.destroy()
 
 
+def test_panel_edit_callbacks_fall_back_to_model_on_settings_read_error() -> None:
+    class BrokenRowsSettings(_Settings):
+        def get_value(self, key):
+            if key == "account-panel-settings":
+                raise KeyError(key)
+            return super().get_value(key)
+
+    settings = BrokenRowsSettings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.model.append(["alpha", 0])
+        panel.list_changed()
+        assert settings.values["account-panel-settings"] == [{"account": "alpha", "slot1": 0}]
+        settings.values["panel-value-count"] = "2"
+        panel._on_count_changed()
+        assert list(panel.model[0]) == ["alpha", 0, 0]
+    finally:
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(

@@ -8002,3 +8002,15 @@ Panel-Add/Edit fängt diese Modellfehler jetzt ab; Edit stellt die Originalzeile
 wieder her. Regression deckt beide echten Bedienpfade ab;
 `tests/test_panel_settings_list.py`: 76/76, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 694: Leisten-Callbacks überleben Settings-Read-Fehler
+
+`list_changed()` und `_on_count_changed()` lasen persistierte Leistenwerte
+noch ungefangen. Ein Backend-Fehler beim Speichern oder beim Ändern der
+Wertanzahl konnte deshalb aus einem GTK-Callback herausbrechen und das
+Einstellungsfenster instabil machen.
+
+Beide Pfade verwenden jetzt denselben leeren Listen-Fallback wie die übrigen
+Panel-Reads. Regression deckt Speichern und Wertanzahl-Änderung mit defektem
+Backend ab; `tests/test_panel_settings_list.py`: 77/77, Python-Compile und
+`git diff --check` sauber.
