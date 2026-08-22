@@ -257,6 +257,20 @@ def test_table_change_escapes_markup_in_label() -> None:
     assert selector.table_title.markup == "<b>A &amp; B &lt;C&gt;</b>"
 
 
+def test_constructor_falls_back_from_nul_table_label() -> None:
+    settings = _Settings()
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A\x00B"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector._table_labels["table-a"] == "table-a"
+    finally:
+        selector.destroy()
+
+
 def test_table_change_ignores_unknown_selection() -> None:
     selector = _selector()
     selector.combo.active = "missing"

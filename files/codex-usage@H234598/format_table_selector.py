@@ -446,7 +446,7 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
             ):
                 continue
             label = table.get("label")
-            if not isinstance(label, str) or not label:
+            if not isinstance(label, str) or not label or "\x00" in label:
                 label = table_key
             if table_key in self._table_labels:
                 continue

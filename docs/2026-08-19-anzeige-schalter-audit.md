@@ -8526,6 +8526,17 @@ Regression deckt beide Varianten ab. Format-/Forecast-Fokustests: 78/78;
 Python-Compile und `git diff --check` sauber. Reale `xlet-settings`-Smoke nach
 Reload lief ohne Traceback.
 
+## Runde 741: NUL-Labels auf sicheren Tabellenkey zurückfallen lassen
+
+Markup-Escaping allein reicht für NUL im Tabellenlabel nicht: GTK beendet den
+Text am NUL trotzdem vorzeitig (`A\0B` wurde als `A` angezeigt). Dadurch konnte
+die sichtbare Bezeichnung von der Schemaangabe abweichen.
+
+Labels mit NUL werden beim Einlesen jetzt auf den bereits validierten
+Tabellenkey zurückgesetzt. Regression deckt diesen Fallback ab. Format-/
+Forecast-Fokustests: 79/79; Python-Compile und `git diff --check` sauber.
+Reale `xlet-settings`-Smoke nach Reload lief ohne Traceback.
+
 ## Runde 738: Sequenz-Optionswerte beim Laden validiert
 
 `_BoundFormatList` unterstützte für `options` neben Dictionaries auch Listen
