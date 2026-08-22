@@ -449,6 +449,33 @@ def test_format_table_drops_invalid_options(options) -> None:
         widget.destroy()
 
 
+@pytest.mark.parametrize(
+    "column",
+    [
+        {"id": "n", "title": "N", "type": "integer"},
+        {"id": "n", "title": "N", "type": "integer", "min": 0},
+        {"id": "n", "title": "N", "type": "integer", "max": 10},
+        {"id": "n", "title": "N", "type": "integer", "min": 10, "max": 0},
+        {
+            "id": "n",
+            "title": "N",
+            "type": "float",
+            "min": float("nan"),
+            "max": 1,
+        },
+    ],
+)
+def test_format_table_drops_incomplete_numeric_ranges(column) -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [column]
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        assert widget.columns == []
+    finally:
+        widget.destroy()
+
+
 def test_malformed_table_value_does_not_break_selector() -> None:
     settings = _Settings()
     settings.settings["table-a"]["value"] = None

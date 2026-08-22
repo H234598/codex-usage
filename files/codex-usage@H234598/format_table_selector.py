@@ -110,6 +110,64 @@ class _BoundFormatList(List, JSONSettingsBackend):
                         break
                 if not valid_options:
                     continue
+            allowed_properties = {
+                "integer": {"min", "max", "step", "units"},
+                "float": {"min", "max", "step", "units"},
+                "string": {"expand-width"},
+                "file": {"select-dir"},
+                "icon": {"expand-width"},
+            }.get(column["type"], set())
+            for property_name in (
+                "min", "max", "step", "units", "select-dir", "expand-width"
+            ):
+                if property_name not in allowed_properties:
+                    column.pop(property_name, None)
+            for boolean_property in ("select-dir", "expand-width"):
+                if (
+                    boolean_property in column
+                    and not isinstance(column[boolean_property], bool)
+                ):
+                    column.pop(boolean_property, None)
+            if "units" in column and (
+                not isinstance(column["units"], str) or "\x00" in column["units"]
+            ):
+                column.pop("units", None)
+            if (
+                column["type"] in {"integer", "float"}
+                and not isinstance(column.get("options"), dict)
+            ):
+                minimum = column.get("min")
+                maximum = column.get("max")
+                if (
+                    isinstance(minimum, bool)
+                    or not isinstance(minimum, (int, float))
+                    or isinstance(maximum, bool)
+                    or not isinstance(maximum, (int, float))
+                ):
+                    continue
+                try:
+                    if (
+                        not math.isfinite(minimum)
+                        or not math.isfinite(maximum)
+                        or minimum > maximum
+                    ):
+                        continue
+                except (OverflowError, TypeError):
+                    continue
+                if "step" in column:
+                    step = column["step"]
+                    try:
+                        valid_step = (
+                            isinstance(step, (int, float))
+                            and not isinstance(step, bool)
+                            and math.isfinite(step)
+                            and step > 0
+                            and (column["type"] == "float" or isinstance(step, int))
+                        )
+                    except (OverflowError, TypeError):
+                        valid_step = False
+                    if not valid_step:
+                        column.pop("step", None)
             if "align" in column:
                 align = column["align"]
                 try:
@@ -179,6 +237,9 @@ class _BoundFormatList(List, JSONSettingsBackend):
             rows = []
         if not isinstance(rows, list):
             rows = []
+        if not self.columns:
+            self.content_widget.columns_autosize()
+            return
         for row in rows:
             if not isinstance(row, dict):
                 continue

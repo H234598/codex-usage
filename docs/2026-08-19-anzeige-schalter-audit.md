@@ -8247,3 +8247,14 @@ Ungültige Optionen werden vor dem Widgetaufbau verworfen. Regression deckt
 Overflow, NUL-Label/-Wert, numerische Listen und fehlende Optionen ab;
 `tests/test_format_table_selector.py`: 47/47, Python-Compile, Ruff und
 `git diff --check` sauber.
+
+## Runde 716: Formatierungs-SpinButtons benötigen gültige Bereiche
+
+Numerische Formatspalten ohne vollständige `min/max`-Grenzen oder mit
+umgekehrten/nichtendlichen Grenzen brachen beim Doppelklick im
+`SpinButton`-Konstruktor mit `TypeError` ab.
+
+Der Spaltenfilter verwirft unvollständige Bereiche und bereinigt ungültige
+Schritte; leere Spaltenschemata erzeugen keine Phantomzeilen mehr. Regression
+deckt fünf Bereichsformen ab; `tests/test_format_table_selector.py`: 52/52,
+Python-Compile, Ruff und `git diff --check` sauber.
