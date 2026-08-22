@@ -7477,3 +7477,18 @@ Regression erzeugt eine Integer-Zeile mit `2**31`; sie deckt damit den echten
 GTK-GValue-Fehler ab. `pytest -q tests/test_format_table_selector.py
 tests/test_forecast_table_selector.py`: 16/16; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 648: Ungültige Selector-Werte bleiben hash-sicher
+
+`FormatTableSelector.on_setting_changed()` und die duplizierte
+`ForecastTableSelector`-Methode prüften den gespeicherten Tabellenwert direkt
+als Dictionary-Schlüssel. Eine beschädigte JSON-Auswahl als Liste oder Dict
+führte dadurch zu `TypeError: unhashable type` und verhinderte den Aufbau der
+Settings-Seite.
+
+Beide Selector-Pfade akzeptieren jetzt nur String-IDs; alle anderen Werte
+fallen auf die erste deklarierte Tabelle zurück, ohne den beschädigten Wert zu
+überschreiben. Regressionen decken Liste und Dict für Formatierungen und
+Prognosen ab. `pytest -q tests/test_format_table_selector.py
+tests/test_forecast_table_selector.py`: 20/20; Ruff, Python-Compile und
+`git diff --check` sauber.

@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_DIR = ROOT / "files" / "codex-usage@H234598"
 sys.path.insert(0, str(APPLET_DIR))
@@ -186,6 +188,25 @@ def test_setting_reload_keeps_selected_table_without_writing() -> None:
     assert selector.combo.set_values == ["account-date-styles"]
     assert selector.table_stack.visible == "account-date-styles"
     assert selector.saved == []
+
+
+@pytest.mark.parametrize("value", [[], {}])
+def test_setting_reload_falls_back_from_unhashable_selection(value) -> None:
+    settings = _Settings()
+    settings.settings["format-table-selector"]["value"] = value
+
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector.combo.get_active_id() == "table-a"
+        assert selector.table_stack.get_visible_child_name() == "table-a"
+        assert settings.writes == []
+    finally:
+        selector.destroy()
 
 
 def test_destroy_detaches_active_table_listener() -> None:

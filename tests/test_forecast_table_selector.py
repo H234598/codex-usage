@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_DIR = ROOT / "files" / "codex-usage@H234598"
 sys.path.insert(0, str(APPLET_DIR))
@@ -147,6 +149,20 @@ def test_setting_reload_falls_back_to_first_table_without_writing() -> None:
     try:
         selector.show_all()
         selector.on_setting_changed()
+        assert selector.combo.get_active_id() == _TABLE_KEYS[0]
+        assert selector.table_stack.get_visible_child_name() == _TABLE_KEYS[0]
+        assert settings.writes == []
+    finally:
+        selector.destroy()
+
+
+@pytest.mark.parametrize("value", [[], {}])
+def test_setting_reload_falls_back_from_unhashable_selection(value) -> None:
+    settings = _Settings()
+    settings.settings["forecast-table-selector"]["value"] = value
+    selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
+
+    try:
         assert selector.combo.get_active_id() == _TABLE_KEYS[0]
         assert selector.table_stack.get_visible_child_name() == _TABLE_KEYS[0]
         assert settings.writes == []

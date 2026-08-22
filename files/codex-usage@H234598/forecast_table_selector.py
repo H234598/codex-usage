@@ -144,7 +144,7 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
 
     def on_setting_changed(self, *_args):
         table_key = self.get_value()
-        if table_key not in self._table_labels:
+        if not isinstance(table_key, str) or table_key not in self._table_labels:
             table_key = next(iter(self._table_labels), None)
         if table_key is None:
             return
