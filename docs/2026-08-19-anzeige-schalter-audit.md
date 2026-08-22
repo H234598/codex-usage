@@ -5584,3 +5584,14 @@ History-/Integrationstests: 15/15; Ruff und `git diff --check` sauber.
 Alle vier Aliase verwenden jetzt `MAX_HISTORY_WINDOW_SECONDS`. Regression:
 `pytest -q tests/test_history.py`: 82/82; aufrufende History-/CLI-/
 Integrationstests: 7/7; Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 471: Health-Test an Directory-FD-Modusbindung angepasst
+
+Der bestehende Health-Fehlerpfad mockte nach der Private-I/O-Härtung noch
+`Path.chmod()`, obwohl `ensure_private_directory()` Verzeichnisrechte nun
+atomar über geöffneten Directory-FD und `os.fchmod()` setzt. Dadurch war die
+Suite auf aktuellem HEAD rot und prüfte nicht mehr den realen Fehlerast. Der
+Test injiziert jetzt `os.fchmod()` direkt; Produktionscode unverändert.
+
+`pytest -q tests/test_health.py tests/test_private_io.py`: 77/77 bestanden;
+Ruff, Python-Compile und `git diff --check` sauber.

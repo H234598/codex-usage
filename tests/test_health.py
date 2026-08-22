@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
-from pathlib import Path
 
 import pytest
 
@@ -233,10 +232,10 @@ def test_health_load_ignores_hard_linked_file(tmp_path):
 def test_health_write_fails_when_directory_chmod_fails(tmp_path, monkeypatch):
     path = tmp_path / "health-dir" / "health.json"
 
-    def fail_chmod(_path, _mode):
+    def fail_chmod(_fd, _mode):
         raise PermissionError("health directory chmod blocked")
 
-    monkeypatch.setattr(Path, "chmod", fail_chmod)
+    monkeypatch.setattr("codex_usage.private_io.os.fchmod", fail_chmod)
 
     with pytest.raises(PermissionError, match="health directory chmod blocked"):
         record_health_event("watch", "blocked", path=path)
