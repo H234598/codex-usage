@@ -8014,3 +8014,15 @@ Beide Pfade verwenden jetzt denselben leeren Listen-Fallback wie die übrigen
 Panel-Reads. Regression deckt Speichern und Wertanzahl-Änderung mit defektem
 Backend ab; `tests/test_panel_settings_list.py`: 77/77, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 695: Leisten-Schreibfehler setzen Callback-Zustand zurück
+
+`JSONSettingsBackend.set_value()` setzt vor dem Backend-Schreiben `_saving`
+auf `True`, setzt es bei `OSError` oder ungültigen Daten aber nicht zurück.
+Ein fehlgeschlagener Leisten-Write konnte dadurch spätere externe
+Settings-Updates dauerhaft unterdrücken.
+
+`list_changed()` fängt die erwartbaren Schreibfehler ab, setzt `_saving`
+wieder auf `False` und beendet den Callback kontrolliert. Regression deckt
+einen nicht verfügbaren Settings-Write ab; `tests/test_panel_settings_list.py`:
+78/78, Python-Compile und `git diff --check` sauber.

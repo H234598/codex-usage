@@ -571,7 +571,20 @@ class PanelSettingsList(List, JSONSettingsBackend):
                 for key, value in previous.items():
                     row_info.setdefault(key, value)
             data.append(row_info)
-        self.set_value(data)
+        try:
+            self.set_value(data)
+        except (
+            AttributeError,
+            KeyError,
+            OSError,
+            TypeError,
+            ValueError,
+            OverflowError,
+        ):
+            # JSONSettingsBackend leaves this flag set when a backend write
+            # fails; reset it so later external updates are not ignored.
+            self._saving = False
+            return
         self.update_button_sensitivity()
 
     def _rebuild_tree(

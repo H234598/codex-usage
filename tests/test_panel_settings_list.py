@@ -555,6 +555,32 @@ def test_panel_edit_callbacks_fall_back_to_model_on_settings_read_error() -> Non
         panel.destroy()
 
 
+def test_panel_list_change_recovers_after_settings_write_error() -> None:
+    class BrokenWriteSettings(_Settings):
+        def set_value(self, key, value):
+            if key == "account-panel-settings":
+                raise OSError("settings file unavailable")
+            return super().set_value(key, value)
+
+    settings = BrokenWriteSettings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.model.append(["alpha", 0])
+        panel.list_changed()
+        assert panel._saving is False
+    finally:
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(
