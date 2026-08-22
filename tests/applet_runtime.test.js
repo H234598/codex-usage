@@ -1990,6 +1990,28 @@ test("panel warning values ignore non-percentage sources", () => {
   assert.equal(applet._panelValueForSource(usage, 3), 70);
 });
 
+test("panel reset sources ignore pools that are not allowed", () => {
+  const applet = makeApplet();
+  const usage = {
+    five_hour: {remaining: 80}, weekly: {remaining: 80},
+    main: {
+      available: true, allowed: false, limit_reached: false, exhausted: true,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 80,
+        reset_at: "2026-08-23T12:00:00+00:00"}],
+    },
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: true, allowed: false, limit_reached: false, exhausted: true,
+        windows: [{name: "5h", duration_seconds: 18000, remaining: 80,
+          reset_at: "2026-08-23T12:00:00+00:00"}],
+      },
+    },
+  };
+
+  assert.equal(applet._panelWindowForKey(usage, "main-monthly"), null);
+  assert.equal(applet._panelWindowForKey(usage, "spark-5h"), null);
+});
+
 test("window identity helpers distinguish aliases, conflicts, duplicates and pool selection", () => {
   const applet = makeApplet();
   const five = {name: "5h", limit_window_seconds: 18000, remaining: 80, limit: 100};

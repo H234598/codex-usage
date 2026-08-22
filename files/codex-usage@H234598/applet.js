@@ -8668,9 +8668,11 @@ CodexUsageApplet.prototype = {
 
     _panelWindowForKey: function(usage, key) {
         let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
-        let mainPool = usage && usage.main && usage.main.available === true
+        let mainPool = usage && usage.main && usage.main.available === true &&
+            usage.main.allowed !== false
             ? usage.main : null;
-        let sparkPool = spark && spark.available === true ? spark : null;
+        let sparkPool = spark && spark.available === true && spark.allowed !== false
+            ? spark : null;
         return {
             "main-5h": usage.five_hour,
             "main-weekly": usage.weekly,

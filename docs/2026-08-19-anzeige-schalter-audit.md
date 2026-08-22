@@ -6180,3 +6180,16 @@ formatierbaren Text-, Reset- und Deltaquellen liefern `null`. Regression prüft
 alle Quellgruppen sowie unveränderte 5h-/Ø-Werte. Fokustest `node --test
 --test-name-pattern='panel warning values ignore|panel|pool|other-window|extended panel sources|long-limit exhaustion|monthly exhaustion' tests/applet_runtime.test.js`:
 75/75; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 556: Panel-Resetquellen nicht freigegebener Pools sperren
+
+`_panelWindowForKey()` akzeptierte für Resetquellen `available=true` auch bei
+`allowed=false`. Main- und Spark-Resetfelder konnten dadurch Fenster eines
+Pools anzeigen, für den Nutzung ausdrücklich nicht freigegeben ist.
+
+Poolfenster für Panel-Resetquellen verlangen jetzt zusätzlich
+`allowed !== false`. Bekannte erschöpfte oder `limit_reached`-Pools behalten
+ihre verwertbaren Resetdaten. Regression prüft Main- und Spark-Resetpfad;
+Fokustest `node --test
+--test-name-pattern='panel reset sources ignore|panel warning values ignore|panel|pool|other-window|extended panel sources|long-limit exhaustion|monthly exhaustion' tests/applet_runtime.test.js`:
+76/76; Node-Syntaxcheck und `git diff --check` sauber.
