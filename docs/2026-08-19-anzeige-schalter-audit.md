@@ -7714,3 +7714,16 @@ Buttons sichtbar und Hidden-Buttons leer. Gültige Definitionen bleiben
 unverändert. Regression deckt alle fünf Metadatenfelder ab;
 `tests/test_format_table_selector.py`: 24/24; Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 665: Hilfe materialisiert beschädigte Format-Copies konsistent
+
+Die Hilfe-Seite behandelte Copy-Definitionen anders als der Format-Selector.
+Bei `columns: null` oder einem String unterschlug sie geerbte Formatfelder;
+bei Tokendelta fehlte dann auch die dynamische Schwelle. Die GUI blieb zwar
+offen, dokumentierte aber nicht das tatsächlich bearbeitbare Format.
+
+`_help_definition()` übernimmt Copy-Spalten jetzt unabhängig von einem
+beschädigten lokalen `columns`-Wert und ergänzt bei Tokendelta immer `Dynamisch`.
+Gültige Überschreibungen bleiben erhalten. Regression ergänzt Copy- und
+Tokendelta-Fälle; `tests/test_help_page.py`: 10/10; Python-Kompilierung und
+`git diff --check` sauber.

@@ -195,31 +195,43 @@ def _help_definition(
     if key == "account-delta-styles" and copy_from is None:
         copy_from = "account-percent-styles"
     base = schema.get(copy_from) if isinstance(copy_from, str) else None
-    if (
-        key == "account-delta-styles"
-        and isinstance(base, dict)
-        and isinstance(base.get("columns"), list)
-        and isinstance(result.get("columns"), list)
-    ):
-        overrides = {
-            column.get("id"): column
-            for column in result["columns"]
-            if isinstance(column, dict) and isinstance(column.get("id"), str)
-        }
-        columns = []
-        for column in base["columns"]:
-            column_id = column.get("id") if isinstance(column, dict) else None
-            if not isinstance(column_id, str):
-                columns.append(column)
-                continue
-            columns.append(overrides.pop(column_id, column))
-        columns.extend(overrides.values())
+    base_columns = base.get("columns") if isinstance(base, dict) else None
+    if isinstance(base_columns, list):
+        if key == "account-delta-styles":
+            own_columns = result.get("columns")
+            if not isinstance(own_columns, list):
+                own_columns = []
+            overrides = {
+                column.get("id"): column
+                for column in own_columns
+                if isinstance(column, dict) and isinstance(column.get("id"), str)
+            }
+            columns = []
+            for column in base_columns:
+                column_id = column.get("id") if isinstance(column, dict) else None
+                if not isinstance(column_id, str):
+                    columns.append(column)
+                    continue
+                columns.append(overrides.pop(column_id, column))
+            columns.extend(overrides.values())
+            result["columns"] = columns
+        elif isinstance(copy_from, str):
+            result["columns"] = base_columns
+    if key == "account-delta-styles":
+        columns = result.get("columns")
+        if not isinstance(columns, list):
+            columns = []
+        if not any(
+            isinstance(column, dict) and column.get("id") == "dynamic"
+            for column in columns
+        ):
+            columns.append({
+                "id": "dynamic",
+                "title": "Dynamisch",
+                "type": "boolean",
+                "default": False,
+            })
         result["columns"] = columns
-    if (
-        "columns" not in result and
-        isinstance(base, dict) and isinstance(base.get("columns"), list)
-    ):
-        result["columns"] = base["columns"]
     return result
 
 

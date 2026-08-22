@@ -128,7 +128,28 @@ def test_help_definition_and_table_key_helpers_handle_malformed_input() -> None:
         {"base": {"columns": [{"id": []}]}},
         "account-delta-styles",
     )
-    assert malformed_base["columns"] == [{"id": []}, {"id": "override"}]
+    assert [column["id"] for column in malformed_base["columns"]] == [
+        [],
+        "override",
+        "dynamic",
+    ]
+
+
+def test_help_materializes_copies_when_columns_are_malformed() -> None:
+    base = {"columns": [{"id": "account", "title": "Account", "type": "string"}]}
+    copied = _help_definition(
+        {"format-copy-of": "base", "columns": None},
+        {"base": base},
+        "account-panel-tag-styles",
+    )
+    assert copied["columns"] == base["columns"]
+
+    delta = _help_definition(
+        {"columns": "broken"},
+        {"account-percent-styles": base},
+        "account-delta-styles",
+    )
+    assert [column["id"] for column in delta["columns"]] == ["account", "dynamic"]
 
 
 @pytest.mark.parametrize(
