@@ -8280,3 +8280,9 @@ Die drei Aktionen prüfen Auswahl und Randpositionen jetzt vor GTK-Aufrufen;
 Button-Sensitivität wird bei Abbruch aktualisiert. Regression deckt leere
 Auswahl ab; `tests/test_format_table_selector.py`: 58/58, Python-Compile,
 Ruff und `git diff --check` sauber.
+
+## Runde 719: Reale Cinnamon-Settings bleiben nach Format-Härtung aktiv
+
+`xlet-settings.py applet codex-usage@H234598 -i 0` lief nach den
+Formatierungsänderungen acht Sekunden ohne Importtraceback oder GTK-Fehler.
+Der erwartete Timeout beendete nur die nicht-interaktive GUI-Prüfung.
