@@ -87,6 +87,34 @@ def test_consumption_cli_accepts_week_units(tmp_path, capsys):
     assert payload["windows"][0]["lookback_seconds"] == 604_800
 
 
+def test_consumption_cli_all_includes_monthly_window(tmp_path, capsys):
+    path = tmp_path / "history.sqlite3"
+
+    assert main(
+        [
+            "consumption",
+            "--account",
+            "alpha",
+            "--amount",
+            "1",
+            "--unit",
+            "hours",
+            "--limit-window",
+            "all",
+            "--path",
+            str(path),
+            "--format",
+            "json",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [window["limit_window_seconds"] for window in payload["windows"]] == [
+        18_000,
+        604_800,
+        2_592_000,
+    ]
+
+
 def test_consumption_cli_uses_bounded_history_query(tmp_path, monkeypatch, capsys):
     path = tmp_path / "history.sqlite3"
     base = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)

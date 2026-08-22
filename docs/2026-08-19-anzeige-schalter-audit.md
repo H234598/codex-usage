@@ -5632,3 +5632,14 @@ Fallback-Suche für konfiguriertes Delta folgt derselben Regel.
 Regression mit altem `4 %` und neuem `9 %`: `node --test
 tests/applet_runtime.test.js`: 416/416; `node --check` und `git diff --check`
 sauber.
+
+## Runde 475: `consumption --limit-window all` enthält 30 Tage
+
+Der CLI-Modus `all` lieferte bislang nur 5-Stunden- und Wochenfenster.
+Dadurch konnte die Leistenquelle `ΔM` trotz aktivierter Abfrage kein
+monatliches `cost_window` erhalten. `all` umfasst jetzt 5h, Woche und 30
+Tage; die CLI-Kurzübersicht nennt alle gültigen Fenster.
+
+Regression prüft die drei ausgegebenen Fenster. `pytest -q
+tests/test_history_cli.py`: 5/5; Ruff, Python-Compile und `git diff --check`
+sauber.

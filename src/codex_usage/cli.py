@@ -191,7 +191,7 @@ Historie und Limitverbrauch:
                             [--path PATH] [--format table|json]
   codex-usage history prune [--before ISO|--days N] (--dry-run|--apply)
   codex-usage consumption --account ACCOUNT --amount N --unit minutes|hours|days|weeks
-                          [--limit-window short|weekly|all] [--format table|json]
+                          [--limit-window short|weekly|monthly|spark|all] [--format table|json]
   codex-usage integration-snapshot --schema 1 --format json
 
 Profile und Auth-Migration:
@@ -1159,7 +1159,7 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
         "weekly": (604_800,),
         "monthly": (2_592_000,),
         "spark": (18_000, 604_800, 2_592_000),
-        "all": (18_000, 604_800),
+        "all": (18_000, 604_800, 2_592_000),
     }[args.limit_window]
     windows: list[ConsumptionWindow] = []
     lookback_seconds = consumption_lookback_seconds(args.amount, args.unit)
