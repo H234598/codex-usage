@@ -7885,3 +7885,14 @@ Titel machen den GTK-Editor unbrauchbar.
 `panel_columns()` akzeptiert nur noch nicht-leere IDs und Titel. Regression
 deckt beide Formen ab; `tests/test_panel_settings_list.py`: 43/43,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 683: Leisten-Slot-Parsing überlebt überlange IDs
+
+Eine manipulierte ID wie `slot` plus tausende Ziffern konnte in `panel_columns()`
+`int()` mit Python-Digit-Limit-Fehler abbrechen lassen. Das passierte beim
+Aufbau der Settings-Seite.
+
+Slotnummern werden jetzt einmalig geschützt geparst; ungültige oder überlange
+IDs fallen weg. Regression deckt 5000 Ziffern ab;
+`tests/test_panel_settings_list.py`: 44/44, Python-Compile und
+`git diff --check` sauber.

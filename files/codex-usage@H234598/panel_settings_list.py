@@ -164,15 +164,16 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
         column_id = column["id"]
         if column_id in seen_ids:
             continue
-        if (
-            column_id.startswith("slot")
-            and (
-                not column_id[4:].isdecimal()
-                or int(column_id[4:]) < 1
-                or int(column_id[4:]) > requested_count
-            )
-        ):
-            continue
+        if column_id.startswith("slot"):
+            slot_suffix = column_id[4:]
+            if not slot_suffix.isdecimal():
+                continue
+            try:
+                slot_number = int(slot_suffix)
+            except (OverflowError, ValueError):
+                continue
+            if slot_number < 1 or slot_number > requested_count:
+                continue
         seen_ids.add(column_id)
         columns.append(column)
     slot_template = next(

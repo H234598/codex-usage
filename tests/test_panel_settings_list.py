@@ -109,6 +109,15 @@ def test_panel_columns_drops_invalid_and_duplicate_slot_ids() -> None:
     ]
 
 
+def test_panel_columns_ignores_overlong_numeric_slot_id() -> None:
+    columns = panel_columns(
+        [{"id": "slot" + ("9" * 5000), "title": "Huge", "type": "integer"}],
+        2,
+    )
+
+    assert [column["id"] for column in columns] == ["slot1", "slot2"]
+
+
 class _Dialog:
     last = None
     response = None
