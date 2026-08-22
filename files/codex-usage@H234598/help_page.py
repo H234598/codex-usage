@@ -209,6 +209,9 @@ def _help_definition(
         columns = []
         for column in base["columns"]:
             column_id = column.get("id") if isinstance(column, dict) else None
+            if not isinstance(column_id, str):
+                columns.append(column)
+                continue
             columns.append(overrides.pop(column_id, column))
         columns.extend(overrides.values())
         result["columns"] = columns
@@ -244,18 +247,26 @@ def build_help_groups(schema: object) -> list[dict[str, object]]:
     seen: set[str] = set()
     groups = []
     for page_key in pages:
-        if page_key == "help-page":
+        if not isinstance(page_key, str) or page_key == "help-page":
             continue
         page = layout.get(page_key)
         if not isinstance(page, dict):
             continue
         sections = []
-        for section_key in page.get("sections", []):
+        section_keys = page.get("sections")
+        if not isinstance(section_keys, list):
+            continue
+        for section_key in section_keys:
+            if not isinstance(section_key, str):
+                continue
             section = layout.get(section_key)
             if not isinstance(section, dict):
                 continue
             entries = []
-            for key in section.get("keys", []):
+            keys = section.get("keys")
+            if not isinstance(keys, list):
+                continue
+            for key in keys:
                 if not isinstance(key, str) or key in seen:
                     continue
                 definition = schema.get(key)

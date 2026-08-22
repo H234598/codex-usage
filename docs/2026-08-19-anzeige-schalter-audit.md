@@ -7492,3 +7492,17 @@ fallen auf die erste deklarierte Tabelle zurück, ohne den beschädigten Wert zu
 Prognosen ab. `pytest -q tests/test_format_table_selector.py
 tests/test_forecast_table_selector.py`: 20/20; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 649: Hilfe-Builder ignoriert beschädigte Schema-Schlüssel
+
+Der schema-getriebene Hilfe-Builder nahm bisher an, dass alle Einträge in
+`layout.pages` und `sections` String-Schlüssel sind. Eine Liste oder ein Dict
+als Schlüssel führte beim Lesen zu einem unhashable-`TypeError`. Zusätzlich
+konnte eine kopierte Tokendelta-Tabelle mit einer nicht-stringartigen Basis-
+Spalten-ID denselben Abbruch auslösen.
+
+Der Builder verwirft jetzt ungültige Seitensektionen und kopierte Basis-
+Spalten-IDs fail-closed; gültige Hilfeeinträge bleiben unverändert. Regression
+deckt verschachtelte Layoutfehler und eine unhashable Basis-ID ab.
+`pytest -q tests/test_help_page.py`: 9/9; Ruff, Python-Compile und
+`git diff --check` sauber.

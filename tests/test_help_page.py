@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_DIR = ROOT / "files" / "codex-usage@H234598"
 sys.path.insert(0, str(APPLET_DIR))
@@ -117,6 +119,39 @@ def test_help_definition_and_table_key_helpers_handle_malformed_input() -> None:
         {"base": {"columns": [{"id": "account"}]}},
     )
     assert resolved["columns"][0]["id"] == "account"
+    malformed_base = _help_definition(
+        {
+            "format-copy-of": "base",
+            "description": "copy",
+            "columns": [{"id": "override"}],
+        },
+        {"base": {"columns": [{"id": []}]}},
+        "account-delta-styles",
+    )
+    assert malformed_base["columns"] == [{"id": []}, {"id": "override"}]
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"layout": {"pages": [[]]}},
+        {
+            "layout": {
+                "pages": ["page"],
+                "page": {"sections": [[]]},
+            },
+        },
+        {
+            "layout": {
+                "pages": ["page"],
+                "page": {"sections": ["section"]},
+                "section": {"keys": [[]]},
+            },
+        },
+    ],
+)
+def test_help_group_builder_ignores_unhashable_layout_entries(schema) -> None:
+    assert build_help_groups(schema) == []
 
 
 def test_help_page_builds_scrollable_widget_from_schema() -> None:
