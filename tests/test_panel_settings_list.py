@@ -589,11 +589,12 @@ def test_panel_edit_callbacks_skip_write_on_settings_read_error() -> None:
         panel.destroy()
 
 
-def test_panel_list_change_recovers_after_settings_write_error() -> None:
+@pytest.mark.parametrize("error", [OSError, RuntimeError])
+def test_panel_list_change_recovers_after_settings_write_error(error) -> None:
     class BrokenWriteSettings(_Settings):
         def set_value(self, key, value):
             if key == "account-panel-settings":
-                raise OSError("settings file unavailable")
+                raise error("settings file unavailable")
             return super().set_value(key, value)
 
     settings = BrokenWriteSettings(3)

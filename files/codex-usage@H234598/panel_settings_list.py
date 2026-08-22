@@ -585,14 +585,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
             data.append(row_info)
         try:
             self.set_value(data)
-        except (
-            AttributeError,
-            KeyError,
-            OSError,
-            TypeError,
-            ValueError,
-            OverflowError,
-        ):
+        except Exception:
             # JSONSettingsBackend leaves this flag set when a backend write
             # fails; reset it so later external updates are not ignored.
             self._saving = False

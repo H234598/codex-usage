@@ -8112,3 +8112,21 @@ und dem aktuellen Schema instanziiert. Ergebnis: 23 Spalten (Account,
 Metadaten und 20 Wertfelder), 8 gespeicherte Zeilen, ein korrekter Listener;
 kein GTK-/Importfehler. Widget und File-Monitor wurden anschließend sauber
 geschlossen.
+
+## Runde 704: Panel-Aufbau-Fuzzcheck ohne ungefangene GTK-Fehler
+
+330 gezielt variierte Schema-/Settings-Kombinationen (kaputte Typen,
+Grenzwerte, Optionen, Zeilen und Metadaten) wurden in-process instanziiert
+und wieder zerstört. Kein Aufbaufehler reproduziert; Änderungen waren für
+diese Runde nicht nötig.
+
+## Runde 705: Backend-Exceptions setzen Leisten-Saving-Zustand zurück
+
+Ein Settings-Write kann neben `OSError` auch eine normale Exception aus
+DBus-/Notify- oder Backend-Code weiterreichen. Der Leisten-Callback fing nur
+einzelne Built-in-Fehler; `_saving` konnte dadurch dauerhaft `True` bleiben.
+
+Der Write-Grenzpunkt fängt jetzt `Exception` (nicht `BaseException`) ab,
+setzt `_saving` zurück und beendet den GTK-Callback kontrolliert. Regression
+deckt `OSError` und `RuntimeError` ab; `tests/test_panel_settings_list.py`:
+84/84, Python-Compile, Ruff und `git diff --check` sauber.
