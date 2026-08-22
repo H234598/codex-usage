@@ -6767,3 +6767,20 @@ tests/applet_runtime.test.js`: 462/462. Zusätzlich 25 echte Auxiliary-Starts
 unter laufendem Cinnamon: keine Zombies, `_auxProcess`/`_auxCommand` leer,
 Timeoutquelle und Deferred-Queue freigegeben. Node-Syntaxcheck und
 `git diff --check` sauber.
+
+## Runde 596: Profiljob-Discovery gegen Duplikate und Backend-Limit härten
+
+`_loadProfileJobs()` akzeptierte bisher doppelte Account- oder Job-ID-Zeilen.
+Dabei konnte eine Job-ID überschrieben und derselbe Account mehrfach in die
+Polling-Queue eingetragen werden. Zusätzlich lehnte der Applet-Client mehr als
+acht Jobs ab, obwohl das Backend bis zu 64 aktive Profiljobs verwaltet.
+
+Die Discovery validiert Account- und Job-ID-Eindeutigkeit vor jeder
+Zustandsmutation und nutzt jetzt das Backend-Limit `MAX_PROFILE_JOBS = 64`.
+Regressionen prüfen doppelte Accounts, doppelte Job-IDs und neun gültige Jobs;
+letztere werden vollständig übernommen.
+
+Fokustest `node --test --test-name-pattern='profile job|device login|auxiliary'
+tests/applet_runtime.test.js`: 46/46. Node-Syntaxcheck und `git diff --check`
+sauber. Vollständiger JS-Lauf `node --test tests/applet_runtime.test.js`:
+465/465.

@@ -691,6 +691,65 @@ test("profile job discovery clears locally stale completed jobs", () => {
   assert.equal(rebuilds, 1);
 });
 
+test("profile job discovery rejects duplicate account rows", () => {
+  const applet = makeApplet();
+  const firstJobId = "job-1234567890abcdef1234567890abcdef";
+  const secondJobId = "job-abcdef1234567890abcdef1234567890";
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    ok: true,
+    jobs: [
+      { account: "alpha", job_id: firstJobId, status: "running" },
+      { account: "alpha", job_id: secondJobId, status: "queued" },
+    ],
+  }, null);
+
+  applet._loadProfileJobs();
+
+  assert.equal(applet._profileJobsLoaded, false);
+  assert.equal(applet._deviceLoginJobs.alpha, undefined);
+  assert.deepEqual(applet._profileJobResumeQueue, []);
+});
+
+test("profile job discovery rejects duplicate job ids", () => {
+  const applet = makeApplet();
+  const jobId = "job-1234567890abcdef1234567890abcdef";
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    ok: true,
+    jobs: [
+      { account: "alpha", job_id: jobId, status: "running" },
+      { account: "beta", job_id: jobId, status: "queued" },
+    ],
+  }, null);
+
+  applet._loadProfileJobs();
+
+  assert.equal(applet._profileJobsLoaded, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._deviceLoginJobs)), {});
+  assert.deepEqual(applet._profileJobResumeQueue, []);
+});
+
+test("profile job discovery accepts more than eight backend jobs", () => {
+  const jobs = Array.from({length: 9}, (_value, index) => ({
+    account: "account" + index,
+    job_id: "job-" + String(index + 1).padStart(32, "0"),
+    status: "queued",
+  }));
+  const applet = makeApplet();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (_argv, callback) => callback({ok: true, jobs}, null);
+  applet._pollNextProfileJob = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._ensureBackendUsageRows = () => false;
+
+  applet._loadProfileJobs();
+
+  assert.equal(applet._profileJobsLoaded, true);
+  assert.equal(Object.keys(applet._deviceLoginJobs).length, 9);
+  assert.equal(applet._profileJobResumeQueue.length, 9);
+});
+
 test("profile job discovery drops events from replaced job", () => {
   const applet = makeApplet();
   const oldJobId = "job-1234567890abcdef1234567890abcdef";

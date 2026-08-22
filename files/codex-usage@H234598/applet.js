@@ -15,6 +15,7 @@ const MAX_JSON_CHARS = 65536;
 const MAX_STDERR_CHARS = 8192;
 const MAX_CLEANUP_LOGS = 16;
 const MAX_ACCOUNTS = 100;
+const MAX_PROFILE_JOBS = 64;
 const MAX_USAGE_POOLS = 20;
 const MAX_POOL_WINDOWS = 8;
 const MAX_CONSUMPTION_WINDOWS = 64;
@@ -7267,12 +7268,14 @@ CodexUsageApplet.prototype = {
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
             if (
                 error || !payload || payload.ok !== true ||
-                !Array.isArray(payload.jobs) || payload.jobs.length > 8
+                !Array.isArray(payload.jobs) || payload.jobs.length > MAX_PROFILE_JOBS
             ) {
                 this._profileJobsLoaded = false;
                 return;
             }
             let jobs = [];
+            let seenJobAccounts = Object.create(null);
+            let seenJobIds = Object.create(null);
             for (let index = 0; index < payload.jobs.length; index++) {
                 let job = payload.jobs[index];
                 let account;
@@ -7294,6 +7297,12 @@ CodexUsageApplet.prototype = {
                     this._profileJobsLoaded = false;
                     return;
                 }
+                if (seenJobAccounts[account] || seenJobIds[jobId]) {
+                    this._profileJobsLoaded = false;
+                    return;
+                }
+                seenJobAccounts[account] = true;
+                seenJobIds[jobId] = true;
                 jobs.push({ account: account, jobId: jobId, status: status });
             }
             let previousJobIds = Object.create(null);
