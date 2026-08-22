@@ -8748,7 +8748,7 @@ CodexUsageApplet.prototype = {
             return false;
         }
         let remaining = this._remainingPercent(window);
-        return remaining === null ? projected >= 100 : projected >= remaining;
+        return remaining !== null && projected >= remaining;
     },
 
     _panelForecastPart: function(usage, surface) {

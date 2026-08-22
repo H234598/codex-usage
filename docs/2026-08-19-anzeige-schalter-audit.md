@@ -5695,3 +5695,15 @@ belastbar.
 Die Dynamik bleibt bei stale/insufficient jetzt aus. Regression deckt stale
 gegen complete ab. `node --test tests/applet_runtime.test.js`: 416/416;
 `node --check` und `git diff --check` sauber.
+
+## Runde 480: Dynamik benötigt bekanntes Restlimit
+
+Bei `remaining=null` ersetzte `_panelDeltaIsDynamic()` das unbekannte
+Restlimit bisher durch ein künstliches `100`. Ein ausreichend großes Delta
+konnte dadurch trotz fehlender Limitinformation die dynamische Warnformatierung
+aktivieren.
+
+Unbekannte Restprozente bleiben jetzt fail-closed; die Projektion aktiviert
+Dynamik nur bei belastbarem Restlimit. Regression deckt fehlendes `remaining`
+gegen ein bekanntes Limit ab. `node --test tests/applet_runtime.test.js`:
+416/416; `node --check` und `git diff --check` sauber.
