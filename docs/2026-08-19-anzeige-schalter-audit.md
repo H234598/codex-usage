@@ -5829,3 +5829,15 @@ gebundenen Parent-FD entfernt; fremder Ersatz bleibt unangetastet. Regression
 prüft Source-Race und Artefaktfreiheit. `pytest -q
 tests/test_integration_installer.py`: 141/141; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 529: Exklusiver Write nach FD-Check erneut am Pfad gebunden
+
+`_write_exclusive()` prüfte den erzeugten Eintrag nach `fsync()` einmal per
+Pfad und validierte danach nur noch den offenen FD. Ein Rename des eigenen
+Inodes auf einen anderen Namen plus fremder Ersatz am Zielpfad konnte dadurch
+als erfolgreicher Write zurückkehren.
+
+Nach der FD-Validierung wird der Pfad jetzt nochmals gegen die erwartete
+Provisional-Identität geprüft. Regression deckt den Rename-/Ersatz-Seam ab.
+`pytest -q tests/test_integration_installer.py`: 142/142; Ruff,
+Python-Compile und `git diff --check` sauber.

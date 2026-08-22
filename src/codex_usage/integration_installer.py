@@ -2167,6 +2167,16 @@ def _write_exclusive(
             or final_item.st_ino != provisional.inode
         ):
             _fail()
+        if (
+            _provisional_rebased(
+                path,
+                provisional,
+                parent_identity,
+                directory=False,
+            )
+            != final_provisional
+        ):
+            _fail()
         return _FileIdentity(
             final_item.st_dev,
             final_item.st_ino,

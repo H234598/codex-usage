@@ -3303,6 +3303,52 @@ def test_exclusive_write_keeps_replaced_candidate_inode_marker(tmp_path, monkeyp
     assert stat.S_IMODE(candidate.lstat().st_mode) == 0o600
 
 
+def test_exclusive_write_rejects_candidate_replaced_after_final_revalidation(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    candidate = parent / "candidate.json"
+    old_candidate = parent / "candidate-old"
+    marker = b"foreign-candidate-marker"
+    original_rebased = integration_installer._provisional_rebased
+    calls = 0
+
+    def replace_after_final_revalidation(path, identity, parent_identity, *, directory):
+        nonlocal calls
+        result = original_rebased(
+            path,
+            identity,
+            parent_identity,
+            directory=directory,
+        )
+        if path == candidate:
+            calls += 1
+            if calls == 2:
+                candidate.rename(old_candidate)
+                candidate.write_bytes(marker)
+                candidate.chmod(0o600)
+        return result
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_provisional_rebased",
+        replace_after_final_revalidation,
+    )
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._write_exclusive(
+            candidate,
+            b"candidate-payload",
+            mode=0o600,
+        )
+
+    assert calls >= 3
+    assert candidate.read_bytes() == marker
+    assert old_candidate.read_bytes() == b"candidate-payload"
+
+
 def test_candidate_call_binds_saved_temporary_identity(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 
