@@ -216,7 +216,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 and series.strip()
                 and active is True
             ):
-                owners[series.strip().upper()] = account
+                owners[series.strip().upper()] = account.strip()
         return owners
 
     def _series_options_for(self, info):

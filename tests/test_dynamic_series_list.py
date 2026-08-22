@@ -87,6 +87,14 @@ def test_active_owners_require_a_real_boolean_true() -> None:
     assert DynamicSeriesList._active_owners(table) == {"A": "alpha"}
 
 
+def test_active_owners_normalize_account_whitespace() -> None:
+    table = _SeriesTable([
+        ["  alpha  ", "A", True],
+    ], ("A",))
+
+    assert DynamicSeriesList._active_owners(table) == {"A": "alpha"}
+
+
 def test_active_owners_accept_gtk_tree_model_row_shape() -> None:
     table = _SeriesTable([
         _TreeModelRow(["alpha", "A", True]),

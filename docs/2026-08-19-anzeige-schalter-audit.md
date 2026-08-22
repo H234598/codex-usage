@@ -8883,3 +8883,19 @@ Verifikation: kombinierter GTK-Fokuslauf
 tests/test_forecast_table_selector.py`: **183 bestanden**, kein Segfault.
 Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 759: Serienbesitzer trimmt Account-ID konsistent
+
+`DynamicSeriesList._series_options_for()` trimmt Account-IDs vor dem Vergleich,
+`_active_owners()` speicherte den Besitzer bisher jedoch mit führenden oder
+folgenden Leerzeichen. Ein Eintrag wie `"  alpha  "` wurde dadurch beim Filtern
+als anderer Besitzer behandelt; belegte Serien konnten für denselben Account
+falsch als frei erscheinen oder umgekehrt.
+
+`_active_owners()` speichert den bereits validierten Besitzer jetzt getrimmt.
+Die Normalisierung betrifft nur den internen Vergleich; persistierte
+Account-Daten bleiben unverändert. Regression deckt Whitespace-Besitzer ab.
+
+Verifikation: `tests/test_dynamic_series_list.py`: **24 bestanden**.
+Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.
