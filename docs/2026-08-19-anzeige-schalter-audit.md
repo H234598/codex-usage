@@ -5954,3 +5954,15 @@ Rohwerte bleiben beim Umschalten und bei sichtbaren Edits erhalten. Regression
 deckt Legacy-Slot-Ausblendung, Wiederherstellung und Bearbeitung ab. `pytest
 -q tests/test_panel_settings_list.py`: 8/8; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 540: Panel-Anzahl validiert ganze Dezimalzahlen
+
+Python-Editor und Applet behandelten ungewöhnliche Freitextwerte bisher
+unterschiedlich: Das Applet akzeptierte etwa `"2.0"`, während der Editor auf
+20 zurückfiel; numerische `2.5` konnte Python zudem auf 2 kürzen.
+
+Beide Seiten akzeptieren jetzt nur ganze Dezimalzahlen im gültigen Bereich.
+Regression deckt Leerzeichen, Dezimalstrings und gebrochene Zahlen ab.
+`pytest -q tests/test_panel_settings_list.py`: 8/8; `node --test
+tests/applet_runtime.test.js`: 416/416; Ruff, Node-Syntaxcheck, Python-Compile
+und `git diff --check` sauber.

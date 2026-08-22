@@ -78,7 +78,19 @@ _SOURCE_OPTIONS = {
 def panel_value_count(value: object) -> int:
     """Return bounded panel column count; malformed settings use default."""
     try:
-        count = int(value) if not isinstance(value, bool) else 0
+        if isinstance(value, bool):
+            count = 0
+        elif isinstance(value, str):
+            normalized = value.strip()
+            if not normalized.isascii() or not normalized.isdecimal():
+                return _DEFAULT_COUNT
+            count = int(normalized)
+        elif isinstance(value, int):
+            count = value
+        elif isinstance(value, float) and value.is_integer():
+            count = int(value)
+        else:
+            return _DEFAULT_COUNT
     except (TypeError, ValueError, OverflowError):
         return _DEFAULT_COUNT
     return count if 1 <= count <= _MAX_COUNT else _DEFAULT_COUNT
@@ -87,7 +99,19 @@ def panel_value_count(value: object) -> int:
 def panel_edit_columns(value: object) -> int:
     """Return bounded editor grid columns; malformed settings use three."""
     try:
-        count = int(value) if not isinstance(value, bool) else 0
+        if isinstance(value, bool):
+            count = 0
+        elif isinstance(value, str):
+            normalized = value.strip()
+            if not normalized.isascii() or not normalized.isdecimal():
+                return _DEFAULT_EDIT_COLUMNS
+            count = int(normalized)
+        elif isinstance(value, int):
+            count = value
+        elif isinstance(value, float) and value.is_integer():
+            count = int(value)
+        else:
+            return _DEFAULT_EDIT_COLUMNS
     except (TypeError, ValueError, OverflowError):
         return _DEFAULT_EDIT_COLUMNS
     return (

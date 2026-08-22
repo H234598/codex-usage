@@ -3577,7 +3577,12 @@ CodexUsageApplet.prototype = {
     },
 
     _panelValueCount: function() {
-        let value = Number(this.panelValueCount);
+        let raw = typeof this.panelValueCount === "string"
+            ? this.panelValueCount.trim() : this.panelValueCount;
+        if (typeof raw === "string" && !/^[0-9]+$/.test(raw)) {
+            return PANEL_VALUE_DEFAULT_COUNT;
+        }
+        let value = Number(raw);
         return Number.isInteger(value) && value >= 1 && value <= PANEL_VALUE_MAX_COUNT
             ? value
             : PANEL_VALUE_DEFAULT_COUNT;

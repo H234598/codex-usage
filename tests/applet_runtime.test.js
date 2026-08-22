@@ -2806,6 +2806,12 @@ test("panel value count accepts free text and defaults to twenty", () => {
   assert.equal(applet._panelValueCount(), 20);
   applet.panelValueCount = "37";
   assert.equal(applet._panelValueCount(), 37);
+  applet.panelValueCount = " 2 ";
+  assert.equal(applet._panelValueCount(), 2);
+  applet.panelValueCount = "2.0";
+  assert.equal(applet._panelValueCount(), 20);
+  applet.panelValueCount = "2.5";
+  assert.equal(applet._panelValueCount(), 20);
   applet.panelValueCount = "0";
   assert.equal(applet._panelValueCount(), 20);
   applet.panelValueCount = "not-a-number";

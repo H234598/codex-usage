@@ -20,6 +20,9 @@ from panel_settings_list import (  # noqa: E402
 def test_panel_value_count_defaults_and_bounds() -> None:
     assert panel_value_count("20") == 20
     assert panel_value_count("64") == 64
+    assert panel_value_count(" 2 ") == 2
+    assert panel_value_count("2.0") == 20
+    assert panel_value_count(2.5) == 20
     assert panel_value_count("0") == 20
     assert panel_value_count("not-a-number") == 20
 
@@ -28,6 +31,8 @@ def test_panel_edit_columns_defaults_and_bounds() -> None:
     assert panel_edit_columns("2") == 2
     assert panel_edit_columns(3) == 3
     assert panel_edit_columns("5") == 5
+    assert panel_edit_columns("2.0") == 3
+    assert panel_edit_columns(2.5) == 3
     assert panel_edit_columns("1") == 3
     assert panel_edit_columns("6") == 3
     assert panel_edit_columns("not-a-number") == 3
