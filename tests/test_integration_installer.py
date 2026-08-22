@@ -3326,6 +3326,54 @@ def test_owned_directory_cleanup_rejects_parent_swap_before_rmtree(
     assert (old_parent / target.name / "owned-marker").read_bytes() == b"owned"
 
 
+def test_owned_directory_cleanup_rejects_foreign_owner(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "temporary"
+    parent.mkdir(mode=0o700)
+    target = parent / "producer-build"
+    target.mkdir(mode=0o700)
+    parent_identity = integration_installer._directory_identity(parent)
+    identity = integration_installer._directory_identity(target)
+    item = target.lstat()
+    foreign = SimpleNamespace(
+        st_dev=item.st_dev,
+        st_ino=item.st_ino,
+        st_uid=os.getuid() + 1,
+        st_mode=item.st_mode,
+        st_nlink=item.st_nlink,
+    )
+    original_stat = integration_installer.os.stat
+    original_rmtree = integration_installer.shutil.rmtree
+    removed = False
+
+    def foreign_stat(name, *args, **kwargs):
+        if name == target.name and kwargs.get("dir_fd") is not None:
+            return foreign
+        return original_stat(name, *args, **kwargs)
+
+    def record_rmtree(*args, **kwargs):
+        nonlocal removed
+        removed = True
+        return original_rmtree(*args, **kwargs)
+
+    monkeypatch.setattr(integration_installer.os, "stat", foreign_stat)
+    monkeypatch.setattr(integration_installer.shutil, "rmtree", record_rmtree)
+    assert (
+        integration_installer._remove_owned_entry(
+            target,
+            identity,
+            parent_identity,
+            directory=True,
+            recursive=True,
+        )
+        is False
+    )
+
+    assert not removed
+    assert target.is_dir()
+
+
 def test_exclusive_write_cleans_candidate_when_parent_revalidation_fails_after_open(
     tmp_path,
     monkeypatch,

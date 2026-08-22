@@ -372,7 +372,7 @@ def _remove_owned_entry(
             return False
         item = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
         if directory:
-            if not stat.S_ISDIR(item.st_mode):
+            if not stat.S_ISDIR(item.st_mode) or item.st_uid != os.getuid():
                 return False
         elif not stat.S_ISREG(item.st_mode) or item.st_nlink != 1:
             return False

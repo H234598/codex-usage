@@ -5885,3 +5885,14 @@ Verzeichnis konnte den Scan dadurch passieren.
 Auch der geöffnete Root wird jetzt auf aktuelle UID geprüft. Regression deckt
 fremden Root-Descriptor ab. `pytest -q tests/test_integration_installer.py`:
 147/147; Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 534: Directory-Cleanup löscht nur eigene Ziele
+
+`_remove_owned_entry()` prüfte bei Directory-Identitäten bisher nur Typ,
+Inode, Gerät und Modus. Ein fremd besessenes gleiches Directory konnte dadurch
+an `rmtree()` gelangen.
+
+Directory-Cleanup verlangt jetzt ebenfalls aktuelle UID vor jeder Entfernung.
+Regression deckt fremden Besitzer ab. `pytest -q
+tests/test_integration_installer.py`: 148/148; Ruff, Python-Compile und
+`git diff --check` sauber.
