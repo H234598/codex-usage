@@ -495,6 +495,18 @@ geprüft werden statt per `deepStrictEqual`.
 Verifikation: 355/355 Node-Tests bestanden, JSON-/Applet-Check bestanden und
 `git diff --check` sauber.
 
+## Runde 606: Models-Malformed-Fuzz nach Serializer-Fix
+
+Nach dem Serializer-Fix wurden die Model-Eigenschaften und
+`AccountUsage.as_dict()` mit 2.000 zufällig typfremden Fenster-/Poolwerten
+ausgeführt. Zusätzlich wurden 5.000 zufällige `AccountUsage`-Objekte mit
+`json.dumps(..., allow_nan=False)` geprüft. Kein Lauf erzeugte eine
+unerwartete Exception oder nicht-JSON-sichere Ausgabe.
+
+Damit ist für diesen Modulbereich kein weiterer reproduzierbarer Fehler
+offen. Produktionslogik blieb unverändert; Regression bleibt durch die
+vorhandenen Model- und State-Tests abgedeckt.
+
 ## Runde 39: Backend-Zustand und Pool-Reset-Merge
 
 Die direkten Tests decken jetzt auch Backend-Zuordnung, leere versus bereits
