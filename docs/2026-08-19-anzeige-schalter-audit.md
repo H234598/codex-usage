@@ -8981,3 +8981,19 @@ falschen Schwellenwerten fern. Regression deckt `pool-only` ab.
 Verifikation: fokussierte Pool-/Delta-Tests in `tests/applet_runtime.test.js`:
 **49 bestanden**; Node-Syntaxcheck und `git diff --check` sauber. Keine
 Settings-Fenster gestartet.
+
+## Runde 765: Tokendelta bei abgelaufenem Reset nicht dynamisch markieren
+
+Die dynamische Delta-Projektion verwendete bei einem bereits abgelaufenen
+`reset_at` weiterhin die komplette Fensterdauer als Horizont. Ein altes Delta
+konnte dadurch nach dem Reset fälschlich den dynamischen Schwellenwert
+überschreiten.
+
+Ein bekanntes `reset_at` in der Vergangenheit beendet die Projektion jetzt
+konservativ mit `false`; ein unbekannter Reset bleibt wie zuvor über die
+konfigurierte Fensterdauer berechenbar. Regression deckt den abgelaufenen
+Reset ab.
+
+Verifikation: fokussierte Tokendelta-/Pool-Tests: **4 bestanden**;
+Node-Syntaxcheck und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.

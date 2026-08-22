@@ -9229,6 +9229,9 @@ test("Tokendelta supports dynamic threshold against the next reset", () => {
   assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
     pool: "pool-only"
   })), false);
+  usage.five_hour.reset_at = new Date(Date.now() - 3600 * 1000).toISOString();
+  assert.equal(applet._panelDeltaIsDynamic(usage, candidate), false);
+  usage.five_hour.reset_at = new Date(Date.now() + 3600 * 1000).toISOString();
   assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
     coverage: "stale",
   })), false);

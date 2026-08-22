@@ -9120,7 +9120,10 @@ CodexUsageApplet.prototype = {
             return false;
         }
         let horizon = duration;
-        if (reset !== null && reset > now) {
+        if (reset !== null) {
+            if (reset <= now) {
+                return false;
+            }
             horizon = Math.min((reset - now) / 1000, duration);
         }
         if (!Number.isFinite(horizon) || horizon <= 0) {
