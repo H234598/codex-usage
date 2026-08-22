@@ -4576,6 +4576,84 @@ test("settings launcher uses the applet instance and schedules bounded maximizat
   assert.equal(applet._settingsMaximizeId, 1);
 });
 
+test("settings launcher passes child pid to window placement", () => {
+  const scheduled = [];
+  const applet = makeApplet((runtime) => {
+    runtime.subprocessFactory = () => ({
+      get_identifier: () => "3089499",
+    });
+  });
+  applet._scheduleSettingsMaximize = (pid) => { scheduled.push(pid); };
+
+  applet._openSettings();
+
+  assert.deepEqual(scheduled, ["3089499"]);
+});
+
+test("settings window lookup matches exact xlet-settings pid", () => {
+  const applet = makeApplet();
+
+  assert.equal(
+    applet._settingsWindowIdForProcess(
+      "0x08400007  0 3089499 fedora Codex Usage\n0x08200007  0 3240683 fedora Codex Usage",
+      "3089499"
+    ),
+    "0x08400007"
+  );
+  assert.equal(
+    applet._settingsWindowIdForProcess("0x08400007  0 3089499 fedora Codex Usage", "308949"),
+    null
+  );
+});
+
+test("settings maximization targets the matching window id", () => {
+  const callbacks = [];
+  const subprocesses = [];
+  const applet = makeApplet((runtime) => {
+    runtime.currentMonitor = {x: 1920, y: 0};
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      const process = {
+        argv: args[0],
+        force_exit() {},
+        wait_check_async(_cancellable, callback) {
+          this.waitCallback = callback;
+        },
+        wait_check_finish() {
+          return true;
+        },
+      };
+      subprocesses.push(process);
+      return process;
+    };
+  });
+  applet._readBoundedProcessOutput = (_process, callback) => {
+    callback(
+      "0x08400007  0 3089499 fedora Codex Usage\n0x08200007  0 3240683 fedora Codex Usage",
+      "",
+      null
+    );
+  };
+
+  applet._scheduleSettingsMaximize("3089499");
+  assert.equal(callbacks[0](), true);
+  assert.equal(JSON.stringify(subprocesses[0].argv), JSON.stringify(["wmctrl", "-lp"]));
+
+  assert.equal(callbacks[0](), true);
+  assert.equal(JSON.stringify(subprocesses[1].argv), JSON.stringify([
+    "wmctrl", "-i", "-r", "0x08400007", "-e", "0,1920,0,-1,-1",
+  ]));
+  subprocesses[1].waitCallback(subprocesses[1], {});
+
+  assert.equal(callbacks[0](), true);
+  assert.equal(JSON.stringify(subprocesses[2].argv), JSON.stringify([
+    "wmctrl", "-i", "-r", "0x08400007", "-b", "add,maximized_vert,maximized_horz",
+  ]));
+});
+
 test("settings launcher does not report a spawn error when only maximize scheduling fails", () => {
   const subprocessCalls = [];
   const errors = [];

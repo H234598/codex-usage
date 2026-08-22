@@ -251,6 +251,7 @@ CodexUsageApplet.prototype = {
         this._settingsMaximizeId = 0;
         this._settingsMaximizeGeneration = 0;
         this._settingsPlacementProcess = null;
+        this._settingsWindowLookupProcess = null;
         this._healthGeneration = 0;
         this._lastHealthReportAt = 0;
         this._backendRowsReady = false;
@@ -10855,14 +10856,26 @@ CodexUsageApplet.prototype = {
         if (typeof tab === "number" && Number.isInteger(tab) && tab >= 0) {
             argv.push("-t", String(tab));
         }
+        let settingsProcess = null;
         try {
-            Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
+            settingsProcess = Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
         } catch (e) {
             this._showCommandError(_("Einstellungen konnten nicht geöffnet werden: ") + String(e));
             return;
         }
+        let settingsPid = null;
+        if (settingsProcess && typeof settingsProcess.get_identifier === "function") {
+            try {
+                let identifier = String(settingsProcess.get_identifier() || "");
+                if (/^[0-9]+$/.test(identifier)) {
+                    settingsPid = identifier;
+                }
+            } catch (e) {
+                this._cleanupLog("settings process identifier unavailable: " + this._shortText(e, 180));
+            }
+        }
         try {
-            this._scheduleSettingsMaximize();
+            this._scheduleSettingsMaximize(settingsPid);
         } catch (e) {
             this._cleanupLog("settings maximize scheduling failed: " + this._shortText(e, 180));
         }
@@ -10872,12 +10885,41 @@ CodexUsageApplet.prototype = {
         this._openSettings(tab);
     },
 
-    _scheduleSettingsMaximize: function() {
+    _settingsWindowIdForProcess: function(output, pid) {
+        let targetPid = String(pid || "");
+        if (!/^[0-9]+$/.test(targetPid)) {
+            return null;
+        }
+        let lines = String(output || "").split(/\r?\n/);
+        for (let index = 0; index < lines.length; index++) {
+            let fields = lines[index].trim().split(/\s+/);
+            if (
+                fields.length >= 3 &&
+                /^0x[0-9a-f]+$/i.test(fields[0]) &&
+                fields[2] === targetPid
+            ) {
+                return fields[0];
+            }
+        }
+        return null;
+    },
+
+    _scheduleSettingsMaximize: function(settingsPid) {
         this._removeSource("_settingsMaximizeId");
         this._terminateChild(this._settingsPlacementProcess, "settings placement restart");
         this._settingsPlacementProcess = null;
+        this._terminateChild(this._settingsWindowLookupProcess, "settings window lookup restart");
+        this._settingsWindowLookupProcess = null;
         let generation = (this._settingsMaximizeGeneration || 0) + 1;
         this._settingsMaximizeGeneration = generation;
+        let targetPid = String(settingsPid || "");
+        if (!/^[0-9]+$/.test(targetPid)) {
+            targetPid = "";
+        }
+        let targetWindowId = null;
+        let lookupPending = false;
+        let lookupAttempts = 0;
+        let targetUnavailable = false;
         let attempts = 0;
         let placementAttempts = 0;
         let positioned = false;
@@ -10890,7 +10932,60 @@ CodexUsageApplet.prototype = {
                 this._clearSource("_settingsMaximizeId");
                 return false;
             }
+            if (targetPid && !targetWindowId && targetUnavailable) {
+                this._clearSource("_settingsMaximizeId");
+                return false;
+            }
             if (!positioned) {
+                if (targetPid && !targetWindowId) {
+                    lookupAttempts += 1;
+                    if (lookupAttempts >= 12) {
+                        targetUnavailable = true;
+                        lookupPending = false;
+                        this._terminateChild(
+                            this._settingsWindowLookupProcess,
+                            "settings window lookup timeout"
+                        );
+                        this._settingsWindowLookupProcess = null;
+                        this._clearSource("_settingsMaximizeId");
+                        return false;
+                    }
+                    if (!lookupPending) {
+                        try {
+                            let lookupProcess = Gio.Subprocess.new(
+                                ["wmctrl", "-lp"],
+                                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+                            );
+                            if (!lookupProcess) {
+                                throw new Error("settings window lookup unavailable");
+                            }
+                            lookupPending = true;
+                            this._settingsWindowLookupProcess = lookupProcess;
+                            this._readBoundedProcessOutput(
+                                lookupProcess,
+                                Lang.bind(this, function(stdout, _stderr, _error) {
+                                    if (
+                                        generation !== this._settingsMaximizeGeneration ||
+                                        this._removed ||
+                                        targetUnavailable
+                                    ) {
+                                        return;
+                                    }
+                                    lookupPending = false;
+                                    if (this._settingsWindowLookupProcess === lookupProcess) {
+                                        this._settingsWindowLookupProcess = null;
+                                    }
+                                    targetWindowId = this._settingsWindowIdForProcess(stdout, targetPid);
+                                })
+                            );
+                        } catch (e) {
+                            lookupPending = false;
+                            this._settingsWindowLookupProcess = null;
+                            this._cleanupLog("settings window lookup failed: " + this._shortText(e, 180));
+                        }
+                    }
+                    return true;
+                }
                 if (placementPending) {
                     placementAttempts += 1;
                     if (placementAttempts < 12) {
@@ -10907,10 +11002,13 @@ CodexUsageApplet.prototype = {
                         let monitorX = monitor && Number(monitor.x);
                         let monitorY = monitor && Number(monitor.y);
                         if (Number.isFinite(monitorX) && Number.isFinite(monitorY)) {
+                            let target = targetWindowId
+                                ? ["-i", "-r", targetWindowId]
+                                : ["-r", "Codex Usage"];
                             let moveProcess = Gio.Subprocess.new(
-                                ["wmctrl", "-r", "Codex Usage", "-e",
+                                ["wmctrl"].concat(target).concat(["-e",
                                     "0," + String(Math.round(monitorX)) + "," +
-                                    String(Math.round(monitorY)) + ",-1,-1"],
+                                    String(Math.round(monitorY)) + ",-1,-1"]),
                                 Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
                             );
                             if (
@@ -10967,8 +11065,11 @@ CodexUsageApplet.prototype = {
                 }
             }
             try {
+                let target = targetWindowId
+                    ? ["-i", "-r", targetWindowId]
+                    : ["-r", "Codex Usage"];
                 Gio.Subprocess.new(
-                    ["wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz"],
+                    ["wmctrl"].concat(target).concat(["-b", "add,maximized_vert,maximized_horz"]),
                     Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
                 );
             } catch (e) {
@@ -11152,6 +11253,8 @@ CodexUsageApplet.prototype = {
         this._removeSource("_settingsMaximizeId");
         this._terminateChild(this._settingsPlacementProcess, "settings placement cleanup");
         this._settingsPlacementProcess = null;
+        this._terminateChild(this._settingsWindowLookupProcess, "settings window lookup cleanup");
+        this._settingsWindowLookupProcess = null;
         this._deviceLoginPollGeneration += 1;
         this._removeSource("_deviceLoginPollId");
         this._removeIdleSources();

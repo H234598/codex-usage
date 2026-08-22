@@ -6835,3 +6835,30 @@ genau diesen Reaping-Race und erwartet fail-closed `()` statt einer Exception.
 
 Fokustest `pytest -q tests/test_dynamic_series_list.py`: 15/15. Python-
 Syntaxcheck und `git diff --check` sauber.
+
+## Runde 600: Settings-Fenster per Prozess-PID adressieren
+
+Mehrere gleichzeitig geöffnete `xlet-settings`-Fenster tragen denselben
+Titel `Codex Usage`. `_scheduleSettingsMaximize()` adressierte sie bisher
+mit `wmctrl -r "Codex Usage"`; `wmctrl` nahm dadurch ein altes oder anderes
+Fenster. Live standen drei alte Fenster offen: das erste war maximiert, das
+zuletzt fokussierte nicht. Das erklärte den Eindruck, dass Einstellungen
+nicht öffnen bzw. unsichtbar bleiben.
+
+`_openSettings()` liest jetzt die PID des gestarteten
+`xlet-settings`-Subprozesses. Der begrenzte Lookup `wmctrl -lp` ordnet diese
+PID exakt einer Fenster-ID zu. Verschieben und Maximieren nutzen danach
+`wmctrl -i -r <window-id>`. Lookup und Placement bleiben generation- und
+entfernungsfest; nach zwölf 250-ms-Versuchen wird ohne unsicheres Titel-
+Fallback beendet. Direkte interne Aufrufe ohne PID behalten den bisherigen
+Titel-Fallback.
+
+Regressionen prüfen PID-Weitergabe, exakte PID-/Fenster-ID-Zuordnung und
+beide `wmctrl -i`-Aufträge. Fokustest `node --test
+--test-name-pattern='settings (launcher|window lookup|maximization|placement)|stale settings|native Cinnamon configure'
+tests/applet_runtime.test.js`: 12/12. Live-Reload erfolgreich; neues Fenster
+PID `3455941`, Fenster-ID `0x08600007`, `_NET_WM_STATE` enthält
+`MAXIMIZED_HORZ`, `MAXIMIZED_VERT` und `FOCUSED`. Node-Syntaxcheck und
+`git diff --check` sauber. `pytest -q tests/test_applet.py` hat eine
+vorbestehende, unabhängige Assertion zur alten `bind`-Form (`1 failed,
+26 passed`).
