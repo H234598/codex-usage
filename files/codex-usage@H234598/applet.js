@@ -1686,11 +1686,11 @@ CodexUsageApplet.prototype = {
                     authJsonPath = item.auth_json_path === null || item.auth_json_path === undefined
                         ? null
                         : this._strictText(item.auth_json_path, 4096);
+                    label = this._safeText(item.label, 120);
                 } catch (e) {
                     global.log("[" + UUID + "] invalid account in backend overview");
                     return;
                 }
-                let label = this._safeText(item.label, 120);
                 if (!account || !/^[A-Za-z0-9_.-]{1,64}$/.test(account) ||
                     ["direct", "app-server"].indexOf(backend) === -1 ||
                     ["firefox", "chromium"].indexOf(browser) === -1 ||

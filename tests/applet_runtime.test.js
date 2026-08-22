@@ -1363,6 +1363,17 @@ test("account overview leaves unset file chooser values unset", () => {
   assert.equal(applet.accountBackends[0]["profile-dir"], null);
 });
 
+test("account overview rejects a non-string label without escaping callback", () => {
+  const applet = makeAccountSettingsApplet();
+  const previous = applet._backendAccounts;
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: 123, backend: "direct" }],
+  }, null);
+
+  assert.doesNotThrow(() => applet._loadAccountBackends());
+  assert.equal(applet._backendAccounts, previous);
+});
+
 test("legacy absolute account settings are migrated to file URIs", () => {
   const applet = makeAccountSettingsApplet();
   const writes = [];

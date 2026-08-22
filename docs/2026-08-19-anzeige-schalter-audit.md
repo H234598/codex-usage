@@ -7520,3 +7520,17 @@ leer aus. Persistierte Daten werden nicht automatisch überschrieben.
 Regression deckt den Integer-Overflow ab. `pytest -q
 tests/test_dynamic_series_list.py`: 17/17; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 651: Backend-Overview verwirft nicht-stringartige Account-Labels
+
+`_loadAccountBackends()` rief `_safeText(item.label, 120)` bisher außerhalb
+des geschützten Parsing-Blocks auf. Ein malformed Overview-Label (zum Beispiel
+eine Zahl) warf dadurch aus dem asynchronen Callback heraus. Die umgebende
+Hilfsprozessschicht konnte den Fehler zwar protokollieren, aber der Account-
+Sync wurde ohne kontrollierte Ablehnung abgebrochen.
+
+Die Labelvalidierung läuft jetzt im selben fail-closed Block wie Account-ID,
+Backend, Browser und Pfade. Ungültige Overview-Daten ersetzen keinen alten
+Zustand und verlassen den Callback kontrolliert. Regression prüft genau diesen
+Fall. Account-/Panel-Fokus: 15/15 Runtime-Tests; Node-Syntaxcheck und
+`git diff --check` sauber.
