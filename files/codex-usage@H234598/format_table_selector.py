@@ -330,6 +330,50 @@ class _BoundFormatList(List, JSONSettingsBackend):
             return
         self.update_button_sensitivity()
 
+    def remove_item(self, *args):
+        model, tree_iter = self.content_widget.get_selection().get_selected()
+        if tree_iter is None:
+            self.update_button_sensitivity()
+            return
+        try:
+            model.remove(tree_iter)
+        except Exception:
+            self.update_button_sensitivity()
+            return
+        self.list_changed()
+
+    def move_item_up(self, *args):
+        model, tree_iter = self.content_widget.get_selection().get_selected()
+        if tree_iter is None:
+            self.update_button_sensitivity()
+            return
+        previous = model.iter_previous(tree_iter)
+        if previous is None:
+            self.update_button_sensitivity()
+            return
+        try:
+            model.swap(tree_iter, previous)
+        except Exception:
+            self.update_button_sensitivity()
+            return
+        self.list_changed()
+
+    def move_item_down(self, *args):
+        model, tree_iter = self.content_widget.get_selection().get_selected()
+        if tree_iter is None:
+            self.update_button_sensitivity()
+            return
+        following = model.iter_next(tree_iter)
+        if following is None:
+            self.update_button_sensitivity()
+            return
+        try:
+            model.swap(tree_iter, following)
+        except Exception:
+            self.update_button_sensitivity()
+            return
+        self.list_changed()
+
 
 class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
     """Render formatting tables exclusively, selected by a centered dropdown."""

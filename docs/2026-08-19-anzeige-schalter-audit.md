@@ -8269,3 +8269,14 @@ Defaults werden jetzt gegen Widgettyp, Optionswerte, signed-32-bit und
 Numerikbereich geprüft; ungültige Defaults entfallen. Regression deckt fünf
 Widgettypen ab; `tests/test_format_table_selector.py`: 57/57,
 Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 718: Format-Listenaktionen behandeln fehlende Auswahl
+
+Gebundene Formatierungslisten erbten Remove-/Move-Callbacks, die bei leerer
+Selection `Gtk.TreeModel` mit `None` aufriefen. Das reproduzierte
+`TypeError`/`AttributeError` trotz deaktivierter Buttons.
+
+Die drei Aktionen prüfen Auswahl und Randpositionen jetzt vor GTK-Aufrufen;
+Button-Sensitivität wird bei Abbruch aktualisiert. Regression deckt leere
+Auswahl ab; `tests/test_format_table_selector.py`: 58/58, Python-Compile,
+Ruff und `git diff --check` sauber.

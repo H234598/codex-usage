@@ -560,6 +560,19 @@ def test_format_table_list_ignores_write_error() -> None:
         widget.destroy()
 
 
+def test_format_table_row_actions_guard_selection() -> None:
+    settings = _Settings()
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        widget.remove_item()
+        widget.move_item_up()
+        widget.move_item_down()
+        assert len(widget.model) == 0
+    finally:
+        widget.destroy()
+
+
 def test_format_table_ignores_integer_overflow_in_persisted_row() -> None:
     settings = _Settings()
     settings.settings["table-a"]["columns"] = [
