@@ -3245,7 +3245,7 @@ CodexUsageApplet.prototype = {
         if (!usage) {
             return false;
         }
-        if (kind === "monthly" && !this._poolIsUsable(usage.main)) {
+        if (usage.main && !this._poolIsUsable(usage.main)) {
             return false;
         }
         let window = kind === "five"

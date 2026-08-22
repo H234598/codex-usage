@@ -6246,3 +6246,17 @@ Legacyfallback nutzbar. Regression prüft Severity und Warnungen sowie alle
 vorherigen Pool-/Panelpfade. Fokustest `node --test
 --test-name-pattern='usage severity ignores legacy|limit notifications ignore legacy|usage severity|limit notifications|Spark notification|panel|pool|other-window|long-limit exhaustion|monthly exhaustion' tests/applet_runtime.test.js`:
 82/82; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 561: Alert-Defaults für Legacyfenster synchronisieren
+
+`_alertWindowAvailable()` erlaubte 5h- und Wochen-Schwellen weiterhin,
+obwohl Panel, Severity und Benachrichtigungen Legacyfenster bei vorhandenem
+unbrauchbarem Main-Pool bereits ignorierten. Alert-Tabellen konnten dadurch
+„20“ statt „no 5h“/„no Woche“ zeigen.
+
+Die Verfügbarkeitsprüfung verlangt jetzt für alle Main-Limitarten denselben
+Poolvertrag; ohne Main-Pool bleiben Legacywerte nutzbar. Regression prüft
+Defaults, Normalisierung sowie bestehende Alert-/Panelpfade. Fokustest
+`node --test
+--test-name-pattern='alert settings|alert helper matrix|legacy alert rows|accounts without a Spark|usage severity|limit notifications|panel|pool|other-window' tests/applet_runtime.test.js`:
+84/84; Node-Syntaxcheck und `git diff --check` sauber.

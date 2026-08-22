@@ -1883,6 +1883,25 @@ test("alert settings ignore monthly data from an unavailable main pool", () => {
   assert.equal(applet._defaultAlertRow("alpha")["monthly-threshold"], "no 30d");
 });
 
+test("alert settings ignore legacy windows from an unusable main pool", () => {
+  const applet = makeAccountSettingsApplet();
+  const usage = {
+    account: "alpha", status: "ok", stale: false,
+    five_hour: {remaining: 80}, weekly: {remaining: 80},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 80}],
+    },
+  };
+  applet._usages = [usage];
+
+  assert.equal(applet._alertWindowAvailable(usage, "five"), false);
+  assert.equal(applet._alertWindowAvailable(usage, "weekly"), false);
+  const row = applet._defaultAlertRow("alpha");
+  assert.equal(row["five-threshold"], "no 5h");
+  assert.equal(row["weekly-threshold"], "no Woche");
+});
+
 test("Spark alert state ignores a pool that is not allowed", () => {
   const applet = makeAccountSettingsApplet();
   const usage = {
