@@ -7233,3 +7233,16 @@ der Invalidierungs-Merge leert zusätzlich `credits`, und die Credit-Ausgabe
 verweigert invalidierte Werte. Regressionen prüfen Validierung, Merge und
 direkten Renderer-Pfad. `node --test tests/applet_runtime.test.js`: 472/472
 (inklusive bestehender Runtime-Tests) sauber.
+
+## Runde 629: Alle invalidierten dynamischen Anzeigeziele bleiben leer
+
+Nach dem Credit-Fix konnten direkte Renderer-Aufrufe mit einem bereits
+invalidierten Objekt weiterhin Credit-Prozentwert, Verbrauchsfenster oder
+Resetdaten ausgeben. Der normale Merge deckte diese Fälle meist ab, aber
+Renderer-Gates durften Invalidierung nicht voraussetzen.
+
+`_panelValueForSource`, Verbrauchs-, Creditverbrauch- und Reset-Renderer
+brechen bei invalidierten Accounts jetzt früh ab. `_clearInvalidatedUsage`
+setzt zusätzlich `usage_resets` auf unbekannt. Regression prüft Renderer und
+Invalidierungs-Merge. `node --test tests/applet_runtime.test.js`: 472/472
+sauber.

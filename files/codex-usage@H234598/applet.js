@@ -6371,6 +6371,7 @@ CodexUsageApplet.prototype = {
         invalidated.main = null;
         invalidated.models = Object.create(null);
         invalidated.cost_windows = [];
+        invalidated.usage_resets = this._safeUsageResets(null);
         invalidated.values_captured_at = null;
         if (invalidated.status === "ok") {
             invalidated.status = "partial";
@@ -9094,6 +9095,9 @@ CodexUsageApplet.prototype = {
     },
 
     _consumptionParts: function(usage, surface) {
+        if (!usage || usage.cache_invalidated === true) {
+            return null;
+        }
         let row = this._consumptionSettings && this._consumptionSettings[usage.account];
         if (!row) {
             return null;
@@ -9214,6 +9218,9 @@ CodexUsageApplet.prototype = {
     },
 
     _usageResetParts: function(usage, surface, forceVisible) {
+        if (!usage || usage.cache_invalidated === true) {
+            return null;
+        }
         let row = this._resetSettings && this._resetSettings[usage.account];
         if (!row) {
             row = this._defaultResetRow(usage.account);
@@ -9405,6 +9412,9 @@ CodexUsageApplet.prototype = {
     },
 
     _creditConsumptionParts: function(usage, surface, forceVisible, panelPrefix) {
+        if (!usage || usage.cache_invalidated === true) {
+            return null;
+        }
         let row = this._creditSettings && this._creditSettings[usage.account];
         if (!row) {
             return null;
@@ -9675,7 +9685,9 @@ CodexUsageApplet.prototype = {
 
     _panelValueForSource: function(usage, source) {
         if (source === 9) {
-            return this._remainingPercent(usage.credits);
+            return usage && usage.cache_invalidated !== true
+                ? this._remainingPercent(usage.credits)
+                : null;
         }
         if (source === 10) {
             return null;

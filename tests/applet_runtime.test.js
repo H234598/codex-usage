@@ -4032,6 +4032,10 @@ test("invalidated credit balances are not rendered", () => {
   };
 
   assert.equal(applet._creditParts(usage, "panel"), null);
+  assert.equal(applet._panelValueForSource(usage, 9), null);
+  assert.equal(applet._consumptionParts(usage, "panel"), null);
+  assert.equal(applet._creditConsumptionParts(usage, "panel"), null);
+  assert.equal(applet._usageResetParts(usage, "panel"), null);
 });
 
 test("credit hover omits credit consumption when its hover setting is disabled", () => {
@@ -7064,12 +7068,16 @@ test("cache invalidation clears dynamic usage pools", () => {
   const invalidated = applet._clearInvalidatedUsage({
     status: "ok",
     credits: {name: "credits", remaining: 794},
+    usage_resets: {available: 2, known: true, redeem_capability: true},
     main: { windows: [{ name: "weekly" }] },
     models: { "gpt-5.3-codex-spark": { windows: [{ name: "weekly" }] } },
   });
 
   assert.equal(invalidated.main, null);
   assert.equal(invalidated.credits, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(invalidated.usage_resets)), {
+    available: null, known: false, redeem_capability: false,
+  });
   assert.equal(Object.keys(invalidated.models).length, 0);
   assert.equal(invalidated.status, "partial");
 });
