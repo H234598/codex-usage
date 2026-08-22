@@ -35,6 +35,7 @@ def test_help_text_helpers_preserve_detail_and_escape_markup() -> None:
     assert _clean_text("  one\n two ") == "one two"
     assert _clean_text(None) == ""
     assert _option_text({"Ja": True, "Nein": False}) == "Auswahl: Ja = True; Nein = False"
+    assert _option_text(["A", "B"]) == "Auswahl: A; B"
     assert _option_text(None) == ""
     column = {
         "id": "threshold",
@@ -48,6 +49,19 @@ def test_help_text_helpers_preserve_detail_and_escape_markup() -> None:
     assert "Schwelle als verbleibender Prozentwert" in text
     assert "Standard: 20" in text
     assert "Grenzen: 0 bis 100" in text
+    detailed = _field_text({
+        "id": "path",
+        "title": "Ordner",
+        "type": "file",
+        "step": 1,
+        "units": "px",
+        "select-dir": True,
+        "expand-width": True,
+    })
+    assert "Schrittweite: 1" in detailed
+    assert "Einheit: px" in detailed
+    assert "Ordnerauswahl: aktiviert" in detailed
+    assert "Breite: horizontal ausdehnen" in detailed
     assert "Wertquelle für dieses Leistenfeld" in _field_text({"id": "slot23"})
     combined = _field_text({
         "id": "custom-format",
@@ -72,6 +86,13 @@ def test_help_group_builder_covers_gui_pages_and_format_copies() -> None:
         entry for section in settings_group["sections"] for entry in section["entries"]
     ]
     assert "Spalten im Leisten-Editor" in {entry["title"] for entry in settings_entries}
+    refresh_entry = next(
+        entry for entry in settings_entries
+        if entry["title"] == "Aktualisierungsintervall in Sekunden"
+    )
+    assert "Standard: 300" in refresh_entry["text"]
+    assert "Grenzen: 60 bis 3600" in refresh_entry["text"]
+    assert "Schrittweite: 60" in refresh_entry["text"]
 
     format_group = next(group for group in groups if group["title"] == "Formatierungen")
     entries = [entry for section in format_group["sections"] for entry in section["entries"]]

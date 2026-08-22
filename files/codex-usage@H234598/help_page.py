@@ -126,7 +126,7 @@ _INTRO = (
     "betroffene Feld gespeichert ist; ein Reload des Applets liest die gespeicherten Werte neu.\n\n"
     "Formatierung ist Darstellung, keine Berechnung: Farben, Schrift und Hintergrund ändern "
     "keine Limits, Abrufwege, Routingentscheidungen oder Accountdaten. Im Leisten-Editor "
-    "kopierst du Wert 1–N eines ausgewählten Accounts und fügst sie in einen anderen ein; "
+    "kopierst du Wert 1 bis N eines ausgewählten Accounts und fügst sie in einen anderen ein; "
     "Account-ID, Reihenfolge und Stumm bleiben dabei unverändert."
 )
 
@@ -138,12 +138,16 @@ def _clean_text(value: object) -> str:
 
 
 def _option_text(options: object) -> str:
-    if not isinstance(options, dict) or not options:
+    if isinstance(options, dict):
+        values = [
+            f"{label} = {value}"
+            for label, value in options.items()
+            if isinstance(label, str)
+        ]
+    elif isinstance(options, (list, tuple)):
+        values = [str(value) for value in options]
+    else:
         return ""
-    values = []
-    for label, value in options.items():
-        if isinstance(label, str):
-            values.append(f"{label} = {value}")
     return "Auswahl: " + "; ".join(values) if values else ""
 
 
@@ -169,6 +173,14 @@ def _field_text(column: dict[str, object]) -> str:
         details.append(f"Standard: {column['default']}")
     if "min" in column or "max" in column:
         details.append(f"Grenzen: {column.get('min', '—')} bis {column.get('max', '—')}")
+    if "step" in column:
+        details.append(f"Schrittweite: {column['step']}")
+    if "units" in column:
+        details.append(f"Einheit: {column['units']}")
+    if column.get("select-dir") is True:
+        details.append("Ordnerauswahl: aktiviert")
+    if column.get("expand-width") is True:
+        details.append("Breite: horizontal ausdehnen")
     return "\n".join([text, *details])
 
 
@@ -183,6 +195,22 @@ def _definition_entry(key: str, definition: dict[str, object]) -> dict[str, obje
         text_parts.append(tooltip)
     if not text_parts:
         text_parts.append("Keine zusätzliche Beschreibung im Schema hinterlegt.")
+    details = []
+    options = _option_text(definition.get("options"))
+    if options:
+        details.append(options)
+    if "default" in definition:
+        details.append(f"Standard: {definition['default']}")
+    if "min" in definition or "max" in definition:
+        details.append(
+            f"Grenzen: {definition.get('min', '—')} bis {definition.get('max', '—')}"
+        )
+    if "step" in definition:
+        details.append(f"Schrittweite: {definition['step']}")
+    if "units" in definition:
+        details.append(f"Einheit: {definition['units']}")
+    if details:
+        text_parts.append("\n".join(details))
     fields = []
     columns = definition.get("columns")
     if isinstance(columns, list):

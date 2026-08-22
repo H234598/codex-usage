@@ -9238,3 +9238,19 @@ fehlgeschlagenen Schreiben.
 
 Verifikation: **109 fokussierte Panel-Tests** sowie Ruff, Python-Compile und
 Diff-Check sauber; keine Settings-Fenster gestartet.
+
+## Runde 786: Hilfe zeigt vollständige Feld-Metadaten
+
+Die gesammelte Hilfe zeigte bei Einzelwerten bisher nur Beschreibung und
+Tooltip. Standardwert, Grenzen und Schrittweite aus dem Schema fehlten; bei
+Listenfeldern wurden außerdem `step`, Einheiten, Ordnerauswahl und horizontale
+Breite nicht erklärt. Optionslisten als Sequenz wurden ebenfalls verschluckt.
+
+`_definition_entry()` und `_field_text()` geben diese Metadaten jetzt lesbar
+aus. `_option_text()` unterstützt neben Dictionaries auch Listen und Tupel.
+Die bestehende HTML-Escapelogik bleibt unverändert. Zusätzlich wurde ein
+mehrdeutiger Gedankenstrich in der Einführung durch klare Textformulierung
+ersetzt, damit der Help-Code lint-sauber bleibt.
+
+Verifikation: **13 fokussierte Hilfe-Tests**, Ruff, Python-Compile und
+Diff-Check bestanden; keine Settings-Fenster gestartet.
