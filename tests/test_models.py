@@ -120,6 +120,24 @@ def test_account_usage_as_dict_skips_unhashable_model_pool_keys():
     assert tuple(payload["models"]) == ("valid",)
 
 
+def test_account_usage_as_dict_skips_ambiguous_model_pool_keys():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        status=AccountStatus.OK,
+        models=(
+            UsagePool(key="spark", display_name="Spark"),
+            UsagePool(key="SPARK", display_name="Duplicate Spark"),
+            UsagePool(key="valid", display_name="Valid"),
+        ),
+    )
+
+    payload = usage.as_dict()
+
+    assert tuple(payload["models"]) == ("valid",)
+
+
 @pytest.mark.parametrize("status", [[], {}, "ok"])
 def test_account_usage_as_dict_normalizes_invalid_status(status):
     usage = AccountUsage(

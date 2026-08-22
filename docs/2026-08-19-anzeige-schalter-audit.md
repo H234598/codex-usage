@@ -6910,3 +6910,17 @@ Helfer ab: Pool-/Fensterkonstruktion, Fensternamen, Reset-Zeit, Spark-
 Identität, Normalisierung, Integer-/Boolean-Grenzen und Unique-Filter.
 Produktionslogik blieb unverändert. `pytest -q tests/test_usage_limits.py`:
 125/125. Ruff, Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 605: Ambige Modell-Pools im Serializer verwerfen
+
+`AccountUsage.model_pool()` arbeitet bei case-ambigen Pool-Keys bewusst
+fail-closed. `AccountUsage.as_dict()` serialisierte solche Pools bisher
+trotzdem; bei identischem Key konnte ein späterer Pool den früheren ohne
+Warnung überschreiben, bei unterschiedlicher Großschreibung entstand ein
+später unlesbarer Snapshot.
+
+Der Serializer erkennt jetzt case-insensitive Duplikate, entfernt beide
+ambigen Einträge und behält nur eindeutige String-Keys. Regression prüft
+ambigen Spark-Key neben einem gültigen Pool. `pytest -q tests/test_models.py`:
+32/32; relevante State-Tests: 77/77. Ruff, Python-Kompilierung und
+`git diff --check` sauber.

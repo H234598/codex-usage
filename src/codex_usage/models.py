@@ -369,15 +369,24 @@ class AccountUsage:
         )
         stale = self.stale if isinstance(self.stale, bool) else True
         values_hidden = cache_invalidated or terminal_status
-        serialized_models = (
-            {
-                pool.key: _pool_to_dict(pool)
-                for pool in self.models
-                if isinstance(pool, UsagePool) and isinstance(pool.key, str)
-            }
-            if not values_hidden and isinstance(self.models, tuple)
-            else {}
-        )
+        serialized_models: dict[str, dict[str, Any] | None] = {}
+        if not values_hidden and isinstance(self.models, tuple):
+            serialized_model_keys: dict[str, str] = {}
+            ambiguous_model_keys: set[str] = set()
+            for pool in self.models:
+                if not isinstance(pool, UsagePool) or not isinstance(pool.key, str):
+                    continue
+                normalized_key = pool.key.casefold()
+                if normalized_key in ambiguous_model_keys:
+                    continue
+                previous_key = serialized_model_keys.get(normalized_key)
+                if previous_key is not None:
+                    serialized_models.pop(previous_key, None)
+                    serialized_model_keys.pop(normalized_key, None)
+                    ambiguous_model_keys.add(normalized_key)
+                    continue
+                serialized_models[pool.key] = _pool_to_dict(pool)
+                serialized_model_keys[normalized_key] = pool.key
         serialized_source_urls = (
             [url for url in self.source_urls if isinstance(url, str)]
             if isinstance(self.source_urls, tuple)
