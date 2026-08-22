@@ -8421,3 +8421,21 @@ Optionsspalte mit ungültigen Grenzen ab. Kombinierter Fokustest
 `tests/test_format_table_selector.py tests/test_forecast_table_selector.py`:
 71/71; Python-Compile, Ruff und `git diff --check` sauber. Applet installiert
 und reloaded.
+
+## Runde 732: Einstellungslauncher erneut live geprüft
+
+Der gemeldete Fehler „Einstellungsmenü lässt sich nicht öffnen“ wurde über
+beide realen Cinnamon-Wege geprüft: `xlet-settings applet
+codex-usage@H234598 -i 14` baut acht Seiten inklusive aller Custom-Widgets auf;
+der native `configureApplet`-Callback und die tatsächliche Popup-Aktion
+„Einstellungen“ starten jeweils ein sichtbares `Codex Usage`-Fenster. Der
+Fensterprozess erscheint in `wmctrl -lp`; der laufende Launcher positioniert
+und maximiert das Fenster auf dem Applet-Monitor. Keine Python-/GTK-/GJS-
+Exception reproduziert. Von diesem Lauf gestartete Testfenster wurden beendet;
+ein vorher vorhandenes Nutzerfenster blieb unangetastet.
+
+Regressionen: fokussierter Settings-Launcher-/Configure-Block in
+`tests/applet_runtime.test.js` 6/6; Format-/Forecast-/Hilfe-/Dynamic-Series-
+Tests 101/101; Python-Compile und `git diff --check` sauber. Es war kein
+weiterer Produktcode-Fix begründet. Installiertes Applet bleibt nach Reload
+auf aktuellem Stand.
