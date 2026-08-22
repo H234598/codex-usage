@@ -7184,3 +7184,14 @@ Der Health-Gate behandelt normale Laufzeitfehler jetzt als ungesunden Zyklus.
 Regression prüft eine fehlerhafte Pool-Evidenz-Property. `pytest -q
 tests/test_scheduler.py`: 217/217; Ruff, Mypy, Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 625: History-Batch-Fehler regressionsgesichert
+
+`fetch_all(save_snapshots=True)` behandelt Fehler beim gemeinsamen History-
+Schreiben bewusst getrennt von Current-/Snapshot-Fehlern. Dieser Schutzpfad
+war bisher nicht direkt getestet.
+
+Der Test prüft, dass gültige aktuelle Nutzung unverändert zurückkommt und
+genau ein `history/sample_save_failed`-Health-Event entsteht. Produktionslogik
+blieb unverändert. `pytest -q tests/test_scheduler.py`: 218/218; Ruff, Mypy,
+Python-Kompilierung und `git diff --check` sauber.

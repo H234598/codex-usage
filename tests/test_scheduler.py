@@ -1548,6 +1548,50 @@ def test_fetch_all_records_history_after_current_snapshot(monkeypatch):
     assert events == ["current", "snapshot", "history"]
 
 
+def test_fetch_all_keeps_usage_when_history_batch_recording_fails(monkeypatch):
+    account = Account(id="alpha", label="Alpha", profile_dir="/tmp/alpha")
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.OK,
+        five_hour=LimitWindow(name="5h", remaining=75),
+        weekly=LimitWindow(name="weekly", remaining=50),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    health_events: list[tuple[str, str, str, str]] = []
+    monkeypatch.setattr("codex_usage.scheduler._fetch_one", lambda *_args, **_kwargs: usage)
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda *_args: 0)
+    monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", lambda *_args: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_current_usage", lambda *_args: None)
+    monkeypatch.setattr("codex_usage.scheduler.save_usage_snapshot", lambda *_args: None)
+    monkeypatch.setattr("codex_usage.scheduler.account_lock", lambda _account_id: nullcontext())
+    monkeypatch.setattr(
+        "codex_usage.scheduler.backend_provenance_matches_configured",
+        lambda *_args: True,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.record_usage_samples_batch",
+        lambda _values: (_ for _ in ()).throw(OSError("history is read-only")),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler._record_health",
+        lambda component, event, **kwargs: health_events.append(
+            (component, event, kwargs["account"], kwargs["error_class"])
+        ),
+    )
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        save_snapshots=True,
+    )
+
+    assert result[0] == usage
+    assert health_events == [("history", "sample_save_failed", "alpha", "OSError")]
+
+
 def test_fetch_all_serializes_authenticated_multi_account_polls(monkeypatch):
     accounts = (
         Account(
