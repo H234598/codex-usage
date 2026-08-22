@@ -1979,6 +1979,17 @@ test("panel reset sources ignore windows from unavailable pools", () => {
   assert.equal(applet._panelSlotContent(item, {source: 29}).plain, "Reset S5h –");
 });
 
+test("panel warning values ignore non-percentage sources", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+
+  for (const source of [11, 14, 20, 28, 32, 43, 51]) {
+    assert.equal(applet._panelValueForSource(usage, source), null, `source ${source}`);
+  }
+  assert.equal(applet._panelValueForSource(usage, 1), 80);
+  assert.equal(applet._panelValueForSource(usage, 3), 70);
+});
+
 test("window identity helpers distinguish aliases, conflicts, duplicates and pool selection", () => {
   const applet = makeApplet();
   const five = {name: "5h", limit_window_seconds: 18000, remaining: 80, limit: 100};

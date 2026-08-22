@@ -6167,3 +6167,16 @@ Regression deckt alle sechs Oberflächen und bestehende Erschöpfungsfälle ab.
 Fokustest `node --test
 --test-name-pattern='usage severity|alert settings|account click summary|account reset details|5h display|dynamic monthly delta|panel reset|panel|pool|other-window|limit notifications|Spark notification|long-limit exhaustion|monthly exhaustion|account menu adds' tests/applet_runtime.test.js`:
 76/76; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 555: Nicht-Prozentquellen nicht als Warnwerte auswerten
+
+`_panelValueForSource()` fiel für Resets, Identität, Tokendelta, Routing und
+Status durch bis zum Durchschnitt von 5h/Woche. `_updatePanel()` behandelte
+diesen Fallback als Prozentwert und konnte deshalb bei rein textlichen
+Leistenfeldern Warnklasse und Minimum falsch setzen.
+
+Nur echte Prozentquellen liefern wieder numerische Panelwerte; alle übrigen
+formatierbaren Text-, Reset- und Deltaquellen liefern `null`. Regression prüft
+alle Quellgruppen sowie unveränderte 5h-/Ø-Werte. Fokustest `node --test
+--test-name-pattern='panel warning values ignore|panel|pool|other-window|extended panel sources|long-limit exhaustion|monthly exhaustion' tests/applet_runtime.test.js`:
+75/75; Node-Syntaxcheck und `git diff --check` sauber.

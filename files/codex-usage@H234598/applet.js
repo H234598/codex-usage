@@ -9440,6 +9440,9 @@ CodexUsageApplet.prototype = {
             let mappedSource = PANEL_LIMIT_SOURCE_MAP[source];
             return this._panelValueForSource(usage, mappedSource);
         }
+        if ((source >= 11 && source <= 36) || source >= 43) {
+            return null;
+        }
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
         if ((source >= 1 && source <= 3 || source === 8) &&
