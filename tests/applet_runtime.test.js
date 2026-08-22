@@ -7433,6 +7433,7 @@ test("Tokendelta supports dynamic threshold against the next reset", () => {
     limit_window_seconds: 86400,
     lookback_seconds: 3600,
     consumed_percentage_points: 1,
+    coverage: "complete",
   };
   assert.equal(applet._panelDeltaIsDynamic(usage, customCandidate), false);
 
