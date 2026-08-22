@@ -9386,3 +9386,18 @@ Duplikate und ungültige Slotwerte werden vor der Darstellung verworfen.
 Kein neuer belastbarer Fehler. Der fokussierte Runtime-Filter deckt 62
 Panel-/Quelltests ab; die vollständige headless Installationsprüfung meldete
 496 von 496 Runtime-Tests erfolgreich. Keine Codeänderung erforderlich.
+
+## Runde 797: Profil-Layout validiert Account-Label vor Seiteneffekten
+
+`ensure_profile_layout()` erzeugte bei einem nicht-stringförmigen
+`Account.label` zunächst Profilverzeichnisse und scheiterte erst beim
+`json.dumps()` mit `TypeError`. Damit blieb Teilzustand trotz ungültiger
+Eingabe zurück.
+
+`layout_for_account()` lehnt leere oder nicht-stringförmige Labels jetzt vor
+jeder Verzeichnisprüfung/-erzeugung mit `ValueError` ab. Regression prüft
+Fehler und das Ausbleiben des Profilverzeichnisses.
+
+Verifikation: **26 fokussierte Profile-Layout-Tests**, **90 Profile-Layout- und
+-Migrations-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

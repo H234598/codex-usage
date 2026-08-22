@@ -97,6 +97,17 @@ def test_profile_layout_rejects_invalid_account_id(tmp_path, account_id):
         )
 
 
+def test_profile_layout_rejects_invalid_label_before_creating_profile(tmp_path):
+    profile = tmp_path / "profile"
+
+    with pytest.raises(ValueError, match="account label"):
+        layout_for_account(
+            Account(id="alpha", label=object(), profile_dir=str(profile))  # type: ignore[arg-type]
+        )
+
+    assert not profile.exists()
+
+
 def test_profile_layout_rejects_unknown_home_user():
     account = Account(
         id="work",

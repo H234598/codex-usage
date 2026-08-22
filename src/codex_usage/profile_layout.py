@@ -34,6 +34,8 @@ def layout_for_account(account: Account) -> ProfileLayout:
         _validate_account_id(account.id)
     except ValueError as exc:
         raise ValueError("account id is invalid") from exc
+    if not isinstance(account.label, str) or not account.label:
+        raise ValueError("account label is invalid")
     if not isinstance(account.profile_dir, str) or not account.profile_dir:
         raise ValueError("profile dir is invalid")
     try:
