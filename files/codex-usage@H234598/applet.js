@@ -10967,10 +10967,17 @@ CodexUsageApplet.prototype = {
                             this._shortText(e, 180));
                     }
                 }
-                settingsProcess = launcher.spawnv(argv);
-            } else if (Gio.Subprocess && typeof Gio.Subprocess.new === "function") {
+                try {
+                    settingsProcess = launcher.spawnv(argv);
+                } catch (e) {
+                    this._cleanupLog("settings launcher spawn failed: " +
+                        this._shortText(e, 180));
+                }
+            }
+            if (!settingsProcess && Gio.Subprocess && typeof Gio.Subprocess.new === "function") {
                 settingsProcess = Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
-            } else {
+            }
+            if (!settingsProcess) {
                 throw new Error("settings subprocess unavailable");
             }
         } catch (e) {

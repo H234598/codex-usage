@@ -8455,3 +8455,18 @@ Retry-, Monitor-, Late-Window- und Timeout-Pfade ab: Settings-Launcher-Block
 15/15; Node-Syntaxcheck und `git diff --check` sauber. Nach Installation und
 Reload öffnet die echte Popup-Aktion ein maximiertes, fokussiertes Fenster;
 Testfenster wurden beendet, das vorhandene Nutzerfenster blieb erhalten.
+
+## Runde 734: Settings-Launcher fällt bei `spawnv()`-Fehler zurück
+
+`_openSettings()` fiel bisher nur dann auf `Gio.Subprocess.new()` zurück, wenn
+`Gio.SubprocessLauncher.new()` nicht verfügbar war. War die Launcher-API
+vorhanden, aber `launcher.spawnv(argv)` schlug beim Start fehl, wurde sofort
+„Einstellungen konnten nicht geöffnet werden“ gemeldet. Damit war ein
+plattform-/runtimeabhängiger Launcher-Fehler unnötig fatal.
+
+Der Spawn wird jetzt separat abgefangen; bei Fehlschlag läuft derselbe
+`Gio.Subprocess.new()`-Fallback wie bei fehlender Launcher-API. Nur wenn beide
+Pfade keinen Prozess liefern, bleibt die Fehlermeldung bestehen. Regression
+prüft Spawnfehler, Prozessargumente, PID-Weitergabe und dass kein falscher
+Fehlerdialog erscheint. Settings-Launcher-Block: 16/16; Node-Syntaxcheck und
+`git diff --check` sauber.

@@ -4866,6 +4866,35 @@ test("settings launcher falls back when SubprocessLauncher is unavailable", () =
   assert.deepEqual(scheduled, ["3089499"]);
 });
 
+test("settings launcher falls back when launcher spawn fails", () => {
+  const subprocessCalls = [];
+  const scheduled = [];
+  const errors = [];
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() {
+        throw new Error("launcher spawn failed");
+      },
+    });
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {get_identifier: () => "3089499"};
+    };
+  });
+  applet._scheduleSettingsMaximize = (pid) => { scheduled.push(pid); };
+  applet._showCommandError = (message) => { errors.push(message); };
+
+  applet._openSettings();
+
+  assert.equal(JSON.stringify(subprocessCalls), JSON.stringify([[
+    ["xlet-settings", "applet", "codex-usage@H234598"],
+    0,
+  ]]));
+  assert.deepEqual(scheduled, ["3089499"]);
+  assert.deepEqual(errors, []);
+});
+
 test("settings window lookup matches exact xlet-settings pid", () => {
   const applet = makeApplet();
 
