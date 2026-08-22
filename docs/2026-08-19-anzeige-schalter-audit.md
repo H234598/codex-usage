@@ -7927,3 +7927,13 @@ oder der Editordialog beim Öffnen abbrechen.
 Beide Reads verwenden jetzt ihre sicheren Defaults auch bei Overflow.
 Regression prüft beide Pfade; `tests/test_panel_settings_list.py`: 56/56,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 687: Leisten-Slot-IDs bleiben kanonisch
+
+`slot01` und `slot001` wurden neben `slot1` akzeptiert. Dadurch konnten
+semantisch doppelte Wert-Spalten entstehen und beim Speichern unterschiedliche
+Schlüssel für denselben Slot erzeugen.
+
+Slot-IDs mit führenden Nullen werden jetzt verworfen. Der bestehende Schema-
+Regressionstest deckt den Fall ab; `tests/test_panel_settings_list.py`: 56/56,
+Python-Compile und `git diff --check` sauber.

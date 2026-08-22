@@ -96,6 +96,7 @@ def test_panel_columns_drops_invalid_and_duplicate_slot_ids() -> None:
         [
             {"id": "account", "title": "Account", "type": "string"},
             {"id": "slot0", "title": "Zero", "type": "integer", "min": 0, "max": 10},
+            {"id": "slot01", "title": "Leading zero", "type": "integer", "min": 0, "max": 10},
             {"id": "slotfoo", "title": "Foo", "type": "string"},
             {"id": "slot4", "title": "Four", "type": "integer", "min": 0, "max": 10},
             {"id": "slot1", "title": "One", "type": "integer", "min": 0, "max": 10},

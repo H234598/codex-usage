@@ -181,7 +181,7 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             continue
         if column_id.startswith("slot"):
             slot_suffix = column_id[4:]
-            if not slot_suffix.isdecimal():
+            if not slot_suffix.isdecimal() or slot_suffix.startswith("0"):
                 continue
             try:
                 slot_number = int(slot_suffix)
