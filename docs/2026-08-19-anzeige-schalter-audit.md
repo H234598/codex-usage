@@ -5363,6 +5363,19 @@ Regressionen prüfen `0` und `False` zusätzlich zum bestehenden Escaping und
 Zeilenumbruch. `tests/test_help_page.py`: 5/5 bestanden; Ruff,
 Python-Compile und `git diff --check` sauber.
 
+## Runde 520: Integrations-Snapshot exportiert Custom-Limits
+
+`integration_snapshot._pool_windows()` akzeptierte bisher nur die drei festen
+Dauern 5h, Woche und 30 Tage. Frei konfigurierte Limitfenster wurden dadurch
+aus `limits` entfernt, obwohl Modell, History, CLI, Snapshot-Kanonisierung und
+Applet diese Dauern unterstützen.
+
+Die Projektion akzeptiert jetzt jede positive, bekannte Fensterdauer bis zur
+zentralen History-Obergrenze von 30 Tagen. Regression prüft ein 1-Tage-Fenster
+mit Rest- und Verbrauchsprozent. `pytest -q tests/test_integration_snapshot.py
+tests/test_integration_entrypoint.py`: 81/81; Ruff, Python-Compile und
+`git diff --check` sauber.
+
 ## Runde 455: Selector-Tabellen lazy aufbauen
 
 `FormatTableSelector` und `ForecastTableSelector` legten beim Seitenaufbau

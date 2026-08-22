@@ -206,6 +206,30 @@ def test_schema1_projection_skips_unusable_remaining_values(remaining):
     assert "limits" not in document["accounts"][0]
 
 
+def test_schema1_projection_exports_custom_limit_windows():
+    from codex_usage.integration_snapshot import build_schema1_document
+
+    usage = _usage_with_pools(
+        (
+            _pool(
+                "main",
+                (LimitWindow(name="1d", remaining=75, duration_seconds=86_400),),
+            ),
+        )
+    )
+
+    document = build_schema1_document((usage,), generated_at=GENERATED)
+
+    assert document["accounts"][0]["limits"] == [
+        {
+            "pool": "main",
+            "window_seconds": 86_400,
+            "used_percent": 25.0,
+            "remaining_percent": 75.0,
+        }
+    ]
+
+
 def test_schema1_projection_rejects_unhashable_pool_key_without_raising():
     from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
 

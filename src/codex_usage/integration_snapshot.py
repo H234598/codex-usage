@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import NoReturn, cast
 
 from .consumption import MAX_FORECAST_SECONDS
-from .history import MAX_HISTORY_SAMPLES
+from .history import MAX_HISTORY_SAMPLES, MAX_HISTORY_WINDOW_SECONDS
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import (
@@ -251,7 +251,11 @@ def _pool_windows(pool: UsagePool) -> list[dict[str, object]]:
         duration = window.duration_seconds
         if duration is None:
             duration = _WINDOW_NAME_SECONDS.get(window.name.strip().casefold())
-        if duration not in _WINDOW_NAME_SECONDS.values():
+        if (
+            isinstance(duration, bool)
+            or not isinstance(duration, int)
+            or not 0 < duration <= MAX_HISTORY_WINDOW_SECONDS
+        ):
             continue
         remaining = window.remaining_percent
         if (
