@@ -688,6 +688,33 @@ test("profile job discovery clears locally stale completed jobs", () => {
   assert.equal(applet._deviceLoginEvents.alpha, undefined);
 });
 
+test("profile job discovery drops events from replaced job", () => {
+  const applet = makeApplet();
+  const oldJobId = "job-1234567890abcdef1234567890abcdef";
+  const newJobId = "job-abcdef1234567890abcdef1234567890";
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginJobs.alpha = oldJobId;
+  applet._deviceLoginEvents.alpha = [{kind: "code", value: "OLD-CODE"}];
+  applet._deviceLoginLiveText.alpha = {stdout: "old", stderr: ""};
+  applet._deviceLoginErrors.alpha = "old job failed";
+  applet._spawnAuxJson = (argv, callback) => {
+    if (argv.indexOf("jobs") !== -1) {
+      callback({
+        ok: true,
+        jobs: [{account: "alpha", job_id: newJobId, status: "running"}],
+      }, null);
+    }
+  };
+
+  applet._loadProfileJobs();
+
+  assert.equal(applet._deviceLoginJobs.alpha, newJobId);
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+  assert.equal(applet._deviceLoginLiveText.alpha, undefined);
+  assert.equal(applet._deviceLoginErrors.alpha, undefined);
+});
+
 test("cancelled profile job discovery can run again", () => {
   const applet = makeApplet((runtime) => {
     runtime.launcherFactory = () => ({

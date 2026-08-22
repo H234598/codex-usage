@@ -7264,6 +7264,12 @@ CodexUsageApplet.prototype = {
                 }
                 jobs.push({ account: account, jobId: jobId, status: status });
             }
+            let previousJobIds = Object.create(null);
+            let previousJobAccounts = Object.keys(this._deviceLoginJobs);
+            for (let index = 0; index < previousJobAccounts.length; index++) {
+                let account = previousJobAccounts[index];
+                previousJobIds[account] = this._deviceLoginJobs[account];
+            }
             this._profileJobResumeQueue = [];
             let discoveredAccounts = Object.create(null);
             for (let index = 0; index < jobs.length; index++) {
@@ -7272,6 +7278,14 @@ CodexUsageApplet.prototype = {
                 this._profilePendingAccounts[account] = true;
                 this._deviceLoginJobs[account] = jobs[index].jobId;
                 this._deviceLoginActive[account] = true;
+                delete this._deviceLoginErrors[account];
+                if (
+                    previousJobIds[account] &&
+                    previousJobIds[account] !== jobs[index].jobId
+                ) {
+                    delete this._deviceLoginEvents[account];
+                    delete this._deviceLoginLiveText[account];
+                }
                 this._profileJobResumeQueue.push(account);
             }
             let knownJobAccounts = Object.keys(this._deviceLoginJobs);

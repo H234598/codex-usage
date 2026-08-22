@@ -6409,3 +6409,16 @@ invalidiert. Regression prüft leere Discovery nach lokalem stale Job.
 Fokustest `node --test
 --test-name-pattern='profile job discovery clears locally stale completed jobs|persistent profile job|cancelled profile job discovery|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
 10/10; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 573: Events bei ersetzter Profiljob-ID verwerfen
+
+Wenn ein Account zwischen zwei Discoveries einen neuen persistenten Profiljob
+bekam, übernahm `_loadProfileJobs()` zwar die neue Job-ID, ließ aber Events,
+Live-Text und Fehler des alten Jobs stehen. Die GUI konnte dadurch Device-Code
+oder Fehlermeldung eines anderen Jobs anzeigen.
+
+Discovery löscht Fehler für aktive Jobs und verwirft Event-/Live-Text nur bei
+geänderter Job-ID. Bei unveränderter ID bleiben bereits eingetroffene Events
+erhalten. Regression prüft den ID-Wechsel. Fokustest `node --test
+--test-name-pattern='profile job discovery drops events from replaced job|profile job discovery clears locally stale completed jobs|persistent profile job|cancelled profile job discovery|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
+11/11; Node-Syntaxcheck und `git diff --check` sauber.
