@@ -219,8 +219,7 @@ def _help_definition(
             result["columns"] = base_columns
     if key == "account-delta-styles":
         columns = result.get("columns")
-        if not isinstance(columns, list):
-            columns = []
+        columns = list(columns) if isinstance(columns, list) else []
         if not any(
             isinstance(column, dict) and column.get("id") == "dynamic"
             for column in columns

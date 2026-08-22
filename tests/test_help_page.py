@@ -152,6 +152,15 @@ def test_help_materializes_copies_when_columns_are_malformed() -> None:
     assert [column["id"] for column in delta["columns"]] == ["account", "dynamic"]
 
 
+def test_help_definition_does_not_mutate_delta_schema_when_base_is_missing() -> None:
+    definition = {"columns": [{"id": "account", "title": "Account"}]}
+
+    resolved = _help_definition(definition, {}, "account-delta-styles")
+
+    assert [column["id"] for column in definition["columns"]] == ["account"]
+    assert [column["id"] for column in resolved["columns"]] == ["account", "dynamic"]
+
+
 @pytest.mark.parametrize(
     "schema",
     [

@@ -8371,3 +8371,16 @@ Regression: `pytest -q tests/test_help_page.py` 10/10 und der fokussierte
 Settings-Launcher-Block in `node --test tests/applet_runtime.test.js` 10/10.
 Kein Produktcode-Fix erforderlich; die Ursache war im aktuellen Stand nicht
 mehr reproduzierbar. Von diesem Lauf gestartete Testprozesse wurden beendet.
+
+## Runde 728: Hilfe-Materialisierung mutiert Schema nicht
+
+`_help_definition()` ergänzte beim Materialisieren des dynamischen
+Tokendelta-Felds `dynamic` direkt die originale `columns`-Liste, wenn das
+referenzierte Basisschema fehlte oder beschädigt war. Ein erneutes Öffnen der
+Hilfe konnte dadurch das geladene Schema schrittweise verändern.
+
+Die dynamische Spaltenliste wird vor dem Ergänzen flach kopiert. Regression
+prüft, dass die Eingabe unverändert bleibt und nur die zurückgegebene
+Materialisierung `dynamic` enthält. `pytest -q tests/test_help_page.py`:
+11/11; Python-Compile, Ruff und `git diff --check` sauber. Applet installiert
+und mit `--reload-running` neu geladen.
