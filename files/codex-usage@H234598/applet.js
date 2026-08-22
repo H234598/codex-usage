@@ -4995,6 +4995,12 @@ CodexUsageApplet.prototype = {
             this._setSource("_auxTimeoutId", timeoutId);
             let liveChunk = deviceLogin
                 ? Lang.bind(this, function(name, chunk, final) {
+                    if (
+                        this._removed || generation !== this._auxGeneration ||
+                        this._auxCommand !== "device-login"
+                    ) {
+                        return;
+                    }
                     this._recordDeviceLoginChunk(name, chunk, final);
                 })
                 : null;

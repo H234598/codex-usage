@@ -1166,6 +1166,39 @@ test("bounded reader finalizes a trailing device login token only at EOF", () =>
   ]);
 });
 
+test("stale device login live chunks do not cross auxiliary generations", () => {
+  let liveChunk = null;
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() {
+        return { force_exit() {} };
+      },
+    });
+  });
+  applet._readBoundedProcessOutput = (_process, _callback, onChunk) => {
+    liveChunk = onChunk;
+  };
+  applet._deviceLoginLiveAccount = "alpha";
+  applet._deviceLoginLiveText.alpha = { stdout: "", stderr: "" };
+  const recorded = [];
+  applet._recordDeviceLoginChunk = (...args) => recorded.push(args);
+
+  applet._spawnAuxJson(
+    ["codex-usage", "profile", "device-login", "--account", "alpha"],
+    () => {},
+    false,
+    1000
+  );
+  applet._cancelAuxProcess();
+  applet._deviceLoginLiveAccount = "beta";
+  applet._deviceLoginLiveText.beta = { stdout: "", stderr: "" };
+
+  liveChunk("stdout", "stale", false);
+
+  assert.deepEqual(recorded, []);
+});
+
 test("legacy account overview rows receive editable defaults", () => {
   const applet = makeAccountSettingsApplet();
   applet._spawnAuxJson = (_argv, callback) => callback({

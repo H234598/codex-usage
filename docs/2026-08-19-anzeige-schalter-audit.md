@@ -6299,3 +6299,16 @@ Beide Funktionen kehren jetzt bei `_removed` oder fehlendem Menü sofort zurück
 Regression prüft den entfernten Zustand für Usage- und Loading-Menü. Fokustest
 `node --test --test-name-pattern='usage menu rebuild is inert|panel click opens|settings launcher|native Cinnamon configure action|safe mode|command setting' tests/applet_runtime.test.js`:
 15/15; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 565: Device-Login-Livechunks generationssicher machen
+
+`_spawnAuxJson()` verwarf veraltete Ergebnis-Callbacks bereits über
+`_auxGeneration`, leitete Device-Login-Livechunks aber ungeprüft weiter. Nach
+Abbruch eines Logins und schnellem Start eines anderen konnten verspätete
+Chunks des alten Prozesses deshalb unter dem neuen Account landen.
+
+Der Livechunk-Callback prüft jetzt `_removed`, Generation und aktiven
+`device-login`-Befehl, bevor er den Parser aufruft. Regression simuliert
+Abbruch von Account A, Startzustand von Account B und verspäteten Chunk.
+Fokustest `node --test --test-name-pattern='bounded reader|device login live|device login parser|stale device login live chunks|auxiliary timeout|auxiliary process' tests/applet_runtime.test.js`:
+16/16; Node-Syntaxcheck und `git diff --check` sauber.
