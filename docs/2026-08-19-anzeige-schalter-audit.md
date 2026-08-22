@@ -7316,3 +7316,15 @@ Verbrauchsfenster im Cache landen.
 
 Die DTO-Prüfung verlangt jetzt eine nichtleere Pool-ID. Regression erweitert
 die Consumption-Validierung um den leeren Token.
+
+## Runde 636: Consumption-Pool-Token an Backend-Format gebunden
+
+Auch nichtleere Pool-IDs mit Leerzeichen wurden bisher akzeptiert. Der
+Backend-Snapshotvertrag erlaubt für Pool-Token ausschließlich druckbare
+ASCII-Zeichen ohne Leerzeichen; solche IDs sind weder gültige Vertragsdaten
+noch auswählbare Applet-Pools.
+
+Die DTO-Prüfung akzeptiert jetzt nur noch nichtleere ASCII-Token im erlaubten
+Bereich `!` bis `~`. Regression ergänzt eine Pool-ID mit Leerzeichen.
+`node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
+37/37; `make applet-check` inklusive JSON-Validierung: 474/474 sauber.

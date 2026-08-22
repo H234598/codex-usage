@@ -4227,6 +4227,14 @@ test("consumption DTO is validated and rendered with coverage marker", () => {
     coverage: "complete",
     sample_count: 2,
   }]), /invalid consumption window/);
+  assert.throws(() => applet._safeConsumptionWindows([{
+    lookback_seconds: 3600,
+    pool: "main pool",
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 10,
+    coverage: "complete",
+    sample_count: 2,
+  }]), /invalid consumption window/);
 });
 
 test("consumption forecast is rendered from backend DTO", () => {
