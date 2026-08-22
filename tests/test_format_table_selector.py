@@ -155,6 +155,26 @@ def test_constructor_ignores_non_mapping_table_definition() -> None:
         selector.destroy()
 
 
+def test_selector_survives_listener_registration_error() -> None:
+    class BrokenListenerSettings(_Settings):
+        def listen(self, key, callback):
+            raise RuntimeError(key)
+
+    settings = BrokenListenerSettings()
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector.combo.get_active_id() == "table-a"
+        assert set(selector._tables) == {"table-a"}
+        assert len(selector._tables["table-a"].model) == 0
+    finally:
+        selector.destroy()
+
+
 def test_table_is_built_when_first_selected() -> None:
     settings = _Settings()
     selector = FormatTableSelector(

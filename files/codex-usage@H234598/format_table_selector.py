@@ -101,7 +101,14 @@ class _BoundFormatList(List, JSONSettingsBackend):
             hidden_buttons=hidden_buttons,
             tooltip=tooltip,
         )
-        self.attach()
+        try:
+            self.attach()
+        except Exception:
+            self.detach()
+            try:
+                self.on_setting_changed()
+            except Exception:
+                pass
 
     def on_setting_changed(self, *_args):
         """Load only row objects; malformed persisted values render empty."""
@@ -137,14 +144,17 @@ class _BoundFormatList(List, JSONSettingsBackend):
         self.content_widget.columns_autosize()
 
     def detach(self):
-        listeners = getattr(self.settings, "listeners", None)
-        if not isinstance(listeners, dict):
+        try:
+            listeners = getattr(self.settings, "listeners", None)
+            if not isinstance(listeners, dict):
+                return
+            callbacks = listeners.get(self.key)
+            if not isinstance(callbacks, list):
+                return
+            listener = self._settings_changed_callback
+            callbacks[:] = [callback for callback in callbacks if callback != listener]
+        except Exception:
             return
-        callbacks = listeners.get(self.key)
-        if not isinstance(callbacks, list):
-            return
-        listener = self._settings_changed_callback
-        callbacks[:] = [callback for callback in callbacks if callback != listener]
 
 
 class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
@@ -211,7 +221,14 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
             self._table_definitions[table_key] = definitions[table_key]
             self.combo.append(table_key, label)
 
-        self.attach()
+        try:
+            self.attach()
+        except Exception:
+            self._detach_selector_listener()
+            try:
+                self.on_setting_changed()
+            except Exception:
+                pass
 
     def _on_table_changed(self, *_args):
         table_key = self.combo.get_active_id()
@@ -243,14 +260,17 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         widget.destroy()
 
     def _detach_selector_listener(self):
-        listeners = getattr(self.settings, "listeners", None)
-        if not isinstance(listeners, dict):
+        try:
+            listeners = getattr(self.settings, "listeners", None)
+            if not isinstance(listeners, dict):
+                return
+            callbacks = listeners.get(self.key)
+            if not isinstance(callbacks, list):
+                return
+            callback = self._settings_changed_callback
+            callbacks[:] = [registered for registered in callbacks if registered != callback]
+        except Exception:
             return
-        callbacks = listeners.get(self.key)
-        if not isinstance(callbacks, list):
-            return
-        callback = self._settings_changed_callback
-        callbacks[:] = [registered for registered in callbacks if registered != callback]
 
     def _show_table(self, table_key):
         if self._ensure_table(table_key) is None:

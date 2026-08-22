@@ -8198,3 +8198,16 @@ Höhe wird jetzt endlich, nichtnegativ und auf 10000 Pixel begrenzt;
 ungültige Werte nutzen 300 Pixel. Regression deckt alle Grenzformen ab;
 `tests/test_format_table_selector.py`: 31/31, Python-Compile, Ruff und
 `git diff --check` sauber.
+
+## Runde 712: Formatierungs-Listener blockieren Fallback nicht
+
+`FormatTableSelector` und `_BoundFormatList` ließen Fehler aus
+`settings.listen()` ungefangen. Bei einem Backend-/DBus-Fehler konnte die
+Formatierungsseite deshalb abbrechen, statt wenigstens die erste Tabelle zu
+zeigen; Cleanup war ebenfalls nicht fehlertolerant.
+
+Attach-/Detach-Pfade behandeln solche Exceptions jetzt kontrolliert und
+rendern die Fallback-Tabelle ohne Live-Listener. Regression deckt die
+Listener-Registrierung am Selector und an der Tabelle ab;
+`tests/test_format_table_selector.py`: 32/32, Python-Compile, Ruff und
+`git diff --check` sauber.
