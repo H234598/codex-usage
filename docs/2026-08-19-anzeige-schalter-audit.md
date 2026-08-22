@@ -9178,3 +9178,15 @@ Tests, Compile und Diff-Check sind sauber.
 
 Verifikation: **2 fokussierte Größen-Tests bestanden**; keine Settings-Fenster
 gestartet.
+
+## Runden 776–779: Persistenz- und JS-Leistenabgleich
+
+Die gespeicherten Leistenzeilen wurden bei Kontoänderung, Löschen, Verschieben,
+Duplikaten und versteckten Legacy-Slots geprüft. Zufällige Schemas bestätigten
+für jede Wertanzahl 1–64 eindeutige, numerisch vollständige `slotN`-Felder.
+Der JS-Pfad wurde gegen Python-Slotlayout, Normalisierung, Duplikatfilter,
+Quellen 0–51 und dynamische 64er-Wertlisten abgeglichen. Keine belastbare neue
+Fehlstelle.
+
+Verifikation: **105 Panel-Tests** und **496 Node-Runtime-Tests** bestanden;
+Ruff und Invarianten-Fuzzing sauber. Keine Settings-Fenster gestartet.
