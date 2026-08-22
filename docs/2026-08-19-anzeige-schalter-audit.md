@@ -5942,3 +5942,15 @@ globales Modul. `pytest -q tests/test_forecast_table_selector.py
 tests/test_format_table_selector.py tests/test_panel_settings_list.py
 tests/test_help_page.py`: 26/26; Ruff, Python-Compile und `git diff --check`
 sauber.
+
+## Runde 539: Leisten-Editor respektiert Wertfeld-Anzahl
+
+`panel-value-count` begrenzte bisher nur das Rendering. Die vier Legacy-
+Slots blieben auch bei Wert `1` oder `2` im Editor sichtbar. Beim Umschalten
+konnten bereits gespeicherte höhere Slots außerdem verloren gehen.
+
+`panel_columns()` blendet Slots oberhalb der gewünschten Anzahl jetzt aus.
+Rohwerte bleiben beim Umschalten und bei sichtbaren Edits erhalten. Regression
+deckt Legacy-Slot-Ausblendung, Wiederherstellung und Bearbeitung ab. `pytest
+-q tests/test_panel_settings_list.py`: 8/8; Ruff, Python-Compile und
+`git diff --check` sauber.

@@ -178,3 +178,48 @@ def test_panel_count_change_rebuilds_slots_and_preserves_rows() -> None:
         assert list(panel.model[0]) == ["alpha", 7, 8, 0, 0]
     finally:
         panel.destroy()
+
+
+def test_panel_count_hides_legacy_slots_and_restores_saved_values() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "2"
+    settings.values["account-panel-settings"] = [
+        {
+            "account": "alpha",
+            "slot1": 1,
+            "slot2": 2,
+            "slot3": 3,
+            "slot4": 4,
+        }
+    ]
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+                {"id": "slot2", "title": "Wert 2", "type": "integer"},
+                {"id": "slot3", "title": "Wert 3", "type": "integer"},
+                {"id": "slot4", "title": "Wert 4", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert [column["id"] for column in panel.columns] == [
+            "account", "slot1", "slot2",
+        ]
+        panel.model[0][1] = 9
+        panel.list_changed()
+        assert settings.values["account-panel-settings"][0]["slot3"] == 3
+        settings.values["panel-value-count"] = "4"
+        panel._on_count_changed()
+
+        assert [column["id"] for column in panel.columns] == [
+            "account", "slot1", "slot2", "slot3", "slot4",
+        ]
+        assert list(panel.model[0]) == ["alpha", 9, 2, 3, 4]
+    finally:
+        panel.destroy()

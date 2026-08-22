@@ -99,7 +99,17 @@ def panel_edit_columns(value: object) -> int:
 
 def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[dict[str, object]]:
     """Expand legacy slot columns to requested count without mutating schema."""
-    columns = copy.deepcopy(base_columns)
+    requested_count = panel_value_count(count)
+    columns = [
+        column
+        for column in copy.deepcopy(base_columns)
+        if not (
+            isinstance(column.get("id"), str)
+            and column["id"].startswith("slot")
+            and column["id"][4:].isdecimal()
+            and int(column["id"][4:]) > requested_count
+        )
+    ]
     slot_template = next(
         (column for column in columns if column.get("id") == "slot1"),
         {"id": "slot1", "title": "Wert 1", "type": "integer"},
@@ -108,7 +118,7 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
         if str(column.get("id", "")).startswith("slot"):
             column["options"] = dict(_SOURCE_OPTIONS)
     existing = {column.get("id") for column in columns}
-    for index in range(1, panel_value_count(count) + 1):
+    for index in range(1, requested_count + 1):
         key = f"slot{index}"
         if key in existing:
             continue
@@ -238,13 +248,49 @@ class PanelSettingsList(List, JSONSettingsBackend):
         columns = panel_columns(self._base_columns, self._read_count())
         if [column["id"] for column in columns] == [column["id"] for column in self.columns]:
             return
-        rows = []
-        for row in self.model:
-            rows.append({
-                column["id"]: row[index]
-                for index, column in enumerate(self.columns)
-            })
+        stored_rows = self.get_value()
+        if (
+            isinstance(stored_rows, list)
+            and stored_rows
+            and all(isinstance(row, dict) for row in stored_rows)
+        ):
+            rows = [dict(row) for row in stored_rows]
+        else:
+            rows = [
+                {
+                    column["id"]: row[index]
+                    for index, column in enumerate(self.columns)
+                }
+                for row in self.model
+            ]
         self._rebuild_tree(columns, rows)
+
+    def list_changed(self, *args):
+        """Save visible edits without discarding temporarily hidden slots."""
+        stored_rows = self.get_value()
+        previous_rows = stored_rows if isinstance(stored_rows, list) else []
+        by_account = {
+            row["account"]: row
+            for row in previous_rows
+            if isinstance(row, dict)
+            and isinstance(row.get("account"), str)
+            and row["account"]
+        }
+        data = []
+        for index, row in enumerate(self.model):
+            row_info = {
+                column["id"]: row[column_index]
+                for column_index, column in enumerate(self.columns)
+            }
+            previous = by_account.get(row_info.get("account"))
+            if previous is None and index < len(previous_rows):
+                previous = previous_rows[index]
+            if isinstance(previous, dict):
+                for key, value in previous.items():
+                    row_info.setdefault(key, value)
+            data.append(row_info)
+        self.set_value(data)
+        self.update_button_sensitivity()
 
     def _rebuild_tree(
         self,
