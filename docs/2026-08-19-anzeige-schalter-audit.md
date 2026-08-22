@@ -8313,3 +8313,15 @@ deckt Listener-, Read- und Write-Fehler ab; `tests/test_forecast_table_selector.
 `ForecastTableSelector` wurde mit der echten Nutzer-Settingsdatei instanziiert;
 alle drei Prognosentabellen wurden nacheinander aufgebaut und wieder entfernt.
 Ergebnis: 3 Tabellen, 0 Exceptions, 0 GTK-Fehler.
+
+## Runde 723: Selector-Mappings überleben fehlendes Backend-Attribut
+
+Forecast- und Format-Selector dereferenzierten `settings.settings` direkt.
+Ein unvollständiges Backend konnte dadurch vor jedem Listener-/Read-Fallback
+mit `AttributeError` abbrechen.
+
+Beide Konstruktoren lesen das Mapping jetzt über `getattr(..., {})` und
+bleiben mit leerem Selector nutzbar. Regression deckt beide fehlenden
+Mappings ab; kombinierter Fokustest `tests/test_format_table_selector.py`
+und `tests/test_forecast_table_selector.py`: 70/70, Python-Compile, Ruff und
+`git diff --check` sauber.

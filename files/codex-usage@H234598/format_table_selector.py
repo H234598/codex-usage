@@ -417,7 +417,8 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         self.table_stack.set_vexpand(True)
         self.pack_start(self.table_stack, True, True, 0)
 
-        definitions = settings.settings if isinstance(settings.settings, dict) else {}
+        raw_definitions = getattr(settings, "settings", {})
+        definitions = raw_definitions if isinstance(raw_definitions, dict) else {}
         tables = info.get("tables", []) if isinstance(info, dict) else []
         if not isinstance(tables, list):
             tables = []

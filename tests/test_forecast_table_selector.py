@@ -137,6 +137,16 @@ def test_forecast_selector_survives_listener_registration_error() -> None:
         selector.destroy()
 
 
+def test_forecast_selector_survives_missing_settings_mapping() -> None:
+    selector = ForecastTableSelector(_info(), "forecast-table-selector", object())
+
+    try:
+        assert selector._table_labels == {}
+        assert selector._tables == {}
+    finally:
+        selector.destroy()
+
+
 def test_table_change_switches_stack_and_persists_selection() -> None:
     settings = _Settings()
     selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)

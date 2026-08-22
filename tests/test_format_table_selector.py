@@ -175,6 +175,20 @@ def test_selector_survives_listener_registration_error() -> None:
         selector.destroy()
 
 
+def test_selector_survives_missing_settings_mapping() -> None:
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        object(),
+    )
+
+    try:
+        assert selector._table_labels == {}
+        assert selector._tables == {}
+    finally:
+        selector.destroy()
+
+
 def test_table_is_built_when_first_selected() -> None:
     settings = _Settings()
     selector = FormatTableSelector(
