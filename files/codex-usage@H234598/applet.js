@@ -8716,10 +8716,19 @@ CodexUsageApplet.prototype = {
         }
         let seconds = Number(candidate.limit_window_seconds);
         let pool = candidate.pool === "gpt-5.3-codex-spark" ? "spark" : "main";
-        let key = pool === "spark"
-            ? ({18000: "spark-5h", 604800: "spark-weekly"}[seconds] || "spark-other")
-            : ({18000: "main-5h", 604800: "main-weekly", 2592000: "main-monthly"}[seconds] || "main-other");
-        let window = this._panelWindowForKey(usage, key);
+        let window;
+        if (pool === "spark") {
+            window = this._poolWindowForDuration(
+                this._modelPool(usage, "gpt-5.3-codex-spark"),
+                seconds
+            );
+        } else if (seconds === 18000) {
+            window = usage.five_hour;
+        } else if (seconds === 604800) {
+            window = usage.weekly;
+        } else {
+            window = this._poolWindowForDuration(usage.main, seconds);
+        }
         if (!window) {
             return false;
         }

@@ -5670,3 +5670,16 @@ Der Sanitizer nutzt jetzt dieselbe Grenze 64 wie History, Panel und
 Integrationsvertrag. Regression prüft 64 akzeptierte und 65 verworfene
 Fenster. `node --test tests/applet_runtime.test.js`: 416/416; `node --check`
 und `git diff --check` sauber.
+
+## Runde 478: Tokendelta-Dynamik nutzt passendes Fenster
+
+`Δsonst.` wählte ein bestimmtes Verbrauchsfenster aus `cost_windows`,
+`_panelDeltaIsDynamic()` prüfte die Hochrechnung aber gegen das global
+knappste sonstige Poolfenster. Bei mehreren frei konfigurierten Dauern konnte
+dadurch ein anderes Restlimit die dynamische Schwelle auslösen.
+
+Die Projektion sucht jetzt exakt Fensterdauer und Pool des angezeigten
+Kandidaten; 5h/Woche behalten ihre Top-Level-Fallbacks. Regression mit
+1-Tage- und 2-Tage-Fenster verhindert Verwechslung. `node --test
+tests/applet_runtime.test.js`: 416/416; `node --check` und `git diff --check`
+sauber.
