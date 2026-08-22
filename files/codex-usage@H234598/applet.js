@@ -5233,6 +5233,8 @@ CodexUsageApplet.prototype = {
             }
             if (cacheInvalidated || status === "error" || status === "login_required") {
                 usageResets = this._safeUsageResets(null);
+                credits = null;
+                costWindows = [];
             }
             result.push({
                 account: account,
@@ -6365,6 +6367,7 @@ CodexUsageApplet.prototype = {
         let invalidated = this._markUsageStale(usage);
         invalidated.five_hour = null;
         invalidated.weekly = null;
+        invalidated.credits = null;
         invalidated.main = null;
         invalidated.models = Object.create(null);
         invalidated.cost_windows = [];
@@ -9348,7 +9351,7 @@ CodexUsageApplet.prototype = {
     _creditParts: function(usage, surface, forceVisible, panelPrefix) {
         let credit = usage && usage.credits;
         let row = this._creditSettings && this._creditSettings[usage.account];
-        if (!credit || !row) return null;
+        if (usage.cache_invalidated === true || !credit || !row) return null;
         let creditText = function(value) {
             if (value === null || value === undefined || !Number.isFinite(Number(value))) return "–";
             return String(Math.round(Number(value)));

@@ -7220,3 +7220,16 @@ Browser-Fehlern `backend_used="browser"`; Direct-/App-Server-Fallbacks bleiben
 unverändert. Regression prüft Status, konfigurierte Provenienz, Transport und
 Cache-Invalidierung. `pytest -q tests/test_scheduler.py`: 220/220; Ruff,
 Mypy, Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 628: Invalidierte GUI-Daten verbergen Credits
+
+Die Applet-Validierung und der Invalidierungs-Merge löschten Fenster und
+Modellpools, ließen aber `credits` stehen. `_creditParts()` renderte diesen
+Wert trotz `cache_invalidated=true`; dadurch konnten veraltete Creditstände
+nach einem fehlgeschlagenen Abruf sichtbar bleiben.
+
+Invalidierte Payloads verwerfen jetzt Credits und Creditverbrauch-Daten,
+der Invalidierungs-Merge leert zusätzlich `credits`, und die Credit-Ausgabe
+verweigert invalidierte Werte. Regressionen prüfen Validierung, Merge und
+direkten Renderer-Pfad. `node --test tests/applet_runtime.test.js`: 472/472
+(inklusive bestehender Runtime-Tests) sauber.

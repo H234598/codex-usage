@@ -4017,6 +4017,23 @@ test("credit hide-when-zero does not hide a positive balance with zero usage", (
   assert.equal(rendered.plain, "CR 794");
 });
 
+test("invalidated credit balances are not rendered", () => {
+  const applet = makeApplet();
+  applet._creditSettings = {
+    alpha: {
+      account: "alpha", "show-panel": true, "show-tooltip": true,
+      format: "compact", "custom-format": "", "hide-when-zero": false,
+    },
+  };
+  const usage = {
+    account: "alpha",
+    cache_invalidated: true,
+    credits: {remaining: 794, limit: 1000, used: 206, percent: 79.4},
+  };
+
+  assert.equal(applet._creditParts(usage, "panel"), null);
+});
+
 test("credit hover omits credit consumption when its hover setting is disabled", () => {
   const applet = makeApplet();
   applet._usages[0].credits = {
@@ -6765,6 +6782,7 @@ test("terminal and invalidated payloads hide cached usage resets", () => {
       status,
       stale: cacheInvalidated,
       cache_invalidated: cacheInvalidated,
+      credits: {name: "credits", remaining: 794},
       usage_resets: { available: 2, known: true, redeem_capability: true }
     }]);
 
@@ -6773,6 +6791,7 @@ test("terminal and invalidated payloads hide cached usage resets", () => {
       known: false,
       redeem_capability: false
     });
+    assert.equal(usage.credits, null);
   }
 });
 
@@ -7044,11 +7063,13 @@ test("cache invalidation clears dynamic usage pools", () => {
   const applet = makeApplet();
   const invalidated = applet._clearInvalidatedUsage({
     status: "ok",
+    credits: {name: "credits", remaining: 794},
     main: { windows: [{ name: "weekly" }] },
     models: { "gpt-5.3-codex-spark": { windows: [{ name: "weekly" }] } },
   });
 
   assert.equal(invalidated.main, null);
+  assert.equal(invalidated.credits, null);
   assert.equal(Object.keys(invalidated.models).length, 0);
   assert.equal(invalidated.status, "partial");
 });
