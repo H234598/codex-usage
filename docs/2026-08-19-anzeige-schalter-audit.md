@@ -8307,3 +8307,9 @@ Info-/Definitionstypen, Attach-/Detach-, Read- und Write-Pfade sind jetzt
 fehlertolerant; die erste Tabelle bleibt als Fallback sichtbar. Regression
 deckt Listener-, Read- und Write-Fehler ab; `tests/test_forecast_table_selector.py`:
 10/10, Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 722: Reale Prognosentabellen laden fehlerfrei
+
+`ForecastTableSelector` wurde mit der echten Nutzer-Settingsdatei instanziiert;
+alle drei Prognosentabellen wurden nacheinander aufgebaut und wieder entfernt.
+Ergebnis: 3 Tabellen, 0 Exceptions, 0 GTK-Fehler.
