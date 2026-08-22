@@ -5548,3 +5548,16 @@ Kürzel ersetzt. Die Synchronisierung unterscheidet jetzt fehlendes Feld
 Regression deckt Synchronisierungszeile und CLI-Argument ab. `node --test
 tests/applet_runtime.test.js`: 411/411 bestanden; `node --check` und
 `git diff --check` sauber.
+
+## Runde 468: Einstellungsfenster wieder erreichbar
+
+Der Einstellungslauncher selbst war korrekt; der Dialog brach beim Laden
+eines Prognose-Widgets ab, weil Cinnamon Custom-Widgets per Dateipfad lädt
+und `forecast_table_selector.py` die Schwesterdatei
+`format_table_selector.py` ohne deren Verzeichnis im `sys.path` importierte.
+Die Pfad-Härtung aus `94467a8` ist installiert und geprüft. Der echte Aufruf
+`xlet-settings applet codex-usage@H234598 -i 14` öffnet wieder das Fenster
+„Codex Usage“; der Loader-Test besteht. `pytest -q
+tests/test_forecast_table_selector.py`: 5/5 und die Settings-Launcher-
+Regressionen in `node --test tests/applet_runtime.test.js`: bestanden.
+Applet danach installiert und Cinnamon-Applet neu geladen.
