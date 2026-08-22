@@ -9437,8 +9437,16 @@ CodexUsageApplet.prototype = {
             "forecast-warn-unit": row["forecast-warn-unit"],
             "forecast-warn-format": row["forecast-warn-format"]
         };
+        let forecastSharesConsumptionQuery =
+            forecastRow["limit-window"] === row["limit-window"] &&
+            forecastRow.smoothing === row.smoothing &&
+            forecastRow["baseline-enabled"] === row["baseline-enabled"] &&
+            (!forecastRow["baseline-enabled"] ||
+                forecastRow["baseline-minutes"] === row["baseline-minutes"]);
+        let consumptionWindowIsLegacy = window._consumption_query_key === undefined;
         let forecast = this._forecastWindowPart(
-            forecastWindow || (forecastRow["limit-window"] === row["limit-window"] ? window : null),
+            forecastWindow ||
+                (consumptionWindowIsLegacy || forecastSharesConsumptionQuery ? window : null),
             forecastRow,
             surface,
             Math.max(0, 100 - value)

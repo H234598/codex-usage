@@ -9014,3 +9014,19 @@ bleiben.
 Verifikation: fokussierte Consumption-/Forecast-Tests in
 `tests/applet_runtime.test.js`: **39 bestanden**; Node-Syntaxcheck und
 `git diff --check` sauber. Keine Settings-Fenster gestartet.
+
+## Runde 767: Tokenende nicht aus fremder Consumption-Query übernehmen
+
+`_consumptionWindowPart()` nutzte bei fehlender Forecast-Antwort immer das
+aktuelle Verbrauchsfenster als TE-Fallback, sobald das Limitfenster gleich
+war. Bei unterschiedlicher Glättung (oder Baseline) stammte das Fenster damit
+aus einer anderen Query und zeigte ein falsches Tokenende.
+
+Der Fallback bleibt nur für ungetaggte Legacy-Fenster oder identische
+Consumption-/Forecast-Queryparameter aktiv. Getaggte Ergebnisse einer
+anderen Query liefern ohne eigene Forecast-Antwort kein TE. Regression deckt
+unterschiedliche Glättung ab und erhält den Legacy-Fallback.
+
+Verifikation: fokussierte Consumption-/Forecast-Tests:
+**40 bestanden**; Node-Syntaxcheck und `git diff --check` sauber. Keine
+Settings-Fenster gestartet.

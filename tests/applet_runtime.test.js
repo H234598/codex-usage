@@ -6139,6 +6139,33 @@ test("same-window consumption and token-end queries retain their own smoothing r
   assert.match(rendered.plain, /AW30m=33,3%/);
 });
 
+test("token end does not reuse consumption data when smoothing differs", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._styleTargets["alpha:5"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    "custom-format": "", smoothing: "ema-10", "hide-when-zero": false,
+    "show-coverage-marker": false, "forecast-show-panel": true,
+    "forecast-show-tooltip": true, "forecast-limit-window": "short",
+    "forecast-format": "compact", "forecast-smoothing": "ema-20",
+    "forecast-show-coverage-marker": false, "forecast-baseline-enabled": false,
+  };
+  const usage = applet._usages[0];
+  usage.cost_windows = [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 12, estimated_seconds_to_exhaustion: 600,
+    coverage: "complete", sample_count: 3,
+    _consumption_query_key: applet._consumptionQueryKey("main", 1, "hours", "ema-10", null),
+  }];
+
+  const rendered = applet._consumptionParts(usage, "panel");
+
+  assert.match(rendered.plain, /Δ1 h 12,0%/);
+  assert.doesNotMatch(rendered.plain, /TE=/);
+});
+
 test("failed consumption refresh preserves the last validated window", () => {
   const applet = makeApplet();
   applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
