@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from gettext import gettext as _
 
 import gi
@@ -150,6 +151,11 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
                 or isinstance(maximum, bool)
                 or not isinstance(maximum, (int, float))
             ):
+                continue
+            try:
+                if not math.isfinite(minimum) or not math.isfinite(maximum) or minimum > maximum:
+                    continue
+            except (OverflowError, TypeError):
                 continue
         column_id = column["id"]
         if column_id in seen_ids:

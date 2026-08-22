@@ -7776,3 +7776,13 @@ Slot-Spalten werden jetzt strikt auf `slot1` bis `slotN` begrenzt und jede
 Spalten-ID erscheint höchstens einmal. Regression prüft ungültige und doppelte
 Slots; `tests/test_panel_settings_list.py`: 36/36; Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 670: Leisten-Editor verwirft unbrauchbare Zahlenbereiche
+
+Numerische Schemafelder mit `min > max`, `NaN` oder unendlichen Grenzen wurden
+an GTK weitergereicht. Das erzeugte Warnungen und unbrauchbare SpinButtons.
+
+Der Panel-Loader akzeptiert nur endliche, geordnete Zahlenbereiche. Ungültige
+Felder werden übersprungen; Slot-Erzeugung bleibt verfügbar. Regression deckt
+umgekehrte und nicht-endliche Grenzen ab; `tests/test_panel_settings_list.py`:
+38/38; Python-Kompilierung und `git diff --check` sauber.
