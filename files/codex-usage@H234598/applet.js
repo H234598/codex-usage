@@ -669,6 +669,11 @@ CodexUsageApplet.prototype = {
             this._consumptionQueue = [];
         }
         this._consumptionQueue.length = 0;
+        this._routingPolicyApplying = false;
+        if (!Array.isArray(this._pendingRoutingLimitCommands)) {
+            this._pendingRoutingLimitCommands = [];
+        }
+        this._pendingRoutingLimitCommands.length = 0;
         this._timerGeneration = (this._timerGeneration || 0) + 1;
         this._displayTimerGeneration = (this._displayTimerGeneration || 0) + 1;
         this._staleCheckGeneration = (this._staleCheckGeneration || 0) + 1;

@@ -6339,3 +6339,15 @@ Consumption-Anfragen und lässt neue Messungen erst aus dem nächsten Refresh
 aufbauen. Regression erweitert den Safe-Mode-Lifecycle-Test; Fokustest
 `node --test --test-name-pattern='safe mode cancels reactivation processes|late consumption response|consumption refresh|safe mode' tests/applet_runtime.test.js`:
 14/14; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 568: Routing-Schreibzustand beim Safe-Mode zurücksetzen
+
+Auch `_routingPolicyApplying` und `_pendingRoutingLimitCommands` überlebten
+einen abgebrochenen Policy-Schreibvorgang. Nach dem Retry ignorierte
+`_onRoutingSettingsChanged()` deshalb neue Änderungen, obwohl kein Prozess mehr
+lief.
+
+Safe-Mode verwirft jetzt den Routing-Schreibguard und die ausstehenden
+Limit-Kommandos. Regression erweitert den Safe-Mode-Lifecycle-Test. Fokustest
+`node --test --test-name-pattern='safe mode cancels reactivation processes|routing|safe mode|late consumption response' tests/applet_runtime.test.js`:
+28/28; Node-Syntaxcheck und `git diff --check` sauber.
