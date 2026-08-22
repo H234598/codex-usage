@@ -7269,3 +7269,16 @@ Die Verbrauchsplanung überspringt invalidierte Accounts jetzt vollständig.
 Regression prüft, dass trotz aktivierter Verbrauchseinstellungen keine Queue-
 Einträge entstehen. `node --test tests/applet_runtime.test.js`: 473/473;
 `make applet-check` inklusive JSON-Validierung sauber.
+
+## Runde 632: Tokendelta begrenzt widersprüchlichen Reset-Horizont
+
+`_panelDeltaIsDynamic()` nutzte einen zukünftigen `reset_at` direkt als
+Projektionshorizont. Ein widersprüchlicher Reset weit hinter der deklarierten
+Fensterdauer konnte dadurch eine dynamische Warnung auslösen, obwohl die
+Fensterdauer diesen Horizont nicht zulässt.
+
+Die Hochrechnung nutzt jetzt höchstens die deklarierte Fensterdauer; ein
+kürzerer gültiger Reset bleibt wirksam. Ungültige oder fehlende Dauerwerte
+beenden die Prüfung fail-closed. Regression prüft einen 5h-Kandidaten mit
+Reset in 24 Stunden. `node --test tests/applet_runtime.test.js`: 474/474;
+`make applet-check` inklusive JSON-Validierung sauber.

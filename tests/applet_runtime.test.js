@@ -2453,6 +2453,26 @@ test("dynamic monthly delta ignores an unavailable main pool", () => {
   assert.equal(applet._panelDeltaIsDynamic(usage, candidate), false);
 });
 
+test("dynamic delta caps a contradictory reset horizon at the window duration", () => {
+  const applet = makeApplet();
+  const usage = {
+    five_hour: {
+      remaining: 90,
+      duration_seconds: 18000,
+      reset_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    },
+  };
+  const candidate = {
+    pool: "main",
+    limit_window_seconds: 18000,
+    lookback_seconds: 3600,
+    consumed_percentage_points: 10,
+    coverage: "complete",
+  };
+
+  assert.equal(applet._panelDeltaIsDynamic(usage, candidate), false);
+});
+
 test("panel reset sources ignore windows from unavailable pools", () => {
   const applet = makeApplet();
   const usage = {

@@ -9033,9 +9033,14 @@ CodexUsageApplet.prototype = {
         }
         let now = Date.now();
         let reset = window && this._dateMillis(window.reset_at);
-        let horizon = reset !== null && reset > now
-            ? (reset - now) / 1000
-            : Number(window && (window.duration_seconds || window.duration) || seconds);
+        let duration = Number(window && (window.duration_seconds || window.duration) || seconds);
+        if (!Number.isFinite(duration) || duration <= 0) {
+            return false;
+        }
+        let horizon = duration;
+        if (reset !== null && reset > now) {
+            horizon = Math.min((reset - now) / 1000, duration);
+        }
         if (!Number.isFinite(horizon) || horizon <= 0) {
             return false;
         }
