@@ -3501,6 +3501,58 @@ test("extended panel sources render resets, identity, routing and account state"
   assert.match(values[15], /Status ok/);
 });
 
+test("every configured panel source has a safe render path", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.credits = {remaining: 70, limit: 100};
+  usage.usage_resets = {known: true, available: 2};
+  usage.main = {
+    available: true, allowed: true, limit_reached: false, exhausted: false,
+    windows: [
+      {name: "30d", duration_seconds: 2592000, remaining: 70},
+      {name: "1d", duration_seconds: 86400, remaining: 55},
+    ],
+  };
+  usage.models = {
+    "gpt-5.3-codex-spark": {
+      available: true, allowed: true, limit_reached: false, exhausted: false,
+      windows: [
+        {name: "5h", duration_seconds: 18000, remaining: 65},
+        {name: "weekly", duration_seconds: 604800, remaining: 45},
+        {name: "1d", duration_seconds: 86400, remaining: 35},
+      ],
+    },
+  };
+  usage.cost_windows = [
+    {pool: "main", limit_window_seconds: 18000, consumed_percentage_points: 4},
+    {pool: "main", limit_window_seconds: 604800, consumed_percentage_points: 5},
+    {pool: "main", limit_window_seconds: 2592000, consumed_percentage_points: 6},
+    {pool: "main", limit_window_seconds: 86400, consumed_percentage_points: 7},
+    {pool: "gpt-5.3-codex-spark", limit_window_seconds: 18000, consumed_percentage_points: 8},
+  ];
+  applet._consumptionSettings = {alpha: {
+    account: "alpha", amount: 1, unit: "hours", "limit-window": "weekly",
+    "forecast-limit-window": "weekly", format: "compact", "forecast-format": "compact",
+  }};
+  applet._routingDecisions = {alpha: {
+    decision: "credits", paid_overage_allowed: true,
+  }};
+  applet._routingPolicy = {credit_limits: {hourly: 10, weekly: 20, monthly: 30}};
+  applet._alertSettings = {alpha: {warnings: true, errors: false}};
+
+  const item = {usage, settings: {account: "alpha"}};
+  for (let source = 1; source <= 51; source += 1) {
+    const slot = {
+      source,
+      value: applet._panelValueForSource(usage, source),
+      window: applet._panelWindowForSource(usage, source),
+    };
+    const result = applet._panelSlotContent(item, slot);
+    assert.equal(typeof result.plain, "string", `plain source ${source}`);
+    assert.equal(typeof result.markup, "string", `markup source ${source}`);
+  }
+});
+
 test("panel limit sources use their declared monthly and other windows", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];

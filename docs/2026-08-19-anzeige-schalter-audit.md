@@ -6653,3 +6653,19 @@ Fokustest `node --test --test-name-pattern='settings launcher|native Cinnamon
 configure action|settings maximization|settings placement|stale settings'
 tests/applet_runtime.test.js`: 9/9. Node-Syntaxcheck und `git diff --check`
 sauber.
+
+## Runde 589: Vollständiger Leistenquellen-Renderpfad
+
+Die 52 konfigurierbaren Leistenquellen (Aus plus Werte 1–51) sind über
+Prozent-, Reset-, Verbrauchs- und eigene Statusformatierungen verteilt. Der
+Audit fand keinen aktuellen Produktionsfehler, aber bisher keinen einzelnen
+Laufzeittest, der jede Quelle durch `_panelValueForSource()`,
+`_panelWindowForSource()` und `_panelSlotContent()` führt.
+
+Der Test `every configured panel source has a safe render path` stellt für
+alle Quellen vollständige Main-/Spark-, Verbrauchs-, Credit-, Routing- und
+Resetdaten bereit und prüft, dass Plaintext und Markup jeweils sicher erzeugt
+werden. Damit schlagen neue Branches mit `null`- oder Ausnahmefehlern direkt
+im fokussierten Paneltest fehl.
+
+Fokustest `node --test --test-name-pattern='panel sources|panel limit sources|extended panel sources|token delta' tests/applet_runtime.test.js`: 13/13. Node-Syntaxcheck und `git diff --check` sauber.
