@@ -8739,3 +8739,18 @@ nur die absichtlich gesetzten `<b>`-Tags.
 Regression nutzt `A & B <C>` und prüft den echten GTK-Titeltext. Verifikation:
 Format-/Forecast-Fokustests 83/83; Python-Compile, Ruff und `git diff --check`
 sauber.
+
+## Runde 752: Forecast-Tabellenmetadaten ohne NUL-Werte
+
+Der Prognose-Selector akzeptierte bislang leere oder NUL-haltige Tabellen-Keys
+und Labels. Solche Werte konnten in `ComboBoxText`, Listener-Schlüsseln oder
+Pango-Markup landen und den Selector mit abgeschnittenen GTK-Strings oder
+Fehlern zurücklassen. `FormatTableSelector` filterte diese Metadaten bereits.
+
+Forecast ignoriert jetzt leere/NUL-Keys und fällt bei einem NUL-Label auf den
+validierten Tabellen-Key zurück. Gültige Tabellen bleiben unverändert; keine
+persistierte Auswahl wird durch diese Metadatenprüfung geschrieben.
+
+Regression deckt leeren Key, NUL-Key und NUL-Label ab. Verifikation:
+Format-/Forecast-Fokustests 86/86; Python-Compile, Ruff und `git diff --check`
+sauber.

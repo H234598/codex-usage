@@ -86,12 +86,17 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
             if not isinstance(table, dict):
                 continue
             table_key = table.get("key")
-            if not isinstance(table_key, str) or table_key not in definitions:
+            if (
+                not isinstance(table_key, str)
+                or not table_key
+                or "\x00" in table_key
+                or table_key not in definitions
+            ):
                 continue
             if not isinstance(definitions[table_key], dict):
                 continue
             label = table.get("label")
-            if not isinstance(label, str) or not label:
+            if not isinstance(label, str) or not label or "\x00" in label:
                 label = table_key
             if table_key in self._table_labels:
                 continue

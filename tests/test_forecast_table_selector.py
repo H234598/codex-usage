@@ -148,6 +148,40 @@ def test_forecast_selector_survives_missing_settings_mapping() -> None:
         selector.destroy()
 
 
+@pytest.mark.parametrize("table_key", ["", "bad\x00key"])
+def test_forecast_selector_ignores_empty_or_nul_table_key(table_key) -> None:
+    settings = _Settings()
+    settings.settings[table_key] = {
+        "value": [],
+        "columns": [{"id": "account", "title": "Account", "type": "string"}],
+    }
+
+    selector = ForecastTableSelector(
+        {"tables": [{"key": table_key, "label": "Bad"}]},
+        "forecast-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector._table_labels == {}
+    finally:
+        selector.destroy()
+
+
+def test_forecast_selector_falls_back_from_nul_table_label() -> None:
+    settings = _Settings()
+    selector = ForecastTableSelector(
+        {"tables": [{"key": _TABLE_KEYS[0], "label": "Bad\x00Label"}]},
+        "forecast-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector._table_labels[_TABLE_KEYS[0]] == _TABLE_KEYS[0]
+    finally:
+        selector.destroy()
+
+
 def test_table_change_switches_stack_and_persists_selection() -> None:
     settings = _Settings()
     selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
