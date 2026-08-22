@@ -185,6 +185,18 @@ def test_consumption_smoothing_uses_time_aware_ema_rate():
     assert smoothed.estimated_seconds_to_exhaustion < unsmoothed.estimated_seconds_to_exhaustion
 
 
+@pytest.mark.parametrize("smoothing", ["ema-05", "ema+5", "ema-0005"])
+def test_consumption_rejects_noncanonical_smoothing_names(smoothing):
+    with pytest.raises(ValueError, match="smoothing"):
+        calculate_consumption(
+            [_sample(0, 10), _sample(30, 20)],
+            amount=1,
+            unit="hours",
+            now=BASE + timedelta(minutes=30),
+            smoothing=smoothing,
+        )
+
+
 def test_consumption_accepts_large_stale_threshold_without_overflow():
     result = calculate_consumption(
         [_sample(0, 20), _sample(30, 50)],

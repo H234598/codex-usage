@@ -7004,3 +7004,16 @@ Damit verhalten sich leere und nichtleere Aufrufe gleich und erzeugen keine
 unbeabsichtigte relative Pfadsemantik. Regression deckt den Empty-Shortcut
 ab. `pytest -q tests/test_history.py`: 86/86. Ruff, Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 612: EMA-Namen in Consumption strikt validieren
+
+`calculate_consumption()` wandelte den Suffix von `smoothing` bisher mit
+`int()` um. Dadurch wurden nicht-kanonische Namen wie `ema-05` und
+`ema-0005` als `ema-5` akzeptiert, obwohl CLI und Vertrag nur die exakt
+aufgelisteten EMA-Werte erlauben.
+
+Die Validierung verlangt jetzt zusätzlich die kanonische Schreibweise
+`ema-{minutes}`. Gültige Werte bleiben unverändert; führende Nullen und
+andere alternative Schreibweisen werden verworfen. Drei Regressionfälle
+decken die Grenze ab. `pytest -q tests/test_consumption.py`: 40/40. Ruff,
+Python-Kompilierung und `git diff --check` sauber.

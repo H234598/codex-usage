@@ -98,7 +98,10 @@ def calculate_consumption(
             smoothing_minutes = int(smoothing[4:])
         except ValueError as exc:
             raise ValueError("smoothing must be none or ema-5 through ema-640") from exc
-        if smoothing_minutes not in {5, 10, 20, 40, 80, 160, 320, 640}:
+        if (
+            smoothing != f"ema-{smoothing_minutes}"
+            or smoothing_minutes not in {5, 10, 20, 40, 80, 160, 320, 640}
+        ):
             raise ValueError("smoothing must be none or ema-5 through ema-640")
     else:
         smoothing_minutes = None
