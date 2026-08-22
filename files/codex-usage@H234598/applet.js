@@ -5658,11 +5658,30 @@ CodexUsageApplet.prototype = {
             for (let slotIndex = 1; slotIndex <= this._panelValueCount(); slotIndex++) {
                 panelSources.push(panelRow["slot" + slotIndex]);
             }
+            let panelNeedsToken = false;
+            let panelNeedsAllWindows = false;
+            let panelNeedsMainDelta = false;
+            let panelNeedsSparkDelta = false;
+            for (let sourceIndex = 0; sourceIndex < panelSources.length; sourceIndex++) {
+                let source = panelSources[sourceIndex];
+                if (source === 12 || source === 13 || (source >= 32 && source <= 36)) {
+                    panelNeedsToken = true;
+                }
+                if (source === 32 || source === 33 || source === 34 || source === 35 || source === 36) {
+                    panelNeedsAllWindows = true;
+                }
+                if (source === 32 || source === 33 || source === 34 || source === 36) {
+                    panelNeedsMainDelta = true;
+                }
+                if (source === 35) {
+                    panelNeedsSparkDelta = true;
+                }
+            }
             let activeQueryKeys = Object.create(null);
             // Keep the last validated windows until the matching request has
             // succeeded.  Clearing them here made one failed consumption
             // refresh erase an otherwise usable panel/hover value.
-            let tokenNeeded = row && (
+            let tokenNeeded = row && (panelNeedsToken ||
                 this._elementTargetEnabled(usage.account, "consumption", "panel", row["show-panel"]) ||
                 this._elementTargetEnabled(usage.account, "consumption", "hover", row["show-tooltip"]) ||
                 this._elementTargetEnabled(usage.account, "consumption", "click", true) ||
@@ -5720,7 +5739,7 @@ CodexUsageApplet.prototype = {
                     smoothing: row.smoothing || "none",
                     limitWindow: consumptionPool === forecastPool &&
                         row["limit-window"] !== forecastLimitWindow
-                        ? "all" : row["limit-window"],
+                        ? "all" : (panelNeedsAllWindows ? "all" : row["limit-window"]),
                     pool: consumptionPool,
                     queryKey: consumptionQueryKey,
                     generation: generation
@@ -5738,11 +5757,58 @@ CodexUsageApplet.prototype = {
                         baselineMinutes: null,
                         baselineValueMinutes: forecastBaselineMinutes,
                         smoothing: forecastSmoothing,
-                        limitWindow: forecastLimitWindow,
+                        limitWindow: (panelNeedsMainDelta && forecastPool === "main") ||
+                            (panelNeedsSparkDelta && forecastPool === "gpt-5.3-codex-spark")
+                            ? "all" : forecastLimitWindow,
                         pool: forecastPool,
                         queryKey: forecastQueryKey,
                         generation: generation
                     });
+                }
+                if (panelNeedsSparkDelta && consumptionPool !== "gpt-5.3-codex-spark" &&
+                    forecastPool !== "gpt-5.3-codex-spark") {
+                    let panelSparkQueryKey = this._consumptionQueryKey(
+                        "gpt-5.3-codex-spark", row.amount, row.unit, row.smoothing,
+                        row["baseline-enabled"] ? row["baseline-minutes"] : null
+                    );
+                    if (!activeQueryKeys[panelSparkQueryKey]) {
+                        activeQueryKeys[panelSparkQueryKey] = true;
+                        this._consumptionQueue.push({
+                            account: usage.account,
+                            amount: row.amount,
+                            unit: row.unit,
+                            baselineMinutes: null,
+                            baselineValueMinutes: row["baseline-enabled"]
+                                ? row["baseline-minutes"] : null,
+                            smoothing: row.smoothing || "none",
+                            limitWindow: "all",
+                            pool: "gpt-5.3-codex-spark",
+                            queryKey: panelSparkQueryKey,
+                            generation: generation
+                        });
+                    }
+                }
+                if (panelNeedsMainDelta && consumptionPool !== "main" && forecastPool !== "main") {
+                    let panelMainQueryKey = this._consumptionQueryKey(
+                        "main", row.amount, row.unit, row.smoothing,
+                        row["baseline-enabled"] ? row["baseline-minutes"] : null
+                    );
+                    if (!activeQueryKeys[panelMainQueryKey]) {
+                        activeQueryKeys[panelMainQueryKey] = true;
+                        this._consumptionQueue.push({
+                            account: usage.account,
+                            amount: row.amount,
+                            unit: row.unit,
+                            baselineMinutes: null,
+                            baselineValueMinutes: row["baseline-enabled"]
+                                ? row["baseline-minutes"] : null,
+                            smoothing: row.smoothing || "none",
+                            limitWindow: "all",
+                            pool: "main",
+                            queryKey: panelMainQueryKey,
+                            generation: generation
+                        });
+                    }
                 }
             }
             if (creditNeeded) {

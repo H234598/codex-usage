@@ -5607,3 +5607,16 @@ Die Request-Ermittlung iteriert jetzt über die konfigurierte Wertanzahl.
 Regression setzt `Creditverbrauch` in Wert 20 und erwartet Pool `credits`.
 `node --test tests/applet_runtime.test.js`: 412/412; `node --check` und
 `git diff --check` sauber.
+
+## Runde 473: Delta-/Tokenende-Leistenquellen fordern ihre Daten an
+
+Die neuen Leistenquellen `TE`, `Δ`, `Δ5h`, `ΔW`, `ΔM`, `ΔSpark` und
+`Δsonst.` wurden nur gerendert. Wenn die alten Tabellenziele deaktiviert
+waren, startete keine Verbrauchsabfrage; bei festem Deltafenster wurde zudem
+nicht garantiert das passende Poolfenster geladen. Die Leistenquelle selbst
+aktiviert jetzt den Bedarf, fordert feste Deltafenster mit `all` an und lädt
+bei Bedarf zusätzlich Main- oder Spark-Pool.
+
+Regressionen decken Tokenende, konfiguriertes Delta, Main-/Spark-Delta und
+beide Poolwechsel ab. `node --test tests/applet_runtime.test.js`: 415/415;
+`node --check` und `git diff --check` sauber.

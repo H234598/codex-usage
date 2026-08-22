@@ -4517,6 +4517,102 @@ test("credit-consumption panel slot beyond legacy four starts a credit request",
   assert.equal(requests[0][requests[0].indexOf("--pool") + 1], "credits");
 });
 
+test("token delta panel sources start requests even when legacy targets are disabled", () => {
+  for (const [source, expectedWindow] of [[12, "weekly"], [13, "weekly"], [33, "all"]]) {
+    const applet = makeApplet();
+    applet._consumptionSettings = {alpha: {
+      account: "alpha", "show-panel": false, "show-tooltip": false,
+      amount: 1, unit: "hours", "limit-window": "weekly",
+      smoothing: "none", "baseline-enabled": false,
+      "forecast-limit-window": "weekly", "forecast-smoothing": "none",
+      "forecast-baseline-enabled": false,
+    }};
+    applet._panelSettings.alpha = {
+      account: "alpha", order: 1, muted: false,
+      slot1: source, slot2: 0, slot3: 0, slot4: 0,
+    };
+    applet._styleTargets = {
+      "alpha:4": {panel: false, hover: false, click: false},
+      "alpha:5": {panel: false, hover: false, click: false},
+      "alpha:10": {panel: false, hover: false, click: false},
+      "alpha:14": {panel: false, hover: false, click: false},
+      "alpha:15": {panel: false, hover: false, click: false},
+    };
+    const requests = [];
+    applet._baseCommandArgv = () => ["codex-usage"];
+    applet._spawnAuxJson = (argv) => { requests.push(argv); };
+
+    applet._refreshConsumption();
+
+    assert.equal(requests.length, 1, `source ${source}`);
+    assert.equal(
+      requests[0][requests[0].indexOf("--limit-window") + 1],
+      expectedWindow,
+      `source ${source}`
+    );
+  }
+});
+
+test("Spark token delta panel source queues a Spark window request", () => {
+  const applet = makeApplet();
+  applet._consumptionSettings = {alpha: {
+    account: "alpha", "show-panel": false, "show-tooltip": false,
+    amount: 1, unit: "hours", "limit-window": "weekly",
+    smoothing: "none", "baseline-enabled": false,
+    "forecast-limit-window": "weekly", "forecast-smoothing": "none",
+    "forecast-baseline-enabled": false,
+  }};
+  applet._panelSettings.alpha = {
+    account: "alpha", order: 1, muted: false,
+    slot1: 35, slot2: 0, slot3: 0, slot4: 0,
+  };
+  applet._styleTargets = {
+    "alpha:4": {panel: false, hover: false, click: false},
+    "alpha:5": {panel: false, hover: false, click: false},
+    "alpha:10": {panel: false, hover: false, click: false},
+    "alpha:14": {panel: false, hover: false, click: false},
+    "alpha:15": {panel: false, hover: false, click: false},
+  };
+  applet._drainConsumptionRequests = () => {};
+
+  applet._refreshConsumption();
+
+  const sparkRequest = applet._consumptionQueue.find(
+    (request) => request.pool === "gpt-5.3-codex-spark"
+  );
+  assert.ok(sparkRequest);
+  assert.equal(sparkRequest.limitWindow, "all");
+});
+
+test("main token delta panel source queues a main request when table uses Spark", () => {
+  const applet = makeApplet();
+  applet._consumptionSettings = {alpha: {
+    account: "alpha", "show-panel": false, "show-tooltip": false,
+    amount: 1, unit: "hours", "limit-window": "spark",
+    smoothing: "none", "baseline-enabled": false,
+    "forecast-limit-window": "spark", "forecast-smoothing": "none",
+    "forecast-baseline-enabled": false,
+  }};
+  applet._panelSettings.alpha = {
+    account: "alpha", order: 1, muted: false,
+    slot1: 32, slot2: 0, slot3: 0, slot4: 0,
+  };
+  applet._styleTargets = {
+    "alpha:4": {panel: false, hover: false, click: false},
+    "alpha:5": {panel: false, hover: false, click: false},
+    "alpha:10": {panel: false, hover: false, click: false},
+    "alpha:14": {panel: false, hover: false, click: false},
+    "alpha:15": {panel: false, hover: false, click: false},
+  };
+  applet._drainConsumptionRequests = () => {};
+
+  applet._refreshConsumption();
+
+  const mainRequest = applet._consumptionQueue.find((request) => request.pool === "main");
+  assert.ok(mainRequest);
+  assert.equal(mainRequest.limitWindow, "all");
+});
+
 test("consumption refresh prunes obsolete tagged query results but retains legacy data", () => {
   const applet = makeApplet();
   applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
