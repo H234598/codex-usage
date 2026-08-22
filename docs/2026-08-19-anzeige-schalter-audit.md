@@ -5735,3 +5735,15 @@ Regression prüft 30 Tage und ein Custom-Fenster. `pytest -q
 tests/test_integration_entrypoint.py tests/test_integration_snapshot.py
 tests/test_history.py tests/test_history_cli.py`: 170/170; Ruff,
 Python-Compile und `git diff --check` sauber.
+Python-Compile und `git diff --check` sauber.
+
+## Runde 521: Integrationsvertrag dokumentiert Label-Allowlist korrekt
+
+Der Integrationscode exportiert absichtlich nur Account-ID, Status,
+Frischeinformationen, Limits, Verbrauch und Resets. Der Vertragstext nannte
+zusätzlich Labels, obwohl der bestehende Allowlist-Regressionstest Labels und
+Provider-Metadaten explizit ausschließt.
+
+`docs/codex-usage-v1.md` beschreibt jetzt korrekt, dass Labels außerhalb des
+Cross-Process-Vertrags bleiben. Keine Produktionsänderung erforderlich;
+bestehende `tests/test_integration_snapshot.py`: 53/53 bestanden.

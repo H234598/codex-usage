@@ -91,10 +91,11 @@ automatically. This is a safety boundary, not an omitted UI feature.
 ## Masterjet integration snapshot
 
 `integration-snapshot --schema 1 --format json` exports only sanitized,
-bounded account IDs/labels, status/freshness, limit windows, percentage-point
-costs, and reset state. It exports no auth paths, tokens, cookies, raw browser
-responses, Device-Login output, or arbitrary provider payloads. Unknown schema
-versions and malformed identities fail closed.
+bounded account IDs, status/freshness, limit windows, percentage-point costs,
+and reset state. Account labels stay out of this cross-process contract. It
+exports no auth paths, tokens, cookies, raw browser responses, Device-Login
+output, or arbitrary provider payloads. Unknown schema versions and malformed
+identities fail closed.
 
 The snapshot is written atomically and is the only supported cross-process
 consumer contract. `codex-master` must treat stale, partial, and unknown values
