@@ -7786,3 +7786,15 @@ Der Panel-Loader akzeptiert nur endliche, geordnete Zahlenbereiche. Ungültige
 Felder werden übersprungen; Slot-Erzeugung bleibt verfügbar. Regression deckt
 umgekehrte und nicht-endliche Grenzen ab; `tests/test_panel_settings_list.py`:
 38/38; Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 671: Mehrdeutige Account-Zeilen behalten ihre Hidden-Slots
+
+Der Speicher-Fallback nutzte bei doppelten Account-IDs den letzten Eintrag im
+`by_account`-Mapping. Beim Umbenennen einer der Duplikatzeilen konnten dadurch
+Hidden-Slots des anderen Eintrags übernommen werden.
+
+Mehrdeutige Accounts werden jetzt aus dem ID-Match entfernt; für sie gilt der
+positionsgebundene Fallback. Eindeutige Accounts behalten weiterhin robustes
+ID-Matching bei Sortieränderungen. Regression deckt zwei gleiche Account-IDs
+und unterschiedliche Hidden-Slots ab; `tests/test_panel_settings_list.py`:
+39/39; Python-Kompilierung und `git diff --check` sauber.

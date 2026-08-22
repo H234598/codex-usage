@@ -407,13 +407,16 @@ class PanelSettingsList(List, JSONSettingsBackend):
             ]
             if isinstance(stored_rows, list) else []
         )
-        by_account = {
-            row["account"]: row
-            for row in previous_rows
-            if isinstance(row, dict)
-            and isinstance(row.get("account"), str)
-            and row["account"]
-        }
+        by_account = {}
+        duplicate_accounts = set()
+        for row in previous_rows:
+            account = row["account"]
+            if account in by_account:
+                duplicate_accounts.add(account)
+                continue
+            by_account[account] = row
+        for account in duplicate_accounts:
+            by_account.pop(account, None)
         data = []
         for index, row in enumerate(self.model):
             row_info = {
