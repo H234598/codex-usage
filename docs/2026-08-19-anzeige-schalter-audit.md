@@ -7672,3 +7672,18 @@ Schema nicht definiert sind. Damit bleibt die Tabelle fail-closed und kann
 keinen falschen Formatierungsmodus anzeigen. Regression prüft gültige Zeile
 plus `mode=99`; `tests/test_format_table_selector.py`: 13/13. Python-
 Kompilierung und `git diff --check` sauber.
+
+## Runde 662: Formatierungs-Selector verwirft beschädigte Schema-Einträge
+
+Der Selector iterierte `info["tables"]` ungeprüft. `None`, ein String oder
+eine Liste mit `None` ließ den Konstruktor beim Öffnen der Formatierungsseite
+mit `TypeError` beziehungsweise `AttributeError` abbrechen. Ebenso konnte ein
+nicht-dictionary Tabellen-Definition später `_BoundFormatList` crashen lassen.
+
+Der Konstruktor akzeptiert jetzt nur Listen, Mapping-Einträge, String-Schlüssel
+und dictionary-Definitionen, die tatsächlich im Settings-Schema existieren.
+Beschädigte Einträge werden übersprungen; die Seite bleibt leer oder zeigt
+verfügbare Tabellen. Regression deckt `None`, String, gemischte Listen und
+nicht-dictionary Definitionen ab. Zusätzlich bleibt der unbekannte Optionswert
+`mode=99` fail-closed. `tests/test_format_table_selector.py`: 17/17;
+Python-Kompilierung und `git diff --check` sauber.

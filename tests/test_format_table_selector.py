@@ -121,6 +121,40 @@ def test_constructor_builds_only_selected_table_and_initial_selection() -> None:
         selector.destroy()
 
 
+@pytest.mark.parametrize(
+    "tables",
+    [None, "malformed", [None, "malformed", {"key": "table-a", "label": "A"}]],
+)
+def test_constructor_ignores_malformed_table_declarations(tables) -> None:
+    settings = _Settings()
+    selector = FormatTableSelector({"tables": tables}, "format-table-selector", settings)
+
+    try:
+        if isinstance(tables, list):
+            assert set(selector._table_labels) == {"table-a"}
+        else:
+            assert selector._table_labels == {}
+            assert selector._tables == {}
+    finally:
+        selector.destroy()
+
+
+def test_constructor_ignores_non_mapping_table_definition() -> None:
+    settings = _Settings()
+    settings.settings["table-a"] = None
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector._table_labels == {}
+        assert selector._tables == {}
+    finally:
+        selector.destroy()
+
+
 def test_table_is_built_when_first_selected() -> None:
     settings = _Settings()
     selector = FormatTableSelector(
