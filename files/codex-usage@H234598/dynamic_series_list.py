@@ -135,14 +135,20 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except (OSError, ProcessLookupError):
-                    process.kill()
+                    try:
+                        process.kill()
+                    except (OSError, ProcessLookupError):
+                        pass
                 try:
                     process.wait(timeout=0.5)
                 except subprocess.TimeoutExpired:
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except (OSError, ProcessLookupError):
-                        process.kill()
+                        try:
+                            process.kill()
+                        except (OSError, ProcessLookupError):
+                            pass
         self.__class__._masterjet_cache = result
         self.__class__._masterjet_cache_at = now
         return result

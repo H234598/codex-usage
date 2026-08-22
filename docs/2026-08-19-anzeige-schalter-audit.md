@@ -3454,18 +3454,6 @@ reproduzierbarer Fehler gefunden.
 `pytest -q tests/test_health.py`: 32/32 bestanden. Mypy für `health.py`, Ruff
 und `git diff --check` sauber.
 
-## Runde 463: Cinnamon-Uninstaller-CLI vollständig abgegrenzt
-
-`uninstall_cinnamon_applet.py` hatte bisher nur indirekte Abdeckung über den
-Installations-Roundtrip. Die fokussierte Suite prüft jetzt alle relevanten
-Pfade: Dry-Run, wiederholtes Entfernen eines fehlenden Ziels, erfolgreiches
-Entfernen, Symlink-/Datei-Schutz, unsichere Zielpfade, Löschfehler und die
-Verzeichnisprüfung. Es wurde kein neuer Fehler im Uninstaller reproduziert;
-unsichere Ziele bleiben unverändert.
-
-`pytest -q tests/test_uninstall_cinnamon_applet.py`: 8/8 bestanden. Ruff,
-Python-Compile und `git diff --check` sauber.
-
 ## Runde 361: Config-Pfade und Account-Identitäten geprüft
 
 `config.py` wurde auf XDG-/Tilde-/`file:`-Pfade, private Verzeichnisse,
@@ -5493,3 +5481,29 @@ Validierung, atomaren Austausch, Cache-Migration, Enum-Konvertierung,
 DBus-/Versionspfade und `main --dry-run`. `pytest -q
 tests/test_install_cinnamon_applet.py`: 9/9 bestanden. Ruff, Python-Compile
 und `git diff --check` sauber.
+
+## Runde 463: Cinnamon-Uninstaller-CLI vollständig abgegrenzt
+
+`uninstall_cinnamon_applet.py` hatte bisher nur indirekte Abdeckung über den
+Installations-Roundtrip. Die fokussierte Suite prüft jetzt alle relevanten
+Pfade: Dry-Run, wiederholtes Entfernen eines fehlenden Ziels, erfolgreiches
+Entfernen, Symlink-/Datei-Schutz, unsichere Zielpfade, Löschfehler und die
+Verzeichnisprüfung. Es wurde kein neuer Fehler im Uninstaller reproduziert;
+unsichere Ziele bleiben unverändert.
+
+`pytest -q tests/test_uninstall_cinnamon_applet.py`: 8/8 bestanden. Ruff,
+Python-Compile und `git diff --check` sauber.
+
+## Runde 464: DynamicSeries-Timeout-Cleanup bleibt bei Exit-Race stabil
+
+`DynamicSeriesList._masterjet_series()` fing einen fehlgeschlagenen
+`killpg()`-Aufruf ab, rief `process.kill()` im Fallback aber ungeschützt auf.
+Wenn der Child-Prozess genau zwischen Poll und Signal bereits beendet war,
+warf der Fallback selbst `ProcessLookupError`; damit konnte eine harmlose
+Masterjet-Serienabfrage den Settings-Dialog-Callback verlassen.
+
+Der Fallback ignoriert jetzt denselben Exit-Race-Fehler wie die übrigen
+begrenzten Prozesspfade. Regression reproduziert den Race mit einem
+beendeten Child-Doppel zuerst rot und besteht danach grün. `pytest -q
+tests/test_dynamic_series_list.py`: 13/13 bestanden; Ruff, Python-Compile und
+`git diff --check` sauber.
