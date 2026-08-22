@@ -8407,3 +8407,17 @@ GTK-Modell kontrolliert. Regression: `pytest -q
 tests/test_dynamic_series_list.py` 19/19; Python-Compile, Ruff und
 `git diff --check` sauber. Reale `xlet-settings`-Smoke nach Installation und
 Reload lief acht Sekunden ohne Traceback/GTK-Fehler.
+
+## Runde 731: Numerische Optionsspalten ignorieren irrelevante Grenzen
+
+`_BoundFormatList` übersprang bei numerischen ComboBox-Spalten zwar die
+Bereichsvalidierung, verglich den gültigen `default` danach aber trotzdem mit
+`min/max`. Malformed Metadaten wie `min="bad"` lösten beim Aufbau der
+Formatierungs- oder Prognosenseite einen `TypeError` aus.
+
+Die Bereichsprüfung läuft für Optionsspalten nicht mehr; dort definiert die
+Optionsmenge bereits alle zulässigen Werte. Regression deckt integer-
+Optionsspalte mit ungültigen Grenzen ab. Kombinierter Fokustest
+`tests/test_format_table_selector.py tests/test_forecast_table_selector.py`:
+71/71; Python-Compile, Ruff und `git diff --check` sauber. Applet installiert
+und reloaded.

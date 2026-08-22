@@ -197,7 +197,11 @@ class _BoundFormatList(List, JSONSettingsBackend):
                         valid_default = False
                 else:
                     valid_default = isinstance(default, bool)
-                if valid_default and column["type"] in {"integer", "float"}:
+                if (
+                    valid_default
+                    and option_values is None
+                    and column["type"] in {"integer", "float"}
+                ):
                     minimum = column.get("min")
                     maximum = column.get("max")
                     if minimum is not None and default < minimum:

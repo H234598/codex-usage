@@ -463,6 +463,28 @@ def test_format_table_drops_invalid_options(options) -> None:
         widget.destroy()
 
 
+def test_format_table_ignores_numeric_ranges_for_option_columns() -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [
+        {
+            "id": "mode",
+            "title": "Mode",
+            "type": "integer",
+            "options": {"Zero": 0},
+            "default": 0,
+            "min": "bad",
+            "max": "bad",
+        }
+    ]
+
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        assert widget.columns[0]["default"] == 0
+    finally:
+        widget.destroy()
+
+
 @pytest.mark.parametrize(
     ("column_type", "default"),
     [
