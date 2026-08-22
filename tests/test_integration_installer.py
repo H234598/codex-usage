@@ -3522,6 +3522,36 @@ def test_interpreter_resolver_accepts_final_symlink_and_rejects_bad_targets(tmp_
         integration_installer._resolve_python_executable(directory)
 
 
+def test_interpreter_resolver_rejects_target_replacement_before_return(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    target = tmp_path / "python-target"
+    target.write_bytes(b"owned executable")
+    target.chmod(0o700)
+    old_target = tmp_path / "python-target-old"
+    replaced = False
+    original_access = os.access
+
+    def replace_before_access(path, mode):
+        nonlocal replaced
+        if path == target and not replaced:
+            target.rename(old_target)
+            target.write_bytes(b"foreign executable")
+            target.chmod(0o700)
+            replaced = True
+        return original_access(path, mode)
+
+    monkeypatch.setattr(integration_installer.os, "access", replace_before_access)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._resolve_python_executable(target)
+
+    assert replaced
+    assert old_target.read_bytes() == b"owned executable"
+    assert target.read_bytes() == b"foreign executable"
+
+
 def test_install_revalidates_temporary_root_and_child_identities(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

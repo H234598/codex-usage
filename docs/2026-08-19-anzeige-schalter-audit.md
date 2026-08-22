@@ -5841,3 +5841,15 @@ Nach der FD-Validierung wird der Pfad jetzt nochmals gegen die erwartete
 Provisional-Identität geprüft. Regression deckt den Rename-/Ersatz-Seam ab.
 `pytest -q tests/test_integration_installer.py`: 142/142; Ruff,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 530: Interpreter-Identität nach Ausführbarkeitsprüfung revalidiert
+
+`_resolve_python_executable()` prüfte den aufgelösten Interpreter per `lstat()`
+und `os.access()`, gab danach aber ohne erneuten Identitätsvergleich zurück.
+Ein Austausch zwischen diesen Schritten konnte einen fremden Interpreter
+akzeptiert machen.
+
+Nach `os.access()` werden jetzt Gerät, Inode, Besitzer, Typ, Modus und
+Linkanzahl erneut verglichen. Regression deckt ersetzten Interpreter ab.
+`pytest -q tests/test_integration_installer.py`: 143/143; Ruff,
+Python-Compile und `git diff --check` sauber.

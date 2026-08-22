@@ -980,6 +980,15 @@ def _resolve_python_executable(path: Path) -> Path:
         _fail()
     if not stat.S_ISREG(item.st_mode) or not os.access(resolved, os.X_OK):
         _fail()
+    try:
+        final_item = resolved.lstat()
+    except (OSError, ValueError):
+        _fail()
+    if (
+        _provisional_from_stat(final_item) != _provisional_from_stat(item)
+        or final_item.st_nlink != item.st_nlink
+    ):
+        _fail()
     return resolved
 
 
