@@ -87,6 +87,8 @@ def ensure_private_directory(
     created_paths: list[tuple[Path, int, int]] | None = None,
 ) -> Path:
     """Create private directory path without weakening existing parents."""
+    if created_paths is not None and not isinstance(created_paths, list):
+        raise ValueError("created_paths is invalid")
     raw_path = _require_path(path, label=label)
     assert_no_symlink_ancestors(raw_path, label=label)
     if raw_path.is_symlink():

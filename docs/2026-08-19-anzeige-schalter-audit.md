@@ -9434,3 +9434,18 @@ Runner- oder Prozessstart. Regression ergänzt den Surrogatfall.
 Verifikation: **46 fokussierte Profile-Login-Tests**, **132 Profile-Login-
 und Job-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 800: `created_paths` vor Verzeichnis-I/O validieren
+
+`private_io.ensure_private_directory()` akzeptierte für den optionalen
+`created_paths`-Transaktionscontainer beliebige Typen. Bei einem Tupel oder
+Dictionary wurden bereits Parent-Verzeichnisse erzeugt, bevor ein rohes
+`AttributeError` auf `.append()` den Lauf abbrach; Partial-State blieb zurück.
+
+Der Container muss jetzt vor jeder Pfadprüfung und jedem I/O eine `list` sein.
+Ungültige Werte liefern `ValueError("created_paths is invalid")`; Regression
+prüft zusätzlich, dass weder Ziel noch Parent angelegt werden.
+
+Verifikation: **50 fokussierte Private-IO-Tests**, **411 Private-IO-, Layout-,
+Migrations- und State-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
+keine Settings-Fenster gestartet.

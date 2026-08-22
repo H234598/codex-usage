@@ -100,6 +100,23 @@ def test_ensure_private_directory_secures_all_new_path_components(tmp_path):
     assert (existing.stat().st_mode & 0o777) == 0o755
 
 
+@pytest.mark.parametrize("created_paths", [(), {}, "invalid", object()])
+def test_ensure_private_directory_rejects_invalid_created_paths_before_io(
+    tmp_path, created_paths
+):
+    target = tmp_path / "new" / "nested"
+
+    with pytest.raises(ValueError, match="created_paths is invalid"):
+        ensure_private_directory(
+            target,
+            label="private directory",
+            created_paths=created_paths,  # type: ignore[arg-type]
+        )
+
+    assert not target.exists()
+    assert not (tmp_path / "new").exists()
+
+
 def test_ensure_private_directory_binds_mode_change_to_directory(tmp_path, monkeypatch):
     target = tmp_path / "target"
     target.mkdir(mode=0o755)
