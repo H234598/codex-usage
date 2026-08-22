@@ -6121,6 +6121,21 @@ Spalten in derselben Reihenfolge wie der Selector zusammen. Regression prüft
 `Formatierungsmodus` und `Dynamisch`; `pytest -q tests/test_help_page.py`: 6/6.
 Python-Kompilierung und `git diff --check` sauber.
 
+## Runde 660: `list_changed()` verlor Hidden-Slots nach beschädigten Zeilen
+
+Beim Speichern sichtbarer Leistenänderungen verwendete `list_changed()` die
+gesamte gespeicherte Liste für den Positions-Fallback. Stand eine beschädigte
+Nicht-Dictionary-Zeile vor einer gültigen Zeile, wurde beim Umbenennen des
+sichtbaren Accounts kein passender Vorgänger gefunden und der Fallback traf auf
+die beschädigte Zeile. Versteckte `slotN`-Werte der gültigen Zeile verschwanden.
+
+Der Positions-Fallback arbeitet jetzt nur noch mit gespeicherten Dictionary-
+Zeilen. Damit bleiben Hidden-Slots auch bei beschädigten Fremdzeilen erhalten;
+der Account-Match bleibt vorrangig. Regression setzt eine beschädigte Zeile vor
+eine gültige Zeile, benennt den sichtbaren Account um und prüft `slot3`.
+`tests/test_panel_settings_list.py`: 19/19; Python-Kompilierung und
+`git diff --check` sauber.
+
 ## Runde 659: Leisten-Rebuild verlor Hidden-Slots bei gemischten Zeilen
 
 Beim Ändern der Anzahl der Leistenfelder prüfte `_on_count_changed()` bisher,

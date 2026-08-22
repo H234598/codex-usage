@@ -395,3 +395,33 @@ def test_panel_count_change_keeps_valid_hidden_slots_with_malformed_rows() -> No
         assert list(panel.model[0]) == ["alpha", 1, 2, 3]
     finally:
         panel.destroy()
+
+
+def test_panel_list_change_keeps_hidden_slots_after_malformed_row() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "2"
+    settings.values["account-panel-settings"] = [
+        "malformed",
+        {"account": "alpha", "slot1": 1, "slot2": 2, "slot3": 3},
+    ]
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+                {"id": "slot2", "title": "Wert 2", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.model[0][0] = "beta"
+        panel.list_changed()
+        assert settings.values["account-panel-settings"][0] == {
+            "account": "beta", "slot1": 1, "slot2": 2, "slot3": 3,
+        }
+    finally:
+        panel.destroy()

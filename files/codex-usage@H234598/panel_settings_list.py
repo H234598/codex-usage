@@ -321,7 +321,10 @@ class PanelSettingsList(List, JSONSettingsBackend):
     def list_changed(self, *args):
         """Save visible edits without discarding temporarily hidden slots."""
         stored_rows = self.get_value()
-        previous_rows = stored_rows if isinstance(stored_rows, list) else []
+        previous_rows = (
+            [row for row in stored_rows if isinstance(row, dict)]
+            if isinstance(stored_rows, list) else []
+        )
         by_account = {
             row["account"]: row
             for row in previous_rows
