@@ -8037,3 +8037,15 @@ Der Read nutzt jetzt denselben leeren Listen-Fallback wie die übrigen
 Leistenpfade. Regression deckt den Overflow bereits während der Widget-
 Initialisierung ab; `tests/test_panel_settings_list.py`: 79/79,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 697: Leisten-Listener-Registrierung blockiert Menü nicht
+
+`PanelSettingsList.__init__()` ließ Fehler aus `settings.listen()` ungefangen.
+Ein Backend-Problem beim Registrieren der Änderungslistener konnte damit den
+gesamten Einstellungsseitenaufbau abbrechen, obwohl Tabellen-Schema und
+gespeicherte Werte verwendbar waren.
+
+Die Listener-Registrierung ist jetzt fehlertolerant; das Panel bleibt ohne
+Live-Updates bedienbar. Regression deckt einen fehlgeschlagenen Listener-Write
+ab; `tests/test_panel_settings_list.py`: 80/80, Python-Compile und
+`git diff --check` sauber.

@@ -680,6 +680,27 @@ def test_panel_ignores_settings_read_overflow() -> None:
         panel.destroy()
 
 
+def test_panel_survives_settings_listener_registration_error() -> None:
+    class BrokenListenerSettings(_Settings):
+        def listen(self, key, callback):
+            raise OSError(key)
+
+    settings = BrokenListenerSettings(3)
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert len(panel.model) == 0
+    finally:
+        panel.destroy()
+
+
 def test_panel_uses_defaults_for_count_and_editor_read_overflow() -> None:
     class BrokenNumericSettings(_Settings):
         def get_value(self, key):
