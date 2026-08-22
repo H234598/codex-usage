@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from pathlib import Path
 
 import pytest
 
@@ -33,6 +34,13 @@ def test_history_store_rejects_invalid_path_type(path):
 def test_record_usage_samples_batch_rejects_invalid_path_before_empty_shortcut(path):
     with pytest.raises(ValueError, match="history path is invalid"):
         history_module.record_usage_samples_batch((), path=path)  # type: ignore[arg-type]
+
+
+def test_record_usage_samples_batch_rejects_relative_path_before_empty_shortcut():
+    with pytest.raises(ValueError, match="history path must be absolute"):
+        history_module.record_usage_samples_batch(
+            (), path=Path("relative-history.sqlite3")
+        )
 
 
 @pytest.mark.parametrize("method", ("samples", "samples_for_consumption"))

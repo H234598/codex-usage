@@ -29,6 +29,8 @@ def default_history_path() -> Path:
 def _validated_history_path(path: Path | None) -> Path | None:
     if path is not None and not isinstance(path, Path):
         raise ValueError("history path is invalid")
+    if path is not None and not path.is_absolute():
+        raise ValueError("history path must be absolute")
     return path
 
 

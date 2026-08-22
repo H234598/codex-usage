@@ -6991,3 +6991,16 @@ Fail-Closed-Prüfungen. Ein echter `AccountStatus.OK` bleibt gültig, ein
 gleichwertiger String wird verworfen. Regression testet genau diesen
 Boundary-Fall. `pytest -q tests/test_history.py`: 85/85. Ruff, Python-
 Kompilierung und `git diff --check` sauber.
+
+## Runde 611: Relative History-Pfade auch beim Empty-Shortcut ablehnen
+
+`record_usage_samples_batch()` validierte bisher nur den Pfadtyp. Bei leerem
+Usage-Batch kehrte die Funktion vor `HistoryStore._prepare_path()` zurück;
+`Path("relative-history.sqlite3")` lieferte dadurch fälschlich `0`, obwohl
+History-Datenbanken ausschließlich absolute Pfade akzeptieren.
+
+`_validated_history_path()` prüft jetzt zusätzlich `Path.is_absolute()`.
+Damit verhalten sich leere und nichtleere Aufrufe gleich und erzeugen keine
+unbeabsichtigte relative Pfadsemantik. Regression deckt den Empty-Shortcut
+ab. `pytest -q tests/test_history.py`: 86/86. Ruff, Python-Kompilierung und
+`git diff --check` sauber.
