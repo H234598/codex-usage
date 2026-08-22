@@ -495,31 +495,6 @@ geprüft werden statt per `deepStrictEqual`.
 Verifikation: 355/355 Node-Tests bestanden, JSON-/Applet-Check bestanden und
 `git diff --check` sauber.
 
-## Runde 606: Models-Malformed-Fuzz nach Serializer-Fix
-
-Nach dem Serializer-Fix wurden die Model-Eigenschaften und
-`AccountUsage.as_dict()` mit 2.000 zufällig typfremden Fenster-/Poolwerten
-ausgeführt. Zusätzlich wurden 5.000 zufällige `AccountUsage`-Objekte mit
-`json.dumps(..., allow_nan=False)` geprüft. Kein Lauf erzeugte eine
-unerwartete Exception oder nicht-JSON-sichere Ausgabe.
-
-Damit ist für diesen Modulbereich kein weiterer reproduzierbarer Fehler
-offen. Produktionslogik blieb unverändert; Regression bleibt durch die
-vorhandenen Model- und State-Tests abgedeckt.
-
-## Runde 607: `account manage` in Root-Hilfe ergänzen
-
-Der Parser registriert `codex-usage account manage`, die ausführliche
-Root-Hilfe listete den Befehl bisher nicht. Dadurch fehlte gerade die
-Account-Funktion zum Öffnen des isolierten Reaktivierungsbrowsers in der
-CLI-Dokumentation.
-
-Die Hilfe enthält jetzt die vollständige Syntax einschließlich Browserwahl
-und Ausgabeformat. Der bestehende Root-Hilfe-Test prüft die Zeile direkt;
-der Test fiel vor der Änderung erwartungsgemäß fehl und ist danach grün.
-`pytest -q tests/test_cli.py`: 117/117. Ruff, Python-Kompilierung und
-`git diff --check` sauber.
-
 ## Runde 39: Backend-Zustand und Pool-Reset-Merge
 
 Die direkten Tests decken jetzt auch Backend-Zuordnung, leere versus bereits
@@ -6948,4 +6923,43 @@ Der Serializer erkennt jetzt case-insensitive Duplikate, entfernt beide
 ambigen Einträge und behält nur eindeutige String-Keys. Regression prüft
 ambigen Spark-Key neben einem gültigen Pool. `pytest -q tests/test_models.py`:
 32/32; relevante State-Tests: 77/77. Ruff, Python-Kompilierung und
+`git diff --check` sauber.
+
+## Runde 606: Models-Malformed-Fuzz nach Serializer-Fix
+
+Nach dem Serializer-Fix wurden die Model-Eigenschaften und
+`AccountUsage.as_dict()` mit 2.000 zufällig typfremden Fenster-/Poolwerten
+ausgeführt. Zusätzlich wurden 5.000 zufällige `AccountUsage`-Objekte mit
+`json.dumps(..., allow_nan=False)` geprüft. Kein Lauf erzeugte eine
+unerwartete Exception oder nicht-JSON-sichere Ausgabe.
+
+Damit ist für diesen Modulbereich kein weiterer reproduzierbarer Fehler
+offen. Produktionslogik blieb unverändert; Regression bleibt durch die
+vorhandenen Model- und State-Tests abgedeckt.
+
+## Runde 607: `account manage` in Root-Hilfe ergänzen
+
+Der Parser registriert `codex-usage account manage`, die ausführliche
+Root-Hilfe listete den Befehl bisher nicht. Dadurch fehlte gerade die
+Account-Funktion zum Öffnen des isolierten Reaktivierungsbrowsers in der
+CLI-Dokumentation.
+
+Die Hilfe enthält jetzt die vollständige Syntax einschließlich Browserwahl
+und Ausgabeformat. Der bestehende Root-Hilfe-Test prüft die Zeile direkt;
+der Test fiel vor der Änderung erwartungsgemäß fehl und ist danach grün.
+`pytest -q tests/test_cli.py`: 117/117. Ruff, Python-Kompilierung und
+`git diff --check` sauber.
+
+## Runde 608: Root-Hilfe mit Parser-Optionen synchronisieren
+
+Der automatische Abgleich von `_build_parser()` mit `COMMAND_OVERVIEW`
+fand weitere sichtbare Optionen, die Nutzer bisher nicht in der
+Root-Hilfe sahen: Account-Tags/Auth-Löschung/Serien, `policy set-limits`,
+Historienfilter und JSON-Aliase, Consumption-Baselines/EMA/Pool/Pfad,
+Snapshot-Pfade sowie Profil-Serien und Migrationsmanifest.
+
+`COMMAND_OVERVIEW` enthält jetzt diese Syntax einschließlich des fehlenden
+`policy evaluate --format`. Der Root-Hilfe-Regressionstest prüft die neuen
+Einträge; Produktionshandler blieben unverändert. `pytest -q
+tests/test_cli.py`: 117/117. Ruff, Python-Kompilierung und
 `git diff --check` sauber.

@@ -139,8 +139,11 @@ Globale Optionen:
 Accounts:
   codex-usage account add ACCOUNT_ID [--label LABEL] [--profile-dir DIR]
                                    [--browser BROWSER] [--auth-json PATH]
+                                   [--tag TAG] [--clear-auth-json]
                                    [--test-home]
                                    [--reactivation-browser BROWSER]
+                                   [--series SERIES]
+                                   [--series-active|--no-series-active]
                                    [--backend direct|app-server] [--format table|json]
   codex-usage account backend ACCOUNT direct|app-server [--format table|json]
   codex-usage account overview [--format table|json] [--config-only]
@@ -168,10 +171,13 @@ Abruf und Ueberwachung:
 Routing und Credits:
   codex-usage policy evaluate [ACCOUNT|--auth-json PATH] --role ROLE
                               [--group ID] [--agent ID] [--job ID]
-                              [--max-age SEKUNDEN]
+                              [--max-age SEKUNDEN] [--format json]
   codex-usage policy set global allow|deny|inherit [--format json]
   codex-usage policy set account|group|agent|job allow|deny|inherit --id ID
                               [--format json]
+  codex-usage policy set-limits [--hourly N] [--weekly N] [--monthly N]
+                                [--scope global|account|group|agent|job] [--id ID]
+                                [--format json]
   codex-usage policy overview [--format json]
   codex-usage policy status [--role ROLE] [--max-age SEKUNDEN] [--format json]
   codex-usage spark-health --backend-account-id ID [--state healthy|failed]
@@ -188,21 +194,32 @@ Gespeicherte Werte und manuelle Aufnahme:
   codex-usage values [--account ACCOUNT]
 
 Historie und Limitverbrauch:
-  codex-usage history status [--path PATH] [--format table|json]
-  codex-usage history query --account ACCOUNT --window-seconds SECONDS
-                            [--path PATH] [--format table|json]
+  codex-usage history status [--path PATH] [--format table|json] [--json]
+  codex-usage history query --account ACCOUNT --pool POOL --window-seconds SECONDS
+                            [--since ISO] [--until ISO] [--path PATH]
+                            [--format table|json] [--json]
   codex-usage history prune [--before ISO|--days N] (--dry-run|--apply)
+                            [--path PATH] [--format table|json] [--json]
   codex-usage consumption --account ACCOUNT --amount N --unit minutes|hours|days|weeks
-                          [--limit-window short|weekly|monthly|spark|all] [--format table|json]
+                          [--baseline-minutes N] [--baseline-value-minutes N]
+                          [--smoothing none|ema-5|ema-10|ema-20|ema-40|
+                           ema-80|ema-160|ema-320|ema-640]
+                          [--pool POOL] [--limit-window short|weekly|monthly|spark|all]
+                          [--path PATH] [--now ISO] [--format table|json] [--json]
   codex-usage integration-snapshot --schema 1 --format json
+                                   [--current-dir DIR] [--cache-path PATH]
 
 Profile und Auth-Migration:
   codex-usage profile layout --account ACCOUNT [--format json]
   codex-usage profile migrate-auth (--dry-run|--apply [--search-root DIR])
-                                   | --rollback MANIFEST
+                                   | --rollback MANIFEST [--manifest PATH]
+                                   [--format table|json]
   codex-usage profile create --account-id ID --label LABEL --browser BROWSER
                              --backend BACKEND --profile-dir PATH
+                             [--tag TAG]
                              [--reactivation-browser BROWSER]
+                             [--series SERIES]
+                             [--series-active|--no-series-active]
                              [--expected-backend-account-id ID] [--json-events]
   codex-usage profile jobs [--account ACCOUNT] [--json]
   codex-usage profile job-status JOB_ID [--json]

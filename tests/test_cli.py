@@ -103,6 +103,9 @@ def test_root_help_lists_all_commands(capsys):
     assert "Beispiele:" in output
     assert "codex-usage account add ACCOUNT_ID" in output
     assert "--browser BROWSER" in output
+    assert "[--tag TAG] [--clear-auth-json]" in output
+    assert "[--series SERIES]" in output
+    assert "[--series-active|--no-series-active]" in output
     assert "codex-usage account list" not in output
     assert "codex-usage account overview" in output
     assert "--config-only" in output
@@ -124,7 +127,9 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage watch" in output
     assert "codex-usage watchdog" in output
     assert "codex-usage policy evaluate [ACCOUNT|--auth-json PATH]" in output
+    assert "[--max-age SEKUNDEN] [--format json]" in output
     assert "codex-usage policy set account|group|agent|job" in output
+    assert "codex-usage policy set-limits [--hourly N] [--weekly N] [--monthly N]" in output
     assert "codex-usage policy status" in output
     assert "codex-usage health" in output
     assert "--direct" in output
@@ -135,6 +140,19 @@ def test_root_help_lists_all_commands(capsys):
     assert "codex-usage ingest ACCOUNT" in output
     assert "codex-usage latest [--format table|json]" in output
     assert "codex-usage values [--account ACCOUNT]" in output
+    assert "[--baseline-minutes N] [--baseline-value-minutes N]" in output
+    assert "[--smoothing none|ema-5|ema-10|ema-20|ema-40|" in output
+    assert "ema-80|ema-160|ema-320|ema-640]" in output
+    assert "[--pool POOL] [--limit-window short|weekly|monthly|spark|all]" in output
+    assert "[--path PATH] [--now ISO] [--format table|json] [--json]" in output
+    assert "history query --account ACCOUNT --pool POOL --window-seconds SECONDS" in output
+    assert "[--since ISO] [--until ISO] [--path PATH]" in output
+    assert "history prune [--before ISO|--days N] (--dry-run|--apply)" in output
+    assert "[--current-dir DIR] [--cache-path PATH]" in output
+    assert "profile create" in output
+    assert output.count("[--tag TAG]") >= 2
+    assert output.count("[--series SERIES]") >= 2
+    assert output.count("[--series-active|--no-series-active]") >= 2
     assert "codex-usage bridge-snippet ACCOUNT" in output
     assert "codex-usage bridge-extension ACCOUNT" in output
     assert "codex-usage bridge-server" in output
