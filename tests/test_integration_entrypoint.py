@@ -440,6 +440,45 @@ def test_cost_window_loader_reads_history_from_data_root(tmp_path, monkeypatch):
     assert costs["alpha"][0].sample_count == 2
 
 
+def test_cost_window_loader_includes_monthly_and_stored_custom_windows(tmp_path):
+    from types import SimpleNamespace
+
+    from codex_usage.history import HistoryStore, UsageSample
+    from codex_usage.integration_entrypoint import _load_cost_windows
+
+    history_path = tmp_path / "usage-history.sqlite3"
+    with HistoryStore(history_path) as store:
+        store.record_many(
+            tuple(
+                UsageSample(
+                    account_id="alpha",
+                    pool="main",
+                    window_seconds=duration,
+                    captured_at=captured_at,
+                    used_percent=used_percent,
+                    source="test",
+                )
+                for duration in (2_592_000, 123_456)
+                for captured_at, used_percent in (
+                    (NOW - timedelta(minutes=30), 10),
+                    (NOW, 20),
+                )
+            )
+        )
+
+    costs = _load_cost_windows(
+        history_path,
+        (SimpleNamespace(account_id="alpha"),),
+        NOW,
+    )
+    by_duration = {
+        item.limit_window_seconds: item for item in costs["alpha"]
+    }
+    assert {18_000, 604_800, 2_592_000, 123_456} <= set(by_duration)
+    assert by_duration[2_592_000].consumed_percentage_points == 10
+    assert by_duration[123_456].consumed_percentage_points == 10
+
+
 def test_cost_window_loader_rejects_out_of_range_lookback(tmp_path):
     from types import SimpleNamespace
 

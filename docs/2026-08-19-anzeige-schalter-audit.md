@@ -5707,3 +5707,18 @@ Unbekannte Restprozente bleiben jetzt fail-closed; die Projektion aktiviert
 Dynamik nur bei belastbarem Restlimit. Regression deckt fehlendes `remaining`
 gegen ein bekanntes Limit ab. `node --test tests/applet_runtime.test.js`:
 416/416; `node --check` und `git diff --check` sauber.
+
+## Runde 481: Integrations-Snapshot liefert Monats- und Custom-Verbrauch
+
+`integration_entrypoint._load_cost_windows()` fragte für den Main-Pool bisher
+nur 5h und Woche ab. Monatswerte und gespeicherte frei konfigurierte
+Fensterdauern fehlten dadurch im Integrations-Snapshot, obwohl History, CLI,
+Snapshot-Vertrag und Applet diese Fenster bereits unterstützen.
+
+Der Producer nimmt jetzt 5h, Woche, 30 Tage und bis zu 64 distinct im
+begrenzten Zeitraum gespeicherte Main-Fenster. Doppelte Dauern werden entfernt
+und die bestehende Obergrenze vor der Snapshot-Erzeugung eingehalten.
+Regression prüft 30 Tage und ein Custom-Fenster. `pytest -q
+tests/test_integration_entrypoint.py tests/test_integration_snapshot.py
+tests/test_history.py tests/test_history_cli.py`: 170/170; Ruff,
+Python-Compile und `git diff --check` sauber.

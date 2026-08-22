@@ -8,7 +8,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .consumption import ConsumptionWindow, calculate_consumption
-from .history import CREDIT_HISTORY_WINDOW_SECONDS, HistoryStore
+from .history import (
+    CREDIT_HISTORY_WINDOW_SECONDS,
+    MAX_CONSUMPTION_WINDOWS,
+    HistoryStore,
+)
 from .integration_snapshot import (
     IntegrationSnapshotError,
     IntegrationUnavailable,
@@ -177,7 +181,23 @@ def _load_cost_windows(
     with HistoryStore(history_path) as store:
         for usage in usages:
             windows: list[ConsumptionWindow] = []
-            for duration in (18_000, 604_800):
+            stored_durations = store.consumption_window_seconds(
+                usage.account_id,
+                pool="main",
+                start=lookback_start,
+                end=now,
+            )
+            durations = tuple(
+                dict.fromkeys(
+                    (
+                        18_000,
+                        604_800,
+                        CREDIT_HISTORY_WINDOW_SECONDS,
+                        *stored_durations,
+                    )
+                )
+            )[:MAX_CONSUMPTION_WINDOWS]
+            for duration in durations:
                 samples = store.samples_for_consumption(
                     usage.account_id,
                     pool="main",
