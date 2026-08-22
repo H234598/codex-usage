@@ -4091,6 +4091,7 @@ test("invalidated credit balances are not rendered", () => {
     usage_resets: {available: 2, known: true, redeem_capability: true},
   };
 
+  assert.equal(applet._creditParts(null, "panel"), null);
   assert.equal(applet._creditParts(usage, "panel"), null);
   assert.equal(applet._panelValueForSource(usage, 9), null);
   assert.equal(applet._consumptionParts(usage, "panel"), null);

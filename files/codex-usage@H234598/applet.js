@@ -9381,7 +9381,8 @@ CodexUsageApplet.prototype = {
     },
 
     _creditParts: function(usage, surface, forceVisible, panelPrefix) {
-        let credit = usage && usage.credits;
+        if (!usage) return null;
+        let credit = usage.credits;
         let row = this._creditSettings && this._creditSettings[usage.account];
         if (usage.cache_invalidated === true || !credit || !row) return null;
         let creditText = function(value) {

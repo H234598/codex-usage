@@ -7377,3 +7377,13 @@ fail-closed sein.
 `_panelForecastPart` und `_panelDeltaPart` verweigern invalidierte Daten jetzt
 früh. Regression speist alte Werte in alle betroffenen Panelpfade ein.
 Fokus 116/116; `make applet-check`: 475/475 sauber.
+
+## Runde 641: Credit-Renderer akzeptiert keinen Null-Account
+
+`_creditParts(null, ...)` griff trotz vorhandener Teilprüfung direkt auf
+`usage.account` zu und warf bei einem fehlenden Usage-Objekt einen
+`TypeError`. Renderer-Grenzen sollen bei fehlenden Daten sicher leer bleiben.
+
+Der Credit-Renderer beendet sich jetzt bei fehlendem Usage-Objekt früh mit
+`null`. Regression ergänzt diesen direkten Nullpfad. Fokus 116/116;
+`make applet-check`: 475/475 sauber.
