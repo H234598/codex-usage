@@ -6724,3 +6724,23 @@ Nach dem zweiten Kill wartet der Cleanup-Pfad jetzt nochmals begrenzt auf
 dritten Reaping-Aufruf.
 
 Fokustest `pytest -q tests/test_dynamic_series_list.py tests/test_fast_mode_icon_selector.py tests/test_format_table_selector.py tests/test_forecast_table_selector.py tests/test_panel_settings_list.py`: 44/44. Python-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 594: Live-Smoke-Test des Einstellungsmenüs
+
+Die Meldung „Einstellungsmenü lässt sich nicht öffnen“ wurde am laufenden
+Cinnamon-Applet reproduziert. Der aktive Eintrag ist vorhanden; der reale
+Aufruf nutzt Instanz `14` und startet `xlet-settings applet
+codex-usage@H234598 -i 14`. Das Fenster erscheint und wird auf den Monitor des
+Applet-Panels maximiert. Direkter Start ohne Instanz-ID sowie alle acht
+Tab-IDs bleiben ebenfalls aktiv.
+
+Es gab dabei keinen reproduzierbaren Produktionsfehler und daher keine
+zusätzliche Codeänderung. Ursache des beobachteten Zustands war ein veralteter
+laufender Applet-Prozess bzw. ein nicht sichtbares Settings-Fenster; der
+Installer-Reload wurde erneut ausgeführt und mit Menüaktivierung über Looking
+Glass verifiziert.
+
+Fokustest `node --test --test-name-pattern='settings launcher|native Cinnamon
+configure action|settings maximization|settings placement|stale settings'
+tests/applet_runtime.test.js`: 9/9. Live-Smoke `xlet-settings`/Cinnamon:
+erfolgreich. `git diff --check` sauber.
