@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import errno
 import hashlib
 import importlib.util
 import json
@@ -2440,22 +2441,22 @@ def test_candidate_manifest_is_single_final_only_write_with_real_treehash(tmp_pa
     candidate_writes: list[dict[str, object]] = []
     rename_snapshots: list[dict[str, object]] = []
     original_write = integration_installer._write_exclusive
-    original_rename = integration_installer.os.rename
+    original_rename = integration_installer._rename_noreplace
 
     def capture_write(path, payload, **kwargs):
         if Path(path).name.startswith("candidate-"):
             candidate_writes.append(json.loads(payload))
         return original_write(path, payload, **kwargs)
 
-    def capture_rename(source, target, **kwargs):
-        if ".staging-" in str(source):
+    def capture_rename(source_name, target_name, parent_fd):
+        if ".staging-" in source_name:
             candidates = sorted(tmp_path.rglob("candidate-*.json"))
             assert len(candidates) == 1
             rename_snapshots.append(json.loads(candidates[0].read_text(encoding="utf-8")))
-        return original_rename(source, target, **kwargs)
+        return original_rename(source_name, target_name, parent_fd)
 
     monkeypatch.setattr(integration_installer, "_write_exclusive", capture_write)
-    monkeypatch.setattr(integration_installer.os, "rename", capture_rename)
+    monkeypatch.setattr(integration_installer, "_rename_noreplace", capture_rename)
     release, _, _ = _install(tmp_path)
 
     assert len(candidate_writes) == 1
@@ -2959,6 +2960,115 @@ def test_owned_directory_rename_rejects_parent_swap_before_rename(tmp_path, monk
     assert (old_parent / staging.name / "owned-marker").read_bytes() == b"owned"
 
 
+def test_rename_noreplace_preserves_existing_target(tmp_path):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "releases"
+    parent.mkdir(mode=0o700)
+    source = parent / "staging"
+    source.mkdir(mode=0o700)
+    (source / "owned-marker").write_bytes(b"owned")
+    target = parent / "final"
+    target.mkdir(mode=0o700)
+    (target / "foreign-marker").write_bytes(b"foreign")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    parent_fd = os.open(parent, flags)
+    try:
+        with pytest.raises(OSError) as error:
+            integration_installer._rename_noreplace("staging", "final", parent_fd)
+    finally:
+        os.close(parent_fd)
+
+    assert error.value.errno == errno.EEXIST
+    assert (source / "owned-marker").read_bytes() == b"owned"
+    assert (target / "foreign-marker").read_bytes() == b"foreign"
+
+
+def test_owned_directory_rename_does_not_overwrite_target_created_at_rename(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "releases"
+    parent.mkdir(mode=0o700)
+    source = parent / "staging"
+    source.mkdir(mode=0o700)
+    (source / "owned-marker").write_bytes(b"owned")
+    target = parent / "final"
+    parent_identity = integration_installer._directory_identity(parent)
+    source_identity = integration_installer._directory_identity(source)
+    original_rename = integration_installer._rename_noreplace
+    created = False
+
+    def create_target_then_rename(source_name, target_name, parent_fd):
+        nonlocal created
+        target.mkdir(mode=0o700)
+        (target / "foreign-marker").write_bytes(b"foreign")
+        created = True
+        return original_rename(source_name, target_name, parent_fd)
+
+    monkeypatch.setattr(
+        integration_installer, "_rename_noreplace", create_target_then_rename
+    )
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._rename_owned_directory(
+            source,
+            target,
+            parent_identity,
+            source_identity,
+        )
+
+    assert created
+    assert (source / "owned-marker").read_bytes() == b"owned"
+    assert (target / "foreign-marker").read_bytes() == b"foreign"
+
+
+def test_owned_directory_rename_rejects_replaced_source_before_rename(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "releases"
+    parent.mkdir(mode=0o700)
+    source = parent / "staging"
+    source.mkdir(mode=0o700)
+    (source / "owned-marker").write_bytes(b"owned")
+    target = parent / "final"
+    parent_identity = integration_installer._directory_identity(parent)
+    source_identity = integration_installer._directory_identity(source)
+    old_source = parent / "staging-old"
+    calls = 0
+    original_stat = os.stat
+
+    def replace_before_rename(name, *args, **kwargs):
+        nonlocal calls
+        if name == source.name and kwargs.get("dir_fd") is not None:
+            calls += 1
+            if calls == 2:
+                source.rename(old_source)
+                source.mkdir(mode=0o700)
+                (source / "foreign-marker").write_bytes(b"foreign")
+        return original_stat(name, *args, **kwargs)
+
+    monkeypatch.setattr(integration_installer.os, "stat", replace_before_rename)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._rename_owned_directory(
+            source,
+            target,
+            parent_identity,
+            source_identity,
+        )
+
+    assert calls == 2
+    assert (old_source / "owned-marker").read_bytes() == b"owned"
+    assert (source / "foreign-marker").read_bytes() == b"foreign"
+    assert not target.exists()
+
+
 def test_owned_directory_cleanup_rejects_parent_swap_before_rmtree(
     tmp_path, monkeypatch
 ):
@@ -3193,7 +3303,7 @@ def test_candidate_manifest_is_checked_before_rename(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 
     rename_calls: list[tuple[Path, Path]] = []
-    original_rename = integration_installer.os.rename
+    original_rename = integration_installer._rename_noreplace
     original_read_manifest = integration_installer._read_manifest
 
     def tamper_before_seam(candidate_path):
@@ -3202,12 +3312,12 @@ def test_candidate_manifest_is_checked_before_rename(tmp_path, monkeypatch):
         candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
         return original_read_manifest(candidate_path)
 
-    def capture_rename(source, target, **kwargs):
-        rename_calls.append((Path(source), Path(target)))
-        return original_rename(source, target, **kwargs)
+    def capture_rename(source_name, target_name, parent_fd):
+        rename_calls.append((Path(source_name), Path(target_name)))
+        return original_rename(source_name, target_name, parent_fd)
 
     monkeypatch.setattr(integration_installer, "_read_manifest", tamper_before_seam)
-    monkeypatch.setattr(integration_installer.os, "rename", capture_rename)
+    monkeypatch.setattr(integration_installer, "_rename_noreplace", capture_rename)
     with pytest.raises(integration_installer.IntegrationInstallError):
         _install(tmp_path)
     assert not rename_calls

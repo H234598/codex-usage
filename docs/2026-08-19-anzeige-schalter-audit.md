@@ -5793,3 +5793,15 @@ erneut verglichen; bei Dateien wird zusätzlich die Linkanzahl geprüft.
 Regression deckt ersetztes `candidate.json` ab. `pytest -q
 tests/test_integration_installer.py`: 137/137; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 526: Final-Release-Rename ohne Zielüberschreibung
+
+`_rename_owned_directory()` verwendete bisher `os.rename()`. Das ersetzt ein
+gleichnamiges Ziel, wenn es nach der Existenzprüfung, aber vor dem Rename
+angelegt wird. Zusätzlich fehlte eine letzte Source-Identitätsprüfung.
+
+Der Installer nutzt jetzt Linux `renameat2(RENAME_NOREPLACE)`, revalidiert den
+Source-Eintrag direkt davor und bricht bei fehlender Unterstützung fail-closed
+ab. Regressionen decken vorhandenes Ziel, Zielanlage am Rename-Seam und
+ersetzte Source ab. `pytest -q tests/test_integration_installer.py`: 140/140;
+Ruff, Python-Compile und `git diff --check` sauber.

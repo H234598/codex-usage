@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import base64
 import csv
+import ctypes
 import hashlib
 import io
 import json
@@ -422,6 +423,35 @@ def _remove_owned_entry(
             os.close(parent_fd)
 
 
+def _rename_noreplace(source_name: str, target_name: str, parent_fd: int) -> None:
+    if sys.platform != "linux":
+        _fail()
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except (AttributeError, OSError):
+        _fail()
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    if (
+        renameat2(
+            parent_fd,
+            os.fsencode(source_name),
+            parent_fd,
+            os.fsencode(target_name),
+            1,
+        )
+        != 0
+    ):
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
 def _rename_owned_directory(
     source: Path,
     target: Path,
@@ -471,12 +501,14 @@ def _rename_owned_directory(
             pass
         else:
             _fail()
-        os.rename(
-            source.name,
-            target.name,
-            src_dir_fd=parent_fd,
-            dst_dir_fd=parent_fd,
+        current_source = os.stat(
+            source.name, dir_fd=parent_fd, follow_symlinks=False
         )
+        if _provisional_from_stat(current_source) != _provisional_from_stat(
+            source_item
+        ):
+            _fail()
+        _rename_noreplace(source.name, target.name, parent_fd)
         final_item = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
         if (
             not stat.S_ISDIR(final_item.st_mode)
