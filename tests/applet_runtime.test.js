@@ -6467,6 +6467,34 @@ test("consumption display asks CLI for configured account query", () => {
   assert.equal(applet._usages[0].cost_windows[0].consumed_percentage_points, 3);
 });
 
+test("consumption response for a different pool is rejected", () => {
+  const applet = makeApplet();
+  applet._usages = [{ account: "alpha", cost_windows: [] }];
+  applet._consumptionQueue = [{
+    account: "alpha", amount: 1, unit: "hours",
+    baselineMinutes: null, baselineValueMinutes: null, smoothing: "none",
+    pool: "credits", limitWindow: "monthly", queryKey: "credits|1|hours|none|-",
+    generation: applet._consumptionGeneration,
+  }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._updatePanel = () => {};
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    account_id: "alpha",
+    windows: [{
+      lookback_seconds: 3600,
+      pool: "main",
+      limit_window_seconds: 2592000,
+      consumed_percentage_points: 3,
+      coverage: "complete",
+      sample_count: 8,
+    }],
+  }, null);
+
+  applet._drainConsumptionRequests();
+
+  assert.deepEqual(applet._usages[0].cost_windows, []);
+});
+
 test("usage reset payloads fail closed and distinguish unknown from zero", () => {
   const applet = makeApplet();
 

@@ -9030,3 +9030,19 @@ unterschiedliche Glättung ab und erhält den Legacy-Fallback.
 Verifikation: fokussierte Consumption-/Forecast-Tests:
 **40 bestanden**; Node-Syntaxcheck und `git diff --check` sauber. Keine
 Settings-Fenster gestartet.
+
+## Runde 768: Consumption-Antworten nicht in fremden Pool übernehmen
+
+`_drainConsumptionRequests()` prüfte bisher nur Account und Generation. Eine
+gültige Antwort mit fremdem `pool` wurde deshalb unter dem Query-Schlüssel der
+laufenden Anfrage gespeichert. Bei pool-only-Quellen konnte so ein Main-
+Fenster als Credits-/Spark-Ergebnis im Cache landen und spätere Darstellung
+oder Ersetzung beeinflussen.
+
+Die Antwort wird jetzt nach DTO-Validierung verworfen, sobald eines ihrer
+Fenster nicht exakt zum angefragten Pool gehört. Regression deckt eine
+Credits-Anfrage mit Main-Antwort ab; Serienpfade bleiben Legacy-Kompatibilität.
+
+Verifikation: fokussierte Consumption-/Forecast-Tests:
+**41 bestanden**; Node-Syntaxcheck und `git diff --check` sauber. Keine
+Settings-Fenster gestartet.

@@ -6067,6 +6067,11 @@ CodexUsageApplet.prototype = {
                     let usage = this._usageForAccount(request.account);
                     if (usage && usage.cache_invalidated !== true) {
                         let windows = this._safeConsumptionWindows(payload.windows);
+                        if (windows.some(function(window) {
+                            return window.pool !== request.pool;
+                        })) {
+                            throw new Error("consumption pool mismatch");
+                        }
                         windows.forEach(function(window) {
                             window._consumption_query_key = request.queryKey;
                         });
