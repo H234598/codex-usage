@@ -4484,6 +4484,12 @@ test("token end keeps its own baseline and compact duration is decimal hours", (
   assert.equal(applet._formatDurationPart(354, 0, true), "5,9h");
   assert.equal(applet._formatDurationPart(354, 0, false), "5h 54m");
   assert.equal(applet._formatDurationPart(150, 0), "2h 30m");
+
+  applet._consumptionSettings.alpha["forecast-hide-when-zero"] = true;
+  usage.cost_windows[0].estimated_seconds_to_exhaustion = 0;
+  const hiddenForecast = applet._consumptionParts(usage, "panel");
+  assert.ok(hiddenForecast);
+  assert.doesNotMatch(hiddenForecast.plain, /TE=/);
 });
 
 test("custom token-end format is preserved in visible markup", () => {

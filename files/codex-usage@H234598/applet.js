@@ -9429,6 +9429,7 @@ CodexUsageApplet.prototype = {
             "custom-format": row["forecast-custom-format"] || "",
             smoothing: row["forecast-smoothing"] || row.smoothing,
             "hide-when-zero": row["forecast-hide-when-zero"] === true,
+            "forecast-hide-when-zero": row["forecast-hide-when-zero"] === true,
             "show-coverage-marker": row["forecast-show-coverage-marker"] !== false,
             "baseline-enabled": row["forecast-baseline-enabled"] === true,
             "baseline-minutes": row["forecast-baseline-minutes"],

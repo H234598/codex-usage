@@ -8997,3 +8997,20 @@ Reset ab.
 Verifikation: fokussierte Tokendelta-/Pool-Tests: **4 bestanden**;
 Node-Syntaxcheck und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 766: Forecast-Nullausblendung auch im kombinierten Verbrauchspfad
+
+`_consumptionWindowPart()` erzeugte für den Tokenende-Anteil eine Forecast-
+Zeile mit dem generischen Feld `hide-when-zero`. `_forecastWindowPart()` prüft
+jedoch korrekt das Forecast-Feld `forecast-hide-when-zero`. Im kombinierten
+Verbrauchs-/Tokenende-Rendering wurde ein Schätzwert `0` deshalb trotz
+aktivierter Nullausblendung als `TE=0,0h` angezeigt.
+
+Die erzeugte Forecast-Zeile trägt jetzt zusätzlich das erwartete
+`forecast-hide-when-zero`-Feld. Der Verbrauchs-Haken bleibt davon getrennt;
+die Regression prüft, dass nur TE verschwindet, Delta und AW aber sichtbar
+bleiben.
+
+Verifikation: fokussierte Consumption-/Forecast-Tests in
+`tests/applet_runtime.test.js`: **39 bestanden**; Node-Syntaxcheck und
+`git diff --check` sauber. Keine Settings-Fenster gestartet.
