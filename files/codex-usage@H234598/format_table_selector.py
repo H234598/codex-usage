@@ -70,6 +70,12 @@ class _BoundFormatList(List, JSONSettingsBackend):
                     row_info.append(column["default"])
                 else:
                     row_info.append(None)
+                options = column.get("options")
+                if isinstance(options, dict) and row_info[-1] not in options.values():
+                    row_info = None
+                    break
+            if row_info is None:
+                continue
             try:
                 self.model.append(row_info)
             except (OverflowError, TypeError, ValueError):

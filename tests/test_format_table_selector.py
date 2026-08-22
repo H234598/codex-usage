@@ -299,3 +299,32 @@ def test_format_table_ignores_integer_overflow_in_persisted_row() -> None:
         assert len(selector._tables["table-a"].model) == 0
     finally:
         selector.destroy()
+
+
+def test_format_table_ignores_unknown_option_values() -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [
+        {"id": "name", "title": "Name", "type": "string"},
+        {
+            "id": "mode",
+            "title": "Mode",
+            "type": "integer",
+            "options": {"Immer": 0, "Aus": 3},
+        },
+    ]
+    settings.settings["table-a"]["value"] = [
+        {"name": "ok", "mode": 0},
+        {"name": "bad", "mode": 99},
+    ]
+
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert len(selector._tables["table-a"].model) == 1
+        assert list(selector._tables["table-a"].model[0]) == ["ok", 0]
+    finally:
+        selector.destroy()

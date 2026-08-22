@@ -6121,50 +6121,6 @@ Spalten in derselben Reihenfolge wie der Selector zusammen. Regression prüft
 `Formatierungsmodus` und `Dynamisch`; `pytest -q tests/test_help_page.py`: 6/6.
 Python-Kompilierung und `git diff --check` sauber.
 
-## Runde 660: `list_changed()` verlor Hidden-Slots nach beschädigten Zeilen
-
-Beim Speichern sichtbarer Leistenänderungen verwendete `list_changed()` die
-gesamte gespeicherte Liste für den Positions-Fallback. Stand eine beschädigte
-Nicht-Dictionary-Zeile vor einer gültigen Zeile, wurde beim Umbenennen des
-sichtbaren Accounts kein passender Vorgänger gefunden und der Fallback traf auf
-die beschädigte Zeile. Versteckte `slotN`-Werte der gültigen Zeile verschwanden.
-
-Der Positions-Fallback arbeitet jetzt nur noch mit gespeicherten Dictionary-
-Zeilen. Damit bleiben Hidden-Slots auch bei beschädigten Fremdzeilen erhalten;
-der Account-Match bleibt vorrangig. Regression setzt eine beschädigte Zeile vor
-eine gültige Zeile, benennt den sichtbaren Account um und prüft `slot3`.
-`tests/test_panel_settings_list.py`: 19/19; Python-Kompilierung und
-`git diff --check` sauber.
-
-## Runde 661: `list_changed()` verlor Hidden-Slots vor beschädigten Zeilen
-
-Der vorherige Rebuild-Schutz behielt Dictionary-Zeilen, aber `list_changed()`
-verwendete für seinen Positions-Fallback weiterhin die rohe gespeicherte Liste.
-Stand eine beschädigte Nicht-Dictionary-Zeile vor einer gültigen Zeile und wurde
-deren sichtbarer Account umbenannt, wurde kein Account-Match gefunden. Der
-Fallback traf auf die beschädigte Position; versteckte `slotN`-Werte gingen
-erneut verloren.
-
-`list_changed()` filtert seine Vorgängerliste jetzt vor Account-Mapping und
-Positions-Fallback auf Dictionaries. Regression prüft beschädigte Zeile,
-Account-Umbenennung und Erhalt von `slot3`. `tests/test_panel_settings_list.py`:
-19/19; Python-Kompilierung und `git diff --check` sauber.
-
-## Runde 659: Leisten-Rebuild verlor Hidden-Slots bei gemischten Zeilen
-
-Beim Ändern der Anzahl der Leistenfelder prüfte `_on_count_changed()` bisher,
-ob alle gespeicherten Zeilen Dictionaries sind. Eine einzelne beschädigte
-Zeile zwang dadurch den Fallback auf das aktuell sichtbare GTK-Modell. Dieses
-Modell enthält absichtlich keine vorübergehend ausgeblendeten `slotN`-Felder;
-deren Werte gingen beim Rebuild verloren.
-
-Der Rebuild übernimmt jetzt alle gültigen gespeicherten Dictionary-Zeilen und
-ignoriert nur nicht-dictionary Zeilen. Der sichtbare Modell-Fallback bleibt für
-leere oder vollständig unbrauchbare Listen erhalten. Regression mit gültiger
-Zeile, verborgenem `slot3` und zusätzlicher beschädigter Zeile prüft, dass der
-Hidden-Slot nach Count-Wechsel erhalten bleibt. `tests/test_panel_settings_list.py`:
-18/18; Python-Kompilierung und `git diff --check` sauber.
-
 ## Runde 551: Native Cinnamon-Einstellungen mit Applet-Launcher verbinden
 
 Cinnamon nutzt im Rechtsklick-Kontextmenü den virtuellen `configureApplet()`-
@@ -7673,3 +7629,46 @@ Zuordnung, damit auch direkte Modelländerungen keinen alten Text übernehmen.
 Regression deckt unbekannten Wert `99`, Rebuild und Renderer-Reuse ab.
 `tests/test_panel_settings_list.py`: 17/17; `tests/test_help_page.py`: 9/9;
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 659: Leisten-Rebuild verlor Hidden-Slots bei gemischten Zeilen
+
+Beim Ändern der Anzahl der Leistenfelder prüfte `_on_count_changed()` bisher,
+ob alle gespeicherten Zeilen Dictionaries sind. Eine einzelne beschädigte
+Zeile zwang dadurch den Fallback auf das aktuell sichtbare GTK-Modell. Dieses
+Modell enthält absichtlich keine vorübergehend ausgeblendeten `slotN`-Felder;
+deren Werte gingen beim Rebuild verloren.
+
+Der Rebuild übernimmt jetzt alle gültigen gespeicherten Dictionary-Zeilen und
+ignoriert nur nicht-dictionary Zeilen. Der sichtbare Modell-Fallback bleibt für
+leere oder vollständig unbrauchbare Listen erhalten. Regression mit gültiger
+Zeile, verborgenem `slot3` und zusätzlicher beschädigter Zeile prüft, dass der
+Hidden-Slot nach Count-Wechsel erhalten bleibt. `tests/test_panel_settings_list.py`:
+18/18; Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 660: `list_changed()` behält Hidden-Slots trotz beschädigter Zeilen
+
+Beim Speichern sichtbarer Leistenänderungen verwendete `list_changed()` die
+gesamte gespeicherte Liste für den Positions-Fallback. Stand eine beschädigte
+Nicht-Dictionary-Zeile vor einer gültigen Zeile, wurde beim Umbenennen des
+sichtbaren Accounts kein passender Vorgänger gefunden und der Fallback traf auf
+die beschädigte Zeile. Versteckte `slotN`-Werte der gültigen Zeile verschwanden.
+
+Der Positions-Fallback arbeitet jetzt nur noch mit gespeicherten Dictionary-
+Zeilen. Damit bleiben Hidden-Slots auch bei beschädigten Fremdzeilen erhalten;
+der Account-Match bleibt vorrangig. Regression setzt eine beschädigte Zeile vor
+eine gültige Zeile, benennt den sichtbaren Account um und prüft `slot3`.
+`tests/test_panel_settings_list.py`: 19/19; Python-Kompilierung und
+`git diff --check` sauber.
+
+## Runde 661: Formatierungstabelle zeigte bei unbekannter Option alten Text
+
+`_BoundFormatList.on_setting_changed()` übernahm gespeicherte Optionswerte
+ohne Prüfung. GTK verwendet Renderer zwischen Zeilen wieder; ein unbekannter
+Wert wie `mode=99` setzte daher kein neues Label und zeigte weiterhin das Label
+der vorherigen Zeile, reproduzierbar `Immer`.
+
+Der Formatierungslisten-Loader verwirft jetzt Zeilen mit Optionswerten, die im
+Schema nicht definiert sind. Damit bleibt die Tabelle fail-closed und kann
+keinen falschen Formatierungsmodus anzeigen. Regression prüft gültige Zeile
+plus `mode=99`; `tests/test_format_table_selector.py`: 13/13. Python-
+Kompilierung und `git diff --check` sauber.
