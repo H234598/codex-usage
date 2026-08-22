@@ -5536,3 +5536,15 @@ Regression reproduzierte zuerst den Validierungsfehler und den fehlenden
 CLI-Schalter. Danach: `pytest -q tests/test_config.py -k
 clear_existing_series` 1/1 und `node --test tests/applet_runtime.test.js`:
 409/409 bestanden.
+
+## Runde 467: Kürzel im Konto-Editor tatsächlich löschbar
+
+Das gleiche Editor-Muster verhinderte das Leeren eines bestehenden Kürzels:
+Ein explizit leerer Tabellenwert wurde vor dem CLI-Aufruf durch das kanonische
+Kürzel ersetzt. Die Synchronisierung unterscheidet jetzt fehlendes Feld
+(Legacy-Kompatibilität) von explizit leerem Feld; beim Speichern wird `--tag ""`
+übertragen und entfernt das Kürzel.
+
+Regression deckt Synchronisierungszeile und CLI-Argument ab. `node --test
+tests/applet_runtime.test.js`: 411/411 bestanden; `node --check` und
+`git diff --check` sauber.

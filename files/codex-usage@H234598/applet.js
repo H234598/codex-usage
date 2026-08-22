@@ -4453,8 +4453,10 @@ CodexUsageApplet.prototype = {
         if (changed.label) {
             argv.push("--label", changed.label);
         }
-        if (changed.tag || (canonical && canonical.tag)) {
-            argv.push("--tag", changed.tag || "");
+        if (Object.prototype.hasOwnProperty.call(changed, "tag")) {
+            argv.push("--tag", changed.tag);
+        } else if (canonical && canonical.tag) {
+            argv.push("--tag", canonical.tag);
         }
         if (profileDir) {
             argv.push("--profile-dir", profileDir);
@@ -4711,7 +4713,7 @@ CodexUsageApplet.prototype = {
                 : this._safeText(row.label, 120);
             let canonicalTag = canonical && typeof canonical.tag === "string"
                 ? canonical.tag : "";
-            let tag = row.tag === undefined || (row.tag === "" && canonicalTag)
+            let tag = row.tag === undefined
                 ? canonicalTag
                 : this._strictText(row.tag, 8);
             let authJson = row["auth-json"] === undefined
@@ -4767,7 +4769,8 @@ CodexUsageApplet.prototype = {
             desiredRows.push({
                 account: account,
                 label: label,
-                ...((tag || (canonical && canonical.tag)) ? { tag: tag } : {}),
+                ...((Object.prototype.hasOwnProperty.call(row, "tag") ||
+                    (canonical && canonical.tag)) ? { tag: tag } : {}),
                 "auth-json": authJson,
                 "profile-dir": profileDir,
                 "test-home": testHome,

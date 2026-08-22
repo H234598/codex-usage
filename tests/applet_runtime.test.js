@@ -1567,6 +1567,71 @@ test("account add passes an empty series to clear an existing assignment", () =>
   ]);
 });
 
+test("account editor preserves an explicit empty tag instead of canonical tag", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._backendAccounts.alpha.tag = "A";
+  const changes = [];
+  applet._reconcileAccountChanges = (rows) => changes.push(rows);
+  applet.accountBackends = [{
+    account: "alpha",
+    label: "Alpha",
+    tag: "",
+    "auth-json": "",
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
+    backend: 0,
+  }];
+
+  applet._onAccountBackendsChanged();
+
+  assert.equal(Object.prototype.hasOwnProperty.call(changes[0][0], "tag"), true);
+  assert.equal(changes[0][0].tag, "");
+});
+
+test("account add passes an empty tag to clear an existing tag", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  applet._backendAccounts = {
+    alpha: {
+      account: "alpha",
+      label: "Alpha",
+      tag: "A",
+      "auth-json": null,
+      "profile-dir": "/tmp/alpha",
+      browser: 0,
+      "reactivation-browser": 0,
+      series: "",
+      "series-active": false,
+      backend: 0,
+    },
+  };
+  applet._accountChangeQueue = [{
+    account: "alpha",
+    label: "Alpha",
+    tag: "",
+    "auth-json": null,
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
+    backend: 0,
+  }];
+  applet._loadAccountBackends = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    callback({ok: true, account: {id: "alpha"}}, null);
+  };
+
+  applet._drainAccountChanges();
+
+  const tagIndex = calls[0].indexOf("--tag");
+  assert.deepEqual(calls[0].slice(tagIndex, tagIndex + 2), ["--tag", ""]);
+});
+
 test("new account starts persistent profile job after account config", () => {
   const applet = makeAccountSettingsApplet();
   const calls = [];
