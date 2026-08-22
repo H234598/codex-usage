@@ -552,6 +552,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
             stored_rows = self.get_value()
         except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
             # Do not overwrite hidden rows when their source cannot be read.
+            self.update_button_sensitivity()
             return
         previous_rows = (
             [
@@ -594,8 +595,53 @@ class PanelSettingsList(List, JSONSettingsBackend):
             # JSONSettingsBackend leaves this flag set when a backend write
             # fails; reset it so later external updates are not ignored.
             self._saving = False
+            self.update_button_sensitivity()
             return
         self.update_button_sensitivity()
+
+    def remove_item(self, *args):
+        model, tree_iter = self.content_widget.get_selection().get_selected()
+        if tree_iter is None:
+            self.update_button_sensitivity()
+            return
+        try:
+            model.remove(tree_iter)
+        except Exception:
+            self.update_button_sensitivity()
+            return
+        self.list_changed()
+
+    def move_item_up(self, *args):
+        model, tree_iter = self.content_widget.get_selection().get_selected()
+        if tree_iter is None:
+            self.update_button_sensitivity()
+            return
+        previous = model.iter_previous(tree_iter)
+        if previous is None:
+            self.update_button_sensitivity()
+            return
+        try:
+            model.swap(tree_iter, previous)
+        except Exception:
+            self.update_button_sensitivity()
+            return
+        self.list_changed()
+
+    def move_item_down(self, *args):
+        model, tree_iter = self.content_widget.get_selection().get_selected()
+        if tree_iter is None:
+            self.update_button_sensitivity()
+            return
+        following = model.iter_next(tree_iter)
+        if following is None:
+            self.update_button_sensitivity()
+            return
+        try:
+            model.swap(tree_iter, following)
+        except Exception:
+            self.update_button_sensitivity()
+            return
+        self.list_changed()
 
     def _rebuild_tree(
         self,

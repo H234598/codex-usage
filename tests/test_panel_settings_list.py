@@ -590,6 +590,54 @@ def test_panel_edit_item_restores_row_after_invalid_widget_value() -> None:
         panel.destroy()
 
 
+def test_panel_row_actions_ignore_missing_selection() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.remove_item()
+        panel.move_item_up()
+        panel.move_item_down()
+        assert len(panel.model) == 0
+    finally:
+        panel.destroy()
+
+
+def test_panel_row_actions_move_and_remove_selected() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.model.append(["alpha", 0])
+        panel.model.append(["beta", 0])
+        selection = panel.content_widget.get_selection()
+        selection.select_path("0")
+        panel.move_item_down()
+        assert [row[0] for row in panel.model] == ["beta", "alpha"]
+        selection.select_path("0")
+        panel.remove_item()
+        assert [row[0] for row in panel.model] == ["alpha"]
+        assert settings.values["account-panel-settings"][0]["account"] == "alpha"
+    finally:
+        panel.destroy()
+
+
 def test_panel_edit_callbacks_skip_write_on_settings_read_error() -> None:
     class BrokenRowsSettings(_Settings):
         def get_value(self, key):

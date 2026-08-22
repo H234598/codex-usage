@@ -8164,3 +8164,14 @@ Dialogzerstörung liegt jetzt in einem `finally`-Block; auch ein Fehler beim
 Zerstören selbst wird nicht weitergereicht. Regression erzwingt einen Fehler
 aus `run()` und prüft die Zerstörung; `tests/test_panel_settings_list.py`:
 87/87, Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 709: Leisten-Zeilenaktionen behandeln fehlende Auswahl
+
+Die geerbten Remove-/Move-Callbacks riefen GTK mit `None` auf, wenn keine
+Zeile selektiert war. Das passierte reproduzierbar trotz deaktivierter Buttons
+bei stale Selection-Zustand und endete in `TypeError`/`AttributeError`.
+
+Panel überschreibt die drei Aktionen jetzt mit Auswahl-/Grenzprüfungen und
+aktualisiert Button-Sensitivität nach jedem Abbruch. Regression deckt leere
+Auswahl sowie Move/Remove einer echten Auswahl ab; `tests/test_panel_settings_list.py`:
+89/89, Python-Compile, Ruff und `git diff --check` sauber.
