@@ -8073,3 +8073,13 @@ Alle vorhandenen und neu erzeugten Slotspalten werden bei der Normalisierung
 jetzt als Integer mit deaktiviertem Standardwert angelegt. Regression prüft
 einen falsch typisierten Legacy-Slot; `tests/test_panel_settings_list.py`:
 81/81, Python-Compile und `git diff --check` sauber.
+
+## Runde 700: Leisten-Stringoptionen verwerfen NUL-Werte
+
+ComboBox-Labels wurden bereits auf eingebettete NUL-Zeichen geprüft, die
+zugehörigen Stringwerte aber nicht. Ein solcher Wert konnte beim Erzeugen des
+GTK-Optionenmodells den Dialogaufbau abbrechen.
+
+Stringoptionen akzeptieren jetzt nur noch NUL-freie Werte. Regression deckt
+den echten Schemafilterpfad ab; `tests/test_panel_settings_list.py`: 82/82,
+Python-Compile und `git diff --check` sauber.

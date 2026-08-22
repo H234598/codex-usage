@@ -159,7 +159,7 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
                     valid_options = False
                     break
                 if option_type is str:
-                    value_valid = isinstance(value, str)
+                    value_valid = isinstance(value, str) and "\x00" not in value
                 elif option_type is int:
                     value_valid = (
                         isinstance(value, int)
