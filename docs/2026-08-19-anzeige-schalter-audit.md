@@ -7928,6 +7928,16 @@ Beide Reads verwenden jetzt ihre sicheren Defaults auch bei Overflow.
 Regression prüft beide Pfade; `tests/test_panel_settings_list.py`: 56/56,
 Python-Compile und `git diff --check` sauber.
 
+## Runde 687: Leisten-Slot-IDs bleiben kanonisch
+
+`slot01` und `slot001` wurden neben `slot1` akzeptiert. Dadurch konnten
+semantisch doppelte Wert-Spalten entstehen und beim Speichern unterschiedliche
+Schlüssel für denselben Slot erzeugen.
+
+Slot-IDs mit führenden Nullen werden jetzt verworfen. Der bestehende Schema-
+Regressionstest deckt den Fall ab; `tests/test_panel_settings_list.py`: 56/56,
+Python-Compile und `git diff --check` sauber.
+
 ## Runde 688: Leisten-Spalten verwerfen NUL-Metadaten
 
 Spalten-ID und Titel konnten eingebettete NUL-Zeichen enthalten. Solche Werte
@@ -7949,12 +7959,13 @@ ungültige ComboBox-Spalten werden entfernt. Regression deckt vier falsche
 Formen im echten Dialogpfad ab; `tests/test_panel_settings_list.py`: 62/62,
 Python-Compile und `git diff --check` sauber.
 
-## Runde 687: Leisten-Slot-IDs bleiben kanonisch
+## Runde 690: Leisten-Integer-Optionen bleiben im GTK-Bereich
 
-`slot01` und `slot001` wurden neben `slot1` akzeptiert. Dadurch konnten
-semantisch doppelte Wert-Spalten entstehen und beim Speichern unterschiedliche
-Schlüssel für denselben Slot erzeugen.
+`Gtk.ListStore(int)` akzeptiert nur signed-32-bit-Werte. ComboBox-Optionen
+außerhalb dieses Bereichs wurden bislang erst beim Dialogaufbau erkannt und
+warfen dort `OverflowError`.
 
-Slot-IDs mit führenden Nullen werden jetzt verworfen. Der bestehende Schema-
-Regressionstest deckt den Fall ab; `tests/test_panel_settings_list.py`: 56/56,
-Python-Compile und `git diff --check` sauber.
+Integer-Optionen werden jetzt auf `-2**31` bis `2**31-1` geprüft. Regression
+deckt beide Grenzverletzungen im echten Dialogpfad ab;
+`tests/test_panel_settings_list.py`: 64/64, Python-Compile und
+`git diff --check` sauber.

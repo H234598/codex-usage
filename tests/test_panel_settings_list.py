@@ -357,6 +357,8 @@ def test_panel_ignores_invalid_column_alignment(align) -> None:
         {"id": "bad", "title": "Bad", "type": "string", "options": {"A": 1}},
         {"id": "bad", "title": "Bad", "type": "float", "options": {"A": "1"}},
         {"id": "bad", "title": "Bad", "type": "integer", "options": [1, 2]},
+        {"id": "bad", "title": "Bad", "type": "integer", "options": {"A": 2**31}},
+        {"id": "bad", "title": "Bad", "type": "integer", "options": {"A": -(2**31) - 1}},
         {"id": "bad", "title": "Bad", "type": "string", "options": {1: "A"}},
     ],
 )

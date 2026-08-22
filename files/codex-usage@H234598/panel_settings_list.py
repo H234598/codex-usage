@@ -161,7 +161,11 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
                 if option_type is str:
                     value_valid = isinstance(value, str)
                 elif option_type is int:
-                    value_valid = isinstance(value, int) and not isinstance(value, bool)
+                    value_valid = (
+                        isinstance(value, int)
+                        and not isinstance(value, bool)
+                        and -(2**31) <= value <= 2**31 - 1
+                    )
                 elif option_type is bool:
                     value_valid = isinstance(value, bool)
                 else:
