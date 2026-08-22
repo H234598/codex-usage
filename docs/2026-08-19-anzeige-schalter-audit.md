@@ -7938,6 +7938,17 @@ Der Schemafilter verwirft NUL-verunreinigte IDs und Titel. Regression deckt
 beide Felder ab; `tests/test_panel_settings_list.py`: 58/58, Python-Compile und
 `git diff --check` sauber.
 
+## Runde 689: Leisten-ComboBoxen validieren Options-Typen
+
+`list_edit_factory()` übergibt Optionswerte ungeprüft an `Gtk.ListStore`.
+Falsche Dict-Werte oder numerische Listenwerte konnten den Editordialog mit
+`TypeError` abbrechen lassen.
+
+`panel_columns()` prüft jetzt Labels und Werte gegen den deklarierten GTK-Typ;
+ungültige ComboBox-Spalten werden entfernt. Regression deckt vier falsche
+Formen im echten Dialogpfad ab; `tests/test_panel_settings_list.py`: 62/62,
+Python-Compile und `git diff --check` sauber.
+
 ## Runde 687: Leisten-Slot-IDs bleiben kanonisch
 
 `slot01` und `slot001` wurden neben `slot1` akzeptiert. Dadurch konnten

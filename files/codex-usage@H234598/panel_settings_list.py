@@ -145,6 +145,39 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             continue
         if "options" in column and not isinstance(column["options"], (dict, list, tuple)):
             continue
+        if "options" in column:
+            options = column["options"]
+            option_pairs = (
+                options.items()
+                if isinstance(options, dict)
+                else ((value, value) for value in options)
+            )
+            option_type = VARIABLE_TYPE_MAP[column["type"]]
+            valid_options = True
+            for label, value in option_pairs:
+                if not isinstance(label, str) or "\x00" in label:
+                    valid_options = False
+                    break
+                if option_type is str:
+                    value_valid = isinstance(value, str)
+                elif option_type is int:
+                    value_valid = isinstance(value, int) and not isinstance(value, bool)
+                elif option_type is bool:
+                    value_valid = isinstance(value, bool)
+                else:
+                    try:
+                        value_valid = (
+                            isinstance(value, (int, float))
+                            and not isinstance(value, bool)
+                            and math.isfinite(value)
+                        )
+                    except (OverflowError, TypeError):
+                        value_valid = False
+                if not value_valid:
+                    valid_options = False
+                    break
+            if not valid_options:
+                continue
         if "align" in column:
             align = column["align"]
             try:

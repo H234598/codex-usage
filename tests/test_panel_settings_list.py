@@ -351,6 +351,32 @@ def test_panel_ignores_invalid_column_alignment(align) -> None:
     panel.destroy()
 
 
+@pytest.mark.parametrize(
+    "column",
+    [
+        {"id": "bad", "title": "Bad", "type": "string", "options": {"A": 1}},
+        {"id": "bad", "title": "Bad", "type": "float", "options": {"A": "1"}},
+        {"id": "bad", "title": "Bad", "type": "integer", "options": [1, 2]},
+        {"id": "bad", "title": "Bad", "type": "string", "options": {1: "A"}},
+    ],
+)
+def test_panel_editor_drops_malformed_combo_options(monkeypatch, column) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {"columns": [column], "show-buttons": False},
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert all(item["id"] != "bad" for item in panel.columns)
+        assert panel.open_add_edit_dialog([None] * len(panel.columns)) is None
+    finally:
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(
