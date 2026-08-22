@@ -6698,3 +6698,16 @@ Beide Selector-Klassen entfernen beim `destroy()` jetzt ihren eigenen
 nach dem Zerstören; damit ist der relevante Cinnamon-Heap-Pfad gebunden.
 
 Fokustest `pytest -q tests/test_format_table_selector.py tests/test_forecast_table_selector.py`: 14/14. Python-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 592: Fast-Mode-Icon-Listener freigeben
+
+`FastModeIconSelector` bindet den Wert `fast-mode-icon` über
+`JSONSettingsBackend.attach()`, hatte aber keinen eigenen `destroy()`-Pfad.
+Beim wiederholten Öffnen der Einstellungen blieb der Callback deshalb im
+gemeinsamen JSON-Settings-Handler und hielt das alte GTK-Widget fest.
+
+Der Selector entfernt seinen Listener jetzt beim Zerstören. Regression baut
+den echten GTK-Selector mit leerer Icon-Liste, prüft Listener-Anmeldung und
+bestätigt die vollständige Abmeldung nach `destroy()`.
+
+Fokustest `pytest -q tests/test_fast_mode_icon_selector.py tests/test_format_table_selector.py tests/test_forecast_table_selector.py tests/test_panel_settings_list.py`: 30/30. Python-Syntaxcheck und `git diff --check` sauber.

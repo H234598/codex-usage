@@ -93,6 +93,16 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
     def connect_widget_handlers(self, *_args):
         pass
 
+    def _detach_settings_listener(self):
+        listeners = getattr(self.settings, "listeners", None)
+        if not isinstance(listeners, dict):
+            return
+        callbacks = listeners.get(self.key)
+        if not isinstance(callbacks, list):
+            return
+        callback = self._settings_changed_callback
+        callbacks[:] = [registered for registered in callbacks if registered != callback]
+
     def set_widget_value(self, value):
         if value not in self._values:
             value = self._values[0] if self._values else ""
@@ -105,3 +115,7 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
         if iterator is None:
             return ""
         return self.store.get_value(iterator, 2)
+
+    def destroy(self):
+        self._detach_settings_listener()
+        return super().destroy()

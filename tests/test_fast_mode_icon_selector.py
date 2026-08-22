@@ -12,6 +12,21 @@ sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 from fast_mode_icon_selector import FastModeIconSelector, _load_icon  # noqa: E402
 
 
+class _Settings:
+    def __init__(self):
+        self.values = {"fast-mode-icon": ""}
+        self.listeners = {}
+
+    def has_property(self, _key, _property):
+        return False
+
+    def listen(self, key, callback):
+        self.listeners.setdefault(key, []).append(callback)
+
+    def get_value(self, key):
+        return self.values[key]
+
+
 class _Combo:
     def __init__(self, active: int = -1):
         self.active = active
@@ -114,3 +129,13 @@ def test_icon_loader_ignores_corrupt_svg(tmp_path: Path) -> None:
     path.write_text("not an svg", encoding="utf-8")
 
     assert _load_icon(path) is None
+
+
+def test_destroy_detaches_settings_listener() -> None:
+    settings = _Settings()
+    selector = FastModeIconSelector({"options": {}}, "fast-mode-icon", settings)
+
+    assert len(settings.listeners["fast-mode-icon"]) == 1
+    selector.destroy()
+
+    assert settings.listeners["fast-mode-icon"] == []
