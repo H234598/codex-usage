@@ -1663,16 +1663,21 @@ def _block_state(usage: AccountUsage, *, now: datetime) -> tuple[datetime | None
         return None, f"usage limit reached: {names}; reset time unknown"
     if not saturated_windows:
         return None, None
-    blocked_until, _window_name = max(saturated_windows, key=lambda item: item[0])
-    active_names = ", ".join(
-        name for reset_at, name in saturated_windows if reset_at == blocked_until
-    )
+    try:
+        blocked_until, _window_name = max(saturated_windows, key=lambda item: item[0])
+        active_names = ", ".join(
+            name for reset_at, name in saturated_windows if reset_at == blocked_until
+        )
+        release_at = blocked_until.isoformat()
+        if blocked_until <= now:
+            return None, None
+    except Exception:
+        names = ", ".join(name for _reset_at, name in saturated_windows)
+        return None, f"usage limit reached: {names or 'unknown'}; reset time unknown"
     if active_names:
-        reason = f"usage limit reached: {active_names}; release at {blocked_until.isoformat()}"
+        reason = f"usage limit reached: {active_names}; release at {release_at}"
     else:
-        reason = f"usage limit reached; release at {blocked_until.isoformat()}"
-    if blocked_until <= now:
-        return None, None
+        reason = f"usage limit reached; release at {release_at}"
     return blocked_until, reason
 
 

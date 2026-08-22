@@ -3454,6 +3454,21 @@ reproduzierbarer Fehler gefunden.
 `pytest -q tests/test_health.py`: 32/32 bestanden. Mypy für `health.py`, Ruff
 und `git diff --check` sauber.
 
+## Runde 616: Scheduler-Blockierung gegen fehlerhafte Resetvergleiche härten
+
+`scheduler._block_state()` prüfte eine Reset-Datetime zwar auf vorhandene
+Zeitzone und `utcoffset()`, führte danach `max()`, Gleichheitsvergleich,
+`isoformat()` und `<= now` aber außerhalb eines Fehlerfangs aus. Eine
+malformed `datetime`-Subclass konnte den Watchdog dadurch mit rohem
+`RuntimeError` abbrechen, statt einen sicheren unbekannten Reset zu melden.
+
+Die gesamte Auswahl- und Ausgabephase läuft jetzt durch einen begrenzten
+`Exception`-Guard. Bei fehlerhaftem Vergleich werden Blockierungszeit und
+Resetfreigabe verworfen; der Account bleibt mit „reset time unknown“ fail-closed.
+Regression nutzt eine Datetime-Subclass mit fehlerhaftem `__le__`.
+`pytest -q tests/test_scheduler.py`: 206/206; Ruff, Mypy, Python-Kompilierung
+und `git diff --check` sauber.
+
 ## Runde 361: Config-Pfade und Account-Identitäten geprüft
 
 `config.py` wurde auf XDG-/Tilde-/`file:`-Pfade, private Verzeichnisse,

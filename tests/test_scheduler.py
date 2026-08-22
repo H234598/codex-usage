@@ -44,6 +44,11 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _RaisingComparisonDatetime(datetime):
+    def __le__(self, _other):
+        raise RuntimeError("synthetic comparison marker")
+
+
 def _usable_main(*windows, availability_sources=("usage",)):
     return UsagePool(
         key="main",
@@ -72,6 +77,31 @@ def test_block_state_treats_failing_reset_timezone_as_unknown():
     blocked_until, reason = _block_state(
         usage,
         now=datetime(2026, 8, 16, 10, 0),
+    )
+
+    assert blocked_until is None
+    assert reason == "usage limit reached: 5h; reset time unknown"
+
+
+def test_block_state_treats_failing_reset_comparison_as_unknown():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0),
+        main=_usable_main(
+            LimitWindow(
+                name="5h",
+                remaining=0,
+                limit=100,
+                reset_at=_RaisingComparisonDatetime(2026, 8, 16, 11, tzinfo=ZoneInfo("UTC")),
+            )
+        ),
+        status=AccountStatus.OK,
+    )
+
+    blocked_until, reason = _block_state(
+        usage,
+        now=datetime(2026, 8, 16, 10, 0, tzinfo=ZoneInfo("UTC")),
     )
 
     assert blocked_until is None
