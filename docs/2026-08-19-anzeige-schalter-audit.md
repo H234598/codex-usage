@@ -6539,3 +6539,19 @@ Ganzzahlen; beim single-instance-Applet genügt UUID ohne Instanzschalter.
 Regression prüft den bestehenden Instanzpfad und den fehlenden-ID-Fallback.
 Der Settings-Fokuslauf bleibt bei 5/5; Node-Syntaxcheck und
 `git diff --check` sauber.
+
+## Runde 582: Hängende Settings-Platzierung begrenzen
+
+Während `wmctrl -e` lief, blieb der Maximierungstimer bisher unbegrenzt in
+`placementPending`. Ein festhängender X11-Hilfsprozess konnte damit einen
+lebenden Timer und dessen Closure im Cinnamon-Prozess halten.
+
+Pending-Ticks zählen jetzt ebenfalls zum Placement-Limit. Nach zwölf Ticks
+geht der Launcher in den bereits vorhandenen begrenzten Maximierungs-Fallback;
+Applet-Entfernung bleibt sofort wirksam. Regression simuliert einen
+`wmctrl`-Prozess ohne Exit-Callback und prüft den anschließenden
+Maximierungsaufruf.
+
+Fokustest `node --test --test-name-pattern='settings placement retries|settings
+placement does not wait|settings maximization' tests/applet_runtime.test.js`:
+4/4. Node-Syntaxcheck und `git diff --check` sauber.

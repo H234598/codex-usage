@@ -4457,6 +4457,44 @@ test("settings placement retries when xlet-settings window appears late", () => 
   ]));
 });
 
+test("settings placement does not wait forever for a stuck wmctrl process", () => {
+  const callbacks = [];
+  const subprocesses = [];
+  const applet = makeApplet((runtime) => {
+    runtime.currentMonitor = {x: 1920, y: 0, width: 1920, height: 1080};
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      const process = {
+        argv: args[0],
+        wait_check_async(_cancellable, callback) {
+          this.waitCallback = callback;
+        },
+        wait_check_finish() {
+          return true;
+        },
+      };
+      subprocesses.push(process);
+      return process;
+    };
+  });
+
+  applet._scheduleSettingsMaximize();
+  assert.equal(callbacks[0](), true);
+  for (let index = 0; index < 10; index += 1) {
+    assert.equal(callbacks[0](), true);
+  }
+  assert.equal(subprocesses.length, 1);
+
+  assert.equal(callbacks[0](), true);
+  assert.equal(subprocesses.length, 2);
+  assert.equal(JSON.stringify(subprocesses[1].argv), JSON.stringify([
+    "wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz",
+  ]));
+});
+
 test("health action reports command and backend failures without retaining work", () => {
   const applet = makeApplet();
   const menu = {
