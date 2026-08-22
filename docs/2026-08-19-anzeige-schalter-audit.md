@@ -6392,3 +6392,20 @@ Synchronisierung liest sie autoritativ neu ein. Regression erweitert den
 Safe-Mode-Lifecycle-Test. Fokustest `node --test
 --test-name-pattern='safe mode cancels reactivation processes|persistent profile job|profile job resume|cancelled profile job discovery' tests/applet_runtime.test.js`:
 10/10; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 572: Veraltete Profiljob-Maps aus Discovery entfernen
+
+`profile jobs` listet ausschließlich nicht-terminale Jobs. Nach einem
+Applet-Safe-Mode oder einer längeren Unterbrechung konnte ein Job aber remote
+bereits beendet sein, während `_deviceLoginJobs`, `_deviceLoginActive`,
+`_profilePendingAccounts` und der Lösch-Wartemarker lokal erhalten blieben.
+Weitere Account-Aktionen sahen den Job dann fälschlich als aktiv.
+
+Nach erfolgreicher Discovery werden lokale persistente Jobs jetzt gegen die
+autoritative Accountliste abgeglichen. Fehlende Jobs verlieren ihre Job-,
+Pending-, Lösch- und persistenten Login-/Event-Zustände; ein separater Live-
+Device-Login bleibt unangetastet. Ein verwaister Poller wird ebenfalls
+invalidiert. Regression prüft leere Discovery nach lokalem stale Job.
+Fokustest `node --test
+--test-name-pattern='profile job discovery clears locally stale completed jobs|persistent profile job|cancelled profile job discovery|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
+10/10; Node-Syntaxcheck und `git diff --check` sauber.

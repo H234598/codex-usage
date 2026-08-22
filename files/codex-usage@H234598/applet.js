@@ -7265,11 +7265,38 @@ CodexUsageApplet.prototype = {
                 jobs.push({ account: account, jobId: jobId, status: status });
             }
             this._profileJobResumeQueue = [];
+            let discoveredAccounts = Object.create(null);
             for (let index = 0; index < jobs.length; index++) {
-                this._profilePendingAccounts[jobs[index].account] = true;
-                this._deviceLoginJobs[jobs[index].account] = jobs[index].jobId;
-                this._deviceLoginActive[jobs[index].account] = true;
-                this._profileJobResumeQueue.push(jobs[index].account);
+                let account = jobs[index].account;
+                discoveredAccounts[account] = true;
+                this._profilePendingAccounts[account] = true;
+                this._deviceLoginJobs[account] = jobs[index].jobId;
+                this._deviceLoginActive[account] = true;
+                this._profileJobResumeQueue.push(account);
+            }
+            let knownJobAccounts = Object.keys(this._deviceLoginJobs);
+            for (let index = 0; index < knownJobAccounts.length; index++) {
+                let account = knownJobAccounts[index];
+                if (discoveredAccounts[account]) {
+                    continue;
+                }
+                delete this._deviceLoginJobs[account];
+                delete this._profilePendingAccounts[account];
+                delete this._accountDeleteWaitingForProfileJob[account];
+                let liveLogin = this._deviceLoginLiveAccount === account;
+                if (!liveLogin) {
+                    delete this._deviceLoginActive[account];
+                    delete this._deviceLoginEvents[account];
+                    delete this._deviceLoginLiveText[account];
+                }
+            }
+            if (
+                this._profileJobPollingAccount &&
+                !discoveredAccounts[this._profileJobPollingAccount]
+            ) {
+                this._profileJobPollingAccount = "";
+                this._deviceLoginPollGeneration += 1;
+                this._removeSource("_deviceLoginPollId");
             }
             if (jobs.length > 0 && this._ensureBackendUsageRows()) {
                 this._refreshFormattedSurfaces();

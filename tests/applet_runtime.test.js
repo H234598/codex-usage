@@ -667,6 +667,27 @@ test("persistent profile job resumes and exposes polled events", () => {
   );
 });
 
+test("profile job discovery clears locally stale completed jobs", () => {
+  const applet = makeApplet();
+  const jobId = "job-1234567890abcdef1234567890abcdef";
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._buildUsageMenu = () => {};
+  applet._deviceLoginJobs.alpha = jobId;
+  applet._deviceLoginActive.alpha = true;
+  applet._profilePendingAccounts.alpha = true;
+  applet._accountDeleteWaitingForProfileJob.alpha = true;
+  applet._deviceLoginEvents.alpha = [{kind: "code", value: "ABCD-1234"}];
+  applet._spawnAuxJson = (_argv, callback) => callback({ok: true, jobs: []}, null);
+
+  applet._loadProfileJobs();
+
+  assert.equal(applet._deviceLoginJobs.alpha, undefined);
+  assert.equal(applet._deviceLoginActive.alpha, undefined);
+  assert.equal(applet._profilePendingAccounts.alpha, undefined);
+  assert.equal(applet._accountDeleteWaitingForProfileJob.alpha, undefined);
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+});
+
 test("cancelled profile job discovery can run again", () => {
   const applet = makeApplet((runtime) => {
     runtime.launcherFactory = () => ({
