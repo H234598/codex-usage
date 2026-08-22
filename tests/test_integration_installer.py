@@ -456,6 +456,34 @@ def test_remove_activation_files_rejects_bin_parent_swap(tmp_path, monkeypatch):
     assert outside_activation.exists()
 
 
+def test_remove_activation_files_rejects_replaced_entry_before_unlink(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(mode=0o700)
+    activation = bin_dir / "activate"
+    activation.write_text("owned", encoding="utf-8")
+    replaced = False
+    original_stat = os.stat
+
+    def replace_before_stat(name, *args, **kwargs):
+        nonlocal replaced
+        if name == "activate" and kwargs.get("dir_fd") is not None and not replaced:
+            activation.unlink()
+            activation.write_text("foreign", encoding="utf-8")
+            replaced = True
+        return original_stat(name, *args, **kwargs)
+
+    monkeypatch.setattr(integration_installer.os, "stat", replace_before_stat)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._remove_activation_files(tmp_path)
+
+    assert replaced
+    assert activation.read_text(encoding="utf-8") == "foreign"
+
+
 def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path):
     root = tmp_path / "foreign"
     root.mkdir(mode=0o700)

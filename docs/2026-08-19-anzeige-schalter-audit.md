@@ -5758,3 +5758,14 @@ Nach der Creation werden Parent-Inode und aktueller Pfad-Parent erneut gegen
 die erwartete Identität geprüft. Regression deckt ein gleichnamiges fremdes
 Ziel ab. `pytest -q tests/test_integration_installer.py`: 134/134; Ruff,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 523: Aktivierungsdatei vor Installer-Unlink revalidiert
+
+`_remove_activation_files()` sammelte bisher nur Dateinamen. Ein Austausch
+zwischen Enumeration und Unlink konnte dadurch eine fremde Datei gleichen
+Namens löschen.
+
+Vor jedem Unlink werden jetzt Typ, Inode, Gerät, Besitzer, Modus und Linkanzahl
+gegen die Enumeration geprüft; Abweichung bricht fail-closed. Regression deckt
+ein ersetztes `activate` ab. `pytest -q tests/test_integration_installer.py`:
+135/135; Ruff, Python-Compile und `git diff --check` sauber.

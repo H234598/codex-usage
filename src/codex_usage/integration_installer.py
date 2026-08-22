@@ -1794,7 +1794,7 @@ def _remove_activation_files(venv_root: Path) -> None:
         if not stat.S_ISDIR(bin_item.st_mode) or bin_item.st_uid != os.getuid():
             _fail()
         with os.scandir(bin_fd) as entries:
-            removable: list[str] = []
+            removable: list[tuple[str, _ProvisionalIdentity, int]] = []
             for entry in entries:
                 if not (
                     entry.name.startswith("activate")
@@ -1804,8 +1804,19 @@ def _remove_activation_files(venv_root: Path) -> None:
                     continue
                 item = entry.stat(follow_symlinks=False)
                 if stat.S_ISLNK(item.st_mode) or stat.S_ISREG(item.st_mode):
-                    removable.append(entry.name)
-        for name in removable:
+                    removable.append(
+                        (entry.name, _provisional_from_stat(item), item.st_nlink)
+                    )
+        for name, expected, expected_nlink in removable:
+            try:
+                current = os.stat(name, dir_fd=bin_fd, follow_symlinks=False)
+            except OSError:
+                _fail()
+            if (
+                _provisional_from_stat(current) != expected
+                or current.st_nlink != expected_nlink
+            ):
+                _fail()
             os.unlink(name, dir_fd=bin_fd)
         try:
             lib64_item = os.stat("lib64", dir_fd=venv_fd, follow_symlinks=False)
