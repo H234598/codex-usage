@@ -7462,3 +7462,18 @@ ab. Ungültige Zeilen werden übersprungen; persistierte Einstellungen werden
 nicht automatisch überschrieben. Regression deckt Initial-Load und
 Wertanzahl-Rebuild ab. `pytest -q tests/test_panel_settings_list.py`: 15/15;
 Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 647: Formatierungs- und Prognosentabellen fangen GTK-Overflow ab
+
+Der gemeinsame `_BoundFormatList`-Adapter der Formatierungs- und
+Prognosenseite übersprang falsche Zelltypen bereits bei `TypeError` und
+`ValueError`, aber nicht bei `OverflowError`. Ein persistierter Integer
+außerhalb des GTK-`gint`-Bereichs konnte deshalb beim Aufbau der ausgewählten
+Tabelle den Einstellungsdialog erneut abbrechen.
+
+Der Adapter fängt jetzt auch `OverflowError` und lässt die beschädigte Zeile
+leer aus. Persistierte Werte werden nicht automatisch überschrieben. Eine
+Regression erzeugt eine Integer-Zeile mit `2**31`; sie deckt damit den echten
+GTK-GValue-Fehler ab. `pytest -q tests/test_format_table_selector.py
+tests/test_forecast_table_selector.py`: 16/16; Ruff, Python-Compile und
+`git diff --check` sauber.

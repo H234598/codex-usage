@@ -259,3 +259,22 @@ def test_malformed_table_value_does_not_break_selector() -> None:
         assert len(selector._tables["table-a"].model) == 0
     finally:
         selector.destroy()
+
+
+def test_format_table_ignores_integer_overflow_in_persisted_row() -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [
+        {"id": "value", "title": "Value", "type": "integer"},
+    ]
+    settings.settings["table-a"]["value"] = [{"value": 2**31}]
+
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert len(selector._tables["table-a"].model) == 0
+    finally:
+        selector.destroy()
