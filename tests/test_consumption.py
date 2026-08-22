@@ -219,6 +219,31 @@ def test_consumption_handles_confirmed_reset_without_false_partial_status():
     assert result.coverage == "complete"
 
 
+def test_consumption_counts_new_cycle_when_reset_usage_exceeds_old_value():
+    samples = [
+        _sample(0, 90, generation="old", reset_at=BASE + timedelta(minutes=30)),
+        _sample(60, 95, generation="new", reset_at=BASE + timedelta(hours=2)),
+    ]
+    result = calculate_consumption(
+        samples,
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=60),
+    )
+    smoothed = calculate_consumption(
+        samples,
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=60),
+        smoothing="ema-5",
+    )
+
+    assert result.consumed_percentage_points == 95.0
+    assert result.coverage == "complete"
+    assert smoothed.consumed_percentage_points == 95.0
+    assert smoothed.estimated_seconds_to_exhaustion == 190
+
+
 def test_consumption_handles_future_next_reset_after_rollover():
     previous_reset = BASE + timedelta(minutes=30)
     current_reset = BASE + timedelta(hours=6)

@@ -196,12 +196,12 @@ def calculate_consumption(
         gap = (current.captured_at - previous.captured_at).total_seconds()
         if gap > max_gap_seconds:
             partial = True
+        if _confirmed_reset(previous, current):
+            consumed += float(current.used_percent)
+            continue
         delta = float(current.used_percent) - float(previous.used_percent)
         if delta >= 0:
             consumed += delta
-            continue
-        if _confirmed_reset(previous, current):
-            consumed += float(current.used_percent)
             continue
         partial = True
 
@@ -259,8 +259,10 @@ def _ema_rate(
             previous = current
             continue
         delta = float(current.used_percent) - float(previous.used_percent)
-        if delta < 0:
-            delta = float(current.used_percent) if _confirmed_reset(previous, current) else 0.0
+        if _confirmed_reset(previous, current):
+            delta = float(current.used_percent)
+        elif delta < 0:
+            delta = 0.0
         instantaneous = delta / gap
         alpha = 1.0 - math.exp(-gap / float(time_constant_seconds))
         ema = instantaneous if ema is None else ema + alpha * (instantaneous - ema)

@@ -5561,3 +5561,15 @@ Die Pfad-Härtung aus `94467a8` ist installiert und geprüft. Der echte Aufruf
 tests/test_forecast_table_selector.py`: 5/5 und die Settings-Launcher-
 Regressionen in `node --test tests/applet_runtime.test.js`: bestanden.
 Applet danach installiert und Cinnamon-Applet neu geladen.
+
+## Runde 469: Consumption-Reset zählt neuen Zyklus vollständig
+
+Bei bestätigter Resetrotation prüfte `calculate_consumption()` den Reset erst
+nach dem Vorzeichen des Deltas. Stieg der neue Zyklus bereits über den alten
+Prozentwert (z. B. 90 % vor Reset, 95 % danach), wurden nur 5 statt 95
+Verbrauchs-Punkte gezählt. Derselbe Fehler verfälschte die EMA-Prognose.
+
+Reset-Erkennung läuft jetzt vor der Delta-Behandlung; bei bestätigtem Reset
+wird der aktuelle Zykluswert in Roh- und EMA-Rate übernommen. Regression deckt
+beide Pfade ab. `pytest -q tests/test_consumption.py`: 36/36; aufrufende
+History-/Integrationstests: 15/15; Ruff und `git diff --check` sauber.
