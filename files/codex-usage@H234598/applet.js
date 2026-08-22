@@ -677,9 +677,12 @@ CodexUsageApplet.prototype = {
         this._timerGeneration = (this._timerGeneration || 0) + 1;
         this._displayTimerGeneration = (this._displayTimerGeneration || 0) + 1;
         this._staleCheckGeneration = (this._staleCheckGeneration || 0) + 1;
+        this._deviceLoginPollGeneration = (this._deviceLoginPollGeneration || 0) + 1;
+        this._profileJobPollingAccount = "";
         this._removeSource("_timerId");
         this._removeSource("_displayTimerId");
         this._removeSource("_staleCheckId");
+        this._removeSource("_deviceLoginPollId");
         this._backendChangeQueue = [];
         this._backendChangeCurrent = null;
         this._accountChangeCurrent = null;

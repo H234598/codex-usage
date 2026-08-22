@@ -6364,3 +6364,15 @@ Synchronisierung liest die persistierten Settings erneut. Regression erweitert
 den Safe-Mode-Test; Fokustest
 `node --test --test-name-pattern='safe mode cancels reactivation processes|account controls|backend synchronization|account delete cancels|new account starts' tests/applet_runtime.test.js`:
 16/16; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 570: Profiljob-Polling beim Safe-Mode invalidieren
+
+`_profileJobPollingAccount` und der zugehörige Poll-Timer blieben nach Abbruch
+eines Profiljob-Statusprozesses erhalten. `_pollNextProfileJob()` sah danach
+weiterhin einen aktiven Poller und startete nach Retry keinen neuen Statusabruf.
+
+Safe-Mode erhöht jetzt die Poll-Generation, entfernt den Poll-Timer und setzt
+den aktiven Polling-Account zurück. Persistente Jobs bleiben erhalten und können
+nach dem nächsten Refresh wieder aufgenommen werden. Fokustest
+`node --test --test-name-pattern='safe mode cancels reactivation processes|persistent profile job|profile job|device login|safe mode' tests/applet_runtime.test.js`:
+42/42; Node-Syntaxcheck und `git diff --check` sauber.
