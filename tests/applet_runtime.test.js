@@ -7427,6 +7427,22 @@ test("Tokendelta supports dynamic threshold against the next reset", () => {
   assert.match(applet._panelDeltaPart(usage, 32, "panel").markup, /<span /);
 });
 
+test("panel delta prefers the newest matching consumption window", () => {
+  const applet = makeApplet();
+  applet._usages[0].cost_windows = [
+    {
+      pool: "main", limit_window_seconds: 18000,
+      consumed_percentage_points: 4, _consumption_query_key: "old",
+    },
+    {
+      pool: "main", limit_window_seconds: 18000,
+      consumed_percentage_points: 9, _consumption_query_key: "new",
+    },
+  ];
+
+  assert.equal(applet._panelDeltaPart(applet._usages[0], 32, "panel").plain, "Δ5h 9,0%");
+});
+
 test("date, time and restlaufzeit styles honor all modes and font colors", () => {
   const applet = makeApplet();
   const kinds = ["date", "time", "duration"];

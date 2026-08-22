@@ -8674,7 +8674,7 @@ CodexUsageApplet.prototype = {
         }
         let windows = Array.isArray(usage.cost_windows) ? usage.cost_windows : [];
         let candidate = null;
-        for (let i = 0; i < windows.length; i++) {
+        for (let i = windows.length - 1; i >= 0; i--) {
             let seconds = windows[i] && Number(windows[i].limit_window_seconds);
             let matchesOther = key === null && [18000, 604800, 2592000].indexOf(seconds) === -1;
             if (windows[i] && windows[i].pool === pool &&
@@ -8684,7 +8684,7 @@ CodexUsageApplet.prototype = {
             }
         }
         if (!candidate && source === 13) {
-            for (let i = 0; i < windows.length; i++) {
+            for (let i = windows.length - 1; i >= 0; i--) {
                 if (windows[i] && windows[i].pool === pool) {
                     candidate = windows[i];
                     break;

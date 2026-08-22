@@ -5620,3 +5620,15 @@ bei Bedarf zusätzlich Main- oder Spark-Pool.
 Regressionen decken Tokenende, konfiguriertes Delta, Main-/Spark-Delta und
 beide Poolwechsel ab. `node --test tests/applet_runtime.test.js`: 415/415;
 `node --check` und `git diff --check` sauber.
+
+## Runde 474: Panel-Delta verwendet neuesten Fensterwert
+
+Nach getrennten Verbrauchsabfragen können alte und neue Werte mit gleichem
+Pool und Fenster gleichzeitig in `cost_windows` liegen. `_panelDeltaPart()`
+nahm bisher immer den ersten Treffer und zeigte dadurch einen veralteten
+Deltawert. Die Suche läuft jetzt vom zuletzt angehängten Wert rückwärts;
+Fallback-Suche für konfiguriertes Delta folgt derselben Regel.
+
+Regression mit altem `4 %` und neuem `9 %`: `node --test
+tests/applet_runtime.test.js`: 416/416; `node --check` und `git diff --check`
+sauber.
