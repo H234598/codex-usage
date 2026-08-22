@@ -10981,7 +10981,7 @@ CodexUsageApplet.prototype = {
         if (settingsProcess && typeof settingsProcess.get_identifier === "function") {
             try {
                 let identifier = String(settingsProcess.get_identifier() || "");
-                if (/^[0-9]+$/.test(identifier)) {
+                if (/^[1-9][0-9]*$/.test(identifier)) {
                     settingsPid = identifier;
                 }
             } catch (e) {
@@ -11001,7 +11001,7 @@ CodexUsageApplet.prototype = {
 
     _settingsWindowIdForProcess: function(output, pid) {
         let targetPid = String(pid || "");
-        if (!/^[0-9]+$/.test(targetPid)) {
+        if (!/^[1-9][0-9]*$/.test(targetPid)) {
             return null;
         }
         let lines = String(output || "").split(/\r?\n/);
@@ -11027,7 +11027,7 @@ CodexUsageApplet.prototype = {
         let generation = (this._settingsMaximizeGeneration || 0) + 1;
         this._settingsMaximizeGeneration = generation;
         let targetPid = String(settingsPid || "");
-        if (!/^[0-9]+$/.test(targetPid)) {
+        if (!/^[1-9][0-9]*$/.test(targetPid)) {
             targetPid = "";
         }
         let targetWindowId = null;

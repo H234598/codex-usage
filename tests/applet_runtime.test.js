@@ -4825,6 +4825,24 @@ test("settings launcher passes child pid to window placement", () => {
   assert.deepEqual(scheduled, ["3089499"]);
 });
 
+test("settings launcher ignores a non-positive child pid", () => {
+  const scheduled = [];
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() {
+        return {get_identifier: () => "0"};
+      },
+    });
+  });
+  applet._scheduleSettingsMaximize = (pid) => { scheduled.push(pid); };
+
+  applet._openSettings();
+
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0], null);
+});
+
 test("settings launcher falls back when SubprocessLauncher is unavailable", () => {
   const subprocessCalls = [];
   const scheduled = [];
@@ -4860,6 +4878,10 @@ test("settings window lookup matches exact xlet-settings pid", () => {
   );
   assert.equal(
     applet._settingsWindowIdForProcess("0x08400007  0 3089499 fedora Codex Usage", "308949"),
+    null
+  );
+  assert.equal(
+    applet._settingsWindowIdForProcess("0x08400007  0 0 fedora Desktop", "0"),
     null
   );
 });

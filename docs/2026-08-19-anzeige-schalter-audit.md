@@ -7843,3 +7843,13 @@ Timer, nicht aber beide Kinder freigegeben wurden.
 Der bestehende Removal-Test prüft jetzt zusätzlich `null` für beide Prozesse
 und `0` für den Timer. Fokussierter Settings-Block: 14/14; Cleanup-Test grün,
 Syntaxcheck und `git diff --check` sauber. Keine Produktcodeänderung nötig.
+
+## Runde 679: Settings-Fenster akzeptiert keine PID 0
+
+Der Settings-Launcher und die `wmctrl`-Zuordnung akzeptierten jede Ziffernfolge
+als Prozess-ID. Ein fehlerhaftes `0` konnte dadurch eine fremde Desktop-Zeile
+mit PID 0 auswählen und verschieben oder maximieren.
+
+Launcher und Lookup akzeptieren jetzt nur positive Dezimal-PIDs. Regression
+deckt PID 0 beim Start und bei der Fensterzuordnung ab; Settings-Fokusblock:
+15/15, Syntaxcheck und `git diff --check` sauber.
