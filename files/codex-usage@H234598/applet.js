@@ -5355,6 +5355,7 @@ CodexUsageApplet.prototype = {
             let estimate = item.estimated_seconds_to_exhaustion;
             let baselineUsed = item.baseline_used_percent;
             let sampleCount = item.sample_count;
+            let pool = this._strictText(item.pool, 64);
             if (estimate === undefined) {
                 estimate = null;
             }
@@ -5367,6 +5368,7 @@ CodexUsageApplet.prototype = {
             if (
                 typeof lookback !== "number" || !Number.isInteger(lookback) ||
                 lookback <= 0 || lookback > 31536000 ||
+                !pool ||
                 typeof limitWindow !== "number" || !Number.isInteger(limitWindow) ||
                 limitWindow <= 0 || limitWindow > 31536000 ||
                 typeof consumed !== "number" || !Number.isFinite(consumed) ||
@@ -5388,7 +5390,7 @@ CodexUsageApplet.prototype = {
             }
             result.push({
                 lookback_seconds: lookback,
-                pool: this._strictText(item.pool, 64),
+                pool: pool,
                 limit_window_seconds: limitWindow,
                 consumed_percentage_points: consumed,
                 estimated_seconds_to_exhaustion: estimate,

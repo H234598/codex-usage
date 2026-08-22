@@ -7306,3 +7306,13 @@ Die DTO-Prüfung verlangt jetzt mindestens zwei Samples für `complete`,
 gültig. Regression deckt den widersprüchlichen Complete-Fall ab.
 `node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
 37/37; `make applet-check` inklusive JSON-Validierung: 474/474 sauber.
+
+## Runde 635: Leere Consumption-Pool-ID verworfen
+
+`_safeConsumptionWindows()` übernahm bisher eine leere `pool`-ID. Der
+Backend-Snapshotvertrag verlangt nichtleere Token; eine leere ID konnte
+dadurch als scheinbar validiertes, später aber nicht auswählbares
+Verbrauchsfenster im Cache landen.
+
+Die DTO-Prüfung verlangt jetzt eine nichtleere Pool-ID. Regression erweitert
+die Consumption-Validierung um den leeren Token.
