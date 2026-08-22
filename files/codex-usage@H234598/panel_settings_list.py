@@ -268,6 +268,7 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
     )
     for column in columns:
         if str(column.get("id", "")).startswith("slot"):
+            column["type"] = "integer"
             column["options"] = dict(_SOURCE_OPTIONS)
             column["default"] = 0
     existing = {column.get("id") for column in columns}
@@ -279,6 +280,8 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
         column["id"] = key
         column["title"] = f"Wert {index}"
         column["options"] = dict(_SOURCE_OPTIONS)
+        column["type"] = "integer"
+        column["default"] = 0
         columns.append(column)
     return columns
 

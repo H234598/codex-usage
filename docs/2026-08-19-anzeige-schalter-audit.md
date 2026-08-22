@@ -8061,3 +8061,15 @@ Der Count-Rebuild nutzt seinen Modell-Fallback weiterhin nur für die Anzeige.
 Regression bestätigt, dass ein fehlgeschlagener Read gespeicherte Zeilen
 unverändert lässt; `tests/test_panel_settings_list.py`: 80/80,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 699: Leisten-Slots erzwingen Integer-Optionen
+
+Ein vorhandenes `slot1` mit falschem Typ (z. B. `string`) bekam später die
+Integer-Quellenliste zugewiesen. GTK-Modell und Edit-ComboBox hatten dadurch
+unterschiedliche Werttypen; Einträge konnten verschwinden oder der Dialog
+fehlschlagen.
+
+Alle vorhandenen und neu erzeugten Slotspalten werden bei der Normalisierung
+jetzt als Integer mit deaktiviertem Standardwert angelegt. Regression prüft
+einen falsch typisierten Legacy-Slot; `tests/test_panel_settings_list.py`:
+81/81, Python-Compile und `git diff --check` sauber.

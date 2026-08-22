@@ -70,6 +70,21 @@ def test_panel_columns_default_slots_to_disabled_source() -> None:
     ]
 
 
+def test_panel_columns_normalize_malformed_slot_type() -> None:
+    columns = panel_columns(
+        [
+            {"id": "account", "title": "Account", "type": "string"},
+            {"id": "slot1", "title": "Wert 1", "type": "string"},
+        ],
+        1,
+    )
+
+    slot = next(column for column in columns if column["id"] == "slot1")
+    assert slot["type"] == "integer"
+    assert slot["default"] == 0
+    assert slot["options"]["Aus"] == 0
+
+
 @pytest.mark.parametrize(
     "base",
     [
