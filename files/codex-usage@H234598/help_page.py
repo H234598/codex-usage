@@ -49,6 +49,14 @@ _COLUMN_GUIDANCE = {
     "panel": "Zeigt das Element in der Leiste an.",
     "hover": "Zeigt das Element im Hover-Hilfetext an.",
     "click": "Zeigt das Element im Klick-Menü an.",
+    "show-hover": (
+        "Zeigt diesen formatierten Wert im Hover-Menü an. Das steuert nur die "
+        "Sichtbarkeit; Datenabruf und Berechnung bleiben unverändert."
+    ),
+    "show-click": (
+        "Zeigt diesen formatierten Wert im Klick-Menü an. Das steuert nur die "
+        "Sichtbarkeit; Datenabruf und Berechnung bleiben unverändert."
+    ),
     "label": (
         "Lesbarer Name des Accounts. Er wird in Leiste, Hover und Menü verwendet, wenn "
         "das jeweilige Anzeigeziel aktiv ist."
@@ -87,8 +95,8 @@ _COLUMN_GUIDANCE = {
         "30 Tage oder Spark."
     ),
     "hide-when-zero": (
-        "Blendet eine sicher berechnete Null aus. Fehlende oder unbekannte Werte werden "
-        "dadurch nicht in Null umgewandelt."
+        "Blendet fehlende oder unbekannte Werte mit Platzhalter — aus. Ein echter "
+        "numerischer 0-Wert bleibt sichtbar; Berechnung und Datenabruf ändern sich nicht."
     ),
     "show-coverage-marker": (
         "Zeigt an, ob Messhistorie vollständig, untere Schranke, veraltet oder "
@@ -324,11 +332,19 @@ class HelpPage(SettingsWidget):
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_spacing(10)
         self.set_border_width(0)
+        self.set_hexpand(True)
+        self.set_vexpand(True)
+        self.set_size_request(720, 560)
 
         self.content_widget = Gtk.ScrolledWindow()
         self.content_widget.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.content_widget.set_hexpand(True)
         self.content_widget.set_vexpand(True)
+        self.content_widget.set_min_content_width(640)
+        self.content_widget.set_min_content_height(480)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        body.set_hexpand(True)
+        body.set_vexpand(True)
         body.set_margin_top(8)
         body.set_margin_bottom(8)
         body.set_margin_left(8)
@@ -365,10 +381,12 @@ class HelpPage(SettingsWidget):
         content.set_margin_right(10)
         heading = Gtk.Label()
         heading.set_xalign(0.0)
+        heading.set_hexpand(True)
         heading.set_markup("<b>" + _markup(title_text) + "</b>")
         content.pack_start(heading, False, False, 0)
         text = Gtk.Label()
         text.set_xalign(0.0)
+        text.set_hexpand(True)
         text.set_line_wrap(True)
         text.set_selectable(True)
         text.set_markup(_markup(body_text))
@@ -390,6 +408,7 @@ class HelpPage(SettingsWidget):
         content.set_margin_right(10)
         body = Gtk.Label()
         body.set_xalign(0.0)
+        body.set_hexpand(True)
         body.set_line_wrap(True)
         body.set_selectable(True)
         body.set_markup(_markup(entry.get("text", "")))
@@ -397,10 +416,12 @@ class HelpPage(SettingsWidget):
         for field in entry.get("fields", []):
             field_title = Gtk.Label()
             field_title.set_xalign(0.0)
+            field_title.set_hexpand(True)
             field_title.set_markup("<b>" + _markup(field.get("title", "Feld")) + "</b>")
             content.pack_start(field_title, False, False, 2)
             field_body = Gtk.Label()
             field_body.set_xalign(0.0)
+            field_body.set_hexpand(True)
             field_body.set_line_wrap(True)
             field_body.set_selectable(True)
             field_body.set_markup(_markup(field.get("text", "")))

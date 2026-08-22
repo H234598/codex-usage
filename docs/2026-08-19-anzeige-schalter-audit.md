@@ -9046,3 +9046,30 @@ Credits-Anfrage mit Main-Antwort ab; Serienpfade bleiben Legacy-Kompatibilität.
 Verifikation: fokussierte Consumption-/Forecast-Tests:
 **41 bestanden**; Node-Syntaxcheck und `git diff --check` sauber. Keine
 Settings-Fenster gestartet.
+
+## Runde 769: Formatierungsziele je Wert und lesbare Hilfe
+
+Die Hilfe-Seite hatte keinen Mindestplatz und war im kleinen Settings-Rahmen
+kaum lesbar. `HelpPage` fordert jetzt mindestens 720 × 560 Pixel an; der
+Scrollbereich erhält mindestens 640 × 480 Pixel. Labels expandieren horizontal
+und bleiben zeilenumbruchsicher. Lazy-Expander bleiben erhalten, damit nicht
+alle Feldwidgets gleichzeitig Cinnamon-Heap belegen.
+
+Die aktive Tabelle `Elemente und Formatierungsorte` ist aus Layout und
+Formatierungs-Dropdown entfernt. Ihre Definition bleibt ausschließlich als
+unsichtbare Legacy-Migrationsquelle erhalten. Die alten Hover-/Klickwerte
+werden beim Stylesync in die zuständigen Formatierungszeilen übernommen:
+Prozent, Resetdatum, Resetzeit, Restlaufzeit sowie Reset-/Kürzel-/Label- und
+Account-ID-Leistenwerte. Panel-Sichtbarkeit bleibt ausschließlich Aufgabe der
+Tabelle `Leiste`.
+
+Alle aktiven Formatierungsziele erhalten `In Hovermenü anzeigen`,
+`In Klickmenü anzeigen` und `Bei Null ausblenden`; Leisten-Kopien erben die
+Felder, Tokendelta behält zusätzlich `Dynamisch`. Nullausblendung meint
+fehlende/unbekannte Werte mit Platzhalter `–`; ein echter numerischer `0`-Wert
+bleibt sichtbar. Prozent-, Reset-, Delta- und Leisten-Renderer setzen diese
+Semantik um.
+
+Verifikation: **494 Node-Tests** und **111 fokussierte Python-Tests** bestanden;
+Node-Syntaxcheck, JSON-Parse und `git diff --check` sauber. Keine
+Settings-Fenster gestartet.

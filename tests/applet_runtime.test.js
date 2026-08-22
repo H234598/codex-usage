@@ -2969,6 +2969,47 @@ test("baseline, custom credit and percent helpers preserve independent display s
   assert.equal(hiddenPercent.markup, "");
 });
 
+test("format style rows migrate menu targets and keep null hiding separate from zero", () => {
+  const applet = makeApplet();
+  applet.accountStyleTargets = [
+    {account: "alpha", element: 0, panel: true, hover: false, click: true},
+  ];
+  const rows = applet._mergedStyleRows(
+    [{account: "alpha"}], [], "percent", 0
+  );
+  assert.equal(rows[0]["show-hover"], false);
+  assert.equal(rows[0]["show-click"], true);
+
+  applet._percentStyles = {
+    alpha: Object.assign({}, rows[0], {"hide-when-zero": true}),
+  };
+  applet._styleTargets = {"alpha:0": {panel: true, hover: true, click: true}};
+  assert.equal(applet._percentPartsFromValue(null, "alpha", "panel").plain, "");
+  assert.equal(applet._percentPartsFromValue(0, "alpha", "panel").plain, "0%");
+});
+
+test("panel format rows migrate identity targets and hide missing values", () => {
+  const applet = makeApplet();
+  applet.accountStyleTargets = [
+    {account: "alpha", element: 9, panel: true, hover: false, click: true},
+  ];
+  const rows = applet._mergedStyleRows(
+    [{account: "alpha"}], [], "percent", applet._panelStyleTargetElement(14)
+  );
+  assert.equal(rows[0]["show-hover"], false);
+  assert.equal(rows[0]["show-click"], true);
+
+  applet._panelValueStyles = {
+    14: {alpha: Object.assign({}, rows[0], {"hide-when-zero": true})},
+  };
+  applet._panelAccountTag = () => "";
+  const missing = applet._panelSlotContent(
+    {usage: {account: "alpha", label: ""}}, {source: 14}
+  );
+  assert.equal(missing.plain, "");
+  assert.equal(missing.markup, "");
+});
+
 test("relative account paths are rejected before spawning CLI", () => {
   const applet = makeAccountSettingsApplet();
   let reloads = 0;
@@ -9438,6 +9479,31 @@ test("reset targets control date, time and duration in click menu", () => {
   assert.match(durationOnly.plain, /^Rest 5m$/);
   applet._styleTargets["alpha:3"].click = false;
   const hidden = applet._windowResetParts(window, "alpha", "click", false);
+  assert.equal(hidden.plain, "");
+  assert.equal(hidden.markup, "");
+});
+
+test("reset style null hiding removes only missing date components", () => {
+  const applet = makeApplet();
+  applet._styleTargets = {
+    "alpha:1": {panel: true, hover: true, click: true},
+    "alpha:2": {panel: true, hover: true, click: true},
+    "alpha:3": {panel: true, hover: true, click: true},
+  };
+  applet._dateStyles.alpha = Object.assign(
+    {}, applet._defaultStyleRow("alpha", "date", 1), {"hide-when-zero": true}
+  );
+  applet._timeStyles.alpha = Object.assign(
+    {}, applet._defaultStyleRow("alpha", "time", 2), {"hide-when-zero": false}
+  );
+  applet._durationStyles.alpha = Object.assign(
+    {}, applet._defaultStyleRow("alpha", "duration", 3), {"hide-when-zero": true}
+  );
+
+  const partial = applet._windowResetParts(null, "alpha", "panel", false);
+  assert.equal(partial.plain, "–");
+  applet._timeStyles.alpha["hide-when-zero"] = true;
+  const hidden = applet._windowResetParts(null, "alpha", "panel", false);
   assert.equal(hidden.plain, "");
   assert.equal(hidden.markup, "");
 });

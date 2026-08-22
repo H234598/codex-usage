@@ -91,6 +91,23 @@ def test_help_group_builder_covers_gui_pages_and_format_copies() -> None:
     }
 
 
+def test_format_tables_own_hover_click_and_null_columns_without_legacy_target_table() -> None:
+    schema = _schema()
+    format_tables = {
+        table["key"] for table in schema["format-table-selector"]["tables"]
+    }
+    assert "account-style-targets" not in format_tables
+    for table in schema["format-table-selector"]["tables"]:
+        key = table["key"]
+        definition = _help_definition(schema[key], schema, key)
+        if key == "account-display-settings":
+            continue
+        columns = {column["id"]: column for column in definition["columns"]}
+        assert columns["show-hover"]["title"] == "In Hovermenü anzeigen"
+        assert columns["show-click"]["title"] == "In Klickmenü anzeigen"
+        assert columns["hide-when-zero"]["title"] == "Bei Null ausblenden"
+
+
 def test_help_materializes_tokendelta_inherited_format_fields() -> None:
     schema = _schema()
     groups = build_help_groups(schema)
@@ -194,6 +211,18 @@ def test_help_page_builds_scrollable_widget_from_schema() -> None:
         widget.destroy()
 
 
+def test_help_page_requests_readable_minimum_size() -> None:
+    widget = HelpPage({}, "help-content", SimpleNamespace(settings=_schema()))
+    try:
+        width, height = widget.get_size_request()
+        assert width >= 720
+        assert height >= 560
+        assert widget.content_widget.get_min_content_width() >= 640
+        assert widget.content_widget.get_min_content_height() >= 480
+    finally:
+        widget.destroy()
+
+
 def _widget_count(widget) -> int:
     count = 1
     if isinstance(widget, Gtk.Container):
@@ -214,7 +243,7 @@ def test_help_page_defers_field_widgets_until_entry_expands() -> None:
     widget = HelpPage({}, "help-content", SimpleNamespace(settings=_schema()))
     try:
         expanders = list(_expanders(widget))
-        assert len(expanders) == 55
+        assert len(expanders) == 54
         initial_count = _widget_count(widget)
         assert initial_count < 300
         assert all(expander.get_child() is None for expander in expanders)

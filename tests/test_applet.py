@@ -249,7 +249,7 @@ def test_style_tables_group_threshold_fields() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     expected = {
         "account-percent-styles": [
-            "account", "mode", "font", "size", "bold", "italic",
+            "account", "show-hover", "show-click", "hide-when-zero", "mode", "font", "size", "bold", "italic",
             "color", "background", "hover-background", "threshold", "below-font", "below-size",
             "below-bold",
             "below-italic",
@@ -258,7 +258,7 @@ def test_style_tables_group_threshold_fields() -> None:
             "below-hover-background",
         ],
         "account-date-styles": [
-            "account", "format", "mode", "font", "size", "bold", "italic",
+            "account", "show-hover", "show-click", "hide-when-zero", "format", "mode", "font", "size", "bold", "italic",
             "color", "background", "hover-background", "threshold", "below-font", "below-size",
             "below-bold",
             "below-italic",
@@ -267,7 +267,7 @@ def test_style_tables_group_threshold_fields() -> None:
             "below-hover-background",
         ],
         "account-time-styles": [
-            "account", "format", "mode", "font", "size", "bold", "italic",
+            "account", "show-hover", "show-click", "hide-when-zero", "format", "mode", "font", "size", "bold", "italic",
             "color", "background", "hover-background", "threshold", "below-font", "below-size",
             "below-bold",
             "below-italic",
@@ -276,7 +276,7 @@ def test_style_tables_group_threshold_fields() -> None:
             "below-hover-background",
         ],
         "account-duration-styles": [
-            "account", "format", "mode", "font", "size", "bold", "italic",
+            "account", "show-hover", "show-click", "hide-when-zero", "format", "mode", "font", "size", "bold", "italic",
             "color", "background", "hover-background", "threshold", "below-font", "below-size",
             "below-bold",
             "below-italic",
@@ -352,11 +352,10 @@ def test_format_and_display_sections_use_new_labels() -> None:
         "account-panel-login-styles",
         "account-panel-status-styles",
         "account-display-settings",
-        "account-style-targets",
     ]
     assert layout["percent-style-section"]["title"] == "Verbleibendes Tokenlimit in %"
     assert layout["display-settings-section"]["title"] == "Account-Anzeige"
-    assert layout["display-target-section"]["title"] == "Formatierungsorte"
+    assert "display-target-section" not in layout
     assert layout["percent-style-section"]["title"] == "Verbleibendes Tokenlimit in %"
     assert layout["date-style-section"]["title"] == "OpenAI - Reset: Datum des Reset"
     assert layout["time-style-section"]["title"] == "OpenAI - Reset: Uhrzeit"
@@ -463,6 +462,9 @@ def test_applet_metadata_and_settings_remainder() -> None:
         assert set(table["hidden-buttons"]) == {"+", "-", "up", "down"}
         assert [column["id"] for column in table["columns"]] == [
             "account",
+            "show-hover",
+            "show-click",
+            "hide-when-zero",
             "format",
             "mode",
             "font",
@@ -499,14 +501,17 @@ def test_applet_metadata_and_settings_remainder() -> None:
         assert set(columns["below-color"]["options"].values()) == set(range(8))
         assert set(columns["below-background"]["options"].values()) == set(range(7))
         assert set(columns["below-hover-background"]["options"].values()) == set(range(7))
-    assert set(date_table["columns"][1]["options"].values()) == set(range(4))
-    assert set(time_table["columns"][1]["options"].values()) == set(range(3))
+    assert set(date_table["columns"][4]["options"].values()) == set(range(4))
+    assert set(time_table["columns"][4]["options"].values()) == set(range(3))
     duration_table = settings["account-duration-styles"]
     assert duration_table["type"] == "list"
     assert duration_table["show-buttons"] is True
     assert set(duration_table["hidden-buttons"]) == {"+", "-", "up", "down"}
     assert [column["id"] for column in duration_table["columns"]] == [
         "account",
+        "show-hover",
+        "show-click",
+        "hide-when-zero",
         "format",
         "mode",
         "font",
@@ -525,8 +530,8 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "below-background",
         "below-hover-background",
     ]
-    assert set(duration_table["columns"][1]["options"].values()) == set(range(4))
-    assert set(duration_table["columns"][2]["options"].values()) == set(range(4))
+    assert set(duration_table["columns"][4]["options"].values()) == set(range(4))
+    assert set(duration_table["columns"][5]["options"].values()) == set(range(4))
     duration_columns = {column["id"]: column for column in duration_table["columns"]}
     assert duration_columns["threshold"]["default"] == 20
     assert duration_columns["threshold"]["max"] == 100
@@ -539,6 +544,9 @@ def test_applet_metadata_and_settings_remainder() -> None:
     percent_table = settings["account-percent-styles"]
     assert [column["id"] for column in percent_table["columns"]] == [
         "account",
+        "show-hover",
+        "show-click",
+        "hide-when-zero",
         "mode",
         "font",
         "size",
@@ -556,7 +564,7 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "below-background",
         "below-hover-background",
     ]
-    assert set(percent_table["columns"][1]["options"].values()) == set(range(4))
+    assert set(percent_table["columns"][4]["options"].values()) == set(range(4))
     percent_columns = {column["id"]: column for column in percent_table["columns"]}
     assert percent_columns["mode"]["default"] == 0
     assert percent_columns["threshold"]["default"] == 20
@@ -630,6 +638,8 @@ def test_applet_metadata_and_settings_remainder() -> None:
         "reactivation-browser",
         "reactivation-browser-migrated",
         "error-notification-state",
+        "account-style-targets",
+        "account-style-targets-heading",
     }
 
 

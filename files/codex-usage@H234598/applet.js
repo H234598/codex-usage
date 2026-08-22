@@ -3673,11 +3673,21 @@ CodexUsageApplet.prototype = {
     },
 
     _syncStyleRows: function(accounts) {
-        let percentRows = this._mergedStyleRows(accounts, this.accountPercentStyles, "percent");
-        let dateRows = this._mergedStyleRows(accounts, this.accountDateStyles, "date");
-        let timeRows = this._mergedStyleRows(accounts, this.accountTimeStyles, "time");
-        let durationRows = this._mergedStyleRows(accounts, this.accountDurationStyles, "duration");
-        let deltaRows = this._mergedStyleRows(accounts, this.accountDeltaStyles, "delta");
+        let percentRows = this._mergedStyleRows(
+            accounts, this.accountPercentStyles, "percent", 0
+        );
+        let dateRows = this._mergedStyleRows(
+            accounts, this.accountDateStyles, "date", 1
+        );
+        let timeRows = this._mergedStyleRows(
+            accounts, this.accountTimeStyles, "time", 2
+        );
+        let durationRows = this._mergedStyleRows(
+            accounts, this.accountDurationStyles, "duration", 3
+        );
+        let deltaRows = this._mergedStyleRows(
+            accounts, this.accountDeltaStyles, "delta", 13
+        );
         let panelRows = Object.create(null);
         let panelChanged = Object.create(null);
         for (let source in PANEL_FORMATTING_TARGETS) {
@@ -3685,7 +3695,12 @@ CodexUsageApplet.prototype = {
                 continue;
             }
             let target = PANEL_FORMATTING_TARGETS[source];
-            let rows = this._mergedStyleRows(accounts, this[target.property], "percent");
+            let rows = this._mergedStyleRows(
+                accounts,
+                this[target.property],
+                "percent",
+                this._panelStyleTargetElement(Number(source))
+            );
             panelRows[source] = rows;
             panelChanged[source] = !this._styleRowsEqual(this[target.property], rows);
         }
@@ -3698,6 +3713,14 @@ CodexUsageApplet.prototype = {
         let deltaChanged = !this._styleRowsEqual(this.accountDeltaStyles, deltaRows);
         let displayChanged = !this._styleRowsEqual(this.accountDisplaySettings, displayRows);
         let targetsChanged = !this._styleRowsEqual(this.accountStyleTargets, targetRows);
+        targetRows = this._applyStyleVisibility(targetRows, percentRows, 0);
+        targetRows = this._applyStyleVisibility(targetRows, dateRows, 1);
+        targetRows = this._applyStyleVisibility(targetRows, timeRows, 2);
+        targetRows = this._applyStyleVisibility(targetRows, durationRows, 3);
+        targetRows = this._applyStyleVisibility(targetRows, panelRows[11], 6);
+        targetRows = this._applyStyleVisibility(targetRows, panelRows[14], 9);
+        targetRows = this._applyStyleVisibility(targetRows, panelRows[15], 8);
+        targetRows = this._applyStyleVisibility(targetRows, panelRows[16], 7);
         this._percentStyles = this._styleMap(percentRows);
         this._dateStyles = this._styleMap(dateRows);
         this._timeStyles = this._styleMap(timeRows);
@@ -3866,7 +3889,43 @@ CodexUsageApplet.prototype = {
         return JSON.stringify(left) === JSON.stringify(right);
     },
 
-    _mergedStyleRows: function(accounts, currentRows, kind) {
+    _legacyTargetForElement: function(account, element) {
+        if (!Array.isArray(this.accountStyleTargets)) {
+            return null;
+        }
+        for (let i = 0; i < this.accountStyleTargets.length; i++) {
+            let row = this.accountStyleTargets[i];
+            if (
+                row && row.account === account && row.element === element &&
+                typeof row.hover === "boolean" && typeof row.click === "boolean"
+            ) {
+                return row;
+            }
+        }
+        return null;
+    },
+
+    _styleVisibilityDefaults: function(account, kind, targetElement) {
+        let legacy = this._legacyTargetForElement(account, targetElement);
+        if (legacy) {
+            return { hover: legacy.hover, click: legacy.click };
+        }
+        return {
+            hover: targetElement === 0 || kind === "percent" || kind === "delta",
+            click: true
+        };
+    },
+
+    _panelStyleTargetElement: function(source) {
+        return {
+            11: 6,
+            14: 9,
+            15: 8,
+            16: 7
+        }[source];
+    },
+
+    _mergedStyleRows: function(accounts, currentRows, kind, targetElement) {
         let current = Object.create(null);
         let seen = Object.create(null);
         if (Array.isArray(currentRows)) {
@@ -3878,7 +3937,9 @@ CodexUsageApplet.prototype = {
                     continue;
                 }
                 seen[account] = true;
-                let normalized = this._normalizeStyleRow(currentRows[i], account, kind);
+                let normalized = this._normalizeStyleRow(
+                    currentRows[i], account, kind, targetElement
+                );
                 if (normalized) {
                     current[account] = normalized;
                 }
@@ -3887,14 +3948,20 @@ CodexUsageApplet.prototype = {
         let rows = [];
         for (let i = 0; i < accounts.length; i++) {
             let account = accounts[i].account;
-            rows.push(current[account] || this._defaultStyleRow(account, kind));
+            rows.push(
+                current[account] || this._defaultStyleRow(account, kind, targetElement)
+            );
         }
         return rows;
     },
 
-    _defaultStyleRow: function(account, kind) {
+    _defaultStyleRow: function(account, kind, targetElement) {
+        let visibility = this._styleVisibilityDefaults(account, kind, targetElement);
         let row = {
             account: account,
+            "show-hover": visibility.hover,
+            "show-click": visibility.click,
+            "hide-when-zero": false,
             mode: 0,
             threshold: 20,
             font: 0,
@@ -3920,6 +3987,9 @@ CodexUsageApplet.prototype = {
             row.format = 0;
             return {
                 account: row.account,
+                "show-hover": row["show-hover"],
+                "show-click": row["show-click"],
+                "hide-when-zero": row["hide-when-zero"],
                 format: row.format,
                 mode: row.mode,
                 threshold: row.threshold,
@@ -3942,10 +4012,17 @@ CodexUsageApplet.prototype = {
         return row;
     },
 
-    _normalizeStyleRow: function(row, account, kind) {
+    _normalizeStyleRow: function(row, account, kind, targetElement) {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
+        let visibility = this._styleVisibilityDefaults(account, kind, targetElement);
+        let showHover = row["show-hover"] === undefined
+            ? visibility.hover : row["show-hover"];
+        let showClick = row["show-click"] === undefined
+            ? visibility.click : row["show-click"];
+        let hideWhenZero = row["hide-when-zero"] === undefined
+            ? false : row["hide-when-zero"];
         let format = kind === "percent" || kind === "delta"
             ? 0
             : (row.format === undefined ? 0 : this._strictIntegerSetting(row.format));
@@ -4002,12 +4079,17 @@ CodexUsageApplet.prototype = {
             typeof belowBold !== "boolean" || typeof belowItalic !== "boolean" ||
             !Number.isInteger(belowColor) || belowColor < 0 || belowColor > 7 ||
             !Number.isInteger(belowBackground) || belowBackground < 0 || belowBackground > 6 ||
-            !Number.isInteger(belowHoverBackground) || belowHoverBackground < 0 || belowHoverBackground > 6
+            !Number.isInteger(belowHoverBackground) || belowHoverBackground < 0 || belowHoverBackground > 6 ||
+            typeof showHover !== "boolean" || typeof showClick !== "boolean" ||
+            typeof hideWhenZero !== "boolean"
         ) {
             return null;
         }
         let normalized = {
             account: account,
+            "show-hover": showHover,
+            "show-click": showClick,
+            "hide-when-zero": hideWhenZero,
             mode: mode,
             threshold: threshold,
             font: font,
@@ -4034,6 +4116,9 @@ CodexUsageApplet.prototype = {
         }
         return {
             account: normalized.account,
+            "show-hover": normalized["show-hover"],
+            "show-click": normalized["show-click"],
+            "hide-when-zero": normalized["hide-when-zero"],
             format: format,
             mode: normalized.mode,
             threshold: normalized.threshold,
@@ -4168,6 +4253,47 @@ CodexUsageApplet.prototype = {
         return result;
     },
 
+    _applyStyleVisibility: function(targetRows, styleRows, element) {
+        if (!Array.isArray(targetRows) || !Array.isArray(styleRows)) {
+            return targetRows;
+        }
+        let targets = Object.create(null);
+        for (let i = 0; i < targetRows.length; i++) {
+            let target = targetRows[i];
+            if (target && typeof target.account === "string") {
+                targets[target.account + ":" + target.element] = target;
+            }
+        }
+        for (let i = 0; i < styleRows.length; i++) {
+            let row = styleRows[i];
+            let target = row && targets[row.account + ":" + element];
+            if (!target) {
+                continue;
+            }
+            if (typeof row["show-hover"] === "boolean") {
+                target.hover = row["show-hover"];
+            }
+            if (typeof row["show-click"] === "boolean") {
+                target.click = row["show-click"];
+            }
+        }
+        return targetRows;
+    },
+
+    _styleRowForElement: function(account, element) {
+        let source = {
+            0: this._percentStyles,
+            1: this._dateStyles,
+            2: this._timeStyles,
+            3: this._durationStyles,
+            6: this._panelValueStyles && this._panelValueStyles[11],
+            7: this._panelValueStyles && this._panelValueStyles[16],
+            8: this._panelValueStyles && this._panelValueStyles[15],
+            9: this._panelValueStyles && this._panelValueStyles[14]
+        }[element];
+        return source && source[account] ? source[account] : null;
+    },
+
     _onPercentStylesChanged: function() {
         this._onStyleRowsChanged("percent");
     },
@@ -4208,7 +4334,9 @@ CodexUsageApplet.prototype = {
                 this._loadAccountBackends();
                 return;
             }
-            let item = this._normalizeStyleRow(rows[i], account, "percent");
+            let item = this._normalizeStyleRow(
+                rows[i], account, "percent", this._panelStyleTargetElement(Number(source))
+            );
             if (!item) {
                 this._loadAccountBackends();
                 return;
@@ -4238,6 +4366,11 @@ CodexUsageApplet.prototype = {
             return;
         }
         let normalized = [];
+        let targetElement = kind === "percent"
+            ? 0
+            : (kind === "date" ? 1
+                : (kind === "time" ? 2
+                    : (kind === "duration" ? 3 : 13)));
         let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             let account = this._configuredAccountId(rows[i] && rows[i].account);
@@ -4245,7 +4378,7 @@ CodexUsageApplet.prototype = {
                 this._loadAccountBackends();
                 return;
             }
-            let item = this._normalizeStyleRow(rows[i], account, kind);
+            let item = this._normalizeStyleRow(rows[i], account, kind, targetElement);
             if (!item) {
                 this._loadAccountBackends();
                 return;
@@ -8877,6 +9010,10 @@ CodexUsageApplet.prototype = {
         if (!style) {
             return result;
         }
+        if (style["hide-when-zero"] === true &&
+            (result.plain === "–" || /(?:^| )–(?:$| )/.test(result.plain))) {
+            return {plain: "", markup: ""};
+        }
         // Text-only values have no remaining-percent metric.  Treat them as
         // below threshold so copied style modes remain useful and predictable.
         return {
@@ -9034,8 +9171,21 @@ CodexUsageApplet.prototype = {
     },
 
     _panelDeltaPart: function(usage, source, surface) {
+        let account = usage && usage.account;
+        let style = account && this._deltaStyles && this._deltaStyles[account]
+            ? this._deltaStyles[account]
+            : (account ? this._defaultStyleRow(account, "delta", 13) : null);
+        if (style && (surface === "hover" || surface === "click")) {
+            let visibilityKey = surface === "hover" ? "show-hover" : "show-click";
+            if (style[visibilityKey] === false) {
+                return {plain: "", markup: ""};
+            }
+        }
         if (!usage || usage.cache_invalidated === true) {
             let label = this._panelSourceLabel(source);
+            if (style && style["hide-when-zero"] === true) {
+                return {plain: "", markup: ""};
+            }
             return {plain: label + " –", markup: this._escapeMarkup(label + " –")};
         }
         let key = {13: undefined, 32: 18000, 33: 604800, 34: 2592000, 35: 18000, 36: null}[source];
@@ -9067,11 +9217,14 @@ CodexUsageApplet.prototype = {
         }
         let value = candidate && candidate.coverage !== "insufficient"
             ? Number(candidate.consumed_percentage_points) : null;
+        if ((value === null || !Number.isFinite(value) || value < 0) && style &&
+            style["hide-when-zero"] === true) {
+            return {plain: "", markup: ""};
+        }
         let valueText = Number.isFinite(value) && value >= 0
             ? this._formatConsumptionValue(value) + "%" : "–";
         let label = this._panelSourceLabel(source);
         let text = label + " " + valueText;
-        let style = this._deltaStyles && this._deltaStyles[usage.account];
         let dynamic = candidate ? this._panelDeltaIsDynamic(usage, candidate) : false;
         let markup = style && Number.isFinite(value)
             ? this._styleSpan(text, style, value, surface, dynamic)
@@ -10407,13 +10560,17 @@ CodexUsageApplet.prototype = {
     },
 
     _percentPartsFromValue: function(value, account, surface, forceVisible) {
+        let style = this._percentStyles[account] || this._defaultStyleRow(account, "percent", 0);
+        let missing = value === null || !Number.isFinite(value);
+        if (missing && style["hide-when-zero"] === true) {
+            return { plain: "", markup: "" };
+        }
         if (!forceVisible && !this._elementTargetEnabled(account, "percent", surface)) {
             return { plain: "", markup: "" };
         }
-        let plain = value === null || !Number.isFinite(value)
+        let plain = missing
             ? "–"
             : Math.round(value) + "%";
-        let style = this._percentStyles[account] || this._defaultStyleRow(account, "percent");
         let markup = this._styleSpan(plain, style, value, surface);
         return { plain: plain, markup: markup };
     },
@@ -10512,17 +10669,26 @@ CodexUsageApplet.prototype = {
         if (!showDate && !showTime && !showDuration) {
             return { plain: "", markup: "" };
         }
-        if (!window || !window.reset_at) {
-            return { plain: "–", markup: this._escapeMarkup("–") };
-        }
-        let millis = this._dateMillis(window.reset_at);
-        if (millis === null) {
-            return { plain: "–", markup: this._escapeMarkup("–") };
-        }
-        let date = new Date(millis);
         let dateStyle = this._dateStyles[account] || this._defaultStyleRow(account, "date");
         let timeStyle = this._timeStyles[account] || this._defaultStyleRow(account, "time");
         let durationStyle = this._durationStyles[account] || this._defaultStyleRow(account, "duration");
+        let millis = window && window.reset_at ? this._dateMillis(window.reset_at) : null;
+        if (millis === null) {
+            if (showDate && dateStyle["hide-when-zero"] === true) {
+                showDate = false;
+            }
+            if (showTime && timeStyle["hide-when-zero"] === true) {
+                showTime = false;
+            }
+            if (showDuration && durationStyle["hide-when-zero"] === true) {
+                showDuration = false;
+            }
+            if (!showDate && !showTime && !showDuration) {
+                return { plain: "", markup: "" };
+            }
+            return { plain: "–", markup: this._escapeMarkup("–") };
+        }
+        let date = new Date(millis);
         let remaining = this._remainingPercent(window);
         let durationMinutes = this._durationMinutes(window);
         let dateText = this._formatDatePart(date, dateStyle.format);
@@ -10576,6 +10742,13 @@ CodexUsageApplet.prototype = {
         let elementId = elements[element];
         if (elementId === undefined) {
             return false;
+        }
+        let style = this._styleRowForElement(account, elementId);
+        if (style && (surface === "hover" || surface === "click")) {
+            let key = surface === "hover" ? "show-hover" : "show-click";
+            if (typeof style[key] === "boolean") {
+                return style[key];
+            }
         }
         let target = this._styleTargets[account + ":" + elementId];
         if (!target && legacyVisible !== undefined) {

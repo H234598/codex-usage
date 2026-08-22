@@ -191,14 +191,6 @@
         "account-display-settings"
       ]
     },
-    "display-target-section": {
-    "type": "section",
-      "title": "Formatierungsorte",
-      "keys": [
-        "account-style-targets-heading",
-        "account-style-targets"
-      ]
-    },
     "percent-style-section": {
       "type": "section",
       "title": "Verbleibendes Tokenlimit in %",
@@ -391,11 +383,6 @@
         "key": "account-display-settings",
         "label": "Account-Anzeige",
         "heading": "account-display-settings-heading"
-      },
-      {
-        "key": "account-style-targets",
-        "label": "Elemente und Formatierungsorte",
-        "heading": "account-style-targets-heading"
       }
     ],
     "default": "account-percent-styles"
@@ -599,6 +586,27 @@
         "id": "account",
         "title": "Account-ID",
         "type": "string"
+      },
+      {
+        "id": "show-hover",
+        "title": "In Hovermenü anzeigen",
+        "type": "boolean",
+        "default": true,
+        "tooltip": "Zeigt diesen Wert im Hover-Hilfetext an."
+      },
+      {
+        "id": "show-click",
+        "title": "In Klickmenü anzeigen",
+        "type": "boolean",
+        "default": true,
+        "tooltip": "Zeigt diesen Wert im Klick-Menü an."
+      },
+      {
+        "id": "hide-when-zero",
+        "title": "Bei Null ausblenden",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Blendet fehlende/null-Werte mit Anzeige – aus. Ein echter numerischer 0-Wert bleibt sichtbar."
       },
       {
         "id": "mode",
@@ -956,6 +964,27 @@
         "type": "string"
       },
       {
+        "id": "show-hover",
+        "title": "In Hovermenü anzeigen",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Zeigt diesen Wert im Hover-Hilfetext an."
+      },
+      {
+        "id": "show-click",
+        "title": "In Klickmenü anzeigen",
+        "type": "boolean",
+        "default": true,
+        "tooltip": "Zeigt diesen Wert im Klick-Menü an."
+      },
+      {
+        "id": "hide-when-zero",
+        "title": "Bei Null ausblenden",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Blendet fehlende/null-Werte mit Anzeige – aus."
+      },
+      {
         "id": "format",
         "title": "Format",
         "type": "integer",
@@ -1159,6 +1188,27 @@
         "type": "string"
       },
       {
+        "id": "show-hover",
+        "title": "In Hovermenü anzeigen",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Zeigt diesen Wert im Hover-Hilfetext an."
+      },
+      {
+        "id": "show-click",
+        "title": "In Klickmenü anzeigen",
+        "type": "boolean",
+        "default": true,
+        "tooltip": "Zeigt diesen Wert im Klick-Menü an."
+      },
+      {
+        "id": "hide-when-zero",
+        "title": "Bei Null ausblenden",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Blendet fehlende/null-Werte mit Anzeige – aus."
+      },
+      {
         "id": "format",
         "title": "Format",
         "type": "integer",
@@ -1360,6 +1410,27 @@
         "id": "account",
         "title": "Account-ID",
         "type": "string"
+      },
+      {
+        "id": "show-hover",
+        "title": "In Hovermenü anzeigen",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Zeigt diesen Wert im Hover-Hilfetext an."
+      },
+      {
+        "id": "show-click",
+        "title": "In Klickmenü anzeigen",
+        "type": "boolean",
+        "default": true,
+        "tooltip": "Zeigt diesen Wert im Klick-Menü an."
+      },
+      {
+        "id": "hide-when-zero",
+        "title": "Bei Null ausblenden",
+        "type": "boolean",
+        "default": false,
+        "tooltip": "Blendet fehlende/null-Werte mit Anzeige – aus."
       },
       {
         "id": "format",
