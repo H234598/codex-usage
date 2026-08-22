@@ -5514,9 +5514,9 @@ Die Quellen `Limit 30 Tage` und `Limit Spark sonstiges` wurden per einfachem
 `source - 36` auf falsche Fenster abgebildet: 30 Tage wurde als Wochenlimit,
 Spark sonstiges als Spark-Wochenlimit gelesen. Zusätzlich konnte
 `main-other` das 30-Tage-Fenster als „sonstiges“ auswählen, wenn kein kleinerer
-Wert vorlag. Explizite Quellenzuordnung und ein monatliches Ausschlussflag
-trennen jetzt 30 Tage von sonstigen Hauptfenstern; Spark behält sein
-kompatibles Other-Verhalten.
+Wert vorlag. Explizite Quellenzuordnung für Render-, Fenster-, Warn- und
+Slotwertpfad sowie ein monatliches Ausschlussflag trennen jetzt 30 Tage von
+sonstigen Hauptfenstern; Spark behält sein kompatibles Other-Verhalten.
 
 Regression prüft 18/19 sowie alle sechs Limitquellen numerisch und rendert
 30-Tage-/Spark-Other-Werte. `node --test tests/applet_runtime.test.js`:

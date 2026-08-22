@@ -9340,6 +9340,15 @@ CodexUsageApplet.prototype = {
         if (source === 9 || source === 10) {
             return null;
         }
+        if (source === 18) {
+            return this._panelWindowForKey(usage, "main-other");
+        }
+        if (source === 19) {
+            return this._panelWindowForKey(usage, "spark-other");
+        }
+        if (source >= 37 && source <= 42) {
+            return this._panelWindowForSource(usage, PANEL_LIMIT_SOURCE_MAP[source]);
+        }
         if (source >= 1 && source <= 3 && usage.main && !this._poolIsUsable(usage.main)) {
             return null;
         }
@@ -9387,6 +9396,9 @@ CodexUsageApplet.prototype = {
     },
 
     _panelThreshold: function(item, source) {
+        if (source >= 37 && source <= 42) {
+            return this._panelThreshold(item, PANEL_LIMIT_SOURCE_MAP[source]);
+        }
         let alert = this._alertSettings[item.usage.account] || this._defaultAlertRow(item.usage.account);
         let five = Number(alert["five-threshold"]);
         let weekly = Number(alert["weekly-threshold"]);

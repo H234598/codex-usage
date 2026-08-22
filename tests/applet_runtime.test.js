@@ -2792,11 +2792,29 @@ test("panel limit sources use their declared monthly and other windows", () => {
     },
   };
   const item = {usage, settings: {account: "alpha"}};
+  applet._alertSettings = {
+    alpha: {
+      "five-threshold": 11,
+      "weekly-threshold": 13,
+      "monthly-threshold": 17,
+      "spark-threshold": 19,
+    },
+  };
 
   assert.equal(applet._poolIsUsable(usage.main), true);
   assert.equal(applet._poolWindowForDuration(usage.main, 2592000).remaining, 25);
   assert.equal(applet._panelValueForSource(usage, 18), 55);
   assert.equal(applet._panelValueForSource(usage, 19), 35);
+  assert.equal(applet._panelWindowForSource(usage, 18).remaining, 55);
+  assert.equal(applet._panelWindowForSource(usage, 19).remaining, 35);
+  assert.equal(applet._panelWindowForSource(usage, 39).remaining, 25);
+  assert.equal(applet._panelWindowForSource(usage, 42).remaining, 35);
+  assert.equal(applet._panelThreshold(item, 37), 11);
+  assert.equal(applet._panelThreshold(item, 38), 13);
+  assert.equal(applet._panelThreshold(item, 39), 17);
+  assert.equal(applet._panelThreshold(item, 40), 19);
+  assert.equal(applet._panelThreshold(item, 41), 19);
+  assert.equal(applet._panelThreshold(item, 42), 19);
   assert.deepEqual(
     [37, 38, 39, 40, 41, 42].map((source) => applet._panelValueForSource(usage, source)),
     [80, 60, 25, 65, 45, 35]
