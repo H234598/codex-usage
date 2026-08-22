@@ -311,6 +311,40 @@ def test_delta_copy_ignores_malformed_base_columns(columns) -> None:
         widget.destroy()
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("description", []),
+        ("height", "bad"),
+        ("show-buttons", "bad"),
+        ("hidden-buttons", None),
+        ("tooltip", []),
+    ],
+)
+def test_malformed_list_metadata_uses_safe_defaults(field, value) -> None:
+    settings = _Settings()
+    definition = settings.settings["table-a"]
+    definition.update(
+        {
+            "description": "Description",
+            "height": 100,
+            "show-buttons": False,
+            "hidden-buttons": ["up"],
+            "tooltip": "Help",
+        }
+    )
+    definition[field] = value
+
+    widget = _BoundFormatList("table-a", definition, settings)
+    try:
+        assert widget.show_buttons is (True if field == "show-buttons" else False)
+        assert widget.hidden_buttons == ([] if field == "hidden-buttons" else ["up"])
+        assert widget.get_tooltip_text() == (None if field == "tooltip" else "Help")
+        assert hasattr(widget, "label") is (field != "description")
+    finally:
+        widget.destroy()
+
+
 def test_malformed_table_value_does_not_break_selector() -> None:
     settings = _Settings()
     settings.settings["table-a"]["value"] = None

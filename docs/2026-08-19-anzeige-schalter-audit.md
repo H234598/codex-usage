@@ -7700,3 +7700,17 @@ Mapping-/Listen-Schema. Ungültige Spalten werden übersprungen, die dynamische
 Tokendelta-Spalte wird trotzdem ergänzt. Regression deckt `columns: null` und
 gemischte beschädigte Spalten ab. `tests/test_format_table_selector.py`:
 19/19; Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 664: Tabellenmetadaten crashen Settings-Seite nicht mehr
+
+`_BoundFormatList` reichte beschädigte Metadaten ungeprüft an Cinnamon-Widgets
+weiter. Nicht-string `description` oder `tooltip`, nicht-numerisches `height`
+und `hidden-buttons: null` führten beim Öffnen zu `TypeError` oder einem
+nicht-iterierbaren Wert; `show-buttons` konnte stillschweigend falsche UI
+erzeugen.
+
+Der Loader verwendet jetzt sichere Defaults: Label/Tooltip leer, Höhe 300,
+Buttons sichtbar und Hidden-Buttons leer. Gültige Definitionen bleiben
+unverändert. Regression deckt alle fünf Metadatenfelder ab;
+`tests/test_format_table_selector.py`: 24/24; Python-Kompilierung und
+`git diff --check` sauber.

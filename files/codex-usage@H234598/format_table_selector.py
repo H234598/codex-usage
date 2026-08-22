@@ -66,13 +66,28 @@ class _BoundFormatList(List, JSONSettingsBackend):
                 and column["type"] in VARIABLE_TYPE_MAP
             )
         ]
+        description = definition.get("description")
+        if description is not None and not isinstance(description, str):
+            description = None
+        height = definition.get("height", 300)
+        if isinstance(height, bool) or not isinstance(height, (int, float)):
+            height = 300
+        show_buttons = definition.get("show-buttons", True)
+        if not isinstance(show_buttons, bool):
+            show_buttons = True
+        hidden_buttons = definition.get("hidden-buttons", [])
+        if not isinstance(hidden_buttons, list):
+            hidden_buttons = []
+        tooltip = definition.get("tooltip", "")
+        if not isinstance(tooltip, str):
+            tooltip = ""
         super().__init__(
-            label=definition.get("description"),
+            label=description,
             columns=definition.get("columns", []),
-            height=definition.get("height", 300),
-            show_buttons=definition.get("show-buttons", True),
-            hidden_buttons=definition.get("hidden-buttons", []),
-            tooltip=definition.get("tooltip", ""),
+            height=height,
+            show_buttons=show_buttons,
+            hidden_buttons=hidden_buttons,
+            tooltip=tooltip,
         )
         self.attach()
 
