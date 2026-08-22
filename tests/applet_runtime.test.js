@@ -4860,7 +4860,7 @@ test("settings launcher falls back when SubprocessLauncher is unavailable", () =
   applet._openSettings();
 
   assert.equal(JSON.stringify(subprocessCalls), JSON.stringify([[
-    ["xlet-settings", "applet", "codex-usage@H234598"],
+    ["/usr/bin/env", "NO_AT_BRIDGE=1", "xlet-settings", "applet", "codex-usage@H234598"],
     0,
   ]]));
   assert.deepEqual(scheduled, ["3089499"]);
@@ -4888,11 +4888,39 @@ test("settings launcher falls back when launcher spawn fails", () => {
   applet._openSettings();
 
   assert.equal(JSON.stringify(subprocessCalls), JSON.stringify([[
-    ["xlet-settings", "applet", "codex-usage@H234598"],
+    ["/usr/bin/env", "NO_AT_BRIDGE=1", "xlet-settings", "applet", "codex-usage@H234598"],
     0,
   ]]));
   assert.deepEqual(scheduled, ["3089499"]);
   assert.deepEqual(errors, []);
+});
+
+test("settings launcher uses the env wrapper when launcher cannot set environment", () => {
+  const launcherSpawns = [];
+  const subprocessCalls = [];
+  const scheduled = [];
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      spawnv(argv) {
+        launcherSpawns.push(argv);
+        return {get_identifier: () => "3089499"};
+      },
+    });
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {get_identifier: () => "3089499"};
+    };
+  });
+  applet._scheduleSettingsMaximize = (pid) => { scheduled.push(pid); };
+
+  applet._openSettings();
+
+  assert.deepEqual(launcherSpawns, []);
+  assert.equal(JSON.stringify(subprocessCalls), JSON.stringify([[
+    ["/usr/bin/env", "NO_AT_BRIDGE=1", "xlet-settings", "applet", "codex-usage@H234598"],
+    0,
+  ]]));
+  assert.deepEqual(scheduled, ["3089499"]);
 });
 
 test("settings window lookup matches exact xlet-settings pid", () => {

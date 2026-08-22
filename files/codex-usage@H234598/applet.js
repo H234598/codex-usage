@@ -10959,23 +10959,35 @@ CodexUsageApplet.prototype = {
                 }
             }
             if (launcher && typeof launcher.spawnv === "function") {
+                let launcherEnvironmentReady = false;
                 if (typeof launcher.setenv === "function") {
                     try {
                         launcher.setenv("NO_AT_BRIDGE", "1", true);
+                        launcherEnvironmentReady = true;
                     } catch (e) {
                         this._cleanupLog("settings AT-SPI bypass unavailable: " +
                             this._shortText(e, 180));
                     }
                 }
-                try {
-                    settingsProcess = launcher.spawnv(argv);
-                } catch (e) {
-                    this._cleanupLog("settings launcher spawn failed: " +
-                        this._shortText(e, 180));
+                if (launcherEnvironmentReady) {
+                    try {
+                        settingsProcess = launcher.spawnv(argv);
+                    } catch (e) {
+                        this._cleanupLog("settings launcher spawn failed: " +
+                            this._shortText(e, 180));
+                    }
+                } else {
+                    this._cleanupLog("settings launcher cannot set child environment");
                 }
             }
             if (!settingsProcess && Gio.Subprocess && typeof Gio.Subprocess.new === "function") {
-                settingsProcess = Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
+                // Keep AT-SPI disabled even when the Launcher API is absent or
+                // its spawn path fails. `Gio.Subprocess.new()` cannot change
+                // the child environment, so use the system env wrapper.
+                settingsProcess = Gio.Subprocess.new(
+                    ["/usr/bin/env", "NO_AT_BRIDGE=1"].concat(argv),
+                    Gio.SubprocessFlags.NONE
+                );
             }
             if (!settingsProcess) {
                 throw new Error("settings subprocess unavailable");

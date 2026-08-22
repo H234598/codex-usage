@@ -8774,3 +8774,24 @@ einer veralteten Implementierungsdetails.
 Verifikation: fokussierte Permission-Tests 49/49; Vollsuite **3198 bestanden,
 1 übersprungen, 41 externe PyGObject-/GTK-Warnungen**; Python-Compile, Ruff
 und `git diff --check` sauber.
+
+## Runde 754: Settings-Fallback behält AT-SPI-Schutz
+
+Der Settings-Launcher setzte `NO_AT_BRIDGE=1` bisher nur über
+`Gio.SubprocessLauncher.setenv()`. Wenn die Launcher-API fehlte, `setenv()`
+nicht vorhanden war oder `spawnv()` scheiterte, fiel der Code auf
+`Gio.Subprocess.new()` zurück und startete `xlet-settings` ohne den Schutz.
+Auf dieser Maschine kann der AT-SPI-Bridge-Aufbau den Prozess dadurch lange
+blockieren; für Nutzer wirkt die Einstellungen-Aktion dann wie ein No-op.
+
+Der Launcher wird jetzt nur verwendet, wenn die Kindumgebung erfolgreich
+gesetzt wurde. Jeder `Gio.Subprocess.new()`-Fallback startet stattdessen
+`/usr/bin/env NO_AT_BRIDGE=1 xlet-settings …`. Die bestehende PID-Weitergabe
+und Fensterplatzierung bleiben unverändert. Regression deckt fehlende
+Launcher-API, `spawnv()`-Fehler und fehlendes `setenv()` ab.
+
+Verifikation: kompletter Node-Runtime-Test `486/486`; Settings-Launcher-
+Fokustest `8/8`; Node-Syntaxcheck und `git diff --check` sauber. Das Applet
+wurde installiert und mit `--reload-running` neu geladen. Nach Nutzerwunsch
+wurden keine weiteren Settings-Fenster für diesen Lauf gestartet; gestartete
+Audit-Prozesse und -Fenster sind beendet.
