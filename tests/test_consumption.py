@@ -130,6 +130,28 @@ def test_consumption_forecast_is_null_without_positive_rate_or_complete_data():
     assert stale.estimated_seconds_to_exhaustion is None
 
 
+def test_consumption_keeps_pool_when_all_samples_are_outside_window():
+    sample = UsageSample(
+        account_id="alpha",
+        pool="credits",
+        window_seconds=2_592_000,
+        captured_at=BASE + timedelta(minutes=30),
+        used_percent=20,
+        source="test",
+    )
+
+    result = calculate_consumption(
+        [sample],
+        amount=1,
+        unit="hours",
+        now=BASE,
+    )
+
+    assert result.pool == "credits"
+    assert result.limit_window_seconds == 2_592_000
+    assert result.coverage == "insufficient"
+
+
 def test_consumption_forecast_is_available_as_approximation_with_fresh_partial_data():
     result = calculate_consumption(
         [_sample(0, 20), _sample(30, 50)],
