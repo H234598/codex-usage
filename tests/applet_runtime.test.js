@@ -4493,6 +4493,30 @@ test("fully disabled credit-consumption targets do not start a consumption reque
   assert.equal(requests, 0);
 });
 
+test("credit-consumption panel slot beyond legacy four starts a credit request", () => {
+  const applet = makeApplet();
+  applet._consumptionSettings = Object.create(null);
+  applet._creditSettings = {alpha: {
+    account: "alpha", "consumption-show-panel": false,
+    "consumption-show-tooltip": false, "consumption-amount": 1,
+    "consumption-unit": "hours", "consumption-smoothing": "ema-20",
+    "consumption-baseline-enabled": false,
+  }};
+  applet._styleTargets["alpha:12"] = {panel: false, hover: false, click: false};
+  applet._panelSettings.alpha = {
+    account: "alpha", order: 1, muted: false,
+    slot1: 0, slot2: 0, slot3: 0, slot4: 0, slot20: 10,
+  };
+  const requests = [];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (argv) => { requests.push(argv); };
+
+  applet._refreshConsumption();
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0][requests[0].indexOf("--pool") + 1], "credits");
+});
+
 test("consumption refresh prunes obsolete tagged query results but retains legacy data", () => {
   const applet = makeApplet();
   applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};

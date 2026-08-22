@@ -5595,3 +5595,15 @@ Test injiziert jetzt `os.fchmod()` direkt; Produktionscode unverändert.
 
 `pytest -q tests/test_health.py tests/test_private_io.py`: 77/77 bestanden;
 Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 472: Dynamische Leistenwerte starten ihre Verbrauchsabfrage
+
+Die Leiste unterstützt bis zu 64 Wertfelder, aber `_refreshConsumption()`
+prüfte für Creditverbrauch nur die alten vier Slots. Ein Creditverbrauch in
+Wert 5 oder höher wurde korrekt gerendert, löste jedoch keinen Credit-Request
+aus und blieb deshalb bei `–`.
+
+Die Request-Ermittlung iteriert jetzt über die konfigurierte Wertanzahl.
+Regression setzt `Creditverbrauch` in Wert 20 und erwartet Pool `credits`.
+`node --test tests/applet_runtime.test.js`: 412/412; `node --check` und
+`git diff --check` sauber.

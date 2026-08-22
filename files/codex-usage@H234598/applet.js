@@ -5654,7 +5654,10 @@ CodexUsageApplet.prototype = {
             let creditRow = this._creditSettings && this._creditSettings[usage.account];
             let panelRow = this._panelSettings[usage.account] ||
                 this._defaultPanelRow(usage.account, i + 1);
-            let panelSources = [panelRow.slot1, panelRow.slot2, panelRow.slot3, panelRow.slot4];
+            let panelSources = [];
+            for (let slotIndex = 1; slotIndex <= this._panelValueCount(); slotIndex++) {
+                panelSources.push(panelRow["slot" + slotIndex]);
+            }
             let activeQueryKeys = Object.create(null);
             // Keep the last validated windows until the matching request has
             // succeeded.  Clearing them here made one failed consumption
