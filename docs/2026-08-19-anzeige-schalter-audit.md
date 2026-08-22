@@ -6862,3 +6862,15 @@ PID `3455941`, Fenster-ID `0x08600007`, `_NET_WM_STATE` enthält
 `git diff --check` sauber. `pytest -q tests/test_applet.py` hat eine
 vorbestehende, unabhängige Assertion zur alten `bind`-Form (`1 failed,
 26 passed`).
+
+## Runde 601: Veraltete Panel-Binding-Test-Erwartung korrigieren
+
+Der fokussierte Python-Test prüfte noch den alten Ausdruck
+`bind("account-panel-settings", ...)`, obwohl die Produktionsänderung aus
+`d95b2a6` diese Einstellung absichtlich über `_bindCustomSetting(...)`
+registriert. Dadurch blieb die Testsuite trotz korrektem Code rot.
+
+Die Assertion folgt jetzt der tatsächlichen Custom-Binding-Form. Keine
+Produktionslogik geändert. `pytest -q tests/test_applet.py`: 27/27.
+Python-Kompilierung der betroffenen Settings-Widgets und `git diff --check`
+sind sauber.

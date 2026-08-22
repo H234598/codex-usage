@@ -663,7 +663,7 @@ def test_applet_uses_argv_subprocesses_and_bounded_json() -> None:
     assert "codex-usage login " not in source
     assert '_bindCustomSetting("fast-mode-icon"' in source
     assert '_bindCustomSetting(\n            "account-backends"' in source
-    assert 'bind("account-panel-settings"' in source
+    assert '_bindCustomSetting(\n            "account-panel-settings"' in source
     assert 'bind("account-alert-settings"' in source
     assert 'bind("account-percent-styles"' in source
     assert 'bind("account-date-styles"' in source
