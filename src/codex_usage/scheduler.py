@@ -1098,7 +1098,7 @@ def _watch_core_resets_current(
                 seconds=duration + RESET_FUTURE_SKEW_SECONDS
             ):
                 return False
-        except (OverflowError, TypeError, ValueError):
+        except Exception:
             return False
     return True
 
@@ -1472,7 +1472,7 @@ def _blocked_until_active(usage: AccountUsage, *, now: datetime) -> bool:
             and usage.blocked_until is not None
             and usage.blocked_until > now
         )
-    except (AttributeError, OverflowError, TypeError, ValueError):
+    except Exception:
         return False
 
 
@@ -1508,7 +1508,7 @@ def _capture_is_too_far_in_future(
         return False
     try:
         return usage.captured_at > reference_at + timedelta(seconds=MAX_CAPTURE_FUTURE_SECONDS)
-    except (TypeError, ValueError, OverflowError):
+    except Exception:
         return True
 
 

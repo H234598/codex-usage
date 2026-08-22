@@ -7076,3 +7076,31 @@ abweichende Rechtekombination weiterhin vor JSON-Verarbeitung. Regression
 setzt eine gültige Policy auf `0700` und erwartet die kontrollierte Ablehnung.
 `pytest -q tests/test_routing.py`: 127/127; Ruff, Mypy, Python-Kompilierung
 und `git diff --check` sauber.
+
+## Runde 616: Scheduler-Blockzustand bei fehlerhaften Reset-Vergleichen fail-closed
+
+`_block_state()` fing Fehler aus Zeitzonen- und Reset-Vergleichen zunächst
+nicht vollständig ab. Ein fehlerhaftes `datetime`-Objekt konnte bei Auswahl,
+Gleichheitsprüfung, `isoformat()` oder dem Vergleich mit `now` einen
+`RuntimeError` bis in den Watchdog durchreichen.
+
+Die Auswahl- und Vergleichsphase ist jetzt vollständig geschützt. Bei einem
+unbekannten Reset wird konservativ „Limit erreicht; Resetzeit unbekannt“
+zurückgegeben. Regression deckt einen fehlerhaften `<=`-Vergleich ab.
+`pytest -q tests/test_scheduler.py`: 206/206; Ruff, Mypy,
+Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 617: Scheduler-Watchdog bei fehlerhaften Datetime-Vergleichen fail-closed
+
+`_watch_core_resets_current()`, `_blocked_until_active()` und
+`_capture_is_too_far_in_future()` fingen bisher nur ausgewählte Standard-
+Exceptions ab. Ein fehlerhaftes `datetime`-Objekt konnte bei `<=` oder `>`
+deshalb einen `RuntimeError` nach außen geben und den Watchdog-Zyklus
+abbrechen.
+
+Die drei Validierungspfade behandeln jetzt jeden normalen Vergleichsfehler
+als ungültige bzw. zu unsichere Zeit: Resetprüfung und Blockaktivität werden
+verworfen, ein fehlerhafter Zukunftsvergleich gilt als zu weit in der Zukunft.
+Regressionstests decken alle drei Grenzen mit absichtlich fehlerhaften
+Datetime-Vergleichen ab. `pytest -q tests/test_scheduler.py`: 209/209;
+Ruff, Mypy, Python-Kompilierung und `git diff --check` sauber.

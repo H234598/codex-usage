@@ -18,6 +18,8 @@ from codex_usage.scheduler import (
     _apply_watchdog_block,
     _block_state,
     _blocked_snapshot_matches_account,
+    _blocked_until_active,
+    _capture_is_too_far_in_future,
     _fetch_one,
     _has_unexpired_window_reset_discontinuity,
     _has_usable_core_usage,
@@ -46,6 +48,9 @@ class _RaisingTimezone(tzinfo):
 
 class _RaisingComparisonDatetime(datetime):
     def __le__(self, _other):
+        raise RuntimeError("synthetic comparison marker")
+
+    def __gt__(self, _other):
         raise RuntimeError("synthetic comparison marker")
 
 
@@ -106,6 +111,61 @@ def test_block_state_treats_failing_reset_comparison_as_unknown():
 
     assert blocked_until is None
     assert reason == "usage limit reached: 5h; reset time unknown"
+
+
+def test_watch_core_resets_current_treats_failing_reset_comparison_as_invalid():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0),
+        main=_usable_main(
+            LimitWindow(
+                name="5h",
+                remaining=50,
+                reset_at=_RaisingComparisonDatetime(
+                    2026, 8, 16, 11, tzinfo=ZoneInfo("UTC")
+                ),
+            )
+        ),
+        status=AccountStatus.OK,
+    )
+
+    assert _watch_core_resets_current(
+        usage,
+        now=datetime(2026, 8, 16, 10, 0, tzinfo=ZoneInfo("UTC")),
+    ) is False
+
+
+def test_blocked_until_active_treats_failing_comparison_as_inactive():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0),
+        status=AccountStatus.BLOCKED,
+        blocked_until=_RaisingComparisonDatetime(
+            2026, 8, 16, 11, tzinfo=ZoneInfo("UTC")
+        ),
+    )
+
+    assert _blocked_until_active(
+        usage,
+        now=datetime(2026, 8, 16, 10, 0, tzinfo=ZoneInfo("UTC")),
+    ) is False
+
+
+def test_capture_future_treats_failing_comparison_as_too_far():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=_RaisingComparisonDatetime(
+            2026, 8, 16, 10, tzinfo=ZoneInfo("UTC")
+        ),
+    )
+
+    assert _capture_is_too_far_in_future(
+        usage,
+        datetime(2026, 8, 16, 10, tzinfo=ZoneInfo("UTC")),
+    ) is True
 
 
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(
