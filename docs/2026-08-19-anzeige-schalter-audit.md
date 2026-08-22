@@ -8223,3 +8223,15 @@ jetzt ab, setzen `_saving` zurück und aktualisieren die UI kontrolliert.
 Regression deckt Dropdown- und Tabellen-Write ab;
 `tests/test_format_table_selector.py`: 34/34, Python-Compile, Ruff und
 `git diff --check` sauber.
+
+## Runde 714: Formatierungs-Spalten validieren GTK-Ausrichtung
+
+`_BoundFormatList` reichte `align`-Metadaten ungeprüft an
+`Gtk.CellRenderer.set_alignment()` weiter. Text/`None` brachen den
+Seitenaufbau mit `TypeError`; ungültige Zahlen erzeugten GTK-Criticals.
+Schemaobjekte wurden außerdem direkt mutiert.
+
+Spaltenschema wird jetzt kopiert, NUL-Identitäten werden verworfen und
+`align` auf finite Werte zwischen 0 und 1 normalisiert. Regression deckt alle
+Grenzformen ab; `tests/test_format_table_selector.py`: 42/42,
+Python-Compile, Ruff und `git diff --check` sauber.

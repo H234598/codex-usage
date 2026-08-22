@@ -23,6 +23,8 @@ class _BoundFormatList(List, JSONSettingsBackend):
         self.settings = settings
         if not isinstance(definition, dict):
             definition = {}
+        else:
+            definition = copy.deepcopy(definition)
         copy_from = definition.get("format-copy-of")
         if key == "account-delta-styles" or isinstance(copy_from, str):
             base_key = "account-percent-styles" if key == "account-delta-styles" else copy_from
@@ -57,16 +59,35 @@ class _BoundFormatList(List, JSONSettingsBackend):
         columns = definition.get("columns", [])
         if not isinstance(columns, list):
             columns = []
-        definition["columns"] = [
-            column for column in columns
-            if (
+        valid_columns = []
+        for column in columns:
+            if not (
                 isinstance(column, dict)
                 and isinstance(column.get("id"), str)
                 and isinstance(column.get("title"), str)
                 and isinstance(column.get("type"), str)
                 and column["type"] in VARIABLE_TYPE_MAP
-            )
-        ]
+            ):
+                continue
+            if "\x00" in column["id"] or "\x00" in column["title"]:
+                continue
+            if "align" in column:
+                align = column["align"]
+                try:
+                    valid_align = (
+                        not isinstance(align, bool)
+                        and isinstance(align, (int, float))
+                        and math.isfinite(align)
+                        and 0 <= align <= 1
+                    )
+                except (OverflowError, TypeError):
+                    valid_align = False
+                if valid_align:
+                    column["align"] = float(align)
+                else:
+                    column.pop("align", None)
+            valid_columns.append(column)
+        definition["columns"] = valid_columns
         description = definition.get("description")
         if description is not None and not isinstance(description, str):
             description = None

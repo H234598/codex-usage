@@ -409,6 +409,23 @@ def test_format_list_height_is_finite_and_bounded(height) -> None:
         widget.destroy()
 
 
+@pytest.mark.parametrize("align", ["bad", float("nan"), float("inf"), -1, 2, True, None, 0.5])
+def test_format_table_sanitizes_column_alignment(align) -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [
+        {"id": "value", "title": "Value", "type": "string", "align": align}
+    ]
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        if align == 0.5:
+            assert widget.columns[0]["align"] == 0.5
+        else:
+            assert "align" not in widget.columns[0]
+    finally:
+        widget.destroy()
+
+
 def test_malformed_table_value_does_not_break_selector() -> None:
     settings = _Settings()
     settings.settings["table-a"]["value"] = None
