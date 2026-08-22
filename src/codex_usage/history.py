@@ -17,6 +17,7 @@ from .private_io import ensure_private_directory, private_path_lock
 
 MAX_HISTORY_SAMPLES = 500_000
 MAX_HISTORY_WINDOW_SECONDS = 2_592_000
+MAX_CONSUMPTION_WINDOWS = 32
 HISTORY_SCHEMA_VERSION = "1"
 CREDIT_HISTORY_WINDOW_SECONDS = 2_592_000
 
@@ -430,6 +431,35 @@ class HistoryStore:
             samples.append(_sample_from_row(baseline_row))
         samples.extend(_sample_from_row(row) for row in observations)
         return tuple(samples)
+
+    def consumption_window_seconds(
+        self,
+        account_id: str,
+        *,
+        pool: str,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[int, ...]:
+        """Return distinct stored windows available in bounded time range."""
+        _validate_history_key(account_id=account_id, pool=pool, window_seconds=1)
+        _require_aware(start, "start")
+        _require_aware(end, "end")
+        if start > end:
+            return ()
+        rows = self._connect().execute(
+            "SELECT DISTINCT window_seconds FROM samples "
+            "WHERE account_id = ? AND pool_key = ? "
+            "AND captured_at_ms >= ? AND captured_at_ms <= ? "
+            "ORDER BY window_seconds LIMIT ?",
+            (
+                account_id,
+                pool,
+                _to_millis(start),
+                _to_millis(end),
+                MAX_CONSUMPTION_WINDOWS,
+            ),
+        ).fetchall()
+        return tuple(int(row["window_seconds"]) for row in rows)
 
     def prune(self, before: datetime, *, dry_run: bool = False) -> int:
         if not isinstance(dry_run, bool):

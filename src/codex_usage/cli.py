@@ -1182,6 +1182,20 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
     except (OverflowError, ValueError) as exc:
         raise ValueError("now is out of range") from exc
     with HistoryStore(args.path) as store:
+        if args.limit_window == "all":
+            durations = tuple(
+                dict.fromkeys(
+                    (
+                        *durations,
+                        *store.consumption_window_seconds(
+                            args.account,
+                            pool=args.pool,
+                            start=start,
+                            end=now,
+                        ),
+                    )
+                )
+            )
         for duration in durations:
             samples = store.samples_for_consumption(
                 args.account,

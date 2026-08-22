@@ -5643,3 +5643,17 @@ Tage; die CLI-Kurzübersicht nennt alle gültigen Fenster.
 Regression prüft die drei ausgegebenen Fenster. `pytest -q
 tests/test_history_cli.py`: 5/5; Ruff, Python-Compile und `git diff --check`
 sauber.
+
+## Runde 476: `all` enthält sonstige Historienfenster
+
+`Δsonst.` kann ein frei konfiguriertes Fenster darstellen. Der CLI-Modus
+`consumption --limit-window all` fragte bisher jedoch nur 5h, Woche und 30
+Tage ab; historische Samples mit anderer Fensterdauer wurden unterschlagen.
+
+`HistoryStore.consumption_window_seconds()` liefert jetzt bis zu 32 distinct
+Fensterdauern aus dem begrenzten Abfragezeitraum. `all` führt diese Werte in
+stabiler Reihenfolge hinter den bekannten Fenstern zusammen. Regressionen
+decken History-Auflistung und CLI-Ausgabe für ein 1-Tage-Fenster ab.
+
+`pytest -q tests/test_history.py tests/test_history_cli.py`: 89/89;
+Ruff, Python-Compile und `git diff --check` sauber.

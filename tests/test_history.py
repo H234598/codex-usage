@@ -686,6 +686,44 @@ def test_history_consumption_samples_keep_baseline_and_window_only(tmp_path):
     ]
 
 
+def test_history_lists_distinct_consumption_windows_in_time_range(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    base = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    with HistoryStore(path) as store:
+        store.record(_sample(captured_at=base - timedelta(minutes=30), used_percent=1))
+        store.record(
+            UsageSample(
+                account_id="alpha",
+                pool="main",
+                window_seconds=86_400,
+                captured_at=base - timedelta(minutes=20),
+                used_percent=2,
+                reset_generation="a",
+                source="test",
+            )
+        )
+        store.record(
+            UsageSample(
+                account_id="beta",
+                pool="main",
+                window_seconds=172_800,
+                captured_at=base - timedelta(minutes=10),
+                used_percent=3,
+                reset_generation="a",
+                source="test",
+            )
+        )
+
+        windows = store.consumption_window_seconds(
+            "alpha",
+            pool="main",
+            start=base - timedelta(hours=1),
+            end=base,
+        )
+
+    assert windows == (18_000, 86_400)
+
+
 def test_history_consumption_samples_include_baseline_before_window(tmp_path):
     path = tmp_path / "history.sqlite3"
     base = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
