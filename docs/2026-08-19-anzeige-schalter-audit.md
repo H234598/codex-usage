@@ -6744,3 +6744,26 @@ Fokustest `node --test --test-name-pattern='settings launcher|native Cinnamon
 configure action|settings maximization|settings placement|stale settings'
 tests/applet_runtime.test.js`: 9/9. Live-Smoke `xlet-settings`/Cinnamon:
 erfolgreich. `git diff --check` sauber.
+
+## Runde 595: Auxiliary-Command nicht über Account-Argumente klassifizieren
+
+`_spawnAuxJson()` erkannte Device-Login bisher mit
+`argv.indexOf("device-login")`. Ein gültiger Account-Identifier oder ein
+anderes Argument mit diesem Text setzte dadurch `_auxCommand` fälschlich auf
+`device-login`; betroffen waren Timeouttext, Live-Event-Parser und der
+Abbruchpfad. `_cancelDeviceLogin()` hatte dieselbe Übererkennung in der
+Deferred-Queue.
+
+Beide Pfade erkennen Device-Login jetzt ausschließlich über das strukturelle
+Tokenpaar `profile device-login`. Regressionen prüfen sowohl Account-ID
+`device-login` im normalen Auxiliary-Befehl als auch eine nicht-Profil-
+Anfrage in der Queue; der echte Profilbefehl behält seinen Device-Login-
+Timeouttext.
+
+Fokustest `node --test --test-name-pattern='account id device-login|queued
+device login cancellation|auxiliary timeout|profile job|bounded process output'
+tests/applet_runtime.test.js`: grün. Vollständiger JS-Lauf `node --test
+tests/applet_runtime.test.js`: 462/462. Zusätzlich 25 echte Auxiliary-Starts
+unter laufendem Cinnamon: keine Zombies, `_auxProcess`/`_auxCommand` leer,
+Timeoutquelle und Deferred-Queue freigegeben. Node-Syntaxcheck und
+`git diff --check` sauber.

@@ -1105,6 +1105,21 @@ test("queued device login cancellation removes only its deferred request", () =>
   assert.equal(drained, 4);
 });
 
+test("queued non-profile command containing device-login is not cancelled", () => {
+  const applet = makeApplet();
+  applet._deviceLoginActive = { "device-login": true };
+  applet._auxCommand = "service-enable";
+  applet._backendAuxQueue = [{
+    argv: ["codex-usage", "consumption", "--account", "device-login", "--amount", "1"],
+  }];
+  applet._buildUsageMenu = () => {};
+
+  applet._cancelDeviceLogin("device-login");
+
+  assert.equal(applet._deviceLoginActive["device-login"], true);
+  assert.equal(applet._backendAuxQueue.length, 1);
+});
+
 test("device login does not replace another active account login", () => {
   const applet = makeApplet();
   let spawned = 0;
@@ -9591,7 +9606,7 @@ test("auxiliary timeout message reports the selected duration", () => {
       expected: "Hilfsbefehl nach 30 Sekunden abgebrochen",
     },
     {
-      argv: ["codex-usage", "account", "device-login"],
+      argv: ["codex-usage", "profile", "device-login", "--account", "alpha"],
       timeoutMs: 910000,
       expected: "Device-Login nach 15 Minuten 10 Sekunden abgebrochen",
     },
@@ -9633,6 +9648,27 @@ test("auxiliary timeout message reports the selected duration", () => {
     error: scenario.expected,
     forced: 1,
   })));
+});
+
+test("account id device-login is not classified as a device-login command", () => {
+  const process = { force_exit() {} };
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_milliseconds, _callback) => 11;
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() { return process; },
+    });
+  });
+  applet._readBoundedProcessOutput = () => {};
+
+  applet._spawnAuxJson(
+    ["codex-usage", "account", "manage", "device-login", "--format", "json"],
+    () => {},
+    false,
+    1000
+  );
+
+  assert.equal(applet._auxCommand, "");
 });
 
 test("stale process timeouts cannot clear newer request timers", () => {

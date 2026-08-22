@@ -4965,12 +4965,14 @@ CodexUsageApplet.prototype = {
                 break;
             }
         }
-        let deviceLogin = argv.indexOf("device-login") !== -1;
+        let deviceLogin = false;
         let profileJobs = false;
         let profileJobStatus = false;
         let profileJobCancel = false;
         for (let index = 0; index < argv.length - 1; index++) {
-            if (argv[index] === "profile" && argv[index + 1] === "jobs") {
+            if (argv[index] === "profile" && argv[index + 1] === "device-login") {
+                deviceLogin = true;
+            } else if (argv[index] === "profile" && argv[index + 1] === "jobs") {
                 profileJobs = true;
             } else if (argv[index] === "profile" && argv[index + 1] === "job-status") {
                 profileJobStatus = true;
@@ -7734,8 +7736,15 @@ CodexUsageApplet.prototype = {
                 let request = this._backendAuxQueue[index];
                 let argv = request && Array.isArray(request.argv) ? request.argv : [];
                 let accountIndex = argv.indexOf("--account");
+                let isDeviceLoginRequest = false;
+                for (let token = 0; token < argv.length - 1; token++) {
+                    if (argv[token] === "profile" && argv[token + 1] === "device-login") {
+                        isDeviceLoginRequest = true;
+                        break;
+                    }
+                }
                 if (
-                    argv.indexOf("device-login") !== -1 &&
+                    isDeviceLoginRequest &&
                     accountIndex !== -1 &&
                     argv[accountIndex + 1] === account
                 ) {
