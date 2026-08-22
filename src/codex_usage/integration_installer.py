@@ -1420,7 +1420,11 @@ def _read_bounded_wheel_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) 
         _fail()
     with archive.open(info, "r") as source:
         payload = source.read(MAX_INSTALL_FILE_BYTES + 1)
-        if len(payload) > MAX_INSTALL_FILE_BYTES or source.read(1):
+        if (
+            len(payload) > MAX_INSTALL_FILE_BYTES
+            or len(payload) != info.file_size
+            or source.read(1)
+        ):
             _fail()
     return payload
 

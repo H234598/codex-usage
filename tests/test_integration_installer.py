@@ -2372,6 +2372,28 @@ def test_installer_reader_rejects_size_drift_after_open(tmp_path, monkeypatch):
         integration_installer._read_nofollow(path)
 
 
+def test_wheel_member_reader_rejects_header_size_drift():
+    from codex_usage import integration_installer
+
+    class FakeSource:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def read(self, size):
+            return b"payload" if size > 1 else b""
+
+    class FakeArchive:
+        def open(self, info, mode):
+            return FakeSource()
+
+    info = SimpleNamespace(file_size=len(b"payload") + 1)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._read_bounded_wheel_member(FakeArchive(), info)
+
+
 def test_installer_reader_rejects_foreign_owner(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

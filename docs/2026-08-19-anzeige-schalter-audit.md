@@ -5907,3 +5907,13 @@ Die gelesene Länge muss jetzt exakt der geprüften `st_size` entsprechen.
 Regression deckt Größen-Drift nach Öffnung ab. `pytest -q
 tests/test_integration_installer.py`: 149/149; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 536: Wheel-Reader erzwingt Header-Payload-Größe
+
+`_read_bounded_wheel_member()` begrenzte bisher Read-Länge und Restdaten,
+verglich die gelesene Payload aber nicht mit `ZipInfo.file_size`. Ein
+inkonsistenter Header konnte dadurch als gültiges Member weiterlaufen.
+
+Die Payload-Länge muss jetzt exakt der Headergröße entsprechen. Regression
+deckt Header-Size-Drift ab. `pytest -q tests/test_integration_installer.py`:
+150/150; Ruff, Python-Compile und `git diff --check` sauber.
