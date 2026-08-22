@@ -358,13 +358,17 @@ class PanelSettingsList(List, JSONSettingsBackend):
             return _DEFAULT_EDIT_COLUMNS
 
     def _remove_listener(self, key, callback) -> None:
-        listeners = getattr(self.settings, "listeners", None)
-        if not isinstance(listeners, dict):
+        try:
+            listeners = getattr(self.settings, "listeners", None)
+            if not isinstance(listeners, dict):
+                return
+            callbacks = listeners.get(key)
+            if not isinstance(callbacks, list):
+                return
+            callbacks[:] = [registered for registered in callbacks if registered != callback]
+        except Exception:
+            # Listener cleanup must not abort page construction or destruction.
             return
-        callbacks = listeners.get(key)
-        if not isinstance(callbacks, list):
-            return
-        callbacks[:] = [registered for registered in callbacks if registered != callback]
 
     def on_setting_changed(self, *_args) -> None:
         """Load only list rows whose values fit the GTK model schema."""

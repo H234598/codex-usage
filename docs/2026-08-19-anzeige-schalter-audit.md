@@ -8141,3 +8141,15 @@ Beide Listener-Registrierungen behandeln jetzt `Exception` fehlertolerant;
 das Panel bleibt ohne Live-Updates bedienbar. Regression deckt
 `OSError` und `RuntimeError` ab; `tests/test_panel_settings_list.py`: 85/85,
 Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 707: Listener-Cleanup überlebt kaputten Container
+
+Beim fehlgeschlagenen `attach()` und beim Schließen greift
+`_remove_listener()` auf den externen `settings.listeners`-Container zu.
+Eine Exception dort konnte den gerade fehlertolerant gemachten Aufbau oder
+Destroy-Pfad wieder abbrechen.
+
+Cleanup behandelt Containerfehler jetzt kontrolliert als bereits nicht
+verfügbaren Listener-Zustand. Regression deckt einen fehlerwerfenden
+Containerzugriff ab; `tests/test_panel_settings_list.py`: 86/86,
+Python-Compile, Ruff und `git diff --check` sauber.
