@@ -8016,6 +8016,10 @@ CodexUsageApplet.prototype = {
     },
 
     _updateAccountPanelSetting: function(account, changes) {
+        if (typeof account !== "string" || !account ||
+            !changes || typeof changes !== "object" || Array.isArray(changes)) {
+            return;
+        }
         let current = this._panelSettings[account] || this._defaultPanelRow(account, 1);
         let candidate = {};
         Object.keys(current).forEach(function(key) { candidate[key] = current[key]; });
@@ -8025,7 +8029,10 @@ CodexUsageApplet.prototype = {
             return;
         }
         let rows = Array.isArray(this.accountPanelSettings)
-            ? this.accountPanelSettings.slice()
+            ? this.accountPanelSettings.filter(function(row) {
+                return row && typeof row === "object" && !Array.isArray(row) &&
+                    typeof row.account === "string" && row.account;
+            })
             : [];
         let found = false;
         rows = rows.map(function(row) {

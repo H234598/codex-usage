@@ -3034,6 +3034,31 @@ test("legacy panel tags migrate to central display settings", () => {
   );
 });
 
+test("panel account update ignores malformed rows and changes", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._updatePanel = () => {};
+  applet.panelPercentSource = "five-hour";
+  applet._panelSettings.alpha = applet._defaultPanelRow("alpha", 1);
+  applet.accountPanelSettings = [
+    null,
+    applet._defaultPanelRow("alpha", 1),
+    ["malformed"],
+  ];
+  applet._updateAccountPanelSetting("alpha", {muted: true});
+
+  assert.deepEqual(JSON.parse(JSON.stringify(applet.accountPanelSettings)), [{
+    account: "alpha",
+    order: 1,
+    muted: true,
+    slot1: 1,
+    slot2: 0,
+    slot3: 0,
+    slot4: 0,
+  }]);
+  assert.doesNotThrow(() => applet._updateAccountPanelSetting("alpha", null));
+  assert.doesNotThrow(() => applet._updateAccountPanelSetting([], {muted: false}));
+});
+
 test("display targets resolve account id, label and tag per surface", () => {
   const applet = makeApplet();
   const item = { usage: { account: "alpha", label: "Private Account" } };

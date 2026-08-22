@@ -7798,3 +7798,15 @@ positionsgebundene Fallback. Eindeutige Accounts behalten weiterhin robustes
 ID-Matching bei Sortieränderungen. Regression deckt zwei gleiche Account-IDs
 und unterschiedliche Hidden-Slots ab; `tests/test_panel_settings_list.py`:
 39/39; Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 672: Panel-JS verwirft kaputte Bestandszeilen sicher
+
+`_updateAccountPanelSetting()` lief beim Menü-Update blind über
+`accountPanelSettings`. `null`, Arrays oder andere beschädigte Rows führten bei
+`row.account` zum Callback-Crash; nicht-objektartige `changes` waren ebenfalls
+ungeprüft.
+
+Die Funktion akzeptiert nur gültige Account-Strings und Objektänderungen und
+filtert beschädigte Bestandszeilen vor Mapping und Persistenz. Regression deckt
+`null`, Array sowie ungültige Änderungen ab; fokussierter Node-Test grün,
+Syntaxcheck und `git diff --check` sauber.
