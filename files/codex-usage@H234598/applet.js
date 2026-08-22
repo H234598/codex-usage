@@ -10998,7 +10998,13 @@ CodexUsageApplet.prototype = {
                 } else {
                     placementAttempts += 1;
                     try {
-                        let monitor = Main.layoutManager && Main.layoutManager.currentMonitor;
+                        let monitor = null;
+                        if (Main.layoutManager && typeof Main.layoutManager.findMonitorForActor === "function") {
+                            monitor = Main.layoutManager.findMonitorForActor(this.actor);
+                        }
+                        if (!monitor && Main.layoutManager) {
+                            monitor = Main.layoutManager.currentMonitor;
+                        }
                         let monitorX = monitor && Number(monitor.x);
                         let monitorY = monitor && Number(monitor.y);
                         if (Number.isFinite(monitorX) && Number.isFinite(monitorY)) {

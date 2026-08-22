@@ -7030,3 +7030,21 @@ Abdeckung als `partial`. Positive Deltas bleiben unverändert. Der
 Regressionstest verwendet zwei identische Zeitstempel und prüft, dass kein
 Verbrauch erfunden wird. `pytest -q tests/test_consumption.py`: 41/41.
 Ruff, Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 614: Settings-Fenster am Applet-Monitor platzieren
+
+Der Settings-Launcher wählte die Zielposition bisher über
+`Main.layoutManager.currentMonitor`. Dieser Wert folgt dem aktuell fokussierten
+Monitor, nicht zwingend dem Monitor des geklickten Applets. Bei mehreren
+Monitoren konnte `xlet-settings` deshalb korrekt starten, aber außerhalb des
+sichtbaren Arbeitsmonitors erscheinen; das wirkte wie „Einstellungen öffnet
+nicht“.
+
+`_scheduleSettingsMaximize()` verwendet jetzt zuerst
+`findMonitorForActor(this.actor)` und fällt nur bei fehlendem Monitor auf
+`currentMonitor` zurück. Verschieben und Maximieren bleiben unverändert
+begrenzt und PID-sicher. Regression simuliert fokussierten Monitor `x=3840`
+bei Applet-Monitor `x=0` und prüft den `wmctrl -e`-Aufruf. Der fokussierte
+Settings-Lauf `node --test --test-name-pattern='settings (launcher|window
+lookup|maximization|placement)|native Cinnamon configure|stale settings'
+tests/applet_runtime.test.js`: 13/13.

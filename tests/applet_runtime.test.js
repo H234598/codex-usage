@@ -122,6 +122,7 @@ function loadPrototype(onReady) {
             get currentMonitor() {
               return runtime.currentMonitor || null;
             },
+            findMonitorForActor: () => runtime.appletMonitor || runtime.currentMonitor || null,
           },
         },
         popupMenu: {
@@ -4769,6 +4770,29 @@ test("settings maximization moves window onto current monitor before maximizing"
   assert.equal(JSON.stringify(subprocessCalls.map((call) => call[0])), JSON.stringify([
     ["wmctrl", "-r", "Codex Usage", "-e", "0,1920,0,-1,-1"],
     ["wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz"],
+  ]));
+});
+
+test("settings maximization follows applet monitor, not focused monitor", () => {
+  const callbacks = [];
+  const subprocessCalls = [];
+  const applet = makeApplet((runtime) => {
+    runtime.currentMonitor = {x: 3840, y: 0, width: 1920, height: 1080};
+    runtime.appletMonitor = {x: 0, y: 0, width: 1920, height: 1080};
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {};
+    };
+  });
+
+  applet._scheduleSettingsMaximize();
+  assert.equal(callbacks[0](), true);
+  assert.equal(JSON.stringify(subprocessCalls[0][0].slice(1)), JSON.stringify([
+    "-r", "Codex Usage", "-e", "0,0,0,-1,-1",
   ]));
 });
 
