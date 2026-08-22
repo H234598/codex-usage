@@ -2817,6 +2817,40 @@ def test_owned_file_cleanup_rejects_parent_swap_before_unlink(tmp_path, monkeypa
     assert (old_parent / target.name).read_bytes() == b"owned"
 
 
+def test_owned_file_cleanup_rejects_replaced_entry_before_unlink(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    target = parent / "candidate.json"
+    target.write_bytes(b"owned")
+    target.chmod(0o600)
+    parent_identity = integration_installer._directory_identity(parent)
+    identity = integration_installer._file_identity(target)
+    calls = 0
+    original_stat = os.stat
+
+    def replace_before_unlink(name, *args, **kwargs):
+        nonlocal calls
+        if name == target.name and kwargs.get("dir_fd") is not None:
+            calls += 1
+            if calls == 2:
+                target.unlink()
+                target.write_bytes(b"foreign")
+                target.chmod(0o600)
+        return original_stat(name, *args, **kwargs)
+
+    monkeypatch.setattr(integration_installer.os, "stat", replace_before_unlink)
+    assert integration_installer._cleanup_owned_file(
+        target, identity, parent_identity
+    ) is False
+
+    assert calls == 2
+    assert target.read_bytes() == b"foreign"
+
+
 def test_provisional_directory_cleanup_rejects_parent_swap_before_rmdir(
     tmp_path, monkeypatch
 ):

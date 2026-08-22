@@ -5780,3 +5780,16 @@ Vor dem Unlink werden jetzt Identität und Linkanzahl erneut geprüft;
 Abweichungen brechen fail-closed. Regression deckt einen ersetzten `lib64`-
 Symlink ab. `pytest -q tests/test_integration_installer.py`: 136/136; Ruff,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 525: Cleanup-Ziel vor destruktiver Operation revalidiert
+
+`_remove_owned_entry()` prüfte Parent und Ziel zunächst korrekt, führte danach
+aber `unlink`, `rmdir` oder `rmtree` ohne zweite Zielprüfung aus. Ein Austausch
+zwischen Prüfung und Cleanup konnte dadurch ein fremdes gleichnamiges Ziel
+treffen.
+
+Vor der destruktiven Operation werden Typ, Inode, Gerät, Besitzer und Modus
+erneut verglichen; bei Dateien wird zusätzlich die Linkanzahl geprüft.
+Regression deckt ersetztes `candidate.json` ab. `pytest -q
+tests/test_integration_installer.py`: 137/137; Ruff, Python-Compile und
+`git diff --check` sauber.

@@ -394,6 +394,15 @@ def _remove_owned_entry(
             != identity
         ):
             return False
+        try:
+            current = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            return False
+        if (
+            _provisional_from_stat(current) != _provisional_from_stat(item)
+            or (not directory and current.st_nlink != item.st_nlink)
+        ):
+            return False
         if directory:
             if recursive:
                 shutil.rmtree(path.name, dir_fd=parent_fd)
