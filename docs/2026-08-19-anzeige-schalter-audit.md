@@ -7572,3 +7572,18 @@ Alle vier Textnormalisierungen laufen jetzt gemeinsam in einem Guard und
 fordern bei Fehlern einen autoritativen Backend-Reload an. Ein parametrischer
 Regressionstest deckt alle vier Felder ab. Fokussierte Account-/Backend-Tests:
 25/25; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 655: Reaktivierungsbrowser wurde vom Anzeige-Browser überschrieben
+
+Beim Speichern eines Accounts und beim Starten eines neuen Profiljobs leitete
+der Applet-Code `--reactivation-browser` fälschlich aus `browser` ab. Eine
+separate Einstellung wie `vivaldi` wurde dadurch bei jedem Account-Write durch
+`firefox` oder `chromium` ersetzt; bestehende Reaktivierungswerte wirkten nur
+bei direkter Menüaktion korrekt.
+
+Die CLI-Argumente verwenden jetzt ausdrücklich `reactivation-browser` aus der
+Accountzeile, mit begrenztem Mapping `auto`/`vivaldi`/`chromium`/`firefox` und
+Fail-Closed-Fallback. Regression prüft Account-Write und Profiljob mit
+Firefox-Anzeige, aber Vivaldi-Reaktivierung, sowie ungültige Mappingwerte.
+Fokussierte Account-/Reaktivierungs-Tests: 26/26; Node-Syntaxcheck und
+`git diff --check` sauber.

@@ -1656,7 +1656,7 @@ test("legacy global reactivation browser migrates to account rows once", () => {
   assert.equal(commands.some((argv) => (
     argv.includes("add") &&
     argv.includes("--reactivation-browser") &&
-    argv[argv.indexOf("--reactivation-browser") + 1] === "firefox"
+    argv[argv.indexOf("--reactivation-browser") + 1] === "vivaldi"
   )), true);
   assert.deepEqual(writes.find(([key]) => key === "reactivation-browser-migrated"), [
     "reactivation-browser-migrated",
@@ -2107,7 +2107,7 @@ test("new account starts persistent profile job after account config", () => {
     "auth-json": null,
     "profile-dir": "/tmp/profile-new",
     browser: 1,
-    "reactivation-browser": 2,
+    "reactivation-browser": 1,
     backend: 1,
   }];
   applet._buildUsageMenu = () => {};
@@ -2141,6 +2141,11 @@ test("new account starts persistent profile job after account config", () => {
 
   applet._drainAccountChanges();
 
+  const accountReactivationIndex = calls[0].indexOf("--reactivation-browser");
+  assert.deepEqual(
+    calls[0].slice(accountReactivationIndex, accountReactivationIndex + 2),
+    ["--reactivation-browser", "vivaldi"]
+  );
   assert.deepEqual(calls[1], [
     "codex-usage", "profile", "create",
     "--account-id", "new-account",
@@ -2148,7 +2153,7 @@ test("new account starts persistent profile job after account config", () => {
     "--browser", "chromium",
     "--backend", "app-server",
     "--profile-dir", "/tmp/profile-new",
-    "--reactivation-browser", "chromium",
+    "--reactivation-browser", "vivaldi",
     "--json-events",
   ]);
   assert.equal(applet._deviceLoginJobs["new-account"], jobId);
@@ -10358,6 +10363,18 @@ test("reactivation uses browser configured for account", () => {
     command[command.indexOf("--browser") + 1],
     "vivaldi"
   );
+});
+
+test("account reactivation browser settings map independently and fail closed", () => {
+  const applet = makeApplet();
+
+  assert.deepEqual(
+    [0, 1, 2, 3].map((value) => applet._reactivationBrowserName(value)),
+    ["auto", "vivaldi", "chromium", "firefox"]
+  );
+  for (const value of [-1, 4, "toString", null]) {
+    assert.equal(applet._reactivationBrowserName(value), "auto");
+  }
 });
 
 test("startup failures and missing timeout sources terminate every spawned child process", () => {

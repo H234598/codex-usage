@@ -39,6 +39,7 @@ const FAST_MODE_ICON = "fast-mode-warning-shield-outline.svg";
 const MAX_CAPTURE_FUTURE_MS = 5 * 60 * 1000;
 const SETTINGS_WINDOW_LOOKUP_MAX_ATTEMPTS = 40;
 const MENU_SPACER = "────────";
+const REACTIVATION_BROWSER_NAMES = ["auto", "vivaldi", "chromium", "firefox"];
 const PANEL_VALUE_DEFAULT_COUNT = 20;
 const PANEL_VALUE_MAX_COUNT = 64;
 const PANEL_SOURCE_LABELS = {
@@ -4349,6 +4350,17 @@ CodexUsageApplet.prototype = {
         );
     },
 
+    _reactivationBrowserName: function(value) {
+        if (
+            !Number.isInteger(value) ||
+            value < 0 ||
+            value >= REACTIVATION_BROWSER_NAMES.length
+        ) {
+            return "auto";
+        }
+        return REACTIVATION_BROWSER_NAMES[value];
+    },
+
     _markLegacyReactivationBrowserMigrated: function() {
         try {
             this.settings.setValue("reactivation-browser-migrated", true);
@@ -4547,7 +4559,7 @@ CodexUsageApplet.prototype = {
             "--browser",
             changed.browser === 1 ? "chromium" : "firefox",
             "--reactivation-browser",
-            changed.browser === 1 ? "chromium" : "firefox",
+            this._reactivationBrowserName(changed["reactivation-browser"]),
             "--backend",
             changed.backend === 1 ? "app-server" : "direct"
         );
@@ -4628,7 +4640,7 @@ CodexUsageApplet.prototype = {
             "--backend", row.backend === 1 ? "app-server" : "direct",
             "--profile-dir", profileDir,
             "--reactivation-browser",
-            row.browser === 1 ? "chromium" : "firefox",
+            this._reactivationBrowserName(row["reactivation-browser"]),
             ...(row.series ? ["--series", row.series] : []),
             ...(row["series-active"] ? ["--series-active"] : []),
             "--json-events"
