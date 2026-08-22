@@ -243,6 +243,36 @@ def test_panel_editor_returns_edited_values(monkeypatch) -> None:
         panel.destroy()
 
 
+def test_panel_editor_destroys_dialog_after_run_error(monkeypatch) -> None:
+    class FailingDialog(_Dialog):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.destroyed = False
+
+        def run(self):
+            raise RuntimeError("dialog loop failed")
+
+        def destroy(self):
+            self.destroyed = True
+
+    monkeypatch.setattr(Gtk, "Dialog", FailingDialog)
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        _Settings(3),
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="dialog loop failed"):
+            panel.open_add_edit_dialog()
+        assert FailingDialog.last.destroyed is True
+    finally:
+        panel.destroy()
+
+
 @pytest.mark.parametrize("info", [[], ["alpha"], {}, "alpha"])
 def test_panel_editor_treats_short_or_malformed_info_as_empty(monkeypatch, info) -> None:
     monkeypatch.setattr(Gtk, "Dialog", _Dialog)

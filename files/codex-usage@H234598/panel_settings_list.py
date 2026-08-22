@@ -421,69 +421,70 @@ class PanelSettingsList(List, JSONSettingsBackend):
                 Gtk.ResponseType.OK,
             ),
         )
+        try:
+            content_area = dialog.get_content_area()
+            content_area.set_margin_right(30)
+            content_area.set_margin_left(30)
+            content_area.set_margin_top(20)
+            content_area.set_margin_bottom(20)
 
-        content_area = dialog.get_content_area()
-        content_area.set_margin_right(30)
-        content_area.set_margin_left(30)
-        content_area.set_margin_top(20)
-        content_area.set_margin_bottom(20)
+            frame = Gtk.Frame()
+            frame.set_shadow_type(Gtk.ShadowType.IN)
+            frame.get_style_context().add_class("view")
+            content_area.add(frame)
 
-        frame = Gtk.Frame()
-        frame.set_shadow_type(Gtk.ShadowType.IN)
-        frame.get_style_context().add_class("view")
-        content_area.add(frame)
+            scrollbox = Gtk.ScrolledWindow()
+            scrollbox.set_size_request(-1, 420)
+            scrollbox.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            frame.add(scrollbox)
 
-        scrollbox = Gtk.ScrolledWindow()
-        scrollbox.set_size_request(-1, 420)
-        scrollbox.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        frame.add(scrollbox)
+            grid = Gtk.Grid()
+            grid.set_column_spacing(18)
+            grid.set_row_spacing(8)
+            grid.set_border_width(12)
+            grid.set_column_homogeneous(True)
+            scrollbox.add(grid)
 
-        grid = Gtk.Grid()
-        grid.set_column_spacing(18)
-        grid.set_row_spacing(8)
-        grid.set_border_width(12)
-        grid.set_column_homogeneous(True)
-        scrollbox.add(grid)
+            widgets = []
+            edit_columns = self._read_edit_columns()
+            for index, column_definition in enumerate(self.columns):
+                widget = list_edit_factory(column_definition)
+                widgets.append(widget)
 
-        widgets = []
-        edit_columns = self._read_edit_columns()
-        for index, column_definition in enumerate(self.columns):
-            widget = list_edit_factory(column_definition)
-            widgets.append(widget)
+                settings_box = Gtk.ListBox()
+                settings_box.set_selection_mode(Gtk.SelectionMode.NONE)
+                settings_box.set_hexpand(True)
+                settings_box.add(widget)
+                grid.attach(settings_box, index % edit_columns, index // edit_columns, 1, 1)
 
-            settings_box = Gtk.ListBox()
-            settings_box.set_selection_mode(Gtk.SelectionMode.NONE)
-            settings_box.set_hexpand(True)
-            settings_box.add(widget)
-            grid.attach(settings_box, index % edit_columns, index // edit_columns, 1, 1)
+                value = None
+                if info is not None:
+                    try:
+                        value = info[index]
+                    except (IndexError, KeyError, TypeError):
+                        pass
+                if value is not None:
+                    try:
+                        widget.set_widget_value(value)
+                    except (OverflowError, TypeError, ValueError):
+                        value = None
+                if value is None and "default" in column_definition:
+                    try:
+                        widget.set_widget_value(column_definition["default"])
+                    except (OverflowError, TypeError, ValueError):
+                        pass
 
-            value = None
-            if info is not None:
-                try:
-                    value = info[index]
-                except (IndexError, KeyError, TypeError):
-                    pass
-            if value is not None:
-                try:
-                    widget.set_widget_value(value)
-                except (OverflowError, TypeError, ValueError):
-                    value = None
-            if value is None and "default" in column_definition:
-                try:
-                    widget.set_widget_value(column_definition["default"])
-                except (OverflowError, TypeError, ValueError):
-                    pass
+            content_area.show_all()
+            response = dialog.run()
 
-        content_area.show_all()
-        response = dialog.run()
-
-        if response == Gtk.ResponseType.OK:
-            values = [widget.get_widget_value() for widget in widgets]
-            dialog.destroy()
-            return values
-
-        dialog.destroy()
-        return None
+            if response == Gtk.ResponseType.OK:
+                return [widget.get_widget_value() for widget in widgets]
+            return None
+        finally:
+            try:
+                dialog.destroy()
+            except Exception:
+                pass
 
     def _on_count_changed(self, *_args) -> None:
         columns = panel_columns(self._base_columns, self._read_count())

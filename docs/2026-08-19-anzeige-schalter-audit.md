@@ -8153,3 +8153,14 @@ Cleanup behandelt Containerfehler jetzt kontrolliert als bereits nicht
 verfügbaren Listener-Zustand. Regression deckt einen fehlerwerfenden
 Containerzugriff ab; `tests/test_panel_settings_list.py`: 86/86,
 Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 708: Leisten-Dialoge werden auch bei GTK-Fehlern zerstört
+
+`open_add_edit_dialog()` rief `dialog.destroy()` nur auf normalen Return-
+Pfaden auf. Ein Fehler im Dialoglauf oder beim Widgetaufbau konnte dadurch
+ein Fensterobjekt und zugehörige GTK-Ressourcen liegen lassen.
+
+Dialogzerstörung liegt jetzt in einem `finally`-Block; auch ein Fehler beim
+Zerstören selbst wird nicht weitergereicht. Regression erzwingt einen Fehler
+aus `run()` und prüft die Zerstörung; `tests/test_panel_settings_list.py`:
+87/87, Python-Compile, Ruff und `git diff --check` sauber.
