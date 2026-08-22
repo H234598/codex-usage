@@ -31,6 +31,7 @@ if _format_module is None:
         sys.modules.pop(_FORMAT_MODULE_NAME, None)
         raise
 _BoundFormatList = _format_module._BoundFormatList
+_valid_text = _format_module._valid_text
 from gi.repository import GLib, Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
 
@@ -87,16 +88,14 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
                 continue
             table_key = table.get("key")
             if (
-                not isinstance(table_key, str)
-                or not table_key
-                or "\x00" in table_key
+                not _valid_text(table_key, allow_empty=False)
                 or table_key not in definitions
             ):
                 continue
             if not isinstance(definitions[table_key], dict):
                 continue
             label = table.get("label")
-            if not isinstance(label, str) or not label or "\x00" in label:
+            if not _valid_text(label, allow_empty=False):
                 label = table_key
             if table_key in self._table_labels:
                 continue

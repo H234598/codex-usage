@@ -182,6 +182,34 @@ def test_forecast_selector_falls_back_from_nul_table_label() -> None:
         selector.destroy()
 
 
+@pytest.mark.parametrize("field", ["key", "label"])
+def test_forecast_selector_ignores_invalid_utf8_table_text(field) -> None:
+    invalid = "table\ud800" if field == "key" else "A\ud800"
+    table_key = invalid if field == "key" else _TABLE_KEYS[0]
+    settings = _Settings()
+    if field == "key":
+        settings.settings[table_key] = settings.settings.pop(_TABLE_KEYS[0])
+
+    selector = ForecastTableSelector(
+        {
+            "tables": [
+                {
+                    "key": table_key,
+                    "label": invalid if field == "label" else "A",
+                }
+            ]
+        },
+        "forecast-table-selector",
+        settings,
+    )
+
+    try:
+        expected = {} if field == "key" else {table_key: table_key}
+        assert selector._table_labels == expected
+    finally:
+        selector.destroy()
+
+
 def test_table_change_switches_stack_and_persists_selection() -> None:
     settings = _Settings()
     selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)

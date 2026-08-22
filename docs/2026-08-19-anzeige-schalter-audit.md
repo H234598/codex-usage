@@ -9284,3 +9284,17 @@ Key zurück; ungültige Keys werden verworfen.
 Regression deckt Key, Label und die Validierungsfunktion ab. Verifikation:
 **75 fokussierte Format-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
 keine Settings-Fenster gestartet.
+
+## Runde 789: Forecast-Selector übernimmt UTF-8-Validierung
+
+Der Prognosen-Selector hatte noch die alte NUL-/Typprüfung. Tabellenkey oder
+Label mit unpaired Unicode-Surrogat konnten beim ComboBox-/Markup-Aufbau
+`UnicodeEncodeError` auslösen, obwohl der Format-Selector bereits gehärtet war.
+
+`ForecastTableSelector` verwendet jetzt den gemeinsamen `_valid_text()`-Validator
+des Format-Selectors für Key und Label. Ungültige Keys werden verworfen,
+ungültige Labels fallen auf den validierten Key zurück.
+
+Regression deckt beide Textpfade ab. Verifikation: **21 fokussierte
+Forecast-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
