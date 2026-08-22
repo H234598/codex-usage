@@ -12074,6 +12074,28 @@ test("backend setting rejects a non-string label without escaping callback", () 
   assert.equal(reloads, 1);
 });
 
+test("backend setting rejects malformed text fields without escaping callback", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  };
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+
+  for (const [field, value] of [
+    ["tag", 123],
+    ["auth-json", 123],
+    ["profile-dir", 123],
+    ["series", 123],
+  ]) {
+    applet.accountBackends = [{ account: "alpha", label: "Alpha", backend: 0, [field]: value }];
+    assert.doesNotThrow(() => applet._onAccountBackendsChanged());
+  }
+
+  assert.equal(reloads, 4);
+});
+
 test("backend synchronization clears its guard after a settings exception", () => {
   const applet = makeApplet();
   applet._baseCommandArgv = () => ["codex-usage"];

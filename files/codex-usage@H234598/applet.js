@@ -4796,17 +4796,30 @@ CodexUsageApplet.prototype = {
                 this._loadAccountBackends();
                 return;
             }
-            let canonicalTag = canonical && typeof canonical.tag === "string"
-                ? canonical.tag : "";
-            let tag = row.tag === undefined
-                ? canonicalTag
-                : this._strictText(row.tag, 8);
-            let authJson = row["auth-json"] === undefined
-                ? this._safeText(canonical && canonical["auth-json"], 4096)
-                : this._safeText(row["auth-json"], 4096);
-            let profileDir = row["profile-dir"] === undefined
-                ? this._safeText(canonical && canonical["profile-dir"], 4096)
-                : this._safeText(row["profile-dir"], 4096);
+            let canonicalTag;
+            let tag;
+            let authJson;
+            let profileDir;
+            let series;
+            try {
+                canonicalTag = canonical && typeof canonical.tag === "string"
+                    ? canonical.tag : "";
+                tag = row.tag === undefined
+                    ? canonicalTag
+                    : this._strictText(row.tag, 8);
+                authJson = row["auth-json"] === undefined
+                    ? this._safeText(canonical && canonical["auth-json"], 4096)
+                    : this._safeText(row["auth-json"], 4096);
+                profileDir = row["profile-dir"] === undefined
+                    ? this._safeText(canonical && canonical["profile-dir"], 4096)
+                    : this._safeText(row["profile-dir"], 4096);
+                series = row.series === undefined
+                    ? (canonical && typeof canonical.series === "string" ? canonical.series : "")
+                    : this._strictText(row.series, 16).toUpperCase();
+            } catch (e) {
+                this._loadAccountBackends();
+                return;
+            }
             let testHome = row["test-home"] === undefined
                 ? Boolean(canonical && canonical["test-home"])
                 : row["test-home"];
@@ -4829,9 +4842,6 @@ CodexUsageApplet.prototype = {
             let backendValue = row.backend === undefined
                 ? (canonical && canonical.backend === 1 ? 1 : 0)
                 : this._strictIntegerSetting(row.backend);
-            let series = row.series === undefined
-                ? (canonical && typeof canonical.series === "string" ? canonical.series : "")
-                : this._strictText(row.series, 16).toUpperCase();
             let seriesActive = row["series-active"] === undefined
                 ? Boolean(canonical && canonical["series-active"])
                 : row["series-active"] === true;

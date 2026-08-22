@@ -7561,3 +7561,14 @@ Die Label-Normalisierung fällt jetzt bei ungültigem Typ kontrolliert auf
 `_loadAccountBackends()` zurück. Regression prüft, dass der Callback nicht
 wirft und genau einen Reload anfordert. Fokussierte Account-/Backend-Tests:
 24/24; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 654: Textfelder im Account-Settings-Callback fail-closed
+
+Neben `label` konnten auch `tag`, `auth-json`, `profile-dir` und `series` als
+falsche gespeicherte Typen aus `_onAccountBackendsChanged()` werfen. Damit
+blieb derselbe Settings-Callback bei beschädigten Einzelzeilen instabil.
+
+Alle vier Textnormalisierungen laufen jetzt gemeinsam in einem Guard und
+fordern bei Fehlern einen autoritativen Backend-Reload an. Ein parametrischer
+Regressionstest deckt alle vier Felder ab. Fokussierte Account-/Backend-Tests:
+25/25; Node-Syntaxcheck und `git diff --check` sauber.
