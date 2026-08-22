@@ -5853,3 +5853,14 @@ Nach `os.access()` werden jetzt Gerät, Inode, Besitzer, Typ, Modus und
 Linkanzahl erneut verglichen. Regression deckt ersetzten Interpreter ab.
 `pytest -q tests/test_integration_installer.py`: 143/143; Ruff,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 531: Installer-Cleanup löscht nur eigene Aktivierungsobjekte
+
+`_remove_activation_files()` löschte passende `activate`-/`python3`-Einträge
+und `lib64`-Symlinks unabhängig von deren Besitzer. Ein fremdes Objekt mit
+passendem Namen konnte dadurch entfernt werden.
+
+Vor Enumeration und Unlink wird jetzt die aktuelle UID verlangt;
+Fremdobjekte brechen fail-closed ab. Regressionen decken fremdes `activate`
+und fremdes `lib64` ab. `pytest -q tests/test_integration_installer.py`:
+145/145; Ruff, Python-Compile und `git diff --check` sauber.

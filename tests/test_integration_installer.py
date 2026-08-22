@@ -16,6 +16,7 @@ import time
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -514,6 +515,106 @@ def test_remove_activation_files_rejects_replaced_lib64_before_unlink(
     assert calls == 2
     assert lib64.is_symlink()
     assert lib64.resolve() == replacement
+
+
+def test_remove_activation_files_rejects_foreign_owned_entry(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(mode=0o700)
+    activation = bin_dir / "activate"
+    activation.write_text("owned", encoding="utf-8")
+    item = activation.lstat()
+    foreign = SimpleNamespace(
+        st_dev=item.st_dev,
+        st_ino=item.st_ino,
+        st_uid=os.getuid() + 1,
+        st_mode=item.st_mode,
+        st_nlink=item.st_nlink,
+    )
+
+    class ForeignEntry:
+        name = "activate"
+
+        def stat(self, *, follow_symlinks=False):
+            return foreign
+
+    class ForeignScan:
+        def __enter__(self):
+            return iter((ForeignEntry(),))
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    original_stat = integration_installer.os.stat
+    original_unlink = integration_installer.os.unlink
+    unlinked = False
+
+    def foreign_scandir(fd):
+        return ForeignScan()
+
+    def foreign_stat(name, *args, **kwargs):
+        if name == "activate" and kwargs.get("dir_fd") is not None:
+            return foreign
+        return original_stat(name, *args, **kwargs)
+
+    def record_unlink(name, *args, **kwargs):
+        nonlocal unlinked
+        if name == "activate" and kwargs.get("dir_fd") is not None:
+            unlinked = True
+            return None
+        return original_unlink(name, *args, **kwargs)
+
+    monkeypatch.setattr(integration_installer.os, "scandir", foreign_scandir)
+    monkeypatch.setattr(integration_installer.os, "stat", foreign_stat)
+    monkeypatch.setattr(integration_installer.os, "unlink", record_unlink)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._remove_activation_files(tmp_path)
+
+    assert not unlinked
+    assert activation.read_text(encoding="utf-8") == "owned"
+
+
+def test_remove_activation_files_rejects_foreign_owned_lib64(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    (tmp_path / "bin").mkdir(mode=0o700)
+    target = tmp_path / "lib64-target"
+    target.mkdir(mode=0o700)
+    lib64 = tmp_path / "lib64"
+    lib64.symlink_to(target.name)
+    item = lib64.lstat()
+    foreign = SimpleNamespace(
+        st_dev=item.st_dev,
+        st_ino=item.st_ino,
+        st_uid=os.getuid() + 1,
+        st_mode=item.st_mode,
+        st_nlink=item.st_nlink,
+    )
+    original_stat = integration_installer.os.stat
+    original_unlink = integration_installer.os.unlink
+    unlinked = False
+
+    def foreign_stat(name, *args, **kwargs):
+        if name == "lib64" and kwargs.get("dir_fd") is not None:
+            return foreign
+        return original_stat(name, *args, **kwargs)
+
+    def record_unlink(name, *args, **kwargs):
+        nonlocal unlinked
+        if name == "lib64" and kwargs.get("dir_fd") is not None:
+            unlinked = True
+            return None
+        return original_unlink(name, *args, **kwargs)
+
+    monkeypatch.setattr(integration_installer.os, "stat", foreign_stat)
+    monkeypatch.setattr(integration_installer.os, "unlink", record_unlink)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._remove_activation_files(tmp_path)
+
+    assert not unlinked
+    assert lib64.is_symlink()
+    assert lib64.resolve() == target
 
 
 def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path):

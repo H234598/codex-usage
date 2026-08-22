@@ -1876,6 +1876,8 @@ def _remove_activation_files(venv_root: Path) -> None:
                     continue
                 item = entry.stat(follow_symlinks=False)
                 if stat.S_ISLNK(item.st_mode) or stat.S_ISREG(item.st_mode):
+                    if item.st_uid != os.getuid():
+                        _fail()
                     removable.append(
                         (entry.name, _provisional_from_stat(item), item.st_nlink)
                     )
@@ -1896,6 +1898,8 @@ def _remove_activation_files(venv_root: Path) -> None:
             pass
         else:
             if stat.S_ISLNK(lib64_item.st_mode):
+                if lib64_item.st_uid != os.getuid():
+                    _fail()
                 expected_lib64 = _provisional_from_stat(lib64_item)
                 try:
                     current_lib64 = os.stat(
