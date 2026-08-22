@@ -227,6 +227,15 @@ def test_table_change_switches_stack_and_persists_selection() -> None:
     assert selector.saved == ["account-date-styles"]
 
 
+def test_table_change_escapes_markup_in_label() -> None:
+    selector = _selector()
+    selector._table_labels["account-date-styles"] = "A & B <C>"
+
+    selector._on_table_changed()
+
+    assert selector.table_title.markup == "<b>A &amp; B &lt;C&gt;</b>"
+
+
 def test_table_change_ignores_unknown_selection() -> None:
     selector = _selector()
     selector.combo.active = "missing"

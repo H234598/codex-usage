@@ -9,7 +9,7 @@ import math
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import GLib, Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
 from TreeListWidgets import VARIABLE_TYPE_MAP, List  # noqa: E402
 
@@ -531,7 +531,8 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
             self._discard_table(active_table_key)
             self._active_table_key = table_key
         self.table_stack.set_visible_child_name(table_key)
-        self.table_title.set_markup(f"<b>{self._table_labels[table_key]}</b>")
+        label = GLib.markup_escape_text(self._table_labels[table_key])
+        self.table_title.set_markup(f"<b>{label}</b>")
 
     def on_setting_changed(self, *_args):
         try:

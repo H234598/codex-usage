@@ -8527,3 +8527,16 @@ Wertmenge. Regression nutzt echte String-Optionen als Liste und Tupel und
 verwirft jeweils unbekannte Werte. Format-/Forecast-Fokustests: 75/75;
 Python-Compile und `git diff --check` sauber. Reale `xlet-settings`-Smoke nach
 Reload lief ohne Traceback.
+
+## Runde 739: Tabellenlabels werden vor Pango-Markup escaped
+
+`FormatTableSelector._show_table()` setzte Tabellenlabels ungefiltert in
+`Gtk.Label.set_markup()`. Labels mit `&` oder `<` erzeugten GTK-Warnungen und
+blieben leer, statt ihren Text anzuzeigen. Das war bei statischen deutschen
+Labels unsichtbar, blieb aber ein fehlerhafter Metadatenpfad.
+
+Die Labels werden jetzt mit `GLib.markup_escape_text()` escaped und erst dann
+fett markiert. Regression prüft `&`, `<` und `>` über den echten Selector-
+Pfad. Format-/Forecast-Fokustests: 76/76; Python-Compile und
+`git diff --check` sauber. Reale `xlet-settings`-Smoke nach Reload lief ohne
+Traceback.
