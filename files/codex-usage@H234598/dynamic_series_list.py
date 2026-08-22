@@ -83,6 +83,25 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 continue
         self.content_widget.columns_autosize()
 
+    def list_changed(self, *args):
+        """Persist edited rows without wedging callbacks after a write error."""
+        data = []
+        for row in self.model:
+            row_info = {
+                column["id"]: row[index]
+                for index, column in enumerate(self.columns)
+            }
+            data.append(row_info)
+        try:
+            self.set_value(data)
+        except Exception:
+            # JSONSettingsBackend leaves this flag set when a backend write fails;
+            # reset it so later external updates are not ignored.
+            self._saving = False
+            self.update_button_sensitivity()
+            return
+        self.update_button_sensitivity()
+
     def _column_index(self, column_id):
         for index, column in enumerate(self.columns):
             if column.get("id") == column_id:

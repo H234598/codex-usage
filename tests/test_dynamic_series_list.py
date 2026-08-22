@@ -65,6 +65,11 @@ class _ListenerErrorSettings(_Settings):
         raise OSError("listener registration failed")
 
 
+class _WriteErrorSettings(_Settings):
+    def set_value(self, key, value):
+        raise OSError("settings write failed")
+
+
 class _ListenerPropertyErrorSettings:
     def get_value(self, key):
         return []
@@ -492,6 +497,41 @@ def test_settings_read_error_keeps_series_table_open() -> None:
     finally:
         if widget is not None:
             widget.destroy()
+
+
+def test_settings_write_error_resets_saving_and_keeps_listener_active() -> None:
+    settings = _WriteErrorSettings()
+    settings.values["account-series-settings"] = [{
+        "account": "alpha",
+        "series": "A",
+        "series-active": True,
+    }]
+    widget = DynamicSeriesList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "series", "title": "Serie", "type": "string"},
+                {"id": "series-active", "title": "Aktiv", "type": "boolean"},
+            ],
+            "show-buttons": False,
+        },
+        "account-series-settings",
+        settings,
+    )
+
+    try:
+        widget.list_changed()
+        assert widget._saving is False
+
+        settings.values["account-series-settings"] = [{
+            "account": "beta",
+            "series": "B",
+            "series-active": False,
+        }]
+        settings.listeners["account-series-settings"][0]()
+        assert next(iter(widget.model))[0] == "beta"
+    finally:
+        widget.destroy()
 
 
 def test_listener_registration_error_keeps_series_table_open() -> None:

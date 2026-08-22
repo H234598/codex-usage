@@ -9298,3 +9298,19 @@ ungültige Labels fallen auf den validierten Key zurück.
 Regression deckt beide Textpfade ab. Verifikation: **21 fokussierte
 Forecast-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 790: Pool-Listen bleiben nach Schreibfehler reaktiv
+
+`DynamicSeriesList` erbte die rohe `List.list_changed()`-Implementierung. Wenn
+das JSON-Backend beim Speichern einen Fehler meldete, blieb
+`JSONSettingsBackend._saving` auf `True`. Nachfolgende externe
+Account-Änderungen wurden dadurch vom Listener ignoriert, bis das Widget neu
+geladen wurde.
+
+Die Liste baut ihre Zeilen nun selbst in `list_changed()` auf, setzt `_saving`
+bei Schreibfehlern zurück und aktualisiert die Button-Sensitivität. Eine
+Regression erzwingt einen fehlgeschlagenen Pool-Write und prüft anschließend,
+dass derselbe Listener eine externe Änderung noch einliest.
+
+Verifikation: **26 fokussierte Dynamic-Series-Tests**, Ruff, Python-Compile und
+Diff-Check bestanden; keine Settings-Fenster gestartet.
