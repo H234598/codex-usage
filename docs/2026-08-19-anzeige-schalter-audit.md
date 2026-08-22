@@ -7765,3 +7765,14 @@ akzeptiert numerische Spalten ohne Optionsmap nur noch mit gültigem Zahlenberei
 ungültige Felder werden übersprungen. Regression deckt falschen Integerwert und
 fehlenden Zahlenbereich ab; `tests/test_panel_settings_list.py`: 35/35;
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 669: Leisten-Slots bleiben innerhalb Count und eindeutig
+
+`panel_columns()` übernahm ungültige IDs wie `slot0` und `slotfoo` sowie
+doppelte `slot1`-Definitionen. Dadurch konnte die Oberfläche mehr Felder als
+der gewählte Count zeigen; beim Speichern überschrieben gleiche IDs einander.
+
+Slot-Spalten werden jetzt strikt auf `slot1` bis `slotN` begrenzt und jede
+Spalten-ID erscheint höchstens einmal. Regression prüft ungültige und doppelte
+Slots; `tests/test_panel_settings_list.py`: 36/36; Python-Kompilierung und
+`git diff --check` sauber.

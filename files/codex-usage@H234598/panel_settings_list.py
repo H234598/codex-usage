@@ -128,6 +128,7 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
         base_columns = []
     copied_columns = copy.deepcopy(base_columns)
     columns = []
+    seen_ids = set()
     for column in copied_columns:
         if (
             not isinstance(column, dict)
@@ -150,12 +151,19 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
                 or not isinstance(maximum, (int, float))
             ):
                 continue
+        column_id = column["id"]
+        if column_id in seen_ids:
+            continue
         if (
-            column["id"].startswith("slot")
-            and column["id"][4:].isdecimal()
-            and int(column["id"][4:]) > requested_count
+            column_id.startswith("slot")
+            and (
+                not column_id[4:].isdecimal()
+                or int(column_id[4:]) < 1
+                or int(column_id[4:]) > requested_count
+            )
         ):
             continue
+        seen_ids.add(column_id)
         columns.append(column)
     slot_template = next(
         (column for column in columns if column.get("id") == "slot1"),
