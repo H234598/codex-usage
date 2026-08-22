@@ -7162,3 +7162,14 @@ Der Vergleich verwirft jetzt jeden normalen Operatorfehler und liefert
 konservativ `False`. Regression deckt einen fehlerhaften `<=`-Vergleich ab.
 `pytest -q tests/test_scheduler.py`: 214/214; Ruff, Mypy,
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 623: Watchdog-Pool-/Fenster-Properties bei Laufzeitfehlern fail-closed
+
+`_pool_forces_watchdog_block()` und `_window_is_exhausted()` behandelten nur
+ausgewählte Standardfehler. Fehlerhafte Properties konnten dadurch den
+Watchdog statt einer konservativen Blockentscheidung abbrechen.
+
+Beide Gates werten normale Property-Fehler jetzt als erschöpft bzw. blockierend.
+Regressionen prüfen fehlerhafte Pool- und Restwert-Properties. `pytest -q
+tests/test_scheduler.py`: 216/216; Ruff, Mypy, Python-Kompilierung und
+`git diff --check` sauber.

@@ -25,6 +25,7 @@ from codex_usage.scheduler import (
     _has_unexpired_window_reset_discontinuity,
     _has_usable_core_usage,
     _is_more_conservative_direct_usage,
+    _pool_forces_watchdog_block,
     _raw_number,
     _remaining_percent,
     _should_persist_snapshot,
@@ -58,6 +59,27 @@ class _RaisingComparisonDatetime(datetime):
 class _RaisingSubtractionDatetime(datetime):
     def __sub__(self, _other):
         raise RuntimeError("synthetic subtraction marker")
+
+
+class _RaisingPool:
+    @property
+    def available(self):
+        raise RuntimeError("synthetic pool marker")
+
+    allowed = True
+    limit_reached = False
+
+
+class _RaisingWindow:
+    has_invalid_usage_value = False
+    used = None
+    limit = None
+    remaining = None
+    percent = None
+
+    @property
+    def remaining_percent(self):
+        raise RuntimeError("synthetic window marker")
 
 
 def _usable_main(*windows, availability_sources=("usage",)):
@@ -281,6 +303,14 @@ def test_conservative_direct_usage_treats_failing_reset_comparison_as_unknown():
     )
 
     assert _is_more_conservative_direct_usage(current, previous) is False
+
+
+def test_pool_forces_watchdog_block_treats_failing_property_as_exhausted():
+    assert _pool_forces_watchdog_block(_RaisingPool()) is True
+
+
+def test_window_is_exhausted_treats_failing_remaining_property_as_exhausted():
+    assert _window_is_exhausted(_RaisingWindow()) is True
 
 
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(

@@ -1698,7 +1698,7 @@ def _pool_forces_watchdog_block(pool: Any) -> bool:
                 and not isinstance(pool.limit_reached, bool)
             )
         )
-    except (AttributeError, TypeError, ValueError):
+    except Exception:
         return True
 
 
@@ -1740,7 +1740,7 @@ def _window_is_exhausted(window: Any) -> bool:
         return True
     try:
         remaining_percent = window.remaining_percent
-    except (AttributeError, TypeError, ValueError, OverflowError):
+    except Exception:
         return True
     if remaining_percent is None:
         return True
