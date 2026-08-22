@@ -124,6 +124,35 @@ def test_icon_selector_does_not_write_when_settings_reload_updates_combo() -> No
     assert selector.saved == []
 
 
+def test_icon_selector_ignores_backend_read_and_write_errors() -> None:
+    selector = _selector()
+
+    selector.get_value = lambda: (_ for _ in ()).throw(RuntimeError("read failed"))
+    selector.on_setting_changed()
+    assert selector.get_widget_value() == "one.svg"
+
+    selector.set_value = lambda _value: (_ for _ in ()).throw(RuntimeError("write failed"))
+    selector._on_changed()
+    assert selector._saving is False
+
+
+def test_icon_selector_survives_listener_registration_error() -> None:
+    class BrokenListenerSettings(_Settings):
+        def listen(self, key, callback):
+            raise RuntimeError(key)
+
+    selector = FastModeIconSelector(
+        {"options": {"One": "one.svg"}},
+        "fast-mode-icon",
+        BrokenListenerSettings(),
+    )
+
+    try:
+        assert selector.get_widget_value() in {"", "one.svg"}
+    finally:
+        selector.destroy()
+
+
 def test_icon_loader_ignores_corrupt_svg(tmp_path: Path) -> None:
     path = tmp_path / "broken.svg"
     path.write_text("not an svg", encoding="utf-8")

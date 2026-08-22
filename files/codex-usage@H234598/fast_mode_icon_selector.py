@@ -66,13 +66,23 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
             self.store.append([pixbuf, label, value])
             self._values.append(value)
             self._tooltips[value] = f"{label}: {value}"
-        self.attach()
+        try:
+            self.attach()
+        except Exception:
+            self._detach_settings_listener()
+            try:
+                self.on_setting_changed()
+            except Exception:
+                pass
 
     def _on_changed(self, *_args):
         value = self.get_widget_value()
         self.combo.set_tooltip_text(self._tooltips.get(value, value or ""))
         if not getattr(self, "_saving", False):
-            self.set_value(value)
+            try:
+                self.set_value(value)
+            except Exception:
+                self._saving = False
 
     def _on_query_tooltip(self, _widget, _x, _y, _keyboard, tooltip):
         value = self.get_widget_value()
@@ -86,7 +96,11 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
         saving = getattr(self, "_saving", False)
         self._saving = True
         try:
-            self.set_widget_value(self.get_value())
+            try:
+                value = self.get_value()
+            except Exception:
+                value = ""
+            self.set_widget_value(value)
         finally:
             self._saving = saving
 
@@ -94,14 +108,17 @@ class FastModeIconSelector(SettingsWidget, JSONSettingsBackend):
         pass
 
     def _detach_settings_listener(self):
-        listeners = getattr(self.settings, "listeners", None)
-        if not isinstance(listeners, dict):
+        try:
+            listeners = getattr(self.settings, "listeners", None)
+            if not isinstance(listeners, dict):
+                return
+            callbacks = listeners.get(self.key)
+            if not isinstance(callbacks, list):
+                return
+            callback = self._settings_changed_callback
+            callbacks[:] = [registered for registered in callbacks if registered != callback]
+        except Exception:
             return
-        callbacks = listeners.get(self.key)
-        if not isinstance(callbacks, list):
-            return
-        callback = self._settings_changed_callback
-        callbacks[:] = [registered for registered in callbacks if registered != callback]
 
     def set_widget_value(self, value):
         if value not in self._values:

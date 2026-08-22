@@ -8314,6 +8314,17 @@ deckt Listener-, Read- und Write-Fehler ab; `tests/test_forecast_table_selector.
 alle drei Prognosentabellen wurden nacheinander aufgebaut und wieder entfernt.
 Ergebnis: 3 Tabellen, 0 Exceptions, 0 GTK-Fehler.
 
+## Runde 724: Fast-Mode-Icon-Widget überlebt Backend-Fehler
+
+`FastModeIconSelector` behandelte Listener-Registrierung, Settings-Read und
+Auswahl-Write ungefangen. Backend-/DBus-Fehler konnten dadurch das
+Einstellungsmenü oder den ComboBox-Callback abbrechen.
+
+Attach-/Detach-, Read- und Write-Pfade sind jetzt fehlertolerant; der
+aktuelle/erste Iconwert bleibt sichtbar. Regression deckt Read-/Write- und
+Listenerfehler ab; `tests/test_fast_mode_icon_selector.py`: 8/8,
+Python-Compile, Ruff und `git diff --check` sauber.
+
 ## Runde 723: Selector-Mappings überleben fehlendes Backend-Attribut
 
 Forecast- und Format-Selector dereferenzierten `settings.settings` direkt.
