@@ -7969,3 +7969,14 @@ Integer-Optionen werden jetzt auf `-2**31` bis `2**31-1` geprüft. Regression
 deckt beide Grenzverletzungen im echten Dialogpfad ab;
 `tests/test_panel_settings_list.py`: 64/64, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 691: Leisten-Widget-Metadaten bleiben kompatibel
+
+SpinButton-Metadaten mit ungültigem `step` (`0`, Text, `NaN`, Unendlich)
+führten beim Dialogaufbau zu GTK-Fehlern. ComboBox-Spalten übernahmen zudem
+`min/max/step/units/expand-width`, die ihr Widget nicht unterstützt.
+
+Ungültige Schritte werden entfernt; nicht passende Spin-Eigenschaften werden
+bei ComboBoxen gestrichen. Regression deckt den echten Dialogpfad ab;
+`tests/test_panel_settings_list.py`: 70/70, Python-Compile und
+`git diff --check` sauber.

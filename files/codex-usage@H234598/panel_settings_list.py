@@ -182,6 +182,8 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
                     break
             if not valid_options:
                 continue
+            for unsupported in ("min", "max", "step", "units", "select-dir", "expand-width"):
+                column.pop(unsupported, None)
         if "align" in column:
             align = column["align"]
             try:
@@ -215,6 +217,23 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
                     continue
             except (OverflowError, TypeError):
                 continue
+            if "step" in column:
+                step = column["step"]
+                try:
+                    valid_step = (
+                        isinstance(step, (int, float))
+                        and not isinstance(step, bool)
+                        and math.isfinite(step)
+                        and step > 0
+                        and (
+                            column["type"] == "float"
+                            or isinstance(step, int)
+                        )
+                    )
+                except (OverflowError, TypeError):
+                    valid_step = False
+                if not valid_step:
+                    column.pop("step", None)
         column_id = column["id"]
         if column_id in seen_ids:
             continue

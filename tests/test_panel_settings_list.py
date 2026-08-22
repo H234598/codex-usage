@@ -379,6 +379,64 @@ def test_panel_editor_drops_malformed_combo_options(monkeypatch, column) -> None
         panel.destroy()
 
 
+def test_panel_editor_strips_spin_properties_from_combo_columns(monkeypatch) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    column = {
+        "id": "field",
+        "title": "Field",
+        "type": "string",
+        "options": {"A": "a"},
+        "min": 0,
+        "max": 1,
+        "step": 1,
+        "units": "x",
+        "expand-width": True,
+    }
+    panel = PanelSettingsList(
+        {"columns": [column], "show-buttons": False},
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert all(key not in panel.columns[0] for key in (
+            "min", "max", "step", "units", "expand-width",
+        ))
+        assert panel.open_add_edit_dialog([None] * len(panel.columns)) is None
+    finally:
+        panel.destroy()
+
+
+@pytest.mark.parametrize("step", [0, -1, "bad", float("nan"), float("inf")])
+def test_panel_editor_drops_invalid_numeric_step(monkeypatch, step) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {
+            "columns": [{
+                "id": "field",
+                "title": "Field",
+                "type": "integer",
+                "min": 0,
+                "max": 10,
+                "step": step,
+            }],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert "step" not in panel.columns[0]
+        assert panel.open_add_edit_dialog([None] * len(panel.columns)) is None
+    finally:
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(
