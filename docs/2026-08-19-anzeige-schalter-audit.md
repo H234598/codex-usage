@@ -8688,3 +8688,20 @@ den nächsten Tabellenwechsel noch das Schließen der Settings-Seite.
 Regression simuliert ein bereits abgehängtes Stack-Widget. Verifikation:
 Format-/Forecast-Fokustests 80/80; Python-Compile, Ruff und `git diff --check`
 sauber.
+
+## Runde 749: Prognose-Selector mit robustem Tabellen-Cleanup
+
+`ForecastTableSelector._discard_table()` hatte noch den alten direkten
+Cleanup-Pfad: `detach()`, `Gtk.Stack.remove()` und `destroy()` konnten jeweils
+eine Ausnahme bis in den Auswahl-Callback weiterreichen. Damit blieb der
+Forecast-Selector beim Wechsel hängen, wenn GTK ein Tabellenwidget bereits
+entfernt hatte.
+
+Der Prognose-Selector behandelt alle drei Cleanup-Schritte jetzt wie der
+Formatierungs-Selector als best-effort und entfernt den internen Tabelleneintrag
+vorher. Ein beschädigtes altes Widget blockiert weder die neue Prognosetabelle
+noch das Schließen der Seite.
+
+Regression simuliert ein bereits abgehängtes Stack-Widget. Verifikation:
+Format-/Forecast-Fokustests 81/81; Python-Compile, Ruff und `git diff --check`
+sauber.

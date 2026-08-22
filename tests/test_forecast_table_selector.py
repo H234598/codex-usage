@@ -228,3 +228,31 @@ def test_destroy_detaches_active_table_listener() -> None:
     assert selector._tables == {}
     assert settings.listeners[_TABLE_KEYS[0]] == []
     assert settings.listeners["forecast-table-selector"] == []
+
+
+def test_discard_table_survives_already_detached_stack_widget() -> None:
+    class FailingStack:
+        def remove(self, _widget):
+            raise RuntimeError("widget already detached")
+
+    class Widget:
+        def __init__(self):
+            self.detached = False
+            self.destroyed = False
+
+        def detach(self):
+            self.detached = True
+
+        def destroy(self):
+            self.destroyed = True
+
+    widget = Widget()
+    selector = ForecastTableSelector.__new__(ForecastTableSelector)
+    selector._tables = {_TABLE_KEYS[0]: widget}
+    selector.table_stack = FailingStack()
+
+    ForecastTableSelector._discard_table(selector, _TABLE_KEYS[0])
+
+    assert selector._tables == {}
+    assert widget.detached is True
+    assert widget.destroyed is True
