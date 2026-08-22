@@ -5361,6 +5361,9 @@ CodexUsageApplet.prototype = {
             if (baselineUsed === undefined) {
                 baselineUsed = null;
             }
+            let coverageSampleMismatch = item.coverage === "insufficient"
+                ? sampleCount >= 2
+                : sampleCount < 2;
             if (
                 typeof lookback !== "number" || !Number.isInteger(lookback) ||
                 lookback <= 0 || lookback > 31536000 ||
@@ -5378,6 +5381,7 @@ CodexUsageApplet.prototype = {
                 )) ||
                 typeof sampleCount !== "number" || !Number.isInteger(sampleCount) ||
                 sampleCount < 0 || sampleCount > 500000 ||
+                coverageSampleMismatch ||
                 ["complete", "partial", "stale", "insufficient"].indexOf(item.coverage) === -1
             ) {
                 throw new Error("invalid consumption window");

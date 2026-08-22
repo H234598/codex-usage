@@ -7292,3 +7292,17 @@ existiert.
 
 Die Applet-Validierung verlangt jetzt ebenfalls eine strikt positive Dauer.
 Regression erweitert die DTO-Validierung um den Nullfall.
+
+## Runde 634: Coverage und Samplezahl konsistent validiert
+
+`_safeConsumptionWindows()` akzeptierte bisher `coverage: "complete"` oder
+`"partial"` mit weniger als zwei Samples. Umgekehrt konnte `"insufficient"`
+mit mindestens zwei Samples durchgelassen werden. `_panelDeltaIsDynamic()`
+konnte dadurch statistische Warnungen aus einem unbrauchbaren Messdatensatz
+ableiten.
+
+Die DTO-Prüfung verlangt jetzt mindestens zwei Samples für `complete`,
+`partial` und `stale`; `insufficient` ist nur mit null oder einem Sample
+gültig. Regression deckt den widersprüchlichen Complete-Fall ab.
+`node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
+37/37; `make applet-check` inklusive JSON-Validierung: 474/474 sauber.
