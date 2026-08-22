@@ -7307,6 +7307,18 @@ gültig. Regression deckt den widersprüchlichen Complete-Fall ab.
 `node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
 37/37; `make applet-check` inklusive JSON-Validierung: 474/474 sauber.
 
+## Runde 637: Unbekannte Verbrauchsdaten nicht ausblenden
+
+`_consumptionWindowPart()` und `_creditConsumptionParts()` prüften
+`hide-when-zero` vor der Coverage-Auswertung. Backend-Daten mit
+`coverage: "insufficient"` tragen konstruktionsbedingt Verbrauch `0`; die
+Einstellung konnte dadurch den Hinweis „nicht genügend Messdaten“ ausblenden.
+
+Die Null-Unterdrückung greift jetzt nur bei sicher bekannten Coverage-Werten.
+`insufficient` bleibt sichtbar, auch wenn Nullwerte ausgeblendet werden soll.
+Regressionen decken Token- und Creditverbrauch ab. Fokus 37/37;
+`make applet-check`: 474/474 sauber.
+
 ## Runde 635: Leere Consumption-Pool-ID verworfen
 
 `_safeConsumptionWindows()` übernahm bisher eine leere `pool`-ID. Der

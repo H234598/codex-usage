@@ -9277,12 +9277,12 @@ CodexUsageApplet.prototype = {
         if (!Number.isFinite(value) || value < 0) {
             return null;
         }
-        if (row["hide-when-zero"] && value === 0) {
+        let coverage = window.coverage;
+        if (row["hide-when-zero"] && value === 0 && coverage !== "insufficient") {
             return null;
         }
         let valueText = this._formatConsumptionValue(value);
         let period = this._consumptionPeriod(row.amount, row.unit);
-        let coverage = window.coverage;
         let marker = this._coverageMarker(coverage, row["show-coverage-marker"] === true);
         let windowLabel = Number(window.limit_window_seconds) === 604800
             ? "Woche"
@@ -9467,7 +9467,8 @@ CodexUsageApplet.prototype = {
             if (!Number.isFinite(value) || value < 0) {
                 continue;
             }
-            if (row["consumption-hide-when-zero"] && value === 0) {
+            if (row["consumption-hide-when-zero"] && value === 0 &&
+                window.coverage !== "insufficient") {
                 continue;
             }
             let valueText = this._formatConsumptionValue(value);

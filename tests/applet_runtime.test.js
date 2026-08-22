@@ -3308,6 +3308,13 @@ test("consumption window rendering keeps delta, coverage, baseline and token end
     consumed_percentage_points: 0,
     coverage: "complete",
   }, row, "panel", null), null);
+  const hiddenUnknown = applet._consumptionWindowPart({
+    pool: "main",
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 0,
+    coverage: "insufficient",
+  }, row, "panel", null);
+  assert.match(hiddenUnknown.plain, /nicht genügend Messdaten/);
 
   row["hide-when-zero"] = false;
   const insufficient = applet._consumptionWindowPart({
@@ -3998,6 +4005,11 @@ test("custom credit consumption retains the enabled coverage marker", () => {
   }];
   const rendered = applet._creditConsumptionParts(applet._usages[0], "panel");
   assert.equal(rendered.plain, "CV 1 h: 12,3% (mindestens)");
+  applet._creditSettings.alpha["consumption-hide-when-zero"] = true;
+  applet._usages[0].cost_windows[0].consumed_percentage_points = 0;
+  applet._usages[0].cost_windows[0].coverage = "insufficient";
+  const hiddenUnknown = applet._creditConsumptionParts(applet._usages[0], "panel");
+  assert.match(hiddenUnknown.plain, /nicht genügend Messdaten/);
 });
 
 test("credit balances are displayed as whole numbers", () => {
