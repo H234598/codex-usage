@@ -133,7 +133,12 @@ def _panel_slot_id(value: object) -> bool:
     if not isinstance(value, str) or not value.startswith("slot"):
         return False
     suffix = value[4:]
-    return bool(suffix) and suffix.isdecimal() and not suffix.startswith("0")
+    return (
+        bool(suffix)
+        and suffix.isascii()
+        and suffix.isdecimal()
+        and not suffix.startswith("0")
+    )
 
 
 def panel_value_settings(
@@ -363,7 +368,11 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             continue
         if column_id.startswith("slot"):
             slot_suffix = column_id[4:]
-            if not slot_suffix.isdecimal() or slot_suffix.startswith("0"):
+            if (
+                not slot_suffix.isascii()
+                or not slot_suffix.isdecimal()
+                or slot_suffix.startswith("0")
+            ):
                 continue
             try:
                 slot_number = int(slot_suffix)

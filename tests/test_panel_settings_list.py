@@ -14,6 +14,7 @@ import panel_settings_list as panel_settings_list_module  # noqa: E402
 from panel_settings_list import (  # noqa: E402
     Gtk,
     PanelSettingsList,
+    _panel_slot_id,
     panel_apply_value_settings,
     panel_columns,
     panel_edit_columns,
@@ -32,6 +33,23 @@ def test_panel_value_count_defaults_and_bounds() -> None:
     assert panel_value_count(2.5) == 20
     assert panel_value_count("0") == 20
     assert panel_value_count("not-a-number") == 20
+
+
+@pytest.mark.parametrize(
+    "slot_id",
+    ["slot" + chr(0x661), "slot" + chr(0xFF11), "slot0", "slot01", "slotfoo"],
+)
+def test_panel_slot_id_rejects_noncanonical_ids(slot_id) -> None:
+    assert _panel_slot_id(slot_id) is False
+
+
+def test_panel_columns_replaces_noncanonical_slot_ids() -> None:
+    columns = panel_columns(
+        [{"id": "slot" + chr(0x661), "title": "Wert", "type": "integer"}],
+        1,
+    )
+
+    assert [column["id"] for column in columns] == ["slot1"]
 
 
 def test_panel_edit_columns_defaults_and_bounds() -> None:

@@ -9136,3 +9136,17 @@ bleiben sauber.
 
 Verifikation: **34 fokussierte Panel-Tests bestanden**; Ruff, Python-Compile
 und `git diff --check` sauber. Keine Settings-Fenster gestartet.
+
+## Runde 773: Nichtkanonische Leisten-Slot-IDs verwerfen
+
+Die Slot-Erkennung verwendete `str.isdecimal()` ohne ASCII-Prüfung. Unicode-
+Ziffern konnten dadurch als `slot1`-ähnliche IDs in Schema und Layout gelangen
+und logische Wertfelder duplizieren. Slot-Suffixe sind jetzt ausschließlich
+ASCII-Ziffern ohne führende Null; ungültige IDs werden wie andere beschädigte
+Schemafelder verworfen und durch kanonische `slot1…slotN`-Felder ersetzt.
+
+Regressionen prüfen arabische und vollbreite Ziffern sowie `slot0`, `slot01`
+und Textsuffixe. Ruff, fokussierte Tests, Compile und Diff-Check sind sauber.
+
+Verifikation: **8 fokussierte Slot-Tests bestanden**; keine Settings-Fenster
+gestartet.
