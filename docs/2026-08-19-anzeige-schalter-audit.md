@@ -8175,3 +8175,15 @@ Panel überschreibt die drei Aktionen jetzt mit Auswahl-/Grenzprüfungen und
 aktualisiert Button-Sensitivität nach jedem Abbruch. Regression deckt leere
 Auswahl sowie Move/Remove einer echten Auswahl ab; `tests/test_panel_settings_list.py`:
 89/89, Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 710: Formatierungs-Selector überlebt Settings-Reads
+
+`FormatTableSelector.on_setting_changed()` und die eingebettete
+`_BoundFormatList` lasen Backendwerte ungefangen. Ein Read-/DBus-Fehler beim
+Öffnen der Formatierungsseite konnte dadurch den gesamten Settings-Aufbau
+abbrechen.
+
+Selector fällt jetzt auf die erste Tabelle, Listen auf leere Zeilen zurück;
+kein Write erfolgt. Regression deckt Selector- und Tabellen-Readfehler ab;
+`tests/test_format_table_selector.py`: 26/26, Python-Compile, Ruff und
+`git diff --check` sauber.

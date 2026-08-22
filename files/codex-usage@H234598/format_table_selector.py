@@ -10,7 +10,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
-from TreeListWidgets import List, VARIABLE_TYPE_MAP  # noqa: E402
+from TreeListWidgets import VARIABLE_TYPE_MAP, List  # noqa: E402
 
 
 class _BoundFormatList(List, JSONSettingsBackend):
@@ -94,7 +94,10 @@ class _BoundFormatList(List, JSONSettingsBackend):
     def on_setting_changed(self, *_args):
         """Load only row objects; malformed persisted values render empty."""
         self.model.clear()
-        rows = self.get_value()
+        try:
+            rows = self.get_value()
+        except Exception:
+            rows = []
         if not isinstance(rows, list):
             rows = []
         for row in rows:
@@ -248,7 +251,10 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         self.table_title.set_markup(f"<b>{self._table_labels[table_key]}</b>")
 
     def on_setting_changed(self, *_args):
-        table_key = self.get_value()
+        try:
+            table_key = self.get_value()
+        except Exception:
+            table_key = None
         if not isinstance(table_key, str) or table_key not in self._table_labels:
             table_key = next(iter(self._table_labels), None)
         if table_key is None:

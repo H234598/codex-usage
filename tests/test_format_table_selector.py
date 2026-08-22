@@ -224,6 +224,27 @@ def test_setting_reload_keeps_selected_table_without_writing() -> None:
     assert selector.saved == []
 
 
+def test_setting_reload_falls_back_when_selector_read_fails() -> None:
+    class BrokenSelectorReadSettings(_Settings):
+        def get_value(self, key):
+            if key == "format-table-selector":
+                raise RuntimeError(key)
+            return super().get_value(key)
+
+    settings = BrokenSelectorReadSettings()
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert selector.combo.get_active_id() == "table-a"
+        assert settings.writes == []
+    finally:
+        selector.destroy()
+
+
 @pytest.mark.parametrize("value", [[], {}])
 def test_setting_reload_falls_back_from_unhashable_selection(value) -> None:
     settings = _Settings()
@@ -362,6 +383,26 @@ def test_malformed_table_value_does_not_break_selector() -> None:
         assert len(selector._tables["table-a"].model) == 1
         settings.settings["table-a"]["value"] = [{"name": 123}]
         selector._tables["table-a"].on_setting_changed()
+        assert len(selector._tables["table-a"].model) == 0
+    finally:
+        selector.destroy()
+
+
+def test_format_table_ignores_table_read_error() -> None:
+    class BrokenTableReadSettings(_Settings):
+        def get_value(self, key):
+            if key == "table-a":
+                raise RuntimeError(key)
+            return super().get_value(key)
+
+    settings = BrokenTableReadSettings()
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
         assert len(selector._tables["table-a"].model) == 0
     finally:
         selector.destroy()
