@@ -7420,7 +7420,12 @@ CodexUsageApplet.prototype = {
         try {
             argv = this._baseCommandArgv();
         } catch (e) {
-            this._finishProfileJob(account, String(e), false);
+            this._finishProfileJob(
+                account,
+                String(e),
+                false,
+                force === true ? "status-force" : "status"
+            );
             return;
         }
         argv.push("profile", "job-status", jobId, "--json");
@@ -7440,16 +7445,31 @@ CodexUsageApplet.prototype = {
                 ["queued", "running", "cancel_requested", "completed", "failed", "cancelled"]
                     .indexOf(payload.status) === -1
             ) {
-                this._finishProfileJob(account, error || "Profiljobstatus ungültig", false);
+                this._finishProfileJob(
+                    account,
+                    error || "Profiljobstatus ungültig",
+                    false,
+                    force === true ? "status-force" : "status"
+                );
                 return;
             }
             if (payload.events !== undefined && !Array.isArray(payload.events)) {
-                this._finishProfileJob(account, "Device-Login-Events ungültig", false);
+                this._finishProfileJob(
+                    account,
+                    "Device-Login-Events ungültig",
+                    false,
+                    force === true ? "status-force" : "status"
+                );
                 return;
             }
             let events = this._safeDeviceLoginEvents(payload.events || []);
             if (payload.events && events.length !== payload.events.length) {
-                this._finishProfileJob(account, "Device-Login-Events ungültig", false);
+                this._finishProfileJob(
+                    account,
+                    "Device-Login-Events ungültig",
+                    false,
+                    force === true ? "status-force" : "status"
+                );
                 return;
             }
             if (events.length) {
@@ -7474,7 +7494,7 @@ CodexUsageApplet.prototype = {
         }), force === true, 10000);
     },
 
-    _scheduleProfileJobPoll: function(account, generation, force) {
+    _scheduleProfileJobPoll: function(account, generation, force, retryAction) {
         if (
             generation !== this._deviceLoginPollGeneration ||
             !this._deviceLoginJobs[account]
@@ -7492,27 +7512,46 @@ CodexUsageApplet.prototype = {
             ) {
                 return false;
             }
-            this._pollProfileJob(account, force);
+            if (retryAction === "cancel") {
+                this._cancelProfileJob(account, true);
+            } else {
+                this._pollProfileJob(account, force);
+            }
             return false;
         }));
         if (!pollId) {
-            this._finishProfileJob(account, "Device-Login-Status konnte nicht weiter geprüft werden", false);
+            if (retryAction) {
+                this._profileJobsLoaded = false;
+                this._profileJobsResumeRequested = true;
+                return;
+            }
+            this._finishProfileJob(
+                account,
+                "Device-Login-Status konnte nicht weiter geprüft werden",
+                false,
+                force === true ? "status-force" : "status"
+            );
             return;
         }
         this._setSource("_deviceLoginPollId", pollId);
     },
 
-    _finishProfileJob: function(account, error, success) {
+    _finishProfileJob: function(account, error, success, retryAction) {
+        let retry = retryAction === "status" ||
+            retryAction === "status-force" ||
+            retryAction === "cancel";
         let deleteWaiting = Boolean(this._accountDeleteWaitingForProfileJob[account]);
-        delete this._accountDeleteWaitingForProfileJob[account];
-        delete this._profilePendingAccounts[account];
-        let remainingResumeJobs = [];
-        for (let index = 0; index < this._profileJobResumeQueue.length; index++) {
-            if (this._profileJobResumeQueue[index] !== account) {
-                remainingResumeJobs.push(this._profileJobResumeQueue[index]);
+        if (!retry) {
+            delete this._accountDeleteWaitingForProfileJob[account];
+            delete this._profilePendingAccounts[account];
+            let remainingResumeJobs = [];
+            for (let index = 0; index < this._profileJobResumeQueue.length; index++) {
+                if (this._profileJobResumeQueue[index] !== account) {
+                    remainingResumeJobs.push(this._profileJobResumeQueue[index]);
+                }
             }
+            this._profileJobResumeQueue = remainingResumeJobs;
         }
-        this._profileJobResumeQueue = remainingResumeJobs;
         if (this._profileJobPollingAccount === account) {
             this._profileJobPollingAccount = "";
         }
@@ -7521,12 +7560,16 @@ CodexUsageApplet.prototype = {
         }
         this._deviceLoginPollGeneration += 1;
         this._removeSource("_deviceLoginPollId");
-        delete this._deviceLoginJobs[account];
-        delete this._deviceLoginActive[account];
-        delete this._deviceLoginEvents[account];
-        delete this._deviceLoginLiveText[account];
-        if (this._deviceLoginLiveAccount === account) {
-            this._deviceLoginLiveAccount = "";
+        if (retry) {
+            this._deviceLoginActive[account] = true;
+        } else {
+            delete this._deviceLoginJobs[account];
+            delete this._deviceLoginActive[account];
+            delete this._deviceLoginEvents[account];
+            delete this._deviceLoginLiveText[account];
+            if (this._deviceLoginLiveAccount === account) {
+                this._deviceLoginLiveAccount = "";
+            }
         }
         if (error) {
             this._deviceLoginErrors[account] = this._shortText(error, 200);
@@ -7535,6 +7578,18 @@ CodexUsageApplet.prototype = {
             this._profileJobsLoaded = false;
         }
         this._buildUsageMenu();
+        if (retry) {
+            if (!deleteWaiting && this._ensureBackendUsageRows()) {
+                this._refreshFormattedSurfaces();
+            }
+            this._scheduleProfileJobPoll(
+                account,
+                this._deviceLoginPollGeneration,
+                retryAction === "status-force",
+                retryAction
+            );
+            return;
+        }
         if (success) {
             this._refreshFresh(false);
         } else if (!deleteWaiting && this._ensureBackendUsageRows()) {
@@ -7564,7 +7619,7 @@ CodexUsageApplet.prototype = {
         try {
             argv = this._baseCommandArgv();
         } catch (e) {
-            this._finishProfileJob(account, String(e), false);
+            this._finishProfileJob(account, String(e), false, "cancel");
             return true;
         }
         argv.push("profile", "cancel", jobId, "--json");
@@ -7581,7 +7636,12 @@ CodexUsageApplet.prototype = {
                 payload.job_id !== jobId ||
                 ["cancel_requested", "cancelled", "completed", "failed"].indexOf(payload.status) === -1
             ) {
-                this._finishProfileJob(account, error || "Device-Login konnte nicht abgebrochen werden", false);
+                this._finishProfileJob(
+                    account,
+                    error || "Device-Login konnte nicht abgebrochen werden",
+                    false,
+                    "cancel"
+                );
                 return;
             }
             if (payload.status === "cancel_requested") {

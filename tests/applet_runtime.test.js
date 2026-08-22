@@ -915,6 +915,76 @@ test("profile polling waits for account writes before spawning status", () => {
   assert.equal(applet._profileJobPollingAccount, "");
 });
 
+test("profile status failure retains persistent job for retry", () => {
+  const callbacks = [];
+  const calls = [];
+  const jobId = "job-1234567890abcdef1234567890abcdef";
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+  });
+  applet._profileJobsLoaded = true;
+  applet._deviceLoginJobs.alpha = jobId;
+  applet._deviceLoginActive.alpha = true;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    if (calls.length === 1) {
+      callback(null, "status timeout");
+      return;
+    }
+    callback({
+      account: "alpha",
+      job_id: jobId,
+      ok: true,
+      status: "completed",
+    }, null);
+  };
+
+  applet._pollProfileJob("alpha");
+
+  assert.equal(applet._deviceLoginJobs.alpha, jobId);
+  assert.equal(applet._deviceLoginActive.alpha, true);
+  assert.equal(applet._deviceLoginErrors.alpha, "status timeout");
+  assert.equal(callbacks.length, 1);
+  callbacks[0]();
+
+  assert.equal(calls.length, 2);
+  assert.equal(applet._deviceLoginJobs.alpha, undefined);
+});
+
+test("profile cancel failure keeps account deletion blocked", () => {
+  const callbacks = [];
+  const calls = [];
+  const jobId = "job-1234567890abcdef1234567890abcdef";
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+  });
+  applet._deviceLoginJobs.alpha = jobId;
+  applet._deviceLoginActive.alpha = true;
+  applet._accountChangeQueue = [{action: "delete", account: "alpha"}];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    callback(null, "cancel timeout");
+  };
+
+  applet._drainAccountChanges();
+
+  assert.deepEqual(calls, [[
+    "codex-usage", "profile", "cancel", jobId, "--json",
+  ]]);
+  assert.equal(applet._deviceLoginJobs.alpha, jobId);
+  assert.equal(applet._accountDeleteWaitingForProfileJob.alpha, true);
+  assert.deepEqual(applet._accountChangeQueue, [{action: "delete", account: "alpha"}]);
+  assert.equal(callbacks.length, 1);
+});
+
 test("stale profile poll timer cannot restart a newer generation", () => {
   const callbacks = [];
   const calls = [];

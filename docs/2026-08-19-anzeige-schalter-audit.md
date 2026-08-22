@@ -6784,3 +6784,25 @@ Fokustest `node --test --test-name-pattern='profile job|device login|auxiliary'
 tests/applet_runtime.test.js`: 46/46. Node-Syntaxcheck und `git diff --check`
 sauber. Vollständiger JS-Lauf `node --test tests/applet_runtime.test.js`:
 465/465.
+
+## Runde 597: Persistente Profiljobs bei Hilfsfehlern erhalten
+
+Ein Timeout, ungültiges JSON oder eine ungültige Eventliste im
+`profile job-status`-Abruf löschte bisher den lokalen Jobzustand, obwohl das
+Backend-Manifest weiterlief. Bei einer laufenden Account-Löschung konnte ein
+Fehler im `profile cancel`-Aufruf dadurch außerdem die Löschung freigeben,
+ohne bestätigte Cancellation.
+
+Status- und Cancel-Fehler behalten Job-ID, Aktivstatus und Warte-Marker jetzt
+und planen einen generation-geschützten Retry. Status-Retries bleiben bei
+laufenden Account-/Backend-Schreibvorgängen blockierend; Cancel-Retries
+verwenden weiterhin den erzwungenen Pfad. Terminale Zustände (`completed`,
+`failed`, `cancelled`) entfernen den Job unverändert. Fehlende Timerquellen
+fallen auf erneute Discovery zurück, statt rekursiv zu pollen.
+
+Regressionen prüfen Status-Retry und dass Account-Löschung bei Cancel-Fehlern
+blockiert bleibt. Fokustest `node --test --test-name-pattern='profile status
+failure|profile cancel failure|profile job|device login|auxiliary'
+tests/applet_runtime.test.js`: 48/48. Vollständiger JS-Lauf:
+`node --test tests/applet_runtime.test.js` 467/467. Node-Syntaxcheck und
+`git diff --check` sauber.
