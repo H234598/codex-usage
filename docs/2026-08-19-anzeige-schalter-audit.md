@@ -8823,3 +8823,22 @@ Dialog-Doppel ohne Cleanup. Kombinierter GTK-Fokuslauf
 tests/test_forecast_table_selector.py`: **179 bestanden**, kein Segfault.
 Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 756: Fehlgeschlagene Formatierungs-Tabelle nicht persistieren
+
+Beim Umschalten des Formatierungs-Selectors schrieb `_on_table_changed()` die
+Auswahl bisher auch dann in die Einstellungen, wenn `_ensure_table()` den
+Widget-Aufbau nicht herstellen konnte. Dadurch blieb die alte oder keine
+Tabelle sichtbar, während beim nächsten Reload eine nicht ladbare Auswahl
+erneut verwendet wurde.
+
+`_show_table()` liefert jetzt einen Erfolgswert zurück. Der Selector speichert
+die Auswahl nur nach erfolgreichem Tabellenaufbau; bei Aufbaufehler bleibt die
+bisherige persistierte Auswahl unverändert. Regression prüft den
+fehlgeschlagenen Aufbau direkt.
+
+Verifikation: kombinierter GTK-Fokuslauf
+`tests/test_panel_settings_list.py tests/test_format_table_selector.py
+tests/test_forecast_table_selector.py`: **180 bestanden**, kein Segfault.
+Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.

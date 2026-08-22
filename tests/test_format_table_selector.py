@@ -281,6 +281,16 @@ def test_table_change_ignores_unknown_selection() -> None:
     assert selector.saved == []
 
 
+def test_table_change_does_not_persist_when_widget_build_fails() -> None:
+    selector = _selector()
+    selector.combo.active = "account-percent-styles"
+    selector._ensure_table = lambda _table_key: None
+
+    selector._on_table_changed()
+
+    assert selector.saved == []
+
+
 def test_table_change_ignores_selector_write_error() -> None:
     selector = _selector()
     selector.set_value = lambda _value: (_ for _ in ()).throw(RuntimeError("write failed"))

@@ -467,7 +467,8 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         table_key = self.combo.get_active_id()
         if table_key not in self._table_labels:
             return
-        self._show_table(table_key)
+        if not self._show_table(table_key):
+            return
         if not self._saving:
             try:
                 self.set_value(table_key)
@@ -536,7 +537,7 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
 
     def _show_table(self, table_key):
         if self._ensure_table(table_key) is None:
-            return
+            return False
         active_table_key = getattr(self, "_active_table_key", None)
         if active_table_key != table_key:
             self._discard_table(active_table_key)
@@ -544,6 +545,7 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         self.table_stack.set_visible_child_name(table_key)
         label = GLib.markup_escape_text(self._table_labels[table_key])
         self.table_title.set_markup(f"<b>{label}</b>")
+        return True
 
     def on_setting_changed(self, *_args):
         try:
