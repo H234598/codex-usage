@@ -235,7 +235,12 @@ class DynamicSeriesList(List, JSONSettingsBackend):
             account = account.strip() or None
         else:
             account = None
-        current = current.strip().upper() if isinstance(current, str) else ""
+        if isinstance(current, str):
+            current = current.strip().upper()
+            if not DynamicSeriesList._SERIES_PREFIX_RE.fullmatch(current):
+                current = ""
+        else:
+            current = ""
 
         current_owned_by_account = False
         if current and account is not None:

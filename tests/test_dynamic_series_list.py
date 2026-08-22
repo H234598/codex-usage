@@ -137,6 +137,14 @@ def test_series_options_ignore_malformed_current_row() -> None:
     }
 
 
+def test_series_options_drop_malformed_current_series() -> None:
+    table = _SeriesTable([["alpha", "A\x00", True]], ())
+
+    assert DynamicSeriesList._series_options_for(table, table.model[0]) == {
+        "Keine Serie": "",
+    }
+
+
 def test_series_options_preserve_current_gtk_tree_model_assignment() -> None:
     table = _SeriesTable([
         _TreeModelRow(["alpha", "A", True]),

@@ -8899,3 +8899,20 @@ Account-Daten bleiben unverändert. Regression deckt Whitespace-Besitzer ab.
 Verifikation: `tests/test_dynamic_series_list.py`: **24 bestanden**.
 Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 760: Ungültige aktuelle Serie nicht in GTK-Combo übernehmen
+
+Der dynamische Serieneditor übernahm jeden gespeicherten String als
+`(aktuell)`-Option, sobald die Serie nicht aus dem Masterjet-Angebot kam. Ein
+beschädigter Wert wie `A\x00` konnte dadurch als Label und Wert in die GTK-
+ComboBox gelangen. Das machte den Editor unnötig fragil und konnte beim
+Rendern/Weiterreichen der Option fehlschlagen.
+
+Der aktuelle Wert wird vor dem Legacy-Erhalt jetzt gegen dasselbe ASCII-
+Serienpräfix geprüft wie die Masterjet-Antwort. Ungültige Werte werden nicht
+als Option angeboten; gültige, nicht mehr verfügbare Serien bleiben für ihren
+Account reparierbar. Regression deckt einen NUL-haltigen Serienwert ab.
+
+Verifikation: `tests/test_dynamic_series_list.py`: **25 bestanden**.
+Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.
