@@ -5917,3 +5917,14 @@ inkonsistenter Header konnte dadurch als gültiges Member weiterlaufen.
 Die Payload-Länge muss jetzt exakt der Headergröße entsprechen. Regression
 deckt Header-Size-Drift ab. `pytest -q tests/test_integration_installer.py`:
 150/150; Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 537: Launcher-Write an Parent-Identität gebunden
+
+`_write_launcher()` rief `_write_exclusive()` bisher ohne erwartete
+Parent-Identität auf. Ein Parent-Swap nach dem letzten Pfad-Check konnte
+den Launcher in einen fremden gleichnamigen User-Ordner schreiben.
+
+Der Parent wird jetzt vor dem exklusiven Write gebunden und beim FD-Open
+erneut geprüft. Regression deckt den Parent-Swap ab. `pytest -q
+tests/test_integration_installer.py`: 151/151; Ruff, Python-Compile und
+`git diff --check` sauber.

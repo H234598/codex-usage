@@ -3612,6 +3612,41 @@ def test_exclusive_write_rejects_candidate_replaced_after_final_revalidation(
     assert old_candidate.read_bytes() == b"candidate-payload"
 
 
+def test_write_launcher_binds_parent_identity_before_write(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "bin"
+    parent.mkdir(mode=0o700)
+    launcher = parent / "codex-usage"
+    old_parent = tmp_path / "bin-old"
+    foreign_parent = tmp_path / "bin-foreign"
+    foreign_parent.mkdir(mode=0o700)
+    parent_identity = integration_installer._directory_identity(parent)
+    original_write = integration_installer._write_exclusive
+    swapped = False
+
+    def swap_before_write(path, payload, **kwargs):
+        nonlocal swapped
+        parent.rename(old_parent)
+        foreign_parent.rename(parent)
+        swapped = True
+        return original_write(path, payload, **kwargs)
+
+    monkeypatch.setattr(integration_installer, "_write_exclusive", swap_before_write)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._write_launcher(
+            path=launcher,
+            final_release_dir=tmp_path / "release",
+            data_home=tmp_path / "data",
+            state_home=tmp_path / "state",
+            parent_identity=parent_identity,
+        )
+
+    assert swapped
+    assert not (parent / launcher.name).exists()
+    assert not (old_parent / launcher.name).exists()
+
+
 def test_candidate_call_binds_saved_temporary_identity(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

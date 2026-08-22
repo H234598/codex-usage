@@ -2243,7 +2243,10 @@ def _write_launcher(
     final_release_dir: Path,
     data_home: Path,
     state_home: Path,
+    parent_identity: _DirectoryIdentity | None = None,
 ) -> _FileIdentity:
+    if parent_identity is None:
+        parent_identity = _directory_identity(path.parent)
     interpreter = final_release_dir / "venv" / "bin" / "python"
     quoted_data = _shell_single_quote(str(data_home))
     quoted_state = _shell_single_quote(str(state_home))
@@ -2261,7 +2264,12 @@ def _write_launcher(
         f"TZ=UTC XDG_DATA_HOME={quoted_data} XDG_STATE_HOME={quoted_state} "
         f"{quoted_interpreter} -B -I -m codex_usage.integration_entrypoint \"$@\"\n"
     ).encode()
-    return _write_exclusive(path, payload, mode=0o700)
+    return _write_exclusive(
+        path,
+        payload,
+        mode=0o700,
+        parent_identity=parent_identity,
+    )
 
 
 def _manifest(
