@@ -43,7 +43,9 @@ def record_health_event(
     if isinstance(now, datetime):
         try:
             if now.tzinfo is not None and now.utcoffset() is not None:
-                current_time = now.astimezone(UTC)
+                candidate_time = now.astimezone(UTC)
+                if type(candidate_time) is datetime:
+                    current_time = candidate_time
         except Exception:
             pass
     entry: dict[str, Any] = {

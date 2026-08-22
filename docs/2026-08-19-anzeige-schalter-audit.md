@@ -9511,3 +9511,18 @@ Iterator über Identitäts-, Plan- und Konsistenzpfad ab.
 Verifikation: **29 fokussierte Identity-Tests**, **466 Identity-, Bridge- und
 Browser-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 805: Health-Clock gegen Fremdtyp-Rückgabe sichern
+
+`record_health_event()` validierte `now` zwar als `datetime`, übernahm aber
+blind das Ergebnis von `now.astimezone(UTC)`. Eine manipulierte
+`datetime`-Subclass konnte dort einen Fremdtyp zurückgeben; der anschließende
+`isoformat()`-Aufruf brach die Health-Telemetrie mit `AttributeError` ab.
+
+Der normalisierte Clock-Wert wird jetzt nur übernommen, wenn er ein exakter
+`datetime`-Wert ist; sonst bleibt die sichere aktuelle UTC-Zeit aktiv.
+Regression deckt die Fremdtyp-Rückgabe ab.
+
+Verifikation: **33 fokussierte Health-Tests**, **306 Health-, State- und
+CI-Workflow-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

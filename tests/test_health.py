@@ -21,6 +21,11 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _ForeignClock(datetime):
+    def astimezone(self, _tz=UTC):
+        return "not-a-datetime"
+
+
 def test_health_is_bounded_and_redacts_invalid_account(tmp_path):
     path = tmp_path / "health.json"
     now = datetime.now(UTC)
@@ -80,6 +85,19 @@ def test_health_uses_safe_clock_for_malformed_now(tmp_path, now):
     path = tmp_path / "health.json"
 
     record_health_event("scheduler", "cycle_ok", path=path, now=now)  # type: ignore[arg-type]
+
+    assert load_health(path)["event_count"] == 1
+
+
+def test_health_uses_safe_clock_when_datetime_returns_foreign_value(tmp_path):
+    path = tmp_path / "health.json"
+
+    record_health_event(
+        "scheduler",
+        "cycle_ok",
+        path=path,
+        now=_ForeignClock(2026, 8, 16, 10, 0, tzinfo=UTC),
+    )
 
     assert load_health(path)["event_count"] == 1
 
