@@ -437,6 +437,40 @@ def test_panel_editor_drops_invalid_numeric_step(monkeypatch, step) -> None:
         panel.destroy()
 
 
+@pytest.mark.parametrize(
+    ("column_type", "property_name", "property_value"),
+    [
+        ("string", "min", 0),
+        ("file", "min", 0),
+        ("icon", "step", 1),
+        ("sound", "expand-width", True),
+    ],
+)
+def test_panel_editor_strips_properties_unsupported_by_widget(
+    monkeypatch, column_type, property_name, property_value
+) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    column = {
+        "id": "field",
+        "title": "Field",
+        "type": column_type,
+        property_name: property_value,
+    }
+    panel = PanelSettingsList(
+        {"columns": [column], "show-buttons": False},
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert property_name not in panel.columns[0]
+        assert panel.open_add_edit_dialog([None] * len(panel.columns)) is None
+    finally:
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(

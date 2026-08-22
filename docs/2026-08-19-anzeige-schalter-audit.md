@@ -7980,3 +7980,14 @@ Ungültige Schritte werden entfernt; nicht passende Spin-Eigenschaften werden
 bei ComboBoxen gestrichen. Regression deckt den echten Dialogpfad ab;
 `tests/test_panel_settings_list.py`: 70/70, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 692: Leisten-Widget-Properties bleiben typgerecht
+
+`min/max/step/units` wurden auch an String-, File-, Icon- und Sound-Widgets
+weitergereicht. Deren Konstruktoren kennen diese Argumente nicht; der
+Editordialog brach mit `TypeError` ab.
+
+Der Schemafilter behält je Widgettyp nur unterstützte Properties und prüft
+Bool-Properties strikt. Regression deckt vier Widgettypen im Dialogpfad ab;
+`tests/test_panel_settings_list.py`: 74/74, Python-Compile und
+`git diff --check` sauber.

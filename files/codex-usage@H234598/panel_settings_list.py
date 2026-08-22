@@ -184,6 +184,19 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
                 continue
             for unsupported in ("min", "max", "step", "units", "select-dir", "expand-width"):
                 column.pop(unsupported, None)
+        allowed_properties = {
+            "integer": {"min", "max", "step", "units"},
+            "float": {"min", "max", "step", "units"},
+            "string": {"expand-width"},
+            "file": {"select-dir"},
+            "icon": {"expand-width"},
+        }.get(column["type"], set())
+        for property_name in ("min", "max", "step", "units", "select-dir", "expand-width"):
+            if property_name not in allowed_properties:
+                column.pop(property_name, None)
+        for boolean_property in ("select-dir", "expand-width"):
+            if boolean_property in column and not isinstance(column[boolean_property], bool):
+                column.pop(boolean_property, None)
         if "align" in column:
             align = column["align"]
             try:
