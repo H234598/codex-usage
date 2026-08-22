@@ -1783,6 +1783,7 @@ def _postwalk_release(
         if (
             not stat.S_ISDIR(root_stat.st_mode)
             or stat.S_ISLNK(root_stat.st_mode)
+            or root_stat.st_uid != os.getuid()
             or (
                 root_identity is not None
                 and current_root_identity != root_identity

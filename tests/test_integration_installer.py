@@ -2308,6 +2308,36 @@ def test_postwalk_release_rejects_foreign_owned_file(tmp_path, monkeypatch):
     assert payload.read_bytes() == b"foreign"
 
 
+def test_postwalk_release_rejects_foreign_owned_root(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    item = release.lstat()
+    foreign = SimpleNamespace(
+        st_dev=item.st_dev,
+        st_ino=item.st_ino,
+        st_uid=os.getuid() + 1,
+        st_mode=item.st_mode,
+        st_nlink=item.st_nlink,
+    )
+    original_fstat = integration_installer.os.fstat
+    calls = 0
+
+    def foreign_root_fstat(fd):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return foreign
+        return original_fstat(fd)
+
+    monkeypatch.setattr(integration_installer.os, "fstat", foreign_root_fstat)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._postwalk_release(release)
+
+    assert calls == 1
+
+
 def test_installer_reader_rejects_oversized_file_before_materializing(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

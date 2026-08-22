@@ -5875,3 +5875,13 @@ Dateien und Verzeichnisse werden jetzt während Enumeration und FD-Öffnung auf
 aktuelle UID geprüft; Abweichung bricht fail-closed. Regression deckt fremde
 Release-Datei ab. `pytest -q tests/test_integration_installer.py`: 146/146;
 Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 533: Postwalk-Root ebenfalls auf Besitzer gebunden
+
+Der Root-Descriptor von `_postwalk_release()` wurde bei fehlender übergebener
+Identität nur auf Verzeichnis-/Symlink-Typ geprüft. Ein fremd besessenes Root-
+Verzeichnis konnte den Scan dadurch passieren.
+
+Auch der geöffnete Root wird jetzt auf aktuelle UID geprüft. Regression deckt
+fremden Root-Descriptor ab. `pytest -q tests/test_integration_installer.py`:
+147/147; Ruff, Python-Compile und `git diff --check` sauber.
