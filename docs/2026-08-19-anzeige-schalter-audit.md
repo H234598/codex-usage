@@ -6376,3 +6376,19 @@ den aktiven Polling-Account zurück. Persistente Jobs bleiben erhalten und könn
 nach dem nächsten Refresh wieder aufgenommen werden. Fokustest
 `node --test --test-name-pattern='safe mode cancels reactivation processes|persistent profile job|profile job|device login|safe mode' tests/applet_runtime.test.js`:
 42/42; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 571: Profiljob-Discovery nach Safe-Mode erzwingen
+
+Safe-Mode konnte während eines anderen Profilbefehls eintreten, während
+`_profileJobsLoaded` noch `true` war. Der laufende Auxiliary-Prozess wurde zwar
+abgebrochen, aber ein Retry übersprang wegen dieses Caches die erneute
+`profile jobs`-Erkennung. Eine bereits laufende persistente Job-ID blieb dann
+ohne Polling; bei wartender Account-Löschung konnte die Queue hängen.
+
+Safe-Mode setzt jetzt `_profileJobsLoaded` und das Resume-Flag zurück und leert
+die Resume-Warteschlange. Persistente Job-Maps bleiben erhalten, damit kein
+aktiver Remote-Job fälschlich als beendet gilt; die nächste Auxiliary-
+Synchronisierung liest sie autoritativ neu ein. Regression erweitert den
+Safe-Mode-Lifecycle-Test. Fokustest `node --test
+--test-name-pattern='safe mode cancels reactivation processes|persistent profile job|profile job resume|cancelled profile job discovery' tests/applet_runtime.test.js`:
+10/10; Node-Syntaxcheck und `git diff --check` sauber.

@@ -678,6 +678,12 @@ CodexUsageApplet.prototype = {
         this._displayTimerGeneration = (this._displayTimerGeneration || 0) + 1;
         this._staleCheckGeneration = (this._staleCheckGeneration || 0) + 1;
         this._deviceLoginPollGeneration = (this._deviceLoginPollGeneration || 0) + 1;
+        this._profileJobsLoaded = false;
+        this._profileJobsResumeRequested = false;
+        if (!Array.isArray(this._profileJobResumeQueue)) {
+            this._profileJobResumeQueue = [];
+        }
+        this._profileJobResumeQueue.length = 0;
         this._profileJobPollingAccount = "";
         this._removeSource("_timerId");
         this._removeSource("_displayTimerId");
