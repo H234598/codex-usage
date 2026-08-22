@@ -624,6 +624,24 @@ def test_format_table_drops_duplicate_column_ids() -> None:
 
 
 @pytest.mark.parametrize(
+    "column",
+    [
+        {"id": "", "title": "Value", "type": "string"},
+        {"id": "value", "title": "", "type": "string"},
+    ],
+)
+def test_format_table_drops_empty_column_text(column) -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [column]
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        assert widget.columns == []
+    finally:
+        widget.destroy()
+
+
+@pytest.mark.parametrize(
     "options",
     [
         {"Bad": 2**31},

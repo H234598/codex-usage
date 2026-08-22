@@ -9361,3 +9361,17 @@ Regression deckt Validator, ungültige Spalten und Widget-Aufbau ab.
 Verifikation: **112 fokussierte Panel-Tests**, Ruff, Python-Compile,
 Diff-Check sowie 3000-Fälle-Schema-Fuzz bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 794: Leere Formatspalten verwerfen
+
+Der Format-Selector akzeptierte bisher leere Spalten-IDs oder -Titel. Solche
+Definitionen erzeugten zwar keinen unmittelbaren GTK-Crash, aber nicht
+adressierbare bzw. unsichtbare Formatfelder und konnten beim JSON-Speichern
+leere Schlüssel verwenden.
+
+`_BoundFormatList` verlangt für Spalten-ID und -Titel jetzt nichtleere,
+NUL-freie, UTF-8-kodierbare Texte. Beide Fälle sind als Regression abgedeckt.
+Der bestehende 500-Fälle-Konstruktions-Fuzz blieb ebenfalls fehlerfrei.
+
+Verifikation: **77 fokussierte Format-Selector-Tests**, Ruff, Python-Compile und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

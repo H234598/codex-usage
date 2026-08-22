@@ -75,8 +75,8 @@ class _BoundFormatList(List, JSONSettingsBackend):
         for column in columns:
             if not (
                 isinstance(column, dict)
-                and _valid_text(column.get("id"))
-                and _valid_text(column.get("title"))
+                and _valid_text(column.get("id"), allow_empty=False)
+                and _valid_text(column.get("title"), allow_empty=False)
                 and isinstance(column.get("type"), str)
                 and column["type"] in VARIABLE_TYPE_MAP
             ):
