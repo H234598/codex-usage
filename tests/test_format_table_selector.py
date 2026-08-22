@@ -573,6 +573,22 @@ def test_format_table_sanitizes_column_alignment(align) -> None:
         widget.destroy()
 
 
+def test_format_table_drops_duplicate_column_ids() -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [
+        {"id": "value", "title": "Erstes", "type": "string"},
+        {"id": "value", "title": "Zweites", "type": "string"},
+    ]
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        assert [(column["id"], column["title"]) for column in widget.columns] == [
+            ("value", "Erstes")
+        ]
+    finally:
+        widget.destroy()
+
+
 @pytest.mark.parametrize(
     "options",
     [

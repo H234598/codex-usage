@@ -9254,3 +9254,18 @@ ersetzt, damit der Help-Code lint-sauber bleibt.
 
 Verifikation: **13 fokussierte Hilfe-Tests**, Ruff, Python-Compile und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 787: Doppelte Formatspalten-IDs verwerfen
+
+Formatierungstabellen akzeptierten bisher doppelte Spalten-IDs. GTK zeigte
+dann mehrere Spalten für denselben Schlüssel; beim Speichern erzeugte der
+JSON-Aufbau denselben Schlüssel mehrfach, sodass der spätere Wert den früheren
+überschrieb.
+
+`_BoundFormatList` dedupliziert gültige Spalten jetzt deterministisch: Die
+erste gültige Definition gewinnt, weitere gleiche IDs werden verworfen. Die
+Schema-Kopie bleibt dank bestehender Deep-Copy-Isolation unverändert.
+
+Regression prüft Titel und Reihenfolge der übrig gebliebenen ersten Spalte.
+Verifikation: **72 fokussierte Format-Tests**, Ruff, Python-Compile und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

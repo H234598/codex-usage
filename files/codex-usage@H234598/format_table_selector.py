@@ -60,6 +60,7 @@ class _BoundFormatList(List, JSONSettingsBackend):
         if not isinstance(columns, list):
             columns = []
         valid_columns = []
+        seen_column_ids = set()
         for column in columns:
             if not (
                 isinstance(column, dict)
@@ -227,6 +228,9 @@ class _BoundFormatList(List, JSONSettingsBackend):
                     column["align"] = float(align)
                 else:
                     column.pop("align", None)
+            if column["id"] in seen_column_ids:
+                continue
+            seen_column_ids.add(column["id"])
             valid_columns.append(column)
         definition["columns"] = valid_columns
         description = definition.get("description")
