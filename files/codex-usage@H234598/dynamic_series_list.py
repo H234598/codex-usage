@@ -29,6 +29,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
     _SERIES_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,15}")
     _masterjet_cache = None
     _masterjet_cache_at = 0.0
+    _masterjet_cache_key = None
 
     def __init__(self, info, key, settings):
         self.backend = "json"
@@ -100,17 +101,19 @@ class DynamicSeriesList(List, JSONSettingsBackend):
 
     def _masterjet_series(self):
         now = time.monotonic()
-        if (
-            self._masterjet_cache is not None
-            and now - self._masterjet_cache_at < self._MASTERJET_CACHE_SECONDS
-        ):
-            return self._masterjet_cache
-
         command = os.environ.get("CODEX_MASTER_MCP", "").strip()
         argv = [command, "fleet", "series", "list"] if command else [
             str(Path.home() / ".local/bin/codex-master-mcp"),
             "fleet", "series", "list",
         ]
+        cache_key = tuple(argv)
+        if (
+            self._masterjet_cache is not None
+            and now - self._masterjet_cache_at < self._MASTERJET_CACHE_SECONDS
+            and self.__class__._masterjet_cache_key == cache_key
+        ):
+            return self._masterjet_cache
+
         result = []
         process = None
         output = bytearray()
@@ -190,6 +193,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                         pass
         self.__class__._masterjet_cache = result
         self.__class__._masterjet_cache_at = now
+        self.__class__._masterjet_cache_key = cache_key
         return result
 
     def _active_owners(self):

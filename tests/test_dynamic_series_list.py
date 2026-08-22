@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -157,6 +158,36 @@ def test_masterjet_series_filters_provider_state_and_caches_result(tmp_path, mon
 
     DynamicSeriesList._masterjet_cache = None
     DynamicSeriesList._masterjet_cache_at = 0.0
+
+
+def test_masterjet_series_cache_follows_command_path(tmp_path, monkeypatch) -> None:
+    commands = []
+    for name, prefix in (("first", "a"), ("second", "b")):
+        command = tmp_path / name
+        payload = {
+            "series": [{"prefix": prefix, "enabled": True, "provider": "openai_chatgpt"}]
+        }
+        command.write_text(
+            "#!/usr/bin/env python3\n"
+            f"print({json.dumps(payload)!r})\n",
+            encoding="utf-8",
+        )
+        command.chmod(0o700)
+        commands.append(command)
+
+    DynamicSeriesList._masterjet_cache = None
+    DynamicSeriesList._masterjet_cache_at = 0.0
+    DynamicSeriesList._masterjet_cache_key = None
+    series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
+    try:
+        monkeypatch.setenv("CODEX_MASTER_MCP", str(commands[0]))
+        assert DynamicSeriesList._masterjet_series(series_widget) == ("A",)
+        monkeypatch.setenv("CODEX_MASTER_MCP", str(commands[1]))
+        assert DynamicSeriesList._masterjet_series(series_widget) == ("B",)
+    finally:
+        DynamicSeriesList._masterjet_cache = None
+        DynamicSeriesList._masterjet_cache_at = 0.0
+        DynamicSeriesList._masterjet_cache_key = None
 
 
 def test_masterjet_series_keeps_ascii_hyphen_and_underscore_prefixes(tmp_path, monkeypatch) -> None:

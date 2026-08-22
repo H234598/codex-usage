@@ -8600,3 +8600,19 @@ das Dialogfenster auf. Regression deckt den Factory-Fehler ab.
 Verifikation: Panel-Tests 92/92; Format-/Forecast-Tests 79/79; relevante
 Settings-Launcher-Tests 39/39; Python-Compile, Ruff und `git diff --check`
 sauber.
+
+## Runde 744: Masterjet-Seriencache an Befehl binden
+
+`DynamicSeriesList._masterjet_series()` verwendete einen klassenweiten
+30-Sekunden-Cache ohne Bezug zum tatsächlich verwendeten
+`CODEX_MASTER_MCP`-Befehl. Nach einem Befehls-/Pfadwechsel blieb deshalb die
+alte Serienliste sichtbar, obwohl der neue Backend-Prozess bereits andere
+Serien lieferte.
+
+Der Cache-Key enthält jetzt das vollständige `argv`. Ein anderer Befehl
+umgeht den alten Eintrag sofort; gleicher Befehl nutzt weiterhin den
+zeitbegrenzten Cache. Regression startet zwei kleine Masterjet-Dummies und
+prüft den Wechsel von `A` auf `B`.
+
+Verifikation: `tests/test_dynamic_series_list.py` 20/20; Python-Compile,
+Ruff und `git diff --check` sauber.
