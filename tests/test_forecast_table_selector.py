@@ -122,6 +122,21 @@ def test_constructor_builds_only_selected_table_and_initial_selection() -> None:
         selector.destroy()
 
 
+def test_forecast_selector_survives_listener_registration_error() -> None:
+    class BrokenListenerSettings(_Settings):
+        def listen(self, key, callback):
+            raise RuntimeError(key)
+
+    settings = BrokenListenerSettings()
+    selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
+
+    try:
+        assert selector.combo.get_active_id() == _TABLE_KEYS[0]
+        assert set(selector._tables) == {_TABLE_KEYS[0]}
+    finally:
+        selector.destroy()
+
+
 def test_table_change_switches_stack_and_persists_selection() -> None:
     settings = _Settings()
     selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
@@ -152,6 +167,29 @@ def test_setting_reload_falls_back_to_first_table_without_writing() -> None:
         assert selector.combo.get_active_id() == _TABLE_KEYS[0]
         assert selector.table_stack.get_visible_child_name() == _TABLE_KEYS[0]
         assert settings.writes == []
+    finally:
+        selector.destroy()
+
+
+def test_forecast_selector_ignores_read_and_write_errors() -> None:
+    class BrokenSettings(_Settings):
+        def get_value(self, key):
+            if key == "forecast-table-selector":
+                raise RuntimeError(key)
+            return super().get_value(key)
+
+        def set_value(self, key, value):
+            raise RuntimeError(key)
+
+    settings = BrokenSettings()
+    selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
+
+    try:
+        assert selector.combo.get_active_id() == _TABLE_KEYS[0]
+        selector.combo.set_active_id(_TABLE_KEYS[1])
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        assert selector._saving is False
     finally:
         selector.destroy()
 

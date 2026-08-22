@@ -77,10 +77,17 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
         self.table_stack.set_vexpand(True)
         self.pack_start(self.table_stack, True, True, 0)
 
-        definitions = settings.settings
-        for table in info.get("tables", []):
+        definitions = settings.settings if isinstance(settings.settings, dict) else {}
+        tables = info.get("tables", []) if isinstance(info, dict) else []
+        if not isinstance(tables, list):
+            tables = []
+        for table in tables:
+            if not isinstance(table, dict):
+                continue
             table_key = table.get("key")
             if not isinstance(table_key, str) or table_key not in definitions:
+                continue
+            if not isinstance(definitions[table_key], dict):
                 continue
             label = table.get("label")
             if not isinstance(label, str) or not label:
@@ -91,7 +98,14 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
             self._table_definitions[table_key] = definitions[table_key]
             self.combo.append(table_key, label)
 
-        self.attach()
+        try:
+            self.attach()
+        except Exception:
+            self._detach_selector_listener()
+            try:
+                self.on_setting_changed()
+            except Exception:
+                pass
 
     def _on_table_changed(self, *_args):
         table_key = self.combo.get_active_id()
@@ -99,7 +113,10 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
             return
         self._show_table(table_key)
         if not self._saving:
-            self.set_value(table_key)
+            try:
+                self.set_value(table_key)
+            except Exception:
+                self._saving = False
 
     def _ensure_table(self, table_key):
         widget = self._tables.get(table_key)
@@ -123,14 +140,17 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
         widget.destroy()
 
     def _detach_selector_listener(self):
-        listeners = getattr(self.settings, "listeners", None)
-        if not isinstance(listeners, dict):
+        try:
+            listeners = getattr(self.settings, "listeners", None)
+            if not isinstance(listeners, dict):
+                return
+            callbacks = listeners.get(self.key)
+            if not isinstance(callbacks, list):
+                return
+            callback = self._settings_changed_callback
+            callbacks[:] = [registered for registered in callbacks if registered != callback]
+        except Exception:
             return
-        callbacks = listeners.get(self.key)
-        if not isinstance(callbacks, list):
-            return
-        callback = self._settings_changed_callback
-        callbacks[:] = [registered for registered in callbacks if registered != callback]
 
     def _show_table(self, table_key):
         if self._ensure_table(table_key) is None:
@@ -143,7 +163,10 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
         self.table_title.set_markup(f"<b>{self._table_labels[table_key]}</b>")
 
     def on_setting_changed(self, *_args):
-        table_key = self.get_value()
+        try:
+            table_key = self.get_value()
+        except Exception:
+            table_key = None
         if not isinstance(table_key, str) or table_key not in self._table_labels:
             table_key = next(iter(self._table_labels), None)
         if table_key is None:

@@ -8296,3 +8296,14 @@ Cinnamon-intern backendabhängig und wird im Format-Schema nicht verwendet.
 Zusätzlich wurden alle 21 realen Formatierungstabellen mit der Nutzer-
 Settingsdatei nacheinander aufgebaut und verworfen: keine Exception, kein
 GTK-Fehler.
+
+## Runde 721: Prognosen-Selector bekommt dieselben Backend-Grenzen
+
+Der Prognosen-Selector behandelte `settings.listen()`, Tabellen-Reads und
+Dropdown-Writes noch ungefangen. Backend-/DBus-Fehler konnten die
+Prognosenseite beim Öffnen oder Wechseln abbrechen.
+
+Info-/Definitionstypen, Attach-/Detach-, Read- und Write-Pfade sind jetzt
+fehlertolerant; die erste Tabelle bleibt als Fallback sichtbar. Regression
+deckt Listener-, Read- und Write-Fehler ab; `tests/test_forecast_table_selector.py`:
+10/10, Python-Compile, Ruff und `git diff --check` sauber.
