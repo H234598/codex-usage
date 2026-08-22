@@ -3454,6 +3454,18 @@ reproduzierbarer Fehler gefunden.
 `pytest -q tests/test_health.py`: 32/32 bestanden. Mypy für `health.py`, Ruff
 und `git diff --check` sauber.
 
+## Runde 463: Cinnamon-Uninstaller-CLI vollständig abgegrenzt
+
+`uninstall_cinnamon_applet.py` hatte bisher nur indirekte Abdeckung über den
+Installations-Roundtrip. Die fokussierte Suite prüft jetzt alle relevanten
+Pfade: Dry-Run, wiederholtes Entfernen eines fehlenden Ziels, erfolgreiches
+Entfernen, Symlink-/Datei-Schutz, unsichere Zielpfade, Löschfehler und die
+Verzeichnisprüfung. Es wurde kein neuer Fehler im Uninstaller reproduziert;
+unsichere Ziele bleiben unverändert.
+
+`pytest -q tests/test_uninstall_cinnamon_applet.py`: 8/8 bestanden. Ruff,
+Python-Compile und `git diff --check` sauber.
+
 ## Runde 361: Config-Pfade und Account-Identitäten geprüft
 
 `config.py` wurde auf XDG-/Tilde-/`file:`-Pfade, private Verzeichnisse,
