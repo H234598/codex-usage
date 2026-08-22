@@ -6898,3 +6898,15 @@ strikter Integer-/Boolean-Typen, Auth-/Unavailable-/Fetch-/Protocol-
 Klassifikation und begrenzter Fehlermeldungen. Produktionslogik blieb
 unverändert. `pytest -q tests/test_app_server.py`: 108/108. Ruff,
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 604: Usage-Limit-Helfer direkt testen
+
+`usage_limits.py` verarbeitet WHAM-/App-Server-Fenster fail-closed. Ein
+begrenzter Fuzzlauf mit 3000 zufällig verschachtelten malformed Payloads
+produzierte keine unerwartete Exception.
+
+Zusätzlich deckt ein direkter Regressionstest bisher nur indirekt geprüfte
+Helfer ab: Pool-/Fensterkonstruktion, Fensternamen, Reset-Zeit, Spark-
+Identität, Normalisierung, Integer-/Boolean-Grenzen und Unique-Filter.
+Produktionslogik blieb unverändert. `pytest -q tests/test_usage_limits.py`:
+125/125. Ruff, Python-Kompilierung und `git diff --check` sauber.

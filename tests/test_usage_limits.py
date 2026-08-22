@@ -64,6 +64,74 @@ def test_usage_pool_parsers_fail_closed_for_invalid_capture_time(captured_at):
     ) == (None, ())  # type: ignore[arg-type]
 
 
+def test_usage_limit_private_helpers_cover_window_and_identity_contracts():
+    wham_pool = usage_limits_module._wham_pool(
+        key="main",
+        display_name="Codex",
+        rate_limit={
+            "primary_window": {
+                "limit_window_seconds": 18_000,
+                "used_percent": 1,
+            }
+        },
+        metered_feature=None,
+        captured_at=NOW,
+        source="test",
+    )
+    app_server_pool = usage_limits_module._app_server_pool(
+        key="main",
+        display_name="Codex",
+        snapshot={"primary": {"usedPercent": 1, "windowDurationMins": 300}},
+        metered_feature=None,
+        captured_at=NOW,
+        source="test",
+    )
+    assert wham_pool is not None and wham_pool.available is True
+    assert app_server_pool is not None and app_server_pool.available is True
+
+    wham_window = usage_limits_module._wham_window(
+        {"limit_window_seconds": 18_000, "used_percent": 1},
+        captured_at=NOW,
+        source="test",
+    )
+    app_server_window = usage_limits_module._app_server_window(
+        {"usedPercent": 1, "windowDurationMins": 300},
+        captured_at=NOW,
+        source="test",
+    )
+    assert wham_window is not None and wham_window.name == "5h"
+    assert app_server_window is not None and app_server_window.name == "5h"
+    assert usage_limits_module._wham_window(
+        {"limit_window_seconds": 0}, captured_at=NOW, source="test"
+    ) is None
+    assert usage_limits_module._app_server_window(
+        {"windowDurationMins": 0}, captured_at=NOW, source="test"
+    ) is None
+
+    assert usage_limits_module._window(18_000, 1, None, source="test").remaining == 99
+    assert usage_limits_module._window_name(None) == "unknown"
+    assert usage_limits_module._window_name(86_400) == "1d"
+    assert usage_limits_module._window_name(3_600) == "1h"
+    assert usage_limits_module._window_name(61) == "61s"
+    assert usage_limits_module._reset_at(None, 60, captured_at=NOW) is not None
+    assert usage_limits_module._reset_at(None, -1, captured_at=NOW) is None
+
+    assert usage_limits_module._is_spark_limit(SPARK_MODEL, None) is True
+    assert usage_limits_module._is_spark_limit(None, SPARK_METERED_FEATURE) is True
+    assert usage_limits_module._is_spark_limit(" GPT-5.3-Codex-Spark", None) is False
+    assert usage_limits_module._normalized("Spark") == "spark"
+    assert usage_limits_module._normalized("bad value") == ""
+    assert usage_limits_module._positive_int(18_000) == 18_000
+    assert usage_limits_module._positive_int(0) is None
+    assert usage_limits_module._nonnegative_int(0) == 0
+    assert usage_limits_module._nonnegative_int(-1) is None
+    assert usage_limits_module._strict_int(1) == 1
+    assert usage_limits_module._strict_int(True) is None
+    assert usage_limits_module._optional_bool(False) is False
+    assert usage_limits_module._optional_bool(0) is None
+    assert usage_limits_module._unique(("a", "a", "b")) == ("a", "b")
+
+
 def test_wham_parser_drops_overflowing_relative_reset_time():
     main, _ = parse_wham_usage_pools(
         {
