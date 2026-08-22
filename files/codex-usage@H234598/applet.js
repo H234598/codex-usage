@@ -10755,7 +10755,14 @@ CodexUsageApplet.prototype = {
     },
 
     _openSettings: function(tab) {
-        let argv = ["xlet-settings", "applet", UUID, "-i", String(this.instanceId)];
+        let argv = ["xlet-settings", "applet", UUID];
+        let instanceId = this.instanceId;
+        if (
+            (typeof instanceId === "number" && Number.isInteger(instanceId) && instanceId >= 0) ||
+            (typeof instanceId === "string" && /^[0-9]+$/.test(instanceId))
+        ) {
+            argv.push("-i", String(instanceId));
+        }
         if (typeof tab === "number" && Number.isInteger(tab) && tab >= 0) {
             argv.push("-t", String(tab));
         }

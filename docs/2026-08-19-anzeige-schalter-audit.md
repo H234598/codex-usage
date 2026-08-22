@@ -6528,3 +6528,14 @@ Fokustest `node --test --test-name-pattern='settings launcher|native Cinnamon
 configure action|settings maximization|settings placement retries'
 tests/applet_runtime.test.js`: 5/5. Node-Syntaxcheck und `git diff --check`
 sauber.
+
+## Runde 581: Ungültige Instanz-ID nicht an xlet-settings übergeben
+
+`_openSettings()` erzeugte bei fehlender Instanz-ID bisher `-i undefined`.
+`xlet-settings` lehnt diesen Wert per argparse ab und beendet sich, bevor ein
+Fenster entsteht. Der Launcher übergibt `-i` jetzt nur für nichtnegative
+Ganzzahlen; beim single-instance-Applet genügt UUID ohne Instanzschalter.
+
+Regression prüft den bestehenden Instanzpfad und den fehlenden-ID-Fallback.
+Der Settings-Fokuslauf bleibt bei 5/5; Node-Syntaxcheck und
+`git diff --check` sauber.

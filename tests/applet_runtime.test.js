@@ -4325,6 +4325,12 @@ test("settings launcher uses the applet instance and schedules bounded maximizat
     "xlet-settings", "applet", "codex-usage@H234598", "-i", "17", "-t", "3",
   ]));
 
+  applet.instanceId = undefined;
+  applet._openSettings();
+  assert.equal(JSON.stringify(subprocessCalls[2][0]), JSON.stringify([
+    "xlet-settings", "applet", "codex-usage@H234598",
+  ]));
+
   applet._scheduleSettingsMaximize = scheduleSettingsMaximize;
   applet._scheduleSettingsMaximize();
   assert.equal(applet._settingsMaximizeId, 1);
