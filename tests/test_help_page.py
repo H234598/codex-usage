@@ -232,6 +232,20 @@ def test_help_page_builds_scrollable_widget_from_schema() -> None:
         widget.destroy()
 
 
+def test_help_page_skips_invalid_utf8_markup_without_aborting() -> None:
+    schema = {
+        "layout": {
+            "pages": ["page"],
+            "page": {"title": "Seite\ud800", "sections": ["section"]},
+            "section": {"title": "Abschnitt", "keys": ["field"]},
+        },
+        "field": {"type": "label", "description": "Text\x00\ud800"},
+    }
+    assert _markup("Text\x00\ud800") == "Text??"
+    widget = HelpPage({}, "help-content", SimpleNamespace(settings=schema))
+    widget.destroy()
+
+
 def test_help_page_requests_readable_minimum_size() -> None:
     widget = HelpPage({}, "help-content", SimpleNamespace(settings=_schema()))
     try:

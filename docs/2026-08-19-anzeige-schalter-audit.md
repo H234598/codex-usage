@@ -9330,3 +9330,18 @@ ungültigen Einträgen bleibt sichtbar.
 
 Verifikation: **10 fokussierte Fast-Mode-Icon-Tests**, Ruff, Python-Compile und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 792: Hilfe-Seite gegen ungültige GTK-Texte härten
+
+Ein unpaired Unicode-Surrogate in einem Schema-Titel ließ den Help-Expander
+beim direkten GTK-Label-Aufbau mit `UnicodeEncodeError` abbrechen. Derselbe
+Fehlerpfad war bei Beschreibungen und anderen Markup-Texten möglich; NUL-Bytes
+waren ebenfalls nicht für GTK-Markup bereinigt.
+
+`_markup()` ersetzt NUL-Bytes und nicht kodierbare Zeichen jetzt sicher. Der
+Expander-Titel erhält dieselbe UTF-8-Bereinigung vor dem GTK-Konstruktor. Eine
+Regression baut die Seite mit beschädigtem Titel und Beschreibung vollständig
+auf und prüft den bereinigten Markup-Text.
+
+Verifikation: **14 fokussierte Help-Page-Tests**, Ruff, Python-Compile und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

@@ -347,6 +347,8 @@ def build_help_groups(schema: object) -> list[dict[str, object]]:
 
 def _markup(text: object) -> str:
     value = "" if text is None else str(text)
+    value = value.replace("\x00", "?")
+    value = value.encode("utf-8", "replace").decode("utf-8")
     return html.escape(value, quote=True).replace("\n", "&#10;")
 
 
@@ -424,7 +426,10 @@ class HelpPage(SettingsWidget):
         parent.pack_start(frame, False, False, 0)
 
     def _add_entry(self, parent, entry: dict[str, object]) -> None:
-        expander = Gtk.Expander(label=str(entry.get("title", "Feld")))
+        title = str(entry.get("title", "Feld"))
+        title = title.replace("\x00", "?")
+        title = title.encode("utf-8", "replace").decode("utf-8")
+        expander = Gtk.Expander(label=title)
         expander.set_hexpand(True)
         expander.connect("notify::expanded", self._on_entry_expanded, entry)
         parent.pack_start(expander, False, False, 0)
