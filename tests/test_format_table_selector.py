@@ -450,6 +450,30 @@ def test_format_table_drops_invalid_options(options) -> None:
 
 
 @pytest.mark.parametrize(
+    ("column_type", "default"),
+    [
+        ("string", False),
+        ("integer", 2**40),
+        ("float", float("nan")),
+        ("boolean", "yes"),
+        ("file", None),
+    ],
+)
+def test_format_table_drops_invalid_defaults(column_type, default) -> None:
+    settings = _Settings()
+    column = {"id": "value", "title": "Value", "type": column_type, "default": default}
+    if column_type in {"integer", "float"}:
+        column.update({"min": 0, "max": 10})
+    settings.settings["table-a"]["columns"] = [column]
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        assert "default" not in widget.columns[0]
+    finally:
+        widget.destroy()
+
+
+@pytest.mark.parametrize(
     "column",
     [
         {"id": "n", "title": "N", "type": "integer"},

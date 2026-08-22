@@ -8258,3 +8258,14 @@ Der Spaltenfilter verwirft unvollständige Bereiche und bereinigt ungültige
 Schritte; leere Spaltenschemata erzeugen keine Phantomzeilen mehr. Regression
 deckt fünf Bereichsformen ab; `tests/test_format_table_selector.py`: 52/52,
 Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 717: Formatierungs-Defaults bleiben widgettypgerecht
+
+Der echte Dialogpfad reichte ungültige `default`-Werte ungefangen an
+`Gtk.Entry`-/SpinButton-/File-Widgets weiter. Falsche Typen reproduzierten
+`TypeError`; sehr große oder nichtendliche Zahlen konnten ebenfalls brechen.
+
+Defaults werden jetzt gegen Widgettyp, Optionswerte, signed-32-bit und
+Numerikbereich geprüft; ungültige Defaults entfallen. Regression deckt fünf
+Widgettypen ab; `tests/test_format_table_selector.py`: 57/57,
+Python-Compile, Ruff und `git diff --check` sauber.

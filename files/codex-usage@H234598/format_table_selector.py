@@ -168,6 +168,44 @@ class _BoundFormatList(List, JSONSettingsBackend):
                         valid_step = False
                     if not valid_step:
                         column.pop("step", None)
+            if "default" in column:
+                default = column["default"]
+                option_values = None
+                options = column.get("options")
+                if isinstance(options, dict):
+                    option_values = options.values()
+                elif isinstance(options, (list, tuple)):
+                    option_values = options
+                if option_values is not None:
+                    valid_default = default in option_values
+                elif column["type"] in {"string", "file", "icon", "sound", "keybinding"}:
+                    valid_default = isinstance(default, str) and "\x00" not in default
+                elif column["type"] == "integer":
+                    valid_default = (
+                        isinstance(default, int)
+                        and not isinstance(default, bool)
+                        and -(2**31) <= default <= 2**31 - 1
+                    )
+                elif column["type"] == "float":
+                    try:
+                        valid_default = (
+                            isinstance(default, (int, float))
+                            and not isinstance(default, bool)
+                            and math.isfinite(default)
+                        )
+                    except (OverflowError, TypeError):
+                        valid_default = False
+                else:
+                    valid_default = isinstance(default, bool)
+                if valid_default and column["type"] in {"integer", "float"}:
+                    minimum = column.get("min")
+                    maximum = column.get("max")
+                    if minimum is not None and default < minimum:
+                        valid_default = False
+                    if maximum is not None and default > maximum:
+                        valid_default = False
+                if not valid_default:
+                    column.pop("default", None)
             if "align" in column:
                 align = column["align"]
                 try:
