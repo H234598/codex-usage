@@ -8723,3 +8723,19 @@ Regression erzwingt einen Fehler in `_BoundFormatList` und erwartet einen
 leeren Tabellenindex statt einer Ausnahme. Verifikation:
 Format-/Forecast-Fokustests 82/82; Python-Compile, Ruff und `git diff --check`
 sauber.
+
+## Runde 751: Prognosetitel sicher als Pango-Markup setzen
+
+`ForecastTableSelector._show_table()` setzte den dynamischen Tabellentitel
+direkt in `Gtk.Label.set_markup()`. Ein Label mit `&`, `<` oder `>` erzeugte
+GTK-Warnungen und wurde leer angezeigt. Das war im statischen deutschen
+Schema unsichtbar, blieb aber ein fehlerhafter Metadatenpfad und wich vom
+bereits gehärteten Formatierungs-Selector ab.
+
+Der Forecast-Titel wird jetzt mit `GLib.markup_escape_text()` escaped und erst
+dann fett markiert. Der sichtbare Titel bleibt unverändert, Pango interpretiert
+nur die absichtlich gesetzten `<b>`-Tags.
+
+Regression nutzt `A & B <C>` und prüft den echten GTK-Titeltext. Verifikation:
+Format-/Forecast-Fokustests 83/83; Python-Compile, Ruff und `git diff --check`
+sauber.

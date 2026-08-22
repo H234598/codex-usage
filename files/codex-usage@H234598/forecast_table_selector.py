@@ -31,7 +31,7 @@ if _format_module is None:
         sys.modules.pop(_FORMAT_MODULE_NAME, None)
         raise
 _BoundFormatList = _format_module._BoundFormatList
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import GLib, Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
 
 
@@ -187,7 +187,8 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
             self._discard_table(active_table_key)
             self._active_table_key = table_key
         self.table_stack.set_visible_child_name(table_key)
-        self.table_title.set_markup(f"<b>{self._table_labels[table_key]}</b>")
+        label = GLib.markup_escape_text(self._table_labels[table_key])
+        self.table_title.set_markup(f"<b>{label}</b>")
 
     def on_setting_changed(self, *_args):
         try:

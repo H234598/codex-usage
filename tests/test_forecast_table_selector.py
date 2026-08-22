@@ -167,6 +167,22 @@ def test_table_change_switches_stack_and_persists_selection() -> None:
         selector.destroy()
 
 
+def test_table_change_escapes_markup_in_label() -> None:
+    settings = _Settings()
+    selector = ForecastTableSelector(
+        {"tables": [{"key": _TABLE_KEYS[0], "label": "A & B <C>"}]},
+        "forecast-table-selector",
+        settings,
+    )
+
+    try:
+        selector.show_all()
+        selector._show_table(_TABLE_KEYS[0])
+        assert selector.table_title.get_text() == "A & B <C>"
+    finally:
+        selector.destroy()
+
+
 def test_setting_reload_falls_back_to_first_table_without_writing() -> None:
     settings = _Settings()
     settings.settings["forecast-table-selector"]["value"] = "missing"
