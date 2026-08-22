@@ -7469,6 +7469,7 @@ CodexUsageApplet.prototype = {
         ) {
             return;
         }
+        this._removeSource("_deviceLoginPollId");
         let pollId = Mainloop.timeout_add(1000, Lang.bind(this, function() {
             this._clearSource("_deviceLoginPollId");
             if (

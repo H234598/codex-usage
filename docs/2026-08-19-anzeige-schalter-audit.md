@@ -6604,3 +6604,18 @@ Fokustest `node --test --test-name-pattern='stale profile poll timer|profile
 polling waits|profile job|device login live|safe mode cancels'
 tests/applet_runtime.test.js`: 25/25. Node-Syntaxcheck und `git diff --check`
 sauber.
+
+## Runde 586: Profilpoll-Timer nicht duplizieren
+
+`_scheduleProfileJobPoll()` legte bisher einen neuen Mainloop-Timer an, ohne
+einen bereits registrierten Poll-Timer vorher zu entfernen. Bei wiederholtem
+Scheduling konnten dadurch mehrere Callbacks für denselben Profiljob leben;
+ein alter Callback löschte zudem die ID des neueren Timers aus dem Tracking.
+
+Vor dem Scheduling wird `_deviceLoginPollId` jetzt zentral entfernt. Damit
+bleibt höchstens ein registrierter Profilpoll-Timer aktiv. Regression prüft
+Entfernung des alten Timers und Tracking der neuen ID.
+
+Fokustest `node --test --test-name-pattern='profile poll|profile job|device
+login|settings launcher' tests/applet_runtime.test.js`: 42/42.
+Node-Syntaxcheck und `git diff --check` sauber.

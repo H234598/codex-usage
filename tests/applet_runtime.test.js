@@ -21,7 +21,7 @@ function loadPrototype(onReady) {
   };
   const mainloop = {
     idle_add: (...args) => runtime.idleAdd(...args),
-    source_remove: () => {},
+    source_remove: (...args) => runtime.sourceRemove(...args),
     timeout_add: (...args) => runtime.timeoutAdd(...args),
     timeout_add_seconds: (...args) => runtime.timeoutAddSeconds(...args),
   };
@@ -877,6 +877,27 @@ test("stale profile poll timer cannot restart a newer generation", () => {
   assert.deepEqual(calls, []);
   assert.equal(applet._profileJobPollingAccount, "");
   assert.equal(applet._deviceLoginPollId, 0);
+});
+
+test("profile poll scheduling replaces an existing timer", () => {
+  const callbacks = [];
+  const removed = [];
+  const applet = makeApplet((runtime) => {
+    runtime.sourceRemove = (id) => { removed.push(id); };
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+  });
+  applet._deviceLoginJobs.alpha = "job-1234567890abcdef1234567890abcdef";
+  applet._deviceLoginPollGeneration = 4;
+
+  applet._scheduleProfileJobPoll("alpha", 4, false);
+  applet._scheduleProfileJobPoll("alpha", 4, false);
+
+  assert.deepEqual(removed, [1]);
+  assert.equal(applet._deviceLoginPollId, 2);
+  assert.equal(callbacks.length, 2);
 });
 
 test("persistent profile job resume drains every active job", () => {
