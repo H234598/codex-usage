@@ -4336,6 +4336,28 @@ test("settings launcher uses the applet instance and schedules bounded maximizat
   assert.equal(applet._settingsMaximizeId, 1);
 });
 
+test("settings launcher does not report a spawn error when only maximize scheduling fails", () => {
+  const subprocessCalls = [];
+  const errors = [];
+  const applet = makeApplet((runtime) => {
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {};
+    };
+    runtime.timeoutAdd = () => {
+      throw new Error("settings timer unavailable");
+    };
+  });
+  applet.instanceId = 14;
+  applet._showCommandError = (message) => { errors.push(message); };
+  applet._cleanupLog = (message) => { errors.push("log:" + message); };
+
+  applet._openSettings();
+
+  assert.equal(subprocessCalls.length, 1);
+  assert.deepEqual(errors, ["log:settings maximize scheduling failed: Error: settings timer unavailable"]);
+});
+
 test("native Cinnamon configure action uses the same settings launcher", () => {
   const applet = makeApplet();
   const calls = [];

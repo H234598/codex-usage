@@ -10769,9 +10769,14 @@ CodexUsageApplet.prototype = {
         }
         try {
             Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
-            this._scheduleSettingsMaximize();
         } catch (e) {
             this._showCommandError(_("Einstellungen konnten nicht geöffnet werden: ") + String(e));
+            return;
+        }
+        try {
+            this._scheduleSettingsMaximize();
+        } catch (e) {
+            this._cleanupLog("settings maximize scheduling failed: " + this._shortText(e, 180));
         }
     },
 

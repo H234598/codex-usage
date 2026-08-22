@@ -6571,3 +6571,20 @@ und Cleanup beim Entfernen.
 Fokustest `node --test --test-name-pattern='settings placement|settings
 maximization|settings launcher' tests/applet_runtime.test.js`: 6/6.
 Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 584: Spawn- und Maximierungsfehler im Settings-Launcher trennen
+
+`_openSettings()` behandelte bisher auch einen Fehler von
+`_scheduleSettingsMaximize()` als fehlgeschlagenen Settings-Spawn. Das Fenster
+war dann bereits gestartet, trotzdem erschien die irreführende Meldung
+„Einstellungen konnten nicht geöffnet werden“.
+
+Spawn und Nachbearbeitung sind jetzt getrennte `try`-Blöcke. Ein Timerfehler
+wird nur begrenzt protokolliert; echter Spawn-Fehler bleibt als Benutzerfehler
+sichtbar. Regression prüft erfolgreich gestarteten Child mit absichtlich
+fehlgeschlagenem Maximierungstimer.
+
+Fokustest `node --test --test-name-pattern='settings launcher|native Cinnamon
+configure action|settings maximization|settings placement'
+tests/applet_runtime.test.js`: 7/7. Node-Syntaxcheck und `git diff --check`
+sauber.
