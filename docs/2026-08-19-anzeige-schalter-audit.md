@@ -5979,4 +5979,5 @@ Alle Slotspalten erhalten jetzt explizit `default: 0` („Aus“), einschließli
 der Legacy-Spalten. Regression prüft drei erzeugte Slots. `pytest -q
 tests/test_panel_settings_list.py`: 10/10; zusätzlich prüft der GTK-Dialog-
 Pfad fehlende Slotwerte als `0`. Ruff, Python-Compile und
-`git diff --check` folgen vor Installation.
+`git diff --check` waren sauber; danach wurde installiert und Cinnamon neu
+geladen.
