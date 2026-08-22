@@ -8930,6 +8930,9 @@ CodexUsageApplet.prototype = {
     },
 
     _panelWindowForKey: function(usage, key) {
+        if (!usage || usage.cache_invalidated === true) {
+            return null;
+        }
         let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
         let mainPool = usage && usage.main && usage.main.available === true &&
             usage.main.allowed !== false
@@ -8963,6 +8966,10 @@ CodexUsageApplet.prototype = {
     },
 
     _panelDeltaPart: function(usage, source, surface) {
+        if (!usage || usage.cache_invalidated === true) {
+            let label = this._panelSourceLabel(source);
+            return {plain: label + " –", markup: this._escapeMarkup(label + " –")};
+        }
         let key = {13: undefined, 32: 18000, 33: 604800, 34: 2592000, 35: 18000, 36: null}[source];
         let pool = source === 35 ? "gpt-5.3-codex-spark" : "main";
         if (source === 13) {
@@ -9060,6 +9067,9 @@ CodexUsageApplet.prototype = {
     },
 
     _panelForecastPart: function(usage, surface) {
+        if (!usage || usage.cache_invalidated === true) {
+            return null;
+        }
         let row = this._consumptionSettings && this._consumptionSettings[usage.account] || {
             account: usage.account, "forecast-limit-window": "short", format: "compact",
             "forecast-format": "compact", "show-coverage-marker": true,
@@ -9700,6 +9710,9 @@ CodexUsageApplet.prototype = {
     },
 
     _panelValueForSource: function(usage, source) {
+        if (!usage || usage.cache_invalidated === true) {
+            return null;
+        }
         if (source === 9) {
             return usage && usage.cache_invalidated !== true
                 ? this._remainingPercent(usage.credits)
@@ -9766,6 +9779,9 @@ CodexUsageApplet.prototype = {
     },
 
     _panelWindowForSource: function(usage, source) {
+        if (!usage || usage.cache_invalidated === true) {
+            return null;
+        }
         if (source === 9 || source === 10) {
             return null;
         }

@@ -7364,3 +7364,16 @@ Leisten-Tokendelta rendert unzureichende Coverage jetzt als `–`; belastbare
 Coverage bleibt unverändert numerisch. Regression ergänzt diesen Panelpfad.
 `node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
 38/38; `make applet-check` inklusive JSON-Validierung: 475/475 sauber.
+
+## Runde 640: Direkte Panelpfade respektieren Cache-Invalidierung
+
+Direkte Aufrufe der konfigurierbaren Panelquellen konnten bei einem
+`cache_invalidated`-Objekt noch alte Prozent-, Pool-, Tokenende- und
+Tokendelta-Werte verwenden, wenn diese Felder im Objekt verblieben. Der
+normale Merge leert sie zwar, direkte Renderer-Grenzen müssen trotzdem
+fail-closed sein.
+
+`_panelValueForSource`, `_panelWindowForSource`, `_panelWindowForKey`,
+`_panelForecastPart` und `_panelDeltaPart` verweigern invalidierte Daten jetzt
+früh. Regression speist alte Werte in alle betroffenen Panelpfade ein.
+Fokus 116/116; `make applet-check`: 475/475 sauber.
