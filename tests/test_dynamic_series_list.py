@@ -65,6 +65,18 @@ class _ListenerErrorSettings(_Settings):
         raise OSError("listener registration failed")
 
 
+class _ListenerPropertyErrorSettings:
+    def get_value(self, key):
+        return []
+
+    def listen(self, key, callback):
+        raise OSError("listener registration failed")
+
+    @property
+    def listeners(self):
+        raise RuntimeError("listener registry unavailable")
+
+
 def test_active_owners_require_a_real_boolean_true() -> None:
     table = _SeriesTable([
         ["alpha", "A", True],
@@ -468,6 +480,28 @@ def test_settings_read_error_keeps_series_table_open() -> None:
 
 def test_listener_registration_error_keeps_series_table_open() -> None:
     settings = _ListenerErrorSettings()
+    widget = None
+    try:
+        widget = DynamicSeriesList(
+            {
+                "columns": [
+                    {"id": "account", "title": "Account", "type": "string"},
+                    {"id": "series", "title": "Serie", "type": "string"},
+                    {"id": "series-active", "title": "Aktiv", "type": "boolean"},
+                ],
+                "show-buttons": False,
+            },
+            "account-series-settings",
+            settings,
+        )
+        assert len(widget.model) == 0
+    finally:
+        if widget is not None:
+            widget.destroy()
+
+
+def test_listener_cleanup_error_keeps_series_table_open() -> None:
+    settings = _ListenerPropertyErrorSettings()
     widget = None
     try:
         widget = DynamicSeriesList(

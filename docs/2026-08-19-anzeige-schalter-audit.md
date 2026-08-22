@@ -8653,3 +8653,21 @@ Regression deckt einen doppelten aktiven Serienwert ab und verlangt, dass der
 erste Konflikt-Account `A (aktuell)` behalten kann. Verifikation:
 `tests/test_dynamic_series_list.py` 22/22; Python-Compile, Ruff und
 `git diff --check` sauber.
+
+## Runde 747: Listener-Cleanup darf Settings-Start nicht abbrechen
+
+Wenn die Listener-Registrierung des Cinnamon-Backends fehlschlug, rief der
+Konstruktor zur Bereinigung `detach()` auf. Ein fehlerhaftes oder bereits
+abgebautes `settings.listeners`-Objekt konnte dabei selbst eine Ausnahme
+werfen. Damit wurde aus einem abgefangenen Backendfehler erneut ein
+ungefangener Fehler im Settings-Eventloop.
+
+`DynamicSeriesList.detach()` behandelt den gesamten Cleanup-Pfad jetzt als
+best-effort. Ein nicht verfügbares Listener-Register oder eine fehlgeschlagene
+Entfernung bleibt lokal; der Settings-Editor kann die Tabelle weiterhin leer
+anzeigen und später sauber zerstört werden. `BaseException` wird nicht
+abgefangen.
+
+Regression verwendet ein Backend, dessen `listeners`-Property beim Cleanup
+fehlschlägt. Verifikation: `tests/test_dynamic_series_list.py` 23/23;
+Python-Compile, Ruff und `git diff --check` sauber.

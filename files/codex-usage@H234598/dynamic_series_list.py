@@ -90,14 +90,18 @@ class DynamicSeriesList(List, JSONSettingsBackend):
         raise ValueError("dynamic series table is missing " + column_id)
 
     def detach(self) -> None:
-        listeners = getattr(self.settings, "listeners", None)
-        if not isinstance(listeners, dict):
+        try:
+            listeners = getattr(self.settings, "listeners", None)
+            if not isinstance(listeners, dict):
+                return
+            callbacks = listeners.get(self.key)
+            if not isinstance(callbacks, list):
+                return
+            listener = self._settings_changed_callback
+            callbacks[:] = [callback for callback in callbacks if callback != listener]
+        except Exception:
+            # Cleanup must not turn a failed settings attachment into a startup error.
             return
-        callbacks = listeners.get(self.key)
-        if not isinstance(callbacks, list):
-            return
-        listener = self._settings_changed_callback
-        callbacks[:] = [callback for callback in callbacks if callback != listener]
 
     def _masterjet_series(self):
         now = time.monotonic()
