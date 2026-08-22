@@ -7307,18 +7307,6 @@ gültig. Regression deckt den widersprüchlichen Complete-Fall ab.
 `node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
 37/37; `make applet-check` inklusive JSON-Validierung: 474/474 sauber.
 
-## Runde 637: Unbekannte Verbrauchsdaten nicht ausblenden
-
-`_consumptionWindowPart()` und `_creditConsumptionParts()` prüften
-`hide-when-zero` vor der Coverage-Auswertung. Backend-Daten mit
-`coverage: "insufficient"` tragen konstruktionsbedingt Verbrauch `0`; die
-Einstellung konnte dadurch den Hinweis „nicht genügend Messdaten“ ausblenden.
-
-Die Null-Unterdrückung greift jetzt nur bei sicher bekannten Coverage-Werten.
-`insufficient` bleibt sichtbar, auch wenn Nullwerte ausgeblendet werden soll.
-Regressionen decken Token- und Creditverbrauch ab. Fokus 37/37;
-`make applet-check`: 474/474 sauber.
-
 ## Runde 635: Leere Consumption-Pool-ID verworfen
 
 `_safeConsumptionWindows()` übernahm bisher eine leere `pool`-ID. Der
@@ -7340,3 +7328,27 @@ Die DTO-Prüfung akzeptiert jetzt nur noch nichtleere ASCII-Token im erlaubten
 Bereich `!` bis `~`. Regression ergänzt eine Pool-ID mit Leerzeichen.
 `node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
 37/37; `make applet-check` inklusive JSON-Validierung: 474/474 sauber.
+
+## Runde 637: Unbekannte Verbrauchsdaten nicht ausblenden
+
+`_consumptionWindowPart()` und `_creditConsumptionParts()` prüften
+`hide-when-zero` vor der Coverage-Auswertung. Backend-Daten mit
+`coverage: "insufficient"` tragen konstruktionsbedingt Verbrauch `0`; die
+Einstellung konnte dadurch den Hinweis „nicht genügend Messdaten“ ausblenden.
+
+Die Null-Unterdrückung greift jetzt nur bei sicher bekannten Coverage-Werten.
+`insufficient` bleibt sichtbar, auch wenn Nullwerte ausgeblendet werden soll.
+Regressionen decken Token- und Creditverbrauch ab. Fokus 37/37;
+`make applet-check`: 474/474 sauber.
+
+## Runde 638: Inflight-Verbrauchsantworten respektieren Invalidierung
+
+Ein bereits laufender Verbrauchs-Request konnte nach einer
+`cache_invalidated`-Antwort noch `cost_windows` in denselben Account schreiben.
+Der nächste Renderer-Aufruf sah damit wieder veraltete Verbrauchsdaten, und
+die Invalidierung war im Datenzustand nicht dauerhaft.
+
+Der Callback übernimmt Fenster jetzt nur noch für nicht invalidierte Accounts.
+Regression simuliert die Invalidierung zwischen Requeststart und Callback.
+`node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
+38/38; `make applet-check` inklusive JSON-Validierung: 475/475 sauber.

@@ -6010,7 +6010,7 @@ CodexUsageApplet.prototype = {
                     Array.isArray(payload.windows) && request.generation === this._consumptionGeneration
                 ) {
                     let usage = this._usageForAccount(request.account);
-                    if (usage) {
+                    if (usage && usage.cache_invalidated !== true) {
                         let windows = this._safeConsumptionWindows(payload.windows);
                         windows.forEach(function(window) {
                             window._consumption_query_key = request.queryKey;

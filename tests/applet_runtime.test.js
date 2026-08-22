@@ -4104,6 +4104,27 @@ test("invalidated usage does not queue consumption refreshes", () => {
   assert.equal(applet._consumptionQueue.length, 0);
 });
 
+test("inflight consumption response cannot repopulate invalidated usage", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:4"] = {panel: true, hover: true, click: true};
+  applet._consumptionSettings.alpha = applet._defaultConsumptionRow("alpha");
+  applet._usages = [{account: "alpha", cache_invalidated: false, cost_windows: []}];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._updatePanel = () => {};
+  let callback = null;
+  applet._spawnAuxJson = (_argv, next) => { callback = next; };
+
+  applet._refreshConsumption();
+  assert.ok(callback);
+  applet._usages[0].cache_invalidated = true;
+  callback({account_id: "alpha", windows: [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 12, coverage: "complete", sample_count: 3,
+  }]}, null);
+
+  assert.deepEqual(applet._usages[0].cost_windows, []);
+});
+
 test("credit hover omits credit consumption when its hover setting is disabled", () => {
   const applet = makeApplet();
   applet._usages[0].credits = {
