@@ -745,6 +745,39 @@ def test_panel_ignores_malformed_persisted_rows(rows) -> None:
         panel.destroy()
 
 
+@pytest.mark.parametrize("options", [["A", "B"], ("A", "B")])
+def test_panel_ignores_unknown_sequence_option_values_on_load(options) -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    settings.values["account-panel-settings"] = [
+        {"account": "alpha", "mode": "unknown"}
+    ]
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {
+                    "id": "mode",
+                    "title": "Mode",
+                    "type": "string",
+                    "options": options,
+                },
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert len(panel.model) == 0
+        settings.values["panel-value-count"] = "2"
+        panel._on_count_changed()
+        assert len(panel.model) == 0
+    finally:
+        panel.destroy()
+
+
 def test_panel_ignores_settings_read_errors() -> None:
     class BrokenRowsSettings(_Settings):
         def get_value(self, key):

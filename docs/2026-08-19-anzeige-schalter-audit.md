@@ -8537,6 +8537,27 @@ Tabellenkey zurückgesetzt. Regression deckt diesen Fallback ab. Format-/
 Forecast-Fokustests: 79/79; Python-Compile und `git diff --check` sauber.
 Reale `xlet-settings`-Smoke nach Reload lief ohne Traceback.
 
+## Runde 742: Sequenz-Optionen in der Leiste konsistent validiert
+
+`panel_columns()` akzeptiert bei konfigurierbaren Leistenfeldern neben
+Dictionaries auch Listen und Tupel als Optionsmenge. `PanelSettingsList` prüfte
+beim initialen Laden und beim Neuaufbau nach einer Wertfeldänderung bisher nur
+`dict.values()`. Ein gespeicherter Sequenzwert außerhalb der erlaubten Menge
+wurde deshalb als gültige Zeile angezeigt.
+
+Beide Ladepfade leiten die erlaubten Werte jetzt für Dictionary-, Listen- und
+Tupel-Optionen ab und verwerfen unbekannte Werte vor dem Einfügen ins
+`Gtk.ListStore`. Regression prüft jeweils Liste und Tupel sowie Initial- und
+Rebuild-Pfad.
+
+Verifikation: `tests/test_panel_settings_list.py` 91/91; danach separat
+`tests/test_format_table_selector.py tests/test_forecast_table_selector.py`
+79/79; Node-Syntax, Ruff und `git diff --check` sauber. Ein kombinierter
+Panel-erst-Run löst im PyGObject-Testprozess einen bekannten GTK-Segfault bei
+`Gtk.main_iteration` aus; umgekehrte Reihenfolge und getrennte Fokustests sind
+stabil. Kein Produktlauf von `xlet-settings` reproduziert diesen Test-Harness-
+Fehler.
+
 ## Runde 738: Sequenz-Optionswerte beim Laden validiert
 
 `_BoundFormatList` unterstützte für `options` neben Dictionaries auch Listen
