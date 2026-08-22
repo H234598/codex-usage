@@ -9208,3 +9208,17 @@ dass die neue TreeView ohne Auswahl beide Aktionen deaktiviert. Ruff,
 Python-Compile und Diff-Check bleiben sauber; keine Settings-Fenster gestartet.
 
 Verifikation: **107 fokussierte Panel-Tests bestanden**.
+
+## Runde 784: Leisten-Dialogbreite auf belegte Spalten begrenzen
+
+Die automatische Breite des Leisten-Editors reservierte bisher immer alle
+konfigurierten Spalten. Bei wenigen Wert- und Metadatenfeldern blieb ein
+unnötig breites Fenster, obwohl weniger Spalten tatsächlich belegt waren.
+Die Breite richtet sich jetzt nach der maximal belegten Spaltenzahl, bleibt
+aber mindestens eine Spalte breit. Bei vielen Werten bleiben alle gewählten
+Spalten sichtbar; nur vertikale Höhe kann weiterhin scrollen.
+
+Regression prüft ein Wertfeld mit fünf konfigurierten Spalten und drei
+Metadatenfeldern: drei belegte Spalten, nicht fünf. **108 fokussierte
+Panel-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

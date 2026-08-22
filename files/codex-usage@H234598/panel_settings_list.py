@@ -228,7 +228,8 @@ def panel_editor_dimensions(
         (metadata + column_count - 1) // column_count if metadata else 0
     )
     rows = metadata_rows + value_rows
-    width = column_count * _EDITOR_COLUMN_WIDTH + _EDITOR_HORIZONTAL_MARGIN
+    visible_columns = min(column_count, max(1, values, metadata))
+    width = visible_columns * _EDITOR_COLUMN_WIDTH + _EDITOR_HORIZONTAL_MARGIN
     height = min(
         _EDITOR_MAX_HEIGHT,
         max(_EDITOR_MIN_HEIGHT, rows * _EDITOR_ROW_HEIGHT + _EDITOR_VERTICAL_MARGIN),

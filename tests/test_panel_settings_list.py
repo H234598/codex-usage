@@ -115,6 +115,12 @@ def test_panel_editor_dimensions_scale_with_values_and_columns() -> None:
     assert narrow[1] > wide[1]
 
 
+def test_panel_editor_dimensions_skip_unused_columns() -> None:
+    width, _height = panel_editor_dimensions(1, 5, 3)
+
+    assert width == 3 * 280 + 160
+
+
 def test_panel_editor_dimensions_handles_huge_counts() -> None:
     width, height = panel_editor_dimensions(10**1000, 3, 10**1000)
 
