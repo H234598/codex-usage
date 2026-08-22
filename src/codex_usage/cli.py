@@ -146,6 +146,8 @@ Accounts:
   codex-usage account overview [--format table|json] [--config-only]
   codex-usage account delete ACCOUNT [--delete-profile] [--force-delete-profile]
                                       [--format table|json]
+  codex-usage account manage ACCOUNT [--browser auto|vivaldi|chromium|firefox]
+                                     [--format table|json]
   codex-usage account terminal ACCOUNT [--format table|json]
 
 Login und Reaktivierung:

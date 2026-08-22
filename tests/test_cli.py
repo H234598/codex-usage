@@ -108,6 +108,10 @@ def test_root_help_lists_all_commands(capsys):
     assert "--config-only" in output
     assert "codex-usage account backend ACCOUNT direct|app-server" in output
     assert "codex-usage account delete ACCOUNT" in output
+    assert (
+        "codex-usage account manage ACCOUNT [--browser auto|vivaldi|chromium|firefox]"
+        in output
+    )
     assert "codex-usage account terminal ACCOUNT" in output
     assert "--format table|json" in output
     assert "codex-usage profile jobs [--account ACCOUNT] [--json]" in output
