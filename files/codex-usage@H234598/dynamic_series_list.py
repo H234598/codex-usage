@@ -149,6 +149,10 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                             process.kill()
                         except (OSError, ProcessLookupError):
                             pass
+                    try:
+                        process.wait(timeout=0.5)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
         self.__class__._masterjet_cache = result
         self.__class__._masterjet_cache_at = now
         return result

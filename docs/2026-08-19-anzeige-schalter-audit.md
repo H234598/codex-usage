@@ -6711,3 +6711,16 @@ den echten GTK-Selector mit leerer Icon-Liste, prüft Listener-Anmeldung und
 bestätigt die vollständige Abmeldung nach `destroy()`.
 
 Fokustest `pytest -q tests/test_fast_mode_icon_selector.py tests/test_format_table_selector.py tests/test_forecast_table_selector.py tests/test_panel_settings_list.py`: 30/30. Python-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 593: Masterjet-Serienprozess nach hartem Timeout reapen
+
+`DynamicSeriesList._masterjet_series()` beendet einen hängenden
+Masterjet-Prozess zunächst per Prozessgruppen-Kill und wiederholt den Kill
+bei einem ersten `wait()`-Timeout. Danach fehlte ein letzter Reaping-Versuch;
+bei langsamer Prozessbeendigung konnte ein Zombie zurückbleiben.
+
+Nach dem zweiten Kill wartet der Cleanup-Pfad jetzt nochmals begrenzt auf
+`process.wait()`. Regression simuliert zweimaliges Timeout und bestätigt den
+dritten Reaping-Aufruf.
+
+Fokustest `pytest -q tests/test_dynamic_series_list.py tests/test_fast_mode_icon_selector.py tests/test_format_table_selector.py tests/test_forecast_table_selector.py tests/test_panel_settings_list.py`: 44/44. Python-Syntaxcheck und `git diff --check` sauber.
