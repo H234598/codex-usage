@@ -9150,3 +9150,18 @@ und Textsuffixe. Ruff, fokussierte Tests, Compile und Diff-Check sind sauber.
 
 Verifikation: **8 fokussierte Slot-Tests bestanden**; keine Settings-Fenster
 gestartet.
+
+## Runde 774: Legacy-Slots numerisch sortieren
+
+Gültige, aber historisch falsch angeordnete Slotfelder (`slot3`, `slot1`,
+`slot2`) blieben bisher in Schema-Reihenfolge. Dadurch konnte Wert 3 vor Wert
+1 im Leisten-Editor und in Snapshot-Reihenfolge landen. `panel_columns()` hält
+Metadatenreihenfolge, sortiert danach alle kanonischen `slotN`-Felder numerisch
+und ergänzt fehlende Slots wie bisher.
+
+Regression deckt eine gültige, absichtlich falsch sortierte Legacy-Liste ab.
+Panel-Spalten-, Editor- und Snapshot-Tests sowie Ruff, Compile und Diff-Check
+bleiben sauber.
+
+Verifikation: **54 fokussierte Panel-Tests bestanden**; keine Settings-Fenster
+gestartet.

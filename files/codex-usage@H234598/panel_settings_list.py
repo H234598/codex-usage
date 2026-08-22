@@ -403,7 +403,14 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
         column["type"] = "integer"
         column["default"] = 0
         columns.append(column)
-    return columns
+    metadata_columns = [
+        column for column in columns if not _panel_slot_id(column.get("id"))
+    ]
+    slot_columns = sorted(
+        (column for column in columns if _panel_slot_id(column.get("id"))),
+        key=lambda column: int(column["id"][4:]),
+    )
+    return metadata_columns + slot_columns
 
 
 class PanelSettingsList(List, JSONSettingsBackend):

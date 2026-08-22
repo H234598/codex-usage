@@ -219,6 +219,23 @@ def test_panel_columns_drops_invalid_and_duplicate_slot_ids() -> None:
     ]
 
 
+def test_panel_columns_sorts_valid_legacy_slots_numerically() -> None:
+    options = {"Aus": 0}
+    columns = panel_columns(
+        [
+            {"id": "account", "title": "Account", "type": "string"},
+            {"id": "slot3", "title": "Wert 3", "type": "integer", "options": options},
+            {"id": "slot1", "title": "Wert 1", "type": "integer", "options": options},
+            {"id": "slot2", "title": "Wert 2", "type": "integer", "options": options},
+        ],
+        3,
+    )
+
+    assert [column["id"] for column in columns] == [
+        "account", "slot1", "slot2", "slot3",
+    ]
+
+
 def test_panel_columns_ignores_overlong_numeric_slot_id() -> None:
     columns = panel_columns(
         [{"id": "slot" + ("9" * 5000), "title": "Huge", "type": "integer"}],
