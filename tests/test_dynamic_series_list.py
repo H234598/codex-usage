@@ -275,6 +275,51 @@ def test_masterjet_cleanup_reaps_after_second_kill(monkeypatch) -> None:
     assert DynamicSeriesList._masterjet_series(series_widget) == ()
     assert process.wait_calls == 3
 
+
+def test_masterjet_cleanup_ignores_wait_reaping_race(monkeypatch) -> None:
+    class _Stream:
+        def fileno(self):
+            return 17
+
+    class _Process:
+        pid = 123
+
+        def __init__(self):
+            self.stdout = _Stream()
+            self.wait_calls = 0
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                return 0
+            raise OSError("child already reaped")
+
+        def kill(self):
+            pass
+
+    process = _Process()
+    monkeypatch.setattr(
+        "dynamic_series_list.subprocess.Popen", lambda *_args, **_kwargs: process
+    )
+    monkeypatch.setattr(
+        "dynamic_series_list.select.select",
+        lambda *_args: ([process.stdout], [], []),
+    )
+    monkeypatch.setattr("dynamic_series_list.os.read", lambda *_args: b"")
+    monkeypatch.setattr(
+        "dynamic_series_list.os.killpg",
+        lambda *_args: (_ for _ in ()).throw(ProcessLookupError("group gone")),
+    )
+
+    DynamicSeriesList._masterjet_cache = None
+    DynamicSeriesList._masterjet_cache_at = 0.0
+    series_widget = DynamicSeriesList.__new__(DynamicSeriesList)
+
+    assert DynamicSeriesList._masterjet_series(series_widget) == ()
+
 def test_column_index_rejects_missing_series_columns() -> None:
     class _Columns:
         def __init__(self) -> None:

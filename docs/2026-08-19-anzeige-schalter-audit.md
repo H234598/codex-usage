@@ -6821,3 +6821,17 @@ freigegeben. Regression lauscht auf das `destroy`-Signal beim Umschalten von
 
 Fokustest `pytest -q tests/test_panel_settings_list.py`: 11/11. Python-
 Syntaxcheck und `git diff --check` sauber.
+
+## Runde 599: Masterjet-Reaping-Race im Cleanup abfangen
+
+`DynamicSeriesList._masterjet_series()` behandelte beim ersten Cleanup-
+`process.wait()` nur `subprocess.TimeoutExpired`. Wenn der Child-Prozess in
+der Zwischenzeit bereits reapte oder sein Status verloren ging, konnte ein
+`OSError` aus dem `finally`-Block bis in die Settings-GUI steigen.
+
+Der erste Cleanup-Wait ignoriert jetzt neben `TimeoutExpired` auch `OSError`;
+der nachgelagerte Kill-/Reap-Pfad bleibt unverändert. Regression simuliert
+genau diesen Reaping-Race und erwartet fail-closed `()` statt einer Exception.
+
+Fokustest `pytest -q tests/test_dynamic_series_list.py`: 15/15. Python-
+Syntaxcheck und `git diff --check` sauber.

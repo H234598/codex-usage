@@ -141,7 +141,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                         pass
                 try:
                     process.wait(timeout=0.5)
-                except subprocess.TimeoutExpired:
+                except (OSError, subprocess.TimeoutExpired):
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except (OSError, ProcessLookupError):
