@@ -11038,6 +11038,7 @@ CodexUsageApplet.prototype = {
         let placementAttempts = 0;
         let positioned = false;
         let placementPending = false;
+        let focused = false;
         let maximize = Lang.bind(this, function() {
             if (generation !== this._settingsMaximizeGeneration) {
                 return false;
@@ -11195,6 +11196,20 @@ CodexUsageApplet.prototype = {
             } catch (e) {
                 this._clearSource("_settingsMaximizeId");
                 return false;
+            }
+            if (!focused) {
+                try {
+                    let focusTarget = targetWindowId
+                        ? ["-i", "-a", targetWindowId]
+                        : ["-a", "Codex Usage"];
+                    Gio.Subprocess.new(
+                        ["wmctrl"].concat(focusTarget),
+                        Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
+                    );
+                    focused = true;
+                } catch (e) {
+                    this._cleanupLog("settings window activation failed: " + this._shortText(e, 180));
+                }
             }
             attempts += 1;
             if (attempts >= 12) {

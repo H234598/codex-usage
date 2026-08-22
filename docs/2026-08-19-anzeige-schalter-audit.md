@@ -8439,3 +8439,19 @@ Regressionen: fokussierter Settings-Launcher-/Configure-Block in
 Tests 101/101; Python-Compile und `git diff --check` sauber. Es war kein
 weiterer Produktcode-Fix begründet. Installiertes Applet bleibt nach Reload
 auf aktuellem Stand.
+
+## Runde 733: Einstellungsfenster nach Start aktiv fokussieren
+
+Der Launcher erzeugte das Einstellungsfenster zwar korrekt, garantierte aber
+keine Aktivierung. Nach dem Aufbau/Maximieren konnte der Fokus wieder auf ein
+anderes Fenster springen; dadurch wirkte „Einstellungen“ wie ein No-op,
+obwohl `xlet-settings` bereits lief.
+
+Nach dem gezielten `wmctrl`-Maximieren aktiviert `_scheduleSettingsMaximize()`
+das erkannte Fenster jetzt einmal per `wmctrl -i -a <window-id>` (ohne PID-
+Treffer per Titel-Fallback). Aktivierungsfehler bleiben best effort und
+blockieren den Launcher nicht. Regression ergänzt die echte Ziel-ID und deckt
+Retry-, Monitor-, Late-Window- und Timeout-Pfade ab: Settings-Launcher-Block
+15/15; Node-Syntaxcheck und `git diff --check` sauber. Nach Installation und
+Reload öffnet die echte Popup-Aktion ein maximiertes, fokussiertes Fenster;
+Testfenster wurden beendet, das vorhandene Nutzerfenster blieb erhalten.

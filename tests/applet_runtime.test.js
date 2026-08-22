@@ -4979,6 +4979,9 @@ test("settings maximization targets the matching window id", () => {
   assert.equal(JSON.stringify(subprocesses[2].argv), JSON.stringify([
     "wmctrl", "-i", "-r", "0x08400007", "-b", "add,maximized_vert,maximized_horz",
   ]));
+  assert.equal(JSON.stringify(subprocesses[3].argv), JSON.stringify([
+    "wmctrl", "-i", "-a", "0x08400007",
+  ]));
 });
 
 test("settings launcher does not report a spawn error when only maximize scheduling fails", () => {
@@ -5035,7 +5038,7 @@ test("settings maximization retries up to twelve times and stops after removal",
   for (let index = 0; index < 23; index += 1) {
     assert.equal(callbacks[0](), index < 22);
   }
-  assert.equal(subprocessCalls.length, 12);
+  assert.equal(subprocessCalls.length, 13);
   assert.equal(subprocessCalls[0][0][0], "wmctrl");
   assert.deepEqual(
     Array.from(subprocessCalls[0][0].slice(1)),
@@ -5047,7 +5050,7 @@ test("settings maximization retries up to twelve times and stops after removal",
   applet._scheduleSettingsMaximize();
   applet._removed = true;
   assert.equal(callbacks[1](), false);
-  assert.equal(subprocessCalls.length, 12);
+  assert.equal(subprocessCalls.length, 13);
   assert.equal(applet._settingsMaximizeId, 0);
 });
 
@@ -5099,6 +5102,7 @@ test("settings maximization moves window onto current monitor before maximizing"
   assert.equal(JSON.stringify(subprocessCalls.map((call) => call[0])), JSON.stringify([
     ["wmctrl", "-r", "Codex Usage", "-e", "0,1920,0,-1,-1"],
     ["wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz"],
+    ["wmctrl", "-a", "Codex Usage"],
   ]));
 });
 
@@ -5201,9 +5205,12 @@ test("settings placement retries when xlet-settings window appears late", () => 
   subprocesses[1].success = true;
   subprocesses[1].waitCallback(subprocesses[1], {});
   assert.equal(callbacks[0](), true);
-  assert.equal(subprocesses.length, 3);
+  assert.equal(subprocesses.length, 4);
   assert.equal(JSON.stringify(subprocesses[2].argv), JSON.stringify([
     "wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz",
+  ]));
+  assert.equal(JSON.stringify(subprocesses[3].argv), JSON.stringify([
+    "wmctrl", "-a", "Codex Usage",
   ]));
 });
 
@@ -5243,9 +5250,12 @@ test("settings placement does not wait forever for a stuck wmctrl process", () =
   assert.equal(subprocesses.length, 1);
 
   assert.equal(callbacks[0](), true);
-  assert.equal(subprocesses.length, 2);
+  assert.equal(subprocesses.length, 3);
   assert.equal(JSON.stringify(subprocesses[1].argv), JSON.stringify([
     "wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz",
+  ]));
+  assert.equal(JSON.stringify(subprocesses[2].argv), JSON.stringify([
+    "wmctrl", "-a", "Codex Usage",
   ]));
   assert.equal(forced, 1);
 
