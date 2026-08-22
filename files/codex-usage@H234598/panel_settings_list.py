@@ -784,14 +784,37 @@ class PanelSettingsList(List, JSONSettingsBackend):
             ]
             if isinstance(stored_rows, list) else []
         )
-        if not rows:
-            rows = [
-                {
+        current_rows = []
+        for row in self.model:
+            try:
+                row_info = {
                     column["id"]: row[index]
                     for index, column in enumerate(self.columns)
                 }
-                for row in self.model
-            ]
+            except (KeyError, IndexError, TypeError, ValueError, OverflowError):
+                continue
+            current_rows.append(row_info)
+        valid_current_rows = [
+            row
+            for row in current_rows
+            if isinstance(row.get("account"), str) and row["account"]
+        ]
+        if rows and valid_current_rows:
+            stored_by_account = {row["account"]: row for row in rows}
+            merged_rows = []
+            for index, row in enumerate(valid_current_rows):
+                previous = stored_by_account.get(row["account"])
+                if previous is None and index < len(rows):
+                    previous = rows[index]
+                if isinstance(previous, dict):
+                    merged = dict(previous)
+                    merged.update(row)
+                    merged_rows.append(merged)
+                else:
+                    merged_rows.append(row)
+            rows = merged_rows
+        if not rows:
+            rows = current_rows
         self._rebuild_tree(columns, rows)
 
     def add_item(self, *args):

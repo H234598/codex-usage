@@ -963,6 +963,42 @@ def test_panel_list_change_recovers_after_settings_write_error(error) -> None:
         panel.destroy()
 
 
+def test_panel_count_change_preserves_unsaved_visible_rows_after_write_error() -> None:
+    class BrokenWriteSettings(_Settings):
+        def set_value(self, key, value):
+            if key == "account-panel-settings":
+                raise OSError("settings file unavailable")
+            return super().set_value(key, value)
+
+    settings = BrokenWriteSettings(3)
+    settings.values["panel-value-count"] = "1"
+    settings.values["account-panel-settings"] = [
+        {"account": "alpha", "slot1": 1, "slot2": 2}
+    ]
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.model[0][1] = 9
+        panel.list_changed()
+        settings.values["panel-value-count"] = "2"
+        panel._on_count_changed()
+
+        assert list(panel.model[0]) == ["alpha", 9, 2]
+        assert settings.values["account-panel-settings"][0]["slot1"] == 1
+    finally:
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(

@@ -9222,3 +9222,19 @@ Regression prüft ein Wertfeld mit fünf konfigurierten Spalten und drei
 Metadatenfeldern: drei belegte Spalten, nicht fünf. **108 fokussierte
 Panel-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 785: Unsaved-Leistenwerte bei Wertanzahlwechsel erhalten
+
+Wenn ein Settings-Schreiben fehlschlug, blieb die Änderung zunächst korrekt
+im GTK-Modell. Ein anschließender Wechsel der Wertanzahl baute die Tabelle
+bisher jedoch ausschließlich aus der alten gespeicherten Zeile neu auf und
+verwarf damit sichtbare, noch nicht persistierte Werte.
+
+Der Rebuild übernimmt jetzt aktuelle sichtbare Modellwerte accountbezogen in
+die gespeicherten Zeilen. Nicht sichtbare Legacy-Slots bleiben aus der
+gespeicherten Zeile erhalten; gelöschte Modellzeilen werden nicht künstlich
+wiederhergestellt. Regression prüft genau diesen Fehler nach einem
+fehlgeschlagenen Schreiben.
+
+Verifikation: **109 fokussierte Panel-Tests** sowie Ruff, Python-Compile und
+Diff-Check sauber; keine Settings-Fenster gestartet.
