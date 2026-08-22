@@ -199,6 +199,30 @@ class PanelSettingsList(List, JSONSettingsBackend):
             return
         callbacks[:] = [registered for registered in callbacks if registered != callback]
 
+    def on_setting_changed(self, *_args) -> None:
+        """Load only list rows whose values fit the GTK model schema."""
+        self.model.clear()
+        rows = self.get_value()
+        if not isinstance(rows, list):
+            rows = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_info = []
+            for column in self.columns:
+                column_id = column["id"]
+                if column_id in row:
+                    row_info.append(row[column_id])
+                elif "default" in column:
+                    row_info.append(column["default"])
+                else:
+                    row_info.append(None)
+            try:
+                self.model.append(row_info)
+            except (OverflowError, TypeError, ValueError):
+                continue
+        self.content_widget.columns_autosize()
+
     def detach(self) -> None:
         self._remove_listener(self.key, self._settings_changed_callback)
         self._remove_listener("panel-value-count", self._on_count_changed)
@@ -377,7 +401,10 @@ class PanelSettingsList(List, JSONSettingsBackend):
             for column in columns:
                 value = row.get(column["id"], column.get("default"))
                 values.append(value)
-            self.model.append(values)
+            try:
+                self.model.append(values)
+            except (OverflowError, TypeError, ValueError):
+                continue
         self.content_widget.get_selection().connect("changed", self.update_button_sensitivity)
         self.content_widget.set_activate_on_single_click(False)
         self.content_widget.connect("row-activated", self.on_row_activated)

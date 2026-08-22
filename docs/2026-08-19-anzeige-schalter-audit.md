@@ -7446,3 +7446,19 @@ bleiben unangetastet.
 Regression deckt alle drei Fälle ab. `pytest -q
 tests/test_dynamic_series_list.py`: 16/16; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 646: Beschädigte Leistenzeilen brechen Settings nicht mehr ab
+
+`PanelSettingsList` erbte für den ersten Settings-Load weiterhin die
+ungeprüfte `TreeListWidgets.List.on_setting_changed()`-Implementierung. Ein
+beschädigter `account-panel-settings`-Wert (`null`, eine Nicht-Objekt-Zeile,
+ein falscher Zelltyp oder ein Integer außerhalb des GTK-Bereichs) konnte den
+gesamten Einstellungsdialog beim Aufbau beenden. Derselbe Abbruch war beim
+Ändern der Wertanzahl über `_rebuild_tree()` möglich.
+
+Die Leistenliste akzeptiert jetzt nur Listen mit Objektzeilen und fängt
+`OverflowError`, `TypeError` und `ValueError` beim Einfügen in das GTK-Modell
+ab. Ungültige Zeilen werden übersprungen; persistierte Einstellungen werden
+nicht automatisch überschrieben. Regression deckt Initial-Load und
+Wertanzahl-Rebuild ab. `pytest -q tests/test_panel_settings_list.py`: 15/15;
+Ruff, Python-Compile und `git diff --check` sauber.

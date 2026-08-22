@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "files" / "codex-usage@H234598"))
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
@@ -195,6 +197,35 @@ def test_panel_destroy_detaches_settings_listeners() -> None:
 
     assert settings.listeners["account-panel-settings"] == []
     assert settings.listeners["panel-value-count"] == []
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [None, ["malformed"], [{"account": 123}], [{"account": "alpha", "slot1": 2**31}]],
+)
+def test_panel_ignores_malformed_persisted_rows(rows) -> None:
+    settings = _Settings(3)
+    settings.values["account-panel-settings"] = rows
+
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert len(panel.model) == 0
+        settings.values["panel-value-count"] = "21"
+        panel._on_count_changed()
+        assert len(panel.model) == 0
+    finally:
+        panel.destroy()
 
 
 def test_panel_count_change_rebuilds_slots_and_preserves_rows() -> None:
