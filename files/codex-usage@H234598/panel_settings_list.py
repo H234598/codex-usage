@@ -326,7 +326,9 @@ class PanelSettingsList(List, JSONSettingsBackend):
         if not children:
             return
         scrollbox = children[0]
-        scrollbox.remove(self.content_widget)
+        old_content_widget = self.content_widget
+        scrollbox.remove(old_content_widget)
+        old_content_widget.destroy()
         self.content_widget = Gtk.TreeView()
         scrollbox.add(self.content_widget)
         self.columns = columns

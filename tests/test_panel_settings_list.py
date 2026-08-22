@@ -225,6 +225,33 @@ def test_panel_count_change_rebuilds_slots_and_preserves_rows() -> None:
         panel.destroy()
 
 
+def test_panel_count_change_destroys_replaced_tree_view() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "2"
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+    destroyed = []
+    old_tree = panel.content_widget
+    old_tree.connect("destroy", lambda *_args: destroyed.append(True))
+
+    try:
+        settings.values["panel-value-count"] = "3"
+        panel._on_count_changed()
+
+        assert destroyed == [True]
+    finally:
+        panel.destroy()
+
+
 def test_panel_count_hides_legacy_slots_and_restores_saved_values() -> None:
     settings = _Settings(3)
     settings.values["panel-value-count"] = "2"

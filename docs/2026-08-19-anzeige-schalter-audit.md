@@ -6806,3 +6806,18 @@ failure|profile cancel failure|profile job|device login|auxiliary'
 tests/applet_runtime.test.js`: 48/48. Vollständiger JS-Lauf:
 `node --test tests/applet_runtime.test.js` 467/467. Node-Syntaxcheck und
 `git diff --check` sauber.
+
+## Runde 598: Ersetzten Leisten-TreeView zerstören
+
+`PanelSettingsList._rebuild_tree()` entfernte beim Wechsel der Anzahl der
+Wertfelder den alten `Gtk.TreeView` nur aus dem `ScrolledWindow` und ersetzte
+ihn durch einen neuen. Der alte TreeView samt Renderern und Signalbindungen
+wurde nicht explizit zerstört; wiederholte Änderungen konnten dadurch
+GTK-/Cinnamon-Heap behalten.
+
+Der alte TreeView wird vor dem Ersetzen jetzt explizit per `destroy()`
+freigegeben. Regression lauscht auf das `destroy`-Signal beim Umschalten von
+2 auf 3 Wertfelder.
+
+Fokustest `pytest -q tests/test_panel_settings_list.py`: 11/11. Python-
+Syntaxcheck und `git diff --check` sauber.
