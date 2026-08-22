@@ -561,6 +561,10 @@ def _iter_usage_samples(usage: AccountUsage):
                 "w": 604_800,
                 "week": 604_800,
                 "weekly": 604_800,
+                "30d": MAX_HISTORY_WINDOW_SECONDS,
+                "30_day": MAX_HISTORY_WINDOW_SECONDS,
+                "month": MAX_HISTORY_WINDOW_SECONDS,
+                "monthly": MAX_HISTORY_WINDOW_SECONDS,
             }.get(window.name.strip().casefold() if isinstance(window.name, str) else "")
             if duration is None:
                 continue

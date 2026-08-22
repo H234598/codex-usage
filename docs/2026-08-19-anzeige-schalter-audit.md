@@ -5573,3 +5573,14 @@ Reset-Erkennung läuft jetzt vor der Delta-Behandlung; bei bestätigtem Reset
 wird der aktuelle Zykluswert in Roh- und EMA-Rate übernommen. Regression deckt
 beide Pfade ab. `pytest -q tests/test_consumption.py`: 36/36; aufrufende
 History-/Integrationstests: 15/15; Ruff und `git diff --check` sauber.
+
+## Runde 470: 30-Tage-Historie aus Fenster-Aliasen speichern
+
+`LimitWindow` akzeptiert `30d`, `30_day`, `month` und `monthly` als bekannte
+30-Tage-Fenster. `history._iter_usage_samples()` hatte ohne explizites
+`duration_seconds` jedoch nur 5h- und Wochen-Aliase abgebildet; valide
+30-Tage-Werte verschwanden dadurch still aus der Historie.
+
+Alle vier Aliase verwenden jetzt `MAX_HISTORY_WINDOW_SECONDS`. Regression:
+`pytest -q tests/test_history.py`: 82/82; aufrufende History-/CLI-/
+Integrationstests: 7/7; Ruff, Python-Compile und `git diff --check` sauber.

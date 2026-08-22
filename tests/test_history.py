@@ -861,6 +861,30 @@ def test_usage_samples_extract_only_fresh_valid_limit_windows():
     ]
 
 
+@pytest.mark.parametrize("name", ["30d", "30_day", "month", "monthly"])
+def test_usage_samples_extract_monthly_window_without_explicit_duration(name):
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="main",
+            windows=(LimitWindow(name=name, percent=40),),
+            availability_sources=("usage",),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    samples = usage_samples_from_usage(usage)
+
+    assert [(sample.window_seconds, sample.used_percent) for sample in samples] == [
+        (history_module.MAX_HISTORY_WINDOW_SECONDS, 60.0)
+    ]
+
+
 def test_usage_samples_reject_overlong_model_iterator_before_consuming_all(
     monkeypatch,
 ):
