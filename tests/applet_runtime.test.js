@@ -667,6 +667,28 @@ test("persistent profile job resumes and exposes polled events", () => {
   );
 });
 
+test("cancelled profile job discovery can run again", () => {
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() {
+        return { force_exit() {} };
+      },
+    });
+  });
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._readBoundedProcessOutput = () => {};
+
+  applet._loadProfileJobs();
+  assert.equal(applet._profileJobsLoaded, true);
+  applet._cancelAuxProcess();
+
+  assert.equal(applet._profileJobsLoaded, false);
+  applet._loadProfileJobs();
+  assert.equal(applet._profileJobsLoaded, true);
+  applet._cancelAuxProcess();
+});
+
 test("persistent profile job resume drains every active job", () => {
   const applet = makeApplet();
   const calls = [];

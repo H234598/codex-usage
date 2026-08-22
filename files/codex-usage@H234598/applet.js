@@ -4924,7 +4924,16 @@ CodexUsageApplet.prototype = {
             }
         }
         let deviceLogin = argv.indexOf("device-login") !== -1;
-        this._auxCommand = serviceEnable ? "service-enable" : (deviceLogin ? "device-login" : "");
+        let profileJobs = false;
+        for (let index = 0; index < argv.length - 1; index++) {
+            if (argv[index] === "profile" && argv[index + 1] === "jobs") {
+                profileJobs = true;
+                break;
+            }
+        }
+        this._auxCommand = serviceEnable
+            ? "service-enable"
+            : (deviceLogin ? "device-login" : (profileJobs ? "profile-jobs" : ""));
         let process = null;
         let done = false;
         let finish = Lang.bind(this, function(payload, error) {
@@ -10710,6 +10719,9 @@ CodexUsageApplet.prototype = {
     },
 
     _cancelAuxProcess: function() {
+        if (this._auxCommand === "profile-jobs") {
+            this._profileJobsLoaded = false;
+        }
         if (this._auxCommand === "device-login") {
             let liveAccount = this._deviceLoginLiveAccount;
             if (liveAccount && !this._deviceLoginJobs[liveAccount]) {

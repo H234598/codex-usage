@@ -6312,3 +6312,17 @@ Der Livechunk-Callback prüft jetzt `_removed`, Generation und aktiven
 Abbruch von Account A, Startzustand von Account B und verspäteten Chunk.
 Fokustest `node --test --test-name-pattern='bounded reader|device login live|device login parser|stale device login live chunks|auxiliary timeout|auxiliary process' tests/applet_runtime.test.js`:
 16/16; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 566: Abgebrochene Profiljob-Erkennung erneut erlauben
+
+`_loadProfileJobs()` setzte `_profileJobsLoaded` vor dem Hilfsprozess auf
+`true`. Wurde die Anfrage durch eine neue Auxiliary-Generation abgebrochen,
+kam kein Ergebnis-Callback mehr und der nächste Statusabruf wurde dauerhaft
+übersprungen.
+
+`profile jobs` ist jetzt als eigener Auxiliary-Befehl markiert;
+`_cancelAuxProcess()` setzt seinen Ladezustand bei Abbruch zurück. Eine neue
+Erkennung kann danach wieder starten. Regression prüft Start, Abbruch und
+erneuten Start. Fokustest `node --test
+--test-name-pattern='cancelled profile job discovery can run again|persistent profile job|device login live|auxiliary' tests/applet_runtime.test.js`:
+23/23; Node-Syntaxcheck und `git diff --check` sauber.
