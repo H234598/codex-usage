@@ -7810,3 +7810,14 @@ Die Funktion akzeptiert nur gültige Account-Strings und Objektänderungen und
 filtert beschädigte Bestandszeilen vor Mapping und Persistenz. Regression deckt
 `null`, Array sowie ungültige Änderungen ab; fokussierter Node-Test grün,
 Syntaxcheck und `git diff --check` sauber.
+
+## Runde 673: Panel-Settings-Mapper verwirft kaputte Eingaben
+
+`_panelSettingsMap()` erwartete ungeprüft ein Array aus Objekt-Rows. `null`
+führte zu einem Längen-Crash; Arrays, leere oder nicht-stringartige Accounts
+konnten unbrauchbare Map-Schlüssel erzeugen.
+
+Der Mapper akzeptiert nur nicht-leere String-Accounts in Objekt-Rows und gibt
+bei Nicht-Arrays eine leere Map zurück. Prototype-sichere Account-IDs bleiben
+erhalten. Regression erweitert den Mapping-Test um alle beschädigten Formen;
+fokussierter Node-Test und Syntaxcheck sauber.

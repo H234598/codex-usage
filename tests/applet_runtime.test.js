@@ -2893,6 +2893,17 @@ test("mapping and primitive helpers are bounded and prototype-safe", () => {
   assert.equal(applet._statusLabel("unknown"), "Fehler");
   assert.equal(applet._dateMillis("not-a-date"), null);
   assert.equal(applet._dateMillis("2026-08-19T12:00:00Z"), 1787140800000);
+  const malformedPanel = applet._panelSettingsMap([
+    null,
+    [],
+    {account: 123},
+    {account: ""},
+    {account: "valid", value: 3},
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(malformedPanel)), {
+    valid: {account: "valid", value: 3},
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._panelSettingsMap(null))), {});
 });
 
 test("baseline, custom credit and percent helpers preserve independent display states", () => {

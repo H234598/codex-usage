@@ -3423,8 +3423,16 @@ CodexUsageApplet.prototype = {
 
     _panelSettingsMap: function(rows) {
         let result = Object.create(null);
+        if (!Array.isArray(rows)) {
+            return result;
+        }
         for (let i = 0; i < rows.length; i++) {
-            result[rows[i].account] = rows[i];
+            let row = rows[i];
+            if (!row || typeof row !== "object" || Array.isArray(row) ||
+                typeof row.account !== "string" || !row.account) {
+                continue;
+            }
+            result[row.account] = row;
         }
         return result;
     },
