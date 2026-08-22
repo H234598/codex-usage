@@ -360,7 +360,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
         self.model.clear()
         try:
             rows = self.get_value()
-        except (AttributeError, KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
             rows = []
         if not isinstance(rows, list):
             rows = []

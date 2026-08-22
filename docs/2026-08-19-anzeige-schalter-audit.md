@@ -8026,3 +8026,14 @@ Settings-Updates dauerhaft unterdrücken.
 wieder auf `False` und beendet den Callback kontrolliert. Regression deckt
 einen nicht verfügbaren Settings-Write ab; `tests/test_panel_settings_list.py`:
 78/78, Python-Compile und `git diff --check` sauber.
+
+## Runde 696: Leisten-Initialisierung überlebt Read-Overflow
+
+`on_setting_changed()` behandelte `OverflowError` beim Laden der gespeicherten
+Leistenzeilen noch nicht. Ein überlaufender Backend-Read konnte damit direkt
+beim Öffnen des Einstellungsmenüs den Widgetaufbau abbrechen.
+
+Der Read nutzt jetzt denselben leeren Listen-Fallback wie die übrigen
+Leistenpfade. Regression deckt den Overflow bereits während der Widget-
+Initialisierung ab; `tests/test_panel_settings_list.py`: 79/79,
+Python-Compile und `git diff --check` sauber.
