@@ -738,6 +738,185 @@ def test_response_for_rejects_explicit_null_error():
     assert "invalid error" in str(error.value)
 
 
+def test_app_server_deadline_and_primitive_validators_reject_invalid_values():
+    now = time.monotonic()
+    assert app_server_module._app_server_deadline(1) > now
+    with pytest.raises(AppServerFetchError, match="positive finite"):
+        app_server_module._app_server_deadline(0)
+
+    assert app_server_module._strict_int(3) == 3
+    assert app_server_module._strict_int(True) is None
+    assert app_server_module._strict_int(3.0) is None
+    assert app_server_module._valid_used_percent({"usedPercent": 0}) is True
+    assert app_server_module._valid_used_percent({"usedPercent": 101}) is False
+    assert app_server_module._valid_used_percent({"usedPercent": True}) is False
+    assert app_server_module._window_duration_is_missing({}) is True
+    assert app_server_module._window_duration_is_missing({"windowDurationMins": None}) is True
+    assert app_server_module._window_duration_is_missing({"windowDurationMins": 300}) is False
+
+
+def test_app_server_environment_keeps_runtime_names_and_sets_codex_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATH", "/safe/bin")
+    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
+    monkeypatch.setenv("UNSAFE_SECRET", "must-not-pass")
+
+    environment = app_server_module._app_server_environment(tmp_path)
+
+    assert environment["PATH"] == "/safe/bin"
+    assert environment["LC_ALL"] == "de_DE.UTF-8"
+    assert environment["CODEX_HOME"] == str(tmp_path)
+    assert "UNSAFE_SECRET" not in environment
+
+
+def test_app_server_request_helpers_send_expected_rpc(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        app_server_module,
+        "_send",
+        lambda process, message, *, deadline: sent.append((process, message, deadline)),
+    )
+    monkeypatch.setattr(
+        app_server_module,
+        "_response_for",
+        lambda *_args, **_kwargs: {
+            "rateLimits": {"primary": {"usedPercent": 1}},
+        },
+    )
+    process = object()
+    result = app_server_module._request_rate_limits(
+        process,
+        object(),
+        request_id=3,
+        deadline=12.5,
+        stderr_reader=object(),
+    )
+
+    assert result == {"rateLimits": {"primary": {"usedPercent": 1}}}
+    assert sent == [(process, {"method": "account/rateLimits/read", "id": 3}, 12.5)]
+
+
+def test_app_server_model_request_deduplicates_ids_and_uses_model_field(monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        app_server_module,
+        "_send",
+        lambda process, message, *, deadline: sent.append((process, message, deadline)),
+    )
+    monkeypatch.setattr(
+        app_server_module,
+        "_response_for",
+        lambda *_args, **_kwargs: {
+            "data": [
+                {"id": "fallback", "model": "gpt-a"},
+                {"id": "gpt-b"},
+                {"id": "duplicate", "model": "gpt-a"},
+            ],
+        },
+    )
+    process = object()
+
+    result = app_server_module._request_model_ids(
+        process,
+        object(),
+        request_id=4,
+        deadline=12.5,
+        stderr_reader=object(),
+    )
+
+    assert result == ("gpt-a", "gpt-b")
+    assert sent == [
+        (
+            process,
+            {
+                "method": "model/list",
+                "id": 4,
+                "params": {"includeHidden": True, "limit": 100},
+            },
+            12.5,
+        )
+    ]
+
+
+def test_app_server_model_request_rejects_invalid_entries(monkeypatch):
+    monkeypatch.setattr(
+        app_server_module,
+        "_send",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        app_server_module,
+        "_response_for",
+        lambda *_args, **_kwargs: {"data": [{"model": "bad model"}]},
+    )
+
+    with pytest.raises(AppServerProtocolError, match="model id is invalid"):
+        app_server_module._request_model_ids(
+            object(),
+            object(),
+            request_id=4,
+            deadline=12.5,
+            stderr_reader=object(),
+        )
+
+
+def test_app_server_rpc_error_mapping_and_response_id_matching():
+    assert app_server_module._response_id_matches(3, 3) is True
+    assert app_server_module._response_id_matches(True, 1) is False
+    assert app_server_module._response_id_matches("3", 3) is False
+
+    with pytest.raises(AppServerUnavailableError):
+        app_server_module._raise_rpc_error({"code": -32601, "message": "no method"})
+    with pytest.raises(AppServerAuthError):
+        app_server_module._raise_rpc_error({"code": -32000, "message": "token expired"})
+    with pytest.raises(AppServerFetchError):
+        app_server_module._raise_rpc_error({"code": -32000, "message": "backend down"})
+    with pytest.raises(AppServerProtocolError):
+        app_server_module._raise_rpc_error(None)
+
+
+def test_app_server_helpers_copy_and_bound_error_text():
+    payload = {"rateLimits": {"primary": {"usedPercent": 1}}}
+    result = app_server_module._with_model_ids(payload, ("gpt-a",))
+
+    assert result == {
+        "rateLimits": {"primary": {"usedPercent": 1}},
+        "_model_ids": ("gpt-a",),
+    }
+    assert "_model_ids" not in payload
+    assert app_server_module._bounded_error(ValueError("  one\n two  ")) == "one two"
+    assert len(app_server_module._bounded_error(ValueError("x" * 600))) == 500
+
+
+def test_app_server_close_stream_ignores_close_races():
+    class Stream:
+        def __init__(self, error=False):
+            self.error = error
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+            if self.error:
+                raise ValueError("already closed")
+
+    closed = Stream()
+    racing = Stream(error=True)
+    app_server_module._close_process_stream(closed)
+    app_server_module._close_process_stream(racing)
+
+    assert closed.closed is True
+    assert racing.closed is True
+
+
+def test_line_reader_put_item_can_replace_oldest_item():
+    reader = _LineReader(None)
+    reader.items = queue.Queue(maxsize=1)
+    reader.items.put(b"old")
+
+    assert reader._put_item(b"new") is False
+    assert reader._put_item(b"new", replace_oldest=True) is True
+    assert reader.items.get_nowait() == b"new"
+
+
 def test_app_server_missing_command_is_compatibility_failure(tmp_path):
     auth_home = tmp_path / "codex-home"
     auth_home.mkdir()

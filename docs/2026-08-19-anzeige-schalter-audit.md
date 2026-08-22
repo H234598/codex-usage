@@ -6884,3 +6884,17 @@ Logikänderung formatiert.
 `ruff check files/codex-usage@H234598/help_page.py`,
 `pytest -q tests/test_help_page.py` (6/6), Python-Kompilierung und
 `git diff --check` sind sauber.
+
+## Runde 603: App-Server-Hilfsfunktionen direkt abdecken
+
+`app_server.py` hatte für mehrere reine Hilfsfunktionen keinen direkten
+Regressionstest: Deadline-/Primitive-Validierung, Umgebungsfilter,
+Rate-Limit- und Model-RPC-Aufträge, RPC-Fehlerklassifikation,
+Response-ID-Typprüfung, Kopier-/Fehlerbegrenzung, Stream-Cleanup und das
+Queue-Replacement des Line-Readers.
+
+Gezielte Tests prüfen diese Verträge einschließlich ungültiger Model-IDs,
+strikter Integer-/Boolean-Typen, Auth-/Unavailable-/Fetch-/Protocol-
+Klassifikation und begrenzter Fehlermeldungen. Produktionslogik blieb
+unverändert. `pytest -q tests/test_app_server.py`: 108/108. Ruff,
+Python-Kompilierung und `git diff --check` sauber.
