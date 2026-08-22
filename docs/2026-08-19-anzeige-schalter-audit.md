@@ -9165,3 +9165,16 @@ bleiben sauber.
 
 Verifikation: **54 fokussierte Panel-Tests bestanden**; keine Settings-Fenster
 gestartet.
+
+## Runde 775: Dialoggrößenberechnung ohne Float-Overflow
+
+`panel_editor_dimensions()` teilte Wert- und Metadatenanzahl bisher mit
+Float-Division auf. Extrem große, direkt übergebene Integer konnten dadurch
+`OverflowError` auslösen. Die Aufrundung verwendet jetzt ganzzahlige Division;
+die bestehende Höhenbegrenzung bleibt unverändert.
+
+Regression prüft eine extrem große Wert- und Metadatenanzahl. Ruff, fokussierte
+Tests, Compile und Diff-Check sind sauber.
+
+Verifikation: **2 fokussierte Größen-Tests bestanden**; keine Settings-Fenster
+gestartet.

@@ -115,6 +115,12 @@ def test_panel_editor_dimensions_scale_with_values_and_columns() -> None:
     assert narrow[1] > wide[1]
 
 
+def test_panel_editor_dimensions_handles_huge_counts() -> None:
+    width, height = panel_editor_dimensions(10**1000, 3, 10**1000)
+
+    assert (width, height) == (1000, 900)
+
+
 def test_panel_columns_expand_legacy_schema_without_mutation() -> None:
     base = [
         {"id": "account", "title": "Account", "type": "string"},

@@ -223,8 +223,10 @@ def panel_editor_dimensions(
         metadata = max(0, int(metadata_count)) if not isinstance(metadata_count, bool) else 0
     except (TypeError, ValueError, OverflowError):
         metadata = 0
-    value_rows = max(1, math.ceil(values / column_count))
-    metadata_rows = math.ceil(metadata / column_count) if metadata else 0
+    value_rows = max(1, (values + column_count - 1) // column_count)
+    metadata_rows = (
+        (metadata + column_count - 1) // column_count if metadata else 0
+    )
     rows = metadata_rows + value_rows
     width = column_count * _EDITOR_COLUMN_WIDTH + _EDITOR_HORIZONTAL_MARGIN
     height = min(
