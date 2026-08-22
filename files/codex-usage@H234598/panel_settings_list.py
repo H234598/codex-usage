@@ -143,6 +143,21 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             continue
         if "options" in column and not isinstance(column["options"], (dict, list, tuple)):
             continue
+        if "align" in column:
+            align = column["align"]
+            try:
+                valid_align = (
+                    not isinstance(align, bool)
+                    and isinstance(align, (int, float))
+                    and math.isfinite(align)
+                    and 0 <= align <= 1
+                )
+            except (OverflowError, TypeError):
+                valid_align = False
+            if valid_align:
+                column["align"] = float(align)
+            else:
+                column.pop("align", None)
         if (
             column["type"] in {"integer", "float"}
             and not isinstance(column.get("options"), dict)
@@ -503,8 +518,19 @@ class PanelSettingsList(List, JSONSettingsBackend):
             else:
                 tree_column.add_attribute(renderer, prop_name, index)
             if "align" in column_def:
-                renderer.set_alignment(column_def["align"], 0.5)
-                tree_column.set_alignment(column_def["align"])
+                align = column_def["align"]
+                try:
+                    valid_align = (
+                        not isinstance(align, bool)
+                        and isinstance(align, (int, float))
+                        and math.isfinite(align)
+                        and 0 <= align <= 1
+                    )
+                except (OverflowError, TypeError):
+                    valid_align = False
+                if valid_align:
+                    renderer.set_alignment(float(align), 0.5)
+                    tree_column.set_alignment(float(align))
             tree_column.set_resizable(True)
             self.content_widget.append_column(tree_column)
 

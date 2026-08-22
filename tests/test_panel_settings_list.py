@@ -329,6 +329,25 @@ def test_panel_height_metadata_is_finite_and_integer(height) -> None:
         panel.destroy()
 
 
+@pytest.mark.parametrize("align", ["bad", float("nan"), float("inf"), -1, 2, True, None])
+def test_panel_ignores_invalid_column_alignment(align) -> None:
+    panel = PanelSettingsList(
+        {
+            "columns": [{
+                "id": "account",
+                "title": "Account",
+                "type": "string",
+                "align": align,
+            }],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        _Settings(3),
+    )
+
+    panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(

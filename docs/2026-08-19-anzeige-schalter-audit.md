@@ -7906,3 +7906,14 @@ der Einstellungen mit Typ- oder Wertefehler abbrechen lassen.
 Höhe wird jetzt auf endliche, nicht-negative Integer bis 10000 begrenzt.
 Regression deckt alle vier Formen ab; `tests/test_panel_settings_list.py`:
 48/48, Python-Compile und `git diff --check` sauber.
+
+## Runde 685: Leisten-Ausrichtung wird vor GTK validiert
+
+`align` wurde ungeprüft an `Gtk.CellRenderer.set_alignment()` übergeben.
+Strings warfen `TypeError`; `NaN`, Unendlich und Werte außerhalb von 0 bis 1
+erzeugten GTK-Criticals. Der Fehler trat bereits im Basiskonstruktor auf.
+
+Der Schemafilter entfernt ungültige Ausrichtungen und normalisiert gültige auf
+Float; der Rebuild-Pfad prüft zusätzlich defensiv. Regression deckt sieben
+kaputte Werte ab; `tests/test_panel_settings_list.py`: 55/55,
+Python-Compile und `git diff --check` sauber.
