@@ -127,22 +127,36 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
     if not isinstance(base_columns, list):
         base_columns = []
     copied_columns = copy.deepcopy(base_columns)
-    columns = [
-        column
-        for column in copied_columns
+    columns = []
+    for column in copied_columns:
         if (
-            isinstance(column, dict)
-            and isinstance(column.get("id"), str)
-            and isinstance(column.get("title"), str)
-            and isinstance(column.get("type"), str)
-            and column["type"] in VARIABLE_TYPE_MAP
-            and not (
-                column["id"].startswith("slot")
-                and column["id"][4:].isdecimal()
-                and int(column["id"][4:]) > requested_count
-            )
-        )
-    ]
+            not isinstance(column, dict)
+            or not isinstance(column.get("id"), str)
+            or not isinstance(column.get("title"), str)
+            or not isinstance(column.get("type"), str)
+            or column["type"] not in VARIABLE_TYPE_MAP
+        ):
+            continue
+        if (
+            column["type"] in {"integer", "float"}
+            and not isinstance(column.get("options"), dict)
+        ):
+            minimum = column.get("min")
+            maximum = column.get("max")
+            if (
+                isinstance(minimum, bool)
+                or not isinstance(minimum, (int, float))
+                or isinstance(maximum, bool)
+                or not isinstance(maximum, (int, float))
+            ):
+                continue
+        if (
+            column["id"].startswith("slot")
+            and column["id"][4:].isdecimal()
+            and int(column["id"][4:]) > requested_count
+        ):
+            continue
+        columns.append(column)
     slot_template = next(
         (column for column in columns if column.get("id") == "slot1"),
         {"id": "slot1", "title": "Wert 1", "type": "integer", "default": 0},
@@ -316,9 +330,15 @@ class PanelSettingsList(List, JSONSettingsBackend):
                 except (IndexError, KeyError, TypeError):
                     pass
             if value is not None:
-                widget.set_widget_value(value)
-            elif "default" in column_definition:
-                widget.set_widget_value(column_definition["default"])
+                try:
+                    widget.set_widget_value(value)
+                except (OverflowError, TypeError, ValueError):
+                    value = None
+            if value is None and "default" in column_definition:
+                try:
+                    widget.set_widget_value(column_definition["default"])
+                except (OverflowError, TypeError, ValueError):
+                    pass
 
         content_area.show_all()
         response = dialog.run()

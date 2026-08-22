@@ -7753,3 +7753,15 @@ geformte Werte gelten als leer und verwenden vorhandene Defaults. Regression
 deckt leere, verkürzte und nicht-sequenzielle `info`-Werte ab;
 `tests/test_panel_settings_list.py`: 33/33; Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 668: Leisten-Dialog verwirft falsche Feldtypen
+
+`open_add_edit_dialog()` reichte vorhandene Werte ungeprüft an Cinnamon-
+Editorwidgets weiter. Ein String in einem Integer-Feld führte zu `TypeError`;
+numerische Spalten ohne `min/max` konnten bereits beim Editoraufbau abstürzen.
+
+Der Dialog verwirft nicht passende Werte und nutzt Defaults. Der Schemafilter
+akzeptiert numerische Spalten ohne Optionsmap nur noch mit gültigem Zahlenbereich;
+ungültige Felder werden übersprungen. Regression deckt falschen Integerwert und
+fehlenden Zahlenbereich ab; `tests/test_panel_settings_list.py`: 35/35;
+Python-Kompilierung und `git diff --check` sauber.

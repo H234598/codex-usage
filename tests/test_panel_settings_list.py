@@ -77,6 +77,7 @@ def test_panel_columns_default_slots_to_disabled_source() -> None:
         "malformed",
         [None, {"id": "missing-title", "type": "string"}],
         [{"id": "unknown", "title": "Unknown", "type": "unknown"}],
+        [{"id": "number", "title": "Number", "type": "integer"}],
     ],
 )
 def test_panel_columns_ignores_malformed_schema_columns(base) -> None:
@@ -190,6 +191,32 @@ def test_panel_editor_treats_short_or_malformed_info_as_empty(monkeypatch, info)
     )
     try:
         assert panel.open_add_edit_dialog(info) is None
+    finally:
+        panel.destroy()
+
+
+def test_panel_editor_ignores_invalid_existing_values(monkeypatch) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {
+                    "id": "order",
+                    "title": "Order",
+                    "type": "integer",
+                    "min": 1,
+                    "max": 10,
+                    "default": 1,
+                },
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        _Settings(3),
+    )
+    try:
+        assert panel.open_add_edit_dialog(["alpha", "bad"]) is None
     finally:
         panel.destroy()
 
