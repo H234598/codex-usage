@@ -139,6 +139,8 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             or column["type"] not in VARIABLE_TYPE_MAP
         ):
             continue
+        if "options" in column and not isinstance(column["options"], (dict, list, tuple)):
+            continue
         if (
             column["type"] in {"integer", "float"}
             and not isinstance(column.get("options"), dict)

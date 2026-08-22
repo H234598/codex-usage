@@ -7864,3 +7864,14 @@ Der Handler verwendet bei typischen Settings-Lese-Fehlern jetzt eine leere
 Zeilenliste und bleibt bedienbar. Regression deckt den Fehler bereits beim
 Widget-Aufbau ab; `tests/test_panel_settings_list.py`: 40/40, Python-Compile
 und `git diff --check` sauber.
+
+## Runde 681: Leisten-Schema verwirft nicht-iterierbare Optionen
+
+Eine Spalte mit `options: 1` oder `options: null` passierte den Schemafilter.
+`list_edit_factory()` versucht solche Werte beim Dialogaufbau zu iterieren und
+ließ den Leisten-Editor abstürzen.
+
+`panel_columns()` akzeptiert Optionswerte jetzt nur noch als Dict, Liste oder
+Tuple. Regression ergänzt den kaputten Optionsfall;
+`tests/test_panel_settings_list.py`: 41/41, Python-Compile und
+`git diff --check` sauber.

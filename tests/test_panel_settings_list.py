@@ -77,6 +77,7 @@ def test_panel_columns_default_slots_to_disabled_source() -> None:
         "malformed",
         [None, {"id": "missing-title", "type": "string"}],
         [{"id": "unknown", "title": "Unknown", "type": "unknown"}],
+        [{"id": "bad-options", "title": "Bad options", "type": "string", "options": 1}],
         [{"id": "number", "title": "Number", "type": "integer"}],
         [{"id": "number", "title": "Number", "type": "integer", "min": 10, "max": 1}],
         [{"id": "number", "title": "Number", "type": "integer", "min": float("nan"), "max": 10}],
