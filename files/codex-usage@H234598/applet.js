@@ -418,7 +418,11 @@ CodexUsageApplet.prototype = {
             "accountBackends",
             this._onAccountBackendsChanged
         );
-        bind("account-panel-settings", "accountPanelSettings", this._onPanelSettingsChanged);
+        this._bindCustomSetting(
+            "account-panel-settings",
+            "accountPanelSettings",
+            this._onPanelSettingsChanged
+        );
         bind(
             "account-consumption-settings",
             "accountConsumptionSettings",

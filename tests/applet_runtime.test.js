@@ -131,7 +131,7 @@ function loadPrototype(onReady) {
           PopupSwitchMenuItem: PopupSwitchItem,
           PopupSubMenuMenuItem: PopupItem,
         },
-        settings: {},
+        settings: { BindingDirection: { IN: 1 } },
       },
     },
     global: { log() {} },
@@ -340,6 +340,24 @@ test("custom settings read current values and react to changed signals", () => {
 
   assert.deepEqual(applet.accountBackends, [{ account: "beta" }]);
   assert.deepEqual(callbackValues, [[{ account: "beta" }]]);
+});
+
+test("panel custom setting bypasses Cinnamon standard binding", () => {
+  const applet = makeApplet();
+  const customKeys = [];
+  const standardKeys = [];
+  applet._bindCustomSetting = (key) => customKeys.push(key);
+  applet._normalizeAccountBackendSettingPaths = () => {};
+  applet.settings = {
+    bindProperty(_direction, key) {
+      standardKeys.push(key);
+    },
+  };
+
+  applet._bindSettings();
+
+  assert.equal(customKeys.includes("account-panel-settings"), true);
+  assert.equal(standardKeys.includes("account-panel-settings"), false);
 });
 
 function usageWithoutSparkLimit(account) {

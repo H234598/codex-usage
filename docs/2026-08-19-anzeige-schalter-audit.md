@@ -6260,3 +6260,18 @@ Defaults, Normalisierung sowie bestehende Alert-/Panelpfade. Fokustest
 `node --test
 --test-name-pattern='alert settings|alert helper matrix|legacy alert rows|accounts without a Spark|usage severity|limit notifications|panel|pool|other-window' tests/applet_runtime.test.js`:
 84/84; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 562: Custom-Panelsetting korrekt binden
+
+Cinnamon meldete beim Applet-Reload wiederholt `Invalid setting type 'custom'
+for setting key 'account-panel-settings'`. Die Schema-Definition ist bewusst
+`type=custom`, `_bindSettings()` verwendete dafür aber `bindProperty()`, das nur
+Standardtypen akzeptiert. Dadurch blieb die Paneltabelle ungebunden und
+Settings-Änderungen konnten aus dem Appletpfad verloren gehen.
+
+`account-panel-settings` wird jetzt wie `account-backends` über
+`_bindCustomSetting()` gelesen und am `changed::`-Signal aktualisiert.
+Regression stellt sicher, dass es nicht mehr an Cinnamon-Standardbindung geht.
+Fokustest `node --test
+--test-name-pattern='panel custom setting bypasses|custom settings read|settings launcher|native Cinnamon configure action|settings maximization|panel settings' tests/applet_runtime.test.js`:
+7/7; Node-Syntaxcheck und `git diff --check` sauber.
