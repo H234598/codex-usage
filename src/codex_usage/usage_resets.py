@@ -69,6 +69,21 @@ def parse_usage_resets(payload: object) -> UsageResetState:
             if key not in payload:
                 continue
             value = payload[key]
+            if key == "usage_resets" and isinstance(value, Mapping) and all(
+                field in value
+                for field in ("available", "known", "redeem_capability")
+            ):
+                try:
+                    duplicate = UsageResetState(
+                        value["available"],
+                        value["known"],
+                        value["redeem_capability"],
+                    )
+                except (TypeError, ValueError):
+                    return UsageResetState(None, False, False)
+                if duplicate != state:
+                    return UsageResetState(None, False, False)
+                continue
             if isinstance(value, Mapping):
                 value = value.get("available")
             if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10_000:

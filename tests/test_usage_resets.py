@@ -120,6 +120,25 @@ def test_reset_parser_handles_nested_legacy_and_malformed_canonical_values():
 
 
 @pytest.mark.parametrize(
+    "nested",
+    [
+        {"available": 2, "known": False, "redeem_capability": False},
+        {"available": 2, "known": True, "redeem_capability": True},
+        {"available": 2, "known": "yes", "redeem_capability": False},
+    ],
+)
+def test_reset_parser_rejects_conflicting_complete_canonical_sources(nested):
+    payload = {
+        "available": 2,
+        "known": True,
+        "redeem_capability": False,
+        "usage_resets": nested,
+    }
+
+    assert parse_usage_resets(payload) == UsageResetState(None, False, False)
+
+
+@pytest.mark.parametrize(
     ("payload", "expected"),
     [
         (None, UsageResetState(None, False, False)),

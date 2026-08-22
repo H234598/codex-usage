@@ -9478,3 +9478,21 @@ Datei erhalten bleibt; ein weiterer prüft gruppenlesbare Manifestdateien.
 
 Verifikation: **66 fokussierte Profile-Migrations-Tests**, Ruff,
 Python-Compile und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 803: Doppelte Reset-Kanonik vollständig abgleichen
+
+`parse_usage_resets()` erkannte ein vollständiges Top-Level-Resetobjekt, prüfte
+ein zusätzliches vollständiges `usage_resets`-Objekt aber nur über dessen
+`available`-Wert. Widersprüchliche Werte für `known` oder
+`redeem_capability` wurden dadurch als gültiger Zustand übernommen; ein
+malformierter boolescher Wert konnte ebenfalls durchrutschen.
+
+Vollständige doppelte Kanonik wird jetzt erneut als `UsageResetState` validiert
+und muss exakt dem bereits erkannten Zustand entsprechen. Abweichungen oder
+ungültige Felder fallen geschlossen auf den unbekannten Zustand zurück;
+partielle Legacy-Mappings behalten bisherige Kompatibilität. Regression deckt
+abweichendes `known`, abweichende Fähigkeit und ungültigen Typ ab.
+
+Verifikation: **20 fokussierte Usage-Reset-Tests**, **376 Reset-, State-,
+Model- und Snapshot-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
+keine Settings-Fenster gestartet.
