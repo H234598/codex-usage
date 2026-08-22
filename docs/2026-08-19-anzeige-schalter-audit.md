@@ -8584,3 +8584,19 @@ fett markiert. Regression prüft `&`, `<` und `>` über den echten Selector-
 Pfad. Format-/Forecast-Fokustests: 76/76; Python-Compile und
 `git diff --check` sauber. Reale `xlet-settings`-Smoke nach Reload lief ohne
 Traceback.
+
+## Runde 743: Panel-Editor überlebt Widget-Factory-Fehler
+
+`PanelSettingsList.open_add_edit_dialog()` ließ Ausnahmen aus
+`list_edit_factory()` bis in den GTK-Callback steigen. Ein einzelnes
+inkompatibles oder beschädigtes Feld konnte dadurch den kompletten
+Leisten-Editor abbrechen, obwohl die Tabelle selbst noch angezeigt werden
+konnte.
+
+Der Factory-Aufbau ist jetzt pro Feld geschützt. Ausnahme oder ein leeres
+Widget beendet nur den Dialog mit `None`; der bestehende `finally`-Pfad räumt
+das Dialogfenster auf. Regression deckt den Factory-Fehler ab.
+
+Verifikation: Panel-Tests 92/92; Format-/Forecast-Tests 79/79; relevante
+Settings-Launcher-Tests 39/39; Python-Compile, Ruff und `git diff --check`
+sauber.

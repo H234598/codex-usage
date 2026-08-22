@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "files" / "codex-usage@H234598"))
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
+import panel_settings_list as panel_settings_list_module  # noqa: E402
 from panel_settings_list import (  # noqa: E402
     Gtk,
     PanelSettingsList,
@@ -269,6 +270,28 @@ def test_panel_editor_destroys_dialog_after_run_error(monkeypatch) -> None:
         with pytest.raises(RuntimeError, match="dialog loop failed"):
             panel.open_add_edit_dialog()
         assert FailingDialog.last.destroyed is True
+    finally:
+        panel.destroy()
+
+
+def test_panel_editor_survives_widget_factory_error(monkeypatch) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+
+    def fail_factory(_column):
+        raise RuntimeError("editor factory failed")
+
+    monkeypatch.setattr(panel_settings_list_module, "list_edit_factory", fail_factory)
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        _Settings(3),
+    )
+
+    try:
+        assert panel.open_add_edit_dialog() is None
     finally:
         panel.destroy()
 

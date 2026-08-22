@@ -454,7 +454,12 @@ class PanelSettingsList(List, JSONSettingsBackend):
             widgets = []
             edit_columns = self._read_edit_columns()
             for index, column_definition in enumerate(self.columns):
-                widget = list_edit_factory(column_definition)
+                try:
+                    widget = list_edit_factory(column_definition)
+                except Exception:
+                    return None
+                if widget is None:
+                    return None
                 widgets.append(widget)
 
                 settings_box = Gtk.ListBox()
