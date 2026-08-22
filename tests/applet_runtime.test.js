@@ -3953,6 +3953,39 @@ test("missing forecast table does not inherit consumption panel visibility", () 
   assert.equal(applet._consumptionSettings.alpha["forecast-show-panel"], false);
 });
 
+test("panel forecast uses forecast-specific format instead of consumption format", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  applet._consumptionSettings = {
+    alpha: {
+      account: "alpha", amount: 1, unit: "hours", format: "compact",
+      "forecast-limit-window": "short", "forecast-format": "verbose",
+      "forecast-smoothing": "none", "forecast-show-panel": true,
+      "forecast-show-coverage-marker": false, "forecast-warn-amount": 0,
+    },
+  };
+  usage.cost_windows = [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 12, coverage: "complete",
+    estimated_seconds_to_exhaustion: 7200,
+  }];
+
+  const rendered = applet._panelForecastPart(usage, "panel");
+
+  assert.match(rendered.plain, /^Zeit bis Tokenende:/);
+
+  Object.assign(applet._consumptionSettings.alpha, {
+    "forecast-format": "custom",
+    "forecast-custom-format": "Forecast {duration}",
+    "forecast-baseline-enabled": true,
+    "forecast-baseline-minutes": 30,
+  });
+  usage.cost_windows[0].baseline_used_percent = 40;
+  const custom = applet._panelForecastPart(usage, "panel");
+
+  assert.match(custom.plain, /^Forecast 2h AW30m=40,0%$/);
+});
+
 test("combined token and credit rows round-trip without crossing table fields", () => {
   const applet = makeApplet();
   const accounts = [{account: "alpha"}];

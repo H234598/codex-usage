@@ -8785,12 +8785,24 @@ CodexUsageApplet.prototype = {
         );
         let windows = this._selectConsumptionWindows(usage.cost_windows, key, pool, query);
         let window = windows[0] || null;
+        let forecastFormat = row["forecast-format"] === undefined
+            ? (row.format || "compact") : row["forecast-format"];
+        let forecastCustomFormat = row["forecast-custom-format"] === undefined
+            ? (row["custom-format"] || "") : row["forecast-custom-format"];
+        let forecastShowCoverage = row["forecast-show-coverage-marker"] !== false;
         let forecastRow = Object.assign({}, row, {
             account: usage.account, "forecast-show-panel": true,
             "forecast-show-tooltip": true, "show-panel": true,
             "show-tooltip": true, "forecast-limit-window": key,
-            "forecast-format": row["forecast-format"] || row.format || "compact",
-            "forecast-show-coverage-marker": row["forecast-show-coverage-marker"] !== false
+            format: forecastFormat,
+            "custom-format": forecastCustomFormat,
+            "forecast-format": forecastFormat,
+            "forecast-custom-format": forecastCustomFormat,
+            "show-coverage-marker": forecastShowCoverage,
+            "baseline-enabled": row["forecast-baseline-enabled"] === true,
+            "baseline-minutes": row["forecast-baseline-minutes"] === undefined
+                ? 60 : row["forecast-baseline-minutes"],
+            "forecast-show-coverage-marker": forecastShowCoverage
         });
         return this._forecastWindowPart(window, forecastRow, surface, 100, true);
     },

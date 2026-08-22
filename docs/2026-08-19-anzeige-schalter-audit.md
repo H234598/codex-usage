@@ -6025,3 +6025,17 @@ Roundtrip und Forecast-Validierung. `node --test
 --test-name-pattern='forecast|token.end|metric-table switches|legacy consumption|combined token'
 tests/applet_runtime.test.js`: 23/23; Node-Syntaxcheck und `git diff --check`
 sauber.
+
+## Runde 545: Panel-Prognose nutzt eigene Formatierung
+
+`_panelForecastPart()` übergab die kombinierte Verbrauchszeile direkt an
+`_forecastWindowPart()`. Dadurch gewann das Hauptformat (`compact`) gegen ein
+konfiguriertes Tokenende-Format (`verbose` oder `custom`). Eigener Forecast-AW
+und Coverage wurden ebenfalls vom Hauptwert übernommen.
+
+Der Panel-Adapter bildet Forecast-Format, Custom-Text, Coverage und AW jetzt
+explizit auf die erwarteten unpräfixierten Felder ab. Regression prüft
+`verbose` gegen `compact` sowie Custom-Text mit Forecast-AW. `node --test
+--test-name-pattern='forecast|token.end|metric-table switches|legacy consumption|combined token|panel forecast'
+tests/applet_runtime.test.js`: 24/24; Node-Syntaxcheck und `git diff --check`
+sauber.
