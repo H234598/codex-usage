@@ -7991,3 +7991,14 @@ Der Schemafilter behält je Widgettyp nur unterstützte Properties und prüft
 Bool-Properties strikt. Regression deckt vier Widgettypen im Dialogpfad ab;
 `tests/test_panel_settings_list.py`: 74/74, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 693: Leisten-Add/Edit bleibt bei ungültigen Widgetwerten stabil
+
+Die geerbten `List.add_item()`- und `edit_item()`-Pfade reichten Dialogwerte
+ungeprüft an `Gtk.ListStore` weiter. Ein kaputter Default konnte dadurch beim
+Hinzufügen oder Doppelklick-Editieren `TypeError` oder `OverflowError` werfen.
+
+Panel-Add/Edit fängt diese Modellfehler jetzt ab; Edit stellt die Originalzeile
+wieder her. Regression deckt beide echten Bedienpfade ab;
+`tests/test_panel_settings_list.py`: 76/76, Python-Compile und
+`git diff --check` sauber.

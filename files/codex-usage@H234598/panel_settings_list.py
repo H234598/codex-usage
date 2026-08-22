@@ -497,6 +497,36 @@ class PanelSettingsList(List, JSONSettingsBackend):
             ]
         self._rebuild_tree(columns, rows)
 
+    def add_item(self, *args):
+        data = self.open_add_edit_dialog()
+        if data is None:
+            return
+        try:
+            self.model.append(data)
+        except (OverflowError, TypeError, ValueError):
+            return
+        self.list_changed()
+
+    def edit_item(self, *args):
+        model, tree_iter = self.content_widget.get_selection().get_selected()
+        if tree_iter is None:
+            return
+        data = self.open_add_edit_dialog(model[tree_iter])
+        if data is None:
+            return
+        original = list(model[tree_iter])
+        try:
+            for index, value in enumerate(data):
+                model[tree_iter][index] = value
+        except (OverflowError, TypeError, ValueError):
+            for index, value in enumerate(original):
+                try:
+                    model[tree_iter][index] = value
+                except (OverflowError, TypeError, ValueError):
+                    pass
+            return
+        self.list_changed()
+
     def list_changed(self, *args):
         """Save visible edits without discarding temporarily hidden slots."""
         stored_rows = self.get_value()

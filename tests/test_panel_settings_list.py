@@ -471,6 +471,61 @@ def test_panel_editor_strips_properties_unsupported_by_widget(
         panel.destroy()
 
 
+def test_panel_add_item_ignores_invalid_widget_values(monkeypatch) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    _Dialog.response = Gtk.ResponseType.OK
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {
+            "columns": [{
+                "id": "field",
+                "title": "Field",
+                "type": "integer",
+                "options": {"A": 1},
+                "default": 2**40,
+            }],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.add_item()
+        assert len(panel.model) == 0
+    finally:
+        _Dialog.response = None
+        panel.destroy()
+
+
+def test_panel_edit_item_restores_row_after_invalid_widget_value() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {
+            "columns": [{
+                "id": "field",
+                "title": "Field",
+                "type": "integer",
+                "options": {"A": 1},
+            }],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.model.append([1, 0])
+        panel.content_widget.get_selection().select_path("0")
+        panel.open_add_edit_dialog = lambda _info: [2**40, 0]
+        panel.edit_item()
+        assert list(panel.model[0]) == [1, 0]
+    finally:
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(
