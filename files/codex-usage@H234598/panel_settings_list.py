@@ -256,7 +256,10 @@ class PanelSettingsList(List, JSONSettingsBackend):
     def on_setting_changed(self, *_args) -> None:
         """Load only list rows whose values fit the GTK model schema."""
         self.model.clear()
-        rows = self.get_value()
+        try:
+            rows = self.get_value()
+        except (AttributeError, KeyError, TypeError, ValueError):
+            rows = []
         if not isinstance(rows, list):
             rows = []
         for row in rows:

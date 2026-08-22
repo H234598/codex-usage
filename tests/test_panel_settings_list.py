@@ -348,6 +348,31 @@ def test_panel_ignores_malformed_persisted_rows(rows) -> None:
         panel.destroy()
 
 
+def test_panel_ignores_settings_read_errors() -> None:
+    class BrokenRowsSettings(_Settings):
+        def get_value(self, key):
+            if key == "account-panel-settings":
+                raise KeyError(key)
+            return super().get_value(key)
+
+    settings = BrokenRowsSettings(3)
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert len(panel.model) == 0
+    finally:
+        panel.destroy()
+
+
 def test_panel_option_renderer_clears_stale_label_for_unknown_value() -> None:
     settings = _Settings(3)
     settings.values["panel-value-count"] = "1"

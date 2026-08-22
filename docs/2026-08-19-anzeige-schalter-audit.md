@@ -7853,3 +7853,14 @@ mit PID 0 auswählen und verschieben oder maximieren.
 Launcher und Lookup akzeptieren jetzt nur positive Dezimal-PIDs. Regression
 deckt PID 0 beim Start und bei der Fensterzuordnung ab; Settings-Fokusblock:
 15/15, Syntaxcheck und `git diff --check` sauber.
+
+## Runde 680: Leisten-Listener überlebt kaputten Settings-Read
+
+`PanelSettingsList.on_setting_changed()` rief `get_value()` ungefangen auf.
+Ein fehlender oder defekter JSON-Wert konnte damit aus dem Cinnamon-Listener
+herauslaufen und den Leisten-Editor abbrechen.
+
+Der Handler verwendet bei typischen Settings-Lese-Fehlern jetzt eine leere
+Zeilenliste und bleibt bedienbar. Regression deckt den Fehler bereits beim
+Widget-Aufbau ab; `tests/test_panel_settings_list.py`: 40/40, Python-Compile
+und `git diff --check` sauber.
