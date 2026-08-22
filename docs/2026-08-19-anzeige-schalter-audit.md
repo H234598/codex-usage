@@ -7687,3 +7687,16 @@ verfügbare Tabellen. Regression deckt `None`, String, gemischte Listen und
 nicht-dictionary Definitionen ab. Zusätzlich bleibt der unbekannte Optionswert
 `mode=99` fail-closed. `tests/test_format_table_selector.py`: 17/17;
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 663: Tokendelta verwirft beschädigte Copy-Spalten
+
+`Tokendelta` übernimmt die Spalten der Prozenttabelle. Bei einer beschädigten
+Basisdefinition wie `columns: null` oder unbekannten Spaltentypen brach der
+Aufbau vor GTK mit `AttributeError` beziehungsweise `KeyError` ab; damit blieb
+das Einstellungsmenü unöffnbar.
+
+Der Copy-Loader behandelt Basisdefinitionen und Spalten jetzt nur bei passendem
+Mapping-/Listen-Schema. Ungültige Spalten werden übersprungen, die dynamische
+Tokendelta-Spalte wird trotzdem ergänzt. Regression deckt `columns: null` und
+gemischte beschädigte Spalten ab. `tests/test_format_table_selector.py`:
+19/19; Python-Kompilierung und `git diff --check` sauber.

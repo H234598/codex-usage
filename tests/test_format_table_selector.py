@@ -294,6 +294,23 @@ def test_copy_table_reuses_percent_columns_but_keeps_own_description() -> None:
         widget.destroy()
 
 
+@pytest.mark.parametrize("columns", [None, [None, {"id": "bad", "type": "unknown"}]])
+def test_delta_copy_ignores_malformed_base_columns(columns) -> None:
+    settings = _Settings()
+    settings.settings["account-percent-styles"] = {"columns": columns, "value": []}
+    settings.settings["account-delta-styles"] = {"value": []}
+
+    widget = _BoundFormatList(
+        "account-delta-styles",
+        settings.settings["account-delta-styles"],
+        settings,
+    )
+    try:
+        assert [column["id"] for column in widget.columns] == ["dynamic"]
+    finally:
+        widget.destroy()
+
+
 def test_malformed_table_value_does_not_break_selector() -> None:
     settings = _Settings()
     settings.settings["table-a"]["value"] = None

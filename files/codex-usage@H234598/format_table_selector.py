@@ -10,7 +10,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
-from TreeListWidgets import List  # noqa: E402
+from TreeListWidgets import List, VARIABLE_TYPE_MAP  # noqa: E402
 
 
 class _BoundFormatList(List, JSONSettingsBackend):
@@ -20,10 +20,17 @@ class _BoundFormatList(List, JSONSettingsBackend):
         self.backend = "json"
         self.key = key
         self.settings = settings
+        if not isinstance(definition, dict):
+            definition = {}
         copy_from = definition.get("format-copy-of")
         if key == "account-delta-styles" or isinstance(copy_from, str):
             base_key = "account-percent-styles" if key == "account-delta-styles" else copy_from
-            base = settings.settings.get(base_key, {})
+            schema = getattr(settings, "settings", {})
+            if not isinstance(schema, dict):
+                schema = {}
+            base = schema.get(base_key, {})
+            if not isinstance(base, dict):
+                base = {}
             overrides = {
                 name: value for name, value in definition.items()
                 if name not in ("columns", "format-copy-of")
@@ -32,6 +39,10 @@ class _BoundFormatList(List, JSONSettingsBackend):
             definition.update(overrides)
             if key == "account-delta-styles":
                 definition["description"] = "Tokendelta"
+                base_columns = definition.get("columns", [])
+                if not isinstance(base_columns, list):
+                    base_columns = []
+                definition["columns"] = base_columns
                 definition["columns"].append({
                     "id": "dynamic",
                     "title": "Dynamisch",
@@ -42,6 +53,19 @@ class _BoundFormatList(List, JSONSettingsBackend):
                         "das verbleibende Limit erreicht."
                     ),
                 })
+        columns = definition.get("columns", [])
+        if not isinstance(columns, list):
+            columns = []
+        definition["columns"] = [
+            column for column in columns
+            if (
+                isinstance(column, dict)
+                and isinstance(column.get("id"), str)
+                and isinstance(column.get("title"), str)
+                and isinstance(column.get("type"), str)
+                and column["type"] in VARIABLE_TYPE_MAP
+            )
+        ]
         super().__init__(
             label=definition.get("description"),
             columns=definition.get("columns", []),
