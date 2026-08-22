@@ -221,6 +221,16 @@ def test_table_change_ignores_unknown_selection() -> None:
     assert selector.saved == []
 
 
+def test_table_change_ignores_selector_write_error() -> None:
+    selector = _selector()
+    selector.set_value = lambda _value: (_ for _ in ()).throw(RuntimeError("write failed"))
+
+    selector._on_table_changed()
+
+    assert selector.table_stack.visible == "account-date-styles"
+    assert selector._saving is False
+
+
 def test_setting_reload_falls_back_to_first_table_without_writing() -> None:
     selector = _selector()
     selector.get_value = lambda: "missing"
@@ -439,6 +449,24 @@ def test_format_table_ignores_table_read_error() -> None:
         assert len(selector._tables["table-a"].model) == 0
     finally:
         selector.destroy()
+
+
+def test_format_table_list_ignores_write_error() -> None:
+    class BrokenWriteSettings(_Settings):
+        def set_value(self, key, value):
+            if key == "table-a":
+                raise RuntimeError(key)
+            return super().set_value(key, value)
+
+    settings = BrokenWriteSettings()
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        widget.model.append(["value"])
+        widget.list_changed()
+        assert widget._saving is False
+    finally:
+        widget.destroy()
 
 
 def test_format_table_ignores_integer_overflow_in_persisted_row() -> None:

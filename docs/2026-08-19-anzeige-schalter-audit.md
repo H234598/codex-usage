@@ -8211,3 +8211,15 @@ rendern die Fallback-Tabelle ohne Live-Listener. Regression deckt die
 Listener-Registrierung am Selector und an der Tabelle ab;
 `tests/test_format_table_selector.py`: 32/32, Python-Compile, Ruff und
 `git diff --check` sauber.
+
+## Runde 713: Formatierungs-Writes setzen Saving-Zustand zurück
+
+Dropdown-Wechsel und geerbtes Listen-Speichern reichten Backend-Exceptions
+ungefangen weiter. Ein fehlgeschlagener Write konnte dadurch den GTK-Callback
+brechen und `_saving` dauerhaft auf `True` lassen.
+
+Selector und gebundene Formatierungsliste fangen normale Backend-Exceptions
+jetzt ab, setzen `_saving` zurück und aktualisieren die UI kontrolliert.
+Regression deckt Dropdown- und Tabellen-Write ab;
+`tests/test_format_table_selector.py`: 34/34, Python-Compile, Ruff und
+`git diff --check` sauber.

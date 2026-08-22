@@ -156,6 +156,21 @@ class _BoundFormatList(List, JSONSettingsBackend):
         except Exception:
             return
 
+    def list_changed(self, *args):
+        data = []
+        for row in self.model:
+            row_info = {
+                column["id"]: row[index]
+                for index, column in enumerate(self.columns)
+            }
+            data.append(row_info)
+        try:
+            self.set_value(data)
+        except Exception:
+            self._saving = False
+            return
+        self.update_button_sensitivity()
+
 
 class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
     """Render formatting tables exclusively, selected by a centered dropdown."""
@@ -236,7 +251,10 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
             return
         self._show_table(table_key)
         if not self._saving:
-            self.set_value(table_key)
+            try:
+                self.set_value(table_key)
+            except Exception:
+                self._saving = False
 
     def _ensure_table(self, table_key):
         widget = self._tables.get(table_key)
