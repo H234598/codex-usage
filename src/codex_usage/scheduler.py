@@ -733,7 +733,7 @@ def _has_unexpired_window_reset_discontinuity(
             abs((current_reset_at - previous_reset_at).total_seconds())
             > DIRECT_RESET_DISCONTINUITY_SECONDS
         )
-    except (AttributeError, OverflowError, TypeError, ValueError):
+    except Exception:
         # Unknown reset ordering must never retain older, possibly exhausted,
         # values.
         return False

@@ -7128,3 +7128,14 @@ Stabilisierungsvergleich und verwendet unverändert den aktuellen Abruf.
 Regression deckt einen fehlerhaften `__sub__`-Vergleich ab. `pytest -q
 tests/test_scheduler.py`: 211/211; Ruff, Mypy, Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 620: Reset-Diskontinuität bei fehlerhaftem Datetime-Vergleich fail-closed
+
+`_has_unexpired_window_reset_discontinuity()` prüfte alte und aktuelle
+Reset-Zeitpunkte nur gegen ausgewählte Standardfehler. Ein fehlerhafter
+Datetime-Operator konnte die authentisierte Fenster-Stabilisierung abbrechen.
+
+Die Diskontinuitätsprüfung verwirft jetzt jeden normalen Vergleichsfehler und
+behält dadurch keine möglicherweise erschöpften alten Limits. Regression
+deckt einen fehlerhaften `<=`-Vergleich ab. `pytest -q tests/test_scheduler.py`:
+212/212; Ruff, Mypy, Python-Kompilierung und `git diff --check` sauber.

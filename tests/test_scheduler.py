@@ -239,6 +239,24 @@ def test_authenticated_stabilization_treats_failing_capture_subtraction_as_unusa
     ) is current
 
 
+def test_reset_discontinuity_treats_failing_datetime_comparison_as_unknown():
+    timezone = ZoneInfo("UTC")
+
+    assert _has_unexpired_window_reset_discontinuity(
+        LimitWindow(
+            name="5h",
+            reset_at=_RaisingComparisonDatetime(
+                2026, 8, 16, 12, 0, tzinfo=timezone
+            ),
+        ),
+        LimitWindow(
+            name="5h",
+            reset_at=datetime(2026, 8, 16, 11, 0, tzinfo=timezone),
+        ),
+        reference_at=datetime(2026, 8, 16, 10, 0, tzinfo=timezone),
+    ) is False
+
+
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(
     monkeypatch,
 ):
