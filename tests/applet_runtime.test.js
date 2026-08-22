@@ -5232,6 +5232,9 @@ test("settings placement does not wait forever for a stuck wmctrl process", () =
   assert.equal(callbacks[1](), true);
   applet.on_applet_removed_from_panel();
   assert.equal(forced, 2);
+  assert.equal(applet._settingsPlacementProcess, null);
+  assert.equal(applet._settingsWindowLookupProcess, null);
+  assert.equal(applet._settingsMaximizeId, 0);
 });
 
 test("health action reports command and backend failures without retaining work", () => {

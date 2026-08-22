@@ -7833,3 +7833,13 @@ best-effort und verwendet sonst `Gio.Subprocess.new()`. Regression prüft den
 Fallback inklusive PID-Weitergabe; fokussierter Settings-Block: 14/14,
 JavaScript-Syntax und `git diff --check` sauber. Nach Install/Reload öffnete
 der echte Cinnamon-Aufruf das Settings-Fenster in 265 ms.
+
+## Runde 678: Settings-Cleanup nach Applet-Entfernung verifiziert
+
+Der Settings-Maximierer besitzt eigene Timer-, Placement- und Lookup-Prozesse.
+Ohne explizite Regression blieb möglich, dass beim Cinnamon-Reload nur der
+Timer, nicht aber beide Kinder freigegeben wurden.
+
+Der bestehende Removal-Test prüft jetzt zusätzlich `null` für beide Prozesse
+und `0` für den Timer. Fokussierter Settings-Block: 14/14; Cleanup-Test grün,
+Syntaxcheck und `git diff --check` sauber. Keine Produktcodeänderung nötig.
