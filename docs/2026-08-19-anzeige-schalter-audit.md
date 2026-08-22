@@ -7896,3 +7896,13 @@ Slotnummern werden jetzt einmalig geschützt geparst; ungültige oder überlange
 IDs fallen weg. Regression deckt 5000 Ziffern ab;
 `tests/test_panel_settings_list.py`: 44/44, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 684: Leisten-Höhe wird GTK-sicher normalisiert
+
+Die Editor-Metadaten akzeptierten `NaN`, Unendlich, negative Höhen und
+gebrochene Zahlen. Diese Werte konnten `Gtk.set_size_request()` beim Aufbau
+der Einstellungen mit Typ- oder Wertefehler abbrechen lassen.
+
+Höhe wird jetzt auf endliche, nicht-negative Integer bis 10000 begrenzt.
+Regression deckt alle vier Formen ab; `tests/test_panel_settings_list.py`:
+48/48, Python-Compile und `git diff --check` sauber.

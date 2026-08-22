@@ -212,8 +212,19 @@ class PanelSettingsList(List, JSONSettingsBackend):
         if description is not None and not isinstance(description, str):
             description = None
         height = info.get("height", 220)
-        if isinstance(height, bool) or not isinstance(height, (int, float)):
+        try:
+            valid_height = (
+                not isinstance(height, bool)
+                and isinstance(height, (int, float))
+                and math.isfinite(height)
+                and height >= 0
+            )
+        except (OverflowError, TypeError):
+            valid_height = False
+        if not valid_height:
             height = 220
+        else:
+            height = min(int(height), 10000)
         show_buttons = info.get("show-buttons", False)
         if not isinstance(show_buttons, bool):
             show_buttons = False

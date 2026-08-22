@@ -309,6 +309,26 @@ def test_panel_malformed_metadata_uses_safe_defaults(field, value) -> None:
         panel.destroy()
 
 
+@pytest.mark.parametrize("height", [float("nan"), float("inf"), -1, 220.5])
+def test_panel_height_metadata_is_finite_and_integer(height) -> None:
+    settings = _Settings(3)
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "height": height,
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        scrollbox = panel.get_children()[0]
+        assert scrollbox.get_size_request()[1] == 220
+    finally:
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(
