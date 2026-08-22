@@ -2916,10 +2916,11 @@ CodexUsageApplet.prototype = {
 
     _normalizeCreditRow: function(row, account) {
         if (!row || typeof row !== "object" || !account ||
-            typeof row["show-panel"] !== "boolean" || typeof row["show-tooltip"] !== "boolean" ||
+            typeof row["show-tooltip"] !== "boolean" ||
             typeof row["hide-when-zero"] !== "boolean") {
             return null;
         }
+        let showPanel = row["show-panel"] === undefined ? false : row["show-panel"];
         let format = this._strictText(row.format, 16);
         let smoothing = row.smoothing === undefined ? "ema-20" : this._strictText(row.smoothing, 16);
         let baselineMinutes = row["baseline-minutes"] === undefined
@@ -2934,6 +2935,7 @@ CodexUsageApplet.prototype = {
         let consumptionCustomFormat = row["consumption-custom-format"] === undefined
             ? "" : row["consumption-custom-format"];
         if (["compact", "verbose", "custom"].indexOf(format) === -1 ||
+            typeof showPanel !== "boolean" ||
             ["none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"].indexOf(smoothing) === -1 ||
             !Number.isInteger(consumptionAmount) || consumptionAmount < 1 || consumptionAmount > 365 ||
             (row["show-coverage-marker"] !== undefined && typeof row["show-coverage-marker"] !== "boolean") ||
@@ -2951,7 +2953,7 @@ CodexUsageApplet.prototype = {
             typeof consumptionCustomFormat !== "string" || consumptionCustomFormat.length > 200) {
             return null;
         }
-        return { account: account, "show-panel": row["show-panel"], "show-tooltip": row["show-tooltip"],
+        return { account: account, "show-panel": showPanel, "show-tooltip": row["show-tooltip"],
             format: format, "custom-format": this._strictText(customFormat, 200),
             smoothing: smoothing,
             "hide-when-zero": row["hide-when-zero"],
@@ -2992,7 +2994,8 @@ CodexUsageApplet.prototype = {
         let customFormat = row["custom-format"] === undefined
             ? ""
             : this._strictText(row["custom-format"], 160);
-        let forecastShowPanel = row["forecast-show-panel"] === undefined ? row["show-panel"] : row["forecast-show-panel"];
+        let showPanel = row["show-panel"] === undefined ? false : row["show-panel"];
+        let forecastShowPanel = row["forecast-show-panel"] === undefined ? showPanel : row["forecast-show-panel"];
         let forecastShowTooltip = row["forecast-show-tooltip"] === undefined ? row["show-tooltip"] : row["forecast-show-tooltip"];
         let forecastFormat = row["forecast-format"] === undefined ? "compact" : this._strictText(row["forecast-format"], 16);
         let forecastCustomFormat = row["forecast-custom-format"] === undefined ? "" : this._strictText(row["forecast-custom-format"], 160);
@@ -3014,7 +3017,7 @@ CodexUsageApplet.prototype = {
         let forecastShowCoverage = row["forecast-show-coverage-marker"] === undefined
             ? true : row["forecast-show-coverage-marker"];
         if (
-            typeof row["show-panel"] !== "boolean" ||
+            typeof showPanel !== "boolean" ||
             typeof row["show-tooltip"] !== "boolean" ||
             typeof baselineEnabled !== "boolean" ||
             !Number.isInteger(baselineMinutes) || baselineMinutes < 0 || baselineMinutes > 9999 ||
@@ -3043,7 +3046,7 @@ CodexUsageApplet.prototype = {
         }
         return {
             account: account,
-            "show-panel": row["show-panel"],
+            "show-panel": showPanel,
             "show-tooltip": row["show-tooltip"],
             "forecast-show-panel": forecastShowPanel,
             "forecast-show-tooltip": forecastShowTooltip,
@@ -3117,9 +3120,10 @@ CodexUsageApplet.prototype = {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
+        let showPanel = row["show-panel"] === undefined ? false : row["show-panel"];
         let format = this._strictText(row.format, 16);
         if (
-            typeof row["show-panel"] !== "boolean" ||
+            typeof showPanel !== "boolean" ||
             typeof row["show-tooltip"] !== "boolean" ||
             typeof row["hide-when-zero"] !== "boolean" ||
             typeof row["show-unknown"] !== "boolean" ||
@@ -3129,7 +3133,7 @@ CodexUsageApplet.prototype = {
         }
         return {
             account: account,
-            "show-panel": row["show-panel"],
+            "show-panel": showPanel,
             "show-tooltip": row["show-tooltip"],
             "hide-when-zero": row["hide-when-zero"],
             "show-unknown": row["show-unknown"],

@@ -4369,6 +4369,24 @@ test("metric-table switches reject non-boolean values independently", () => {
   }
 });
 
+test("modern metric tables accept rows without obsolete panel visibility fields", () => {
+  const applet = makeApplet();
+  const rows = [
+    [applet._defaultConsumptionRow("alpha"), applet._normalizeConsumptionRow],
+    [applet._defaultForecastRow("alpha"), applet._normalizeForecastRow],
+    [applet._defaultCreditRow("alpha"), applet._normalizeCreditRow],
+    [applet._defaultCreditConsumptionRow("alpha"), applet._normalizeCreditConsumptionRow],
+    [applet._defaultResetRow("alpha"), applet._normalizeResetRow],
+  ];
+
+  for (const [row, normalize] of rows) {
+    delete row["show-panel"];
+    const normalized = normalize.call(applet, row, "alpha");
+    assert.ok(normalized, `${normalize.name} rejected schema-shaped row`);
+    assert.equal(normalized["show-panel"], false, `${normalize.name} retained panel visibility`);
+  }
+});
+
 test("combined consumption rows reject malformed forecast-only fields", () => {
   const applet = makeApplet();
   const base = Object.assign(applet._defaultConsumptionRow("alpha"), {

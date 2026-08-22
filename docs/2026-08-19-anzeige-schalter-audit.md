@@ -6079,3 +6079,17 @@ Fokustests: `pytest -q tests/test_format_table_selector.py
 tests/test_forecast_table_selector.py tests/test_panel_settings_list.py
 tests/test_help_page.py`: 29/29. Keine neue reproduzierbare Fehlfunktion;
 Worktree und installierte Applet-Datei bleiben synchron.
+
+## Runde 549: Obsolete Panel-Felder in modernen Tabellen
+
+Die Tabellen `Limitverbrauch`, `Creditstand`, `Creditverbrauch` und `Resets`
+zeigen keine alten „In Liste anzeigen“-Felder mehr. Cinnamon `List.list_changed()`
+schreibt deshalb Zeilen ohne `show-panel`. Die JavaScript-Normalizer für
+Verbrauch, Credits und Resets verlangten das Feld trotzdem und lösten beim
+Bearbeiten einen Reload der Accountdaten aus; gültige Änderungen konnten so
+verschwinden.
+
+Die Normalizer akzeptieren fehlendes `show-panel` jetzt als `false`, behalten
+explizite alte Boolwerte aber unverändert. Regression prüft alle fünf modernen
+Tabellenformen. Fokustest `node --test --test-name-pattern='credit|consumption|reset|metric-table|modern metric|account row mergers' tests/applet_runtime.test.js`:
+67/67; Node-Syntaxcheck und `git diff --check` sauber.
