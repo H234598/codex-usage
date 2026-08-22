@@ -336,7 +336,7 @@ def run_profile_job(job_id: str) -> int:
             error=None,
         )
         return 0 if current["status"] == "cancelled" else 1
-    if started["status"] != "running":
+    if started["status"] != "running" or started["worker_pid"] != os.getpid():
         return 1
     account = Account(
         id=cast(str, job["account_id"]),

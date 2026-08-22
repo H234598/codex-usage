@@ -769,6 +769,48 @@ def test_profile_job_worker_preserves_options_and_cancel_group(tmp_path, monkeyp
     assert profile_jobs.profile_job_status(created["job_id"])["status"] == "completed"
 
 
+def test_profile_job_worker_does_not_reclaim_running_job_from_other_worker(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "state"
+    monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
+
+    class FakeProcess:
+        pid = 4321
+
+    monkeypatch.setattr(
+        profile_jobs.subprocess, "Popen", lambda *args, **kwargs: FakeProcess()
+    )
+    created = profile_jobs.create_profile_job(
+        account_id="alpha",
+        label="Alpha",
+        browser="firefox",
+        backend="direct",
+        profile_dir=str(tmp_path / "profile"),
+        expected_backend_account_id=None,
+        config_path=tmp_path / "config.toml",
+        json_events=False,
+    )
+    foreign_pid = os.getpid() + 1
+    profile_jobs._update_job(
+        created["job_id"],
+        expected_status="queued",
+        status="running",
+        worker_pid=foreign_pid,
+    )
+    login_calls = []
+    monkeypatch.setattr(
+        "codex_usage.profile_login.run_device_login",
+        lambda *args, **kwargs: login_calls.append(True)
+        or DeviceLoginResult(True, "alpha"),
+    )
+    monkeypatch.setattr(profile_jobs, "_verify_profile_job_completion", lambda job: True)
+
+    assert profile_jobs.run_profile_job(created["job_id"]) == 1
+    assert login_calls == []
+    assert profile_jobs._read_job(created["job_id"])["status"] == "running"
+
+
 def test_profile_job_status_exposes_events_only_while_job_is_live(tmp_path, monkeypatch):
     state = tmp_path / "state"
     monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)

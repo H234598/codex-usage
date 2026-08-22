@@ -9401,3 +9401,21 @@ Fehler und das Ausbleiben des Profilverzeichnisses.
 Verifikation: **26 fokussierte Profile-Layout-Tests**, **90 Profile-Layout- und
 -Migrations-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 798: Profil-Job nicht durch zweiten Worker übernehmen
+
+`run_profile_job()` behandelte das Ergebnis eines fehlgeschlagenen
+`expected_status="queued"`-Claims mit bereits vorhandenem Status
+`running` trotzdem als eigenen Start. Ein zweiter Worker konnte dadurch
+denselben Login parallel ausführen und Job-Metadaten beziehungsweise
+Accountzustand überschreiben.
+
+Der Worker akzeptiert den Übergang zu `running` jetzt nur, wenn die gespeicherte
+`worker_pid` der eigenen Prozess-ID entspricht. Fremde laufende Jobs werden mit
+Status `1` verlassen; Manifest und erster Worker bleiben unverändert.
+Regression deckt den Fremd-PID-Pfad ab und stellt sicher, dass kein Login
+gestartet wird.
+
+Verifikation: **86 fokussierte Profile-Job-Tests**, **135 Profile-Job-, CLI-
+und Login-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
