@@ -6963,3 +6963,18 @@ Snapshot-Pfade sowie Profil-Serien und Migrationsmanifest.
 Einträge; Produktionshandler blieben unverändert. `pytest -q
 tests/test_cli.py`: 117/117. Ruff, Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 609: FIFO-Blockade beim Sidecar-Schutz verhindern
+
+`_secure_related_files()` prüft WAL-/SHM-Sidecars über
+`_chmod_private_regular()`. Die Funktion öffnete Sonderdateien bisher nur
+mit `O_RDONLY|O_NOFOLLOW|O_CLOEXEC`. Ein als Sidecar platzierter FIFO konnte
+den Prozess dadurch beim Öffnen blockieren, bevor der Nicht-Regular-Dateityp
+erkannt wurde.
+
+`_chmod_private_regular()` verwendet jetzt zusätzlich `O_NONBLOCK`, sofern
+die Plattform es anbietet. Ein FIFO wird weiterhin sicher als ungültige
+Sidecar-Datei abgewiesen, blockiert aber nicht. Der Regressionstest prüft das
+Flag vor dem echten Öffnen; er war vor dem Fix rot und ist danach grün.
+`pytest -q tests/test_history.py`: 84/84. Ruff, Python-Kompilierung und
+`git diff --check` sauber.

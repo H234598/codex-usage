@@ -505,6 +505,8 @@ def _chmod_private_regular(path: Path, *, label: str) -> None:
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     try:
         fd = os.open(path, flags)
     except OSError as exc:

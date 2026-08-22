@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
@@ -584,6 +585,27 @@ def test_history_store_rejects_hard_linked_sqlite_sidecar(tmp_path):
 
     with pytest.raises(ValueError, match="hard-linked"):
         store._secure_related_files()
+
+
+@pytest.mark.skipif(not hasattr(os, "O_NONBLOCK"), reason="O_NONBLOCK unavailable")
+def test_history_sidecar_regular_check_opens_fifo_nonblocking(tmp_path, monkeypatch):
+    target = tmp_path / "history.sqlite3-wal"
+    os.mkfifo(target)
+    real_open = history_module.os.open
+    flags_seen = []
+
+    def guarded_open(path, flags, *args):
+        if path == target:
+            flags_seen.append(flags)
+            assert flags & os.O_NONBLOCK
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(history_module.os, "open", guarded_open)
+
+    with pytest.raises(ValueError, match="history sidecar"):
+        history_module._chmod_private_regular(target, label="history sidecar")
+
+    assert flags_seen
 
 
 def test_history_store_rejects_database_symlink_before_chmod(tmp_path):
