@@ -5769,3 +5769,14 @@ Vor jedem Unlink werden jetzt Typ, Inode, Gerät, Besitzer, Modus und Linkanzahl
 gegen die Enumeration geprüft; Abweichung bricht fail-closed. Regression deckt
 ein ersetztes `activate` ab. `pytest -q tests/test_integration_installer.py`:
 135/135; Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 524: `lib64`-Symlink vor Installer-Unlink revalidiert
+
+Auch der optionale `lib64`-Symlink wurde bisher nach einer einzelnen
+`stat()`-Prüfung direkt per Dateiname gelöscht. Ein Austausch zwischen Prüfung
+und Unlink konnte dadurch einen fremden Symlink treffen.
+
+Vor dem Unlink werden jetzt Identität und Linkanzahl erneut geprüft;
+Abweichungen brechen fail-closed. Regression deckt einen ersetzten `lib64`-
+Symlink ab. `pytest -q tests/test_integration_installer.py`: 136/136; Ruff,
+Python-Compile und `git diff --check` sauber.

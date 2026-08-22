@@ -484,6 +484,37 @@ def test_remove_activation_files_rejects_replaced_entry_before_unlink(
     assert activation.read_text(encoding="utf-8") == "foreign"
 
 
+def test_remove_activation_files_rejects_replaced_lib64_before_unlink(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    (tmp_path / "bin").mkdir(mode=0o700)
+    lib64 = tmp_path / "lib64"
+    lib64.symlink_to("owned-target")
+    replacement = tmp_path / "foreign-target"
+    replacement.mkdir(mode=0o700)
+    calls = 0
+    original_stat = os.stat
+
+    def replace_before_lib64_unlink(name, *args, **kwargs):
+        nonlocal calls
+        if name == "lib64" and kwargs.get("dir_fd") is not None:
+            calls += 1
+            if calls == 2:
+                lib64.unlink()
+                lib64.symlink_to(replacement.name)
+        return original_stat(name, *args, **kwargs)
+
+    monkeypatch.setattr(integration_installer.os, "stat", replace_before_lib64_unlink)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._remove_activation_files(tmp_path)
+
+    assert calls == 2
+    assert lib64.is_symlink()
+    assert lib64.resolve() == replacement
+
+
 def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path):
     root = tmp_path / "foreign"
     root.mkdir(mode=0o700)

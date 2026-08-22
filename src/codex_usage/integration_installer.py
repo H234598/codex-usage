@@ -1824,6 +1824,18 @@ def _remove_activation_files(venv_root: Path) -> None:
             pass
         else:
             if stat.S_ISLNK(lib64_item.st_mode):
+                expected_lib64 = _provisional_from_stat(lib64_item)
+                try:
+                    current_lib64 = os.stat(
+                        "lib64", dir_fd=venv_fd, follow_symlinks=False
+                    )
+                except OSError:
+                    _fail()
+                if (
+                    _provisional_from_stat(current_lib64) != expected_lib64
+                    or current_lib64.st_nlink != lib64_item.st_nlink
+                ):
+                    _fail()
                 os.unlink("lib64", dir_fd=venv_fd)
     except IntegrationInstallError:
         raise
