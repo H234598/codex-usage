@@ -4765,6 +4765,53 @@ test("settings window lookup matches exact xlet-settings pid", () => {
   );
 });
 
+test("settings window lookup tolerates slow xlet-settings startup", () => {
+  const callbacks = [];
+  const subprocesses = [];
+  let lookups = 0;
+  const applet = makeApplet((runtime) => {
+    runtime.currentMonitor = {x: 1920, y: 0};
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      const process = {
+        argv: args[0],
+        force_exit() {},
+        wait_check_async(_cancellable, callback) {
+          this.waitCallback = callback;
+        },
+        wait_check_finish() {
+          return true;
+        },
+      };
+      subprocesses.push(process);
+      return process;
+    };
+  });
+  applet._readBoundedProcessOutput = (_process, callback) => {
+    lookups += 1;
+    callback(
+      lookups >= 12 ? "0x08400007  0 3089499 fedora Codex Usage" : "",
+      "",
+      null
+    );
+  };
+
+  applet._scheduleSettingsMaximize("3089499");
+  for (let index = 0; index < 12; index += 1) {
+    assert.equal(callbacks[0](), true);
+  }
+  assert.equal(lookups, 12);
+  assert.equal(JSON.stringify(subprocesses[11].argv), JSON.stringify(["wmctrl", "-lp"]));
+
+  assert.equal(callbacks[0](), true);
+  assert.equal(JSON.stringify(subprocesses[12].argv), JSON.stringify([
+    "wmctrl", "-i", "-r", "0x08400007", "-e", "0,1920,0,-1,-1",
+  ]));
+});
+
 test("settings maximization targets the matching window id", () => {
   const callbacks = [];
   const subprocesses = [];

@@ -7398,3 +7398,20 @@ vortäuschen.
 Die Anzeige verlangt jetzt zusätzlich `cache_invalidated !== true` für `ja`.
 Regression prüft invalidierten `partial`-Status und erwartet `Login nein`.
 Fokus 116/116; `make applet-check`: 475/475 sauber.
+
+## Runde 643: Langsamer Settings-Start bleibt sichtbar
+
+Der PID-gezielte Lookup des `xlet-settings`-Fensters brach bisher nach zwölf
+250-ms-Ticks ab. Das sind nur drei Sekunden. Beim kalten Start der großen
+Cinnamon-Settings-GUI kann das Fenster später erscheinen; danach blieb es auf
+seiner gespeicherten Position außerhalb des sichtbaren Monitors. Für den
+Benutzer sah das wie ein nicht öffnendes Einstellungsmenü aus.
+
+Der Lookup wartet jetzt bis zu 40 Ticks (zehn Sekunden), ohne das sichere
+PID-Matching oder die Generation-/Cleanup-Guards zu ändern. Eine Regression
+simuliert ein Fenster, das erst beim zwölften Lookup auftaucht, und prüft
+anschließendes Verschieben per Fenster-ID.
+
+Fokustest `node --test --test-name-pattern='settings (launcher|window
+lookup|maximization|placement)|stale settings|native Cinnamon configure'
+tests/applet_runtime.test.js`: 14/14. `git diff --check` sauber.

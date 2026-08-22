@@ -37,6 +37,7 @@ const FAST_MODE_STATE_PATH = "/home/teladi/.local/state/codex-master-mcp/fast-mo
 const EMERGENCY_DISPLAY_OVERRIDE_PATH = "/home/teladi/.local/state/codex-master-mcp/codex-usage-emergency-overrides.json";
 const FAST_MODE_ICON = "fast-mode-warning-shield-outline.svg";
 const MAX_CAPTURE_FUTURE_MS = 5 * 60 * 1000;
+const SETTINGS_WINDOW_LOOKUP_MAX_ATTEMPTS = 40;
 const MENU_SPACER = "────────";
 const PANEL_VALUE_DEFAULT_COUNT = 20;
 const PANEL_VALUE_MAX_COUNT = 64;
@@ -10988,7 +10989,7 @@ CodexUsageApplet.prototype = {
             if (!positioned) {
                 if (targetPid && !targetWindowId) {
                     lookupAttempts += 1;
-                    if (lookupAttempts >= 12) {
+                    if (lookupAttempts >= SETTINGS_WINDOW_LOOKUP_MAX_ATTEMPTS) {
                         targetUnavailable = true;
                         lookupPending = false;
                         this._terminateChild(
