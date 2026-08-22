@@ -191,6 +191,7 @@ function makeApplet(onReady) {
   applet._deviceLoginLiveAccount = "";
   applet._profileJobResumeQueue = [];
   applet._profileJobPollingAccount = "";
+  applet._profileJobCommandAccount = "";
   applet._deviceLoginPollId = 0;
   applet._deviceLoginPollGeneration = 0;
   applet._profilePendingAccounts = {};
@@ -761,6 +762,7 @@ test("cancelled profile job status requeues its persistent poll", () => {
 
   assert.equal(forced, 1);
   assert.equal(applet._profileJobPollingAccount, "");
+  assert.equal(applet._profileJobCommandAccount, "");
   assert.deepEqual(applet._profileJobResumeQueue, ["alpha"]);
   assert.equal(applet._deviceLoginPollGeneration, 6);
   assert.equal(applet._deviceLoginPollId, 0);
@@ -795,6 +797,31 @@ test("auxiliary completion resumes queued profile poll", () => {
   ]);
   assert.equal(applet._profileJobPollingAccount, "alpha");
   assert.equal(applet._auxCommand, "profile-job-status");
+});
+
+test("cancelled profile job cancel request requeues target account", () => {
+  let forced = 0;
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() {
+        return {force_exit() { forced += 1; }};
+      },
+    });
+  });
+  applet._readBoundedProcessOutput = () => {};
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._deviceLoginJobs.alpha = "job-1234567890abcdef1234567890abcdef";
+
+  applet._cancelProfileJob("alpha", true);
+  assert.equal(applet._auxCommand, "profile-job-cancel");
+
+  applet._cancelAuxProcess();
+
+  assert.equal(forced, 1);
+  assert.equal(applet._profileJobPollingAccount, "");
+  assert.equal(applet._profileJobCommandAccount, "");
+  assert.deepEqual(applet._profileJobResumeQueue, ["alpha"]);
 });
 
 test("persistent profile job resume drains every active job", () => {
@@ -7554,6 +7581,7 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   applet._profileJobResumeQueue = ["alpha"];
   applet._profilePendingAccounts = { alpha: true };
   applet._profileJobPollingAccount = "alpha";
+  applet._profileJobCommandAccount = "alpha";
   applet._deviceLoginPollGeneration = 4;
   applet._deviceLoginPollId = 14;
   applet._sources._deviceLoginPollId = 14;
@@ -7585,6 +7613,7 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   assert.deepEqual(applet._profileJobResumeQueue, []);
   assert.deepEqual(applet._profilePendingAccounts, {});
   assert.equal(applet._profileJobPollingAccount, "");
+  assert.equal(applet._profileJobCommandAccount, "");
   assert.equal(applet._deviceLoginPollGeneration, 5);
   assert.equal(applet._deviceLoginPollId, 0);
   assert.equal(applet._timerId, 0);

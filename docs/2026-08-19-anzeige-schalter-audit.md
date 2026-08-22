@@ -6479,3 +6479,17 @@ nächsten Profiljob automatisch wieder auf. Regression prüft echten Status-
 Spawn, Abbruch und Fortsetzung nach Auxiliary-Abschluss. Fokustest `node --test
 --test-name-pattern='cancelled profile job status requeues its persistent poll|auxiliary completion resumes queued profile poll|profile job discovery|persistent profile job|live device login cleanup|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
 12/12; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 578: Profiljob-Cancel nach Auxiliary-Abbruch fortsetzen
+
+Auch `profile cancel` war bisher nicht als Profiljob-Command markiert. Wurde
+der Cancel-Request durch einen anderen Auxiliary-Befehl ersetzt, blieben
+Job-ID, Löschmarker und ggf. Poll-Account ohne Fortsetzung zurück.
+
+Status- und Cancel-Commands verfolgen jetzt ihren Account separat. Abbruch
+requeued den betroffenen persistenten Job, invalidiert Poll-Timer/Generation
+und setzt Tracking zurück; der nächste Auxiliary-Abschluss startet den Status-
+Poll erneut. Safe-Mode verwirft das Tracking gemeinsam mit seinen Queues.
+Regression prüft echten Cancel-Spawn und Abbruch. Fokustest `node --test
+--test-name-pattern='cancelled profile job status requeues its persistent poll|auxiliary completion resumes queued profile poll|cancelled profile job cancel request requeues target account|profile job discovery|persistent profile job|live device login cleanup|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
+14/14; Node-Syntaxcheck und `git diff --check` sauber.

@@ -237,6 +237,7 @@ CodexUsageApplet.prototype = {
         this._profileJobsResumeRequested = false;
         this._profileJobResumeQueue = [];
         this._profileJobPollingAccount = "";
+        this._profileJobCommandAccount = "";
         this._deviceLoginPollId = 0;
         this._deviceLoginPollGeneration = 0;
         this._profilePendingAccounts = Object.create(null);
@@ -697,6 +698,7 @@ CodexUsageApplet.prototype = {
             }
         }
         this._profileJobPollingAccount = "";
+        this._profileJobCommandAccount = "";
         this._removeSource("_timerId");
         this._removeSource("_displayTimerId");
         this._removeSource("_staleCheckId");
@@ -4964,18 +4966,25 @@ CodexUsageApplet.prototype = {
         let deviceLogin = argv.indexOf("device-login") !== -1;
         let profileJobs = false;
         let profileJobStatus = false;
+        let profileJobCancel = false;
         for (let index = 0; index < argv.length - 1; index++) {
             if (argv[index] === "profile" && argv[index + 1] === "jobs") {
                 profileJobs = true;
             } else if (argv[index] === "profile" && argv[index + 1] === "job-status") {
                 profileJobStatus = true;
+            } else if (argv[index] === "profile" && argv[index + 1] === "cancel") {
+                profileJobCancel = true;
             }
         }
         this._auxCommand = serviceEnable
             ? "service-enable"
             : (deviceLogin
                 ? "device-login"
-                : (profileJobs ? "profile-jobs" : (profileJobStatus ? "profile-job-status" : "")));
+                : (profileJobs
+                    ? "profile-jobs"
+                    : (profileJobStatus
+                        ? "profile-job-status"
+                        : (profileJobCancel ? "profile-job-cancel" : ""))));
         let process = null;
         let done = false;
         let finish = Lang.bind(this, function(payload, error) {
@@ -7372,6 +7381,7 @@ CodexUsageApplet.prototype = {
             this._profileJobResumeQueue.unshift(this._profileJobPollingAccount);
         }
         this._profileJobPollingAccount = account;
+        this._profileJobCommandAccount = account;
         this._removeSource("_deviceLoginPollId");
         let generation = ++this._deviceLoginPollGeneration;
         let argv;
@@ -7388,6 +7398,9 @@ CodexUsageApplet.prototype = {
                 this._deviceLoginJobs[account] !== jobId
             ) {
                 return;
+            }
+            if (this._profileJobCommandAccount === account) {
+                this._profileJobCommandAccount = "";
             }
             if (
                 error || !payload || payload.account !== account ||
@@ -7462,6 +7475,9 @@ CodexUsageApplet.prototype = {
         if (this._profileJobPollingAccount === account) {
             this._profileJobPollingAccount = "";
         }
+        if (this._profileJobCommandAccount === account) {
+            this._profileJobCommandAccount = "";
+        }
         this._deviceLoginPollGeneration += 1;
         this._removeSource("_deviceLoginPollId");
         delete this._deviceLoginJobs[account];
@@ -7511,9 +7527,13 @@ CodexUsageApplet.prototype = {
             return true;
         }
         argv.push("profile", "cancel", jobId, "--json");
+        this._profileJobCommandAccount = account;
         this._spawnAuxJson(argv, Lang.bind(this, function(payload, error) {
             if (this._deviceLoginJobs[account] !== jobId) {
                 return;
+            }
+            if (this._profileJobCommandAccount === account) {
+                this._profileJobCommandAccount = "";
             }
             if (
                 error || !payload || payload.account !== account ||
@@ -10808,8 +10828,11 @@ CodexUsageApplet.prototype = {
     },
 
     _cancelAuxProcess: function() {
-        if (this._auxCommand === "profile-job-status") {
-            let account = this._profileJobPollingAccount;
+        if (
+            this._auxCommand === "profile-job-status" ||
+            this._auxCommand === "profile-job-cancel"
+        ) {
+            let account = this._profileJobCommandAccount || this._profileJobPollingAccount;
             if (
                 account &&
                 this._deviceLoginJobs[account] &&
@@ -10818,6 +10841,7 @@ CodexUsageApplet.prototype = {
                 this._profileJobResumeQueue.unshift(account);
             }
             this._profileJobPollingAccount = "";
+            this._profileJobCommandAccount = "";
             this._deviceLoginPollGeneration += 1;
             this._removeSource("_deviceLoginPollId");
         }
