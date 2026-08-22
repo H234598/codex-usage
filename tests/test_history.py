@@ -921,6 +921,25 @@ def test_usage_samples_extract_only_fresh_valid_limit_windows():
     ]
 
 
+def test_usage_samples_reject_string_status_even_when_value_matches():
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="main",
+            windows=(LimitWindow(name="5h", percent=75),),
+            availability_sources=("usage",),
+        ),
+        status="ok",  # type: ignore[arg-type]
+        backend_used="direct",
+    )
+
+    assert history_module.usage_samples_from_usage(usage) == ()
+
+
 @pytest.mark.parametrize("name", ["30d", "30_day", "month", "monthly"])
 def test_usage_samples_extract_monthly_window_without_explicit_duration(name):
     captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)

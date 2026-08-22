@@ -6978,3 +6978,16 @@ Sidecar-Datei abgewiesen, blockiert aber nicht. Der Regressionstest prüft das
 Flag vor dem echten Öffnen; er war vor dem Fix rot und ist danach grün.
 `pytest -q tests/test_history.py`: 84/84. Ruff, Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 610: String-Status nicht in History übernehmen
+
+`_iter_usage_samples()` prüfte den Accountstatus bisher mit `!=` gegen
+`AccountStatus.OK`. Weil `AccountStatus` ein `StrEnum` ist, passierte ein
+malformed Status-String `"ok"` diesen Gate und wurde als gültige Historie
+gespeichert.
+
+Der Gate verwendet jetzt Identitätsvergleich (`is not`), wie die übrigen
+Fail-Closed-Prüfungen. Ein echter `AccountStatus.OK` bleibt gültig, ein
+gleichwertiger String wird verworfen. Regression testet genau diesen
+Boundary-Fall. `pytest -q tests/test_history.py`: 85/85. Ruff, Python-
+Kompilierung und `git diff --check` sauber.

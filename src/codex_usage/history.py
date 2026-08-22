@@ -547,7 +547,7 @@ def usage_samples_from_usage(usage: AccountUsage) -> tuple[UsageSample, ...]:
 def _iter_usage_samples(usage: AccountUsage):
     if not isinstance(usage, AccountUsage):
         raise ValueError("usage is invalid")
-    if usage.status != AccountStatus.OK or usage.stale or usage.cache_invalidated:
+    if usage.status is not AccountStatus.OK or usage.stale or usage.cache_invalidated:
         return
     if not isinstance(usage.account_id, str) or not usage.account_id:
         return
