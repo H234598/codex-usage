@@ -500,7 +500,7 @@ def test_device_auth_help_probe_requires_explicit_flag():
     ) is False
 
 
-@pytest.mark.parametrize("codex_bin", [None, [], 0, False, ""])
+@pytest.mark.parametrize("codex_bin", [None, [], 0, False, "", "\ud800"])
 def test_device_auth_supported_rejects_invalid_codex_command(codex_bin):
     with pytest.raises(DeviceLoginError, match="codex command is invalid"):
         device_auth_supported(

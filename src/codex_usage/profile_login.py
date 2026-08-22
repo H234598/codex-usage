@@ -107,6 +107,10 @@ def _validate_codex_command(codex_bin: object) -> None:
         ord(character) < 32 or ord(character) == 127 for character in codex_bin
     ):
         raise DeviceLoginError("codex command is invalid")
+    try:
+        codex_bin.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise DeviceLoginError("codex command is invalid") from exc
 
 
 def device_auth_supported(

@@ -9419,3 +9419,18 @@ gestartet wird.
 Verifikation: **86 fokussierte Profile-Job-Tests**, **135 Profile-Job-, CLI-
 und Login-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 799: Codex-Befehl auf gültiges UTF-8 begrenzen
+
+`profile_login._validate_codex_command()` prüfte bisher nur Typ, Leerstring
+und Steuerzeichen. Ein unpaired Unicode-Surrogat passierte diese Prüfung und
+führte beim echten `subprocess.Popen()` zu einem rohen `UnicodeEncodeError`
+statt zu kontrollierter Eingabeablehnung.
+
+Der Befehlsname muss jetzt zusätzlich UTF-8-kodierbar sein; ungültige Werte
+ergeben weiterhin `DeviceLoginError("codex command is invalid")` vor jedem
+Runner- oder Prozessstart. Regression ergänzt den Surrogatfall.
+
+Verifikation: **46 fokussierte Profile-Login-Tests**, **132 Profile-Login-
+und Job-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
