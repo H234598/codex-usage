@@ -963,6 +963,52 @@ def test_fetch_all_invalidates_usage_when_state_changes_during_fetch(monkeypatch
     assert result[0].stale is True
 
 
+def test_fetch_all_invalidates_usage_when_state_generation_read_fails_after_fetch(
+    monkeypatch,
+):
+    account = Account(id="race", label="Race", profile_dir="/tmp/race")
+    generation_reads = 0
+    usage = AccountUsage(
+        account_id="race",
+        label="Race",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.ERROR,
+        error="transport warning",
+        backend_configured="direct",
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=97),
+        weekly=LimitWindow(name="weekly", remaining=55),
+    )
+
+    def fail_second_generation_read(_account_id):
+        nonlocal generation_reads
+        generation_reads += 1
+        if generation_reads == 1:
+            return 0
+        raise OSError("generation unavailable")
+
+    monkeypatch.setattr(
+        "codex_usage.scheduler.load_state_generation",
+        fail_second_generation_read,
+    )
+    monkeypatch.setattr("codex_usage.scheduler._fetch_one", lambda *_args, **_kwargs: usage)
+
+    result = fetch_all(
+        AppConfig(accounts=(account,)),
+        (account,),
+        direct=True,
+    )
+
+    assert result[0].status == AccountStatus.ERROR
+    assert result[0].error == (
+        "state generation failed after fetch: OSError; transport warning"
+    )
+    assert result[0].five_hour is None
+    assert result[0].weekly is None
+    assert result[0].stale is True
+    assert result[0].cache_invalidated is True
+
+
 def test_watch_backs_off_after_unexpected_cycle_error(monkeypatch, capsys):
     delays: list[int] = []
     health_events: list[tuple[str, str]] = []

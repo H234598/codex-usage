@@ -7139,3 +7139,15 @@ Die Diskontinuitätsprüfung verwirft jetzt jeden normalen Vergleichsfehler und
 behält dadurch keine möglicherweise erschöpften alten Limits. Regression
 deckt einen fehlerhaften `<=`-Vergleich ab. `pytest -q tests/test_scheduler.py`:
 212/212; Ruff, Mypy, Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 621: State-Generation-Lesefehler nach Abruf regressionsgesichert
+
+Der zweite `load_state_generation()`-Aufruf in `fetch_all()` schützt vor
+einem State-Rennen nach dem Abruf. Dieser Fehlerpfad löschte Werte bereits
+fail-closed, hatte aber keine Regression für den Fall eines Lese-`OSError`
+mit bestehender Abruf-Fehlermeldung.
+
+Der Test prüft jetzt Fehlerverkettung, geleerte Limits, `stale` und
+`cache_invalidated`. Produktionslogik blieb unverändert. `pytest -q
+tests/test_scheduler.py`: 213/213; Ruff, Mypy, Python-Kompilierung und
+`git diff --check` sauber.
