@@ -4460,6 +4460,7 @@ test("settings placement retries when xlet-settings window appears late", () => 
 test("settings placement does not wait forever for a stuck wmctrl process", () => {
   const callbacks = [];
   const subprocesses = [];
+  let forced = 0;
   const applet = makeApplet((runtime) => {
     runtime.currentMonitor = {x: 1920, y: 0, width: 1920, height: 1080};
     runtime.timeoutAdd = (_milliseconds, callback) => {
@@ -4469,6 +4470,9 @@ test("settings placement does not wait forever for a stuck wmctrl process", () =
     runtime.subprocessFactory = (...args) => {
       const process = {
         argv: args[0],
+        force_exit() {
+          forced += 1;
+        },
         wait_check_async(_cancellable, callback) {
           this.waitCallback = callback;
         },
@@ -4493,6 +4497,13 @@ test("settings placement does not wait forever for a stuck wmctrl process", () =
   assert.equal(JSON.stringify(subprocesses[1].argv), JSON.stringify([
     "wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz",
   ]));
+  assert.equal(forced, 1);
+
+  applet._removed = false;
+  applet._scheduleSettingsMaximize();
+  assert.equal(callbacks[1](), true);
+  applet.on_applet_removed_from_panel();
+  assert.equal(forced, 2);
 });
 
 test("health action reports command and backend failures without retaining work", () => {

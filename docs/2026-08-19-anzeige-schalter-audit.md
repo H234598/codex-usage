@@ -6555,3 +6555,19 @@ Maximierungsaufruf.
 Fokustest `node --test --test-name-pattern='settings placement retries|settings
 placement does not wait|settings maximization' tests/applet_runtime.test.js`:
 4/4. Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 583: Placement-Child bei Timeout und Applet-Entfernung beenden
+
+Der neue Placement-Fallback begrenzte zwar den Timer, ließ das noch laufende
+`wmctrl -e`-Child aber weiterlaufen. Ein verspäteter Exit konnte nach der
+Maximierung erneut Geometrie anwenden; bei Applet-Entfernung blieb das Child
+ebenfalls untracked.
+
+Der Placement-Prozess wird jetzt referenziert, bei Timeout per `force_exit()`
+beendet und bei Applet-Entfernung bereinigt. Abschluss-Callbacks lösen die
+Referenz nur noch für ihren eigenen Prozess. Regression prüft Timeout-Abbruch
+und Cleanup beim Entfernen.
+
+Fokustest `node --test --test-name-pattern='settings placement|settings
+maximization|settings launcher' tests/applet_runtime.test.js`: 6/6.
+Node-Syntaxcheck und `git diff --check` sauber.

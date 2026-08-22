@@ -248,6 +248,7 @@ CodexUsageApplet.prototype = {
         this._healthProcess = null;
         this._healthTimeoutId = 0;
         this._settingsMaximizeId = 0;
+        this._settingsPlacementProcess = null;
         this._healthGeneration = 0;
         this._lastHealthReportAt = 0;
         this._backendRowsReady = false;
@@ -10780,6 +10781,8 @@ CodexUsageApplet.prototype = {
 
     _scheduleSettingsMaximize: function() {
         this._removeSource("_settingsMaximizeId");
+        this._terminateChild(this._settingsPlacementProcess, "settings placement restart");
+        this._settingsPlacementProcess = null;
         let attempts = 0;
         let placementAttempts = 0;
         let positioned = false;
@@ -10796,6 +10799,9 @@ CodexUsageApplet.prototype = {
                         return true;
                     }
                     positioned = true;
+                    placementPending = false;
+                    this._terminateChild(this._settingsPlacementProcess, "settings placement timeout");
+                    this._settingsPlacementProcess = null;
                 } else {
                     placementAttempts += 1;
                     try {
@@ -10815,8 +10821,12 @@ CodexUsageApplet.prototype = {
                                 typeof moveProcess.wait_check_finish === "function"
                             ) {
                                 placementPending = true;
+                                this._settingsPlacementProcess = moveProcess;
                                 moveProcess.wait_check_async(null, Lang.bind(this, function(source, result) {
                                     placementPending = false;
+                                    if (this._settingsPlacementProcess === source) {
+                                        this._settingsPlacementProcess = null;
+                                    }
                                     if (this._removed) {
                                         return;
                                     }
@@ -10840,6 +10850,9 @@ CodexUsageApplet.prototype = {
                         }
                         positioned = true;
                     } catch (e) {
+                        this._terminateChild(this._settingsPlacementProcess, "settings placement startup cleanup");
+                        this._settingsPlacementProcess = null;
+                        placementPending = false;
                         this._cleanupLog("settings window placement failed: " + this._shortText(e, 180));
                         positioned = true;
                     }
@@ -11032,6 +11045,8 @@ CodexUsageApplet.prototype = {
         this._removeSource("_displayTimerId");
         this._removeSource("_staleCheckId");
         this._removeSource("_settingsMaximizeId");
+        this._terminateChild(this._settingsPlacementProcess, "settings placement cleanup");
+        this._settingsPlacementProcess = null;
         this._deviceLoginPollGeneration += 1;
         this._removeSource("_deviceLoginPollId");
         this._removeIdleSources();
