@@ -6874,3 +6874,13 @@ Die Assertion folgt jetzt der tatsächlichen Custom-Binding-Form. Keine
 Produktionslogik geändert. `pytest -q tests/test_applet.py`: 27/27.
 Python-Kompilierung der betroffenen Settings-Widgets und `git diff --check`
 sind sauber.
+
+## Runde 602: Hilfe-Seite Ruff-Fehler beheben
+
+`help_page.py` hatte in der Tabellenmaterialisierung eine 108 Zeichen lange
+Zeile. Die verschachtelte `_definition_entry(...)`-Zeile ist jetzt ohne
+Logikänderung formatiert.
+
+`ruff check files/codex-usage@H234598/help_page.py`,
+`pytest -q tests/test_help_page.py` (6/6), Python-Kompilierung und
+`git diff --check` sind sauber.

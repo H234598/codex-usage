@@ -270,7 +270,9 @@ def build_help_groups(schema: object) -> list[dict[str, object]]:
                     if not isinstance(table, dict):
                         continue
                     seen.add(table_key)
-                    entries.append(_definition_entry(table_key, _help_definition(table, schema, table_key)))
+                    entries.append(
+                        _definition_entry(table_key, _help_definition(table, schema, table_key))
+                    )
             if entries:
                 sections.append({
                     "title": _clean_text(section.get("title")) or section_key,
