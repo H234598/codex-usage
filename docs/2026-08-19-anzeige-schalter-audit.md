@@ -7875,3 +7875,13 @@ ließ den Leisten-Editor abstürzen.
 Tuple. Regression ergänzt den kaputten Optionsfall;
 `tests/test_panel_settings_list.py`: 41/41, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 682: Leisten-Schema verwirft leere Spaltenidentitäten
+
+Leere Spalten-IDs oder reine Leerzeichen als Titel passierten den Filter.
+Leere IDs erzeugen beim Speichern kollidierende Dictionary-Schlüssel; leere
+Titel machen den GTK-Editor unbrauchbar.
+
+`panel_columns()` akzeptiert nur noch nicht-leere IDs und Titel. Regression
+deckt beide Formen ab; `tests/test_panel_settings_list.py`: 43/43,
+Python-Compile und `git diff --check` sauber.
