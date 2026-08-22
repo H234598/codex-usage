@@ -440,10 +440,13 @@ def test_private_output_directory_rejects_failed_permission_hardening(
     output_dir = tmp_path / "screens"
     output_dir.mkdir()
 
-    def fail_chmod(_path, _mode):
+    def fail_private_directory(*_args, **_kwargs):
         raise OSError("permission denied")
 
-    monkeypatch.setattr(Path, "chmod", fail_chmod)
+    monkeypatch.setattr(
+        "codex_usage.browser.ensure_private_directory",
+        fail_private_directory,
+    )
 
     with pytest.raises(ValueError, match="could not secure private path"):
         _prepare_private_output_dir(output_dir, label="diagnose screenshot directory")

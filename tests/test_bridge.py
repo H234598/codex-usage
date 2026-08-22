@@ -3982,14 +3982,15 @@ def test_save_bridge_debug_payload_fails_closed_when_directory_cannot_be_secured
     snapshot_dir = tmp_path / "snapshots"
     snapshot_dir.mkdir()
     debug_dir = tmp_path / "debug"
-    original_chmod = bridge_module.Path.chmod
 
-    def fail_debug_chmod(path, mode):
-        if path == debug_dir:
-            raise OSError("simulated debug chmod failure")
-        return original_chmod(path, mode)
+    def fail_debug_directory(*_args, **_kwargs):
+        raise OSError("simulated debug directory failure")
 
-    monkeypatch.setattr(bridge_module.Path, "chmod", fail_debug_chmod)
+    monkeypatch.setattr(
+        bridge_module,
+        "ensure_private_directory",
+        fail_debug_directory,
+    )
 
     with pytest.raises(ValueError, match="secure debug directory"):
         save_bridge_debug_payload("privat", {"bodyText": "debug"}, snapshot_dir)
@@ -7086,14 +7087,15 @@ def test_write_bridge_extension_fails_closed_when_output_directory_cannot_be_sec
     tmp_path, monkeypatch
 ):
     output_dir = tmp_path / "extension"
-    original_chmod = bridge_module.Path.chmod
 
-    def fail_output_chmod(path, mode):
-        if path == output_dir:
-            raise OSError("simulated extension chmod failure")
-        return original_chmod(path, mode)
+    def fail_output_directory(*_args, **_kwargs):
+        raise OSError("simulated extension directory failure")
 
-    monkeypatch.setattr(bridge_module.Path, "chmod", fail_output_chmod)
+    monkeypatch.setattr(
+        bridge_module,
+        "ensure_private_directory",
+        fail_output_directory,
+    )
 
     with pytest.raises(ValueError, match="secure extension output directory"):
         write_bridge_extension(

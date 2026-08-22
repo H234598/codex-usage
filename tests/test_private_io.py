@@ -121,6 +121,19 @@ def test_ensure_private_directory_binds_mode_change_to_directory(tmp_path, monke
     assert outside.stat().st_mode & 0o777 == 0o755
 
 
+def test_ensure_private_directory_fails_when_descriptor_chmod_fails(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    target.mkdir(mode=0o755)
+
+    def fail_fchmod(_fd, _mode):
+        raise OSError("simulated descriptor chmod failure")
+
+    monkeypatch.setattr(private_io.os, "fchmod", fail_fchmod)
+
+    with pytest.raises(OSError, match="descriptor chmod failure"):
+        ensure_private_directory(target, label="private directory")
+
+
 def test_ensure_private_directory_rejects_root_before_chmod(monkeypatch):
     def fail_chmod(_self, _mode):
         pytest.fail("root must not be chmodded")

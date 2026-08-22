@@ -8754,3 +8754,23 @@ persistierte Auswahl wird durch diese Metadatenprüfung geschrieben.
 Regression deckt leeren Key, NUL-Key und NUL-Label ab. Verifikation:
 Format-/Forecast-Fokustests 86/86; Python-Compile, Ruff und `git diff --check`
 sauber.
+
+## Runde 753: Permission-Regressionstests an FD-Härtung angepasst
+
+Der Vollsuite-Lauf fand drei rote Tests in den Bridge-/Browser-Diagnosepfaden.
+Die Tests simulierten fehlgeschlagene Verzeichnissicherung über
+`Path.chmod()`. Die gemeinsame Private-IO-Implementierung setzt Verzeichnis-
+rechte inzwischen absichtlich über geöffnete Deskriptoren und `os.fchmod()`,
+damit ein TOCTOU-Swap zwischen Prüfung und Modusänderung nicht auf einen
+Symlink folgt. Der alte Test-Seam konnte diesen Fehler daher nicht mehr
+auslösen; Produktionscode war nicht regressiert.
+
+Die Bridge- und Browser-Tests patchen jetzt direkt den jeweiligen
+`ensure_private_directory`-Vertrag und prüfen weiterhin fail-closed-Fehler in
+den öffentlichen Wrappern. Ein zusätzlicher Private-IO-Test deckt echten
+`os.fchmod()`-Fehler ab. Damit testen sie aktuelle Sicherheitsgrenze statt
+einer veralteten Implementierungsdetails.
+
+Verifikation: fokussierte Permission-Tests 49/49; Vollsuite **3198 bestanden,
+1 übersprungen, 41 externe PyGObject-/GTK-Warnungen**; Python-Compile, Ruff
+und `git diff --check` sauber.
