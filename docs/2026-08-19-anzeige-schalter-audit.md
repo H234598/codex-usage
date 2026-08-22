@@ -7282,3 +7282,13 @@ kürzerer gültiger Reset bleibt wirksam. Ungültige oder fehlende Dauerwerte
 beenden die Prüfung fail-closed. Regression prüft einen 5h-Kandidaten mit
 Reset in 24 Stunden. `node --test tests/applet_runtime.test.js`: 474/474;
 `make applet-check` inklusive JSON-Validierung sauber.
+
+## Runde 633: Verbrauchsfenster mit Dauer null verworfen
+
+`_safeConsumptionWindows()` akzeptierte bisher `limit_window_seconds: 0`.
+Das widerspricht dem Backend-Vertrag positiver Fensterdauern und konnte bei
+`Δsonst.` als gültiges sonstiges Fenster erscheinen, obwohl keine Zeitspanne
+existiert.
+
+Die Applet-Validierung verlangt jetzt ebenfalls eine strikt positive Dauer.
+Regression erweitert die DTO-Validierung um den Nullfall.

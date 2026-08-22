@@ -5365,7 +5365,7 @@ CodexUsageApplet.prototype = {
                 typeof lookback !== "number" || !Number.isInteger(lookback) ||
                 lookback <= 0 || lookback > 31536000 ||
                 typeof limitWindow !== "number" || !Number.isInteger(limitWindow) ||
-                limitWindow < 0 || limitWindow > 31536000 ||
+                limitWindow <= 0 || limitWindow > 31536000 ||
                 typeof consumed !== "number" || !Number.isFinite(consumed) ||
                 consumed < 0 || consumed > 10000 ||
                 (estimate !== null && (
