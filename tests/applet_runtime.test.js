@@ -4266,6 +4266,15 @@ test("panel click opens the menu and refreshes only when it was closed", () => {
   assert.equal(toggles, 2);
 });
 
+test("usage menu rebuild is inert after applet removal", () => {
+  const applet = makeApplet();
+  applet._removed = true;
+  applet.menu = null;
+
+  assert.doesNotThrow(() => applet._buildUsageMenu());
+  assert.doesNotThrow(() => applet._buildLoadingMenu("Lade …"));
+});
+
 test("analytics action uses the fixed URL and reports browser failures", () => {
   const calls = [];
   const applet = makeApplet((runtime) => {

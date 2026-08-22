@@ -6288,3 +6288,14 @@ Betrieb bleibt der erzwungene Cache-Ladevorgang unverändert. Regression prüft
 Safe-Mode, normalen Betrieb und entfernte Appletinstanz. Fokustest
 `node --test --test-name-pattern='safe mode|command setting|settings|refresh-on-open|automatic refresh' tests/applet_runtime.test.js`:
 37/37; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 564: Menüaufbau nach Applet-Entfernung abbrechen
+
+`_buildUsageMenu()` und `_buildLoadingMenu()` verwendeten `this.menu` ohne
+Lifecycle-Prüfung. Ein verspäteter Callback nach `on_applet_removed_from_panel()`
+konnte deshalb auf dem bereits zerstörten Menü `removeAll()` aufrufen.
+
+Beide Funktionen kehren jetzt bei `_removed` oder fehlendem Menü sofort zurück.
+Regression prüft den entfernten Zustand für Usage- und Loading-Menü. Fokustest
+`node --test --test-name-pattern='usage menu rebuild is inert|panel click opens|settings launcher|native Cinnamon configure action|safe mode|command setting' tests/applet_runtime.test.js`:
+15/15; Node-Syntaxcheck und `git diff --check` sauber.

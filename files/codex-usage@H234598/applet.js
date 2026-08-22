@@ -6904,6 +6904,9 @@ CodexUsageApplet.prototype = {
     },
 
     _buildLoadingMenu: function(message) {
+        if (this._removed || !this.menu) {
+            return;
+        }
         this.menu.removeAll();
         this._addDisabled(this.menu, message || _("Lade …"), "codex-usage-stale");
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -6911,6 +6914,9 @@ CodexUsageApplet.prototype = {
     },
 
     _buildUsageMenu: function() {
+        if (this._removed || !this.menu) {
+            return;
+        }
         if (this.menu && this.menu.isOpen) {
             this._menuDirty = true;
             return;
