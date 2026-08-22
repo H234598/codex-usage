@@ -7431,6 +7431,8 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   applet._primaryCacheRefreshAfter = true;
   applet._primaryFreshPending = true;
   applet._primaryFreshOpenAfter = true;
+  applet._consumptionCurrent = { account: "alpha" };
+  applet._consumptionQueue = [{ account: "beta" }];
   applet._timerId = 11;
   applet._displayTimerId = 12;
   applet._staleCheckId = 13;
@@ -7448,6 +7450,8 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   assert.equal(applet._primaryCacheRefreshAfter, false);
   assert.equal(applet._primaryFreshPending, false);
   assert.equal(applet._primaryFreshOpenAfter, false);
+  assert.equal(applet._consumptionCurrent, null);
+  assert.deepEqual(applet._consumptionQueue, []);
   assert.equal(applet._timerId, 0);
   assert.equal(applet._displayTimerId, 0);
   assert.equal(applet._staleCheckId, 0);

@@ -6326,3 +6326,16 @@ Erkennung kann danach wieder starten. Regression prüft Start, Abbruch und
 erneuten Start. Fokustest `node --test
 --test-name-pattern='cancelled profile job discovery can run again|persistent profile job|device login live|auxiliary' tests/applet_runtime.test.js`:
 23/23; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 567: Consumption-Anfragen beim Safe-Mode invalidieren
+
+`_enterSafeMode()` stoppte Primary-, Auxiliary- und Timer-Arbeit, ließ aber
+`_consumptionCurrent` sowie die Consumption-Warteschlange bestehen. Nach einem
+Retry konnte `_drainConsumptionRequests()` deshalb dauerhaft blockiert bleiben;
+eine verspätete Antwort besaß weiterhin die alte Generation.
+
+Safe-Mode erhöht jetzt `_consumptionGeneration`, leert aktive und wartende
+Consumption-Anfragen und lässt neue Messungen erst aus dem nächsten Refresh
+aufbauen. Regression erweitert den Safe-Mode-Lifecycle-Test; Fokustest
+`node --test --test-name-pattern='safe mode cancels reactivation processes|late consumption response|consumption refresh|safe mode' tests/applet_runtime.test.js`:
+14/14; Node-Syntaxcheck und `git diff --check` sauber.

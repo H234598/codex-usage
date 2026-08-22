@@ -663,6 +663,12 @@ CodexUsageApplet.prototype = {
         this._primaryFreshPending = false;
         this._primaryFreshOpenAfter = false;
         this._reactivationRefreshPending = false;
+        this._consumptionGeneration = (this._consumptionGeneration || 0) + 1;
+        this._consumptionCurrent = null;
+        if (!Array.isArray(this._consumptionQueue)) {
+            this._consumptionQueue = [];
+        }
+        this._consumptionQueue.length = 0;
         this._timerGeneration = (this._timerGeneration || 0) + 1;
         this._displayTimerGeneration = (this._displayTimerGeneration || 0) + 1;
         this._staleCheckGeneration = (this._staleCheckGeneration || 0) + 1;
