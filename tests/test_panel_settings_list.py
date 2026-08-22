@@ -201,7 +201,13 @@ def test_panel_destroy_detaches_settings_listeners() -> None:
 
 @pytest.mark.parametrize(
     "rows",
-    [None, ["malformed"], [{"account": 123}], [{"account": "alpha", "slot1": 2**31}]],
+    [
+        None,
+        ["malformed"],
+        [{"account": 123}],
+        [{"account": "alpha", "slot1": 99}],
+        [{"account": "alpha", "slot1": 2**31}],
+    ],
 )
 def test_panel_ignores_malformed_persisted_rows(rows) -> None:
     settings = _Settings(3)
@@ -224,6 +230,41 @@ def test_panel_ignores_malformed_persisted_rows(rows) -> None:
         settings.values["panel-value-count"] = "21"
         panel._on_count_changed()
         assert len(panel.model) == 0
+    finally:
+        panel.destroy()
+
+
+def test_panel_option_renderer_clears_stale_label_for_unknown_value() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "1"
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account-ID", "type": "string"},
+                {
+                    "id": "slot1",
+                    "title": "Wert 1",
+                    "type": "integer",
+                    "options": {"Aus": 0, "5h": 1},
+                },
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        settings.values["panel-value-count"] = "2"
+        panel._on_count_changed()
+        panel.model.append(["alpha", 1, 0])
+        panel.model.append(["beta", 99, 0])
+        column = panel.content_widget.get_column(1)
+        renderer = column.get_cells()[0]
+        column.cell_set_cell_data(panel.model, panel.model.get_iter(0), False, False)
+        assert renderer.get_property("text") == "5h"
+        column.cell_set_cell_data(panel.model, panel.model.get_iter(1), False, False)
+        assert renderer.get_property("text") == ""
     finally:
         panel.destroy()
 

@@ -217,6 +217,12 @@ class PanelSettingsList(List, JSONSettingsBackend):
                     row_info.append(column["default"])
                 else:
                     row_info.append(None)
+                options = column.get("options")
+                if isinstance(options, dict) and row_info[-1] not in options.values():
+                    row_info = None
+                    break
+            if row_info is None:
+                continue
             try:
                 self.model.append(row_info)
             except (OverflowError, TypeError, ValueError):
@@ -381,6 +387,9 @@ class PanelSettingsList(List, JSONSettingsBackend):
             if has_options:
                 def map_func(_column, rend, model, row_iter, data):
                     value = model[row_iter][data[1]]
+                    # Cell renderers are reused between rows.  Clear stale
+                    # text before mapping malformed or unknown values.
+                    rend.set_property("text", "")
                     for label, mapped in data[0].items():
                         if mapped == value:
                             rend.set_property("text", label)
@@ -401,6 +410,12 @@ class PanelSettingsList(List, JSONSettingsBackend):
             for column in columns:
                 value = row.get(column["id"], column.get("default"))
                 values.append(value)
+                options = column.get("options")
+                if isinstance(options, dict) and value not in options.values():
+                    values = None
+                    break
+            if values is None:
+                continue
             try:
                 self.model.append(values)
             except (OverflowError, TypeError, ValueError):

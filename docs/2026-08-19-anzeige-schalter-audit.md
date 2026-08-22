@@ -7613,3 +7613,19 @@ Einstellungs-Hilfsprozess; die Applet-Laufzeit bleibt unverändert. Der
 Launcherpfad ist durch Regressionen für Argumente, Umgebungsvariable,
 Fenster-PID und verzögerte Maximierung abgedeckt. Fokussierte
 Einstellungs-Tests: 10/10; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 658: Leisten-Editor zeigte bei unbekannter Quelle einen alten Wert
+
+Der GTK-Renderer für Optionsfelder wird zwischen Tabellenzeilen wiederverwendet.
+Bei einem unbekannten gespeicherten Quellenwert, etwa `99`, setzte die
+Mapping-Funktion keinen neuen Text. Der Renderer behielt dadurch den Text der
+vorherigen Zeile; reproduzierbar zeigte eine Zeile mit `99` weiterhin `5h`.
+Zusätzlich konnten solche Werte beim Wechsel der Anzahl der Leistenfelder über
+den Rebuild-Pfad wieder in das Modell gelangen.
+
+`PanelSettingsList` verwirft jetzt unbekannte Optionswerte sowohl beim Laden
+als auch beim Rebuild. Die Mapping-Funktion leert den Renderer vor jeder
+Zuordnung, damit auch direkte Modelländerungen keinen alten Text übernehmen.
+Regression deckt unbekannten Wert `99`, Rebuild und Renderer-Reuse ab.
+`tests/test_panel_settings_list.py`: 17/17; `tests/test_help_page.py`: 9/9;
+Python-Kompilierung und `git diff --check` sauber.
