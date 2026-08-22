@@ -8336,6 +8336,13 @@ abgefangen. Regression deckt Traversal, NUL und gültiges Icon ab;
 `tests/test_fast_mode_icon_selector.py`: 9/9, Python-Compile, Ruff und
 `git diff --check` sauber.
 
+## Runde 726: Fast-Mode-Widget mit echter Settingsdatei geprüft
+
+Reale Nutzer-Settingsdatei und Schema wurden direkt geladen: 9 Icons,
+gültige aktuelle Auswahl und genau ein Settings-Listener. Widget und
+File-Monitor wurden anschließend sauber zerstört/pausiert; keine GTK- oder
+Importfehler.
+
 ## Runde 723: Selector-Mappings überleben fehlendes Backend-Attribut
 
 Forecast- und Format-Selector dereferenzierten `settings.settings` direkt.
