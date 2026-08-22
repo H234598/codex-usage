@@ -9345,3 +9345,19 @@ auf und prüft den bereinigten Markup-Text.
 
 Verifikation: **14 fokussierte Help-Page-Tests**, Ruff, Python-Compile und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 793: Leisten-Schema vor ungültigen GTK-Texten schützen
+
+Eine unpaired Unicode-Surrogate in einer Leisten-Spaltenüberschrift ließ den
+GTK-TreeView-Aufbau abbrechen. Derselbe Eintrittspfad bestand für
+Optionslabels, String-Optionswerte, Einheiten sowie Beschreibung und Tooltip.
+
+`_panel_text_valid()` prüft diese Schema-Texte jetzt auf NUL-Freiheit und
+UTF-8-Kodierbarkeit. Ungültige Spalten/Optionen werden verworfen; Beschreibung
+und Tooltip fallen auf sichere leere Werte zurück. Die Wertkopie,
+Wertreihenfolge und Editor-Spalten bleiben unverändert.
+
+Regression deckt Validator, ungültige Spalten und Widget-Aufbau ab.
+Verifikation: **112 fokussierte Panel-Tests**, Ruff, Python-Compile,
+Diff-Check sowie 3000-Fälle-Schema-Fuzz bestanden; keine Settings-Fenster
+gestartet.

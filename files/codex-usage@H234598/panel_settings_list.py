@@ -82,6 +82,17 @@ _SOURCE_OPTIONS = {
 }
 
 
+def _panel_text_valid(value: object) -> bool:
+    """Return whether schema text can safely enter GTK string APIs."""
+    if not isinstance(value, str) or "\x00" in value:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def panel_value_count(value: object) -> int:
     """Return bounded panel column count; malformed settings use default."""
     try:
@@ -252,8 +263,8 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             or not isinstance(column.get("title"), str)
             or not column["id"].strip()
             or not column["title"].strip()
-            or "\x00" in column["id"]
-            or "\x00" in column["title"]
+            or not _panel_text_valid(column["id"])
+            or not _panel_text_valid(column["title"])
             or not isinstance(column.get("type"), str)
             or column["type"] not in VARIABLE_TYPE_MAP
         ):
@@ -270,11 +281,11 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             option_type = VARIABLE_TYPE_MAP[column["type"]]
             valid_options = True
             for label, value in option_pairs:
-                if not isinstance(label, str) or "\x00" in label:
+                if not _panel_text_valid(label):
                     valid_options = False
                     break
                 if option_type is str:
-                    value_valid = isinstance(value, str) and "\x00" not in value
+                    value_valid = _panel_text_valid(value)
                 elif option_type is int:
                     value_valid = (
                         isinstance(value, int)
@@ -313,7 +324,7 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             if boolean_property in column and not isinstance(column[boolean_property], bool):
                 column.pop(boolean_property, None)
         if "units" in column and (
-            not isinstance(column["units"], str) or "\x00" in column["units"]
+            not _panel_text_valid(column["units"])
         ):
             column.pop("units", None)
         if "align" in column:
@@ -431,7 +442,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
         self._base_columns = copy.deepcopy(info.get("columns", []))
         columns = panel_columns(self._base_columns, self._read_count())
         description = info.get("description")
-        if description is not None and not isinstance(description, str):
+        if description is not None and not _panel_text_valid(description):
             description = None
         height = info.get("height", 220)
         try:
@@ -454,7 +465,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
         if not isinstance(hidden_buttons, list):
             hidden_buttons = []
         tooltip = info.get("tooltip", "")
-        if not isinstance(tooltip, str):
+        if not _panel_text_valid(tooltip):
             tooltip = ""
         super().__init__(
             label=description,

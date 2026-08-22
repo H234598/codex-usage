@@ -15,6 +15,7 @@ from panel_settings_list import (  # noqa: E402
     Gtk,
     PanelSettingsList,
     _panel_slot_id,
+    _panel_text_valid,
     panel_apply_value_settings,
     panel_columns,
     panel_edit_columns,
@@ -33,6 +34,13 @@ def test_panel_value_count_defaults_and_bounds() -> None:
     assert panel_value_count(2.5) == 20
     assert panel_value_count("0") == 20
     assert panel_value_count("not-a-number") == 20
+
+
+def test_panel_text_validator_rejects_gtk_unsafe_values() -> None:
+    assert _panel_text_valid("normal") is True
+    assert _panel_text_valid("bad\x00text") is False
+    assert _panel_text_valid("bad\ud800text") is False
+    assert _panel_text_valid(1) is False
 
 
 @pytest.mark.parametrize(
@@ -200,6 +208,7 @@ def test_panel_columns_drop_invalid_units_text() -> None:
         [{"id": "empty-title", "title": " ", "type": "string"}],
         [{"id": "bad\x00id", "title": "Bad id", "type": "string"}],
         [{"id": "bad-title", "title": "Bad\x00title", "type": "string"}],
+        [{"id": "bad-utf8", "title": "Bad\ud800title", "type": "string"}],
         [{"id": "bad-options", "title": "Bad options", "type": "string", "options": 1}],
         [{"id": "number", "title": "Number", "type": "integer"}],
         [{"id": "number", "title": "Number", "type": "integer", "min": 10, "max": 1}],
@@ -210,6 +219,20 @@ def test_panel_columns_ignores_malformed_schema_columns(base) -> None:
     columns = panel_columns(base, 3)
 
     assert [column["id"] for column in columns] == ["slot1", "slot2", "slot3"]
+
+
+def test_panel_rejects_invalid_description_and_tooltip_text() -> None:
+    panel = PanelSettingsList(
+        {
+            "description": "bad\ud800description",
+            "tooltip": "bad\x00tooltip",
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        _Settings(3),
+    )
+    panel.destroy()
 
 
 def test_panel_columns_drops_invalid_and_duplicate_slot_ids() -> None:
