@@ -5977,5 +5977,6 @@ verwirft eine solche Zeile, weil jede vorhandene Slotquelle eine ganze Zahl
 
 Alle Slotspalten erhalten jetzt explizit `default: 0` („Aus“), einschließlich
 der Legacy-Spalten. Regression prüft drei erzeugte Slots. `pytest -q
-tests/test_panel_settings_list.py`: 9/9; Ruff, Python-Compile und
+tests/test_panel_settings_list.py`: 10/10; zusätzlich prüft der GTK-Dialog-
+Pfad fehlende Slotwerte als `0`. Ruff, Python-Compile und
 `git diff --check` folgen vor Installation.

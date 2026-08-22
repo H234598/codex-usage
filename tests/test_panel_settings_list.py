@@ -157,6 +157,30 @@ def test_panel_editor_returns_edited_values(monkeypatch) -> None:
         panel.destroy()
 
 
+def test_panel_editor_uses_disabled_source_for_missing_slots(monkeypatch) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    _Dialog.response = Gtk.ResponseType.OK
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "3"
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account-ID", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+    try:
+        values = panel.open_add_edit_dialog([None] * len(panel.columns))
+        assert values[1:] == [0, 0, 0]
+    finally:
+        _Dialog.response = None
+        panel.destroy()
+
+
 def test_panel_destroy_detaches_settings_listeners() -> None:
     settings = _Settings(3)
     panel = PanelSettingsList(
