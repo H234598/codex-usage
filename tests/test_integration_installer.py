@@ -2350,6 +2350,28 @@ def test_installer_reader_rejects_oversized_file_before_materializing(tmp_path, 
         integration_installer._read_nofollow(path)
 
 
+def test_installer_reader_rejects_size_drift_after_open(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    path = tmp_path / "installer-file"
+    path.write_bytes(b"payload")
+    path.chmod(0o600)
+    original_fstat = integration_installer.os.fstat
+
+    def report_drifted_size(fd):
+        item = original_fstat(fd)
+        return SimpleNamespace(
+            st_mode=item.st_mode,
+            st_nlink=item.st_nlink,
+            st_uid=item.st_uid,
+            st_size=item.st_size - 1,
+        )
+
+    monkeypatch.setattr(integration_installer.os, "fstat", report_drifted_size)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._read_nofollow(path)
+
+
 def test_installer_reader_rejects_foreign_owner(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

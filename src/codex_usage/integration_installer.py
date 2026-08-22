@@ -955,7 +955,10 @@ def _read_nofollow(
         with os.fdopen(fd, "rb") as source:
             fd = -1
             payload = source.read(MAX_INSTALL_FILE_BYTES + 1)
-            if len(payload) > MAX_INSTALL_FILE_BYTES:
+            if (
+                len(payload) > MAX_INSTALL_FILE_BYTES
+                or len(payload) != item.st_size
+            ):
                 _fail()
             return payload
     except IntegrationInstallError:

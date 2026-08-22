@@ -5896,3 +5896,14 @@ Directory-Cleanup verlangt jetzt ebenfalls aktuelle UID vor jeder Entfernung.
 Regression deckt fremden Besitzer ab. `pytest -q
 tests/test_integration_installer.py`: 148/148; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 535: Installer-Reader verwirft Größen-Drift
+
+`_read_nofollow()` begrenzte bisher nur die maximale Read-Länge. Schrumpfte
+oder wuchs eine reguläre Datei zwischen `fstat()` und Read, konnte ein
+verkürztes oder verändertes Payload trotzdem zurückgegeben werden.
+
+Die gelesene Länge muss jetzt exakt der geprüften `st_size` entsprechen.
+Regression deckt Größen-Drift nach Öffnung ab. `pytest -q
+tests/test_integration_installer.py`: 149/149; Ruff, Python-Compile und
+`git diff --check` sauber.
