@@ -806,6 +806,8 @@ def _copy_regular(
 ) -> _FileIdentity:
     fd = -1
     parent_fd = -1
+    target_parent_identity: _DirectoryIdentity | None = None
+    provisional: _ProvisionalIdentity | None = None
     try:
         _no_symlink_ancestors(source.parent)
         source_stat = source.lstat()
@@ -852,6 +854,7 @@ def _copy_regular(
             _fail()
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(target.name, flags, mode, dir_fd=parent_fd)
+        provisional = _provisional_fd_identity(fd)
         destination = os.fdopen(fd, "wb")
         fd = -1
         with destination:
@@ -873,8 +876,22 @@ def _copy_regular(
                 _fail()
             return _FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
     except IntegrationInstallError:
+        if provisional is not None and target_parent_identity is not None:
+            _cleanup_provisional_after_failure(
+                target,
+                provisional,
+                target_parent_identity,
+                directory=False,
+            )
         raise
     except (OSError, ValueError):
+        if provisional is not None and target_parent_identity is not None:
+            _cleanup_provisional_after_failure(
+                target,
+                provisional,
+                target_parent_identity,
+                directory=False,
+            )
         _fail()
     finally:
         if fd >= 0:

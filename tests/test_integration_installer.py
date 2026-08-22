@@ -1451,7 +1451,7 @@ def test_copy_regular_rejects_replaced_source_before_read(tmp_path, monkeypatch)
 
     assert replaced
     assert source.read_bytes() == b"foreign"
-    assert target.read_bytes() == b""
+    assert not target.exists()
 
 
 def test_safe_extract_binds_mode_change_to_open_file(tmp_path, monkeypatch):

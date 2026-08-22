@@ -5817,3 +5817,15 @@ Die beim ersten Check ermittelte Dateiidentität wird jetzt immer an den
 geöffneten Read-FD gebunden. Regression deckt ersetzten Source ab. `pytest -q
 tests/test_integration_installer.py`: 141/141; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 528: Fehlgeschlagenes reguläres Copy räumt Zielartefakt auf
+
+`_copy_regular()` erzeugte das exklusive Ziel vor dem Lesen der Quelle. Schlug
+der gebundene Read danach fehl, blieb eine leere oder partielle Zieldatei im
+Build-/Temp-Baum zurück.
+
+Das Ziel wird bei Fehler jetzt über seine Provisional-Identität und den
+gebundenen Parent-FD entfernt; fremder Ersatz bleibt unangetastet. Regression
+prüft Source-Race und Artefaktfreiheit. `pytest -q
+tests/test_integration_installer.py`: 141/141; Ruff, Python-Compile und
+`git diff --check` sauber.
