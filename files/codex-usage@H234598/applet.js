@@ -7471,6 +7471,14 @@ CodexUsageApplet.prototype = {
         }
         let pollId = Mainloop.timeout_add(1000, Lang.bind(this, function() {
             this._clearSource("_deviceLoginPollId");
+            if (
+                generation !== this._deviceLoginPollGeneration ||
+                this._removed ||
+                this._safeMode ||
+                !this._deviceLoginJobs[account]
+            ) {
+                return false;
+            }
             this._pollProfileJob(account, force);
             return false;
         }));

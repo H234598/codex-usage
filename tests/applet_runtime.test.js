@@ -856,6 +856,29 @@ test("profile polling waits for account writes before spawning status", () => {
   assert.equal(applet._profileJobPollingAccount, "");
 });
 
+test("stale profile poll timer cannot restart a newer generation", () => {
+  const callbacks = [];
+  const calls = [];
+  const applet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+  });
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (argv) => { calls.push(argv); };
+  applet._deviceLoginJobs.alpha = "job-1234567890abcdef1234567890abcdef";
+  applet._deviceLoginPollGeneration = 4;
+
+  applet._scheduleProfileJobPoll("alpha", 4, false);
+  applet._deviceLoginPollGeneration = 5;
+
+  assert.equal(callbacks[0](), false);
+  assert.deepEqual(calls, []);
+  assert.equal(applet._profileJobPollingAccount, "");
+  assert.equal(applet._deviceLoginPollId, 0);
+});
+
 test("persistent profile job resume drains every active job", () => {
   const applet = makeApplet();
   const calls = [];

@@ -6588,3 +6588,19 @@ Fokustest `node --test --test-name-pattern='settings launcher|native Cinnamon
 configure action|settings maximization|settings placement'
 tests/applet_runtime.test.js`: 7/7. Node-Syntaxcheck und `git diff --check`
 sauber.
+
+## Runde 585: Stale Profilpoll-Timer nicht erneut starten lassen
+
+`_scheduleProfileJobPoll()` prüfte die Generation nur beim Anlegen des
+Timers. Ein bereits in die Mainloop eingereihter Callback konnte nach Cancel,
+Safe-Mode oder anderer Generation trotzdem `_pollProfileJob()` starten und
+einen neuen Statusprozess erzeugen.
+
+Der Timer-Callback verwirft jetzt veraltete Generationen, entfernte/sichere
+Appletzustände und fehlende Job-IDs vor jedem Spawn. Regression erhöht die
+Generation nach dem Scheduling und erwartet keinen Statusaufruf.
+
+Fokustest `node --test --test-name-pattern='stale profile poll timer|profile
+polling waits|profile job|device login live|safe mode cancels'
+tests/applet_runtime.test.js`: 25/25. Node-Syntaxcheck und `git diff --check`
+sauber.
