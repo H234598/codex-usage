@@ -126,10 +126,27 @@ class ForecastTableSelector(SettingsWidget, JSONSettingsBackend):
         definition = getattr(self, "_table_definitions", {}).get(table_key)
         if definition is None:
             return None
-        widget = _BoundFormatList(table_key, definition, self.settings)
+        widget = None
+        try:
+            widget = _BoundFormatList(table_key, definition, self.settings)
+            self.table_stack.add_named(widget, table_key)
+            widget.show_all()
+        except Exception:
+            if widget is not None:
+                try:
+                    widget.detach()
+                except Exception:
+                    pass
+                try:
+                    self.table_stack.remove(widget)
+                except Exception:
+                    pass
+                try:
+                    widget.destroy()
+                except Exception:
+                    pass
+            return None
         self._tables[table_key] = widget
-        self.table_stack.add_named(widget, table_key)
-        widget.show_all()
         return widget
 
     def _discard_table(self, table_key):

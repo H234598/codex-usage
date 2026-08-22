@@ -8705,3 +8705,21 @@ noch das Schließen der Seite.
 Regression simuliert ein bereits abgehängtes Stack-Widget. Verifikation:
 Format-/Forecast-Fokustests 81/81; Python-Compile, Ruff und `git diff --check`
 sauber.
+
+## Runde 750: Prognose-Tabellenaufbau fail-closed
+
+`ForecastTableSelector._ensure_table()` rief `_BoundFormatList` und die
+anschließende GTK-Registrierung ungeguardet auf. Ein beschädigtes
+Tabellenschema oder ein einzelner GTK-Aufbaufehler konnte dadurch aus dem
+Auswahl-Callback bis in den Settings-Eventloop steigen. Der
+Formatierungs-Selector hatte diesen Schutz bereits.
+
+Der Prognose-Tabellenaufbau nutzt jetzt denselben Guard: Erst nach erfolgreichem
+`add_named()` und `show_all()` wird das Widget registriert. Bei einem Fehler
+werden bereits erzeugtes Widget, Listener und Stack-Eintrag best-effort
+aufgeräumt; der Selector liefert `None` und bleibt bedienbar.
+
+Regression erzwingt einen Fehler in `_BoundFormatList` und erwartet einen
+leeren Tabellenindex statt einer Ausnahme. Verifikation:
+Format-/Forecast-Fokustests 82/82; Python-Compile, Ruff und `git diff --check`
+sauber.

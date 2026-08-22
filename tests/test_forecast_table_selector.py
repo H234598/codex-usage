@@ -13,6 +13,7 @@ sys.path.insert(0, str(APPLET_DIR))
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
+import forecast_table_selector as forecast_table_selector_module  # noqa: E402
 from forecast_table_selector import ForecastTableSelector, Gtk  # noqa: E402
 
 _TABLE_KEYS = (
@@ -202,6 +203,21 @@ def test_forecast_selector_ignores_read_and_write_errors() -> None:
         assert selector._saving is False
     finally:
         selector.destroy()
+
+
+def test_forecast_selector_ignores_table_widget_construction_error(monkeypatch) -> None:
+    selector = ForecastTableSelector.__new__(ForecastTableSelector)
+    selector._table_definitions = {_TABLE_KEYS[0]: {}}
+    selector._tables = {}
+    selector.settings = object()
+
+    def fail_widget(*_args, **_kwargs):
+        raise RuntimeError("widget construction failed")
+
+    monkeypatch.setattr(forecast_table_selector_module, "_BoundFormatList", fail_widget)
+
+    assert selector._ensure_table(_TABLE_KEYS[0]) is None
+    assert selector._tables == {}
 
 
 @pytest.mark.parametrize("value", [[], {}])
