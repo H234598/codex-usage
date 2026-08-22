@@ -14,6 +14,17 @@ from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E40
 from TreeListWidgets import VARIABLE_TYPE_MAP, List  # noqa: E402
 
 
+def _valid_text(value: object, *, allow_empty: bool = True) -> bool:
+    """Return whether value is safe for GTK and GLib text APIs."""
+    if not isinstance(value, str) or (not allow_empty and not value) or "\x00" in value:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 class _BoundFormatList(List, JSONSettingsBackend):
     """Bind one existing list schema to its JSON setting key."""
 
@@ -64,13 +75,11 @@ class _BoundFormatList(List, JSONSettingsBackend):
         for column in columns:
             if not (
                 isinstance(column, dict)
-                and isinstance(column.get("id"), str)
-                and isinstance(column.get("title"), str)
+                and _valid_text(column.get("id"))
+                and _valid_text(column.get("title"))
                 and isinstance(column.get("type"), str)
                 and column["type"] in VARIABLE_TYPE_MAP
             ):
-                continue
-            if "\x00" in column["id"] or "\x00" in column["title"]:
                 continue
             if "options" in column:
                 options = column["options"]
@@ -84,11 +93,11 @@ class _BoundFormatList(List, JSONSettingsBackend):
                 option_type = VARIABLE_TYPE_MAP[column["type"]]
                 valid_options = True
                 for label, value in option_pairs:
-                    if not isinstance(label, str) or "\x00" in label:
+                    if not _valid_text(label):
                         valid_options = False
                         break
                     if option_type is str:
-                        value_valid = isinstance(value, str) and "\x00" not in value
+                        value_valid = _valid_text(value)
                     elif option_type is int:
                         value_valid = (
                             isinstance(value, int)
@@ -131,9 +140,7 @@ class _BoundFormatList(List, JSONSettingsBackend):
                     and not isinstance(column[boolean_property], bool)
                 ):
                     column.pop(boolean_property, None)
-            if "units" in column and (
-                not isinstance(column["units"], str) or "\x00" in column["units"]
-            ):
+            if "units" in column and not _valid_text(column["units"]):
                 column.pop("units", None)
             if (
                 column["type"] in {"integer", "float"}
@@ -182,7 +189,7 @@ class _BoundFormatList(List, JSONSettingsBackend):
                 if option_values is not None:
                     valid_default = default in option_values
                 elif column["type"] in {"string", "file", "icon", "sound", "keybinding"}:
-                    valid_default = isinstance(default, str) and "\x00" not in default
+                    valid_default = _valid_text(default)
                 elif column["type"] == "integer":
                     valid_default = (
                         isinstance(default, int)
@@ -234,7 +241,7 @@ class _BoundFormatList(List, JSONSettingsBackend):
             valid_columns.append(column)
         definition["columns"] = valid_columns
         description = definition.get("description")
-        if description is not None and not isinstance(description, str):
+        if description is not None and not _valid_text(description):
             description = None
         height = definition.get("height", 300)
         try:
@@ -257,7 +264,7 @@ class _BoundFormatList(List, JSONSettingsBackend):
         if not isinstance(hidden_buttons, list):
             hidden_buttons = []
         tooltip = definition.get("tooltip", "")
-        if not isinstance(tooltip, str):
+        if not _valid_text(tooltip):
             tooltip = ""
         super().__init__(
             label=description,
@@ -443,14 +450,12 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
                 continue
             table_key = table.get("key")
             if (
-                not isinstance(table_key, str)
-                or not table_key
-                or "\x00" in table_key
+                not _valid_text(table_key, allow_empty=False)
                 or not isinstance(definitions.get(table_key), dict)
             ):
                 continue
             label = table.get("label")
-            if not isinstance(label, str) or not label or "\x00" in label:
+            if not _valid_text(label, allow_empty=False):
                 label = table_key
             if table_key in self._table_labels:
                 continue

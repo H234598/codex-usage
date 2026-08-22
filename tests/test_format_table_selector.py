@@ -12,7 +12,12 @@ sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
 import format_table_selector as format_table_selector_module  # noqa: E402
-from format_table_selector import FormatTableSelector, Gtk, _BoundFormatList  # noqa: E402
+from format_table_selector import (  # noqa: E402
+    FormatTableSelector,
+    Gtk,
+    _BoundFormatList,
+    _valid_text,
+)
 from TreeListWidgets import list_edit_factory  # noqa: E402
 
 
@@ -269,6 +274,35 @@ def test_constructor_falls_back_from_nul_table_label() -> None:
         assert selector._table_labels["table-a"] == "table-a"
     finally:
         selector.destroy()
+
+
+@pytest.mark.parametrize("field", ["key", "label"])
+def test_constructor_ignores_invalid_utf8_table_text(field) -> None:
+    invalid = "table\ud800" if field == "key" else "A\ud800"
+    table_key = invalid if field == "key" else "table-a"
+    settings = _Settings()
+    if field == "key":
+        settings.settings[table_key] = settings.settings.pop("table-a")
+
+    selector = FormatTableSelector(
+        {"tables": [{"key": table_key, "label": invalid if field == "label" else "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        expected = {} if field == "key" else {"table-a": "table-a"}
+        assert selector._table_labels == expected
+    finally:
+        selector.destroy()
+
+
+def test_valid_text_rejects_nul_and_unpaired_surrogate() -> None:
+    assert _valid_text("ok") is True
+    assert _valid_text("") is True
+    assert _valid_text("", allow_empty=False) is False
+    assert _valid_text("bad\x00text") is False
+    assert _valid_text("bad\ud800") is False
 
 
 def test_table_change_ignores_unknown_selection() -> None:

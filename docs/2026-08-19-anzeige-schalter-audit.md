@@ -9269,3 +9269,18 @@ Schema-Kopie bleibt dank bestehender Deep-Copy-Isolation unverändert.
 Regression prüft Titel und Reihenfolge der übrig gebliebenen ersten Spalte.
 Verifikation: **72 fokussierte Format-Tests**, Ruff, Python-Compile und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 788: Ungültige UTF-8-Texte im Format-Selector abweisen
+
+Tabellenkeys und Labels mit unpaired Unicode-Surrogaten passierten bisher die
+NUL-Prüfung. Beim Einfügen in GTK-ComboBox oder GLib-Markup entstand dadurch
+`UnicodeEncodeError`; die Einstellungsseite konnte beim Aufbau abbrechen.
+
+`_valid_text()` prüft jetzt NUL-freie, UTF-8-kodierbare Texte. Die Prüfung gilt
+für Tabellenkey/-label sowie relevante Spalten-, Options-, Einheiten-,
+Default-, Beschreibung- und Tooltiptexte. Ungültige Labels fallen auf den
+Key zurück; ungültige Keys werden verworfen.
+
+Regression deckt Key, Label und die Validierungsfunktion ab. Verifikation:
+**75 fokussierte Format-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
+keine Settings-Fenster gestartet.
