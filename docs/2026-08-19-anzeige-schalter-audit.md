@@ -8965,3 +8965,19 @@ ab.
 Verifikation: fokussierte Node-Tests für Legacy-Migration, Backend-Overview,
 Backend-Settings und Serien: **17 bestanden**; Node-Syntaxcheck und
 `git diff --check` sauber. Keine Settings-Fenster gestartet.
+
+## Runde 764: Tokendelta nicht mit unbekanntem Pool als `main` markieren
+
+`_panelDeltaIsDynamic()` leitete aus jedem Poolnamen außer
+`gpt-5.3-codex-spark` automatisch den Pool `main` ab. Ein unbekannter oder
+künftiger pool-only-Pool konnte dadurch gegen das 5h-/Main-Fenster geprüft
+und fälschlich als dynamisch formatiert werden.
+
+Die Zuordnung akzeptiert jetzt ausschließlich die bekannten Pool-IDs `main`
+und `gpt-5.3-codex-spark`; unbekannte IDs liefern konservativ `false`. Das
+ändert keine bestehenden Main-/Spark-Pfade und hält neue pool-only IDs von
+falschen Schwellenwerten fern. Regression deckt `pool-only` ab.
+
+Verifikation: fokussierte Pool-/Delta-Tests in `tests/applet_runtime.test.js`:
+**49 bestanden**; Node-Syntaxcheck und `git diff --check` sauber. Keine
+Settings-Fenster gestartet.

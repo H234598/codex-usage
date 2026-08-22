@@ -9087,7 +9087,12 @@ CodexUsageApplet.prototype = {
             return false;
         }
         let seconds = Number(candidate.limit_window_seconds);
-        let pool = candidate.pool === "gpt-5.3-codex-spark" ? "spark" : "main";
+        let pool = candidate.pool === "gpt-5.3-codex-spark"
+            ? "spark"
+            : (candidate.pool === "main" ? "main" : "");
+        if (!pool) {
+            return false;
+        }
         let window;
         if (pool === "spark") {
             let sparkPool = this._modelPool(usage, "gpt-5.3-codex-spark");
