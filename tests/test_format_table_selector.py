@@ -387,6 +387,34 @@ def test_destroy_detaches_active_table_listener() -> None:
     assert settings.listeners["format-table-selector"] == []
 
 
+def test_discard_table_survives_already_detached_stack_widget() -> None:
+    class FailingStack:
+        def remove(self, _widget):
+            raise RuntimeError("widget already detached")
+
+    class Widget:
+        def __init__(self):
+            self.detached = False
+            self.destroyed = False
+
+        def detach(self):
+            self.detached = True
+
+        def destroy(self):
+            self.destroyed = True
+
+    widget = Widget()
+    selector = FormatTableSelector.__new__(FormatTableSelector)
+    selector._tables = {"table-a": widget}
+    selector.table_stack = FailingStack()
+
+    FormatTableSelector._discard_table(selector, "table-a")
+
+    assert selector._tables == {}
+    assert widget.detached is True
+    assert widget.destroyed is True
+
+
 def test_copy_table_reuses_percent_columns_but_keeps_own_description() -> None:
     settings = _Settings()
     settings.settings = {

@@ -8671,3 +8671,20 @@ abgefangen.
 Regression verwendet ein Backend, dessen `listeners`-Property beim Cleanup
 fehlschlägt. Verifikation: `tests/test_dynamic_series_list.py` 23/23;
 Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 748: Formatierungs-Selector überlebt abgehängte Tabellenwidgets
+
+Beim Umschalten einer Formatierungs- oder Prognosetabelle entfernt der
+Selector zuerst das bisher aktive Widget aus dem `Gtk.Stack`. War dieses
+Widget bereits extern abgehängt oder zerstört, konnte `Stack.remove()` eine
+Ausnahme werfen. Der Auswahl-Callback brach dann vor `destroy()` und vor der
+neuen Anzeige ab.
+
+`FormatTableSelector._discard_table()` behandelt `detach()`, `Stack.remove()`
+und `destroy()` jetzt einzeln als best-effort. Der interne Tabellenindex wird
+vorher entfernt; ein Fehler in einem GTK-Cleanup-Schritt blockiert daher weder
+den nächsten Tabellenwechsel noch das Schließen der Settings-Seite.
+
+Regression simuliert ein bereits abgehängtes Stack-Widget. Verifikation:
+Format-/Forecast-Fokustests 80/80; Python-Compile, Ruff und `git diff --check`
+sauber.

@@ -508,9 +508,18 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         widget = self._tables.pop(table_key, None)
         if widget is None:
             return
-        widget.detach()
-        self.table_stack.remove(widget)
-        widget.destroy()
+        try:
+            widget.detach()
+        except Exception:
+            pass
+        try:
+            self.table_stack.remove(widget)
+        except Exception:
+            pass
+        try:
+            widget.destroy()
+        except Exception:
+            pass
 
     def _detach_selector_listener(self):
         try:
