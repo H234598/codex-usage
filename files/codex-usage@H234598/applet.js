@@ -9404,7 +9404,8 @@ CodexUsageApplet.prototype = {
             return usage && usage.five_hour;
         }
         let weekly = this._remainingPercent(usage.weekly);
-        let monthly = usage.main && usage.main.available === true
+        let monthly = usage.main && usage.main.available === true &&
+            usage.main.allowed !== false
             ? this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000))
             : null;
         return weekly === 0 || monthly === 0 ? null : usage.five_hour;
@@ -9415,7 +9416,8 @@ CodexUsageApplet.prototype = {
             return false;
         }
         let weekly = this._remainingPercent(usage.weekly);
-        let monthlyWindow = usage.main && usage.main.available === true
+        let monthlyWindow = usage.main && usage.main.available === true &&
+            usage.main.allowed !== false
             ? this._poolWindowForDuration(usage.main, 2592000)
             : null;
         let monthly = this._remainingPercent(monthlyWindow);

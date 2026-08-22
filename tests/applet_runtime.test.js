@@ -1951,6 +1951,22 @@ test("5h display does not mask data from an unavailable main pool", () => {
   assert.equal(applet._fiveHourDisplayWindow(usage), usage.five_hour);
 });
 
+test("5h display does not mask data from a disallowed main pool", () => {
+  const applet = makeApplet();
+  applet.hideFiveHourWhenLongLimitExhausted = true;
+  const usage = {
+    status: "ok", stale: false,
+    five_hour: {remaining: 80}, weekly: {remaining: 80},
+    main: {
+      available: true, allowed: false, limit_reached: false, exhausted: true,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 0}],
+    },
+  };
+
+  assert.equal(applet._fiveHourDisplayWindow(usage), usage.five_hour);
+  assert.equal(applet._longLimitExhausted(usage), false);
+});
+
 test("dynamic monthly delta ignores an unavailable main pool", () => {
   const applet = makeApplet();
   const usage = {

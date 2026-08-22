@@ -6219,3 +6219,16 @@ Regression prüft nicht freigegebenen Spark-Pool und bestehende Alert-/Panel-
 Pfade. Fokustest `node --test
 --test-name-pattern='Spark alert state ignores|alert helper matrix|legacy alert rows|usage severity|limit notifications|panel' tests/applet_runtime.test.js`:
 55/55; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 559: Disallowed-Pool nicht als Langlimit-Erschöpfung werten
+
+`_fiveHourDisplayWindow()` und `_longLimitExhausted()` prüften bisher nur
+`available=true`. Bei `allowed=false, exhausted=true` konnte ein nicht
+freigegebener Main-Pool deshalb 5h ausblenden oder den Account verstecken.
+
+Beide Pfade verlangen jetzt zusätzlich `allowed !== false`. Bekannte
+Erschöpfung freigegebener Pools bleibt unverändert. Regression prüft
+unavailable/disallowed sowie bestehende Panel-, Pool- und Alarmfälle.
+Fokustest `node --test
+--test-name-pattern='5h display does not mask|long-limit exhaustion|monthly exhaustion|opt-in long-limit|panel|pool|other-window|usage severity|Spark alert state|limit notifications' tests/applet_runtime.test.js`:
+79/79; Node-Syntaxcheck und `git diff --check` sauber.
