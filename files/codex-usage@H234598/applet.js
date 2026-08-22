@@ -3579,6 +3579,9 @@ CodexUsageApplet.prototype = {
     _panelValueCount: function() {
         let raw = typeof this.panelValueCount === "string"
             ? this.panelValueCount.trim() : this.panelValueCount;
+        if (typeof raw === "boolean") {
+            return PANEL_VALUE_DEFAULT_COUNT;
+        }
         if (typeof raw === "string" && !/^[0-9]+$/.test(raw)) {
             return PANEL_VALUE_DEFAULT_COUNT;
         }

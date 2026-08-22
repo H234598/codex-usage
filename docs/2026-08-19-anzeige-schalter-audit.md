@@ -5981,3 +5981,17 @@ tests/test_panel_settings_list.py`: 10/10; zusätzlich prüft der GTK-Dialog-
 Pfad fehlende Slotwerte als `0`. Ruff, Python-Compile und
 `git diff --check` waren sauber; danach wurde installiert und Cinnamon neu
 geladen.
+
+## Runde 542: Panel-Anzahl verwirft boolesche Werte
+
+Python-Editor und GJS validierten `panel-value-count` bisher nicht gleich:
+Python verwirft boolesche Werte, GJS wandelte `true` mit `Number(true)` in
+`1` um. Ein beschädigter JSON-Import konnte dadurch ungewollt nur ein
+Wertfeld anzeigen.
+
+`_panelValueCount()` verwirft boolesche Werte jetzt ebenfalls und fällt auf
+20 zurück. Regression prüft `true` und `false`. `node --test
+tests/applet_runtime.test.js`: 416/416; `pytest -q
+tests/test_panel_settings_list.py tests/test_applet.py -k 'panel or metadata
+or settings or list_columns'`: 14/14. Ruff, Node-Syntaxcheck, Python-Compile
+und `git diff --check` sauber.
