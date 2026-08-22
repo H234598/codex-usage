@@ -6135,3 +6135,18 @@ reproduziert beide Pools und den vollständigen Panel-Text zuerst rot und besteh
 danach grün. Fokustest `node --test
 --test-name-pattern='panel|pool|other-window' tests/applet_runtime.test.js`:
 65/65; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 553: Warnungen ignorieren unbrauchbare Poolfenster
+
+Die Poolprüfung war nach den Leistenfixes noch nicht überall einheitlich:
+`_usageSeverity()` nahm das Main-30-Tage-Fenster ungeprüft, und
+`_notifyForPayload()` erzeugte Monats- und Spark-Warnungen aus Pools mit
+`available=false` oder widersprüchlicher Erschöpfung. Dadurch konnten alte
+Grenzwerte als kritische Panelklasse oder Benachrichtigung erscheinen.
+
+Severity und Benachrichtigungsaufbau verwenden jetzt `_poolIsUsable()` für
+beide dynamischen Poolgruppen; direkte 5h-/Wochenwerte bleiben separat
+nutzbar. Regression prüft unbrauchbare Main- und Spark-Pools sowie bestehende
+Spark-Schwellen. Fokustest `node --test
+--test-name-pattern='usage severity|limit notifications|Spark notification|panel|pool|other-window' tests/applet_runtime.test.js`:
+68/68; Node-Syntaxcheck und `git diff --check` sauber.

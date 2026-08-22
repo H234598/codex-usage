@@ -357,10 +357,13 @@ function usageWithSparkWindows(account, values) {
     account,
     label: account,
     status: "ok",
-    main: { available: true, windows: [] },
+    main: {
+      available: true, allowed: true, limit_reached: false, exhausted: false,
+      windows: [],
+    },
     models: {
       "gpt-5.3-codex-spark": {
-        available: true,
+        available: true, allowed: true, limit_reached: false, exhausted: false,
         windows: [
           { name: "5h", duration_seconds: 18000, remaining: values.five },
           { name: "weekly", duration_seconds: 604800, remaining: values.weekly },
@@ -1834,6 +1837,22 @@ test("usage severity ignores Spark windows from an unavailable model pool", () =
   assert.equal(applet._usageSeverity(base), "codex-usage-critical");
 });
 
+test("usage severity ignores monthly data from an unavailable main pool", () => {
+  const applet = makeApplet();
+  const usage = {
+    account: "alpha", status: "ok", stale: false,
+    five_hour: {remaining: 50}, weekly: {remaining: 50},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 1}],
+    },
+  };
+
+  assert.equal(applet._usageSeverity(usage), "");
+  usage.main.available = true;
+  assert.equal(applet._usageSeverity(usage), "codex-usage-critical");
+});
+
 test("window identity helpers distinguish aliases, conflicts, duplicates and pool selection", () => {
   const applet = makeApplet();
   const five = {name: "5h", limit_window_seconds: 18000, remaining: 80, limit: 100};
@@ -2712,6 +2731,38 @@ test("Spark notification uses dedicated Spark threshold", () => {
   applet._notifyForPayload();
 
   assert.equal(applet._warningState["alpha:Spark 5h"], true);
+});
+
+test("limit notifications ignore windows from unavailable pools", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._alertSettings = { alpha: {
+    account: "alpha",
+    "five-threshold": 20,
+    "weekly-threshold": 20,
+    "monthly-threshold": "20",
+    "spark-threshold": "20",
+    warnings: true,
+    errors: true,
+  } };
+  applet._usages = [{
+    account: "alpha", label: "alpha", status: "ok",
+    five_hour: {remaining: 80}, weekly: {remaining: 80},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 1}],
+    },
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: false, allowed: true, limit_reached: false, exhausted: false,
+        windows: [{name: "5h", duration_seconds: 18000, remaining: 1}],
+      },
+    },
+  }];
+  applet.notifyWarnings = false;
+
+  applet._notifyForPayload();
+
+  assert.deepEqual(Object.keys(applet._warningState), []);
 });
 
 test("Spark panel sources use dedicated threshold", () => {

@@ -9904,13 +9904,16 @@ CodexUsageApplet.prototype = {
                     );
                 }
             }
+            let mainPoolUsable = this._poolIsUsable(usage.main);
             let windows = [
                 ["5h", usage.five_hour, "five-threshold"],
                 ["Woche", usage.weekly, "weekly-threshold"],
-                ["30d", this._poolWindowForDuration(usage.main, 2592000), "monthly-threshold"]
+                ["30d", mainPoolUsable
+                    ? this._poolWindowForDuration(usage.main, 2592000)
+                    : null, "monthly-threshold"]
             ];
             let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
-            if (spark && Array.isArray(spark.windows)) {
+            if (this._poolIsUsable(spark) && Array.isArray(spark.windows)) {
                 for (let sparkIndex = 0; sparkIndex < spark.windows.length; sparkIndex++) {
                     let sparkWindow = spark.windows[sparkIndex];
                     if (!this._windowIdentityIsKnown(sparkWindow)) {
@@ -10422,7 +10425,9 @@ CodexUsageApplet.prototype = {
         }
         let five = this._remainingPercent(usage.five_hour);
         let week = this._remainingPercent(usage.weekly);
-        let monthly = this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000));
+        let monthly = this._poolIsUsable(usage.main)
+            ? this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000))
+            : null;
         let sparkPool = this._modelPool(usage, "gpt-5.3-codex-spark");
         let sparkValues = this._poolIsUsable(sparkPool) && Array.isArray(sparkPool.windows)
             ? sparkPool.windows.map(Lang.bind(this, function(window) {
