@@ -1714,12 +1714,7 @@ CodexUsageApplet.prototype = {
                     "profile-dir": profileDir,
                     "test-home": this._isTestHomeProfile(profileDir),
                     browser: browser === "chromium" ? 1 : 0,
-                    "reactivation-browser": {
-                        auto: 0,
-                        vivaldi: 1,
-                        chromium: 2,
-                        firefox: 3
-                    }[reactivationBrowser],
+                    "reactivation-browser": REACTIVATION_BROWSER_NAMES.indexOf(reactivationBrowser),
                     series: series,
                     "series-active": seriesActive,
                     backend: backend === "app-server" ? 1 : 0

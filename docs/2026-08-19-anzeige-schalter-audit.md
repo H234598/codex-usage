@@ -7587,3 +7587,11 @@ Fail-Closed-Fallback. Regression prüft Account-Write und Profiljob mit
 Firefox-Anzeige, aber Vivaldi-Reaktivierung, sowie ungültige Mappingwerte.
 Fokussierte Account-/Reaktivierungs-Tests: 26/26; Node-Syntaxcheck und
 `git diff --check` sauber.
+
+## Runde 656: Reaktivierungs-Mapping zentralisiert
+
+Die vier zulässigen Reaktivierungsbrowser standen nach dem Fix noch einmal
+als getrennte Objektzuordnung im Overview-Parser. Das Mapping nutzt jetzt
+dieselbe zentrale, begrenzte Namensliste wie Account-Write und Profiljob.
+Damit können Parser- und Schreibpfad nicht mehr still unterschiedliche
+Indexwerte vergeben. Die fokussierten 26/26 Tests bleiben grün.
