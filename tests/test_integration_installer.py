@@ -2268,6 +2268,46 @@ def test_postwalk_release_rejects_child_directory_swap_before_fd_open(
     assert swapped
 
 
+def test_postwalk_release_rejects_foreign_owned_file(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    payload = release / "payload"
+    payload.write_bytes(b"foreign")
+    item = payload.lstat()
+    foreign = SimpleNamespace(
+        st_dev=item.st_dev,
+        st_ino=item.st_ino,
+        st_uid=os.getuid() + 1,
+        st_mode=item.st_mode,
+        st_nlink=item.st_nlink,
+    )
+
+    class ForeignEntry:
+        name = "payload"
+
+        def stat(self, *, follow_symlinks=False):
+            return foreign
+
+    class ForeignScan:
+        def __enter__(self):
+            return iter((ForeignEntry(),))
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    monkeypatch.setattr(
+        integration_installer.os,
+        "scandir",
+        lambda directory_fd: ForeignScan(),
+    )
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._postwalk_release(release)
+
+    assert payload.read_bytes() == b"foreign"
+
+
 def test_installer_reader_rejects_oversized_file_before_materializing(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

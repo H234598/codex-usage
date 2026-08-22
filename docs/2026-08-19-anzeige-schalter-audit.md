@@ -5864,3 +5864,14 @@ Vor Enumeration und Unlink wird jetzt die aktuelle UID verlangt;
 Fremdobjekte brechen fail-closed ab. Regressionen decken fremdes `activate`
 und fremdes `lib64` ab. `pytest -q tests/test_integration_installer.py`:
 145/145; Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 532: Postwalk akzeptiert nur eigene Release-Objekte
+
+`_postwalk_release()` prüfte bisher Typ, Inode und Linkanzahl, aber nicht die
+Besitzer-UID von Dateien und geöffneten Unterverzeichnissen. Fremde Objekte
+konnten dadurch in den Release-Scan gelangen.
+
+Dateien und Verzeichnisse werden jetzt während Enumeration und FD-Öffnung auf
+aktuelle UID geprüft; Abweichung bricht fail-closed. Regression deckt fremde
+Release-Datei ab. `pytest -q tests/test_integration_installer.py`: 146/146;
+Ruff, Python-Compile und `git diff --check` sauber.

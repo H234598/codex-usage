@@ -1814,6 +1814,8 @@ def _postwalk_release(
                             stat.S_ISDIR(item.st_mode) or stat.S_ISREG(item.st_mode)
                         ):
                             _fail()
+                        if item.st_uid != os.getuid():
+                            _fail()
                         if stat.S_ISREG(item.st_mode) and item.st_nlink != 1:
                             _fail()
                         if name == "__pycache__" or Path(name).suffix == ".pyc":
@@ -1823,6 +1825,7 @@ def _postwalk_release(
                             child_stat = os.fstat(child_fd)
                             if (
                                 not stat.S_ISDIR(child_stat.st_mode)
+                                or child_stat.st_uid != os.getuid()
                                 or child_stat.st_dev != item.st_dev
                                 or child_stat.st_ino != item.st_ino
                             ):
