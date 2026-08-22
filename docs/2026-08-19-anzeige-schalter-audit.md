@@ -7431,3 +7431,18 @@ nicht automatisch überschrieben, damit kein stiller Verlust entsteht.
 Regression deckt `null`, Nicht-Objekt-Zeilen und falsche Zelltypen ab.
 `pytest -q tests/test_format_table_selector.py`: 9/9; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 645: Beschädigte Account-Serienzeilen brechen Settings nicht mehr ab
+
+`DynamicSeriesList` nutzte ebenfalls direkt die ungeschützte
+`TreeListWidgets.List.on_setting_changed()`-Implementierung. Ein beschädigter
+`account-series-settings`-Wert (`null`, Nicht-Objekt-Zeile oder falscher
+Zelltyp) konnte dadurch den gesamten Einstellungsdialog beim Aufbau beenden.
+
+Die Account-Serienliste lädt jetzt nur Listen mit Objektzeilen. Ungültige
+Zeilen und nicht passende GTK-Zellwerte werden verworfen; gespeicherte Daten
+bleiben unangetastet.
+
+Regression deckt alle drei Fälle ab. `pytest -q
+tests/test_dynamic_series_list.py`: 16/16; Ruff, Python-Compile und
+`git diff --check` sauber.

@@ -354,6 +354,42 @@ def test_destroy_detaches_settings_listener() -> None:
     assert settings.listeners["account-series-settings"] == []
 
 
+def test_malformed_account_rows_do_not_break_settings_table() -> None:
+    settings = _Settings()
+    settings.values["account-series-settings"] = None
+    widget = DynamicSeriesList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "series", "title": "Serie", "type": "string"},
+                {"id": "series-active", "title": "Aktiv", "type": "boolean"},
+            ],
+            "show-buttons": False,
+        },
+        "account-series-settings",
+        settings,
+    )
+
+    try:
+        assert len(widget.model) == 0
+        settings.values["account-series-settings"] = [None, "broken", {
+            "account": "alpha",
+            "series": "A",
+            "series-active": True,
+        }]
+        widget.on_setting_changed()
+        assert len(widget.model) == 1
+        settings.values["account-series-settings"] = [{
+            "account": 123,
+            "series": "A",
+            "series-active": True,
+        }]
+        widget.on_setting_changed()
+        assert len(widget.model) == 0
+    finally:
+        widget.destroy()
+
+
 def test_open_dialog_filters_series_column_and_restores_schema(monkeypatch) -> None:
     widget = DynamicSeriesList.__new__(DynamicSeriesList)
     original_columns = [
