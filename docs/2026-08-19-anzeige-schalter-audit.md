@@ -6093,3 +6093,15 @@ Die Normalizer akzeptieren fehlendes `show-panel` jetzt als `false`, behalten
 explizite alte Boolwerte aber unverändert. Regression prüft alle fünf modernen
 Tabellenformen. Fokustest `node --test --test-name-pattern='credit|consumption|reset|metric-table|modern metric|account row mergers' tests/applet_runtime.test.js`:
 67/67; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 550: Tokendelta-Hilfe vollständig materialisieren
+
+`Tokendelta` erbt seine Formatierungsfelder im Selector aus
+`account-percent-styles`, besitzt im Schema aber zusätzlich eigene Spalten
+`Account-ID` und `Dynamisch`. Die schema-getriebene Hilfe sah deshalb nur diese
+beiden Felder und verschwieg Modus, Schrift, Schwelle und Alternativformat.
+
+Die Hilfe-Materialisierung führt für Tokendelta jetzt geerbte und eigene
+Spalten in derselben Reihenfolge wie der Selector zusammen. Regression prüft
+`Formatierungsmodus` und `Dynamisch`; `pytest -q tests/test_help_page.py`: 6/6.
+Python-Kompilierung und `git diff --check` sauber.

@@ -89,6 +89,23 @@ def test_help_group_builder_covers_gui_pages_and_format_copies() -> None:
     }
 
 
+def test_help_materializes_tokendelta_inherited_format_fields() -> None:
+    schema = _schema()
+    groups = build_help_groups(schema)
+    entries = [
+        entry
+        for group in groups
+        for section in group["sections"]
+        for entry in section["entries"]
+        if entry["title"] == "Tokendelta"
+    ]
+
+    assert len(entries) == 1
+    field_titles = {field["title"] for field in entries[0]["fields"]}
+    assert "Formatierungsmodus" in field_titles
+    assert "Dynamisch" in field_titles
+
+
 def test_help_definition_and_table_key_helpers_handle_malformed_input() -> None:
     assert tuple(_iter_table_keys({"tables": [{"key": "a"}, {}, {"key": 2}]})) == ("a",)
     assert tuple(_iter_table_keys({})) == ()

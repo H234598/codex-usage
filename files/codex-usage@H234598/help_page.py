@@ -187,12 +187,31 @@ def _definition_entry(key: str, definition: dict[str, object]) -> dict[str, obje
 
 
 def _help_definition(
-    definition: dict[str, object], schema: dict[str, object]
+    definition: dict[str, object], schema: dict[str, object], key: str | None = None
 ) -> dict[str, object]:
     """Materialize copied table columns for the read-only help view."""
     result = dict(definition)
     copy_from = definition.get("format-copy-of")
+    if key == "account-delta-styles" and copy_from is None:
+        copy_from = "account-percent-styles"
     base = schema.get(copy_from) if isinstance(copy_from, str) else None
+    if (
+        key == "account-delta-styles"
+        and isinstance(base, dict)
+        and isinstance(base.get("columns"), list)
+        and isinstance(result.get("columns"), list)
+    ):
+        overrides = {
+            column.get("id"): column
+            for column in result["columns"]
+            if isinstance(column, dict) and isinstance(column.get("id"), str)
+        }
+        columns = []
+        for column in base["columns"]:
+            column_id = column.get("id") if isinstance(column, dict) else None
+            columns.append(overrides.pop(column_id, column))
+        columns.extend(overrides.values())
+        result["columns"] = columns
     if (
         "columns" not in result and
         isinstance(base, dict) and isinstance(base.get("columns"), list)
@@ -243,7 +262,7 @@ def build_help_groups(schema: object) -> list[dict[str, object]]:
                 if not isinstance(definition, dict):
                     continue
                 seen.add(key)
-                entries.append(_definition_entry(key, _help_definition(definition, schema)))
+                entries.append(_definition_entry(key, _help_definition(definition, schema, key)))
                 for table_key in _iter_table_keys(definition):
                     if table_key in seen:
                         continue
@@ -251,7 +270,7 @@ def build_help_groups(schema: object) -> list[dict[str, object]]:
                     if not isinstance(table, dict):
                         continue
                     seen.add(table_key)
-                    entries.append(_definition_entry(table_key, _help_definition(table, schema)))
+                    entries.append(_definition_entry(table_key, _help_definition(table, schema, table_key)))
             if entries:
                 sections.append({
                     "title": _clean_text(section.get("title")) or section_key,
