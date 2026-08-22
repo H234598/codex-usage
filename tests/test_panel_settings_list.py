@@ -14,13 +14,13 @@ import panel_settings_list as panel_settings_list_module  # noqa: E402
 from panel_settings_list import (  # noqa: E402
     Gtk,
     PanelSettingsList,
-    panel_columns,
     panel_apply_value_settings,
+    panel_columns,
+    panel_edit_columns,
     panel_editor_dimensions,
     panel_editor_positions,
-    panel_edit_columns,
-    panel_value_settings,
     panel_value_count,
+    panel_value_settings,
 )
 
 
@@ -80,6 +80,13 @@ def test_panel_value_snapshot_preserves_non_value_fields() -> None:
 
     assert copied == {"slot1": 4, "slot2": 5}
     assert pasted == {"account": "target", "slot1": 4, "slot2": 5, "muted": False}
+
+
+def test_panel_value_snapshot_helpers_ignore_malformed_columns() -> None:
+    row = {"account": "target", "slot1": 4}
+
+    assert panel_value_settings(None, row) == {}
+    assert panel_apply_value_settings(None, row, {"slot1": 9}) == row
 
 
 def test_panel_editor_dimensions_scale_with_values_and_columns() -> None:

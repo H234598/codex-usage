@@ -9121,3 +9121,18 @@ Dialoggröße und Schema-Metadaten ab.
 Verifikation: **3212 Python-Tests bestanden, 1 übersprungen**; Node-
 Syntaxcheck, JSON-Parse und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 772: Snapshot-Helfer gegen defekte Spaltendaten härten
+
+Die neuen Leisten-Kopierfunktionen erwarteten bei `panel_value_settings()` und
+`panel_apply_value_settings()` stillschweigend eine gültige Spaltenliste. Ein
+defekter oder noch nicht geladener Schemawert `columns=None` führte deshalb zu
+`TypeError`. Beide Helfer liefern jetzt bei ungültiger Spaltenliste einen
+leeren beziehungsweise unveränderten Ziel-Snapshot zurück.
+
+Regression deckt `None`, leere und fehlerhafte Snapshot-Eingaben ab; ein
+kleiner Fuzz-Lauf über kaputte Typen bleibt fehlerfrei. Ruff und Panel-Fokuslauf
+bleiben sauber.
+
+Verifikation: **34 fokussierte Panel-Tests bestanden**; Ruff, Python-Compile
+und `git diff --check` sauber. Keine Settings-Fenster gestartet.

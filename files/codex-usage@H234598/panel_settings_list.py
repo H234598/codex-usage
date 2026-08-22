@@ -140,7 +140,7 @@ def panel_value_settings(
     columns: list[dict[str, object]], row: object
 ) -> dict[str, object]:
     """Copy only ordered value fields from one panel row."""
-    if not isinstance(row, dict):
+    if not isinstance(columns, list) or not isinstance(row, dict):
         return {}
     return {
         column_id: copy.deepcopy(row[column_id])
@@ -158,7 +158,7 @@ def panel_apply_value_settings(
 ) -> dict[str, object]:
     """Return row with copied ordered value fields applied."""
     result = copy.deepcopy(row) if isinstance(row, dict) else {}
-    if not isinstance(values, dict):
+    if not isinstance(columns, list) or not isinstance(values, dict):
         return result
     for column in columns:
         if not isinstance(column, dict):
