@@ -8513,3 +8513,17 @@ entfernt. Regression baut die echte `list_edit_factory`-ComboBox und prüft die
 Bereinigung. Format-/Forecast-Fokustests: 73/73; Python-Compile und
 `git diff --check` sauber. Reale `xlet-settings`-Smoke nach Reload lief ohne
 Traceback.
+
+## Runde 738: Sequenz-Optionswerte beim Laden validiert
+
+`_BoundFormatList` unterstützte für `options` neben Dictionaries auch Listen
+und Tupel, prüfte gespeicherte Zeilenwerte aber ausschließlich gegen
+`dict.values()`. Ein persistierter Wert außerhalb einer Sequenz wurde dadurch
+als gültige Tabellenzeile angezeigt und konnte später in einen ungültigen
+Editorzustand gelangen.
+
+Die Zeilenvalidierung bildet jetzt für Dict, Liste und Tupel dieselbe erlaubte
+Wertmenge. Regression nutzt echte String-Optionen als Liste und Tupel und
+verwirft jeweils unbekannte Werte. Format-/Forecast-Fokustests: 75/75;
+Python-Compile und `git diff --check` sauber. Reale `xlet-settings`-Smoke nach
+Reload lief ohne Traceback.

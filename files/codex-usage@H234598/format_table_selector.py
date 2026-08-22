@@ -297,7 +297,13 @@ class _BoundFormatList(List, JSONSettingsBackend):
                 else:
                     row_info.append(None)
                 options = column.get("options")
-                if isinstance(options, dict) and row_info[-1] not in options.values():
+                if isinstance(options, dict):
+                    allowed_values = options.values()
+                elif isinstance(options, (list, tuple)):
+                    allowed_values = options
+                else:
+                    allowed_values = None
+                if allowed_values is not None and row_info[-1] not in allowed_values:
                     row_info = None
                     break
             if row_info is None:

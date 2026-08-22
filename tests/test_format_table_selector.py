@@ -702,3 +702,28 @@ def test_format_table_ignores_unknown_option_values() -> None:
         assert list(selector._tables["table-a"].model[0]) == ["ok", 0]
     finally:
         selector.destroy()
+
+
+@pytest.mark.parametrize("options", [["A", "B"], ("A", "B")])
+def test_format_table_ignores_unknown_sequence_option_values(options) -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [
+        {
+            "id": "mode",
+            "title": "Mode",
+            "type": "string",
+            "options": options,
+        }
+    ]
+    settings.settings["table-a"]["value"] = [{"mode": "C"}]
+
+    selector = FormatTableSelector(
+        {"tables": [{"key": "table-a", "label": "A"}]},
+        "format-table-selector",
+        settings,
+    )
+
+    try:
+        assert len(selector._tables["table-a"].model) == 0
+    finally:
+        selector.destroy()
