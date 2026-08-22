@@ -7352,3 +7352,15 @@ Der Callback übernimmt Fenster jetzt nur noch für nicht invalidierte Accounts.
 Regression simuliert die Invalidierung zwischen Requeststart und Callback.
 `node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
 38/38; `make applet-check` inklusive JSON-Validierung: 475/475 sauber.
+
+## Runde 639: Leisten-Tokendelta verbirgt unzureichende Messdaten
+
+`_panelDeltaPart()` zeigte bei `coverage: "insufficient"` den Backend-Wert
+`0` als `0,0%`. Die normale Verbrauchsanzeige kennzeichnet denselben Zustand
+bereits als „nicht genügend Messdaten“; die Leiste konnte dagegen einen
+scheinbar belastbaren Wert vortäuschen.
+
+Leisten-Tokendelta rendert unzureichende Coverage jetzt als `–`; belastbare
+Coverage bleibt unverändert numerisch. Regression ergänzt diesen Panelpfad.
+`node --test --test-name-pattern='(consumption|Tokendelta|panel delta|dynamic delta|forecast)' tests/applet_runtime.test.js`:
+38/38; `make applet-check` inklusive JSON-Validierung: 475/475 sauber.

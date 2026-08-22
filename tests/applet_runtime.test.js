@@ -8998,6 +8998,11 @@ test("panel delta prefers the newest matching consumption window", () => {
   ];
 
   assert.equal(applet._panelDeltaPart(applet._usages[0], 32, "panel").plain, "Δ5h 9,0%");
+  applet._usages[0].cost_windows = [{
+    pool: "main", limit_window_seconds: 18000,
+    consumed_percentage_points: 0, coverage: "insufficient",
+  }];
+  assert.equal(applet._panelDeltaPart(applet._usages[0], 32, "panel").plain, "Δ5h –");
 });
 
 test("date, time and restlaufzeit styles honor all modes and font colors", () => {

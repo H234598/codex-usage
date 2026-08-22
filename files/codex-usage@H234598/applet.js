@@ -8990,7 +8990,8 @@ CodexUsageApplet.prototype = {
                 }
             }
         }
-        let value = candidate && Number(candidate.consumed_percentage_points);
+        let value = candidate && candidate.coverage !== "insufficient"
+            ? Number(candidate.consumed_percentage_points) : null;
         let valueText = Number.isFinite(value) && value >= 0
             ? this._formatConsumptionValue(value) + "%" : "–";
         let label = this._panelSourceLabel(source);
