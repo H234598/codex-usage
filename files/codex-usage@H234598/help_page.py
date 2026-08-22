@@ -125,8 +125,9 @@ _INTRO = (
     "Optionen, Standardwerte und Grenzen zu sehen. Änderungen werden erst wirksam, wenn das "
     "betroffene Feld gespeichert ist; ein Reload des Applets liest die gespeicherten Werte neu.\n\n"
     "Formatierung ist Darstellung, keine Berechnung: Farben, Schrift und Hintergrund ändern "
-    "keine Limits, Abrufwege, Routingentscheidungen oder Accountdaten. Eine kopierte "
-    "Leistenwert-Tabelle gilt nur für ihren ausgewählten Wert und Account."
+    "keine Limits, Abrufwege, Routingentscheidungen oder Accountdaten. Im Leisten-Editor "
+    "kopierst du Wert 1–N eines ausgewählten Accounts und fügst sie in einen anderen ein; "
+    "Account-ID, Reihenfolge und Stumm bleiben dabei unverändert."
 )
 
 

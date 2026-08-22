@@ -404,7 +404,7 @@
   "panel-edit-columns": {
     "type": "combobox",
     "description": "Spalten im Leisten-Editor",
-    "tooltip": "Beim Doppelklick auf einen Leisten-Eintrag werden die Felder in 2, 3, 4 oder 5 Spalten angeordnet. Die Einstellung begrenzt nur die Dialoghöhe; Daten, Reihenfolge und Speichern bleiben unverändert. Standard: 3 Spalten.",
+    "tooltip": "Beim Doppelklick auf einen Leisten-Eintrag werden Accountdaten oben und Wert 1–N von oben nach unten in 2, 3, 4 oder 5 Spalten angeordnet. Das Fenster passt Breite und Höhe automatisch an; bei vielen Werten bleibt nur ein vertikaler Bildlauf. Standard: 3 Spalten.",
     "options": {
       "2 Spalten": 2,
       "3 Spalten": 3,
@@ -1798,7 +1798,7 @@
     "file": "panel_settings_list.py",
     "widget": "PanelSettingsList",
     "description": "Panelwerte pro Account",
-    "tooltip": "Jeder Account kann so viele geordnete Wertfelder wie oben konfiguriert anzeigen. Alte slot1–slot4-Werte bleiben kompatibel.",
+    "tooltip": "Jeder Account kann so viele geordnete Wertfelder wie oben konfiguriert anzeigen. Alte slot1–slot4-Werte bleiben kompatibel. Im Editor: Quelle auswählen, Werte kopieren, Ziel auswählen und Werte einfügen. Dabei werden nur Wert 1–N übertragen; Account-ID, Reihenfolge und Stumm bleiben unverändert.",
     "columns": [
       {
         "id": "account",
@@ -1934,7 +1934,8 @@
       }
     ],
     "height": 220,
-    "show-buttons": false,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
     "default": []
   },
   "account-credit-settings": {

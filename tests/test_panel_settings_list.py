@@ -15,7 +15,11 @@ from panel_settings_list import (  # noqa: E402
     Gtk,
     PanelSettingsList,
     panel_columns,
+    panel_apply_value_settings,
+    panel_editor_dimensions,
+    panel_editor_positions,
     panel_edit_columns,
+    panel_value_settings,
     panel_value_count,
 )
 
@@ -40,6 +44,50 @@ def test_panel_edit_columns_defaults_and_bounds() -> None:
     assert panel_edit_columns("6") == 3
     assert panel_edit_columns("not-a-number") == 3
     assert panel_edit_columns(True) == 3
+
+
+def test_panel_editor_fills_value_columns_top_to_bottom() -> None:
+    columns = [
+        {"id": "account", "title": "Account", "type": "string"},
+        *[
+            {"id": f"slot{index}", "title": f"Wert {index}", "type": "integer"}
+            for index in range(1, 16)
+        ],
+    ]
+
+    positions = panel_editor_positions(columns, 3)
+
+    assert positions[0] == (0, 0)
+    assert [positions[index][0] for index in range(1, 6)] == [0] * 5
+    assert [positions[index][1] for index in range(1, 6)] == list(range(1, 6))
+    assert [positions[index][0] for index in range(6, 11)] == [1] * 5
+    assert [positions[index][1] for index in range(6, 11)] == list(range(1, 6))
+    assert [positions[index][0] for index in range(11, 16)] == [2] * 5
+    assert [positions[index][1] for index in range(11, 16)] == list(range(1, 6))
+
+
+def test_panel_value_snapshot_preserves_non_value_fields() -> None:
+    columns = [
+        {"id": "account", "title": "Account", "type": "string"},
+        {"id": "slot1", "title": "Wert 1", "type": "integer"},
+        {"id": "slot2", "title": "Wert 2", "type": "integer"},
+    ]
+    source = {"account": "source", "slot1": 4, "slot2": 5, "muted": True}
+    target = {"account": "target", "slot1": 0, "slot2": 1, "muted": False}
+
+    copied = panel_value_settings(columns, source)
+    pasted = panel_apply_value_settings(columns, target, copied)
+
+    assert copied == {"slot1": 4, "slot2": 5}
+    assert pasted == {"account": "target", "slot1": 4, "slot2": 5, "muted": False}
+
+
+def test_panel_editor_dimensions_scale_with_values_and_columns() -> None:
+    narrow = panel_editor_dimensions(15, 3, 1)
+    wide = panel_editor_dimensions(15, 5, 1)
+
+    assert narrow[0] < wide[0]
+    assert narrow[1] > wide[1]
 
 
 def test_panel_columns_expand_legacy_schema_without_mutation() -> None:
@@ -161,6 +209,7 @@ class _Dialog:
 
     def __init__(self, *_args, **_kwargs):
         self.content_area = Gtk.Box()
+        self.default_size = None
         self.__class__.last = self
 
     def get_content_area(self):
@@ -168,6 +217,9 @@ class _Dialog:
 
     def run(self):
         return self.response or Gtk.ResponseType.CANCEL
+
+    def set_default_size(self, width, height):
+        self.default_size = (width, height)
 
     def destroy(self):
         pass
@@ -192,7 +244,7 @@ class _Settings:
         self.values[key] = value
 
 
-def test_panel_editor_places_fields_in_selected_grid_columns(monkeypatch) -> None:
+def test_panel_editor_places_values_vertically_in_selected_columns(monkeypatch) -> None:
     captured = {}
 
     class InspectingDialog(_Dialog):
@@ -206,28 +258,36 @@ def test_panel_editor_places_fields_in_selected_grid_columns(monkeypatch) -> Non
     monkeypatch.setattr(Gtk, "Dialog", InspectingDialog)
     info = {
         "columns": [
-            {"id": f"field{index}", "title": f"Feld {index}", "type": "string"}
-            for index in range(7)
+            {"id": "account", "title": "Account", "type": "string"},
+            *[
+                {"id": f"slot{index}", "title": f"Wert {index}", "type": "integer"}
+                for index in range(1, 8)
+            ],
         ],
         "show-buttons": False,
     }
-    panel = PanelSettingsList(info, "account-panel-settings", _Settings(3))
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "7"
+    panel = PanelSettingsList(info, "account-panel-settings", settings)
 
     panel.open_add_edit_dialog([None for _ in panel.columns])
 
     scrolled = captured["scrolled"]
     grid = captured["grid"]
     assert isinstance(grid, Gtk.Grid)
-    assert scrolled.get_size_request()[1] == 420
+    assert InspectingDialog.last.default_size == panel_editor_dimensions(7, 3, 1)
+    assert scrolled.get_size_request()[0] == panel_editor_dimensions(7, 3, 1)[0] - 60
     assert grid.get_child_at(0, 0) is not None
-    assert grid.get_child_at(1, 0) is not None
-    assert grid.get_child_at(2, 0) is not None
     assert grid.get_child_at(0, 1) is not None
-    assert grid.get_child_at(1, 1) is not None
-    assert grid.get_child_at(2, 1) is not None
     assert grid.get_child_at(0, 2) is not None
+    assert grid.get_child_at(0, 3) is not None
+    assert grid.get_child_at(1, 1) is not None
     assert grid.get_child_at(1, 2) is not None
-    assert grid.get_child_at(3, 0) is None
+    assert grid.get_child_at(1, 3) is not None
+    assert grid.get_child_at(2, 1) is not None
+    assert grid.get_child_at(2, 2) is None
+    assert grid.get_child_at(2, 3) is None
+    assert grid.get_child_at(3, 1) is None
     panel.destroy()
 
 
@@ -249,6 +309,56 @@ def test_panel_editor_returns_edited_values(monkeypatch) -> None:
         assert values[:2] == ["alpha", "beta"]
     finally:
         _Dialog.response = None
+        panel.destroy()
+
+
+def test_panel_copy_paste_changes_only_selected_account_values() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "2"
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {
+                    "id": "order",
+                    "title": "Reihenfolge",
+                    "type": "integer",
+                    "min": 1,
+                    "max": 100,
+                    "default": 1,
+                },
+                {"id": "muted", "title": "Stumm", "type": "boolean", "default": False},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+                {"id": "slot2", "title": "Wert 2", "type": "integer"},
+            ],
+            "show-buttons": True,
+            "hidden-buttons": ["+", "-", "up", "down"],
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert panel.copy_button is not None
+        assert panel.paste_button is not None
+        panel.model.append(["source", 1, False, 4, 5])
+        panel.model.append(["target", 9, True, 0, 1])
+        selection = panel.content_widget.get_selection()
+        selection.select_path("0")
+        panel.copy_value_settings()
+        assert panel.paste_button.get_sensitive() is True
+        selection.select_path("1")
+        panel.paste_value_settings()
+
+        assert list(panel.model[1]) == ["target", 9, True, 4, 5]
+        assert settings.values["account-panel-settings"][1] == {
+            "account": "target",
+            "order": 9,
+            "muted": True,
+            "slot1": 4,
+            "slot2": 5,
+        }
+    finally:
         panel.destroy()
 
 

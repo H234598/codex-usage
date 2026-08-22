@@ -76,6 +76,8 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
     assert panel_table["columns"][1]["max"] == 100
     assert set(panel_table["columns"][3]["options"].values()) == set(range(52))
     assert panel_table["columns"][2]["default"] is False
+    assert panel_table["show-buttons"] is True
+    assert panel_table["hidden-buttons"] == ["+", "-", "up", "down"]
     edit_columns = settings["panel-edit-columns"]
     assert edit_columns["type"] == "combobox"
     assert edit_columns["default"] == 3
@@ -85,6 +87,8 @@ def test_applet_metadata_and_settings_are_consistent() -> None:
         "4 Spalten": 4,
         "5 Spalten": 5,
     }
+    assert "von oben nach unten" in edit_columns["tooltip"]
+    assert "automatisch" in edit_columns["tooltip"]
     assert "panel-edit-columns" in settings["layout"]["display-section"]["keys"]
     assert settings["panel-account-separator"]["default"] == "bar"
     assert set(settings["panel-account-separator"]["options"].values()) == {

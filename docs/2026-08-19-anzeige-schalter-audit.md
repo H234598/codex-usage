@@ -9098,3 +9098,26 @@ Verifikation: **496 Node-Tests**, **131 fokussierte Python-Tests** und die
 vollständige Python-Suite mit **3208 bestanden, 1 übersprungen**; Node-
 Syntaxcheck, JSON-Parse und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 771: Leistenwerte accountübergreifend kopieren und vertikal bearbeiten
+
+Der Leisten-Editor bietet jetzt zwei Toolbar-Aktionen: Werte kopieren legt
+die sichtbaren Wert-1-bis-N-Felder des ausgewählten Accounts als internen
+Snapshot ab; Werte einfügen übernimmt diesen Snapshot in den ausgewählten
+Zielaccount. Account-ID, Reihenfolge, Stumm und sonstige Metadaten werden
+nicht überschrieben. Nicht sichtbare Legacy-Slots bleiben beim Speichern
+weiterhin erhalten.
+
+Die Editorpositionen trennen Account-Metadaten von den Wertfeldern. Wert 1–N
+werden spaltenweise von oben nach unten verteilt: bei 15 Werten und drei
+Spalten entstehen 1–5, 6–10 und 11–15. Dialogbreite und -höhe werden aus
+Wertanzahl, Metadaten und Spaltenzahl berechnet; große Wertlisten behalten
+vertikalen Bildlauf, horizontale Spalten bleiben sichtbar. Schema-Tooltip und
+gesammelte Hilfe dokumentieren Bedienfolge und unveränderte Felder.
+
+Regressionen decken Snapshot-Isolation, Toolbar-Aktionen, 15-Werte-Layout,
+Dialoggröße und Schema-Metadaten ab.
+
+Verifikation: **3212 Python-Tests bestanden, 1 übersprungen**; Node-
+Syntaxcheck, JSON-Parse und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.

@@ -19,6 +19,12 @@ _MAX_COUNT = 64
 _DEFAULT_EDIT_COLUMNS = 3
 _MIN_EDIT_COLUMNS = 2
 _MAX_EDIT_COLUMNS = 5
+_EDITOR_COLUMN_WIDTH = 280
+_EDITOR_ROW_HEIGHT = 76
+_EDITOR_HORIZONTAL_MARGIN = 160
+_EDITOR_VERTICAL_MARGIN = 180
+_EDITOR_MIN_HEIGHT = 460
+_EDITOR_MAX_HEIGHT = 900
 
 _SOURCE_OPTIONS = {
     "Aus": 0,
@@ -120,6 +126,107 @@ def panel_edit_columns(value: object) -> int:
         if _MIN_EDIT_COLUMNS <= count <= _MAX_EDIT_COLUMNS
         else _DEFAULT_EDIT_COLUMNS
     )
+
+
+def _panel_slot_id(value: object) -> bool:
+    """Return whether value identifies an ordered panel value field."""
+    if not isinstance(value, str) or not value.startswith("slot"):
+        return False
+    suffix = value[4:]
+    return bool(suffix) and suffix.isdecimal() and not suffix.startswith("0")
+
+
+def panel_value_settings(
+    columns: list[dict[str, object]], row: object
+) -> dict[str, object]:
+    """Copy only ordered value fields from one panel row."""
+    if not isinstance(row, dict):
+        return {}
+    return {
+        column_id: copy.deepcopy(row[column_id])
+        for column in columns
+        if isinstance(column, dict)
+        and _panel_slot_id(column_id := column.get("id"))
+        and column_id in row
+    }
+
+
+def panel_apply_value_settings(
+    columns: list[dict[str, object]],
+    row: object,
+    values: object,
+) -> dict[str, object]:
+    """Return row with copied ordered value fields applied."""
+    result = copy.deepcopy(row) if isinstance(row, dict) else {}
+    if not isinstance(values, dict):
+        return result
+    for column in columns:
+        if not isinstance(column, dict):
+            continue
+        column_id = column.get("id")
+        if _panel_slot_id(column_id) and column_id in values:
+            result[column_id] = copy.deepcopy(values[column_id])
+    return result
+
+
+def panel_editor_positions(
+    columns: list[dict[str, object]], edit_columns: object
+) -> dict[int, tuple[int, int]]:
+    """Place metadata first, then ordered values top-to-bottom per column."""
+    column_count = panel_edit_columns(edit_columns)
+    if not isinstance(columns, list):
+        return {}
+    slot_indices = {
+        index
+        for index, column in enumerate(columns)
+        if isinstance(column, dict) and _panel_slot_id(column.get("id"))
+    }
+    value_indices = [index for index in range(len(columns)) if index in slot_indices]
+    metadata_indices = [index for index in range(len(columns)) if index not in slot_indices]
+    if not value_indices:
+        value_indices = metadata_indices
+        metadata_indices = []
+
+    positions = {
+        index: (offset % column_count, offset // column_count)
+        for offset, index in enumerate(metadata_indices)
+    }
+    metadata_rows = (
+        math.ceil(len(metadata_indices) / column_count) if metadata_indices else 0
+    )
+    value_rows = max(1, math.ceil(len(value_indices) / column_count))
+    for offset, index in enumerate(value_indices):
+        positions[index] = (
+            offset // value_rows,
+            metadata_rows + (offset % value_rows),
+        )
+    return positions
+
+
+def panel_editor_dimensions(
+    value_count: object,
+    edit_columns: object,
+    metadata_count: object = 0,
+) -> tuple[int, int]:
+    """Return default dialog size for visible columns and vertical rows."""
+    column_count = panel_edit_columns(edit_columns)
+    try:
+        values = max(0, int(value_count)) if not isinstance(value_count, bool) else 0
+    except (TypeError, ValueError, OverflowError):
+        values = 0
+    try:
+        metadata = max(0, int(metadata_count)) if not isinstance(metadata_count, bool) else 0
+    except (TypeError, ValueError, OverflowError):
+        metadata = 0
+    value_rows = max(1, math.ceil(values / column_count))
+    metadata_rows = math.ceil(metadata / column_count) if metadata else 0
+    rows = metadata_rows + value_rows
+    width = column_count * _EDITOR_COLUMN_WIDTH + _EDITOR_HORIZONTAL_MARGIN
+    height = min(
+        _EDITOR_MAX_HEIGHT,
+        max(_EDITOR_MIN_HEIGHT, rows * _EDITOR_ROW_HEIGHT + _EDITOR_VERTICAL_MARGIN),
+    )
+    return width, height
 
 
 def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[dict[str, object]]:
@@ -294,6 +401,9 @@ class PanelSettingsList(List, JSONSettingsBackend):
     """Render legacy and newly requested panel slots in one account table."""
 
     def __init__(self, info, key, settings):
+        self._copied_value_settings = None
+        self.copy_button = None
+        self.paste_button = None
         self.backend = "json"
         self.key = key
         self.settings = settings
@@ -335,6 +445,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
             hidden_buttons=hidden_buttons,
             tooltip=tooltip,
         )
+        self._install_copy_paste_buttons()
         try:
             self.attach()
         except Exception:
@@ -344,6 +455,104 @@ class PanelSettingsList(List, JSONSettingsBackend):
             settings.listen("panel-value-count", self._on_count_changed)
         except Exception:
             pass
+
+    def _install_copy_paste_buttons(self) -> None:
+        """Add value-copy actions to the existing list toolbar."""
+        if not self.show_buttons:
+            return
+        toolbar = next(
+            (child for child in self.get_children() if isinstance(child, Gtk.Toolbar)),
+            None,
+        )
+        if toolbar is None:
+            return
+        self.copy_button = Gtk.ToolButton()
+        self.copy_button.set_icon_name("edit-copy-symbolic")
+        self.copy_button.set_tooltip_text(
+            _("Werte des ausgewählten Accounts kopieren")
+        )
+        self.copy_button.connect("clicked", self.copy_value_settings)
+        self.copy_button.set_sensitive(False)
+        toolbar.insert(self.copy_button, toolbar.get_n_items())
+
+        self.paste_button = Gtk.ToolButton()
+        self.paste_button.set_icon_name("edit-paste-symbolic")
+        self.paste_button.set_tooltip_text(
+            _("Kopierte Werte in ausgewählten Account einfügen")
+        )
+        self.paste_button.connect("clicked", self.paste_value_settings)
+        self.paste_button.set_sensitive(False)
+        toolbar.insert(self.paste_button, toolbar.get_n_items())
+        toolbar.show_all()
+
+    def update_button_sensitivity(self, *args) -> None:
+        """Keep copy/paste actions aligned with current selection and snapshot."""
+        super().update_button_sensitivity(*args)
+        if self.copy_button is None and self.paste_button is None:
+            return
+        try:
+            _model, tree_iter = self.content_widget.get_selection().get_selected()
+            has_selection = tree_iter is not None
+        except Exception:
+            has_selection = False
+        if self.copy_button is not None:
+            self.copy_button.set_sensitive(has_selection)
+        if self.paste_button is not None:
+            self.paste_button.set_sensitive(
+                has_selection and bool(self._copied_value_settings)
+            )
+
+    def _selected_row(self):
+        try:
+            model, tree_iter = self.content_widget.get_selection().get_selected()
+        except Exception:
+            return None, None, None
+        if tree_iter is None:
+            return None, None, None
+        try:
+            row = {
+                column["id"]: model[tree_iter][index]
+                for index, column in enumerate(self.columns)
+            }
+        except (KeyError, IndexError, TypeError, ValueError, OverflowError):
+            return None, None, None
+        return model, tree_iter, row
+
+    def copy_value_settings(self, *_args) -> None:
+        """Remember selected account's ordered values for a later paste."""
+        _model, _tree_iter, row = self._selected_row()
+        if row is None:
+            return
+        values = panel_value_settings(self.columns, row)
+        if not values:
+            return
+        self._copied_value_settings = values
+        self.update_button_sensitivity()
+
+    def paste_value_settings(self, *_args) -> None:
+        """Apply remembered ordered values to selected account only."""
+        if not self._copied_value_settings:
+            return
+        model, tree_iter, row = self._selected_row()
+        if model is None or tree_iter is None or row is None:
+            return
+        updated = panel_apply_value_settings(
+            self.columns, row, self._copied_value_settings
+        )
+        original = list(model[tree_iter])
+        try:
+            for index, column in enumerate(self.columns):
+                column_id = column["id"]
+                if _panel_slot_id(column_id) and column_id in updated:
+                    model[tree_iter][index] = updated[column_id]
+        except (IndexError, TypeError, ValueError, OverflowError):
+            for index, value in enumerate(original):
+                try:
+                    model[tree_iter][index] = value
+                except (IndexError, TypeError, ValueError, OverflowError):
+                    pass
+            return
+        self.list_changed()
 
     def _read_count(self) -> int:
         try:
@@ -443,7 +652,32 @@ class PanelSettingsList(List, JSONSettingsBackend):
             content_area.add(frame)
 
             scrollbox = Gtk.ScrolledWindow()
-            scrollbox.set_size_request(-1, 420)
+            edit_columns = self._read_edit_columns()
+            positions = panel_editor_positions(self.columns, edit_columns)
+            value_indices = [
+                index
+                for index, column in enumerate(self.columns)
+                if _panel_slot_id(column.get("id"))
+            ]
+            if value_indices:
+                value_count = len(value_indices)
+                metadata_count = len(self.columns) - value_count
+            else:
+                value_count = len(self.columns)
+                metadata_count = 0
+            dialog_width, dialog_height = panel_editor_dimensions(
+                value_count,
+                edit_columns,
+                metadata_count,
+            )
+            try:
+                dialog.set_default_size(dialog_width, dialog_height)
+            except (AttributeError, TypeError, ValueError):
+                pass
+            scrollbox.set_size_request(
+                max(1, dialog_width - 60),
+                max(320, dialog_height - 160),
+            )
             scrollbox.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
             frame.add(scrollbox)
 
@@ -454,7 +688,6 @@ class PanelSettingsList(List, JSONSettingsBackend):
             grid.set_column_homogeneous(True)
             scrollbox.add(grid)
 
-            edit_columns = self._read_edit_columns()
             for index, column_definition in enumerate(self.columns):
                 try:
                     widget = list_edit_factory(column_definition)
@@ -468,7 +701,8 @@ class PanelSettingsList(List, JSONSettingsBackend):
                 settings_box.set_selection_mode(Gtk.SelectionMode.NONE)
                 settings_box.set_hexpand(True)
                 settings_box.add(widget)
-                grid.attach(settings_box, index % edit_columns, index // edit_columns, 1, 1)
+                column, row = positions.get(index, (0, index))
+                grid.attach(settings_box, column, row, 1, 1)
 
                 value = None
                 if info is not None:
