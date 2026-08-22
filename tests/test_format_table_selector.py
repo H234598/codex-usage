@@ -366,6 +366,19 @@ def test_malformed_list_metadata_uses_safe_defaults(field, value) -> None:
         widget.destroy()
 
 
+@pytest.mark.parametrize("height", [float("nan"), float("inf"), -1, 220.5, 20000])
+def test_format_list_height_is_finite_and_bounded(height) -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["height"] = height
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        expected = 220 if height == 220.5 else 10000 if height == 20000 else 300
+        assert widget.get_children()[0].get_size_request()[1] == expected
+    finally:
+        widget.destroy()
+
+
 def test_malformed_table_value_does_not_break_selector() -> None:
     settings = _Settings()
     settings.settings["table-a"]["value"] = None

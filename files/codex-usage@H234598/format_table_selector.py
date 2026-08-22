@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import math
 
 import gi
 
@@ -70,8 +71,19 @@ class _BoundFormatList(List, JSONSettingsBackend):
         if description is not None and not isinstance(description, str):
             description = None
         height = definition.get("height", 300)
-        if isinstance(height, bool) or not isinstance(height, (int, float)):
+        try:
+            valid_height = (
+                not isinstance(height, bool)
+                and isinstance(height, (int, float))
+                and math.isfinite(height)
+                and height >= 0
+            )
+        except (OverflowError, TypeError):
+            valid_height = False
+        if not valid_height:
             height = 300
+        else:
+            height = min(int(height), 10000)
         show_buttons = definition.get("show-buttons", True)
         if not isinstance(show_buttons, bool):
             show_buttons = True

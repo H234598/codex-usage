@@ -8187,3 +8187,14 @@ Selector fällt jetzt auf die erste Tabelle, Listen auf leere Zeilen zurück;
 kein Write erfolgt. Regression deckt Selector- und Tabellen-Readfehler ab;
 `tests/test_format_table_selector.py`: 26/26, Python-Compile, Ruff und
 `git diff --check` sauber.
+
+## Runde 711: Formatierungslisten begrenzen GTK-Höhe
+
+`_BoundFormatList` übergab `NaN`, Unendlich, negative oder übergroße
+`height`-Metadaten direkt an `Gtk.ScrolledWindow`; das reproduzierte
+`TypeError`/`OverflowError` bereits beim Öffnen der Formatierungsseite.
+
+Höhe wird jetzt endlich, nichtnegativ und auf 10000 Pixel begrenzt;
+ungültige Werte nutzen 300 Pixel. Regression deckt alle Grenzformen ab;
+`tests/test_format_table_selector.py`: 31/31, Python-Compile, Ruff und
+`git diff --check` sauber.
