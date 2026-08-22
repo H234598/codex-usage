@@ -6120,3 +6120,17 @@ beide `Codex Usage` maximiert auf `x=1920`, `1920×964`. Fokustest `node --test
 --test-name-pattern='native Cinnamon configure action|settings launcher|settings
 maximization' tests/applet_runtime.test.js`: 4/4; Node-Syntaxcheck und
 `git diff --check` sauber.
+
+## Runde 552: Leistenquellen schützen unbrauchbare Zusatzfenster
+
+Die Leistenquellen `sonstiges` und `Spark sonstiges` griffen direkt auf ein
+Poolfenster zu. Anders als 5h, Woche, Spark und 30 Tage prüften sie nicht, ob
+der zugehörige Pool verfügbar, nicht erschöpft und eindeutig identifiziert
+ist. Ein Provider konnte dadurch trotz `available=false` oder erschöpftem Pool
+noch einen alten Zusatzwert anzeigen.
+
+Wert- und Fensterpfad prüfen jetzt vor Auswahl des Zusatzfensters denselben
+`_poolIsUsable()`-Vertrag wie die übrigen Poolquellen. Regression reproduziert
+beide Pools zuerst rot und besteht danach grün. Fokustest `node --test
+--test-name-pattern='panel|pool|other-window' tests/applet_runtime.test.js`:
+65/65; Node-Syntaxcheck und `git diff --check` sauber.

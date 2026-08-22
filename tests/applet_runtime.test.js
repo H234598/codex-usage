@@ -5598,6 +5598,26 @@ test("unusable Spark pools cannot drive panel sources", () => {
   }
 });
 
+test("unusable main and Spark pools cannot drive other-window panel sources", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.main = {
+    available: false,
+    windows: [{name: "1d", duration_seconds: 86400, remaining: 40}],
+  };
+  usage.models = {
+    "gpt-5.3-codex-spark": {
+      available: false,
+      windows: [{name: "1d", duration_seconds: 86400, remaining: 35}],
+    },
+  };
+
+  assert.equal(applet._panelValueForSource(usage, 18), null);
+  assert.equal(applet._panelWindowForSource(usage, 18), null);
+  assert.equal(applet._panelValueForSource(usage, 19), null);
+  assert.equal(applet._panelWindowForSource(usage, 19), null);
+});
+
 test("malformed cache controls fail closed during payload validation", () => {
   const applet = makeApplet();
   const [validated] = applet._validatePayload([{

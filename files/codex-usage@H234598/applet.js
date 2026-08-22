@@ -9408,9 +9408,16 @@ CodexUsageApplet.prototype = {
             return null;
         }
         if (source === 18) {
+            if (!this._poolIsUsable(usage && usage.main)) {
+                return null;
+            }
             return this._remainingPercent(this._panelWindowForKey(usage, "main-other"));
         }
         if (source === 19) {
+            let sparkPool = this._modelPool(usage, "gpt-5.3-codex-spark");
+            if (!this._poolIsUsable(sparkPool)) {
+                return null;
+            }
             return this._remainingPercent(this._panelWindowForKey(usage, "spark-other"));
         }
         if (source >= 37 && source <= 42) {
@@ -9459,9 +9466,16 @@ CodexUsageApplet.prototype = {
             return null;
         }
         if (source === 18) {
+            if (!this._poolIsUsable(usage && usage.main)) {
+                return null;
+            }
             return this._panelWindowForKey(usage, "main-other");
         }
         if (source === 19) {
+            let sparkPool = this._modelPool(usage, "gpt-5.3-codex-spark");
+            if (!this._poolIsUsable(sparkPool)) {
+                return null;
+            }
             return this._panelWindowForKey(usage, "spark-other");
         }
         if (source >= 37 && source <= 42) {
