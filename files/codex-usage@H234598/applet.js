@@ -7272,6 +7272,7 @@ CodexUsageApplet.prototype = {
             }
             this._profileJobResumeQueue = [];
             let discoveredAccounts = Object.create(null);
+            let profileStateChanged = false;
             for (let index = 0; index < jobs.length; index++) {
                 let account = jobs[index].account;
                 discoveredAccounts[account] = true;
@@ -7294,6 +7295,7 @@ CodexUsageApplet.prototype = {
                 if (discoveredAccounts[account]) {
                     continue;
                 }
+                profileStateChanged = true;
                 delete this._deviceLoginJobs[account];
                 delete this._profilePendingAccounts[account];
                 delete this._accountDeleteWaitingForProfileJob[account];
@@ -7308,17 +7310,18 @@ CodexUsageApplet.prototype = {
                 this._profileJobPollingAccount &&
                 !discoveredAccounts[this._profileJobPollingAccount]
             ) {
+                profileStateChanged = true;
                 this._profileJobPollingAccount = "";
                 this._deviceLoginPollGeneration += 1;
                 this._removeSource("_deviceLoginPollId");
             }
-            if (jobs.length > 0 && this._ensureBackendUsageRows()) {
+            if ((jobs.length > 0 || profileStateChanged) && this._ensureBackendUsageRows()) {
                 this._refreshFormattedSurfaces();
             }
             if (jobs.length > 0) {
                 this._pollNextProfileJob();
             }
-            if (jobs.length > 0) {
+            if (jobs.length > 0 || profileStateChanged) {
                 this._buildUsageMenu();
             }
         }), false, 10000);

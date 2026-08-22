@@ -6422,3 +6422,17 @@ geänderter Job-ID. Bei unveränderter ID bleiben bereits eingetroffene Events
 erhalten. Regression prüft den ID-Wechsel. Fokustest `node --test
 --test-name-pattern='profile job discovery drops events from replaced job|profile job discovery clears locally stale completed jobs|persistent profile job|cancelled profile job discovery|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
 11/11; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 574: Anzeige nach leerer Profiljob-Discovery aktualisieren
+
+Wenn die autoritative Discovery stale lokale Jobs entfernte und danach keine
+aktiven Jobs übrig blieben, baute `_loadProfileJobs()` bisher weder Menü noch
+Formatierungsflächen neu auf. Die alte „Login läuft“-Anzeige konnte dadurch bis
+zum nächsten unabhängigen Refresh sichtbar bleiben.
+
+Bei tatsächlich verändertem Profiljob-Zustand aktualisiert der Loader jetzt
+Leisten-/Formatierungsflächen und Menü auch bei `jobs: []`; unveränderte leere
+Discovery bleibt ohne Zusatzarbeit. Regression prüft stale Bereinigung und
+genau einen Menüaufbau. Fokustest `node --test
+--test-name-pattern='profile job discovery drops events from replaced job|profile job discovery clears locally stale completed jobs|persistent profile job|cancelled profile job discovery|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
+11/11; Node-Syntaxcheck und `git diff --check` sauber.

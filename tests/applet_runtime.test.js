@@ -670,8 +670,9 @@ test("persistent profile job resumes and exposes polled events", () => {
 test("profile job discovery clears locally stale completed jobs", () => {
   const applet = makeApplet();
   const jobId = "job-1234567890abcdef1234567890abcdef";
+  let rebuilds = 0;
   applet._baseCommandArgv = () => ["codex-usage"];
-  applet._buildUsageMenu = () => {};
+  applet._buildUsageMenu = () => { rebuilds += 1; };
   applet._deviceLoginJobs.alpha = jobId;
   applet._deviceLoginActive.alpha = true;
   applet._profilePendingAccounts.alpha = true;
@@ -686,6 +687,7 @@ test("profile job discovery clears locally stale completed jobs", () => {
   assert.equal(applet._profilePendingAccounts.alpha, undefined);
   assert.equal(applet._accountDeleteWaitingForProfileJob.alpha, undefined);
   assert.equal(applet._deviceLoginEvents.alpha, undefined);
+  assert.equal(rebuilds, 1);
 });
 
 test("profile job discovery drops events from replaced job", () => {
