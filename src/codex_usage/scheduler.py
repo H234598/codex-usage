@@ -1461,7 +1461,7 @@ def _current_supersedes_blocked_snapshot(
         return False
     try:
         return current.captured_at > blocked_snapshot.captured_at
-    except (AttributeError, OverflowError, TypeError, ValueError):
+    except Exception:
         return False
 
 

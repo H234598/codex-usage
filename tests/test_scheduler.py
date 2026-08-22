@@ -20,6 +20,7 @@ from codex_usage.scheduler import (
     _blocked_snapshot_matches_account,
     _blocked_until_active,
     _capture_is_too_far_in_future,
+    _current_supersedes_blocked_snapshot,
     _fetch_one,
     _has_unexpired_window_reset_discontinuity,
     _has_usable_core_usage,
@@ -166,6 +167,39 @@ def test_capture_future_treats_failing_comparison_as_too_far():
         usage,
         datetime(2026, 8, 16, 10, tzinfo=ZoneInfo("UTC")),
     ) is True
+
+
+def test_current_supersedes_blocked_snapshot_treats_failing_comparison_as_stale(
+    monkeypatch,
+):
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+    blocked_snapshot = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=ZoneInfo("UTC")),
+        status=AccountStatus.BLOCKED,
+    )
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=_RaisingComparisonDatetime(
+            2026, 8, 16, 11, tzinfo=ZoneInfo("UTC")
+        ),
+        status=AccountStatus.OK,
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler._blocked_snapshot_matches_account",
+        lambda *_args, **_kwargs: True,
+    )
+
+    assert _current_supersedes_blocked_snapshot(
+        account,
+        blocked_snapshot,
+        current,
+        auth_json_path=None,
+        configured_backend="direct",
+        authenticated_fetch=False,
+    ) is False
 
 
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(

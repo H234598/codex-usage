@@ -7104,3 +7104,14 @@ verworfen, ein fehlerhafter Zukunftsvergleich gilt als zu weit in der Zukunft.
 Regressionstests decken alle drei Grenzen mit absichtlich fehlerhaften
 Datetime-Vergleichen ab. `pytest -q tests/test_scheduler.py`: 209/209;
 Ruff, Mypy, Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 618: Watchdog-Re-Fetch bei fehlerhafter Capture-Zeit fail-closed
+
+`_current_supersedes_blocked_snapshot()` verglich die Capture-Zeit des
+aktuellen Werts mit dem Block-Snapshot nur gegen einige Standardfehler. Ein
+fehlerhafter Vergleich konnte den Watchdog beim Re-Fetch-Entscheid abbrechen.
+
+Der Vergleich behandelt jetzt jeden normalen Fehler als „nicht neuer“ und
+lässt den bestehenden Block-Snapshot sicher bestehen. Regression deckt einen
+fehlerhaften `>`-Vergleich ab. `pytest -q tests/test_scheduler.py`: 210/210;
+Ruff, Mypy, Python-Kompilierung und `git diff --check` sauber.
