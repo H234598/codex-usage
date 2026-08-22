@@ -5683,3 +5683,15 @@ Kandidaten; 5h/Woche behalten ihre Top-Level-Fallbacks. Regression mit
 1-Tage- und 2-Tage-Fenster verhindert Verwechslung. `node --test
 tests/applet_runtime.test.js`: 416/416; `node --check` und `git diff --check`
 sauber.
+
+## Runde 479: Dynamische Schwelle ignoriert stale/insufficient
+
+`_panelDeltaIsDynamic()` prüfte bisher nur Delta, Rückblick und Restfenster.
+Auch `coverage: "stale"` oder `"insufficient"` konnte dadurch die dynamische
+Schwelle aktivieren. Der Verbrauchsvertrag behandelt solche Werte als
+unbekannt; nur `complete` und frische `partial`-Daten sind für die Statistik
+belastbar.
+
+Die Dynamik bleibt bei stale/insufficient jetzt aus. Regression deckt stale
+gegen complete ab. `node --test tests/applet_runtime.test.js`: 416/416;
+`node --check` und `git diff --check` sauber.

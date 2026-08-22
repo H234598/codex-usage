@@ -8714,6 +8714,9 @@ CodexUsageApplet.prototype = {
         if (!Number.isFinite(lookback) || lookback <= 0 || !Number.isFinite(delta) || delta < 0) {
             return false;
         }
+        if (candidate.coverage !== "complete" && candidate.coverage !== "partial") {
+            return false;
+        }
         let seconds = Number(candidate.limit_window_seconds);
         let pool = candidate.pool === "gpt-5.3-codex-spark" ? "spark" : "main";
         let window;
