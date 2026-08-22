@@ -5928,3 +5928,17 @@ Der Parent wird jetzt vor dem exklusiven Write gebunden und beim FD-Open
 erneut geprüft. Regression deckt den Parent-Swap ab. `pytest -q
 tests/test_integration_installer.py`: 151/151; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 538: Prognose-Loader gegen Modulnamenskollision gehärtet
+
+`forecast_table_selector.py` importierte `format_table_selector` bisher nur
+über den globalen Modulnamen. Ein bereits von einem anderen Cinnamon-Xlet
+geladenes gleichnamiges Modul konnte dadurch die Prognose-Seite beim Öffnen
+der Einstellungen brechen.
+
+Der gemeinsame Formatter wird jetzt aus dem lokalen Applet-Pfad unter einem
+eindeutigen Modulnamen geladen. Regression simuliert ein kollidierendes
+globales Modul. `pytest -q tests/test_forecast_table_selector.py
+tests/test_format_table_selector.py tests/test_panel_settings_list.py
+tests/test_help_page.py`: 26/26; Ruff, Python-Compile und `git diff --check`
+sauber.

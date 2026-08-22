@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[1]
 APPLET_DIR = ROOT / "files" / "codex-usage@H234598"
@@ -74,6 +75,33 @@ def test_forecast_module_loads_without_applet_directory_on_sys_path() -> None:
         sys.path[:] = original_path
         if original_format_module is not None:
             sys.modules["format_table_selector"] = original_format_module
+
+
+def test_forecast_module_ignores_colliding_format_module() -> None:
+    module_name = "_codex_usage_forecast_collision_probe"
+    original_format_module = sys.modules.get("format_table_selector")
+    original_bound_module = sys.modules.pop("_codex_usage_format_table_selector", None)
+    collision = ModuleType("format_table_selector")
+    collision._BoundFormatList = object()
+    sys.modules["format_table_selector"] = collision
+    try:
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            APPLET_DIR / "forecast_table_selector.py",
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert module._BoundFormatList.__module__ == "_codex_usage_format_table_selector"
+    finally:
+        sys.modules.pop(module_name, None)
+        sys.modules.pop("_codex_usage_format_table_selector", None)
+        if original_bound_module is not None:
+            sys.modules["_codex_usage_format_table_selector"] = original_bound_module
+        if original_format_module is not None:
+            sys.modules["format_table_selector"] = original_format_module
+        else:
+            sys.modules.pop("format_table_selector", None)
 
 
 def test_constructor_builds_only_selected_table_and_initial_selection() -> None:

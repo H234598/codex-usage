@@ -3,18 +3,34 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
 import gi
 
 gi.require_version("Gtk", "3.0")
-# Cinnamon loads custom widgets by file path and does not add applet files
-# to sys.path. Make sibling shared code importable in that loader as well.
+# Cinnamon loads custom widgets by file path. Load sibling explicitly so a
+# same-named module from another Xlet cannot satisfy the import.
 _APPLET_DIR = str(Path(__file__).resolve().parent)
-if _APPLET_DIR not in sys.path:
-    sys.path.insert(0, _APPLET_DIR)
-from format_table_selector import _BoundFormatList  # noqa: E402
+
+_FORMAT_MODULE_NAME = "_codex_usage_format_table_selector"
+_format_module = sys.modules.get(_FORMAT_MODULE_NAME)
+if _format_module is None:
+    _format_spec = importlib.util.spec_from_file_location(
+        _FORMAT_MODULE_NAME,
+        Path(_APPLET_DIR) / "format_table_selector.py",
+    )
+    if _format_spec is None or _format_spec.loader is None:
+        raise ImportError("format_table_selector loader unavailable")
+    _format_module = importlib.util.module_from_spec(_format_spec)
+    sys.modules[_FORMAT_MODULE_NAME] = _format_module
+    try:
+        _format_spec.loader.exec_module(_format_module)
+    except BaseException:
+        sys.modules.pop(_FORMAT_MODULE_NAME, None)
+        raise
+_BoundFormatList = _format_module._BoundFormatList
 from gi.repository import Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
 
