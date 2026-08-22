@@ -8863,3 +8863,23 @@ Verifikation: kombinierter GTK-Fokuslauf
 tests/test_forecast_table_selector.py`: **181 bestanden**, kein Segfault.
 Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
 gestartet.
+
+## Runde 758: Prognosen-Selector erhält denselben Aufbau-Fallback
+
+Der Prognosen-Selector hatte den gleichen Fehlerpfad wie der bereits gehärtete
+Formatierungs-Selector: Nach einem fehlgeschlagenen Tabellenaufbau wurde die
+Auswahl trotzdem persistiert. Beim Reload wurde eine gültige, aber nicht
+baubare Tabelle nicht übersprungen; die Prognosen-Seite konnte dadurch leer
+bleiben.
+
+`ForecastTableSelector` wertet `_show_table()` jetzt als Erfolgswert aus und
+schreibt nur nach erfolgreichem Aufbau. Beim Settings-Reload werden zuerst die
+gespeicherte Tabelle und danach die übrigen Tabellen in deklarierter Reihenfolge
+probiert. Combo-Auswahl und sichtbare Tabelle werden erst bei Erfolg gesetzt.
+Zwei Regressionen decken Umschalten und Reload mit defekter Tabelle ab.
+
+Verifikation: kombinierter GTK-Fokuslauf
+`tests/test_panel_settings_list.py tests/test_format_table_selector.py
+tests/test_forecast_table_selector.py`: **183 bestanden**, kein Segfault.
+Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.

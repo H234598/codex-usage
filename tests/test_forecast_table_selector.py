@@ -201,6 +201,20 @@ def test_table_change_switches_stack_and_persists_selection() -> None:
         selector.destroy()
 
 
+def test_table_change_does_not_persist_when_widget_build_fails(monkeypatch) -> None:
+    settings = _Settings()
+    selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
+
+    try:
+        monkeypatch.setattr(selector, "_ensure_table", lambda _table_key: None)
+        selector.combo.set_active_id(_TABLE_KEYS[1])
+        if selector._active_table_key != _TABLE_KEYS[1]:
+            selector._on_table_changed()
+        assert settings.writes == []
+    finally:
+        selector.destroy()
+
+
 def test_table_change_escapes_markup_in_label() -> None:
     settings = _Settings()
     selector = ForecastTableSelector(
@@ -227,6 +241,31 @@ def test_setting_reload_falls_back_to_first_table_without_writing() -> None:
         selector.on_setting_changed()
         assert selector.combo.get_active_id() == _TABLE_KEYS[0]
         assert selector.table_stack.get_visible_child_name() == _TABLE_KEYS[0]
+        assert settings.writes == []
+    finally:
+        selector.destroy()
+
+
+def test_setting_reload_falls_back_when_selected_table_cannot_be_built(monkeypatch) -> None:
+    settings = _Settings()
+    settings.settings["forecast-table-selector"]["value"] = _TABLE_KEYS[0]
+    original_bound_list = forecast_table_selector_module._BoundFormatList
+
+    def fail_selected_table(key, definition, table_settings):
+        if key == _TABLE_KEYS[0]:
+            raise RuntimeError("selected table failed")
+        return original_bound_list(key, definition, table_settings)
+
+    monkeypatch.setattr(
+        forecast_table_selector_module,
+        "_BoundFormatList",
+        fail_selected_table,
+    )
+    selector = ForecastTableSelector(_info(), "forecast-table-selector", settings)
+
+    try:
+        assert selector.combo.get_active_id() == _TABLE_KEYS[1]
+        assert selector.table_stack.get_visible_child_name() == _TABLE_KEYS[1]
         assert settings.writes == []
     finally:
         selector.destroy()
