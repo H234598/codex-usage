@@ -823,6 +823,11 @@ def _copy_regular(
             )
         ):
             _fail()
+        expected_source_identity = source_identity or _FileIdentity(
+            source_stat.st_dev,
+            source_stat.st_ino,
+            stat.S_IMODE(source_stat.st_mode),
+        )
         ensure_private_directory(target.parent, label="integration target directory")
         target_parent_identity = _directory_identity(target.parent)
         parent_flags = os.O_RDONLY
@@ -854,7 +859,7 @@ def _copy_regular(
                 _read_nofollow(
                     source,
                     expected_parent_identity=source_parent_identity,
-                    expected_file_identity=source_identity,
+                    expected_file_identity=expected_source_identity,
                 )
             )
             os.fchmod(destination.fileno(), mode)

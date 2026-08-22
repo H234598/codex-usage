@@ -1424,6 +1424,36 @@ def test_copy_regular_binds_target_to_parent_descriptor(tmp_path, monkeypatch):
     assert not (parent / "target").exists()
 
 
+def test_copy_regular_rejects_replaced_source_before_read(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    source = tmp_path / "source"
+    source.write_bytes(b"owned")
+    source.chmod(0o600)
+    parent = tmp_path / "destination"
+    parent.mkdir(mode=0o700)
+    target = parent / "target"
+    original_read = integration_installer._read_nofollow
+    replaced = False
+
+    def replace_before_read(path, **kwargs):
+        nonlocal replaced
+        if path == source and not replaced:
+            source.unlink()
+            source.write_bytes(b"foreign")
+            source.chmod(0o600)
+            replaced = True
+        return original_read(path, **kwargs)
+
+    monkeypatch.setattr(integration_installer, "_read_nofollow", replace_before_read)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer._copy_regular(source, target)
+
+    assert replaced
+    assert source.read_bytes() == b"foreign"
+    assert target.read_bytes() == b""
+
+
 def test_safe_extract_binds_mode_change_to_open_file(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

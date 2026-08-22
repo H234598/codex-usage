@@ -5805,3 +5805,15 @@ Source-Eintrag direkt davor und bricht bei fehlender Unterstützung fail-closed
 ab. Regressionen decken vorhandenes Ziel, Zielanlage am Rename-Seam und
 ersetzte Source ab. `pytest -q tests/test_integration_installer.py`: 140/140;
 Ruff, Python-Compile und `git diff --check` sauber.
+
+## Runde 527: Source-Inode vor regulärem Copy gebunden
+
+`_copy_regular()` prüfte Quelle zunächst per `lstat()`, rief
+`_read_nofollow()` bei fehlender Caller-Identität danach aber ohne erwartete
+Dateiidentität auf. Ein Austausch zwischen beiden Schritten konnte eine
+fremde gleichnamige Datei in Build oder temporäre Kopie übernehmen.
+
+Die beim ersten Check ermittelte Dateiidentität wird jetzt immer an den
+geöffneten Read-FD gebunden. Regression deckt ersetzten Source ab. `pytest -q
+tests/test_integration_installer.py`: 141/141; Ruff, Python-Compile und
+`git diff --check` sauber.
