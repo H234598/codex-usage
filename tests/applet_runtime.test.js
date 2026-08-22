@@ -1869,6 +1869,21 @@ test("alert settings ignore monthly data from an unavailable main pool", () => {
   assert.equal(applet._defaultAlertRow("alpha")["monthly-threshold"], "no 30d");
 });
 
+test("Spark alert state ignores a pool that is not allowed", () => {
+  const applet = makeAccountSettingsApplet();
+  const usage = {
+    account: "alpha", status: "ok", stale: false,
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: true, allowed: false, limit_reached: false, exhausted: true,
+        windows: [{name: "5h", duration_seconds: 18000, remaining: 80}],
+      },
+    },
+  };
+
+  assert.equal(applet._sparkLimitState(usage), "unknown");
+});
+
 test("account click summary ignores monthly data from an unavailable main pool", () => {
   const applet = makeApplet();
   const usage = {
@@ -2660,7 +2675,7 @@ test("alert helper matrix distinguishes missing, monthly and Spark windows", () 
     },
     models: {
       "gpt-5.3-codex-spark": {
-        available: true,
+        available: true, allowed: true, limit_reached: false, exhausted: false,
         windows: [{
           name: "5h",
           duration_seconds: 18000,

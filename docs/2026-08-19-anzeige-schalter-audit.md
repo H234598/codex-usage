@@ -6205,3 +6205,17 @@ sonst auf kein Fenster zurück. Regression prüft unbekannte Main- und
 Spark-Fenster sowie bestehende Pool-/Panelpfade. Fokustest `node --test
 --test-name-pattern='other-window panel sources ignore unknown|panel reset sources ignore|panel limit sources|unusable main and Spark|Spark pools without|duplicate window identity|panel warning values ignore' tests/applet_runtime.test.js`:
 9/9; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 558: Spark-Alertstatus an Poolvertrag binden
+
+`_sparkLimitState()` prüfte Spark-Pools schwächer als Panel, Severity und
+Benachrichtigungen. Ein Pool mit `allowed=false` oder `exhausted=true` konnte
+deshalb in Alert-Einstellungen als `present` erscheinen und einen normalen
+Spark-Schwellenwert anbieten.
+
+Der Status verwendet jetzt zusätzlich `_poolIsUsable()`. Nicht nutzbare,
+aber vorhandene Pools bleiben `unknown`; nur fehlende Pools sind `none`.
+Regression prüft nicht freigegebenen Spark-Pool und bestehende Alert-/Panel-
+Pfade. Fokustest `node --test
+--test-name-pattern='Spark alert state ignores|alert helper matrix|legacy alert rows|usage severity|limit notifications|panel' tests/applet_runtime.test.js`:
+55/55; Node-Syntaxcheck und `git diff --check` sauber.

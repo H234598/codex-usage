@@ -3294,6 +3294,7 @@ CodexUsageApplet.prototype = {
             !pool || typeof pool !== "object" || Array.isArray(pool) ||
             pool.available !== true || !Array.isArray(pool.windows) ||
             !pool.windows.length || !this._hasUniqueWindowIdentities(pool.windows) ||
+            !this._poolIsUsable(pool) ||
             !pool.windows.every(Lang.bind(this, function(window) {
                 return this._remainingPercent(window) !== null;
             }))
