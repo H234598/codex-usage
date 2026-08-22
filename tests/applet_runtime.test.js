@@ -4254,6 +4254,26 @@ test("metric-table switches reject non-boolean values independently", () => {
   }
 });
 
+test("combined consumption rows reject malformed forecast baseline fields", () => {
+  const applet = makeApplet();
+  const base = Object.assign(applet._defaultConsumptionRow("alpha"), {
+    "forecast-baseline-enabled": true,
+    "forecast-baseline-minutes": 30,
+  });
+
+  assert.equal(applet._normalizeConsumptionRow(base, "alpha")["forecast-baseline-minutes"], 30);
+  for (const [key, value] of [
+    ["forecast-baseline-enabled", "true"],
+    ["forecast-baseline-minutes", "30"],
+    ["forecast-baseline-minutes", 30.5],
+    ["forecast-baseline-minutes", -1],
+    ["forecast-baseline-minutes", 10000],
+  ]) {
+    const row = Object.assign({}, base, {[key]: value});
+    assert.equal(applet._normalizeConsumptionRow(row, "alpha"), null, `${key} accepts ${value}`);
+  }
+});
+
 test("remaining boolean switch groups round-trip independently", () => {
   const applet = makeApplet();
   applet._backendAccounts = {alpha: {account: "alpha"}};

@@ -3007,11 +3007,18 @@ CodexUsageApplet.prototype = {
         let forecastLimitWindow = row["forecast-limit-window"] === undefined
             ? limitWindow
             : this._strictText(row["forecast-limit-window"], 16);
+        let forecastBaselineEnabled = row["forecast-baseline-enabled"] === undefined
+            ? false : row["forecast-baseline-enabled"];
+        let forecastBaselineMinutes = row["forecast-baseline-minutes"] === undefined
+            ? 60 : this._strictIntegerSetting(row["forecast-baseline-minutes"]);
         if (
             typeof row["show-panel"] !== "boolean" ||
             typeof row["show-tooltip"] !== "boolean" ||
             typeof baselineEnabled !== "boolean" ||
             !Number.isInteger(baselineMinutes) || baselineMinutes < 0 || baselineMinutes > 9999 ||
+            typeof forecastBaselineEnabled !== "boolean" ||
+            !Number.isInteger(forecastBaselineMinutes) ||
+            forecastBaselineMinutes < 0 || forecastBaselineMinutes > 9999 ||
             ["none", "ema-5", "ema-10", "ema-20", "ema-40", "ema-80", "ema-160", "ema-320", "ema-640"].indexOf(smoothing) === -1 ||
             typeof forecastShowPanel !== "boolean" ||
             typeof forecastShowTooltip !== "boolean" ||
@@ -3056,9 +3063,8 @@ CodexUsageApplet.prototype = {
             "hide-when-zero": row["hide-when-zero"],
             "show-coverage-marker": row["show-coverage-marker"],
             "forecast-show-coverage-marker": row["forecast-show-coverage-marker"] !== false,
-            "forecast-baseline-enabled": row["forecast-baseline-enabled"] === true,
-            "forecast-baseline-minutes": row["forecast-baseline-minutes"] === undefined
-                ? 60 : row["forecast-baseline-minutes"]
+            "forecast-baseline-enabled": forecastBaselineEnabled,
+            "forecast-baseline-minutes": forecastBaselineMinutes
         };
     },
 
