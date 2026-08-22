@@ -118,6 +118,11 @@ function loadPrototype(onReady) {
               runtime.onNotify(...args);
             }
           },
+          layoutManager: {
+            get currentMonitor() {
+              return runtime.currentMonitor || null;
+            },
+          },
         },
         popupMenu: {
           PopupMenuItem: PopupItem,
@@ -3784,6 +3789,32 @@ test("settings maximization retries up to twelve times and stops after removal",
   assert.equal(callbacks[1](), false);
   assert.equal(subprocessCalls.length, 12);
   assert.equal(applet._settingsMaximizeId, 0);
+});
+
+test("settings maximization moves window onto current monitor before maximizing", () => {
+  const callbacks = [];
+  const subprocessCalls = [];
+  const applet = makeApplet((runtime) => {
+    runtime.currentMonitor = {x: 1920, y: 0, width: 1920, height: 1080};
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {};
+    };
+  });
+
+  applet._scheduleSettingsMaximize();
+  assert.equal(callbacks.length, 1);
+  assert.equal(callbacks[0](), true);
+  assert.equal(subprocessCalls.length, 1);
+  assert.equal(callbacks[0](), true);
+  assert.equal(JSON.stringify(subprocessCalls.map((call) => call[0])), JSON.stringify([
+    ["wmctrl", "-r", "Codex Usage", "-e", "0,1920,0,-1,-1"],
+    ["wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz"],
+  ]));
 });
 
 test("health action reports command and backend failures without retaining work", () => {

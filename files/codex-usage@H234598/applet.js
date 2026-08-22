@@ -10562,10 +10562,30 @@ CodexUsageApplet.prototype = {
     _scheduleSettingsMaximize: function() {
         this._removeSource("_settingsMaximizeId");
         let attempts = 0;
+        let positioned = false;
         let maximize = Lang.bind(this, function() {
             if (this._removed) {
                 this._clearSource("_settingsMaximizeId");
                 return false;
+            }
+            if (!positioned) {
+                positioned = true;
+                try {
+                    let monitor = Main.layoutManager && Main.layoutManager.currentMonitor;
+                    let monitorX = monitor && Number(monitor.x);
+                    let monitorY = monitor && Number(monitor.y);
+                    if (Number.isFinite(monitorX) && Number.isFinite(monitorY)) {
+                        Gio.Subprocess.new(
+                            ["wmctrl", "-r", "Codex Usage", "-e",
+                                "0," + String(Math.round(monitorX)) + "," +
+                                String(Math.round(monitorY)) + ",-1,-1"],
+                            Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE
+                        );
+                        return true;
+                    }
+                } catch (e) {
+                    this._cleanupLog("settings window placement failed: " + this._shortText(e, 180));
+                }
             }
             try {
                 Gio.Subprocess.new(

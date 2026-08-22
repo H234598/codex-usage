@@ -6050,3 +6050,19 @@ Die Regression prüft `TE=2h 30m`, rote Warnmarkierung und Null-Ausblendung.
 `node --test --test-name-pattern='panel forecast' tests/applet_runtime.test.js`:
 2/2; der vollständige Lauf ist 420/420. Node-Syntaxcheck und
 `git diff --check` sind sauber.
+
+## Runde 547: Einstellungsfenster auf aktuellen Monitor holen
+
+Der reale Cinnamon-/X11-Test zeigte das Problem: `xlet-settings` öffnete sich
+auf gespeicherter Position des dritten Monitors (`x=3890`), während der
+Einstellungsaufruf vom mittleren Monitor kam. Dadurch war der Dialog für den
+Benutzer praktisch unsichtbar. `_scheduleSettingsMaximize()` verschiebt das
+Fenster jetzt vor der Maximierung auf `Main.layoutManager.currentMonitor`.
+Verschieben und Maximieren laufen in getrennten Timer-Ticks; der `wmctrl -e`
+Parameter wird als korrektes kommagetrenntes Geometrieargument übergeben.
+
+Regression prüft Monitorverschiebung vor Maximierung; Cinnamon-X11 bestätigte
+real `x=3890 → x=1920`, danach `1920×964` maximiert. `node --test
+--test-name-pattern='settings maximization moves|settings maximization retries|settings launcher'
+tests/applet_runtime.test.js`: 3/3; Node-Syntaxcheck und `git diff --check`
+sind sauber.
