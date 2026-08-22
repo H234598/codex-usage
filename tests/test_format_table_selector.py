@@ -426,6 +426,29 @@ def test_format_table_sanitizes_column_alignment(align) -> None:
         widget.destroy()
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"Bad": 2**31},
+        {"Bad\x00Label": 1},
+        {"Bad": "bad\x00value"},
+        [1, 2],
+        None,
+    ],
+)
+def test_format_table_drops_invalid_options(options) -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [
+        {"id": "mode", "title": "Mode", "type": "integer", "options": options}
+    ]
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+
+    try:
+        assert widget.columns == []
+    finally:
+        widget.destroy()
+
+
 def test_malformed_table_value_does_not_break_selector() -> None:
     settings = _Settings()
     settings.settings["table-a"]["value"] = None

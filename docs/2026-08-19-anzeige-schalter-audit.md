@@ -8235,3 +8235,15 @@ Spaltenschema wird jetzt kopiert, NUL-Identitäten werden verworfen und
 `align` auf finite Werte zwischen 0 und 1 normalisiert. Regression deckt alle
 Grenzformen ab; `tests/test_format_table_selector.py`: 42/42,
 Python-Compile, Ruff und `git diff --check` sauber.
+
+## Runde 715: Formatierungs-Optionen bleiben im GTK-Wertebereich
+
+Formatierungs-ComboBoxen übernahmen Optionswerte ungeprüft. Ein Integerwert
+größer als signed 32-bit reproduzierte beim Doppelklick einen
+`OverflowError`; NUL-Werte und falsche Optionsformen waren ebenfalls nicht
+GTK-sicher.
+
+Ungültige Optionen werden vor dem Widgetaufbau verworfen. Regression deckt
+Overflow, NUL-Label/-Wert, numerische Listen und fehlende Optionen ab;
+`tests/test_format_table_selector.py`: 47/47, Python-Compile, Ruff und
+`git diff --check` sauber.
