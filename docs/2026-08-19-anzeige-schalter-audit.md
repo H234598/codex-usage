@@ -6039,3 +6039,14 @@ explizit auf die erwarteten unpräfixierten Felder ab. Regression prüft
 --test-name-pattern='forecast|token.end|metric-table switches|legacy consumption|combined token|panel forecast'
 tests/applet_runtime.test.js`: 24/24; Node-Syntaxcheck und `git diff --check`
 sauber.
+
+## Runde 546: Panel-Prognose-Sonderformate regressionsgesichert
+
+Der fokussierte Audit des Panel-Prognosepfads bestätigt `compact-minutes` mit
+Stunden-/Minutendarstellung. Forecast-Warnung und „Bei null ausblenden“ greifen
+ebenfalls aus ihren eigenen Feldern; das Hauptformat bleibt ohne Einfluss.
+
+Die Regression prüft `TE=2h 30m`, rote Warnmarkierung und Null-Ausblendung.
+`node --test --test-name-pattern='panel forecast' tests/applet_runtime.test.js`:
+2/2; der vollständige Lauf ist 420/420. Node-Syntaxcheck und
+`git diff --check` sind sauber.

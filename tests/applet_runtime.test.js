@@ -3986,6 +3986,35 @@ test("panel forecast uses forecast-specific format instead of consumption format
   assert.match(custom.plain, /^Forecast 2h AW30m=40,0%$/);
 });
 
+test("panel forecast keeps compact-minutes warning and zero-hide settings", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  applet._consumptionSettings = {
+    alpha: {
+      account: "alpha", amount: 1, unit: "hours", format: "compact",
+      "forecast-limit-window": "short", "forecast-format": "compact-minutes",
+      "forecast-smoothing": "none", "forecast-show-panel": true,
+      "forecast-show-coverage-marker": false, "forecast-hide-when-zero": false,
+      "forecast-warn-amount": 3, "forecast-warn-unit": "hours",
+      "forecast-warn-format": "red"
+    },
+  };
+  usage.cost_windows = [{
+    pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+    consumed_percentage_points: 12, coverage: "complete",
+    estimated_seconds_to_exhaustion: 150 * 60,
+  }];
+
+  const rendered = applet._panelForecastPart(usage, "panel");
+
+  assert.equal(rendered.plain, "TE=2h 30m");
+  assert.match(rendered.markup, /<span foreground="#ff5555">/);
+
+  applet._consumptionSettings.alpha["forecast-hide-when-zero"] = true;
+  usage.cost_windows[0].estimated_seconds_to_exhaustion = 0;
+  assert.equal(applet._panelForecastPart(usage, "panel"), null);
+});
+
 test("combined token and credit rows round-trip without crossing table fields", () => {
   const applet = makeApplet();
   const accounts = [{account: "alpha"}];
