@@ -13,6 +13,7 @@ sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
 import format_table_selector as format_table_selector_module  # noqa: E402
 from format_table_selector import FormatTableSelector, Gtk, _BoundFormatList  # noqa: E402
+from TreeListWidgets import list_edit_factory  # noqa: E402
 
 
 class _Combo:
@@ -497,6 +498,36 @@ def test_format_table_ignores_numeric_ranges_for_option_columns() -> None:
 
     try:
         assert widget.columns[0]["default"] == 0
+    finally:
+        widget.destroy()
+
+
+def test_format_table_option_columns_drop_spinbutton_properties() -> None:
+    settings = _Settings()
+    settings.settings["table-a"]["columns"] = [
+        {
+            "id": "mode",
+            "title": "Mode",
+            "type": "integer",
+            "options": {"Zero": 0},
+            "min": 0,
+            "max": 10,
+            "step": 1,
+            "units": "Wert",
+            "default": 0,
+        }
+    ]
+
+    widget = _BoundFormatList("table-a", settings.settings["table-a"], settings)
+    try:
+        editor = list_edit_factory(widget.columns[0])
+        try:
+            assert all(
+                property_name not in widget.columns[0]
+                for property_name in ("min", "max", "step", "units")
+            )
+        finally:
+            editor.destroy()
     finally:
         widget.destroy()
 

@@ -117,6 +117,8 @@ class _BoundFormatList(List, JSONSettingsBackend):
                 "file": {"select-dir"},
                 "icon": {"expand-width"},
             }.get(column["type"], set())
+            if "options" in column:
+                allowed_properties = set()
             for property_name in (
                 "min", "max", "step", "units", "select-dir", "expand-width"
             ):

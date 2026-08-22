@@ -8499,3 +8499,17 @@ liefert dann `None`, sodass die vorhandene aktive Tabelle erhalten bleibt.
 Regression deckt den Konstruktorfehler ab. Format-/Forecast-Fokustests:
 72/72; Python-Compile und `git diff --check` sauber. Reale `xlet-settings`-
 Smoke nach Installation und Reload lief ohne Traceback.
+
+## Runde 737: Optionsspalten reichen keine SpinButton-Parameter weiter
+
+`_BoundFormatList` akzeptierte bei Optionsspalten weiterhin `min`, `max`,
+`step` und `units`. Beim eigentlichen Doppelklick-Editor übergibt
+`TreeListWidgets.list_edit_factory()` diese Felder jedoch an `ComboBox`;
+`ComboBox.__init__()` kennt sie nicht und bricht mit `TypeError` ab. Der
+Fehler war beim Tabellenaufbau unsichtbar und trat erst beim Bearbeiten auf.
+
+Für jede Spalte mit `options` werden diese Renderer-fremden Eigenschaften nun
+entfernt. Regression baut die echte `list_edit_factory`-ComboBox und prüft die
+Bereinigung. Format-/Forecast-Fokustests: 73/73; Python-Compile und
+`git diff --check` sauber. Reale `xlet-settings`-Smoke nach Reload lief ohne
+Traceback.
