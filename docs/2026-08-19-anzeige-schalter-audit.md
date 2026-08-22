@@ -6136,6 +6136,20 @@ eine gültige Zeile, benennt den sichtbaren Account um und prüft `slot3`.
 `tests/test_panel_settings_list.py`: 19/19; Python-Kompilierung und
 `git diff --check` sauber.
 
+## Runde 661: `list_changed()` verlor Hidden-Slots vor beschädigten Zeilen
+
+Der vorherige Rebuild-Schutz behielt Dictionary-Zeilen, aber `list_changed()`
+verwendete für seinen Positions-Fallback weiterhin die rohe gespeicherte Liste.
+Stand eine beschädigte Nicht-Dictionary-Zeile vor einer gültigen Zeile und wurde
+deren sichtbarer Account umbenannt, wurde kein Account-Match gefunden. Der
+Fallback traf auf die beschädigte Position; versteckte `slotN`-Werte gingen
+erneut verloren.
+
+`list_changed()` filtert seine Vorgängerliste jetzt vor Account-Mapping und
+Positions-Fallback auf Dictionaries. Regression prüft beschädigte Zeile,
+Account-Umbenennung und Erhalt von `slot3`. `tests/test_panel_settings_list.py`:
+19/19; Python-Kompilierung und `git diff --check` sauber.
+
 ## Runde 659: Leisten-Rebuild verlor Hidden-Slots bei gemischten Zeilen
 
 Beim Ändern der Anzahl der Leistenfelder prüfte `_on_count_changed()` bisher,
