@@ -7928,6 +7928,16 @@ Beide Reads verwenden jetzt ihre sicheren Defaults auch bei Overflow.
 Regression prüft beide Pfade; `tests/test_panel_settings_list.py`: 56/56,
 Python-Compile und `git diff --check` sauber.
 
+## Runde 688: Leisten-Spalten verwerfen NUL-Metadaten
+
+Spalten-ID und Titel konnten eingebettete NUL-Zeichen enthalten. Solche Werte
+sind für GTK-Labels und JSON-Schlüssel nicht sicher und konnten Aufbau oder
+Speicherung der Tabelle abbrechen lassen.
+
+Der Schemafilter verwirft NUL-verunreinigte IDs und Titel. Regression deckt
+beide Felder ab; `tests/test_panel_settings_list.py`: 58/58, Python-Compile und
+`git diff --check` sauber.
+
 ## Runde 687: Leisten-Slot-IDs bleiben kanonisch
 
 `slot01` und `slot001` wurden neben `slot1` akzeptiert. Dadurch konnten

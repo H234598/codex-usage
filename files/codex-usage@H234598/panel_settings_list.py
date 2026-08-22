@@ -137,6 +137,8 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
             or not isinstance(column.get("title"), str)
             or not column["id"].strip()
             or not column["title"].strip()
+            or "\x00" in column["id"]
+            or "\x00" in column["title"]
             or not isinstance(column.get("type"), str)
             or column["type"] not in VARIABLE_TYPE_MAP
         ):
