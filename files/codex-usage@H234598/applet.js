@@ -8616,7 +8616,7 @@ CodexUsageApplet.prototype = {
             ? this._panelWindowForSource(usage, percentSource)
             : slot.window;
         if (slot.source === 18 || slot.source === 19) {
-            percentWindow = this._panelWindowForKey(usage, slot.source === 18 ? "main-other" : "spark-other");
+            percentWindow = this._panelWindowForSource(usage, slot.source);
         }
         let percentValue = slot.source >= 1 && slot.source <= 8
             ? slot.value : this._remainingPercent(percentWindow);

@@ -5616,6 +5616,16 @@ test("unusable main and Spark pools cannot drive other-window panel sources", ()
   assert.equal(applet._panelWindowForSource(usage, 18), null);
   assert.equal(applet._panelValueForSource(usage, 19), null);
   assert.equal(applet._panelWindowForSource(usage, 19), null);
+
+  const item = {usage, settings: {account: "alpha"}};
+  assert.match(
+    applet._panelSlotContent(item, {source: 18, value: null, window: null}).plain,
+    /sonstiges –/
+  );
+  assert.match(
+    applet._panelSlotContent(item, {source: 19, value: null, window: null}).plain,
+    /S sonst\. –/
+  );
 });
 
 test("malformed cache controls fail closed during payload validation", () => {

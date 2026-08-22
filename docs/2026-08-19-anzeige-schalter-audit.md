@@ -6129,8 +6129,9 @@ der zugehörige Pool verfügbar, nicht erschöpft und eindeutig identifiziert
 ist. Ein Provider konnte dadurch trotz `available=false` oder erschöpftem Pool
 noch einen alten Zusatzwert anzeigen.
 
-Wert- und Fensterpfad prüfen jetzt vor Auswahl des Zusatzfensters denselben
-`_poolIsUsable()`-Vertrag wie die übrigen Poolquellen. Regression reproduziert
-beide Pools zuerst rot und besteht danach grün. Fokustest `node --test
+Wert-, Fenster- und Renderpfad prüfen jetzt vor Auswahl des Zusatzfensters
+denselben `_poolIsUsable()`-Vertrag wie die übrigen Poolquellen. Regression
+reproduziert beide Pools und den vollständigen Panel-Text zuerst rot und besteht
+danach grün. Fokustest `node --test
 --test-name-pattern='panel|pool|other-window' tests/applet_runtime.test.js`:
 65/65; Node-Syntaxcheck und `git diff --check` sauber.
