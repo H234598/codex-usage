@@ -6193,3 +6193,15 @@ ihre verwertbaren Resetdaten. Regression prüft Main- und Spark-Resetpfad;
 Fokustest `node --test
 --test-name-pattern='panel reset sources ignore|panel warning values ignore|panel|pool|other-window|extended panel sources|long-limit exhaustion|monthly exhaustion' tests/applet_runtime.test.js`:
 76/76; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 557: Unbekannte „other“-Fenster nicht auswählen
+
+`_poolOtherWindow()` übersprang zwar 5h/Woche/30d, akzeptierte aber unbekannte
+Fensteridentitäten oder doppelte Identitäten. Panel- und Resetquellen für
+„sonstiges“ konnten dadurch ein nicht eindeutig zuordenbares Fenster anzeigen.
+
+Die Auswahl verlangt jetzt eindeutige, bekannte Fensteridentitäten und fällt
+sonst auf kein Fenster zurück. Regression prüft unbekannte Main- und
+Spark-Fenster sowie bestehende Pool-/Panelpfade. Fokustest `node --test
+--test-name-pattern='other-window panel sources ignore unknown|panel reset sources ignore|panel limit sources|unusable main and Spark|Spark pools without|duplicate window identity|panel warning values ignore' tests/applet_runtime.test.js`:
+9/9; Node-Syntaxcheck und `git diff --check` sauber.

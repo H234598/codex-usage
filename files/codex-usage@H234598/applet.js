@@ -6679,6 +6679,9 @@ CodexUsageApplet.prototype = {
         if (!pool || !Array.isArray(pool.windows)) {
             return null;
         }
+        if (!this._hasUniqueWindowIdentities(pool.windows)) {
+            return null;
+        }
         let excludedDurations = [18000, 604800];
         if (excludeMonthly === true) {
             excludedDurations.push(2592000);

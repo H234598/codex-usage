@@ -2012,6 +2012,25 @@ test("panel reset sources ignore pools that are not allowed", () => {
   assert.equal(applet._panelWindowForKey(usage, "spark-5h"), null);
 });
 
+test("other-window panel sources ignore unknown pool identities", () => {
+  const applet = makeApplet();
+  const usage = {
+    main: {
+      available: true, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "mystery", duration_seconds: 86400, remaining: 80}],
+    },
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: true, allowed: true, limit_reached: false, exhausted: false,
+        windows: [{name: "mystery", duration_seconds: 86400, remaining: 70}],
+      },
+    },
+  };
+
+  assert.equal(applet._poolOtherWindow(usage.main, true), null);
+  assert.equal(applet._poolOtherWindow(usage.models["gpt-5.3-codex-spark"]), null);
+});
+
 test("window identity helpers distinguish aliases, conflicts, duplicates and pool selection", () => {
   const applet = makeApplet();
   const five = {name: "5h", limit_window_seconds: 18000, remaining: 80, limit: 100};
