@@ -8093,3 +8093,13 @@ beim Öffnen des Bearbeitungsdialogs einen GTK-Fehler auslösen.
 Ungültige `units`-Metadaten werden jetzt entfernt; gültige Einheiten bleiben
 unverändert. Regression prüft den Schemafilter; `tests/test_panel_settings_list.py`:
 83/83, Python-Compile und `git diff --check` sauber.
+
+## Runde 702: Cinnamon-Settings startet Panel-Seite ohne Importfehler
+
+Der reale Cinnamon-Settings-Prozess wurde mit
+`xlet-settings.py applet codex-usage@H234598 -i 0` acht Sekunden laufen
+gelassen. Prozess blieb ohne Importtraceback oder GTK-Fehler aktiv; der
+Timeout beendete nur die absichtlich nicht-interaktive GUI-Prüfung.
+
+Zusätzlich: `cinnamon-settings applets` startete erfolgreich. Working tree
+blieb nach Installation und Reload sauber.
