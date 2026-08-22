@@ -367,3 +367,31 @@ def test_panel_count_hides_legacy_slots_and_restores_saved_values() -> None:
         assert list(panel.model[0]) == ["alpha", 9, 2, 3, 4]
     finally:
         panel.destroy()
+
+
+def test_panel_count_change_keeps_valid_hidden_slots_with_malformed_rows() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "2"
+    settings.values["account-panel-settings"] = [
+        {"account": "alpha", "slot1": 1, "slot2": 2, "slot3": 3},
+        "malformed",
+    ]
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+                {"id": "slot2", "title": "Wert 2", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        settings.values["panel-value-count"] = "3"
+        panel._on_count_changed()
+        assert list(panel.model[0]) == ["alpha", 1, 2, 3]
+    finally:
+        panel.destroy()

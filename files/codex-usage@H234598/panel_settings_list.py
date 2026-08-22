@@ -304,13 +304,11 @@ class PanelSettingsList(List, JSONSettingsBackend):
         if [column["id"] for column in columns] == [column["id"] for column in self.columns]:
             return
         stored_rows = self.get_value()
-        if (
-            isinstance(stored_rows, list)
-            and stored_rows
-            and all(isinstance(row, dict) for row in stored_rows)
-        ):
-            rows = [dict(row) for row in stored_rows]
-        else:
+        rows = (
+            [dict(row) for row in stored_rows if isinstance(row, dict)]
+            if isinstance(stored_rows, list) else []
+        )
+        if not rows:
             rows = [
                 {
                     column["id"]: row[index]

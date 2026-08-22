@@ -6121,6 +6121,21 @@ Spalten in derselben Reihenfolge wie der Selector zusammen. Regression prüft
 `Formatierungsmodus` und `Dynamisch`; `pytest -q tests/test_help_page.py`: 6/6.
 Python-Kompilierung und `git diff --check` sauber.
 
+## Runde 659: Leisten-Rebuild verlor Hidden-Slots bei gemischten Zeilen
+
+Beim Ändern der Anzahl der Leistenfelder prüfte `_on_count_changed()` bisher,
+ob alle gespeicherten Zeilen Dictionaries sind. Eine einzelne beschädigte
+Zeile zwang dadurch den Fallback auf das aktuell sichtbare GTK-Modell. Dieses
+Modell enthält absichtlich keine vorübergehend ausgeblendeten `slotN`-Felder;
+deren Werte gingen beim Rebuild verloren.
+
+Der Rebuild übernimmt jetzt alle gültigen gespeicherten Dictionary-Zeilen und
+ignoriert nur nicht-dictionary Zeilen. Der sichtbare Modell-Fallback bleibt für
+leere oder vollständig unbrauchbare Listen erhalten. Regression mit gültiger
+Zeile, verborgenem `slot3` und zusätzlicher beschädigter Zeile prüft, dass der
+Hidden-Slot nach Count-Wechsel erhalten bleibt. `tests/test_panel_settings_list.py`:
+18/18; Python-Kompilierung und `git diff --check` sauber.
+
 ## Runde 551: Native Cinnamon-Einstellungen mit Applet-Launcher verbinden
 
 Cinnamon nutzt im Rechtsklick-Kontextmenü den virtuellen `configureApplet()`-
