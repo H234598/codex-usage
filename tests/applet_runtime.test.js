@@ -4059,6 +4059,19 @@ test("invalidated credit balances are not rendered", () => {
   assert.equal(applet._usageResetParts(usage, "panel"), null);
 });
 
+test("invalidated usage does not queue consumption refreshes", () => {
+  const applet = makeApplet();
+  applet._usages = [{account: "alpha", cache_invalidated: true, cost_windows: []}];
+  applet._consumptionSettings = {
+    alpha: applet._defaultConsumptionRow("alpha"),
+  };
+  applet._drainConsumptionRequests = () => {};
+
+  applet._refreshConsumption();
+
+  assert.equal(applet._consumptionQueue.length, 0);
+});
+
 test("credit hover omits credit consumption when its hover setting is disabled", () => {
   const applet = makeApplet();
   applet._usages[0].credits = {

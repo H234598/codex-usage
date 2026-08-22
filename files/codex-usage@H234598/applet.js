@@ -5760,6 +5760,9 @@ CodexUsageApplet.prototype = {
         this._consumptionQueue = [];
         for (let i = 0; i < this._usages.length; i++) {
             let usage = this._usages[i];
+            if (usage.cache_invalidated === true) {
+                continue;
+            }
             let row = this._consumptionSettings[usage.account];
             let creditRow = this._creditSettings && this._creditSettings[usage.account];
             let panelRow = this._panelSettings[usage.account] ||

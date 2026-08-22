@@ -7257,3 +7257,15 @@ Der Merge setzt Resetdaten jetzt auf unbekannt; alle betroffenen Renderer
 brechen für invalidierte Accounts früh ab. Regression deckt diese direkten
 Pfade mit gültigen Altwerten ab. `node --test tests/applet_runtime.test.js`:
 472/472 sauber.
+
+## Runde 631: Invalidierte Accounts erzeugen keine Verbrauchs-Requests
+
+`_refreshConsumption()` stellte bisher auch für Accounts mit
+`cache_invalidated=true` Token- und Creditverbrauchs-Requests zusammen. Die
+zugehörigen Renderer verwerfen solche Werte bereits; die Requests konnten
+deshalb nur unnötige I/O- und Queue-Last erzeugen.
+
+Die Verbrauchsplanung überspringt invalidierte Accounts jetzt vollständig.
+Regression prüft, dass trotz aktivierter Verbrauchseinstellungen keine Queue-
+Einträge entstehen. `node --test tests/applet_runtime.test.js`: 473/473;
+`make applet-check` inklusive JSON-Validierung sauber.
