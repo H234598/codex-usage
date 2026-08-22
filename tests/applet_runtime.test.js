@@ -12179,6 +12179,34 @@ test("backend overview rejects invalid rows without replacing state", () => {
   ]);
 });
 
+test("backend overview rejects a non-boolean series_active value", () => {
+  const applet = makeApplet();
+  applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };
+  applet._backendRowsReady = true;
+  applet.accountBackends = [{ account: "alpha", label: "Alpha", backend: 0 }];
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet.settings = { setValue() { throw new Error("must not write"); } };
+  applet._syncAccountSettings = () => { throw new Error("must not sync"); };
+  applet._syncStyleRows = () => { throw new Error("must not sync"); };
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{
+      id: "alpha",
+      label: "Alpha",
+      backend: "direct",
+      series: "A",
+      series_active: "true",
+    }],
+  }, null);
+
+  assert.doesNotThrow(() => applet._loadAccountBackends());
+  assert.deepEqual(applet._backendAccounts, {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  });
+  assert.deepEqual(applet.accountBackends, [
+    { account: "alpha", label: "Alpha", backend: 0 },
+  ]);
+});
+
 test("backend overview rejects relative account paths without throwing", () => {
   const applet = makeApplet();
   applet._backendAccounts = { alpha: { account: "alpha", label: "Alpha", backend: 0 } };

@@ -8933,3 +8933,19 @@ den Stringwert `"true"` ab.
 Verifikation: fokussierte Node-Tests für Serien-/Backend-Settings: **9
 bestanden**; Node-Syntaxcheck und `git diff --check` sauber. Keine
 Settings-Fenster gestartet.
+
+## Runde 762: `series_active` aus Backend-Overview strikt prüfen
+
+Die Backend-Overview setzte `seriesActive` bisher mit `item.series_active ===
+true`. Ein fehlerhafter Payload-Wert wie der String `"true"` wurde damit
+lautlos zu `false`, obwohl die Antwort anschließend als gültiger Account-Stand
+weiterverarbeitet werden konnte.
+
+`_loadAccountBackends()` lehnt vorhandene `series_active`-Werte jetzt ab, wenn
+sie kein echtes Boolean sind. Der bisherige Zustand bleibt erhalten; weder
+Settings-Sync noch Account-Update laufen mit einem verfälschten Wert.
+Regression prüft den String-Payload.
+
+Verifikation: fokussierte Node-Tests für Backend-Overview, Backend-Settings
+und Serien: **15 bestanden**; Node-Syntaxcheck und `git diff --check` sauber.
+Keine Settings-Fenster gestartet.

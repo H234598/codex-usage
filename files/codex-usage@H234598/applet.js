@@ -1689,6 +1689,13 @@ CodexUsageApplet.prototype = {
                         ? null
                         : this._strictText(item.auth_json_path, 4096);
                     label = this._safeText(item.label, 120);
+                    if (
+                        item.series_active !== undefined &&
+                        typeof item.series_active !== "boolean"
+                    ) {
+                        global.log("[" + UUID + "] invalid account in backend overview");
+                        return;
+                    }
                 } catch (e) {
                     global.log("[" + UUID + "] invalid account in backend overview");
                     return;
