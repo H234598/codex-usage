@@ -4963,15 +4963,19 @@ CodexUsageApplet.prototype = {
         }
         let deviceLogin = argv.indexOf("device-login") !== -1;
         let profileJobs = false;
+        let profileJobStatus = false;
         for (let index = 0; index < argv.length - 1; index++) {
             if (argv[index] === "profile" && argv[index + 1] === "jobs") {
                 profileJobs = true;
-                break;
+            } else if (argv[index] === "profile" && argv[index + 1] === "job-status") {
+                profileJobStatus = true;
             }
         }
         this._auxCommand = serviceEnable
             ? "service-enable"
-            : (deviceLogin ? "device-login" : (profileJobs ? "profile-jobs" : ""));
+            : (deviceLogin
+                ? "device-login"
+                : (profileJobs ? "profile-jobs" : (profileJobStatus ? "profile-job-status" : "")));
         let process = null;
         let done = false;
         let finish = Lang.bind(this, function(payload, error) {
@@ -4994,6 +4998,9 @@ CodexUsageApplet.prototype = {
             this._drainAccountChanges();
             this._drainDeferredAuxRequests();
             this._drainConsumptionRequests();
+            if (!this._auxProcess && this._profileJobResumeQueue.length) {
+                this._pollNextProfileJob();
+            }
         });
         try {
             let launcher = Gio.SubprocessLauncher.new(
@@ -10801,6 +10808,19 @@ CodexUsageApplet.prototype = {
     },
 
     _cancelAuxProcess: function() {
+        if (this._auxCommand === "profile-job-status") {
+            let account = this._profileJobPollingAccount;
+            if (
+                account &&
+                this._deviceLoginJobs[account] &&
+                this._profileJobResumeQueue.indexOf(account) === -1
+            ) {
+                this._profileJobResumeQueue.unshift(account);
+            }
+            this._profileJobPollingAccount = "";
+            this._deviceLoginPollGeneration += 1;
+            this._removeSource("_deviceLoginPollId");
+        }
         if (this._auxCommand === "profile-jobs") {
             this._profileJobsLoaded = false;
         }

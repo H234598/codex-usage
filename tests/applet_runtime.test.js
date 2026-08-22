@@ -739,6 +739,64 @@ test("cancelled profile job discovery can run again", () => {
   applet._cancelAuxProcess();
 });
 
+test("cancelled profile job status requeues its persistent poll", () => {
+  let forced = 0;
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() {
+        return {force_exit() { forced += 1; }};
+      },
+    });
+  });
+  applet._readBoundedProcessOutput = () => {};
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._deviceLoginJobs.alpha = "job-1234567890abcdef1234567890abcdef";
+  applet._deviceLoginPollGeneration = 4;
+
+  applet._pollProfileJob("alpha");
+  assert.equal(applet._auxCommand, "profile-job-status");
+
+  applet._cancelAuxProcess();
+
+  assert.equal(forced, 1);
+  assert.equal(applet._profileJobPollingAccount, "");
+  assert.deepEqual(applet._profileJobResumeQueue, ["alpha"]);
+  assert.equal(applet._deviceLoginPollGeneration, 6);
+  assert.equal(applet._deviceLoginPollId, 0);
+});
+
+test("auxiliary completion resumes queued profile poll", () => {
+  const calls = [];
+  const readers = [];
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv(argv) {
+        calls.push(argv);
+        return {force_exit() {}};
+      },
+    });
+  });
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._readBoundedProcessOutput = (_process, callback) => {
+    readers.push(callback);
+  };
+  applet._deviceLoginJobs.alpha = "job-1234567890abcdef1234567890abcdef";
+  applet._profileJobResumeQueue = ["alpha"];
+
+  applet._spawnAuxJson(["codex-usage", "health", "--format", "json"], () => {});
+  readers[0]("{\"ok\":true}", "", null);
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1], [
+    "codex-usage", "profile", "job-status",
+    "job-1234567890abcdef1234567890abcdef", "--json",
+  ]);
+  assert.equal(applet._profileJobPollingAccount, "alpha");
+  assert.equal(applet._auxCommand, "profile-job-status");
+});
+
 test("persistent profile job resume drains every active job", () => {
   const applet = makeApplet();
   const calls = [];

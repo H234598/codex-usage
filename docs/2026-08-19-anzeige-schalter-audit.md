@@ -6464,3 +6464,18 @@ ohne persistente Job-ID. Regression erweitert den persistenten-Job-Cleanup-Test.
 Fokustest `node --test
 --test-name-pattern='live device login cleanup preserves persistent profile job state|device login live|safe mode cancels reactivation processes|profile job discovery' tests/applet_runtime.test.js`:
 13/13; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 577: Profiljob-Statuspoll nach Auxiliary-Abbruch fortsetzen
+
+Ein laufender `profile job-status`-Abruf konnte durch Health-, Routing- oder
+anderen Auxiliary-Befehl abgebrochen werden. Der gemeinsame Auxiliary-Guard
+invalidierte zwar die Antwort, ließ aber `_profileJobPollingAccount` gesetzt;
+der nächste Poll startete dadurch nicht mehr.
+
+`profile job-status` wird jetzt als eigener Auxiliary-Befehl erkannt. Beim
+Abbruch werden Account, Poll-Timer und Generation invalidiert und der Job
+requeued. Nach Abschluss des unterbrechenden Hilfsbefehls nimmt der Loader den
+nächsten Profiljob automatisch wieder auf. Regression prüft echten Status-
+Spawn, Abbruch und Fortsetzung nach Auxiliary-Abschluss. Fokustest `node --test
+--test-name-pattern='cancelled profile job status requeues its persistent poll|auxiliary completion resumes queued profile poll|profile job discovery|persistent profile job|live device login cleanup|safe mode cancels reactivation processes' tests/applet_runtime.test.js`:
+12/12; Node-Syntaxcheck und `git diff --check` sauber.
