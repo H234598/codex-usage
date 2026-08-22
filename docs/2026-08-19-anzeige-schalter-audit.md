@@ -6066,3 +6066,16 @@ real `x=3890 → x=1920`, danach `1920×964` maximiert. `node --test
 --test-name-pattern='settings maximization moves|settings maximization retries|settings launcher'
 tests/applet_runtime.test.js`: 3/3; Node-Syntaxcheck und `git diff --check`
 sind sauber.
+
+## Runde 548: Einstellungsseiten und Selector-Widgets real geprüft
+
+Der direkte Cinnamon-Aufruf `xlet-settings applet codex-usage@H234598 -i 14 -t 1`
+öffnet die Seite `Formatierungen` sichtbar; die Tabelle `Tokendelta` wird mit
+ihren Accountzeilen gerendert. Der vollständige Applet-Aufruf bleibt durch die
+Monitorplatzierung aus Runde 547 geschützt. Die Selector-Widgets bauen jeweils
+nur die aktive Tabelle und trennen den alten Listener beim Wechsel.
+
+Fokustests: `pytest -q tests/test_format_table_selector.py
+tests/test_forecast_table_selector.py tests/test_panel_settings_list.py
+tests/test_help_page.py`: 29/29. Keine neue reproduzierbare Fehlfunktion;
+Worktree und installierte Applet-Datei bleiben synchron.
