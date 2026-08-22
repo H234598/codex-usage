@@ -8949,3 +8949,19 @@ Regression prüft den String-Payload.
 Verifikation: fokussierte Node-Tests für Backend-Overview, Backend-Settings
 und Serien: **15 bestanden**; Node-Syntaxcheck und `git diff --check` sauber.
 Keine Settings-Fenster gestartet.
+
+## Runde 763: Legacy-Reactivation-Migration nicht mit malformed Serienflag
+
+Die Migration des alten Reactivation-Browser-Felds baute
+`series-active` bisher erneut per `=== true` auf. Ein beschädigter Stringwert
+`"true"` wurde dadurch zu `false` und konnte beim nachfolgenden Account-Update
+die aktive Serienzuordnung abschalten.
+
+Die Migration bricht bei einem vorhandenen Nicht-Boolean jetzt fail-closed ab
+und setzt keinen Migrationsstand. Echte Boolean-Werte sowie fehlende Legacy-
+Felder bleiben unverändert kompatibel. Regression deckt den malformed String
+ab.
+
+Verifikation: fokussierte Node-Tests für Legacy-Migration, Backend-Overview,
+Backend-Settings und Serien: **17 bestanden**; Node-Syntaxcheck und
+`git diff --check` sauber. Keine Settings-Fenster gestartet.

@@ -1696,6 +1696,29 @@ test("legacy reactivation migration stays pending when account update fails", ()
   assert.notEqual(applet.reactivationBrowserMigrated, true);
 });
 
+test("legacy reactivation migration ignores malformed series-active", () => {
+  const applet = makeAccountSettingsApplet();
+  applet.reactivationBrowser = "vivaldi";
+  let reconciles = 0;
+  applet._reconcileAccountChanges = () => { reconciles += 1; };
+
+  applet._migrateLegacyReactivationBrowser([{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": "",
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    "series": "A",
+    "series-active": "true",
+    backend: 0,
+  }]);
+
+  assert.equal(reconciles, 0);
+  assert.notEqual(applet._legacyReactivationMigrationPending, 1);
+  assert.notEqual(applet.reactivationBrowserMigrated, true);
+});
+
 test("legacy migration marker stays pending when settings write fails", () => {
   const applet = makeAccountSettingsApplet();
   applet.settings = {

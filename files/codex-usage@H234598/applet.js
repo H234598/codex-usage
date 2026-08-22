@@ -4401,6 +4401,13 @@ CodexUsageApplet.prototype = {
         let changed = 0;
         for (let i = 0; i < rows.length; i++) {
             let row = rows[i];
+            if (
+                row["series-active"] !== undefined &&
+                typeof row["series-active"] !== "boolean"
+            ) {
+                global.log("[" + UUID + "] legacy migration ignored malformed series-active");
+                return;
+            }
             let migrated = {
                 account: row.account,
                 label: row.label,
@@ -4411,7 +4418,9 @@ CodexUsageApplet.prototype = {
                 browser: row.browser,
                 "reactivation-browser": row["reactivation-browser"],
                 series: row.series || "",
-                "series-active": row["series-active"] === true,
+                "series-active": row["series-active"] === undefined
+                    ? false
+                    : row["series-active"],
                 backend: row.backend
             };
             if (migrated["reactivation-browser"] === 0) {
