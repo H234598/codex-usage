@@ -4825,6 +4825,29 @@ test("settings launcher passes child pid to window placement", () => {
   assert.deepEqual(scheduled, ["3089499"]);
 });
 
+test("settings launcher falls back when SubprocessLauncher is unavailable", () => {
+  const subprocessCalls = [];
+  const scheduled = [];
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => {
+      throw new Error("launcher API unavailable");
+    };
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {get_identifier: () => "3089499"};
+    };
+  });
+  applet._scheduleSettingsMaximize = (pid) => { scheduled.push(pid); };
+
+  applet._openSettings();
+
+  assert.equal(JSON.stringify(subprocessCalls), JSON.stringify([[
+    ["xlet-settings", "applet", "codex-usage@H234598"],
+    0,
+  ]]));
+  assert.deepEqual(scheduled, ["3089499"]);
+});
+
 test("settings window lookup matches exact xlet-settings pid", () => {
   const applet = makeApplet();
 

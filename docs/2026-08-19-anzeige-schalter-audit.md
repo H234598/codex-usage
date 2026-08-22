@@ -7821,3 +7821,15 @@ Der Mapper akzeptiert nur nicht-leere String-Accounts in Objekt-Rows und gibt
 bei Nicht-Arrays eine leere Map zurück. Prototype-sichere Account-IDs bleiben
 erhalten. Regression erweitert den Mapping-Test um alle beschädigten Formen;
 fokussierter Node-Test und Syntaxcheck sauber.
+
+## Runde 677: Settings-Launcher fällt bei alter Gio-API zurück
+
+Der Settings-Start verwendete `Gio.SubprocessLauncher.new()` ohne
+Kompatibilitätspfad. Wenn Cinnamon diese API nicht bereitstellt oder deren
+Konstruktor fehlschlägt, wurde `xlet-settings` gar nicht gestartet.
+
+Der Launcher prüft API und Methoden jetzt defensiv, setzt `NO_AT_BRIDGE` nur
+best-effort und verwendet sonst `Gio.Subprocess.new()`. Regression prüft den
+Fallback inklusive PID-Weitergabe; fokussierter Settings-Block: 14/14,
+JavaScript-Syntax und `git diff --check` sauber. Nach Install/Reload öffnete
+der echte Cinnamon-Aufruf das Settings-Fenster in 265 ms.
