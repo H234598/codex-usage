@@ -11,6 +11,7 @@ sys.path.insert(0, str(APPLET_DIR))
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings")
 sys.path.insert(0, "/usr/share/cinnamon/cinnamon-settings/bin")
 
+import format_table_selector as format_table_selector_module  # noqa: E402
 from format_table_selector import FormatTableSelector, Gtk, _BoundFormatList  # noqa: E402
 
 
@@ -243,6 +244,21 @@ def test_table_change_ignores_selector_write_error() -> None:
 
     assert selector.table_stack.visible == "account-date-styles"
     assert selector._saving is False
+
+
+def test_selector_ignores_table_widget_construction_error(monkeypatch) -> None:
+    selector = FormatTableSelector.__new__(FormatTableSelector)
+    selector._table_definitions = {"table-a": {}}
+    selector._tables = {}
+    selector.settings = object()
+
+    def fail_widget(*_args, **_kwargs):
+        raise RuntimeError("widget construction failed")
+
+    monkeypatch.setattr(format_table_selector_module, "_BoundFormatList", fail_widget)
+
+    assert selector._ensure_table("table-a") is None
+    assert selector._tables == {}
 
 
 def test_setting_reload_falls_back_to_first_table_without_writing() -> None:

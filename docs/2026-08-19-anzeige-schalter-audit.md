@@ -8484,3 +8484,18 @@ und Fehlerdialog-Unterdrückung ab. Settings-Launcher-Block: 16/16;
 Node-Syntaxcheck und `git diff --check` sauber. Live-Popup-Smoke nach Reload
 bleibt fokussiert und maximiert. In dieser Runde war kein weiterer
 Produktcode-Fix erforderlich.
+
+## Runde 736: Format-Selector überlebt Widget-Aufbaufehler
+
+`FormatTableSelector._ensure_table()` ließ Fehler aus `_BoundFormatList`,
+`Gtk.Stack.add_named()` oder `show_all()` bis in den ComboBox-Callback steigen.
+Ein beschädigtes Schema oder ein temporärer GTK-Fehler beim Umschalten konnte
+damit die gesamte Formatierungsseite abbrechen; bei teilweise angehängten
+Widgets blieben Listener und GTK-Kinder zurück.
+
+Der Aufbau läuft jetzt in einem Guard. Fehlgeschlagene Widgets werden, soweit
+vorhanden, detached, aus dem Stack entfernt und zerstört; `_ensure_table()`
+liefert dann `None`, sodass die vorhandene aktive Tabelle erhalten bleibt.
+Regression deckt den Konstruktorfehler ab. Format-/Forecast-Fokustests:
+72/72; Python-Compile und `git diff --check` sauber. Reale `xlet-settings`-
+Smoke nach Installation und Reload lief ohne Traceback.
