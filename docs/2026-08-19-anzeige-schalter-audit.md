@@ -7048,3 +7048,16 @@ bei Applet-Monitor `x=0` und prüft den `wmctrl -e`-Aufruf. Der fokussierte
 Settings-Lauf `node --test --test-name-pattern='settings (launcher|window
 lookup|maximization|placement)|native Cinnamon configure|stale settings'
 tests/applet_runtime.test.js`: 13/13.
+
+## Runde 615: Routing-Policy verlangt exakt 0600
+
+`load_policy()` meldete bei zu offenen Policy-Dateien zwar „0600“, prüfte
+aber nur Gruppen-/Andere-Bits. Dateien mit `0700` oder `0400` wurden deshalb
+akzeptiert. Für eine Datei, die bezahltes Credit-Routing und Modellfreigaben
+steuert, war das ein inkonsistenter Schutzvertrag.
+
+Die Prüfung verwendet jetzt `stat.S_IMODE(...) == 0o600` und verwirft jede
+abweichende Rechtekombination weiterhin vor JSON-Verarbeitung. Regression
+setzt eine gültige Policy auf `0700` und erwartet die kontrollierte Ablehnung.
+`pytest -q tests/test_routing.py`: 127/127; Ruff, Mypy, Python-Kompilierung
+und `git diff --check` sauber.

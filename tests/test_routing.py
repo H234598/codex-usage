@@ -111,6 +111,15 @@ def test_policy_apis_reject_non_path_input(path):
         set_credit_limits({"hourly": 1}, path=path)  # type: ignore[arg-type]
 
 
+def test_load_policy_requires_exact_private_file_permissions(tmp_path):
+    path = tmp_path / "routing-policy.json"
+    set_policy_rule("global", None, True, path=path)
+    path.chmod(0o700)
+
+    with pytest.raises(ValueError, match="routing policy permissions must be 0600"):
+        load_policy(path)
+
+
 def test_evaluate_routing_json_is_safe_for_malformed_identity_fields():
     usage = replace(
         _usage(),

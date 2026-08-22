@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -72,7 +73,7 @@ def load_policy(path: Path | None = None) -> dict[str, Any]:
         read_label="routing policy",
         max_bytes=MAX_POLICY_BYTES,
     )
-    if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+    if file_stat.st_nlink != 1 or stat.S_IMODE(file_stat.st_mode) != 0o600:
         raise ValueError("routing policy permissions must be 0600")
     try:
         payload = loads_strict(text)
