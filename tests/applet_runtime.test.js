@@ -4023,12 +4023,33 @@ test("invalidated credit balances are not rendered", () => {
     alpha: {
       account: "alpha", "show-panel": true, "show-tooltip": true,
       format: "compact", "custom-format": "", "hide-when-zero": false,
+      "consumption-show-panel": true, "consumption-show-tooltip": true,
+      "consumption-amount": 1, "consumption-unit": "hours",
+      "consumption-format": "compact", "consumption-hide-when-zero": false,
+      "consumption-show-coverage-marker": false,
+    },
+  };
+  applet._consumptionSettings = {
+    alpha: {
+      account: "alpha", "show-panel": true, "show-tooltip": true,
+      amount: 1, unit: "hours", "limit-window": "short", format: "compact",
+    },
+  };
+  applet._resetSettings = {
+    alpha: {
+      account: "alpha", "show-panel": true, "show-tooltip": true,
+      "hide-when-zero": false, "show-unknown": true, format: "compact",
     },
   };
   const usage = {
     account: "alpha",
     cache_invalidated: true,
     credits: {remaining: 794, limit: 1000, used: 206, percent: 79.4},
+    cost_windows: [{
+      pool: "main", lookback_seconds: 3600, limit_window_seconds: 18000,
+      consumed_percentage_points: 4, coverage: "complete",
+    }],
+    usage_resets: {available: 2, known: true, redeem_capability: true},
   };
 
   assert.equal(applet._creditParts(usage, "panel"), null);

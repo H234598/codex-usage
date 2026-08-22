@@ -7246,3 +7246,14 @@ brechen bei invalidierten Accounts jetzt früh ab. `_clearInvalidatedUsage`
 setzt zusätzlich `usage_resets` auf unbekannt. Regression prüft Renderer und
 Invalidierungs-Merge. `node --test tests/applet_runtime.test.js`: 472/472
 sauber.
+
+## Runde 630: Resetdaten und direkte Invalidierungs-Renderer abgesichert
+
+Der Invalidierungs-Merge entfernte zwar Limits, Modelle und Verbrauchsfenster,
+übernahm aber mögliche `usage_resets` unverändert. Zusätzlich konnten direkte
+Aufrufe von Verbrauchs- und Reset-Renderern ein invalidiertes Objekt umgehen.
+
+Der Merge setzt Resetdaten jetzt auf unbekannt; alle betroffenen Renderer
+brechen für invalidierte Accounts früh ab. Regression deckt diese direkten
+Pfade mit gültigen Altwerten ab. `node --test tests/applet_runtime.test.js`:
+472/472 sauber.
