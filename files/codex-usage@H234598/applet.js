@@ -10808,6 +10808,7 @@ CodexUsageApplet.prototype = {
             let liveAccount = this._deviceLoginLiveAccount;
             if (liveAccount && !this._deviceLoginJobs[liveAccount]) {
                 delete this._deviceLoginActive[liveAccount];
+                delete this._deviceLoginEvents[liveAccount];
             }
             this._deviceLoginLiveText = Object.create(null);
             this._deviceLoginLiveAccount = "";

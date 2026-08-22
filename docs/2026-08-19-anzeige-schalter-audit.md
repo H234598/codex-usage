@@ -6450,3 +6450,17 @@ wieder eingetragen. Regression erweitert den Safe-Mode-Lifecycle-Test.
 Fokustest `node --test
 --test-name-pattern='safe mode cancels reactivation processes|profile job discovery clears locally stale completed jobs|persistent profile job|cancelled profile job discovery|device login live' tests/applet_runtime.test.js`:
 18/18; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 576: Live-Device-Login-Events beim Abbruch löschen
+
+`_cancelAuxProcess()` entfernte bei einem ephemeren `profile device-login`
+Aktivstatus und Live-Text, ließ aber `_deviceLoginEvents` bestehen. Nach
+Abbruch oder Safe-Mode konnte ein späterer Login daher den alten Device-Code
+oder die alte URL anzeigen. Persistente Profiljobs dürfen diesen Zustand nicht
+verlieren.
+
+Cleanup löscht Events jetzt nur für den tatsächlich live abgebrochenen Account
+ohne persistente Job-ID. Regression erweitert den persistenten-Job-Cleanup-Test.
+Fokustest `node --test
+--test-name-pattern='live device login cleanup preserves persistent profile job state|device login live|safe mode cancels reactivation processes|profile job discovery' tests/applet_runtime.test.js`:
+13/13; Node-Syntaxcheck und `git diff --check` sauber.

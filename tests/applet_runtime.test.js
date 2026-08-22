@@ -885,6 +885,8 @@ test("live device login cleanup preserves persistent profile job state", () => {
   const applet = makeApplet();
   applet._deviceLoginActive = { alpha: true, beta: true };
   applet._deviceLoginJobs = { beta: "job-beta" };
+  applet._deviceLoginEvents.alpha = [{kind: "code", value: "OLD-CODE"}];
+  applet._deviceLoginLiveText.alpha = {stdout: "old", stderr: ""};
   applet._deviceLoginLiveAccount = "alpha";
   applet._auxCommand = "device-login";
 
@@ -892,6 +894,8 @@ test("live device login cleanup preserves persistent profile job state", () => {
 
   assert.deepEqual(applet._deviceLoginActive, { beta: true });
   assert.deepEqual(applet._deviceLoginJobs, { beta: "job-beta" });
+  assert.equal(applet._deviceLoginEvents.alpha, undefined);
+  assert.deepEqual(Object.keys(applet._deviceLoginLiveText), []);
   assert.equal(applet._deviceLoginLiveAccount, "");
 });
 
