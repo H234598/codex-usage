@@ -85,6 +85,26 @@ def test_account_lock_rejects_foreign_owner_file(tmp_path, monkeypatch):
             pass
 
 
+def test_account_lock_wraps_lock_file_io_error(tmp_path, monkeypatch):
+    from codex_usage import account_lock as account_lock_module
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    lock_dir = tmp_path / "codex-usage" / "locks"
+    lock_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setattr(account_lock_module, "_prepare_lock_directory", lambda _: None)
+    monkeypatch.setattr(
+        account_lock_module.os,
+        "fchmod",
+        lambda *_args: (_ for _ in ()).throw(OSError("chmod failed")),
+    )
+
+    with pytest.raises(AccountLockError, match="could not secure account lock") as captured:
+        with account_lock("work"):
+            pass
+
+    assert isinstance(captured.value.__cause__, OSError)
+
+
 def test_account_lock_rejects_path_traversal(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 

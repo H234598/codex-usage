@@ -9449,3 +9449,17 @@ prüft zusätzlich, dass weder Ziel noch Parent angelegt werden.
 Verifikation: **50 fokussierte Private-IO-Tests**, **411 Private-IO-, Layout-,
 Migrations- und State-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
 keine Settings-Fenster gestartet.
+
+## Runde 801: Account-Lock-I/O-Fehler kontrolliert melden
+
+`account_lock()` kapselte Fehler beim Öffnen der Lockdatei, aber nicht den
+`os.fchmod()`-Fehler beim Sichern ihrer Rechte. Ein solcher Setup-Fehler leakte
+als rohes `OSError` statt als erwarteter `AccountLockError`.
+
+Der Rechte-Setup-Pfad wandelt `OSError` jetzt in
+`AccountLockError("could not secure account lock")` mit Cause um. Regression
+prüft Fehlertyp, Meldung und Ursache vor dem Lock-Body.
+
+Verifikation: **16 fokussierte Account-Lock-Tests**, **267 Account-Lock-,
+Config-, Profile-Job- und Profile-Login-Tests**, Ruff, Python-Compile und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

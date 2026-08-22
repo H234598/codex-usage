@@ -58,7 +58,10 @@ def account_lock(
             or file_stat.st_uid != os.getuid()
         ):
             raise AccountLockError("account lock must be a private regular file")
-        os.fchmod(fd, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+        except OSError as exc:
+            raise AccountLockError("could not secure account lock") from exc
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
