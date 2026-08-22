@@ -251,7 +251,10 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                 break
         self.columns = columns
         try:
-            return super().open_add_edit_dialog(info)
+            try:
+                return super().open_add_edit_dialog(info)
+            except Exception:
+                return None
         finally:
             # Keep the base schema columns intact; the next dialog is filtered again.
             self.columns = original_columns

@@ -518,3 +518,21 @@ def test_open_dialog_filters_series_column_and_restores_schema(monkeypatch) -> N
     assert widget.columns is original_columns
     assert captured[0][1] == ["alpha", ""]
     assert captured[0][0][1]["options"] == {"Keine Serie": "", "A": "A"}
+
+
+def test_open_dialog_survives_base_editor_error_and_restores_schema(monkeypatch) -> None:
+    widget = DynamicSeriesList.__new__(DynamicSeriesList)
+    original_columns = [
+        {"id": "account", "title": "Account", "type": "string"},
+        {"id": "series", "title": "Serie", "type": "string"},
+    ]
+    widget.columns = original_columns
+    widget._series_options_for = lambda _info: {"Keine Serie": "", "A": "A"}
+
+    def fail_open_add_edit_dialog(self, _info=None):
+        raise RuntimeError("base editor failed")
+
+    monkeypatch.setattr(List, "open_add_edit_dialog", fail_open_add_edit_dialog)
+
+    assert DynamicSeriesList.open_add_edit_dialog(widget, ["alpha", ""]) is None
+    assert widget.columns is original_columns

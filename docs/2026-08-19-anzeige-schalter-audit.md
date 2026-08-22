@@ -8616,3 +8616,18 @@ prüft den Wechsel von `A` auf `B`.
 
 Verifikation: `tests/test_dynamic_series_list.py` 20/20; Python-Compile,
 Ruff und `git diff --check` sauber.
+
+## Runde 745: Dynamic-Series-Editor fängt Basisdialogfehler ab
+
+`DynamicSeriesList.open_add_edit_dialog()` filterte die Serienoptionen und
+rief danach den Cinnamon-Basisdialog ungeguardet auf. Fehler beim Aufbau eines
+einzelnen Feldeditors konnten damit den Accounts-Editor bis in den
+Settings-Eventloop abbrechen. Das zuvor geschützte `PanelSettingsList`-Muster
+war hier nicht wirksam, weil diese Klasse direkt von `List` erbt.
+
+Der Basisdialog läuft jetzt in einem Fehlerguard und liefert bei einer
+Ausnahme `None`; der `finally`-Pfad stellt die unveränderte Spaltenschemareferenz
+immer wieder her. Regression deckt Fehler und Schema-Restore ab.
+
+Verifikation: `tests/test_dynamic_series_list.py` 21/21; Python-Compile,
+Ruff und `git diff --check` sauber.
