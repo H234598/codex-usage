@@ -9463,3 +9463,18 @@ prüft Fehlertyp, Meldung und Ursache vor dem Lock-Body.
 Verifikation: **16 fokussierte Account-Lock-Tests**, **267 Account-Lock-,
 Config-, Profile-Job- und Profile-Login-Tests**, Ruff, Python-Compile und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 802: Migrations-Rollback auf echte Manifestziele begrenzen
+
+`rollback_auth_migration()` vertraute bisher jedem absoluten `target`-Pfad
+aus einem Manifest. Ein handgebautes oder beschädigtes Manifest konnte damit
+eine beliebige private Datei löschen, sobald ihr Hash angegeben war. Die
+Rollback-Prüfung ignorierte außerdem Manifest-Rechte und das Schema.
+
+Rollback akzeptiert jetzt nur Schema 1, private Manifestdateien, vollständige
+`source`-/SHA-256-Felder und Ziele unter `.../codex-home/auth.json`. Ein
+Regressionstest reproduziert den fremden Zielpfad und stellt sicher, dass die
+Datei erhalten bleibt; ein weiterer prüft gruppenlesbare Manifestdateien.
+
+Verifikation: **66 fokussierte Profile-Migrations-Tests**, Ruff,
+Python-Compile und Diff-Check bestanden; keine Settings-Fenster gestartet.

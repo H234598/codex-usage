@@ -193,14 +193,20 @@ def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[s
 def rollback_auth_migration(manifest_path: Path) -> None:
     manifest_path = _require_absolute(manifest_path, "manifest path")
     with private_path_lock(manifest_path, label="migration lock"):
-        text, _ = read_private_text(
+        text, manifest_stat = read_private_text(
             manifest_path,
             regular_label="migration manifest",
             read_label="migration manifest",
             max_bytes=1_000_000,
         )
+        if manifest_stat.st_nlink != 1 or manifest_stat.st_mode & 0o077:
+            raise ValueError("migration manifest permissions are invalid")
         manifest = loads_strict(text)
-        if not isinstance(manifest, dict) or manifest.get("status") != "applied":
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("schema_version") != 1
+            or manifest.get("status") != "applied"
+        ):
             raise ValueError("migration manifest is invalid")
         items = manifest.get("items")
         if not isinstance(items, list) or len(items) > MAX_MIGRATION_ITEMS:
@@ -218,9 +224,25 @@ def rollback_auth_migration(manifest_path: Path) -> None:
             if status != "applied":
                 raise ValueError("migration manifest is invalid")
             target_text = item.get("target")
-            if not isinstance(target_text, str) or not target_text:
+            source_text = item.get("source")
+            digest = item.get("sha256")
+            if (
+                not isinstance(source_text, str)
+                or not source_text
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+                or not isinstance(target_text, str)
+                or not target_text
+            ):
                 raise ValueError("migration manifest is invalid")
+            try:
+                _require_absolute(Path(source_text), "migration source")
+            except ValueError as exc:
+                raise ValueError("migration manifest is invalid") from exc
             target = _require_absolute(Path(target_text), "migration target")
+            if target.name != "auth.json" or target.parent.name != "codex-home":
+                raise ValueError("migration manifest is invalid")
             assert_no_symlink_ancestors(target, label="migration target")
             if not target.is_file() or target.is_symlink():
                 continue
@@ -234,7 +256,7 @@ def rollback_auth_migration(manifest_path: Path) -> None:
             if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
                 raise ValueError("migration target permissions are invalid")
             raw = text.encode("utf-8")
-            if hashlib.sha256(raw).hexdigest() != item.get("sha256"):
+            if hashlib.sha256(raw).hexdigest() != digest:
                 raise ValueError("canonical auth.json changed after migration")
             target.unlink()
         manifest["status"] = "rolled_back"

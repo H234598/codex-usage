@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
@@ -846,6 +847,54 @@ def test_auth_migration_rollback_rejects_manifest_item_without_target(tmp_path):
 
     with pytest.raises(ValueError, match="manifest is invalid"):
         rollback_auth_migration(manifest_path)
+
+
+def test_auth_migration_rollback_rejects_non_profile_target(tmp_path):
+    target = tmp_path / "important.json"
+    raw = b'{"keep":true}\n'
+    target.write_bytes(raw)
+    target.chmod(0o600)
+    manifest_path = tmp_path / "migration" / "manifest.json"
+    manifest_path.parent.mkdir(mode=0o700)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "applied",
+                "items": [
+                    {
+                        "account_id": "alpha",
+                        "source": str(tmp_path / "source.json"),
+                        "target": str(target),
+                        "status": "applied",
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="manifest is invalid"):
+        rollback_auth_migration(manifest_path)
+
+    assert target.exists()
+
+
+def test_auth_migration_rollback_rejects_non_private_manifest(tmp_path):
+    source = tmp_path / "auth.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    plan = plan_auth_migration((_account(tmp_path, source),))
+    manifest_path = tmp_path / "migration" / "manifest.json"
+    apply_auth_migration(plan, manifest_path)
+    manifest_path.chmod(0o644)
+
+    with pytest.raises(ValueError, match="manifest permissions"):
+        rollback_auth_migration(manifest_path)
+
+    assert plan.items[0].target.exists()
 
 
 @pytest.mark.parametrize(
