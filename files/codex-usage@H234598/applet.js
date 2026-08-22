@@ -4787,9 +4787,15 @@ CodexUsageApplet.prototype = {
                 Object.prototype.hasOwnProperty.call(row, "series") ||
                 Object.prototype.hasOwnProperty.call(row, "series-active");
             legacyBackendOnly = legacyBackendOnly && !hasEditableFields;
-            let label = row.label === undefined
-                ? this._safeText(canonical && canonical.label, 120)
-                : this._safeText(row.label, 120);
+            let label;
+            try {
+                label = row.label === undefined
+                    ? this._safeText(canonical && canonical.label, 120)
+                    : this._safeText(row.label, 120);
+            } catch (e) {
+                this._loadAccountBackends();
+                return;
+            }
             let canonicalTag = canonical && typeof canonical.tag === "string"
                 ? canonical.tag : "";
             let tag = row.tag === undefined

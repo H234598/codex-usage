@@ -12060,6 +12060,20 @@ test("backend setting rejects normalized account identity", () => {
   assert.equal(reloads, 1);
 });
 
+test("backend setting rejects a non-string label without escaping callback", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: { account: "alpha", label: "Alpha", backend: 0 },
+  };
+  applet.accountBackends = [{ account: "alpha", label: 123, backend: 0 }];
+  let reloads = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+
+  assert.doesNotThrow(() => applet._onAccountBackendsChanged());
+  assert.equal(reloads, 1);
+});
+
 test("backend synchronization clears its guard after a settings exception", () => {
   const applet = makeApplet();
   applet._baseCommandArgv = () => ["codex-usage"];

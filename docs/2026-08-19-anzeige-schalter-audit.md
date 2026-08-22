@@ -495,20 +495,6 @@ geprüft werden statt per `deepStrictEqual`.
 Verifikation: 355/355 Node-Tests bestanden, JSON-/Applet-Check bestanden und
 `git diff --check` sauber.
 
-## Runde 652: Strikte GJS-Ausführung blockierte Einstellungsmenü
-
-Der neue geschützte Account-Overview-Parser schrieb `label` ohne lokale
-Deklaration. Node-Test-Sandbox lief dadurch zufällig weiter, GJS behandelt
-Applet-Module jedoch strikt und warf bei jedem gültigen Account einen
-`ReferenceError`. Der Callback brach vor `_backendRowsReady` ab; dadurch
-blieb die Synchronisierung unvollständig und der Einstellungszugriff wirkte
-defekt.
-
-`label` ist jetzt vor dem Parsing-Block lokal deklariert. Regression führt
-denselben Overview-Pfad in strikt ausgeführter Sandbox aus und prüft, dass
-gültige Zeilen synchronisiert werden. `node --test tests/applet_runtime.test.js`:
-478/478; Node-Syntaxcheck und `git diff --check` sauber.
-
 ## Runde 39: Backend-Zustand und Pool-Reset-Merge
 
 Die direkten Tests decken jetzt auch Backend-Zuordnung, leere versus bereits
@@ -7548,3 +7534,30 @@ Backend, Browser und Pfade. Ungültige Overview-Daten ersetzen keinen alten
 Zustand und verlassen den Callback kontrolliert. Regression prüft genau diesen
 Fall. Account-/Panel-Fokus: 15/15 Runtime-Tests; Node-Syntaxcheck und
 `git diff --check` sauber.
+
+## Runde 652: Strikte GJS-Ausführung blockierte Einstellungsmenü
+
+Der neue geschützte Account-Overview-Parser schrieb `label` ohne lokale
+Deklaration. Node-Test-Sandbox lief dadurch zufällig weiter, GJS behandelt
+Applet-Module jedoch strikt und warf bei jedem gültigen Account einen
+`ReferenceError`. Der Callback brach vor `_backendRowsReady` ab; dadurch
+blieb die Synchronisierung unvollständig und der Einstellungszugriff wirkte
+defekt.
+
+`label` ist jetzt vor dem Parsing-Block lokal deklariert. Regression führt
+denselben Overview-Pfad in strikt ausgeführter Sandbox aus und prüft, dass
+gültige Zeilen synchronisiert werden. `node --test tests/applet_runtime.test.js`:
+478/478; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 653: Beschädigtes Label im Account-Settings-Callback
+
+`_onAccountBackendsChanged()` normalisierte `row.label` bisher außerhalb eines
+Fehlerguards. Ein beschädigter gespeicherter Wert, etwa eine Zahl statt Text,
+warf deshalb aus dem Settings-Callback. Der äußere Schutz protokollierte den
+Fehler, stellte aber weder den autoritativen Backend-Stand wieder her noch
+verhinderte wiederholte Callback-Fehler.
+
+Die Label-Normalisierung fällt jetzt bei ungültigem Typ kontrolliert auf
+`_loadAccountBackends()` zurück. Regression prüft, dass der Callback nicht
+wirft und genau einen Reload anfordert. Fokussierte Account-/Backend-Tests:
+24/24; Node-Syntaxcheck und `git diff --check` sauber.
