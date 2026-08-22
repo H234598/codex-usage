@@ -203,6 +203,7 @@ def test_destroy_detaches_active_table_listener() -> None:
 
     assert selector._tables == {}
     assert settings.listeners["table-a"] == []
+    assert settings.listeners["format-table-selector"] == []
 
 
 def test_copy_table_reuses_percent_columns_but_keeps_own_description() -> None:

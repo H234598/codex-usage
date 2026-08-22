@@ -6683,3 +6683,18 @@ und leere Poll-Trackingfelder. Der aktuelle Produktionspfad besteht bereits;
 es war keine Codeänderung nötig.
 
 Fokustest `node --test --test-name-pattern='profile job|profile poll|auxiliary completion|safe mode' tests/applet_runtime.test.js`: 30/30. Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 591: Selector-Listener beim Settings-Seitenwechsel freigeben
+
+`FormatTableSelector` und `ForecastTableSelector` registrieren ihren
+Seitenwert über `JSONSettingsBackend.attach()`. Beim Zerstören wurden bisher
+nur die jeweils angelegten Tabellenwidgets abgemeldet; der Listener des
+Selectors selbst blieb im gemeinsamen `JSONSettingsHandler` erhalten.
+Jedes erneute Öffnen der Settings-Seite konnte dadurch ein weiteres zerstörtes
+Widget samt Callback im Speicher halten.
+
+Beide Selector-Klassen entfernen beim `destroy()` jetzt ihren eigenen
+`settings.listen()`-Callback. Regression prüft Tabellen- und Seitenlistener
+nach dem Zerstören; damit ist der relevante Cinnamon-Heap-Pfad gebunden.
+
+Fokustest `pytest -q tests/test_format_table_selector.py tests/test_forecast_table_selector.py`: 14/14. Python-Syntaxcheck und `git diff --check` sauber.

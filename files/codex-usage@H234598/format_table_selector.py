@@ -150,6 +150,16 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         self.table_stack.remove(widget)
         widget.destroy()
 
+    def _detach_selector_listener(self):
+        listeners = getattr(self.settings, "listeners", None)
+        if not isinstance(listeners, dict):
+            return
+        callbacks = listeners.get(self.key)
+        if not isinstance(callbacks, list):
+            return
+        callback = self._settings_changed_callback
+        callbacks[:] = [registered for registered in callbacks if registered != callback]
+
     def _show_table(self, table_key):
         if self._ensure_table(table_key) is None:
             return
@@ -177,6 +187,7 @@ class FormatTableSelector(SettingsWidget, JSONSettingsBackend):
         pass
 
     def destroy(self):
+        self._detach_selector_listener()
         for table_key in list(self._tables):
             self._discard_table(table_key)
         return super().destroy()

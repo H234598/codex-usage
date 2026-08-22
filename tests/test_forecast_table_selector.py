@@ -163,3 +163,4 @@ def test_destroy_detaches_active_table_listener() -> None:
 
     assert selector._tables == {}
     assert settings.listeners[_TABLE_KEYS[0]] == []
+    assert settings.listeners["forecast-table-selector"] == []
