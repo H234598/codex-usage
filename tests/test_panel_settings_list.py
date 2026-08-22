@@ -70,6 +70,21 @@ def test_panel_columns_default_slots_to_disabled_source() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "base",
+    [
+        None,
+        "malformed",
+        [None, {"id": "missing-title", "type": "string"}],
+        [{"id": "unknown", "title": "Unknown", "type": "unknown"}],
+    ],
+)
+def test_panel_columns_ignores_malformed_schema_columns(base) -> None:
+    columns = panel_columns(base, 3)
+
+    assert [column["id"] for column in columns] == ["slot1", "slot2", "slot3"]
+
+
 class _Dialog:
     last = None
     response = None
@@ -180,6 +195,38 @@ def test_panel_editor_uses_disabled_source_for_missing_slots(monkeypatch) -> Non
         assert values[1:] == [0, 0, 0]
     finally:
         _Dialog.response = None
+        panel.destroy()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("description", []),
+        ("height", "bad"),
+        ("show-buttons", "bad"),
+        ("hidden-buttons", None),
+        ("tooltip", []),
+    ],
+)
+def test_panel_malformed_metadata_uses_safe_defaults(field, value) -> None:
+    settings = _Settings(3)
+    info = {
+        "columns": [{"id": "account", "title": "Account", "type": "string"}],
+        "description": "Description",
+        "height": 100,
+        "show-buttons": False,
+        "hidden-buttons": ["up"],
+        "tooltip": "Help",
+    }
+    info[field] = value
+
+    panel = PanelSettingsList(info, "account-panel-settings", settings)
+    try:
+        assert panel.show_buttons is False
+        assert panel.hidden_buttons == ([] if field == "hidden-buttons" else ["up"])
+        assert panel.get_tooltip_text() == (None if field == "tooltip" else "Help")
+        assert hasattr(panel, "label") is (field != "description")
+    finally:
         panel.destroy()
 
 
@@ -423,5 +470,35 @@ def test_panel_list_change_keeps_hidden_slots_after_malformed_row() -> None:
         assert settings.values["account-panel-settings"][0] == {
             "account": "beta", "slot1": 1, "slot2": 2, "slot3": 3,
         }
+    finally:
+        panel.destroy()
+
+
+def test_panel_list_change_ignores_invalid_account_row_for_position_fallback() -> None:
+    settings = _Settings(3)
+    settings.values["panel-value-count"] = "2"
+    settings.values["account-panel-settings"] = [
+        {"account": 123, "slot1": 9, "slot3": 99},
+        {"account": "alpha", "slot1": 1, "slot2": 2, "slot3": 3},
+    ]
+    panel = PanelSettingsList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "slot1", "title": "Wert 1", "type": "integer"},
+                {"id": "slot2", "title": "Wert 2", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        panel.model[0][0] = "beta"
+        panel.list_changed()
+        assert settings.values["account-panel-settings"] == [
+            {"account": "beta", "slot1": 1, "slot2": 2, "slot3": 3},
+        ]
     finally:
         panel.destroy()

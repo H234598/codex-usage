@@ -7727,3 +7727,17 @@ beschädigten lokalen `columns`-Wert und ergänzt bei Tokendelta immer `Dynamisc
 Gültige Überschreibungen bleiben erhalten. Regression ergänzt Copy- und
 Tokendelta-Fälle; `tests/test_help_page.py`: 10/10; Python-Kompilierung und
 `git diff --check` sauber.
+
+## Runde 666: Leisten-Editor verwirft kaputte Schema- und Account-Zeilen
+
+`panel_columns()` rief bei `columns: null`, einem String oder `None`-Einträgen
+`.get()` auf und ließ damit die Einstellungen abstürzen. Zusätzlich verwendete
+der Positions-Fallback beim Speichern jede Dictionary-Zeile; eine Zeile mit
+`account: 123` konnte dadurch Hidden-Slots einer gültigen Zeile überschreiben.
+
+Der Panel-Loader akzeptiert nur vollständige Cinnamon-Spalten und normalisiert
+Widget-Metadaten auf sichere Defaults. Rebuild und Edit-Fallback verwenden nur
+Zeilen mit nicht-leerer String-Account-ID. Regression deckt vier kaputte
+Schemas, fünf Metadatenfelder und den ungültigen Account-Fallback ab;
+`tests/test_panel_settings_list.py`: 29/29; Python-Kompilierung und
+`git diff --check` sauber.

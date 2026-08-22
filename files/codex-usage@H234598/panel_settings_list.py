@@ -124,14 +124,23 @@ def panel_edit_columns(value: object) -> int:
 def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[dict[str, object]]:
     """Expand legacy slot columns to requested count without mutating schema."""
     requested_count = panel_value_count(count)
+    if not isinstance(base_columns, list):
+        base_columns = []
+    copied_columns = copy.deepcopy(base_columns)
     columns = [
         column
-        for column in copy.deepcopy(base_columns)
-        if not (
-            isinstance(column.get("id"), str)
-            and column["id"].startswith("slot")
-            and column["id"][4:].isdecimal()
-            and int(column["id"][4:]) > requested_count
+        for column in copied_columns
+        if (
+            isinstance(column, dict)
+            and isinstance(column.get("id"), str)
+            and isinstance(column.get("title"), str)
+            and isinstance(column.get("type"), str)
+            and column["type"] in VARIABLE_TYPE_MAP
+            and not (
+                column["id"].startswith("slot")
+                and column["id"][4:].isdecimal()
+                and int(column["id"][4:]) > requested_count
+            )
         )
     ]
     slot_template = next(
@@ -162,15 +171,32 @@ class PanelSettingsList(List, JSONSettingsBackend):
         self.backend = "json"
         self.key = key
         self.settings = settings
+        if not isinstance(info, dict):
+            info = {}
         self._base_columns = copy.deepcopy(info.get("columns", []))
         columns = panel_columns(self._base_columns, self._read_count())
+        description = info.get("description")
+        if description is not None and not isinstance(description, str):
+            description = None
+        height = info.get("height", 220)
+        if isinstance(height, bool) or not isinstance(height, (int, float)):
+            height = 220
+        show_buttons = info.get("show-buttons", False)
+        if not isinstance(show_buttons, bool):
+            show_buttons = False
+        hidden_buttons = info.get("hidden-buttons", [])
+        if not isinstance(hidden_buttons, list):
+            hidden_buttons = []
+        tooltip = info.get("tooltip", "")
+        if not isinstance(tooltip, str):
+            tooltip = ""
         super().__init__(
-            label=info.get("description"),
+            label=description,
             columns=columns,
-            height=info.get("height", 220),
-            show_buttons=info.get("show-buttons", False),
-            hidden_buttons=info.get("hidden-buttons", []),
-            tooltip=info.get("tooltip", ""),
+            height=height,
+            show_buttons=show_buttons,
+            hidden_buttons=hidden_buttons,
+            tooltip=tooltip,
         )
         self.attach()
         try:
@@ -305,7 +331,15 @@ class PanelSettingsList(List, JSONSettingsBackend):
             return
         stored_rows = self.get_value()
         rows = (
-            [dict(row) for row in stored_rows if isinstance(row, dict)]
+            [
+                dict(row)
+                for row in stored_rows
+                if (
+                    isinstance(row, dict)
+                    and isinstance(row.get("account"), str)
+                    and row["account"]
+                )
+            ]
             if isinstance(stored_rows, list) else []
         )
         if not rows:
@@ -322,7 +356,15 @@ class PanelSettingsList(List, JSONSettingsBackend):
         """Save visible edits without discarding temporarily hidden slots."""
         stored_rows = self.get_value()
         previous_rows = (
-            [row for row in stored_rows if isinstance(row, dict)]
+            [
+                row
+                for row in stored_rows
+                if (
+                    isinstance(row, dict)
+                    and isinstance(row.get("account"), str)
+                    and row["account"]
+                )
+            ]
             if isinstance(stored_rows, list) else []
         )
         by_account = {
