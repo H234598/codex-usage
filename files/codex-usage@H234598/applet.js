@@ -10871,6 +10871,9 @@ CodexUsageApplet.prototype = {
                             positioned = true;
                             return true;
                         }
+                        if (placementAttempts < 12) {
+                            return true;
+                        }
                         positioned = true;
                     } catch (e) {
                         this._terminateChild(this._settingsPlacementProcess, "settings placement startup cleanup");

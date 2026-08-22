@@ -4428,8 +4428,8 @@ test("settings maximization retries up to twelve times and stops after removal",
   });
   applet._scheduleSettingsMaximize();
   assert.equal(callbacks.length, 1);
-  for (let index = 0; index < 12; index += 1) {
-    assert.equal(callbacks[0](), index < 11);
+  for (let index = 0; index < 23; index += 1) {
+    assert.equal(callbacks[0](), index < 22);
   }
   assert.equal(subprocessCalls.length, 12);
   assert.equal(subprocessCalls[0][0][0], "wmctrl");
@@ -4451,6 +4451,7 @@ test("stale settings maximize callback cannot run after rescheduling", () => {
   const callbacks = [];
   const subprocessCalls = [];
   const applet = makeApplet((runtime) => {
+    runtime.currentMonitor = {x: 0, y: 0};
     runtime.timeoutAdd = (_milliseconds, callback) => {
       callbacks.push(callback);
       return callbacks.length;
@@ -4494,6 +4495,38 @@ test("settings maximization moves window onto current monitor before maximizing"
   assert.equal(JSON.stringify(subprocessCalls.map((call) => call[0])), JSON.stringify([
     ["wmctrl", "-r", "Codex Usage", "-e", "0,1920,0,-1,-1"],
     ["wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz"],
+  ]));
+});
+
+test("settings placement retries while the current monitor is unavailable", () => {
+  const callbacks = [];
+  const subprocessCalls = [];
+  let runtimeState;
+  const applet = makeApplet((runtime) => {
+    runtimeState = runtime;
+    runtime.currentMonitor = null;
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    };
+    runtime.subprocessFactory = (...args) => {
+      subprocessCalls.push(args);
+      return {};
+    };
+  });
+
+  applet._scheduleSettingsMaximize();
+  assert.equal(callbacks[0](), true);
+  assert.equal(subprocessCalls.length, 0);
+
+  runtimeState.currentMonitor = {x: 1920, y: 0};
+  assert.equal(callbacks[0](), true);
+  assert.equal(JSON.stringify(subprocessCalls[0][0]), JSON.stringify([
+    "wmctrl", "-r", "Codex Usage", "-e", "0,1920,0,-1,-1",
+  ]));
+  assert.equal(callbacks[0](), true);
+  assert.equal(JSON.stringify(subprocessCalls[1][0]), JSON.stringify([
+    "wmctrl", "-r", "Codex Usage", "-b", "add,maximized_vert,maximized_horz",
   ]));
 });
 

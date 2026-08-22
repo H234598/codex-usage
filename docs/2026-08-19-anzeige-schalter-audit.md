@@ -6635,3 +6635,21 @@ einen alten Callback nach direktem Rescheduling.
 Fokustest `node --test --test-name-pattern='settings|stale settings'
 tests/applet_runtime.test.js`: 29/29. Node-Syntaxcheck und `git diff --check`
 sauber.
+
+## Runde 588: Settings-Platzierung bei verzögerter Monitor-Erkennung
+
+Wenn `Main.layoutManager.currentMonitor` beim ersten Maximierungstick noch
+fehlt, setzte der Launcher die Platzierung bisher sofort als erledigt und
+maximierte ohne `wmctrl -e`. Während Cinnamon-Start oder Monitor-Hotplug kann
+das Fenster dadurch auf falschem oder unsichtbarem Monitor landen.
+
+Fehlende/ungültige Monitor-Koordinaten werden jetzt bis zum bestehenden
+12-Tick-Limit erneut geprüft. Erst danach greift der begrenzte Maximierungs-
+Fallback; sobald Monitor-Daten eintreffen, wird zuerst verschoben und danach
+maximiert. Regression simuliert fehlenden Monitor beim ersten Tick und
+verzögerte Monitor-Verfügbarkeit.
+
+Fokustest `node --test --test-name-pattern='settings launcher|native Cinnamon
+configure action|settings maximization|settings placement|stale settings'
+tests/applet_runtime.test.js`: 9/9. Node-Syntaxcheck und `git diff --check`
+sauber.
