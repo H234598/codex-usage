@@ -2670,7 +2670,7 @@ CodexUsageApplet.prototype = {
     _defaultForecastRow: function(account) {
         return { account: account, "show-panel": false, "show-tooltip": true,
             "limit-window": "short", format: "compact", "custom-format": "",
-            smoothing: "ema-20", "hide-when-zero": false,
+            smoothing: "ema-20", "hide-when-zero": true,
             "warn-amount": 2, "warn-unit": "hours", "warn-format": "red-yellow",
             "show-coverage-marker": true, "baseline-enabled": false, "baseline-minutes": 60 };
     },
@@ -2696,7 +2696,7 @@ CodexUsageApplet.prototype = {
         let showTooltip = source["show-tooltip"] === undefined
             ? (source["forecast-show-tooltip"] === undefined ? true : source["forecast-show-tooltip"]) : source["show-tooltip"];
         let hideWhenZero = source["hide-when-zero"] === undefined
-            ? (source["forecast-hide-when-zero"] === undefined ? false : source["forecast-hide-when-zero"]) : source["hide-when-zero"];
+            ? (source["forecast-hide-when-zero"] === undefined ? fallback["hide-when-zero"] : source["forecast-hide-when-zero"]) : source["hide-when-zero"];
         let coverage = source["show-coverage-marker"] === undefined
             ? (source["forecast-show-coverage-marker"] === undefined ? true : source["forecast-show-coverage-marker"]) : source["show-coverage-marker"];
         let baselineEnabled = source["baseline-enabled"] === undefined
@@ -2785,7 +2785,7 @@ CodexUsageApplet.prototype = {
         return { account: account, "show-panel": false, "show-tooltip": true,
             amount: 1, unit: "hours", format: "compact", "custom-format": "",
             smoothing: "ema-20",
-            "hide-when-zero": false, "show-coverage-marker": true,
+            "hide-when-zero": true, "show-coverage-marker": true,
             "baseline-enabled": false, "baseline-minutes": 60 };
     },
 
@@ -2811,7 +2811,7 @@ CodexUsageApplet.prototype = {
                 ? fallback.smoothing : source["consumption-smoothing"])
             : source.smoothing;
         let hideWhenZero = source["hide-when-zero"] === undefined
-            ? (source["consumption-hide-when-zero"] === undefined ? false : source["consumption-hide-when-zero"]) : source["hide-when-zero"];
+            ? (source["consumption-hide-when-zero"] === undefined ? fallback["hide-when-zero"] : source["consumption-hide-when-zero"]) : source["hide-when-zero"];
         let coverage = source["show-coverage-marker"] === undefined
             ? (source["consumption-show-coverage-marker"] === undefined ? true : source["consumption-show-coverage-marker"]) : source["show-coverage-marker"];
         let baselineEnabled = source["baseline-enabled"] === undefined
@@ -2929,7 +2929,8 @@ CodexUsageApplet.prototype = {
             "forecast-warn-amount": 2,
             "forecast-warn-unit": "hours",
             "forecast-warn-format": "red-yellow",
-            "hide-when-zero": false,
+            "hide-when-zero": true,
+            "forecast-hide-when-zero": true,
             "show-coverage-marker": true
         };
     },
@@ -2957,23 +2958,27 @@ CodexUsageApplet.prototype = {
 
     _defaultCreditRow: function(account) {
         return { account: account, "show-panel": false, "show-tooltip": true,
-            format: "compact", "custom-format": "", "hide-when-zero": false,
+            format: "compact", "custom-format": "", "hide-when-zero": true,
             smoothing: "ema-20",
             "show-coverage-marker": true, "baseline-enabled": false, "baseline-minutes": 60,
             "consumption-show-panel": false, "consumption-show-tooltip": true,
             "consumption-amount": 1, "consumption-unit": "hours",
             "consumption-format": "compact", "consumption-custom-format": "",
             "consumption-smoothing": "ema-20",
-            "consumption-hide-when-zero": false,
+            "consumption-hide-when-zero": true,
             "consumption-show-coverage-marker": true,
             "consumption-baseline-enabled": false,
             "consumption-baseline-minutes": 60 };
     },
 
     _normalizeCreditRow: function(row, account) {
+        let hideWhenZero = row && row["hide-when-zero"] === undefined
+            ? true : row && row["hide-when-zero"];
+        let consumptionHideWhenZero = row && row["consumption-hide-when-zero"] === undefined
+            ? true : row && row["consumption-hide-when-zero"];
         if (!row || typeof row !== "object" || !account ||
             typeof row["show-tooltip"] !== "boolean" ||
-            typeof row["hide-when-zero"] !== "boolean") {
+            typeof hideWhenZero !== "boolean") {
             return null;
         }
         let showPanel = row["show-panel"] === undefined ? false : row["show-panel"];
@@ -3001,7 +3006,7 @@ CodexUsageApplet.prototype = {
             ["compact", "verbose", "custom"].indexOf(consumptionFormat) === -1 ||
             (row["consumption-show-panel"] !== undefined && typeof row["consumption-show-panel"] !== "boolean") ||
             (row["consumption-show-tooltip"] !== undefined && typeof row["consumption-show-tooltip"] !== "boolean") ||
-            (row["consumption-hide-when-zero"] !== undefined && typeof row["consumption-hide-when-zero"] !== "boolean") ||
+            typeof consumptionHideWhenZero !== "boolean" ||
             (row["consumption-show-coverage-marker"] !== undefined && typeof row["consumption-show-coverage-marker"] !== "boolean") ||
             (row["consumption-baseline-enabled"] !== undefined && typeof row["consumption-baseline-enabled"] !== "boolean") ||
             (row["consumption-baseline-minutes"] !== undefined && (!Number.isInteger(row["consumption-baseline-minutes"]) || row["consumption-baseline-minutes"] < 0 || row["consumption-baseline-minutes"] > 9999)) ||
@@ -3012,7 +3017,7 @@ CodexUsageApplet.prototype = {
         return { account: account, "show-panel": showPanel, "show-tooltip": row["show-tooltip"],
             format: format, "custom-format": this._strictText(customFormat, 200),
             smoothing: smoothing,
-            "hide-when-zero": row["hide-when-zero"],
+            "hide-when-zero": hideWhenZero,
             "show-coverage-marker": row["show-coverage-marker"] !== false,
             "baseline-enabled": row["baseline-enabled"] === true,
             "baseline-minutes": baselineMinutes,
@@ -3022,7 +3027,7 @@ CodexUsageApplet.prototype = {
             "consumption-unit": consumptionUnit,
             "consumption-format": consumptionFormat,
             "consumption-custom-format": this._strictText(consumptionCustomFormat, 200),
-            "consumption-hide-when-zero": row["consumption-hide-when-zero"] === true,
+            "consumption-hide-when-zero": consumptionHideWhenZero,
             "consumption-show-coverage-marker": row["consumption-show-coverage-marker"] !== false,
             "consumption-baseline-enabled": row["consumption-baseline-enabled"] === true,
             "consumption-baseline-minutes": row["consumption-baseline-minutes"] === undefined ? 60 : row["consumption-baseline-minutes"] };
@@ -3038,6 +3043,8 @@ CodexUsageApplet.prototype = {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
+        let hideWhenZero = row["hide-when-zero"] === undefined
+            ? true : row["hide-when-zero"];
         let amount = this._strictIntegerSetting(row.amount);
         let unit = this._strictText(row.unit, 16);
         let baselineEnabled = row["baseline-enabled"] === undefined
@@ -3056,7 +3063,7 @@ CodexUsageApplet.prototype = {
         let forecastFormat = row["forecast-format"] === undefined ? "compact" : this._strictText(row["forecast-format"], 16);
         let forecastCustomFormat = row["forecast-custom-format"] === undefined ? "" : this._strictText(row["forecast-custom-format"], 160);
         let forecastSmoothing = row["forecast-smoothing"] === undefined ? "ema-20" : this._strictText(row["forecast-smoothing"], 16);
-        let forecastHideWhenZero = row["forecast-hide-when-zero"] === undefined ? false : row["forecast-hide-when-zero"];
+        let forecastHideWhenZero = row["forecast-hide-when-zero"] === undefined ? true : row["forecast-hide-when-zero"];
         let forecastWarnAmount = row["forecast-warn-amount"] === undefined
             ? 2 : this._strictIntegerSetting(row["forecast-warn-amount"]);
         let forecastWarnUnit = row["forecast-warn-unit"] === undefined
@@ -3095,7 +3102,7 @@ CodexUsageApplet.prototype = {
             !Number.isInteger(forecastWarnAmount) || forecastWarnAmount < 0 || forecastWarnAmount > 365 ||
             ["minutes", "hours", "days", "weeks"].indexOf(forecastWarnUnit) === -1 ||
             ["none", "red", "red-yellow", "blink-red-yellow", "yellow", "red-green", "red-red"].indexOf(forecastWarnFormat) === -1 ||
-            typeof row["hide-when-zero"] !== "boolean" ||
+            typeof hideWhenZero !== "boolean" ||
             typeof row["show-coverage-marker"] !== "boolean"
         ) {
             return null;
@@ -3122,7 +3129,7 @@ CodexUsageApplet.prototype = {
             "forecast-warn-amount": forecastWarnAmount,
             "forecast-warn-unit": forecastWarnUnit,
             "forecast-warn-format": forecastWarnFormat,
-            "hide-when-zero": row["hide-when-zero"],
+            "hide-when-zero": hideWhenZero,
             "show-coverage-marker": row["show-coverage-marker"],
             "forecast-show-coverage-marker": forecastShowCoverage,
             "forecast-baseline-enabled": forecastBaselineEnabled,
@@ -3177,11 +3184,12 @@ CodexUsageApplet.prototype = {
             return null;
         }
         let showPanel = row["show-panel"] === undefined ? false : row["show-panel"];
+        let hideWhenZero = row["hide-when-zero"] === undefined ? true : row["hide-when-zero"];
         let format = this._strictText(row.format, 16);
         if (
             typeof showPanel !== "boolean" ||
             typeof row["show-tooltip"] !== "boolean" ||
-            typeof row["hide-when-zero"] !== "boolean" ||
+            typeof hideWhenZero !== "boolean" ||
             typeof row["show-unknown"] !== "boolean" ||
             ["compact", "readable", "verbose"].indexOf(format) === -1
         ) {
@@ -3191,7 +3199,7 @@ CodexUsageApplet.prototype = {
             account: account,
             "show-panel": showPanel,
             "show-tooltip": row["show-tooltip"],
-            "hide-when-zero": row["hide-when-zero"],
+            "hide-when-zero": hideWhenZero,
             "show-unknown": row["show-unknown"],
             format: format
         };
@@ -3961,7 +3969,7 @@ CodexUsageApplet.prototype = {
             account: account,
             "show-hover": visibility.hover,
             "show-click": visibility.click,
-            "hide-when-zero": false,
+            "hide-when-zero": true,
             mode: 0,
             threshold: 20,
             font: 0,
@@ -4022,7 +4030,7 @@ CodexUsageApplet.prototype = {
         let showClick = row["show-click"] === undefined
             ? visibility.click : row["show-click"];
         let hideWhenZero = row["hide-when-zero"] === undefined
-            ? false : row["hide-when-zero"];
+            ? true : row["hide-when-zero"];
         let format = kind === "percent" || kind === "delta"
             ? 0
             : (row.format === undefined ? 0 : this._strictIntegerSetting(row.format));
@@ -9303,7 +9311,7 @@ CodexUsageApplet.prototype = {
             account: usage.account, "forecast-limit-window": "short", format: "compact",
             "forecast-format": "compact", "show-coverage-marker": true,
             "forecast-show-panel": true, "forecast-show-tooltip": true,
-            "forecast-hide-when-zero": false, "forecast-baseline-enabled": false
+            "forecast-hide-when-zero": true, "forecast-baseline-enabled": false
         };
         let key = row["forecast-limit-window"] || row["limit-window"] || "short";
         let pool = key === "spark" ? "gpt-5.3-codex-spark" : "main";
@@ -9518,7 +9526,7 @@ CodexUsageApplet.prototype = {
             return null;
         }
         let coverage = window.coverage;
-        if (row["hide-when-zero"] && value === 0 && coverage !== "insufficient") {
+        if (row["hide-when-zero"] !== false && value === 0 && coverage !== "insufficient") {
             return null;
         }
         let valueText = this._formatConsumptionValue(value);
@@ -9637,7 +9645,13 @@ CodexUsageApplet.prototype = {
         let used = creditText(usedValue);
         let percent = credit.percent !== null && credit.percent !== undefined
             ? String(Math.round(credit.percent * 10) / 10) : "–";
-        if (row["hide-when-zero"] && credit.remaining === 0) return null;
+        let remainingNumber = credit.remaining === null || credit.remaining === undefined
+            ? null : Number(credit.remaining);
+        let remainingInvalid = remainingNumber === null ||
+            !Number.isFinite(remainingNumber) || remainingNumber < 0;
+        if (row["hide-when-zero"] !== false && (remainingInvalid || remainingNumber === 0)) {
+            return null;
+        }
         if (!forceVisible && !this._elementTargetEnabled(usage.account, "credits", surface,
             surface === "panel" ? row["show-panel"] : surface === "hover" ? row["show-tooltip"] : true)) {
             return null;
@@ -9717,7 +9731,7 @@ CodexUsageApplet.prototype = {
             if (!Number.isFinite(value) || value < 0) {
                 continue;
             }
-            if (row["consumption-hide-when-zero"] && value === 0 &&
+            if (row["consumption-hide-when-zero"] !== false && value === 0 &&
                 window.coverage !== "insufficient") {
                 continue;
             }
@@ -9788,7 +9802,12 @@ CodexUsageApplet.prototype = {
         let estimate = window.coverage === "stale" || window.coverage === "insufficient"
             ? null
             : window.estimated_seconds_to_exhaustion;
-        if (row["forecast-hide-when-zero"] && estimate === 0) {
+        if (estimate !== null && estimate !== undefined &&
+            (typeof estimate !== "number" || !Number.isFinite(estimate) || estimate < 0)) {
+            estimate = null;
+        }
+        if (row["forecast-hide-when-zero"] !== false &&
+            (estimate === null || estimate === 0)) {
             return null;
         }
         let forecastVisible = surface === "panel"

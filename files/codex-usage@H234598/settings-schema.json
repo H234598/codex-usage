@@ -605,7 +605,7 @@
         "id": "hide-when-zero",
         "title": "Bei Null ausblenden",
         "type": "boolean",
-        "default": false,
+        "default": true,
         "tooltip": "Blendet fehlende/null-Werte mit Anzeige – aus. Ein echter numerischer 0-Wert bleibt sichtbar."
       },
       {
@@ -981,7 +981,7 @@
         "id": "hide-when-zero",
         "title": "Bei Null ausblenden",
         "type": "boolean",
-        "default": false,
+        "default": true,
         "tooltip": "Blendet fehlende/null-Werte mit Anzeige – aus."
       },
       {
@@ -1205,7 +1205,7 @@
         "id": "hide-when-zero",
         "title": "Bei Null ausblenden",
         "type": "boolean",
-        "default": false,
+        "default": true,
         "tooltip": "Blendet fehlende/null-Werte mit Anzeige – aus."
       },
       {
@@ -1429,7 +1429,7 @@
         "id": "hide-when-zero",
         "title": "Bei Null ausblenden",
         "type": "boolean",
-        "default": false,
+        "default": true,
         "tooltip": "Blendet fehlende/null-Werte mit Anzeige – aus."
       },
       {
@@ -1947,7 +1947,7 @@
       {"id": "format", "title": "Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
       {"id": "custom-format", "title": "Eigenes Format", "type": "string", "description": "Nur bei Benutzerdefiniert. Platzhalter: {remaining}, {used}, {limit}, {percent}, {reset}.", "default": ""},
       {"id": "smoothing", "title": "Glättung", "type": "string", "options": {"Keine": "none", "EMA – 5 Minuten": "ema-5", "EMA – 10 Minuten": "ema-10", "EMA – 20 Minuten": "ema-20", "EMA – 40 Minuten": "ema-40", "EMA – 80 Minuten": "ema-80", "EMA – 160 Minuten": "ema-160", "EMA – 320 Minuten": "ema-320", "EMA – 640 Minuten": "ema-640"}, "tooltip": "Glättet die Creditmessung mit einer EMA.", "default": "ema-20"},
-      {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false},
+      {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": true},
       {"id": "show-coverage-marker", "title": "Coverage", "type": "boolean", "default": true, "tooltip": "Zeigt die Datenabdeckung des Creditstands: vollständig, teilweise, veraltet oder unbekannt."},
       {"id": "baseline-enabled", "title": "Setze eigenen AW", "type": "boolean", "default": false, "tooltip": "Zeigt den eigenen Ausgangswert, wenn der Credit-Provider einen solchen Messwert liefert."},
       {"id": "baseline-minutes", "title": "Eigener AW in M.", "type": "integer", "min": 0, "max": 9999, "default": 60, "tooltip": "Eigener Ausgangspunkt in Minuten vor jetzt; wirkt nur bei einem verfügbaren Credit-Ausgangswert."}
@@ -2047,7 +2047,7 @@
         "id": "hide-when-zero",
         "title": "Bei null ausblenden",
         "type": "boolean",
-        "default": false
+        "default": true
       },
       {
         "id": "show-coverage-marker",
@@ -2094,7 +2094,7 @@
       {"id": "format", "title": "Tokenende Format", "type": "string", "options": {"Kompakt (Dezimalstunden)": "compact", "Kompakt (Stunden/Minuten)": "compact-minutes", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "tooltip": "Kompakt (Dezimalstunden) zeigt die Restzeit mit einer Nachkommastelle in Stunden, z. B. 5,9h. Kompakt (Stunden/Minuten) zeigt die bisherige Stunden-/Minutendarstellung.", "default": "compact"},
       {"id": "custom-format", "title": "Tokenende Eigenes Format", "type": "string", "tooltip": "{value}=Restlaufzeit, {duration}=formatierte Dauer. Beispiel: Tokenende {value}.", "default": ""},
       {"id": "smoothing", "title": "Glättung", "type": "string", "options": {"Keine": "none", "EMA – 5 Minuten": "ema-5", "EMA – 10 Minuten": "ema-10", "EMA – 20 Minuten": "ema-20", "EMA – 40 Minuten": "ema-40", "EMA – 80 Minuten": "ema-80", "EMA – 160 Minuten": "ema-160", "EMA – 320 Minuten": "ema-320", "EMA – 640 Minuten": "ema-640"}, "tooltip": "Glättet die Tokenende-Prognose mit einer EMA.", "default": "ema-20"},
-      {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": false},
+      {"id": "hide-when-zero", "title": "Bei null ausblenden", "type": "boolean", "default": true},
       {"id": "show-coverage-marker", "title": "Coverage", "type": "boolean", "default": true, "tooltip": "Markiert, ob die Tokenende-Prognose vollständig, teilweise, veraltet oder unzureichend gedeckt ist."},
       {"id": "baseline-enabled", "title": "Setze eigenen AW", "type": "boolean", "default": false, "tooltip": "Verwendet einen festen Ausgangsmesspunkt für die Tokenende-Prognose."},
       {"id": "baseline-minutes", "title": "Eigener AW in M.", "type": "integer", "min": 0, "max": 9999, "default": 60, "tooltip": "Fester Prognose-Ausgangspunkt in Minuten vor jetzt; wirkt nur bei Setze eigenen AW."},
@@ -2119,7 +2119,7 @@
       {"id": "format", "title": "Creditverbrauch Format", "type": "string", "options": {"Kompakt": "compact", "Ausführlich": "verbose", "Benutzerdefiniert": "custom"}, "default": "compact"},
       {"id": "custom-format", "title": "Eigenes Creditverbrauchsformat", "type": "string", "tooltip": "{value}=Verbrauch in Prozent, {period}=Zeitraum, {coverage}=Datenqualität. Beispiel: CV {period} {value}% ({coverage}).", "default": ""},
       {"id": "smoothing", "title": "Glättung", "type": "string", "options": {"Keine": "none", "EMA – 5 Minuten": "ema-5", "EMA – 10 Minuten": "ema-10", "EMA – 20 Minuten": "ema-20", "EMA – 40 Minuten": "ema-40", "EMA – 80 Minuten": "ema-80", "EMA – 160 Minuten": "ema-160", "EMA – 320 Minuten": "ema-320", "EMA – 640 Minuten": "ema-640"}, "tooltip": "Glättet den Creditverbrauch mit einer EMA.", "default": "ema-20"},
-      {"id": "hide-when-zero", "title": "Creditverbrauch bei null ausblenden", "type": "boolean", "default": false},
+      {"id": "hide-when-zero", "title": "Creditverbrauch bei null ausblenden", "type": "boolean", "default": true},
       {"id": "show-coverage-marker", "title": "Coverage", "type": "boolean", "default": true, "tooltip": "Markiert die Datenqualität der Creditverbrauchsrate."},
       {"id": "baseline-enabled", "title": "Setze eigenen AW", "type": "boolean", "default": false, "tooltip": "Verwendet einen festen Ausgangsmesspunkt für den Creditverbrauch."},
       {"id": "baseline-minutes", "title": "Eigener AW in M.", "type": "integer", "min": 0, "max": 9999, "default": 60, "tooltip": "Fester Ausgangspunkt in Minuten vor jetzt; wirkt nur bei Setze eigenen AW."}

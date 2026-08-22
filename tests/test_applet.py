@@ -245,6 +245,25 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     assert delta_columns["dynamic"]["default"] is False
 
 
+def test_null_hiding_defaults_true_for_every_value_table() -> None:
+    settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
+
+    tables = [
+        "account-percent-styles",
+        "account-date-styles",
+        "account-time-styles",
+        "account-duration-styles",
+        "account-credit-settings",
+        "account-consumption-settings",
+        "account-forecast-settings",
+        "account-credit-consumption-settings",
+        "account-reset-display-settings",
+    ]
+    for name in tables:
+        columns = {column["id"]: column for column in settings[name]["columns"]}
+        assert columns["hide-when-zero"]["default"] is True, name
+
+
 def test_style_tables_group_threshold_fields() -> None:
     settings = json.loads((APPLET_DIR / "settings-schema.json").read_text(encoding="utf-8"))
     expected = {

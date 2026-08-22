@@ -9073,3 +9073,28 @@ Semantik um.
 Verifikation: **494 Node-Tests** und **111 fokussierte Python-Tests** bestanden;
 Node-Syntaxcheck, JSON-Parse und `git diff --check` sauber. Keine
 Settings-Fenster gestartet.
+
+## Runde 770: NULL-/ungültige Werte standardmäßig ausblenden
+
+Die Schalter `Bei null ausblenden` hatten in mehreren Tabellen noch `false`
+als Schema- oder Laufzeit-Default. Das betraf Prozent-, Reset-, Tokenende-,
+Credit- und Creditverbrauchszeilen sowie deren geklonte Formatierungszeilen.
+Alle neun aktiven Tabellen mit diesem Schalter verwenden jetzt `true` als
+Default. Fehlende Felder aus älteren gespeicherten Zeilen werden bei der
+Normalisierung ebenfalls auf `true` gesetzt; ein ausdrücklich gespeichertes
+`false` bleibt eine gültige Nutzerentscheidung.
+
+Forecast- und Credit-Renderer unterdrücken bei aktivem Default nun auch
+fehlende, nicht numerische oder negative Kernwerte, statt `—` auszugeben.
+Bereits vorhandene gültige Werte und die bisherige explizite Nullausblendung
+bleiben unverändert. Die Formatierungs-Renderer behalten ihre Trennung:
+fehlende/ungültige Werte verschwinden, ein echter numerischer 0-Wert bleibt
+sichtbar.
+
+Regressionen prüfen alle Default-/Normalisierungspfade, die Beibehaltung von
+`false`, Schema-Defaults sowie das Ausblenden ungültiger Forecast-/Creditwerte.
+
+Verifikation: **496 Node-Tests**, **131 fokussierte Python-Tests** und die
+vollständige Python-Suite mit **3208 bestanden, 1 übersprungen**; Node-
+Syntaxcheck, JSON-Parse und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.

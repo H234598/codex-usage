@@ -2960,6 +2960,9 @@ test("baseline, custom credit and percent helpers preserve independent display s
 
   assert.equal(applet._windowValue({ remaining: 80.4 }), "80%");
   assert.equal(applet._windowValue({ remaining: null }), "–");
+  applet._percentStyles.alpha = Object.assign(
+    {}, applet._defaultStyleRow("alpha", "percent"), {"hide-when-zero": false}
+  );
   const missingPercent = applet._percentPartsFromValue(null, "alpha", "panel");
   assert.equal(missingPercent.plain, "–");
   assert.equal(missingPercent.markup, "–");
@@ -3966,6 +3969,9 @@ test("panel value style setting rows validate and map per account", () => {
 test("long-limit exhaustion masks 5h on panel, click and hover only when enabled", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];
+  applet._percentStyles.alpha = Object.assign(
+    {}, applet._defaultStyleRow("alpha", "percent"), {"hide-when-zero": false}
+  );
   applet.hideFiveHourWhenLongLimitExhausted = true;
   usage.weekly.remaining = 0;
 
@@ -4007,6 +4013,9 @@ test("long-limit exhaustion masks 5h on panel, click and hover only when enabled
 test("monthly exhaustion masks 5h when long-limit hiding is enabled", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];
+  applet._percentStyles.alpha = Object.assign(
+    {}, applet._defaultStyleRow("alpha", "percent"), {"hide-when-zero": false}
+  );
   usage.main = {
     available: true,
     allowed: true,
@@ -4200,6 +4209,11 @@ test("invalidated credit balances are not rendered", () => {
       account: "alpha", "show-panel": true, "show-tooltip": true,
       "hide-when-zero": false, "show-unknown": true, format: "compact",
     },
+  };
+  applet._deltaStyles = {
+    alpha: Object.assign({}, applet._defaultStyleRow("alpha", "delta"), {
+      "hide-when-zero": false,
+    }),
   };
   const usage = {
     account: "alpha",
@@ -4558,6 +4572,7 @@ test("missing token-end estimate does not duplicate its configured baseline in m
     account: "alpha", "show-panel": true, "show-tooltip": true,
     format: "compact", "show-coverage-marker": false,
     "baseline-enabled": true, "baseline-minutes": 60,
+    "forecast-hide-when-zero": false,
     "forecast-warn-amount": 0, "forecast-warn-unit": "hours",
   }, "panel", 50);
   assert.equal(rendered.plain, "TE=— AW60m=42,0%");
@@ -5760,7 +5775,7 @@ test("invalid current credit-consumption rows do not fall back to stale legacy r
     [{account: "alpha", "consumption-smoothing": "ema-5"}]
   );
   assert.equal(rows[0].smoothing, "ema-20");
-  assert.equal(rows[0]["hide-when-zero"], false);
+  assert.equal(rows[0]["hide-when-zero"], true);
 });
 
 test("account row mergers fail closed on an invalid first duplicate", () => {
@@ -5973,6 +5988,77 @@ test("modern metric tables accept rows without obsolete panel visibility fields"
     assert.ok(normalized, `${normalize.name} rejected schema-shaped row`);
     assert.equal(normalized["show-panel"], false, `${normalize.name} retained panel visibility`);
   }
+});
+
+test("null hiding defaults true for every value row and preserves explicit false", () => {
+  const applet = makeApplet();
+  const styleKinds = ["percent", "date", "time", "duration", "delta"];
+  for (const kind of styleKinds) {
+    const row = applet._defaultStyleRow("alpha", kind);
+    assert.equal(row["hide-when-zero"], true, `${kind} default`);
+    delete row["hide-when-zero"];
+    assert.equal(
+      applet._normalizeStyleRow(row, "alpha", kind)["hide-when-zero"],
+      true,
+      `${kind} missing field`
+    );
+    row["hide-when-zero"] = false;
+    assert.equal(
+      applet._normalizeStyleRow(row, "alpha", kind)["hide-when-zero"],
+      false,
+      `${kind} explicit false`
+    );
+  }
+
+  const forecast = applet._defaultForecastRow("alpha");
+  assert.equal(forecast["hide-when-zero"], true);
+  delete forecast["hide-when-zero"];
+  assert.equal(applet._normalizeForecastRow(forecast, "alpha")["hide-when-zero"], true);
+
+  const creditConsumption = applet._defaultCreditConsumptionRow("alpha");
+  assert.equal(creditConsumption["hide-when-zero"], true);
+  delete creditConsumption["hide-when-zero"];
+  assert.equal(applet._normalizeCreditConsumptionRow(creditConsumption, "alpha")["hide-when-zero"], true);
+
+  const consumption = applet._defaultConsumptionRow("alpha");
+  assert.equal(consumption["hide-when-zero"], true);
+  assert.equal(consumption["forecast-hide-when-zero"], true);
+  delete consumption["hide-when-zero"];
+  delete consumption["forecast-hide-when-zero"];
+  const normalizedConsumption = applet._normalizeConsumptionRow(consumption, "alpha");
+  assert.equal(normalizedConsumption["hide-when-zero"], true);
+  assert.equal(normalizedConsumption["forecast-hide-when-zero"], true);
+
+  const credit = applet._defaultCreditRow("alpha");
+  assert.equal(credit["hide-when-zero"], true);
+  assert.equal(credit["consumption-hide-when-zero"], true);
+  delete credit["hide-when-zero"];
+  delete credit["consumption-hide-when-zero"];
+  const normalizedCredit = applet._normalizeCreditRow(credit, "alpha");
+  assert.equal(normalizedCredit["hide-when-zero"], true);
+  assert.equal(normalizedCredit["consumption-hide-when-zero"], true);
+
+  const reset = applet._defaultResetRow("alpha");
+  assert.equal(reset["hide-when-zero"], true);
+  delete reset["hide-when-zero"];
+  assert.equal(applet._normalizeResetRow(reset, "alpha")["hide-when-zero"], true);
+});
+
+test("default null hiding suppresses invalid forecast and credit values", () => {
+  const applet = makeApplet();
+  const forecast = Object.assign({}, applet._defaultForecastRow("alpha"), {
+    "show-panel": true,
+  });
+  assert.equal(applet._forecastWindowPart({
+    coverage: "stale", estimated_seconds_to_exhaustion: null,
+  }, forecast, "panel", 50), null);
+
+  applet._styleTargets["alpha:11"] = {panel: true, hover: true, click: true};
+  applet._creditSettings = {alpha: Object.assign({}, applet._defaultCreditRow("alpha"), {
+    "show-panel": true,
+  })};
+  applet._usages[0].credits = {remaining: null, limit: 100, used: 0, percent: 0};
+  assert.equal(applet._creditParts(applet._usages[0], "panel"), null);
 });
 
 test("combined consumption rows reject malformed forecast-only fields", () => {
@@ -7228,6 +7314,9 @@ test("unusable Spark pools cannot drive panel sources", () => {
 test("unusable main and Spark pools cannot drive other-window panel sources", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];
+  applet._percentStyles.alpha = Object.assign(
+    {}, applet._defaultStyleRow("alpha", "percent"), {"hide-when-zero": false}
+  );
   usage.main = {
     available: false,
     windows: [{name: "1d", duration_seconds: 86400, remaining: 40}],
@@ -9376,6 +9465,11 @@ test("Tokendelta supports dynamic threshold against the next reset", () => {
 
 test("panel delta prefers the newest matching consumption window", () => {
   const applet = makeApplet();
+  applet._deltaStyles = {
+    alpha: Object.assign({}, applet._defaultStyleRow("alpha", "delta"), {
+      "hide-when-zero": false,
+    }),
+  };
   applet._usages[0].cost_windows = [
     {
       pool: "main", limit_window_seconds: 18000,
