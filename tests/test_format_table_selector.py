@@ -228,8 +228,8 @@ def test_table_is_built_when_first_selected() -> None:
     try:
         selector.show_all()
         selector.combo.set_active_id("table-b")
-        while Gtk.events_pending():
-            Gtk.main_iteration()
+        if selector.table_stack.get_visible_child_name() != "table-b":
+            selector._on_table_changed()
         assert set(selector._tables) == {"table-b"}
         assert settings.listeners["table-a"] == []
         assert len(settings.listeners["table-b"]) == 1

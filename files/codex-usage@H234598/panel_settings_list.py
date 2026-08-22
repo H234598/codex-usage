@@ -427,6 +427,8 @@ class PanelSettingsList(List, JSONSettingsBackend):
                 Gtk.ResponseType.OK,
             ),
         )
+        widgets = []
+        editor_frame = None
         try:
             content_area = dialog.get_content_area()
             content_area.set_margin_right(30)
@@ -435,6 +437,7 @@ class PanelSettingsList(List, JSONSettingsBackend):
             content_area.set_margin_bottom(20)
 
             frame = Gtk.Frame()
+            editor_frame = frame
             frame.set_shadow_type(Gtk.ShadowType.IN)
             frame.get_style_context().add_class("view")
             content_area.add(frame)
@@ -451,7 +454,6 @@ class PanelSettingsList(List, JSONSettingsBackend):
             grid.set_column_homogeneous(True)
             scrollbox.add(grid)
 
-            widgets = []
             edit_columns = self._read_edit_columns()
             for index, column_definition in enumerate(self.columns):
                 try:
@@ -492,6 +494,17 @@ class PanelSettingsList(List, JSONSettingsBackend):
                 return [widget.get_widget_value() for widget in widgets]
             return None
         finally:
+            if editor_frame is not None:
+                try:
+                    editor_frame.destroy()
+                except Exception:
+                    pass
+            for widget in widgets:
+                try:
+                    if widget.get_parent() is not None:
+                        widget.destroy()
+                except Exception:
+                    pass
             try:
                 dialog.destroy()
             except Exception:

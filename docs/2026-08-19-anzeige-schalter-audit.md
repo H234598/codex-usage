@@ -8795,3 +8795,31 @@ Fokustest `8/8`; Node-Syntaxcheck und `git diff --check` sauber. Das Applet
 wurde installiert und mit `--reload-running` neu geladen. Nach Nutzerwunsch
 wurden keine weiteren Settings-Fenster für diesen Lauf gestartet; gestartete
 Audit-Prozesse und -Fenster sind beendet.
+
+## Runde 755: Leisten-Editor räumt GTK-Dialogbaum vollständig auf
+
+Der Leisten-Editor zerstörte seine Eingabefelder bisher nur indirekt über
+`Gtk.Dialog.destroy()`. Bei einem fehlenden oder abweichenden Dialog-Cleanup
+blieben Frame, ScrolledWindow, Grid und die dynamisch erzeugten Eingabefelder
+referenziert. Nach vielen Doppelklicks konnte Cinnamon dadurch unnötig GTK-Heap
+behalten; der Fehler zeigte sich im Test als Segfault beim späteren Abarbeiten
+der globalen GTK-Eventqueue.
+
+`PanelSettingsList.open_add_edit_dialog()` hält Editor-Widgets und den
+Editor-Frame jetzt bis zum `finally` fest. Der komplette Frame wird explizit
+zerstört, verbliebene Widgets werden zusätzlich best-effort zerstört, danach
+folgt der Dialog-Cleanup. Damit greift Bereinigung auch bei einem Dialog-Doppel
+oder einem fehlerhaften Dialogpfad.
+
+Die GTK-Selector-Regressionen für Formatierungs- und Prognosetabellen drainen
+keine globale Eventqueue mehr. Sie verwenden den normalen `changed`-Signalpfad
+und rufen den Handler nur als synchronen Fallback auf, falls eine GTK-Version
+den Signalversand verzögert. Dadurch verarbeitet ein Test nicht fremde,
+bereits zerstörte Widgets aus anderen Settings-Seiten.
+
+Regression: Neuer Test erzwingt Zerstörung aller Leisten-Editor-Widgets trotz
+Dialog-Doppel ohne Cleanup. Kombinierter GTK-Fokuslauf
+`tests/test_panel_settings_list.py tests/test_format_table_selector.py
+tests/test_forecast_table_selector.py`: **179 bestanden**, kein Segfault.
+Python-Compile, Ruff und `git diff --check` sauber. Keine Settings-Fenster
+gestartet.

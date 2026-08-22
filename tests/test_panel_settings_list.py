@@ -193,7 +193,17 @@ class _Settings:
 
 
 def test_panel_editor_places_fields_in_selected_grid_columns(monkeypatch) -> None:
-    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    captured = {}
+
+    class InspectingDialog(_Dialog):
+        def run(self):
+            frame = self.content_area.get_children()[0]
+            scrolled = frame.get_child()
+            captured["scrolled"] = scrolled
+            captured["grid"] = scrolled.get_child().get_child()
+            return super().run()
+
+    monkeypatch.setattr(Gtk, "Dialog", InspectingDialog)
     info = {
         "columns": [
             {"id": f"field{index}", "title": f"Feld {index}", "type": "string"}
@@ -205,10 +215,8 @@ def test_panel_editor_places_fields_in_selected_grid_columns(monkeypatch) -> Non
 
     panel.open_add_edit_dialog([None for _ in panel.columns])
 
-    dialog = _Dialog.last
-    frame = dialog.content_area.get_children()[0]
-    scrolled = frame.get_child()
-    grid = scrolled.get_child().get_child()
+    scrolled = captured["scrolled"]
+    grid = captured["grid"]
     assert isinstance(grid, Gtk.Grid)
     assert scrolled.get_size_request()[1] == 420
     assert grid.get_child_at(0, 0) is not None
@@ -270,6 +278,42 @@ def test_panel_editor_destroys_dialog_after_run_error(monkeypatch) -> None:
         with pytest.raises(RuntimeError, match="dialog loop failed"):
             panel.open_add_edit_dialog()
         assert FailingDialog.last.destroyed is True
+    finally:
+        panel.destroy()
+
+
+def test_panel_editor_destroys_editor_widgets_after_dialog(monkeypatch) -> None:
+    monkeypatch.setattr(Gtk, "Dialog", _Dialog)
+    destroyed = []
+
+    class TrackingEntry(Gtk.Entry):
+        def set_widget_value(self, value):
+            self.set_text("" if value is None else str(value))
+
+        def get_widget_value(self):
+            return self.get_text()
+
+        def destroy(self):
+            destroyed.append(self)
+            return super().destroy()
+
+    monkeypatch.setattr(
+        panel_settings_list_module,
+        "list_edit_factory",
+        lambda _column: TrackingEntry(),
+    )
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        _Settings(3),
+    )
+
+    try:
+        assert panel.open_add_edit_dialog() is None
+        assert len(destroyed) == len(panel.columns)
     finally:
         panel.destroy()
 

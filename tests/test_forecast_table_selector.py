@@ -189,8 +189,8 @@ def test_table_change_switches_stack_and_persists_selection() -> None:
     try:
         selector.show_all()
         selector.combo.set_active_id(_TABLE_KEYS[2])
-        while Gtk.events_pending():
-            Gtk.main_iteration()
+        if selector.table_stack.get_visible_child_name() != _TABLE_KEYS[2]:
+            selector._on_table_changed()
         assert selector.table_stack.get_visible_child_name() == _TABLE_KEYS[2]
         assert selector.table_title.get_text() == "Creditverbrauch"
         assert set(selector._tables) == {_TABLE_KEYS[2]}
@@ -248,8 +248,8 @@ def test_forecast_selector_ignores_read_and_write_errors() -> None:
     try:
         assert selector.combo.get_active_id() == _TABLE_KEYS[0]
         selector.combo.set_active_id(_TABLE_KEYS[1])
-        while Gtk.events_pending():
-            Gtk.main_iteration()
+        if selector._active_table_key != _TABLE_KEYS[1]:
+            selector._on_table_changed()
         assert selector._saving is False
     finally:
         selector.destroy()
