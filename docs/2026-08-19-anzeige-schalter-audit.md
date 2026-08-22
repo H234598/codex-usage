@@ -8103,3 +8103,12 @@ Timeout beendete nur die absichtlich nicht-interaktive GUI-Prüfung.
 
 Zusätzlich: `cinnamon-settings applets` startete erfolgreich. Working tree
 blieb nach Installation und Reload sauber.
+
+## Runde 703: Panel mit echter Settingsdatei lädt alle Nutzerzeilen
+
+Die installierte `PanelSettingsList` wurde mit der realen Datei
+`~/.config/cinnamon/spices/codex-usage@H234598/codex-usage@H234598.json`
+und dem aktuellen Schema instanziiert. Ergebnis: 23 Spalten (Account,
+Metadaten und 20 Wertfelder), 8 gespeicherte Zeilen, ein korrekter Listener;
+kein GTK-/Importfehler. Widget und File-Monitor wurden anschließend sauber
+geschlossen.
