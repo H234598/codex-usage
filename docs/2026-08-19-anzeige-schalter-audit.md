@@ -5521,3 +5521,18 @@ sonstigen Hauptfenstern; Spark behält sein kompatibles Other-Verhalten.
 Regression prüft 18/19 sowie alle sechs Limitquellen numerisch und rendert
 30-Tage-/Spark-Other-Werte. `node --test tests/applet_runtime.test.js`:
 408/408 bestanden; `node --check` und `git diff --check` sauber.
+
+## Runde 466: Serienzuordnung im Konto-Editor löschbar
+
+Der Wert `Keine Serie` wurde beim Konto-Speichern nicht als Löschung
+übertragen: Das Applet ließ `--series` bei leerem Wert weg, worauf die CLI die
+bisherige Serie behielt; zusätzlich lehnte `add_or_update_account()` einen
+explizit leeren Serienwert ab. Das Applet übergibt ein vorhandenes leeres
+Serienfeld jetzt ausdrücklich, und die Konfigurationsvalidierung erlaubt leere
+Serienwerte zum Entfernen einer Zuordnung. `series-active=false` bleibt dabei
+erforderlich und wird vom Editor mitgesendet.
+
+Regression reproduzierte zuerst den Validierungsfehler und den fehlenden
+CLI-Schalter. Danach: `pytest -q tests/test_config.py -k
+clear_existing_series` 1/1 und `node --test tests/applet_runtime.test.js`:
+409/409 bestanden.

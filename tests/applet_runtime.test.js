@@ -1527,6 +1527,46 @@ test("account add converts file URIs before spawning CLI", () => {
   applet._drainAccountChanges();
 });
 
+test("account add passes an empty series to clear an existing assignment", () => {
+  const applet = makeAccountSettingsApplet();
+  const calls = [];
+  applet._backendAccounts = {
+    alpha: {
+      account: "alpha",
+      label: "Alpha",
+      "auth-json": null,
+      "profile-dir": "/tmp/alpha",
+      browser: 0,
+      "reactivation-browser": 0,
+      series: "A",
+      "series-active": true,
+      backend: 0,
+    },
+  };
+  applet._accountChangeQueue = [{
+    account: "alpha",
+    label: "Alpha",
+    "auth-json": null,
+    "profile-dir": "/tmp/alpha",
+    browser: 0,
+    "reactivation-browser": 0,
+    series: "",
+    "series-active": false,
+    backend: 0,
+  }];
+  applet._loadAccountBackends = () => {};
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    callback({ok: true, account: {id: "alpha"}}, null);
+  };
+
+  applet._drainAccountChanges();
+
+  assert.deepEqual(calls[0].slice(calls[0].indexOf("--series"), calls[0].indexOf("--series") + 2), [
+    "--series", "",
+  ]);
+});
+
 test("new account starts persistent profile job after account config", () => {
   const applet = makeAccountSettingsApplet();
   const calls = [];

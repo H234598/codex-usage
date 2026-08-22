@@ -214,7 +214,7 @@ def add_or_update_account(
     if reactivation_browser is not None:
         _validate_reactivation_browser(reactivation_browser)
     if series is not None:
-        _validate_series(series)
+        _validate_series(series, allow_empty=True)
         series = series.upper()
     if series_active is not None and not isinstance(series_active, bool):
         raise ValueError("series_active must be boolean")

@@ -4470,7 +4470,7 @@ CodexUsageApplet.prototype = {
             "--backend",
             changed.backend === 1 ? "app-server" : "direct"
         );
-        if (changed.series) {
+        if (Object.prototype.hasOwnProperty.call(changed, "series")) {
             argv.push("--series", changed.series);
         }
         argv.push(changed["series-active"] ? "--series-active" : "--no-series-active");

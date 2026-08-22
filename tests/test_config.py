@@ -447,6 +447,27 @@ def test_add_account_rejects_case_variant_active_series_conflict(tmp_path):
         )
 
 
+def test_add_account_can_clear_existing_series_assignment(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account(
+        "series-account",
+        series="A",
+        series_active=True,
+        path=config_path,
+    )
+
+    _, updated = add_or_update_account(
+        "series-account",
+        series="",
+        series_active=False,
+        path=config_path,
+    )
+
+    assert updated.series == ""
+    assert updated.series_active is False
+    assert load_config(config_path).accounts == (updated,)
+
+
 def test_add_account_rejects_dot_segments(tmp_path):
     with pytest.raises(ValueError):
         add_or_update_account(".", path=tmp_path / "config.toml")
