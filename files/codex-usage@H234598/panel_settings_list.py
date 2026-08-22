@@ -197,6 +197,10 @@ def panel_columns(base_columns: list[dict[str, object]], count: object) -> list[
         for boolean_property in ("select-dir", "expand-width"):
             if boolean_property in column and not isinstance(column[boolean_property], bool):
                 column.pop(boolean_property, None)
+        if "units" in column and (
+            not isinstance(column["units"], str) or "\x00" in column["units"]
+        ):
+            column.pop("units", None)
         if "align" in column:
             align = column["align"]
             try:

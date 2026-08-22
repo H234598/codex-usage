@@ -8083,3 +8083,13 @@ GTK-Optionenmodells den Dialogaufbau abbrechen.
 Stringoptionen akzeptieren jetzt nur noch NUL-freie Werte. Regression deckt
 den echten Schemafilterpfad ab; `tests/test_panel_settings_list.py`: 82/82,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 701: Leisten-SpinButton-Einheiten bleiben GTK-sicher
+
+`units` wurde für Integer-/Float-Editoren ohne Textvalidierung an den
+SpinButton-Konstruktor weitergereicht. NUL-haltige Einheiten konnten dadurch
+beim Öffnen des Bearbeitungsdialogs einen GTK-Fehler auslösen.
+
+Ungültige `units`-Metadaten werden jetzt entfernt; gültige Einheiten bleiben
+unverändert. Regression prüft den Schemafilter; `tests/test_panel_settings_list.py`:
+83/83, Python-Compile und `git diff --check` sauber.

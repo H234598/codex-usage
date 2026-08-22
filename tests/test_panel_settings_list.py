@@ -85,6 +85,24 @@ def test_panel_columns_normalize_malformed_slot_type() -> None:
     assert slot["options"]["Aus"] == 0
 
 
+def test_panel_columns_drop_invalid_units_text() -> None:
+    columns = panel_columns(
+        [
+            {
+                "id": "value",
+                "title": "Value",
+                "type": "integer",
+                "min": 0,
+                "max": 10,
+                "units": "bad\x00unit",
+            }
+        ],
+        1,
+    )
+
+    assert "units" not in columns[0]
+
+
 @pytest.mark.parametrize(
     "base",
     [
