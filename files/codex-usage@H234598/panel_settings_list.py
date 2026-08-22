@@ -266,13 +266,13 @@ class PanelSettingsList(List, JSONSettingsBackend):
     def _read_count(self) -> int:
         try:
             return panel_value_count(self.settings.get_value("panel-value-count"))
-        except (AttributeError, KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
             return _DEFAULT_COUNT
 
     def _read_edit_columns(self) -> int:
         try:
             return panel_edit_columns(self.settings.get_value("panel-edit-columns"))
-        except (AttributeError, KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
             return _DEFAULT_EDIT_COLUMNS
 
     def _remove_listener(self, key, callback) -> None:

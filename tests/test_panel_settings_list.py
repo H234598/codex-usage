@@ -424,6 +424,30 @@ def test_panel_ignores_settings_read_errors() -> None:
         panel.destroy()
 
 
+def test_panel_uses_defaults_for_count_and_editor_read_overflow() -> None:
+    class BrokenNumericSettings(_Settings):
+        def get_value(self, key):
+            if key in {"panel-value-count", "panel-edit-columns"}:
+                raise OverflowError(key)
+            return super().get_value(key)
+
+    settings = BrokenNumericSettings(3)
+    panel = PanelSettingsList(
+        {
+            "columns": [{"id": "account", "title": "Account", "type": "string"}],
+            "show-buttons": False,
+        },
+        "account-panel-settings",
+        settings,
+    )
+
+    try:
+        assert [column["id"] for column in panel.columns][:2] == ["account", "slot1"]
+        assert panel._read_edit_columns() == 3
+    finally:
+        panel.destroy()
+
+
 def test_panel_option_renderer_clears_stale_label_for_unknown_value() -> None:
     settings = _Settings(3)
     settings.values["panel-value-count"] = "1"

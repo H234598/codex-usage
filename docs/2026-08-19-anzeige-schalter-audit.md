@@ -7917,3 +7917,13 @@ Der Schemafilter entfernt ungültige Ausrichtungen und normalisiert gültige auf
 Float; der Rebuild-Pfad prüft zusätzlich defensiv. Regression deckt sieben
 kaputte Werte ab; `tests/test_panel_settings_list.py`: 55/55,
 Python-Compile und `git diff --check` sauber.
+
+## Runde 686: Leisten-Numerik-Reads fangen Overflow ab
+
+`_read_count()` und `_read_edit_columns()` ließen einen `OverflowError` aus
+dem Settings-Backend herauslaufen. Damit konnte die Leisten-Seite beim Aufbau
+oder der Editordialog beim Öffnen abbrechen.
+
+Beide Reads verwenden jetzt ihre sicheren Defaults auch bei Overflow.
+Regression prüft beide Pfade; `tests/test_panel_settings_list.py`: 56/56,
+Python-Compile und `git diff --check` sauber.
