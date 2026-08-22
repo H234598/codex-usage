@@ -578,7 +578,7 @@ def _stabilize_authenticated_usage(
         return usage
     try:
         age_seconds = (usage.captured_at - previous.captured_at).total_seconds()
-    except (TypeError, AttributeError):
+    except Exception:
         return usage
     if age_seconds < 0 or age_seconds > max_age_seconds:
         return usage

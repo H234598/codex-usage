@@ -55,6 +55,11 @@ class _RaisingComparisonDatetime(datetime):
         raise RuntimeError("synthetic comparison marker")
 
 
+class _RaisingSubtractionDatetime(datetime):
+    def __sub__(self, _other):
+        raise RuntimeError("synthetic subtraction marker")
+
+
 def _usable_main(*windows, availability_sources=("usage",)):
     return UsagePool(
         key="main",
@@ -200,6 +205,38 @@ def test_current_supersedes_blocked_snapshot_treats_failing_comparison_as_stale(
         configured_backend="direct",
         authenticated_fetch=False,
     ) is False
+
+
+def test_authenticated_stabilization_treats_failing_capture_subtraction_as_unusable():
+    timezone = ZoneInfo("UTC")
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=timezone),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=_RaisingSubtractionDatetime(
+            2026, 8, 16, 10, 1, tzinfo=timezone
+        ),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user-account",
+        backend_account_id="account-id",
+    )
+
+    assert _stabilize_authenticated_usage(
+        current,
+        previous,
+        max_age_seconds=300,
+    ) is current
 
 
 def test_ambiguous_direct_accounts_detects_shared_users_with_distinct_accounts(

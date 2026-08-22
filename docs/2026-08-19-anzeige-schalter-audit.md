@@ -7115,3 +7115,16 @@ Der Vergleich behandelt jetzt jeden normalen Fehler als „nicht neuer“ und
 lässt den bestehenden Block-Snapshot sicher bestehen. Regression deckt einen
 fehlerhaften `>`-Vergleich ab. `pytest -q tests/test_scheduler.py`: 210/210;
 Ruff, Mypy, Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 619: Authentisierte Stabilisierung bei fehlerhafter Capture-Differenz fail-closed
+
+`_stabilize_authenticated_usage()` berechnete das Alter zwischen aktueller
+und vorheriger Capture-Zeit. Ein fehlerhaftes Datetime-Objekt konnte bei der
+Subtraktion einen unerwarteten `RuntimeError` auslösen und den Abrufzyklus
+abbrechen.
+
+Die Altersprüfung behandelt jetzt jeden normalen Fehler als unbrauchbaren
+Stabilisierungsvergleich und verwendet unverändert den aktuellen Abruf.
+Regression deckt einen fehlerhaften `__sub__`-Vergleich ab. `pytest -q
+tests/test_scheduler.py`: 211/211; Ruff, Mypy, Python-Kompilierung und
+`git diff --check` sauber.
