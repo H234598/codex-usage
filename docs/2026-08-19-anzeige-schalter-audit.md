@@ -6150,3 +6150,20 @@ nutzbar. Regression prüft unbrauchbare Main- und Spark-Pools sowie bestehende
 Spark-Schwellen. Fokustest `node --test
 --test-name-pattern='usage severity|limit notifications|Spark notification|panel|pool|other-window' tests/applet_runtime.test.js`:
 68/68; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 554: Alle dynamischen Poolflächen gegen stale Monats-/Sparkwerte härten
+
+Nach Severity und Benachrichtigungen blieben weitere direkte Zugriffe auf
+Poolfenster: Alert-Defaults, Click-Zusammenfassung, Click-Resets,
+Tokendelta-Dynamik, 5h-Ausblendung und Panel-Resetquellen. Bei
+`available=false` konnten sie alte Monats-/Sparkwerte verwenden oder 5h
+fälschlich ausblenden.
+
+Monatswerte in diesen Pfaden verlangen jetzt einen nutzbaren Main-Pool.
+Tokendelta verlangt zusätzlich einen nutzbaren Spark-Pool; bekannte
+`available=true`-Erschöpfung bleibt für die 5h-Ausblendung und Resetdaten
+sichtbar. Panel-Resetquellen verwerfen Fenster nicht verfügbarer Pools.
+Regression deckt alle sechs Oberflächen und bestehende Erschöpfungsfälle ab.
+Fokustest `node --test
+--test-name-pattern='usage severity|alert settings|account click summary|account reset details|5h display|dynamic monthly delta|panel reset|panel|pool|other-window|limit notifications|Spark notification|long-limit exhaustion|monthly exhaustion|account menu adds' tests/applet_runtime.test.js`:
+76/76; Node-Syntaxcheck und `git diff --check` sauber.

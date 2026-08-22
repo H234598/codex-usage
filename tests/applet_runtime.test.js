@@ -1853,6 +1853,132 @@ test("usage severity ignores monthly data from an unavailable main pool", () => 
   assert.equal(applet._usageSeverity(usage), "codex-usage-critical");
 });
 
+test("alert settings ignore monthly data from an unavailable main pool", () => {
+  const applet = makeAccountSettingsApplet();
+  const usage = {
+    account: "alpha", status: "ok", stale: false,
+    five_hour: {remaining: 80}, weekly: {remaining: 80},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 1}],
+    },
+  };
+  applet._usages = [usage];
+
+  assert.equal(applet._alertWindowAvailable(usage, "monthly"), false);
+  assert.equal(applet._defaultAlertRow("alpha")["monthly-threshold"], "no 30d");
+});
+
+test("account click summary ignores monthly data from an unavailable main pool", () => {
+  const applet = makeApplet();
+  const usage = {
+    account: "alpha", label: "Alpha", status: "ok",
+    five_hour: {remaining: 80}, weekly: {remaining: 80},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 1}],
+    },
+  };
+  applet.menu = {items: [], addMenuItem(item) { this.items.push(item); }};
+  applet._addResetDetail = () => {};
+  applet._creditParts = () => null;
+  applet._creditConsumptionParts = () => null;
+  applet._consumptionParts = () => null;
+  applet._usageResetParts = () => null;
+  applet._addDynamicLimitDetails = () => {};
+  applet._addAccountControls = () => {};
+  applet._addAccountTerminalAction = () => {};
+  applet._addDisabled = () => {};
+  applet._setItemMarkup = () => {};
+  applet.showReactivationActions = false;
+
+  applet._addAccount(usage);
+
+  assert.doesNotMatch(applet.menu.items[0].label.text, /Monat 1%/);
+});
+
+test("account reset details ignore monthly data from an unavailable main pool", () => {
+  const applet = makeApplet();
+  const usage = {
+    account: "alpha",
+    five_hour: {remaining: 80}, weekly: {remaining: 80},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{
+        name: "30d", duration_seconds: 2592000, remaining: 1,
+        reset_at: "2026-08-23T12:00:00+00:00",
+      }],
+    },
+  };
+  const target = {items: [], addMenuItem(item) { this.items.push(item); }};
+  applet._windowResetParts = (window) => window
+    ? {plain: "in 1h", markup: "in 1h"}
+    : {plain: "", markup: ""};
+  applet._backendSummary = () => "Direkt";
+
+  applet._addResetDetail(usage, target);
+
+  assert.doesNotMatch(target.items[0].label.text, /30d Reset/);
+});
+
+test("5h display does not mask data from an unavailable main pool", () => {
+  const applet = makeApplet();
+  applet.hideFiveHourWhenLongLimitExhausted = true;
+  const usage = {
+    five_hour: {remaining: 80},
+    weekly: {remaining: 80},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 0}],
+    },
+  };
+
+  assert.equal(applet._fiveHourDisplayWindow(usage), usage.five_hour);
+});
+
+test("dynamic monthly delta ignores an unavailable main pool", () => {
+  const applet = makeApplet();
+  const usage = {
+    five_hour: {remaining: 80}, weekly: {remaining: 80},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 80}],
+    },
+  };
+  const candidate = {
+    lookback_seconds: 3600,
+    consumed_percentage_points: 10,
+    coverage: "complete",
+    limit_window_seconds: 2592000,
+    pool: "main",
+  };
+
+  assert.equal(applet._panelDeltaIsDynamic(usage, candidate), false);
+});
+
+test("panel reset sources ignore windows from unavailable pools", () => {
+  const applet = makeApplet();
+  const usage = {
+    account: "alpha",
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 80,
+        reset_at: "2026-08-23T12:00:00+00:00"}],
+    },
+    models: {
+      "gpt-5.3-codex-spark": {
+        available: false, allowed: true, limit_reached: false, exhausted: false,
+        windows: [{name: "5h", duration_seconds: 18000, remaining: 80,
+          reset_at: "2026-08-23T12:00:00+00:00"}],
+      },
+    },
+  };
+  const item = {usage, settings: {account: "alpha"}};
+
+  assert.equal(applet._panelSlotContent(item, {source: 28}).plain, "Reset M –");
+  assert.equal(applet._panelSlotContent(item, {source: 29}).plain, "Reset S5h –");
+});
+
 test("window identity helpers distinguish aliases, conflicts, duplicates and pool selection", () => {
   const applet = makeApplet();
   const five = {name: "5h", limit_window_seconds: 18000, remaining: 80, limit: 100};
@@ -2476,7 +2602,10 @@ test("alert helper matrix distinguishes missing, monthly and Spark windows", () 
     stale: false,
     five_hour: { name: "5h", duration_seconds: 18000, remaining: 61 },
     weekly: { name: "weekly", duration_seconds: 604800, remaining: 52 },
-    main: { available: true, windows: [monthly] },
+    main: {
+      available: true, allowed: true, limit_reached: false, exhausted: false,
+      windows: [monthly],
+    },
     models: {
       "gpt-5.3-codex-spark": {
         available: true,
@@ -3668,6 +3797,7 @@ test("account menu adds reset and dynamic limit details without mixing windows",
     five_hour: {name: "5h", duration_seconds: 18000, remaining: 88},
     weekly: {name: "weekly", duration_seconds: 604800, remaining: 77},
     main: {
+      available: true, allowed: true, limit_reached: false, exhausted: false,
       windows: [
         {name: "weekly", duration_seconds: 604800, remaining: 71},
         {name: "monthly", duration_seconds: 2592000, remaining: 63},
@@ -3675,6 +3805,7 @@ test("account menu adds reset and dynamic limit details without mixing windows",
     },
     models: {
       "gpt-5.3-codex-spark": {
+        available: true, allowed: true, limit_reached: false, exhausted: false,
         windows: [
           {name: "5h", duration_seconds: 18000, remaining: 42},
           {name: "weekly", duration_seconds: 604800, remaining: 37},

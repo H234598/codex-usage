@@ -3245,6 +3245,9 @@ CodexUsageApplet.prototype = {
         if (!usage) {
             return false;
         }
+        if (kind === "monthly" && !this._poolIsUsable(usage.main)) {
+            return false;
+        }
         let window = kind === "five"
             ? usage.five_hour
             : (kind === "weekly"
@@ -6947,7 +6950,10 @@ CodexUsageApplet.prototype = {
             this._fiveHourDisplayWindow(usage), usage.account, "click"
         );
         let week = this._percentParts(usage.weekly, usage.account, "click");
-        let monthly = this._percentParts(this._poolWindowForDuration(usage.main, 2592000), usage.account, "click");
+        let monthlyWindow = this._poolIsUsable(usage.main)
+            ? this._poolWindowForDuration(usage.main, 2592000)
+            : null;
+        let monthly = this._percentParts(monthlyWindow, usage.account, "click");
         let severity = this._usageSeverity(usage);
         let display = this._accountDisplayText({ usage: usage }, "click");
         let summaryParts = display ? [display] : [];
@@ -7794,7 +7800,10 @@ CodexUsageApplet.prototype = {
         let target = targetMenu || this.menu;
         let five = this._windowResetParts(usage.five_hour, usage.account, "click", false);
         let week = this._windowResetParts(usage.weekly, usage.account, "click", false);
-        let monthly = this._windowResetParts(this._poolWindowForDuration(usage.main, 2592000), usage.account, "click", false);
+        let monthlyWindow = this._poolIsUsable(usage.main)
+            ? this._poolWindowForDuration(usage.main, 2592000)
+            : null;
+        let monthly = this._windowResetParts(monthlyWindow, usage.account, "click", false);
         let backend = this._backendSummary(usage);
         let plainParts = [];
         let markupParts = [];
@@ -8659,14 +8668,17 @@ CodexUsageApplet.prototype = {
 
     _panelWindowForKey: function(usage, key) {
         let spark = this._modelPool(usage, "gpt-5.3-codex-spark");
+        let mainPool = usage && usage.main && usage.main.available === true
+            ? usage.main : null;
+        let sparkPool = spark && spark.available === true ? spark : null;
         return {
             "main-5h": usage.five_hour,
             "main-weekly": usage.weekly,
-            "main-monthly": this._poolWindowForDuration(usage.main, 2592000),
-            "main-other": this._poolOtherWindow(usage.main, true),
-            "spark-5h": this._poolWindowForDuration(spark, 18000),
-            "spark-weekly": this._poolWindowForDuration(spark, 604800),
-            "spark-other": this._poolOtherWindow(spark)
+            "main-monthly": this._poolWindowForDuration(mainPool, 2592000),
+            "main-other": this._poolOtherWindow(mainPool, true),
+            "spark-5h": this._poolWindowForDuration(sparkPool, 18000),
+            "spark-weekly": this._poolWindowForDuration(sparkPool, 604800),
+            "spark-other": this._poolOtherWindow(sparkPool)
         }[key] || null;
     },
 
@@ -8742,15 +8754,19 @@ CodexUsageApplet.prototype = {
         let pool = candidate.pool === "gpt-5.3-codex-spark" ? "spark" : "main";
         let window;
         if (pool === "spark") {
-            window = this._poolWindowForDuration(
-                this._modelPool(usage, "gpt-5.3-codex-spark"),
-                seconds
-            );
+            let sparkPool = this._modelPool(usage, "gpt-5.3-codex-spark");
+            if (!this._poolIsUsable(sparkPool)) {
+                return false;
+            }
+            window = this._poolWindowForDuration(sparkPool, seconds);
         } else if (seconds === 18000) {
             window = usage.five_hour;
         } else if (seconds === 604800) {
             window = usage.weekly;
         } else {
+            if (!this._poolIsUsable(usage.main)) {
+                return false;
+            }
             window = this._poolWindowForDuration(usage.main, seconds);
         }
         if (!window) {
@@ -9382,9 +9398,9 @@ CodexUsageApplet.prototype = {
             return usage && usage.five_hour;
         }
         let weekly = this._remainingPercent(usage.weekly);
-        let monthly = this._remainingPercent(
-            this._poolWindowForDuration(usage.main, 2592000)
-        );
+        let monthly = usage.main && usage.main.available === true
+            ? this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000))
+            : null;
         return weekly === 0 || monthly === 0 ? null : usage.five_hour;
     },
 
