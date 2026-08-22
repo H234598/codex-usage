@@ -9,7 +9,7 @@ const source = fs.readFileSync(
   "utf8"
 );
 
-function loadPrototype(onReady) {
+function loadPrototype(onReady, strictMode = false) {
   const runtime = {
     idleAdd: () => 1,
     timeoutAdd: () => 2,
@@ -149,7 +149,7 @@ function loadPrototype(onReady) {
     RegExp,
   };
   vm.runInNewContext(
-    `${source}\nglobalThis.__CodexUsageApplet = CodexUsageApplet;`,
+    `${strictMode ? '"use strict";\n' : ""}${source}\nglobalThis.__CodexUsageApplet = CodexUsageApplet;`,
     sandbox
   );
   if (onReady) {
@@ -158,8 +158,8 @@ function loadPrototype(onReady) {
   return sandbox.__CodexUsageApplet.prototype;
 }
 
-function makeApplet(onReady) {
-  const prototype = loadPrototype(onReady);
+function makeApplet(onReady, strictMode = false) {
+  const prototype = loadPrototype(onReady, strictMode);
   const applet = Object.create(prototype);
   applet._removed = false;
   applet._sources = {};
@@ -280,8 +280,8 @@ function makeApplet(onReady) {
   return applet;
 }
 
-function makeAccountSettingsApplet() {
-  const applet = makeApplet();
+function makeAccountSettingsApplet(strictMode = false) {
+  const applet = makeApplet(undefined, strictMode);
   applet._baseCommandArgv = () => ["codex-usage"];
   applet.settings = { setValue() {} };
   applet._cancelRemovedReactivations = () => {};
@@ -1349,6 +1349,18 @@ test("account overview rows expose editable account settings", () => {
     backend: 1,
   });
   assert.equal(applet._backendAccounts.alpha["profile-dir"], "/tmp/alpha");
+});
+
+test("account overview accepts valid rows in strict runtime", () => {
+  const applet = makeAccountSettingsApplet(true);
+  applet._spawnAuxJson = (_argv, callback) => callback({
+    accounts: [{ id: "alpha", label: "Alpha", backend: "direct" }],
+  }, null);
+
+  applet._loadAccountBackends();
+
+  assert.equal(applet._backendRowsReady, true);
+  assert.deepEqual(Object.keys(applet._backendAccounts), ["alpha"]);
 });
 
 test("account overview leaves unset file chooser values unset", () => {

@@ -495,6 +495,20 @@ geprüft werden statt per `deepStrictEqual`.
 Verifikation: 355/355 Node-Tests bestanden, JSON-/Applet-Check bestanden und
 `git diff --check` sauber.
 
+## Runde 652: Strikte GJS-Ausführung blockierte Einstellungsmenü
+
+Der neue geschützte Account-Overview-Parser schrieb `label` ohne lokale
+Deklaration. Node-Test-Sandbox lief dadurch zufällig weiter, GJS behandelt
+Applet-Module jedoch strikt und warf bei jedem gültigen Account einen
+`ReferenceError`. Der Callback brach vor `_backendRowsReady` ab; dadurch
+blieb die Synchronisierung unvollständig und der Einstellungszugriff wirkte
+defekt.
+
+`label` ist jetzt vor dem Parsing-Block lokal deklariert. Regression führt
+denselben Overview-Pfad in strikt ausgeführter Sandbox aus und prüft, dass
+gültige Zeilen synchronisiert werden. `node --test tests/applet_runtime.test.js`:
+478/478; Node-Syntaxcheck und `git diff --check` sauber.
+
 ## Runde 39: Backend-Zustand und Pool-Reset-Merge
 
 Die direkten Tests decken jetzt auch Backend-Zuordnung, leere versus bereits

@@ -1663,6 +1663,7 @@ CodexUsageApplet.prototype = {
                 let seriesActive;
                 let profileDir;
                 let authJsonPath;
+                let label;
                 try {
                     account = this._strictText(item.id, 64);
                     tag = item.tag === undefined || item.tag === null
