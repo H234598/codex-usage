@@ -7195,3 +7195,16 @@ Der Test prüft, dass gültige aktuelle Nutzung unverändert zurückkommt und
 genau ein `history/sample_save_failed`-Health-Event entsteht. Produktionslogik
 blieb unverändert. `pytest -q tests/test_scheduler.py`: 218/218; Ruff, Mypy,
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 626: App-Server-Fallback bewahrt Ambiguitäts-Schutz
+
+Fällt der App-Server wegen Nichtverfügbarkeit auf Direct zurück, muss der
+Fallback dieselbe Identitätsprüfung wie ein normaler Direct-Abruf erhalten.
+Ohne das Flag konnte eine gemeinsame Benutzeridentität mehrere konfigurierte
+Accounts falsch zuordnen.
+
+Regression mit zwei Accounts und gemeinsamer Benutzeridentität prüft, dass
+beide Direct-Fallbacks `reject_ambiguous_backend_identity=True` erhalten und
+den Fallback-Grund unverändert melden. Produktionslogik blieb unverändert.
+`pytest -q tests/test_scheduler.py`: 219/219; Ruff, Mypy,
+Python-Kompilierung und `git diff --check` sauber.

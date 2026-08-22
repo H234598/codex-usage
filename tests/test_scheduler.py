@@ -5614,6 +5614,60 @@ def test_app_server_falls_back_only_when_unavailable(monkeypatch):
     assert result[0].fallback_reason == "app-server unavailable: unsupported"
 
 
+def test_app_server_fallback_preserves_ambiguous_identity_guard(monkeypatch):
+    accounts = tuple(
+        Account(
+            id=account_id,
+            label=account_id.title(),
+            profile_dir=f"/tmp/{account_id}",
+            auth_json_path=f"/tmp/{account_id}/auth.json",
+            backend="app-server",
+        )
+        for account_id in ("work", "personal")
+    )
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    reject_flags: dict[str, bool] = {}
+
+    def unavailable(_selected):
+        raise AppServerUnavailableError("unsupported")
+
+    def direct(
+        selected,
+        auth_json_path=None,
+        *,
+        reject_ambiguous_backend_identity=False,
+    ):
+        reject_flags[selected.id] = reject_ambiguous_backend_identity
+        return AccountUsage(
+            account_id=selected.id,
+            label=selected.label,
+            captured_at=captured,
+        )
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_app_server", unavailable)
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage_direct", direct)
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_identity_for_account",
+        lambda selected: ("shared-user", selected.id),
+    )
+    monkeypatch.setattr(
+        "codex_usage.scheduler.auth_plan_type_for_account",
+        lambda _selected: None,
+    )
+    monkeypatch.setattr("codex_usage.scheduler.account_lock", lambda _account_id: nullcontext())
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _account_id: 0)
+    monkeypatch.setattr("codex_usage.scheduler.load_usage_snapshot", lambda _account_id: None)
+
+    result = fetch_all(AppConfig(accounts=accounts), accounts)
+
+    assert reject_flags == {"work": True, "personal": True}
+    assert all(usage.backend_used == "direct" for usage in result)
+    assert all(
+        usage.fallback_reason == "app-server unavailable: unsupported"
+        for usage in result
+    )
+
+
 def test_watchdog_refuses_user_only_authenticated_blocked_snapshot_match(tmp_path, monkeypatch):
     account = Account(
         id="blocked",
