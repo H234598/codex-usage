@@ -4725,11 +4725,19 @@ test("health and common action menu callbacks use guarded commands", () => {
 
 test("settings launcher uses the applet instance and schedules bounded maximization", () => {
   const subprocessCalls = [];
+  const launcherCalls = [];
   const scheduleCalls = [];
   const applet = makeApplet((runtime) => {
-    runtime.subprocessFactory = (...args) => {
-      subprocessCalls.push(args);
-      return {};
+    runtime.launcherFactory = (...args) => {
+      const call = {args, env: []};
+      launcherCalls.push(call);
+      return {
+        setenv: (...envArgs) => call.env.push(envArgs),
+        spawnv: (argv) => {
+          subprocessCalls.push([argv, 0]);
+          return {};
+        },
+      };
     };
     runtime.timeoutAdd = (_milliseconds, callback) => {
       runtime.settingsCallbacks.push(callback);
@@ -4742,6 +4750,7 @@ test("settings launcher uses the applet instance and schedules bounded maximizat
   applet.instanceId = 17;
   applet._openSettings();
   assert.deepEqual(scheduleCalls, ["scheduled"]);
+  assert.deepEqual(launcherCalls[0].env, [["NO_AT_BRIDGE", "1", true]]);
   assert.equal(JSON.stringify(subprocessCalls[0]), JSON.stringify([
     ["xlet-settings", "applet", "codex-usage@H234598", "-i", "17"],
     0,
@@ -4766,8 +4775,11 @@ test("settings launcher uses the applet instance and schedules bounded maximizat
 test("settings launcher passes child pid to window placement", () => {
   const scheduled = [];
   const applet = makeApplet((runtime) => {
-    runtime.subprocessFactory = () => ({
-      get_identifier: () => "3089499",
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() {
+        return {get_identifier: () => "3089499"};
+      },
     });
   });
   applet._scheduleSettingsMaximize = (pid) => { scheduled.push(pid); };
@@ -4892,10 +4904,13 @@ test("settings launcher does not report a spawn error when only maximize schedul
   const subprocessCalls = [];
   const errors = [];
   const applet = makeApplet((runtime) => {
-    runtime.subprocessFactory = (...args) => {
-      subprocessCalls.push(args);
-      return {};
-    };
+    runtime.launcherFactory = (...args) => ({
+      setenv() {},
+      spawnv: (argv) => {
+        subprocessCalls.push([argv, 0]);
+        return {};
+      },
+    });
     runtime.timeoutAdd = () => {
       throw new Error("settings timer unavailable");
     };

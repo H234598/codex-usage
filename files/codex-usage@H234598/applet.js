@@ -10932,7 +10932,11 @@ CodexUsageApplet.prototype = {
         }
         let settingsProcess = null;
         try {
-            settingsProcess = Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
+            // xlet-settings can block for tens of seconds while the broken AT-SPI
+            // bridge is starting. Settings remain fully usable without that bridge.
+            let launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE);
+            launcher.setenv("NO_AT_BRIDGE", "1", true);
+            settingsProcess = launcher.spawnv(argv);
         } catch (e) {
             this._showCommandError(_("Einstellungen konnten nicht geöffnet werden: ") + String(e));
             return;

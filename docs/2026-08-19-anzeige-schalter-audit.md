@@ -7595,3 +7595,21 @@ als getrennte Objektzuordnung im Overview-Parser. Das Mapping nutzt jetzt
 dieselbe zentrale, begrenzte Namensliste wie Account-Write und Profiljob.
 Damit können Parser- und Schreibpfad nicht mehr still unterschiedliche
 Indexwerte vergeben. Die fokussierten 26/26 Tests bleiben grün.
+
+## Runde 657: Einstellungsstarter blockierte am AT-SPI-Bridge-Start
+
+Der Einstellungsstarter rief `xlet-settings` ohne eigene Prozessumgebung auf.
+Auf diesem Cinnamon-Desktop wartet GTK dabei auf den nicht funktionierenden
+AT-SPI-Bridge-Dienst. Die Prozesse liefen weiter, aber das Fenster erschien
+erst nach vielen Sekunden; fünf liegengebliebene `xlet-settings`-Prozesse und
+die Cinnamon-Warnungen `AT-SPI: Could not obtain desktop path or name` sowie
+`GetRegisteredEvents returned message with unknown signature` bestätigten den
+Pfad. Ein direkter Start ohne Bridge öffnete das Fenster innerhalb einer
+Sekunde, der normale Start blieb über acht Sekunden unsichtbar.
+
+`_openSettings()` startet `xlet-settings` jetzt über
+`Gio.SubprocessLauncher` mit `NO_AT_BRIDGE=1`. Das betrifft nur diesen
+Einstellungs-Hilfsprozess; die Applet-Laufzeit bleibt unverändert. Der
+Launcherpfad ist durch Regressionen für Argumente, Umgebungsvariable,
+Fenster-PID und verzögerte Maximierung abgedeckt. Fokussierte
+Einstellungs-Tests: 10/10; Node-Syntaxcheck und `git diff --check` sauber.
