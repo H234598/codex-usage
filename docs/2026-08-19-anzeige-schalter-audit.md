@@ -7506,3 +7506,17 @@ Spalten-IDs fail-closed; gültige Hilfeeinträge bleiben unverändert. Regressio
 deckt verschachtelte Layoutfehler und eine unhashable Basis-ID ab.
 `pytest -q tests/test_help_page.py`: 9/9; Ruff, Python-Compile und
 `git diff --check` sauber.
+
+## Runde 650: Account-Serienliste fängt GTK-Integer-Overflow ab
+
+`DynamicSeriesList` übersprang falsche Zelltypen beim Laden gespeicherter
+Accountzeilen bereits für `TypeError` und `ValueError`, aber nicht für
+`OverflowError`. Die Schemafelder `browser` und `backend` sind GTK-
+`gint`-Spalten; ein persistierter Wert wie `2**31` konnte deshalb den
+Einstellungsdialog beim Aufbau abbrechen.
+
+Der Loader fängt jetzt auch `OverflowError` und lässt die beschädigte Zeile
+leer aus. Persistierte Daten werden nicht automatisch überschrieben.
+Regression deckt den Integer-Overflow ab. `pytest -q
+tests/test_dynamic_series_list.py`: 17/17; Ruff, Python-Compile und
+`git diff --check` sauber.

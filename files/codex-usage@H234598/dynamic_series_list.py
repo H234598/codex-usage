@@ -67,7 +67,7 @@ class DynamicSeriesList(List, JSONSettingsBackend):
                     row_info.append(None)
             try:
                 self.model.append(row_info)
-            except (TypeError, ValueError):
+            except (OverflowError, TypeError, ValueError):
                 continue
         self.content_widget.columns_autosize()
 

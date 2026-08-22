@@ -390,6 +390,29 @@ def test_malformed_account_rows_do_not_break_settings_table() -> None:
         widget.destroy()
 
 
+def test_integer_overflow_in_account_row_does_not_break_settings_table() -> None:
+    settings = _Settings()
+    settings.values["account-series-settings"] = [{"account": "alpha", "browser": 2**31}]
+    widget = DynamicSeriesList(
+        {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {"id": "series", "title": "Serie", "type": "string"},
+                {"id": "series-active", "title": "Aktiv", "type": "boolean"},
+                {"id": "browser", "title": "Browser", "type": "integer"},
+            ],
+            "show-buttons": False,
+        },
+        "account-series-settings",
+        settings,
+    )
+
+    try:
+        assert len(widget.model) == 0
+    finally:
+        widget.destroy()
+
+
 def test_open_dialog_filters_series_column_and_restores_schema(monkeypatch) -> None:
     widget = DynamicSeriesList.__new__(DynamicSeriesList)
     original_columns = [
