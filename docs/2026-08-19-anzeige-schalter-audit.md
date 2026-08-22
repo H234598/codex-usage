@@ -7208,3 +7208,15 @@ beide Direct-Fallbacks `reject_ambiguous_backend_identity=True` erhalten und
 den Fallback-Grund unverändert melden. Produktionslogik blieb unverändert.
 `pytest -q tests/test_scheduler.py`: 219/219; Ruff, Mypy,
 Python-Kompilierung und `git diff --check` sauber.
+
+## Runde 627: Browser-Fehler meldet tatsächliche Transport-Provenienz
+
+`_fetch_one()` meldete bei einem Fehler im headed Browser-Pfad den
+konfigurierten authentisierten Backend-Namen als `backend_used`. Dadurch
+erschien ein fehlgeschlagener Browser-Abruf fälschlich als Direct-Abruf.
+
+Der Pfad führt jetzt tatsächliche Transport-Provenienz separat und setzt bei
+Browser-Fehlern `backend_used="browser"`; Direct-/App-Server-Fallbacks bleiben
+unverändert. Regression prüft Status, konfigurierte Provenienz, Transport und
+Cache-Invalidierung. `pytest -q tests/test_scheduler.py`: 220/220; Ruff,
+Mypy, Python-Kompilierung und `git diff --check` sauber.

@@ -450,6 +450,7 @@ def _fetch_one(
     reject_ambiguous_backend_identity: bool = False,
 ) -> AccountUsage:
     backend: object = None
+    backend_used: object = None
     try:
         effective_backend = "direct" if (direct or auth_json_path is not None) else (
             backend_override if backend_override is not None else account.backend
@@ -468,8 +469,12 @@ def _fetch_one(
             or account.auth_json_path is not None
         )
         if not headed and use_auth_backend:
+            backend_used = backend
+
             def fetch_authenticated() -> AccountUsage:
+                nonlocal backend_used
                 if backend == "app-server":
+                    backend_used = "app-server"
                     try:
                         usage = fetch_account_usage_app_server(account)
                         return replace(
@@ -478,6 +483,7 @@ def _fetch_one(
                             backend_used="app-server",
                         )
                     except AppServerUnavailableError as exc:
+                        backend_used = "direct"
                         if reject_ambiguous_backend_identity:
                             usage = fetch_account_usage_direct(
                                 account,
@@ -498,6 +504,7 @@ def _fetch_one(
                                 f"{APP_SERVER_FALLBACK_REASON_PREFIX}{fallback_detail}"
                             )[:500],
                         )
+                backend_used = "direct"
                 if reject_ambiguous_backend_identity:
                     usage = fetch_account_usage_direct(
                         account,
@@ -530,6 +537,7 @@ def _fetch_one(
                 backend_used="browser",
             )
 
+        backend_used = "browser"
         with account_lock(account.id):
             return fetch_browser()
     except Exception as exc:
@@ -541,8 +549,9 @@ def _fetch_one(
             error=f"fetch failed: {type(exc).__name__}",
             backend_configured=account.backend,
             backend_used=(
-                backend
-                if isinstance(backend, str) and backend in AUTHENTICATED_BACKENDS
+                backend_used
+                if isinstance(backend_used, str)
+                and backend_used in AUTHENTICATED_BACKENDS | {"browser"}
                 else None
             ),
             cache_invalidated=True,

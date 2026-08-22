@@ -1388,6 +1388,28 @@ def test_fetch_all_invalidates_cache_after_unexpected_fetch_failure(monkeypatch)
     assert result[0].weekly is None
 
 
+def test_browser_failure_keeps_browser_provenance(monkeypatch):
+    account = Account(
+        id="browser-failure",
+        label="Browser failure",
+        profile_dir="/tmp/browser-failure",
+        backend="direct",
+    )
+
+    def fail_fetch(*_args, **_kwargs):
+        raise RuntimeError("browser crashed")
+
+    monkeypatch.setattr("codex_usage.scheduler.fetch_account_usage", fail_fetch)
+    monkeypatch.setattr("codex_usage.scheduler.load_state_generation", lambda _id: 0)
+
+    result = fetch_all(AppConfig(accounts=(account,)), (account,), headed=True)
+
+    assert result[0].status == AccountStatus.ERROR
+    assert result[0].backend_configured == "direct"
+    assert result[0].backend_used == "browser"
+    assert result[0].cache_invalidated is True
+
+
 def test_fetch_one_rejects_malformed_backend_override_fail_closed():
     account = Account(
         id="account",
