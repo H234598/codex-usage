@@ -9931,11 +9931,11 @@ CodexUsageApplet.prototype = {
                     );
                 }
             }
-            let mainPoolUsable = this._poolIsUsable(usage.main);
+            let legacyPoolUsable = !usage.main || this._poolIsUsable(usage.main);
             let windows = [
-                ["5h", usage.five_hour, "five-threshold"],
-                ["Woche", usage.weekly, "weekly-threshold"],
-                ["30d", mainPoolUsable
+                ["5h", legacyPoolUsable ? usage.five_hour : null, "five-threshold"],
+                ["Woche", legacyPoolUsable ? usage.weekly : null, "weekly-threshold"],
+                ["30d", legacyPoolUsable
                     ? this._poolWindowForDuration(usage.main, 2592000)
                     : null, "monthly-threshold"]
             ];
@@ -10450,8 +10450,9 @@ CodexUsageApplet.prototype = {
         if (["error", "login_required", "blocked"].indexOf(usage.status) !== -1) {
             return "codex-usage-error";
         }
-        let five = this._remainingPercent(usage.five_hour);
-        let week = this._remainingPercent(usage.weekly);
+        let legacyPoolUsable = !usage.main || this._poolIsUsable(usage.main);
+        let five = legacyPoolUsable ? this._remainingPercent(usage.five_hour) : null;
+        let week = legacyPoolUsable ? this._remainingPercent(usage.weekly) : null;
         let monthly = this._poolIsUsable(usage.main)
             ? this._remainingPercent(this._poolWindowForDuration(usage.main, 2592000))
             : null;

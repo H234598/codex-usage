@@ -1853,6 +1853,20 @@ test("usage severity ignores monthly data from an unavailable main pool", () => 
   assert.equal(applet._usageSeverity(usage), "codex-usage-critical");
 });
 
+test("usage severity ignores legacy windows from an unusable main pool", () => {
+  const applet = makeApplet();
+  const usage = {
+    account: "alpha", status: "ok", stale: false,
+    five_hour: {remaining: 1}, weekly: {remaining: 1},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 80}],
+    },
+  };
+
+  assert.equal(applet._usageSeverity(usage), "");
+});
+
 test("alert settings ignore monthly data from an unavailable main pool", () => {
   const applet = makeAccountSettingsApplet();
   const usage = {
@@ -2968,6 +2982,32 @@ test("limit notifications ignore windows from unavailable pools", () => {
         available: false, allowed: true, limit_reached: false, exhausted: false,
         windows: [{name: "5h", duration_seconds: 18000, remaining: 1}],
       },
+    },
+  }];
+  applet.notifyWarnings = false;
+
+  applet._notifyForPayload();
+
+  assert.deepEqual(Object.keys(applet._warningState), []);
+});
+
+test("limit notifications ignore legacy windows from an unusable main pool", () => {
+  const applet = makeAccountSettingsApplet();
+  applet._alertSettings = { alpha: {
+    account: "alpha",
+    "five-threshold": 20,
+    "weekly-threshold": 20,
+    "monthly-threshold": "no 30d",
+    "spark-threshold": "no Spark",
+    warnings: true,
+    errors: true,
+  } };
+  applet._usages = [{
+    account: "alpha", label: "alpha", status: "ok",
+    five_hour: {remaining: 1}, weekly: {remaining: 1},
+    main: {
+      available: false, allowed: true, limit_reached: false, exhausted: false,
+      windows: [{name: "30d", duration_seconds: 2592000, remaining: 80}],
     },
   }];
   applet.notifyWarnings = false;

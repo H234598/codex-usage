@@ -6232,3 +6232,17 @@ unavailable/disallowed sowie bestehende Panel-, Pool- und Alarmfälle.
 Fokustest `node --test
 --test-name-pattern='5h display does not mask|long-limit exhaustion|monthly exhaustion|opt-in long-limit|panel|pool|other-window|usage severity|Spark alert state|limit notifications' tests/applet_runtime.test.js`:
 79/79; Node-Syntaxcheck und `git diff --check` sauber.
+
+## Runde 560: Legacy-5h/Woche bei unbrauchbarem Main-Pool nicht alarmieren
+
+`_usageSeverity()` und `_notifyForPayload()` werteten `five_hour` und `weekly`
+direkt aus. Wenn parallel ein vorhandener, aber unbrauchbarer Main-Pool
+vorlag, konnten gecachte Legacywerte trotzdem kritische Klassen oder Warnungen
+erzeugen; Panelquellen verwarfen dieselben Werte bereits.
+
+Beide Pfade verwenden jetzt den Main-Poolvertrag für Legacyfenster: Bei
+unbrauchbarem Main-Pool werden sie ignoriert, ohne Main-Pool bleiben sie als
+Legacyfallback nutzbar. Regression prüft Severity und Warnungen sowie alle
+vorherigen Pool-/Panelpfade. Fokustest `node --test
+--test-name-pattern='usage severity ignores legacy|limit notifications ignore legacy|usage severity|limit notifications|Spark notification|panel|pool|other-window|long-limit exhaustion|monthly exhaustion' tests/applet_runtime.test.js`:
+82/82; Node-Syntaxcheck und `git diff --check` sauber.
