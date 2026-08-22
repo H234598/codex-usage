@@ -9375,3 +9375,14 @@ Der bestehende 500-Fälle-Konstruktions-Fuzz blieb ebenfalls fehlerfrei.
 
 Verifikation: **77 fokussierte Format-Selector-Tests**, Ruff, Python-Compile und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 796: Leisten-Quellzuordnung geprüft
+
+Die Panel-Quellzuordnung in `applet.js` wurde gegen die 52 konfigurierbaren
+Quellen (0 bis 51) geprüft. `_panelItems`, Quellfenster, Prozent-/Resetpfade,
+Textwerte, Credits, Routing und Status besitzen jeweils einen Renderpfad;
+Duplikate und ungültige Slotwerte werden vor der Darstellung verworfen.
+
+Kein neuer belastbarer Fehler. Der fokussierte Runtime-Filter deckt 62
+Panel-/Quelltests ab; die vollständige headless Installationsprüfung meldete
+496 von 496 Runtime-Tests erfolgreich. Keine Codeänderung erforderlich.
