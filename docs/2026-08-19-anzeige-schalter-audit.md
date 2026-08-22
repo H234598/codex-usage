@@ -8354,3 +8354,20 @@ bleiben mit leerem Selector nutzbar. Regression deckt beide fehlenden
 Mappings ab; kombinierter Fokustest `tests/test_format_table_selector.py`
 und `tests/test_forecast_table_selector.py`: 70/70, Python-Compile, Ruff und
 `git diff --check` sauber.
+
+## Runde 727: Einstellungslauncher nach Reload erreichbar
+
+Der gemeldete Öffnungsfehler ließ sich zuerst direkt mit
+`xlet-settings applet codex-usage@H234598 -i 0` und anschließend über den
+laufenden Cinnamon-Applet-Callback reproduzierbar prüfen. Beide Pfade laden
+die acht Seiten, inklusive Hilfe-, Formatierungs- und Prognosen-Widgets, ohne
+Import- oder GTK-Fehler; das Fenster erscheint innerhalb einer Sekunde und
+wird auf den Applet-Monitor maximiert. Alte Sitzungslogs enthielten nur
+AT-SPI-Timeouts früherer Settings-Prozesse. Das installierte Applet wurde mit
+`scripts/install_cinnamon_applet.py --reload-running` synchronisiert; danach
+öffnet `configureApplet()` erneut ein sichtbares, maximiertes Fenster.
+
+Regression: `pytest -q tests/test_help_page.py` 10/10 und der fokussierte
+Settings-Launcher-Block in `node --test tests/applet_runtime.test.js` 10/10.
+Kein Produktcode-Fix erforderlich; die Ursache war im aktuellen Stand nicht
+mehr reproduzierbar. Von diesem Lauf gestartete Testprozesse wurden beendet.
