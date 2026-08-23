@@ -1270,6 +1270,22 @@ def test_snapshot_canonical_document_rejects_shapes_and_canonicalizes_optional_s
     assert valid["accounts"][0]["usage_resets"]["available"] is None
     assert valid["source_commit"] == "abc123"
 
+    without_optional_resets = _canonical_document(_canonical_document_base(base_account))
+    assert "usage_resets" not in without_optional_resets["accounts"][0]
+    known_resets = _canonical_document(
+        _canonical_document_base(
+            {
+                **base_account,
+                "usage_resets": {
+                    "available": 2,
+                    "known": True,
+                    "redeem_capability": True,
+                },
+            }
+        )
+    )
+    assert known_resets["accounts"][0]["usage_resets"]["available"] == 2
+
 
 def test_snapshot_canonical_document_rejects_invalid_reset_contracts():
     from codex_usage.integration_snapshot import IntegrationInvalidSource, _canonical_document

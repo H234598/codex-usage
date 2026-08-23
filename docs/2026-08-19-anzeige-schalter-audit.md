@@ -13330,3 +13330,18 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1106: Integration-Snapshot-Reset-Guards vollständig geprüft
+
+`integration_snapshot.py` hatte noch zwei echte Reset-Vertragszweige ohne
+Regression: Account ohne optionales `usage_resets`-Feld und bekanntes Reset-
+Kontingent mit gültiger Anzahl. Gezielte Regressionen decken beide Zustände
+ab. Produktionslogik blieb unverändert.
+
+Verifikation: **75 `tests/test_integration_snapshot.py`-Tests**,
+`integration_snapshot.py` **482/482 Statements und 242/242 Branches, 100 %
+Coverage**, Mypy, Ruff und Diff-Check bestanden. Keine Settings-Fenster
+gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
+nicht ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
+bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
+Reload-Schritte ab.
