@@ -10184,3 +10184,16 @@ Schreib- und Rollbackpfade bleiben unverändert.
 Verifikation: **52 Private-IO-Tests**, **296 abhängige Config-/History-/Snapshot-
 und Entrypoint-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 849: Private-Pfade auf kanonischen Path-Typ begrenzen
+
+`private_io._require_path()` akzeptierte `Path`-Subklassen. Überschriebene
+Pfadmethoden konnten dadurch vor Symlink-/Owner-Prüfung rohe Exceptions in
+private Schreib- und Lockpfade einschleusen.
+
+Der gemeinsame Pfad-Guard akzeptiert jetzt ausschließlich den nativen
+Plattform-`Path`-Typ vor jeder Methode. Regression simuliert einen fehlerhaften
+`is_symlink()`-Hook; normale `Path`-/`PosixPath`-Aufrufer bleiben unverändert.
+
+Verifikation: **53 Private-IO-Tests**, **296 abhängige Tests**, Ruff und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

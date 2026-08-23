@@ -106,6 +106,21 @@ def test_private_io_rejects_non_path(path):
             pass
 
 
+def test_private_io_rejects_path_subclass_before_methods(tmp_path):
+    path_type = type(tmp_path)
+
+    class BrokenPath(path_type):
+        def is_symlink(self):
+            raise RuntimeError("synthetic private path marker")
+
+    with pytest.raises(ValueError, match="path is invalid"):
+        write_private_text(
+            BrokenPath(tmp_path / "value.json"),
+            "value",
+            label="private",
+        )
+
+
 @pytest.mark.parametrize("max_bytes", [None, True, -1, "10"])
 def test_read_private_text_rejects_invalid_byte_budget(tmp_path, max_bytes):
     with pytest.raises(ValueError, match="max_bytes is invalid"):

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 PRIVATE_LOCK_TIMEOUT_SECONDS = 30
+_PATH_TYPE = type(Path())
 
 
 def _lock_deadline(timeout_seconds: int | float) -> float:
@@ -362,6 +363,6 @@ def private_path_lock(
 
 
 def _require_path(path: object, *, label: str) -> Path:
-    if not isinstance(path, Path):
+    if type(path) is not _PATH_TYPE:
         raise ValueError(f"{label} path is invalid")
     return path
