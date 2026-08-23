@@ -9947,3 +9947,18 @@ ab.
 Verifikation: **48 fokussierte Profile-Login-Tests**, **138 Profile-Login-,
 Profile-CLI- und Profile-Job-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 832: Reaktivierungsprozessgrenzen strikt validieren
+
+`reactivate.py` akzeptierte bei Browser-Reaktivierungs-Timeouts und beim
+Beenden des Login-Prozessgroups noch Integer-Subklassen. Fremde Vergleichs-
+operatoren konnten Timeoutprüfung oder Kill-Pfad mit rohen Exceptions und
+unerwarteter Signalweitergabe abbrechen.
+
+Timeout und PID akzeptieren jetzt ausschließlich Built-in-`int`; ungültige
+Werte werden kontrolliert verworfen, danach läuft der sichere Einzelprozess-
+Kill weiter. Regression deckt Reaktivierungs-Timeout, Boolean-/Subklassen-PID
+und den vollständigen Reaktivierungspfad ab.
+
+Verifikation: **70 fokussierte Reaktivierungs-Tests**, Ruff und Diff-Check
+bestanden; keine Settings-Fenster gestartet.

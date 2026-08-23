@@ -36,6 +36,14 @@ def _jwt_with_exp(expiry: int) -> str:
     return f"{header}.{payload}.signature"
 
 
+class _BrokenInt(int):
+    def __ge__(self, _other):
+        raise RuntimeError("synthetic reactivation integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic reactivation integer comparison marker")
+
+
 def _jwt_with_user_id(user_id: str) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     payload = base64.urlsafe_b64encode(
@@ -262,6 +270,7 @@ def test_manage_account_rejects_malformed_url(tmp_path):
         pytest.param(float("-inf"), id="negative-infinity"),
         pytest.param("1", id="string"),
         pytest.param(10**10_000, id="huge-int"),
+        pytest.param(_BrokenInt(60), id="integer-subclass"),
     ),
 )
 def test_reactivate_rejects_invalid_timeout_before_account_lock(
@@ -642,6 +651,28 @@ def test_kill_login_process_group_rejects_boolean_pid(monkeypatch):
 
     class FakeProcess:
         pid = True
+
+        def kill(self):
+            calls.append(("kill",))
+
+        def wait(self, timeout):
+            calls.append(("wait", timeout))
+
+    monkeypatch.setattr(
+        "codex_usage.reactivate.os.killpg",
+        lambda pid, signum: calls.append(("killpg", pid, signum)),
+    )
+
+    _kill_login_process_group(FakeProcess())
+
+    assert calls == [("kill",), ("wait", 2)]
+
+
+def test_kill_login_process_group_rejects_numeric_subclass_pid(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = _BrokenInt(4321)
 
         def kill(self):
             calls.append(("kill",))

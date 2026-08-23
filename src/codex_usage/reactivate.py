@@ -84,11 +84,7 @@ def reactivate_account(
         _validate_account_id(account.id)
     except ValueError as exc:
         raise ReactivationError("account id is invalid") from exc
-    if (
-        isinstance(timeout_seconds, bool)
-        or not isinstance(timeout_seconds, int)
-        or not 1 <= timeout_seconds <= 3600
-    ):
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 3600:
         raise ReactivationError("reactivation timeout is invalid")
     requested_browser = (
         account.reactivation_browser if browser is None else browser
@@ -273,7 +269,7 @@ def _run_reactivation(
 def _kill_login_process_group(process: subprocess.Popen[bytes]) -> None:
     pid = getattr(process, "pid", None)
     signaled_group = False
-    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+    if type(pid) is int and pid > 0:
         try:
             os.killpg(pid, signal.SIGKILL)
             signaled_group = True
