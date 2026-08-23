@@ -513,7 +513,7 @@ def auth_email_from_payload(
     if not isinstance(payload, dict):
         return None
     tokens = payload.get("tokens")
-    if not isinstance(tokens, dict):
+    if type(tokens) is not dict:
         return None
     emails: list[str] = []
     for token_name in ("id_token", "access_token"):

@@ -821,6 +821,17 @@ def test_auth_account_id_rejects_tokens_dict_subclass_hooks(tmp_path):
     ) is None
 
 
+def test_auth_email_rejects_tokens_dict_subclass_hooks(tmp_path):
+    class BrokenTokens(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth email mapping marker")
+
+    assert auth_email_from_payload(
+        {"tokens": BrokenTokens()},
+        path=tmp_path / "auth.json",
+    ) is None
+
+
 @pytest.mark.parametrize(
     "claims",
     [

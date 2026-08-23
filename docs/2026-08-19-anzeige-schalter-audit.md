@@ -10831,3 +10831,17 @@ Account-ID-`.get()`-Hook ab; normale Auth-JSON-Strukturen bleiben unverändert.
 
 Verifikation: **228 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 896: Auth-E-Mail nur aus nativen Token-Dicts lesen
+
+`direct.auth_email_from_payload()` akzeptierte den `tokens`-Block als
+Dict-Subclass per `isinstance` und rief dessen `.get()` für beide Token auf.
+Ein manipuliertes Auth-Mapping konnte die E-Mail-Auswertung dadurch mit einer
+rohen Exception abbrechen.
+
+Der Helper verarbeitet jetzt nur native `dict`-Tokenblöcke; Subklassen werden
+ohne Hook-Aufruf ignoriert. Regression deckt den E-Mail-`.get()`-Hook ab;
+normale Auth-JSON-Strukturen bleiben unverändert.
+
+Verifikation: **229 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
