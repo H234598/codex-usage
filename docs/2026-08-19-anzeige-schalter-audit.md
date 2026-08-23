@@ -13170,3 +13170,22 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1096: Direct-Auth-, Credit- und FD-Öffnungs-Guards vollständig geprüft
+
+`direct.py` hatte noch Kanten bei ungültigen Fensterdauern vor einer gültigen
+Dauer, Top-Level-JWT-Claims ohne verschachtelte Auth-Claims, optionalen
+Auth-Datei-Open-Flags sowie gemischten Credit-Quellen und der Weiterverwendung
+des nächsten gültigen Credit-Schlüssels. Vier Regressionen decken diese Fälle.
+Der Fokuslauf fand zusätzlich neun bestehende Mypy-Narrowing-Fehler: Strikte
+`type(...)`-Prüfungen wurden an den betroffenen `Any`-Werten mit lokalen
+`cast`-Grenzen bzw. einem nicht kollidierenden Schleifenvariablennamen
+präzisiert. Laufzeitverhalten bleibt unverändert.
+
+Verifikation: **360 `tests/test_direct.py`-/`tests/test_live_direct.py`-Tests**,
+**1 erwarteter Plattform-Skip**, `direct.py` **1101/1101 Statements und
+558/558 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check bestanden. Keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
+Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
+Installations- und Reload-Schritte ab.

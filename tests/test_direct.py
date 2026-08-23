@@ -1026,6 +1026,23 @@ def test_missing_usage_limits_error_reports_unsupported_backend_window():
     )
 
 
+def test_missing_usage_limits_error_skips_invalid_window_before_valid_window():
+    error = direct_module._missing_usage_limits_error(
+        {
+            "rate_limit": {
+                "primary_window": {"limit_window_seconds": 0},
+                "secondary_window": {
+                    "limit_window_seconds": 18_000,
+                    "used_percent": 20,
+                },
+            }
+        },
+        "plus",
+    )
+
+    assert "available window 5h" in error
+
+
 def test_missing_usage_limits_error_rejects_mapping_subclass_hooks():
     class BrokenDict(dict):
         def get(self, _key, _default=None):
@@ -1086,6 +1103,24 @@ def test_credit_window_extracts_rate_limits_nested_sources():
 
     assert rate_limits is not None and rate_limits.remaining == 12
     assert by_limit_id is not None and by_limit_id.remaining == 34
+
+
+def test_credit_window_skips_mixed_sources_and_invalid_number_before_valid_value():
+    window = _credit_window(
+        {
+            "rateLimitsByLimitId": {
+                "ignored": "not-a-source",
+                "empty": {"account": {}},
+                "credits-limit": {
+                    "credits": {"used": -1, "consumed": 5},
+                },
+            }
+        },
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    )
+
+    assert window is not None
+    assert window.used == 5
 
 
 def test_credit_window_extracts_explicit_scalar_balance():
@@ -1929,6 +1964,19 @@ def test_auth_identity_rejects_claims_dict_subclass_hooks(tmp_path, monkeypatch)
         {"tokens": {"id_token": "token"}},
         path=tmp_path / "auth.json",
     ) == (None, None)
+
+
+def test_auth_identity_accepts_top_level_claims_without_nested_auth(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda _token: {"user_id": "user-from-token"},
+    )
+
+    assert auth_identity_from_payload(
+        {"tokens": {"id_token": "token"}},
+        path=tmp_path / "auth.json",
+    ) == ("user-from-token", None)
 
 
 def test_auth_identity_rejects_nested_auth_claims_dict_subclass_hooks(
@@ -5181,6 +5229,18 @@ def test_auth_json_helpers_accept_inherited_regular_fd(tmp_path):
     assert raw == '{"tokens": {"access_token": "token"}}'
     assert raw_again == raw
     assert file_stat.st_ino == validated.st_ino
+
+
+def test_read_auth_json_file_handles_missing_optional_open_flags(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text('{"tokens": {"access_token": "token"}}', encoding="utf-8")
+    auth_path.chmod(0o600)
+    for attribute in ("O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
+        monkeypatch.delattr(direct_module.os, attribute, raising=False)
+
+    raw, _ = read_auth_json_file(auth_path)
+
+    assert raw == '{"tokens": {"access_token": "token"}}'
 
 
 def test_validate_auth_json_stat_accepts_secure_regular_file(tmp_path):

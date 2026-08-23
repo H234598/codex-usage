@@ -10,7 +10,7 @@ import time
 from datetime import UTC, datetime
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -317,7 +317,7 @@ def _missing_usage_limits_error(
             if type(raw_seconds) not in (int, float):
                 continue
             try:
-                seconds = float(raw_seconds)
+                seconds = float(cast(int | float, raw_seconds))
             except (OverflowError, TypeError, ValueError):
                 continue
             if (
@@ -331,7 +331,7 @@ def _missing_usage_limits_error(
                     used_percent = window.get("used_percent")
                     if (
                         type(used_percent) in (int, float)
-                        and 0 <= used_percent <= 100
+                        and 0 <= cast(int | float, used_percent) <= 100
                     ):
                         available.add(duration)
     if backend_plan_type is None or type(backend_plan_type) is not str:
@@ -727,12 +727,12 @@ def canonical_backend_identity(
     require_backend_account_id: bool = False,
     reject_ambiguous_backend_identity: bool = False,
 ) -> tuple[str | None, str | None]:
-    for field, value in (
+    for field, flag in (
         ("require_backend_identity", require_backend_identity),
         ("require_backend_account_id", require_backend_account_id),
         ("reject_ambiguous_backend_identity", reject_ambiguous_backend_identity),
     ):
-        if type(value) is not bool:
+        if type(flag) is not bool:
             raise ValueError(f"{field} is invalid")
     for field, value, maximum in (
         ("backend_user_id", backend_user_id, MAX_AUTH_ID_CHARS),
@@ -841,7 +841,7 @@ def _validate_access_token_expiry(token: str, *, path: Path) -> None:
     if type(expiry) not in (int, float):
         raise DirectAuthError(f"auth.json access_token expiry is invalid: {path}")
     try:
-        numeric_expiry = float(expiry)
+        numeric_expiry = float(cast(int | float, expiry))
         if not math.isfinite(numeric_expiry):
             raise ValueError
         datetime.fromtimestamp(numeric_expiry, tz=UTC)
@@ -1713,7 +1713,7 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
             if type(value) not in (int, float, str):
                 continue
             try:
-                numeric = float(value)
+                numeric = float(cast(int | float | str, value))
             except (OverflowError, TypeError, ValueError):
                 continue
             if math.isfinite(numeric) and numeric >= 0:
@@ -1755,7 +1755,9 @@ def _jwt_expiry(token: Any) -> datetime | None:
     if type(exp) not in (int, float):
         return None
     try:
-        return datetime.fromtimestamp(float(exp), tz=UTC).astimezone(LOCAL_TZ)
+        return datetime.fromtimestamp(
+            float(cast(int | float, exp)), tz=UTC
+        ).astimezone(LOCAL_TZ)
     except (OverflowError, OSError, ValueError):
         return None
 
@@ -1770,11 +1772,11 @@ def _current_jwt_claims(token: Any) -> dict[str, Any] | None:
     if type(expiry) not in (int, float):
         return None
     try:
-        if not math.isfinite(float(expiry)):
+        if not math.isfinite(float(cast(int | float, expiry))):
             return None
     except (OverflowError, TypeError, ValueError):
         return None
-    return None if float(expiry) <= time.time() else claims
+    return None if float(cast(int | float, expiry)) <= time.time() else claims
 
 
 def _jwt_claims(token: Any) -> dict[str, Any] | None:
