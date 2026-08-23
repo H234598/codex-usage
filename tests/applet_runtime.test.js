@@ -4174,6 +4174,81 @@ test("legacy panel account content renders optional metric fallbacks", () => {
   assert.equal(result.markup, "[A <token> <cv> <cr> <resets>]");
 });
 
+test("panel update covers safe mode, icon, severity, refresh and tooltip branches", () => {
+  const applet = makeApplet();
+  let labels = 0;
+  let tooltips = [];
+  let icons = [];
+  applet._clearPanelClasses = () => {};
+  applet._setPanelMarkup = () => {};
+  applet.set_applet_label = () => { labels += 1; };
+  applet.set_applet_tooltip = (value) => { tooltips.push(value); };
+  applet.set_applet_icon_path = (value) => { icons.push("path:" + value); };
+  applet.set_applet_icon_symbolic_name = (value) => { icons.push("symbolic:" + value); };
+  applet._panelContent = () => ({plain: "Panel", markup: "<panel>"});
+  applet._tooltipContent = () => ({plain: "Details", markup: "<details>"});
+  applet._fastModeIsActive = () => false;
+  applet._panelItems = () => [];
+
+  applet._safeMode = true;
+  applet._updatePanel();
+  assert.equal(labels, 0);
+
+  applet._safeMode = false;
+  applet._panelContent = () => ({plain: "", markup: ""});
+  applet._tooltipContent = () => ({plain: "", markup: ""});
+  applet._updatePanel();
+  assert.match(tooltips[0], /Keine Codex-Nutzungswerte/);
+
+  applet._panelContent = () => ({plain: "Panel", markup: "<panel>"});
+  applet._tooltipContent = () => ({plain: "Details", markup: "<details>"});
+  applet._commandError = "kaputt";
+  applet._updatePanel();
+  assert.match(tooltips[1], /Fehler:/);
+  applet._commandError = "";
+  applet._refreshing = true;
+  applet._updatePanel();
+  assert.match(tooltips[2], /Aktualisiere/);
+  applet._refreshing = false;
+  applet._tooltipContent = () => ({plain: "", markup: ""});
+  applet._commandError = "kaputt";
+  applet._updatePanel();
+  applet._commandError = "";
+  applet._refreshing = true;
+  applet._updatePanel();
+  applet._refreshing = false;
+
+  const usage = applet._usages[0];
+  const item = {usage, visible: true, slots: [{source: 1, value: 4}]};
+  applet._panelItems = () => [item];
+  applet._panelThreshold = () => 20;
+  applet._updatePanel();
+  usage.status = "error";
+  applet._updatePanel();
+  usage.status = "partial";
+  item.slots = [{source: 1, value: 80}];
+  applet._updatePanel();
+
+  applet._panelItems = () => [];
+  applet._fastModeIsActive = () => true;
+  applet.fastModeIcon = "";
+  applet.metadata = {};
+  applet._panelSurfaceState = null;
+  applet._updatePanel();
+  applet.fastModeIcon = "invalid";
+  applet._panelSurfaceState = null;
+  applet._updatePanel();
+  applet.fastModeIcon = "fast.svg";
+  applet.metadata = {path: "/tmp/applet"};
+  applet.set_applet_icon_path = () => { throw new Error("icon unavailable"); };
+  applet._panelSurfaceState = null;
+  applet._updatePanel();
+  applet.set_applet_icon_path = (value) => { icons.push("path:" + value); };
+  applet._panelSurfaceState = null;
+  applet._updatePanel();
+  assert.ok(icons.includes("symbolic:dialog-warning-symbolic"));
+});
+
 test("extended panel sources render resets, identity, routing and account state", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];

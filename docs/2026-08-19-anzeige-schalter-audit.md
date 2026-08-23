@@ -13813,3 +13813,19 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1135: Applet-Panelaktualisierung vollständig ausgeführt
+
+Die Regression für `_updatePanel` deckt Safe-Mode-Abbruch, leere Tooltip-
+Fallbacks, Command-Fehler, laufende Aktualisierung, kritische/warnende und
+fehlerhafte Accounts sowie gültige, ungültige und fehlerhafte Fast-Mode-Icons
+ab. Damit sind alle V8-Blockranges der Funktion erreicht. Produktionslogik
+blieb unverändert.
+
+Verifikation: **533 `tests/applet_runtime.test.js`-Tests**, **533 bestanden**;
+V8-Raw-Coverage: `_updatePanel` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
