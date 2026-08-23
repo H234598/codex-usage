@@ -1796,12 +1796,16 @@ def _is_access_token_expired(expiry: datetime | None, *, now: datetime) -> bool:
 
 
 def _expired_auth_error(account_id: str, expiry: datetime | None) -> str:
-    if expiry is None:
-        return f"auth.json access_token expired; run `codex-usage reactivate {account_id}`"
+    safe_account_id = account_id if type(account_id) is str else "<unknown>"
+    if expiry is None or type(expiry) is not datetime:
+        return (
+            "auth.json access_token expired; run `codex-usage reactivate "
+            f"{safe_account_id}`"
+        )
     return (
         "auth.json access_token expired at "
         f"{expiry.astimezone(LOCAL_TZ).strftime('%d.%m.%Y %H:%M')}; "
-        f"run `codex-usage reactivate {account_id}`"
+        f"run `codex-usage reactivate {safe_account_id}`"
     )
 
 

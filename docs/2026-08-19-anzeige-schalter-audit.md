@@ -10609,3 +10609,17 @@ unverändert.
 
 Verifikation: **212 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 880: Ablauf-Fehlermeldung gegen Datetime-Hooks härten
+
+`direct._expired_auth_error()` rief `astimezone()` und `strftime()` direkt auf
+dem Ablaufwert auf. Eine Datetime-Subclass konnte dadurch die Loginmeldung
+mit einer rohen Exception verhindern.
+
+Die Funktion formatiert nur native Datetimes mit Zeitstempel; ungültige
+Zeittypen fallen auf die generische Ablaufmeldung zurück. Auch fremde
+Account-ID-Typen werden durch `<unknown>` ersetzt. Regression deckt den
+`astimezone()`-Hook ab; normale Ablaufmeldungen bleiben unverändert.
+
+Verifikation: **213 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
