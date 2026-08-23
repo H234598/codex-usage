@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -5952,3 +5953,1000 @@ def test_watchdog_keeps_browser_account_match_without_auth_identity():
         configured_backend="browser",
         authenticated_fetch=False,
     ) is True
+
+
+def test_scheduler_ambiguous_identity_skips_accounts_with_different_users(monkeypatch):
+    accounts = [
+        Account(
+            id="one",
+            label="One",
+            profile_dir="/tmp/one",
+            auth_json_path="/tmp/one-auth.json",
+        ),
+        Account(
+            id="two",
+            label="Two",
+            profile_dir="/tmp/two",
+            auth_json_path="/tmp/two-auth.json",
+        ),
+    ]
+    identities = {"one": ("user-one", "account-one"), "two": ("user-two", "account-two")}
+    monkeypatch.setattr(
+        scheduler_module,
+        "auth_identity_for_account",
+        lambda account: identities[account.id],
+    )
+    monkeypatch.setattr(scheduler_module, "auth_plan_type_for_account", lambda _account: None)
+
+    assert _ambiguous_direct_accounts(accounts) == frozenset()
+
+
+def test_scheduler_shared_auth_path_falls_back_to_string_when_path_methods_fail(
+    monkeypatch,
+):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        auth_json_path="/tmp/auth.json",
+    )
+    expand_calls = 0
+
+    def expanduser(_path):
+        nonlocal expand_calls
+        expand_calls += 1
+        if expand_calls == 2:
+            raise RuntimeError("home unavailable")
+        return _path
+
+    monkeypatch.setattr(Path, "expanduser", expanduser)
+    monkeypatch.setattr(
+        Path,
+        "resolve",
+        lambda _path, strict=False: (_ for _ in ()).throw(ValueError("resolve failed")),
+    )
+
+    assert scheduler_module._shared_direct_auth_accounts([account]) == frozenset()
+
+
+def test_scheduler_unattributed_direct_error_keeps_previous_detail():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        error="transport warning",
+    )
+
+    rejected = scheduler_module._reject_unattributed_direct_usage(usage)
+
+    assert rejected.status is AccountStatus.ERROR
+    assert rejected.error == (
+        "direct auth source cannot be attributed to one account; transport warning"
+    )
+
+
+def test_scheduler_stabilization_rejects_backend_transition_without_fallback_proof():
+    captured = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("UTC"))
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="app-server",
+        backend_used="app-server",
+        backend_user_id="user",
+        backend_account_id="account-id",
+    )
+    current = replace(
+        previous,
+        captured_at=captured + timedelta(minutes=1),
+        backend_used="direct",
+    )
+
+    assert _stabilize_authenticated_usage(current, previous, max_age_seconds=300) is current
+
+
+def test_scheduler_stabilization_rejects_capture_older_than_previous():
+    captured = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("UTC"))
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user",
+        backend_account_id="account-id",
+    )
+    current = replace(previous, captured_at=captured + timedelta(hours=1))
+
+    assert _stabilize_authenticated_usage(current, previous, max_age_seconds=300) is current
+
+
+def test_scheduler_stabilization_does_not_reuse_confirmed_app_server_fallback():
+    captured = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("UTC"))
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        status=AccountStatus.OK,
+        backend_configured="app-server",
+        backend_used="app-server",
+        backend_user_id="user",
+        backend_account_id="account-id",
+        fallback_reason=scheduler_module.AUTHENTICATED_RESET_FALLBACK_REASON,
+        stale=True,
+    )
+    current = replace(
+        previous,
+        captured_at=captured + timedelta(minutes=1),
+        stale=False,
+        five_hour=LimitWindow(name="5h", remaining=99),
+    )
+
+    assert _stabilize_authenticated_usage(current, previous, max_age_seconds=300) is current
+
+
+@pytest.mark.parametrize("current", [None, object()])
+def test_scheduler_stabilize_main_pool_rejects_non_pool(current):
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+    )
+
+    assert _stabilize_main_pool(
+        current,
+        previous,
+        retain_five_hour=True,
+        retain_weekly=True,
+    ) is current
+
+
+def test_scheduler_stabilize_main_pool_appends_fallback_window_and_keeps_equal_pool():
+    captured = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("UTC"))
+    previous_window = LimitWindow(name="5h", remaining=80)
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        five_hour=previous_window,
+        main=UsagePool(key="main", display_name="Codex", windows=()),
+    )
+    current = UsagePool(key="main", display_name="Codex", windows=())
+    appended = _stabilize_main_pool(
+        current,
+        previous,
+        retain_five_hour=True,
+        retain_weekly=False,
+    )
+    assert appended.windows == (previous_window,)
+
+    equal = UsagePool(key="main", display_name="Codex", windows=(previous_window,))
+    assert _stabilize_main_pool(
+        equal,
+        previous,
+        retain_five_hour=True,
+        retain_weekly=False,
+    ) is equal
+
+
+def test_scheduler_stabilize_main_pool_skips_missing_fallback_window():
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        main=UsagePool(key="main", display_name="Codex", windows=()),
+    )
+    current = UsagePool(key="main", display_name="Codex", windows=())
+
+    assert _stabilize_main_pool(
+        current,
+        previous,
+        retain_five_hour=True,
+        retain_weekly=False,
+    ) is current
+
+
+def test_scheduler_reset_discontinuity_rejects_expired_unknown_and_absolute_resets():
+    reference = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("UTC"))
+    expired = LimitWindow(name="5h", reset_at=reference)
+    future_unknown = LimitWindow(name="unknown", reset_at=reference + timedelta(hours=1))
+    assert (
+        _has_unexpired_window_reset_discontinuity(
+            expired,
+            expired,
+            reference_at=reference,
+        )
+        is False
+    )
+    assert (
+        _has_unexpired_window_reset_discontinuity(
+            future_unknown,
+            future_unknown,
+            reference_at=reference,
+        )
+        is False
+    )
+    absolute = replace(future_unknown, source="app-server")
+    assert (
+        _has_unexpired_window_reset_discontinuity(
+            absolute,
+            future_unknown,
+            reference_at=reference,
+        )
+        is False
+    )
+
+
+def test_scheduler_reset_discontinuity_rejects_relative_metadata_and_countdown(monkeypatch):
+    reference = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("UTC"))
+    malformed = LimitWindow(
+        name="5h",
+        reset_at=reference + timedelta(hours=1),
+        raw='{"limit_window_seconds": 18000, "reset_after_seconds": "bad"}',
+    )
+    valid = replace(
+        malformed,
+        raw='{"limit_window_seconds": 18000, "reset_after_seconds": 17900}',
+    )
+    assert scheduler_module._has_relative_reset_metadata(malformed) is True
+    assert scheduler_module._uses_relative_reset_time(valid) is True
+    assert (
+        _has_unexpired_window_reset_discontinuity(
+            malformed,
+            malformed,
+            reference_at=reference,
+        )
+        is False
+    )
+    assert (
+        _has_unexpired_window_reset_discontinuity(
+            valid,
+            valid,
+            reference_at=reference,
+        )
+        is False
+    )
+
+    absolute = replace(
+        valid,
+        name="5h",
+        source="app-server",
+        raw=None,
+    )
+    assert (
+        _has_unexpired_window_reset_discontinuity(
+            absolute,
+            valid,
+            reference_at=reference,
+        )
+        is False
+    )
+
+    monkeypatch.setattr(
+        scheduler_module,
+        "_has_relative_reset_metadata",
+        lambda _window: False,
+    )
+    assert (
+        _has_unexpired_window_reset_discontinuity(
+            valid,
+            valid,
+            reference_at=reference,
+        )
+        is False
+    )
+
+
+def test_scheduler_raw_number_and_duration_helpers_fail_closed(monkeypatch):
+    assert _raw_number("{}", "limit_window_seconds") is None
+    assert _window_duration_seconds(LimitWindow(name="5h", raw="{}")) is None
+
+    monkeypatch.setattr(
+        scheduler_module,
+        "float",
+        lambda _value: (_ for _ in ()).throw(ValueError("bad number")),
+        raising=False,
+    )
+    assert _raw_number('{"limit_window_seconds": 18000}', "limit_window_seconds") is None
+    assert _window_duration_seconds(
+        LimitWindow(name="5h", raw='{"limit_window_seconds": 18000}')
+    ) is None
+
+
+def test_scheduler_should_retain_window_requires_two_percent_values():
+    reference = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("UTC"))
+    current = SimpleNamespace(
+        name="5h",
+        raw=None,
+        reset_at=reference + timedelta(hours=1),
+        has_invalid_usage_value=False,
+        used=None,
+        limit=None,
+        remaining=None,
+        percent=None,
+    )
+    previous = SimpleNamespace(
+        name="5h",
+        raw=None,
+        reset_at=reference + timedelta(hours=2),
+        has_invalid_usage_value=False,
+        used=None,
+        limit=None,
+        remaining=None,
+        percent=None,
+    )
+
+    assert (
+        scheduler_module._should_retain_previous_window(
+            current,
+            previous,
+            reference_at=reference,
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    ("current", "previous"),
+    [
+        (LimitWindow(name="5h"), LimitWindow(name="")),
+        (
+            LimitWindow(name="5h", raw='{"limit_window_seconds": 18000}'),
+            LimitWindow(name="", raw='{"limit_window_seconds": 18000}'),
+        ),
+        (
+            LimitWindow(name="5h", raw='{"limit_window_seconds": 18000}'),
+            LimitWindow(name="weekly", raw='{"limit_window_seconds": 604800}'),
+        ),
+        (
+            LimitWindow(name="5h", raw='{"limit_window_seconds": 604800}'),
+            LimitWindow(name="5h", raw='{"limit_window_seconds": 18000}'),
+        ),
+    ],
+)
+def test_scheduler_window_duration_matching_rejects_identity_and_duration_mismatches(
+    current,
+    previous,
+):
+    assert scheduler_module._window_duration_matches(current, previous) is False
+
+
+def test_scheduler_conservative_usage_skips_missing_windows():
+    now = datetime.now().astimezone()
+    current = AccountUsage(account_id="account", label="Account", captured_at=now)
+    previous = AccountUsage(account_id="account", label="Account", captured_at=now)
+
+    assert _is_more_conservative_direct_usage(current, previous) is False
+
+
+def test_scheduler_remaining_percent_covers_invalid_and_absolute_fallbacks():
+    def window(**values):
+        fields = dict(
+            has_invalid_usage_value=False,
+            used=None,
+            limit=None,
+            remaining=None,
+            percent=None,
+        )
+        fields.update(values)
+        return SimpleNamespace(**fields)
+
+    assert _remaining_percent(window(used="bad", limit=100)) is None
+    assert _remaining_percent(window(used=-1, limit=100)) is None
+    assert _remaining_percent(window(limit=0, remaining=0)) is None
+    assert _remaining_percent(window(limit=100, remaining=50)) == 50
+    assert _remaining_percent(window(limit=100, remaining=101)) is None
+    assert _remaining_percent(window(remaining=101)) is None
+    assert _remaining_percent(window(percent=50)) == 50
+
+
+def test_scheduler_finite_number_maps_conversion_errors(monkeypatch):
+    monkeypatch.setattr(
+        scheduler_module,
+        "float",
+        lambda _value: (_ for _ in ()).throw(OverflowError("too large")),
+        raising=False,
+    )
+
+    assert _finite_number(1) is None
+
+
+def test_scheduler_usage_map_rejects_invalid_accounts_and_result_shapes():
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+    )
+
+    assert _usage_map_for_accounts([usage], [object()]) is None  # type: ignore[list-item]
+    assert _usage_map_for_accounts([object()], [account]) is None  # type: ignore[list-item]
+    duplicate_account = Account(
+        id="account",
+        label="Duplicate",
+        profile_dir="/tmp/duplicate",
+    )
+    other_usage = replace(usage, account_id="other")
+    assert _usage_map_for_accounts([usage, other_usage], [account, duplicate_account]) is None
+
+
+def test_scheduler_usage_map_rejects_unhashable_result_identity():
+    usage = AccountUsage(
+        account_id=[],  # type: ignore[arg-type]
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+    )
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+
+    assert _usage_map_for_accounts([usage], [account]) is None
+
+
+def test_scheduler_watch_core_resets_legacy_windows_and_rejects_malformed_shapes():
+    now = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("UTC"))
+    legacy = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=now,
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=80,
+            reset_at=now + timedelta(hours=1),
+        ),
+    )
+    assert _watch_core_resets_current(legacy, now=now) is True
+
+    legacy_without_main = AccountUsage(
+        account_id="legacy",
+        label="Legacy",
+        captured_at=now,
+    )
+    object.__setattr__(
+        legacy_without_main,
+        "five_hour",
+        LimitWindow(name="5h", remaining=80, reset_at=now + timedelta(hours=1)),
+    )
+    assert _watch_core_resets_current(legacy_without_main, now=now) is True
+
+    malformed_pool = replace(
+        legacy,
+        main=UsagePool(key="main", display_name="Codex", windows=(object(),)),  # type: ignore[arg-type]
+    )
+    assert _watch_core_resets_current(malformed_pool, now=now) is False
+
+    naive = replace(
+        legacy,
+        main=None,
+        five_hour=LimitWindow(name="5h", remaining=80, reset_at=datetime(2026, 8, 23, 11, 0)),
+    )
+    assert _watch_core_resets_current(naive, now=now) is False
+
+    expired = replace(
+        legacy,
+        main=None,
+        five_hour=LimitWindow(name="5h", remaining=80, reset_at=now),
+    )
+    assert _watch_core_resets_current(expired, now=now) is False
+
+
+def test_scheduler_failure_usages_ignore_invalid_attempted_iterable():
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+
+    failures = scheduler_module._watch_failure_usages(
+        [account],
+        object(),  # type: ignore[arg-type]
+        error="fallback",
+    )
+
+    assert failures[0].error == "fallback"
+
+
+def test_scheduler_watch_json_success_handles_keyboard_interrupt_and_signal_guards(
+    monkeypatch,
+    capsys,
+):
+    class StopAfterWait:
+        def __init__(self):
+            self.stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def wait(self, _delay):
+            self.stopped = True
+            return True
+
+        def set(self):
+            self.stopped = True
+
+    signal_calls = []
+
+    def signal_call(signum, handler):
+        signal_calls.append((signum, handler))
+        if len(signal_calls) > 2:
+            raise OSError("restore failed")
+
+    monkeypatch.setattr(scheduler_module, "Event", StopAfterWait)
+    monkeypatch.setattr(scheduler_module, "signal", SimpleNamespace(
+        SIGINT=signal.SIGINT,
+        SIGTERM=signal.SIGTERM,
+        getsignal=lambda _signum: "previous",
+        signal=signal_call,
+    ))
+    monkeypatch.setattr(scheduler_module, "fetch_all", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(scheduler_module, "render_json", lambda _usages: "[]")
+
+    watch(AppConfig(accounts=()), (), output="json", interval_seconds=60)
+    signal_calls[0][1](None, None)
+
+    assert capsys.readouterr().out == "[]\n"
+    assert len(signal_calls) == 4
+
+
+def test_scheduler_watch_handles_signal_install_failure(monkeypatch):
+    class StopAfterWait:
+        def is_set(self):
+            return False
+
+        def wait(self, _delay):
+            return True
+
+        def set(self):
+            return None
+
+    monkeypatch.setattr(scheduler_module, "Event", StopAfterWait)
+    monkeypatch.setattr(scheduler_module.signal, "getsignal", lambda _signum: "previous")
+    monkeypatch.setattr(
+        scheduler_module.signal,
+        "signal",
+        lambda *_args: (_ for _ in ()).throw(OSError("install failed")),
+    )
+    monkeypatch.setattr(scheduler_module, "fetch_all", lambda *_args, **_kwargs: [])
+
+    watch(AppConfig(accounts=()), (), output="table", interval_seconds=60)
+
+
+def test_scheduler_watch_handles_keyboard_interrupt(monkeypatch):
+    class StopAfterInterrupt:
+        def __init__(self):
+            self.set_called = False
+
+        def is_set(self):
+            return False
+
+        def wait(self, _delay):
+            return True
+
+        def set(self):
+            self.set_called = True
+
+    event = StopAfterInterrupt()
+    monkeypatch.setattr(scheduler_module, "Event", lambda: event)
+    monkeypatch.setattr(
+        scheduler_module,
+        "fetch_all",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    monkeypatch.setattr(scheduler_module.signal, "getsignal", lambda _signum: "previous")
+    monkeypatch.setattr(scheduler_module.signal, "signal", lambda *_args: None)
+
+    watch(AppConfig(accounts=()), (), output="table", interval_seconds=60)
+
+    assert event.set_called is True
+
+
+def test_scheduler_watchdog_refetches_when_block_generation_read_fails(monkeypatch):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir="/tmp/blocked",
+        backend="direct",
+    )
+    snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
+        blocked_until=datetime.now().astimezone() + timedelta(hours=1),
+        state_generation=1,
+    )
+    fetched: list[str] = []
+
+    monkeypatch.setattr(scheduler_module, "load_usage_snapshot", lambda *_args: snapshot)
+    monkeypatch.setattr(scheduler_module, "load_current_usage", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "_blocked_until_active", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        scheduler_module,
+        "_blocked_snapshot_is_consistent",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_blocked_snapshot_matches_account",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_current_supersedes_blocked_snapshot",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "load_state_generation",
+        lambda *_args: (_ for _ in ()).throw(ValueError("generation corrupt")),
+    )
+
+    def fake_fetch(_config, selected, **_kwargs):
+        fetched.extend(account.id for account in selected)
+        return []
+
+    monkeypatch.setattr(scheduler_module, "fetch_all", fake_fetch)
+    monkeypatch.setattr(scheduler_module, "save_current_usage", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "save_usage_snapshot", lambda *_args: None)
+
+    watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        direct=True,
+    )
+
+    assert fetched == ["blocked"]
+
+
+def test_scheduler_watchdog_refetches_block_when_generation_changes(monkeypatch):
+    account = Account(
+        id="blocked",
+        label="Blocked",
+        profile_dir="/tmp/blocked",
+        backend="direct",
+    )
+    snapshot = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.BLOCKED,
+        backend_configured="direct",
+        backend_used="direct",
+        blocked_until=datetime.now().astimezone() + timedelta(hours=1),
+    )
+    fresh = AccountUsage(
+        account_id="blocked",
+        label="Blocked",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+        main=_usable_main(
+            LimitWindow(
+                name="5h",
+                remaining=80,
+                reset_at=datetime.now().astimezone() + timedelta(hours=1),
+            ),
+            availability_sources=("usage",),
+        ),
+    )
+    selected: list[list[str]] = []
+
+    monkeypatch.setattr(scheduler_module, "load_usage_snapshot", lambda *_args: snapshot)
+    monkeypatch.setattr(scheduler_module, "load_current_usage", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "_blocked_until_active", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        scheduler_module,
+        "_blocked_snapshot_is_consistent",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_blocked_snapshot_matches_account",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_current_supersedes_blocked_snapshot",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(scheduler_module, "load_state_generation", lambda *_args: 7)
+    monkeypatch.setattr(
+        scheduler_module,
+        "_blocked_snapshot_generation_is_current",
+        lambda *_args: False,
+    )
+
+    def fake_fetch(_config, accounts, **_kwargs):
+        chosen = [item.id for item in accounts]
+        selected.append(chosen)
+        return [fresh] if chosen else []
+
+    monkeypatch.setattr(scheduler_module, "fetch_all", fake_fetch)
+    monkeypatch.setattr(scheduler_module, "save_current_usage", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "save_usage_snapshot", lambda *_args: None)
+
+    result = watchdog(AppConfig(accounts=(account,)), (account,), output="json")
+
+    assert selected == [[], ["blocked"]]
+    assert result == [fresh]
+
+
+def test_scheduler_watchdog_skips_account_without_fetched_usage(monkeypatch):
+    account = Account(id="missing", label="Missing", profile_dir="/tmp/missing")
+    monkeypatch.setattr(scheduler_module, "load_usage_snapshot", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "load_current_usage", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "fetch_all", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(scheduler_module, "_usage_map_for_accounts", lambda *_args: {})
+
+    assert watchdog(AppConfig(accounts=(account,)), (account,), output="json") == []
+
+
+def test_scheduler_watchdog_contains_snapshot_save_failure(monkeypatch):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        backend="direct",
+    )
+    captured = datetime.now().astimezone()
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        backend_configured="direct",
+        backend_used="direct",
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=80, reset_at=captured + timedelta(hours=1)),
+            availability_sources=("usage",),
+        ),
+    )
+    monkeypatch.setattr(scheduler_module, "load_usage_snapshot", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "load_current_usage", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "fetch_all", lambda *_args, **_kwargs: [usage])
+    monkeypatch.setattr(
+        scheduler_module,
+        "save_current_usage",
+        lambda *_args: (_ for _ in ()).throw(OSError("read-only")),
+    )
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        direct=True,
+    )
+
+    assert result[0].status is AccountStatus.ERROR
+    assert result[0].error == "snapshot save failed: OSError"
+
+
+def test_scheduler_blocked_snapshot_helpers_fail_closed(monkeypatch):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.BLOCKED,
+        blocked_until=datetime.now().astimezone() + timedelta(hours=1),
+        five_hour=LimitWindow(name="5h", remaining=0),
+        state_generation=1,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_block_state",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad block")),
+    )
+    assert (
+        scheduler_module._blocked_snapshot_is_consistent(
+            usage,
+            now=datetime.now().astimezone(),
+        )
+        is False
+    )
+
+    monkeypatch.setattr(
+        scheduler_module,
+        "load_state_generation",
+        lambda *_args: (_ for _ in ()).throw(OSError("state unavailable")),
+    )
+    assert scheduler_module._blocked_snapshot_generation_is_current(usage, "account") is False
+
+    assert _capture_is_too_far_in_future(None, datetime.now().astimezone()) is False
+
+
+def test_scheduler_blocked_snapshot_matching_rejects_unbound_browser_and_missing_auth(
+    monkeypatch,
+):
+    account = Account(id="browser", label="Browser", profile_dir="/tmp/browser")
+    browser_snapshot = AccountUsage(
+        account_id="browser",
+        label="Browser",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="browser",
+        backend_account_id="account-id",
+    )
+    assert (
+        _blocked_snapshot_matches_account(
+            account,
+            browser_snapshot,
+            auth_json_path=None,
+            configured_backend="direct",
+            authenticated_fetch=False,
+        )
+        is False
+    )
+
+    monkeypatch.setattr(
+        scheduler_module,
+        "auth_identity_from_file",
+        lambda _path: ("user", None),
+    )
+    assert (
+        _blocked_snapshot_matches_account(
+            account,
+            replace(browser_snapshot, backend_used="direct"),
+            auth_json_path=None,
+            configured_backend="direct",
+            authenticated_fetch=True,
+        )
+        is False
+    )
+
+
+def test_scheduler_blocked_snapshot_matching_uses_default_auth_identity(monkeypatch):
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+    snapshot = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user",
+        backend_account_id="account-id",
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "auth_identity_from_file",
+        lambda _path: ("user", "account-id"),
+    )
+
+    assert (
+        _blocked_snapshot_matches_account(
+            account,
+            snapshot,
+            auth_json_path=None,
+            configured_backend="direct",
+            authenticated_fetch=True,
+        )
+        is True
+    )
+
+
+def test_scheduler_effective_backend_returns_none_without_account():
+    assert (
+        scheduler_module._fetch_effective_backend(
+            None,
+            direct=False,
+            backend_override=None,
+            auth_json_path=None,
+        )
+        is None
+    )
+
+
+def test_scheduler_block_state_fails_closed_for_unavailable_pool_without_windows():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            available=False,
+            windows=(),
+        ),
+    )
+
+    assert _block_state(usage, now=datetime.now().astimezone()) == (
+        None,
+        "usage limit reached: main; reset time unknown",
+    )
+
+
+class _NeverEqualDatetime(datetime):
+    def __eq__(self, _other):
+        return False
+
+
+def test_scheduler_block_state_handles_unmatched_active_window_name():
+    reset_at = _NeverEqualDatetime(2099, 8, 23, 12, tzinfo=ZoneInfo("UTC"))
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 8, 23, 10, tzinfo=ZoneInfo("UTC")),
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=0, reset_at=reset_at),
+        ),
+    )
+
+    blocked_until, reason = _block_state(
+        usage,
+        now=datetime(2026, 8, 23, 10, tzinfo=ZoneInfo("UTC")),
+    )
+
+    assert blocked_until is reset_at
+    assert reason == "usage limit reached; release at 2099-08-23T12:00:00+00:00"
+
+
+def test_scheduler_block_state_releases_expired_exhausted_window():
+    now = datetime(2026, 8, 23, 10, tzinfo=ZoneInfo("UTC"))
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=now,
+        main=_usable_main(
+            LimitWindow(name="5h", remaining=0, reset_at=now),
+        ),
+    )
+
+    assert _block_state(usage, now=now) == (None, None)
+
+
+def test_scheduler_window_exhaustion_fail_closed_matrix():
+    class RawWindow:
+        has_invalid_usage_value = False
+        used = None
+        limit = None
+        remaining = None
+        percent = None
+        remaining_percent = 50
+
+    assert _window_is_exhausted(None) is False
+    assert _window_is_exhausted(SimpleNamespace(
+        has_invalid_usage_value=False,
+        used="bad",
+        limit=None,
+        remaining=None,
+        percent=None,
+        remaining_percent=50,
+    )) is True
+    assert _window_is_exhausted(SimpleNamespace(
+        has_invalid_usage_value=False,
+        used=-1,
+        limit=100,
+        remaining=None,
+        percent=None,
+        remaining_percent=50,
+    )) is True
+    assert _window_is_exhausted(SimpleNamespace(
+        has_invalid_usage_value=False,
+        used=None,
+        limit=0,
+        remaining=None,
+        percent=None,
+        remaining_percent=50,
+    )) is True
+    assert _window_is_exhausted(SimpleNamespace(
+        has_invalid_usage_value=False,
+        used=None,
+        limit=None,
+        remaining=-1,
+        percent=None,
+        remaining_percent=50,
+    )) is True
+    assert _window_is_exhausted(SimpleNamespace(
+        has_invalid_usage_value=False,
+        used=None,
+        limit=None,
+        remaining=101,
+        percent=50,
+        remaining_percent=50,
+    )) is False
+    assert _window_is_exhausted(SimpleNamespace(
+        has_invalid_usage_value=False,
+        used=None,
+        limit=None,
+        remaining=101,
+        percent=101,
+        remaining_percent=50,
+    )) is True
+    assert _window_is_exhausted(RawWindow()) is True

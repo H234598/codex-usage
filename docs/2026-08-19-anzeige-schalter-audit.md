@@ -12819,3 +12819,18 @@ Verifikation: **490 Browser-/CLI-/Entrypoint-/Reactivation-Tests**, Mypy für
 **100 %**. Die zwei bestehenden `runpy`-Warnungen bleiben erwartbar; keine
 Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1075: Scheduler- und Watchdog-Guards vollständig geprüft
+
+Direkt-Identitätsambiguität, Auth-Pfad-Fallbacks, authentifizierte
+Stabilisierung, Reset-/Window-Klassifikation, Prozent-/Zahlenvalidierung,
+Usage-Mapping, Legacy-Resetprüfung, Watch-Signal-/KeyboardInterrupt-Cleanup
+und Watchdog-Snapshot-/Generations-/Provenancepfade waren noch nicht überall
+direkt ausgeführt. Vierzig fokussierte Regressionen decken sämtliche
+verbleibenden `scheduler.py`-Branches einschließlich fail-closed
+Exhaustion-/Block-State-Fälle ab; Produktionscode blieb unverändert.
+
+Verifikation: **265 Scheduler-Tests**, Mypy für `scheduler.py`, Ruff und
+Diff-Check bestanden; Coverage-Auszug für `scheduler.py`: **100 %**. Keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt.
