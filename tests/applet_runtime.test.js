@@ -10055,6 +10055,19 @@ test("restlaufzeit is rendered, styled and uses the per-surface target", () => {
   assert.equal(applet._formatDurationPart(150, 1), "02:30");
   assert.equal(applet._formatDurationPart(150, 2), "2 Stunden 30 Minuten");
   assert.equal(applet._formatDurationPart(150, 3), "2h 30m");
+  assert.equal(applet._formatDurationPart(null, 0), "–");
+  assert.equal(applet._formatDurationPart(Infinity, 0), "–");
+  assert.equal(applet._formatDurationPart(-1, 2), "0 Minuten");
+  assert.equal(applet._formatDurationPart(90, 0, true), "1,5h");
+  assert.equal(applet._formatDurationPart(1500, 1), "1d 01:00");
+  assert.equal(applet._formatDurationPart(1501, 2), "1 Tag 1 Stunde 1 Minute");
+  assert.equal(applet._formatDurationPart(2880, 2), "2 Tage 0 Stunden");
+  assert.equal(applet._formatDurationPart(0, 2), "0 Minuten");
+  assert.equal(applet._formatDurationPart(1501, 0), "1d 1h 1m");
+  assert.equal(applet._formatDurationPart(1440, 0), "1d 0h");
+  assert.equal(applet._formatDurationPart(61, 0), "1h 1m");
+  assert.equal(applet._formatDurationPart(60, 0), "1h");
+  assert.equal(applet._formatDurationPart(1, 0), "1m");
 });
 
 test("style modes control normal, threshold and disabled formatting", () => {

@@ -13574,3 +13574,19 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1120: Applet-Dauerformatierung vollständig ausgeführt
+
+Die Dauerformatierungs-Regression deckt jetzt ungültige und negative Werte,
+Dezimal-Kompaktformat, Tage mit Singular und Plural, Stunden-/Minuten-Singular
+und -Plural, Nullwerte sowie alle vier expliziten und den Standardausgabezweig
+ab. `_formatDurationPart` hat damit keine ungezählten V8-Blockranges mehr.
+Produktionslogik blieb unverändert.
+
+Verifikation: **518 `tests/applet_runtime.test.js`-Tests**, **518 bestanden**;
+V8-Raw-Coverage: `_formatDurationPart` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
