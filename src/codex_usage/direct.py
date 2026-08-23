@@ -1530,10 +1530,10 @@ def _latest_response_is_absolute_reset(
 
 def _rate_limit_window(payload: dict[str, Any], key: str) -> dict[str, Any] | None:
     rate_limit = payload.get("rate_limit")
-    if not isinstance(rate_limit, dict):
+    if type(rate_limit) is not dict:
         return None
     window = rate_limit.get(key)
-    return window if isinstance(window, dict) else None
+    return window if type(window) is dict else None
 
 
 def _progressive_window_identity_is_stable(windows: list[tuple]) -> bool:

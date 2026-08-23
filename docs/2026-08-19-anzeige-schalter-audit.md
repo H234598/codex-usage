@@ -10760,3 +10760,18 @@ Mappings liefern eine Signatur ohne Fensterwerte. Regression deckt den
 
 Verifikation: **223 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 891: Rate-Limit-Fenster auf native Dicts begrenzen
+
+`direct._rate_limit_window()` akzeptierte Rate-Limit- und Fenster-Dict-
+Subklassen per `isinstance` und rief das Rate-Limit-`.get()` direkt auf. Ein
+manipuliertes Mapping konnte Resetprüfungen dadurch mit einer rohen Exception
+abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich native `dict`-Objekte auf beiden
+Ebenen; Subklassen werden ohne Hook-Aufruf als nicht vorhanden behandelt.
+Regression deckt beide Mapping-Hooks ab; normale Fensterauflösung bleibt
+unverändert.
+
+Verifikation: **224 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
