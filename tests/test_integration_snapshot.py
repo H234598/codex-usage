@@ -96,6 +96,17 @@ def test_schema1_projection_rejects_timezone_callbacks_that_raise():
         _utc_text(datetime(2026, 8, 15, 10, 0, tzinfo=_RaisingTimezone()))
 
 
+def test_schema1_canonical_timestamp_rejects_string_subclass_hooks():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, _canonical_timestamp
+
+    class BrokenStr(str):
+        def __contains__(self, _value):
+            raise RuntimeError("synthetic snapshot timestamp marker")
+
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_timestamp(BrokenStr("2026-08-15T10:00:00Z"))
+
+
 @pytest.mark.parametrize("value", [None, [], {}, "invalid", 1, True])
 def test_schema1_projection_rejects_malformed_usage_timestamp(value):
     from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document

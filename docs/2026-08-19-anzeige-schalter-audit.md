@@ -10091,3 +10091,16 @@ sicher, dass kein Cache angelegt wird.
 
 Verifikation: **55 Snapshot-Tests**, **28 Integration-Entrypoint-Tests**, Ruff
 und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 842: Snapshot-Zeitstempel auf Built-in-Strings begrenzen
+
+`integration_snapshot._canonical_timestamp()` akzeptierte `str`-Subklassen.
+Ein überschriebenes `__contains__` konnte die Vorprüfung vor dem kontrollierten
+ISO-Parser mit einer rohen Exception abbrechen.
+
+Die Funktion verlangt jetzt Built-in-`str` vor `T`-Suche und Normalisierung.
+Regression simuliert den fehlerhaften String-Hook; gültige ISO-Zeitwerte bleiben
+unverändert.
+
+Verifikation: **56 Snapshot-Tests**, **28 Integration-Entrypoint-Tests**, Ruff
+und Diff-Check bestanden; keine Settings-Fenster gestartet.

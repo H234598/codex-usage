@@ -447,7 +447,7 @@ def _scan_secrets(value: object, *, depth: int = 0) -> None:
 
 
 def _canonical_timestamp(value: object) -> str:
-    if not isinstance(value, str) or "T" not in value:
+    if type(value) is not str or "T" not in value:
         _invalid()
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
