@@ -10362,3 +10362,16 @@ Der Zeitparser verlangt jetzt Built-in-`str` vor Trim-, Ersetzungs- und
 
 Verifikation: **194 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 862: Auth-Pfad auf Built-in-Strings begrenzen
+
+`direct._resolve_auth_json_path()` verglich `Account.auth_json_path` vor der
+Typprüfung mit `""`. Eine `str`-Subklasse konnte dabei ihren `__eq__`-Hook
+ausführen und die sichere Pfadauflösung mit einer rohen Exception abbrechen.
+
+Der Resolver prüft jetzt zuerst den exakten Built-in-Stringtyp, behandelt erst
+danach den leeren Pfad und übergibt nur validierte Werte an `Path`. Regression
+simuliert den fehlerhaften Vergleichs-Hook.
+
+Verifikation: **195 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

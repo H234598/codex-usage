@@ -384,12 +384,15 @@ def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
             return override.expanduser()
         except RuntimeError as exc:
             raise DirectAuthError("auth.json path is invalid") from exc
-    if account.auth_json_path is None or account.auth_json_path == "":
+    configured_path = account.auth_json_path
+    if configured_path is None:
         return default_auth_json_path()
-    if not isinstance(account.auth_json_path, str):
+    if type(configured_path) is not str:
         raise DirectAuthError("auth.json path is invalid")
+    if not configured_path:
+        return default_auth_json_path()
     try:
-        return Path(account.auth_json_path).expanduser()
+        return Path(configured_path).expanduser()
     except RuntimeError as exc:
         raise DirectAuthError("auth.json path is invalid") from exc
 

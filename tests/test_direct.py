@@ -174,6 +174,21 @@ def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     assert usage.error == "auth.json path is invalid"
 
 
+def test_direct_resolve_auth_path_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __eq__(self, _other):
+            raise RuntimeError("synthetic auth path marker")
+
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        auth_json_path=BrokenStr("/tmp/auth.json"),
+    )
+    with pytest.raises(DirectAuthError, match=r"auth\.json path is invalid"):
+        direct_module._resolve_auth_json_path(account, None)
+
+
 def test_direct_fetch_rejects_unknown_auth_home(tmp_path):
     account = Account(
         id="work",
