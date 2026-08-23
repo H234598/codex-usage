@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 import codex_usage.browser as browser_module
 from codex_usage.browser import (
@@ -835,7 +836,10 @@ def test_fetch_closes_context_when_navigation_fails(tmp_path, monkeypatch):
     assert context_state["closed"] is True
 
 
-def test_fetch_cloudflare_clears_values_and_invalidates_cache(tmp_path, monkeypatch):
+@pytest.mark.parametrize("wait_error", [None, PlaywrightTimeoutError("network idle")])
+def test_fetch_cloudflare_clears_values_and_invalidates_cache(
+    tmp_path, monkeypatch, wait_error
+):
     analytics_url = "https://chatgpt.com/codex/cloud/settings/analytics"
     account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
 
@@ -852,6 +856,8 @@ def test_fetch_cloudflare_clears_values_and_invalidates_cache(tmp_path, monkeypa
             return FakeResponse()
 
         def wait_for_load_state(self, *_args, **_kwargs):
+            if wait_error is not None:
+                raise wait_error
             return None
 
         def title(self):
@@ -895,7 +901,296 @@ def test_fetch_cloudflare_clears_values_and_invalidates_cache(tmp_path, monkeypa
     assert usage.weekly is None
 
 
-def test_diagnose_uses_configured_account_auth_json_by_default(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("failure", "expected_status", "message"),
+    [
+        ("selector", "error", "selector failed"),
+        ("backend", "error", "backend failed"),
+        ("auth", "login_required", "auth failed"),
+        ("canonical", "error", "canonical failed"),
+    ],
+)
+def test_fetch_maps_identity_processing_errors(
+    tmp_path, monkeypatch, failure, expected_status, message
+):
+    account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
+
+    class FakeResponse:
+        status = 200
+
+    class FakePage:
+        url = "https://chatgpt.com/codex/cloud/settings/analytics"
+
+        def on(self, *_args):
+            return None
+
+        def goto(self, *_args, **_kwargs):
+            return FakeResponse()
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def title(self):
+            return "Analytics"
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(browser_module, "_prepare_profile", lambda _account: tmp_path / "profile")
+    monkeypatch.setattr(browser_module, "_profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr(browser_module, "sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        browser_module,
+        "_launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(browser_module, "_safe_page_text_sources", lambda _page: ("", ()))
+    monkeypatch.setattr(browser_module, "auth_identity_for_account", lambda _account: (None, None))
+    monkeypatch.setattr(browser_module, "auth_plan_type_for_account", lambda _account: None)
+    if failure == "selector":
+        monkeypatch.setattr(
+            browser_module,
+            "select_identity_consistent_candidates",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError(message)),
+        )
+    else:
+        monkeypatch.setattr(
+            browser_module,
+            "select_identity_consistent_candidates",
+            lambda *_args, **_kwargs: [],
+        )
+        monkeypatch.setattr(
+            browser_module,
+            "extract_windows",
+            lambda **_kwargs: (None, None),
+        )
+        if failure == "backend":
+            monkeypatch.setattr(
+                browser_module,
+                "backend_identity_from_candidates",
+                lambda *_args: (_ for _ in ()).throw(ValueError(message)),
+            )
+        else:
+            monkeypatch.setattr(
+                browser_module,
+                "backend_identity_from_candidates",
+                lambda *_args: (None, None),
+            )
+            monkeypatch.setattr(
+                browser_module,
+                "backend_plan_type_from_candidates",
+                lambda *_args: None,
+            )
+            monkeypatch.setattr(
+                browser_module,
+                "canonical_backend_identity",
+                lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    browser_module.DirectAuthError(message)
+                    if failure == "auth"
+                    else ValueError(message)
+                ),
+            )
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status.value == expected_status
+    assert usage.error == message
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_status", "message"),
+    [
+        ("login", "login_required", "browser login required"),
+        ("http", "error", "browser analytics request failed: HTTP 500"),
+        ("empty", "partial", "browser page has no usable usage limits"),
+    ],
+)
+def test_fetch_marks_invalid_result_state(
+    tmp_path, monkeypatch, mode, expected_status, message
+):
+    account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
+
+    class FakeResponse:
+        status = 500 if mode == "http" else 200
+
+    class FakePage:
+        url = "https://chatgpt.com/codex/cloud/settings/analytics"
+
+        def on(self, *_args):
+            return None
+
+        def goto(self, *_args, **_kwargs):
+            return FakeResponse()
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def title(self):
+            return "Analytics"
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(browser_module, "_prepare_profile", lambda _account: tmp_path / "profile")
+    monkeypatch.setattr(browser_module, "_profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr(browser_module, "sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        browser_module,
+        "_launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(browser_module, "_safe_page_text_sources", lambda _page: ("", ()))
+    monkeypatch.setattr(browser_module, "auth_identity_for_account", lambda _account: (None, None))
+    monkeypatch.setattr(browser_module, "auth_plan_type_for_account", lambda _account: None)
+    monkeypatch.setattr(
+        browser_module,
+        "select_identity_consistent_candidates",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(browser_module, "extract_windows", lambda **_kwargs: (None, None))
+    monkeypatch.setattr(
+        browser_module,
+        "backend_identity_from_candidates",
+        lambda *_args: (None, None),
+    )
+    monkeypatch.setattr(
+        browser_module,
+        "backend_plan_type_from_candidates",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        browser_module,
+        "canonical_backend_identity",
+        lambda *_args, **_kwargs: (None, None),
+    )
+    if mode == "login":
+        monkeypatch.setattr(
+            browser_module,
+            "_status_for_result",
+            lambda **_kwargs: browser_module.AccountStatus.LOGIN_REQUIRED,
+        )
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status.value == expected_status
+    assert usage.error == message
+    assert usage.cache_invalidated is True
+    assert usage.five_hour is None
+    assert usage.weekly is None
+
+
+def test_fetch_maps_outer_direct_auth_error(tmp_path, monkeypatch):
+    account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
+    monkeypatch.setattr(
+        browser_module,
+        "auth_identity_for_account",
+        lambda _account: (_ for _ in ()).throw(
+            browser_module.DirectAuthError("auth unavailable")
+        ),
+    )
+
+    usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
+
+    assert usage.status.value == "login_required"
+    assert usage.error == "auth unavailable"
+    assert usage.cache_invalidated is True
+
+
+def test_structured_identity_match_rejects_canonical_mismatch(monkeypatch):
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/api/usage",
+        payload={"account_id": "account"},
+    )
+    monkeypatch.setattr(
+        browser_module,
+        "backend_identity_from_candidates",
+        lambda _candidates: ("user", "account"),
+    )
+    monkeypatch.setattr(
+        browser_module,
+        "canonical_backend_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("mismatch")),
+    )
+
+    assert not browser_module._structured_identity_matches_account(
+        [candidate],
+        auth_user_id="user",
+        auth_account_id="account",
+    )
+
+
+def test_probe_account_collects_without_saving(tmp_path, monkeypatch):
+    account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
+
+    class FakePage:
+        def on(self, *_args):
+            return None
+
+        def goto(self, *_args, **_kwargs):
+            return None
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakePlaywright:
+        def __enter__(self):
+            return object()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(browser_module, "_prepare_profile", lambda _account: tmp_path / "profile")
+    monkeypatch.setattr(browser_module, "_profile_lock", lambda _profile: nullcontext())
+    monkeypatch.setattr(browser_module, "sync_playwright", lambda: FakePlaywright())
+    monkeypatch.setattr(
+        browser_module,
+        "_launch_persistent_context",
+        lambda *_args, **_kwargs: FakeContext(),
+    )
+    monkeypatch.setattr(browser_module, "_safe_page_text_sources", lambda _page: ("", ()))
+    monkeypatch.setattr(browser_module, "extract_windows", lambda **_kwargs: (None, None))
+
+    result = probe_account(account, AppConfig(accounts=(account,)), headed=False)
+
+    assert result["account"] == "privat"
+    assert result["browser"] == "firefox"
+    assert result["json_candidates"] == []
+    assert result["saved"] == []
+
+
+@pytest.mark.parametrize("wait_error", [None, PlaywrightTimeoutError("network idle")])
+def test_diagnose_uses_configured_account_auth_json_by_default(
+    tmp_path, monkeypatch, wait_error
+):
     auth_path = tmp_path / "accounts" / "privat" / "auth.json"
     account = Account(
         id="privat",
@@ -929,6 +1224,8 @@ def test_diagnose_uses_configured_account_auth_json_by_default(tmp_path, monkeyp
             return type("Response", (), {"status": 200})()
 
         def wait_for_load_state(self, *_args, **_kwargs):
+            if wait_error is not None:
+                raise wait_error
             return None
 
     class FakeContext:

@@ -12789,3 +12789,17 @@ bestanden; Coverage-Auszug für `reactivate.py`: **100 %**. Die bestehende
 `runpy`-Warnung im OAuth-`__main__`-Test bleibt erwartbar; keine
 Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1073: Browser-Entry-Points und Ergebnisstatus geprüft
+
+`browser.py` hatte im Fetch-Pfad noch Networkidle-Timeout, äußere
+Auth-/Identitätsfehler und Status-/Cache-Invalidierungszweige ohne direkte
+Regression. Zusätzlich fehlte ein normaler Probe- und Diagnosepfad; ein
+redundanter, nach dem frühen Cloudflare-Return unerreichbarer Statuszweig wurde
+entfernt. Neun fokussierte Regressionen decken diese Entry-Point-Grenzen ab.
+
+Verifikation: **453 Browser-/CLI-/Entrypoint-/Reactivation-Tests**, Mypy für
+`browser.py`, Ruff und Diff-Check bestanden; Coverage-Auszug für `browser.py`:
+**90 %**. Die bestehenden `runpy`-Warnungen bleiben erwartbar; keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt.

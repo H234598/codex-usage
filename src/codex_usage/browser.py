@@ -329,11 +329,7 @@ def fetch_account_usage(
         )
         error = None
         cache_invalidated = False
-        if page_state == "cloudflare":
-            status = AccountStatus.ERROR
-            error = "browser page blocked by cloudflare"
-            cache_invalidated = True
-        elif status == AccountStatus.LOGIN_REQUIRED:
+        if status == AccountStatus.LOGIN_REQUIRED:
             error = "browser login required"
             cache_invalidated = True
         elif _main_response_failed(main_status):
