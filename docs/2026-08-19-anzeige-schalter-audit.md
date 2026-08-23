@@ -11792,3 +11792,13 @@ früher. Der neue Test bestätigt die erneute Begrenzung mit
 Verifikation: **332 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **96 %**, Missing-Zeilen 40; keine Settings-Fenster
 gestartet.
+
+## Runde 983: Ungültiges UTF-8 in Auth-Datei direkt abgewiesen
+
+`direct.read_auth_json_file()` hatte den Decode-Fehlerpfad nach erfolgreichem
+Read noch nicht direkt belegt. Der neue Test bestätigt `invalid auth.json` mit
+konkretem Pfad statt einer rohen `UnicodeDecodeError`-Weitergabe.
+
+Verifikation: **333 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **97 %**, Missing-Zeilen 38; keine Settings-Fenster
+gestartet.

@@ -4861,6 +4861,15 @@ def test_read_auth_json_file_rejects_oversized_post_read(tmp_path, monkeypatch):
         read_auth_json_file(auth_path)
 
 
+def test_read_auth_json_file_rejects_invalid_utf8(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_bytes(b"\xff")
+    auth_path.chmod(0o600)
+
+    with pytest.raises(DirectAuthError, match=rf"invalid auth\.json: {auth_path}"):
+        read_auth_json_file(auth_path)
+
+
 def test_auth_identity_from_file_rejects_payload_dict_subclass(
     tmp_path, monkeypatch
 ):
