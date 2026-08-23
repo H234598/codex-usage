@@ -13057,3 +13057,18 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1089: Routing-Usage-Container-Guard vollständig geprüft
+
+`routing.py` hatte eine unbelegte Fail-Closed-Kante beim Prüfen des internen
+`models`-Containers: Nicht-Tuple-Werte dürfen nicht in die Pool-Liste gelangen.
+Eine Regression setzt diesen Container absichtlich auf eine ungültige Laufzeit-
+repräsentation und prüft, dass resetlose Nutzung sicher als nicht abgelaufen
+behandelt wird. Produktionslogik blieb unverändert.
+
+Verifikation: **167 `tests/test_routing.py`-Tests**, `routing.py` **482/482
+Statements und 266/266 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.

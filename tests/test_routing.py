@@ -1650,6 +1650,16 @@ def test_expired_resetless_usage_window_fails_closed_on_clock_error():
     ) is False
 
 
+def test_expired_resetless_usage_ignores_non_tuple_model_container():
+    usage = replace(_usage(), models=[])  # type: ignore[arg-type]
+
+    assert routing_module._has_expired_resetless_usage_window(
+        usage,
+        captured_at=NOW,
+        now=NOW,
+    ) is False
+
+
 def test_spark_health_helpers_reject_invalid_payload_timestamps():
     assert routing_module._spark_health_is_fresh(
         {"state": "failed", "stale": False}, now=NOW
