@@ -482,6 +482,14 @@ def test_latest_response_detects_absolute_reset_timestamp_advance():
     ) is True
 
 
+def test_rate_limit_window_returns_native_primary_window():
+    window = {"limit_window_seconds": 18_000, "used_percent": 10}
+
+    assert direct_module._rate_limit_window(
+        {"rate_limit": {"primary_window": window}}, "primary_window"
+    ) == window
+
+
 def test_signature_flag_rejects_string_hooks():
     class BrokenFlag:
         def __str__(self):

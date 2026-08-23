@@ -11363,3 +11363,12 @@ und verschiebt nur den primären absoluten `reset_at`-Zeitstempel nach vorn.
 
 Verifikation: **276 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 940: Rate-Limit-Fenster direkt aufgelöst
+
+`direct._rate_limit_window()` war bisher nur über weitere Stabilitätshelfer
+abgedeckt. Der neue direkte Test prüft die Rückgabe des nativen
+`primary_window`-Objekts.
+
+Verifikation: **277 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
