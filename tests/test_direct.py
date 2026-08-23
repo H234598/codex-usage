@@ -2512,6 +2512,34 @@ def test_conflicting_partial_windows_detects_dropped_latest_window():
     ) is True
 
 
+def test_conflicting_partial_windows_skips_foreign_identity_group():
+    best = {
+        "user_id": "user-a",
+        "account_id": "account-a",
+        "rate_limit": {
+            "primary_window": {
+                "limit_window_seconds": 18_000,
+                "used_percent": 3,
+            }
+        },
+    }
+    foreign = {
+        "user_id": "user-b",
+        "account_id": "account-b",
+        "rate_limit": {
+            "secondary_window": {
+                "limit_window_seconds": 604_800,
+                "used_percent": 45,
+            }
+        },
+    }
+
+    assert direct_module._has_conflicting_partial_windows(
+        [(0, best)],
+        {("best",): [(0, best)], ("foreign",): [(1, foreign)]},
+    ) is False
+
+
 def test_select_stable_wham_usage_rejects_conflicting_spark_windows():
     def response(used: int) -> dict:
         return {

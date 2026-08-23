@@ -11843,3 +11843,13 @@ zurückgegeben wird.
 Verifikation: **337 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **97 %**, Missing-Zeilen 33; keine Settings-Fenster
 gestartet.
+
+## Runde 988: Fremde Partial-Window-Gruppe direkt übersprungen
+
+`direct._has_conflicting_partial_windows()` hatte den Backend-Identity-
+`continue`-Zweig noch nicht direkt belegt. Der neue Test bestätigt, dass
+Fenster eines fremden Accounts nicht in die Konfliktaggregation einfließen.
+
+Verifikation: **338 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **97 %**, Missing-Zeilen 32; keine Settings-Fenster
+gestartet.
