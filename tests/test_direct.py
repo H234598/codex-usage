@@ -3122,6 +3122,30 @@ def test_fetch_stable_wham_usage_maps_selector_value_error(monkeypatch):
         _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_stable_wham_usage_raises_last_error_after_attempt_iterator_ends(
+    monkeypatch,
+):
+    original_range = range
+
+    def one_attempt(value):
+        if value == direct_module.DIRECT_STABILITY_ATTEMPTS:
+            return [0]
+        return original_range(value)
+
+    monkeypatch.setattr(direct_module, "range", one_attempt, raising=False)
+    monkeypatch.setattr(direct_module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        direct_module,
+        "_fetch_wham_usage",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            DirectFetchError("synthetic terminal fetch")
+        ),
+    )
+
+    with pytest.raises(DirectFetchError, match="synthetic terminal fetch"):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 def test_fetch_stable_wham_usage_re_raises_incomplete_sample_iterator(monkeypatch):
     responses = iter(({},))
     monkeypatch.setattr(

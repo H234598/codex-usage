@@ -11853,3 +11853,13 @@ Fenster eines fremden Accounts nicht in die Konfliktaggregation einfließen.
 Verifikation: **338 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **97 %**, Missing-Zeilen 32; keine Settings-Fenster
 gestartet.
+
+## Runde 989: Letzten Stable-Fetch-Fehler nach Iteratorende erhalten
+
+`direct._fetch_stable_wham_usage()` hatte den defensiven Schleifen-Tail nach
+vorzeitigem Attempt-Iteratorende noch nicht direkt belegt. Der neue Test
+bestätigt, dass der letzte `DirectFetchError` unverändert weitergegeben wird.
+
+Verifikation: **339 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **97 %**, Missing-Zeilen 30; keine Settings-Fenster
+gestartet.
