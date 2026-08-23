@@ -1813,9 +1813,9 @@ def _has_usage_values(
     five_hour: LimitWindow | None,
     weekly: LimitWindow | None,
 ) -> bool:
+    if type(five_hour) is not LimitWindow or type(weekly) is not LimitWindow:
+        return False
     return bool(
-        five_hour is not None
-        and weekly is not None
-        and five_hour.has_usage_value
+        five_hour.has_usage_value
         and weekly.has_usage_value
     )

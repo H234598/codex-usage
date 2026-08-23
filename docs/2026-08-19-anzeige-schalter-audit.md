@@ -10623,3 +10623,17 @@ Account-ID-Typen werden durch `<unknown>` ersetzt. Regression deckt den
 
 Verifikation: **213 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 881: Usage-Window-Property-Zugriff begrenzen
+
+`direct._has_usage_values()` dereferenzierte `has_usage_value` direkt auf
+annotierten Window-Objekten. Ein fremdes Objekt oder eine Window-Subclass mit
+manipulierter Property konnte die Nutzungsentscheidung mit einer rohen
+Exception abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich native `LimitWindow`-Instanzen;
+andere Werte liefern vor Property-Zugriff `False`. Regression deckt den
+Property-Hook ab; normale native Fensterentscheidungen bleiben unverändert.
+
+Verifikation: **214 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

@@ -608,6 +608,15 @@ def test_expired_auth_error_rejects_datetime_subclass_hooks():
     ) == "auth.json access_token expired; run `codex-usage reactivate account`"
 
 
+def test_has_usage_values_rejects_window_property_hooks():
+    class BrokenWindow:
+        @property
+        def has_usage_value(self):
+            raise RuntimeError("synthetic usage window marker")
+
+    assert direct_module._has_usage_values(BrokenWindow(), object()) is False
+
+
 def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
     path = tmp_path / "auth.json"
     payload = {
