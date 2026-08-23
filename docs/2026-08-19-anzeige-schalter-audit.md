@@ -13500,3 +13500,23 @@ Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
 Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
 Installations- und Reload-Schritte ab.
+
+## Runde 1116: Applet-Prozess- und Menü-Callback-Kanten vollständig ausgeführt
+
+Der VM-Runtime-Test deckt jetzt auch Konstruktor-/`main`-Initialisierung,
+Settings-Callback-Weiterleitung, Menü-Rebuilds, Safe-Mode-Aktionen,
+Panel-Defaults, Verbrauchsumschaltung, Device-Login-Kopieren, geschlossene
+Menüöffnung nach Fresh-Refresh sowie durchschnittliche Panel-Schwellen ab.
+Zusätzlich prüfen fokussierte Regressionen alle Reader-Ergebnisse für primäre
+JSON-Prozesse und Reaktivierung: Readerfehler, übergroße/fehlende/ungültige
+JSON-Ausgabe, gültige Antworten und 15-Minuten-Timeout. Produktionslogik
+blieb unverändert; der VM-Testharness stellt dafür minimale Cinnamon-
+Basisklassen und `main`-Export bereit.
+
+Verifikation: **514 `tests/applet_runtime.test.js`-Tests**, **514 bestanden**;
+V8-Raw-Coverage: **570/570 Funktionen** im ausgeführten Nicht-Strict-Lauf;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

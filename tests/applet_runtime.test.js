@@ -96,6 +96,79 @@ function loadPrototype(onReady, strictMode = false) {
       this.state = state === true;
     }
   }
+  function TextIconApplet() {}
+  TextIconApplet.prototype._init = function() {
+    this.actor = {
+      add_style_class_name() {},
+      remove_style_class_name() {},
+    };
+    this._applet_label = {clutter_text: {set_markup() {}}};
+  };
+  TextIconApplet.prototype.set_applet_icon_symbolic_name = function() {};
+  TextIconApplet.prototype.set_applet_icon_path = function() {};
+  TextIconApplet.prototype.set_applet_label = function() {};
+  TextIconApplet.prototype.set_applet_tooltip = function() {};
+  class AppletPopupMenu {
+    constructor() {
+      this.items = [];
+      this.isOpen = false;
+      this.box = {};
+      this._signals = {};
+    }
+    connect(signal, callback) {
+      this._signals[signal] = callback;
+      return signal;
+    }
+    disconnect(signal) {
+      delete this._signals[signal];
+    }
+    addMenuItem(item) {
+      this.items.push(item);
+    }
+    removeAll() {
+      this.items = [];
+    }
+    toggle() {
+      this.isOpen = !this.isOpen;
+      if (typeof this._signals["open-state-changed"] === "function") {
+        this._signals["open-state-changed"](this, this.isOpen);
+      }
+    }
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+  class PopupMenuManager {
+    constructor() {
+      this.menus = [];
+    }
+    addMenu(menu) {
+      this.menus.push(menu);
+    }
+  }
+  class AppletSettings {
+    constructor() {
+      this.values = {};
+      this.bindings = [];
+      this.signals = {};
+    }
+    bindProperty(direction, key, property, callback) {
+      this.bindings.push({direction, key, property, callback});
+    }
+    getValue(key) {
+      return this.values[key];
+    }
+    connect(signal, callback) {
+      this.signals[signal] = callback;
+      return signal;
+    }
+    setValue(key, value) {
+      this.values[key] = value;
+    }
+    finalize() {
+      this.finalized = true;
+    }
+  }
   const sandbox = {
     imports: {
       byteArray: { toString: (value) => Buffer.from(value).toString("utf8") },
@@ -111,7 +184,7 @@ function loadPrototype(onReady, strictMode = false) {
       lang: { bind: (object, callback) => callback.bind(object) },
       mainloop,
       ui: {
-        applet: { TextIconApplet: function TextIconApplet() {} },
+        applet: { TextIconApplet, AppletPopupMenu },
         main: {
           notify: (...args) => {
             if (runtime.onNotify) {
@@ -126,13 +199,14 @@ function loadPrototype(onReady, strictMode = false) {
           },
         },
         popupMenu: {
+          PopupMenuManager,
           PopupMenuItem: PopupItem,
           PopupIconMenuItem: PopupItem,
           PopupSeparatorMenuItem: PopupSeparatorItem,
           PopupSwitchMenuItem: PopupSwitchItem,
           PopupSubMenuMenuItem: PopupItem,
         },
-        settings: { BindingDirection: { IN: 1 } },
+        settings: { BindingDirection: { IN: 1 }, AppletSettings },
       },
     },
     global: { log() {} },
@@ -149,11 +223,11 @@ function loadPrototype(onReady, strictMode = false) {
     RegExp,
   };
   vm.runInNewContext(
-    `${strictMode ? '"use strict";\n' : ""}${source}\nglobalThis.__CodexUsageApplet = CodexUsageApplet;\n//# sourceURL=${path.join(__dirname, "../files/codex-usage@H234598/applet.js")}`,
+    `${strictMode ? '"use strict";\n' : ""}${source}\nglobalThis.__CodexUsageApplet = CodexUsageApplet;\nglobalThis.__CodexUsageMain = main;\n//# sourceURL=${path.join(__dirname, "../files/codex-usage@H234598/applet.js")}`,
     sandbox
   );
   if (onReady) {
-    onReady(runtime);
+    onReady(runtime, sandbox.__CodexUsageApplet, sandbox.__CodexUsageMain);
   }
   return sandbox.__CodexUsageApplet.prototype;
 }
@@ -360,6 +434,116 @@ test("panel custom setting bypasses Cinnamon standard binding", () => {
 
   assert.equal(customKeys.includes("account-panel-settings"), true);
   assert.equal(standardKeys.includes("account-panel-settings"), false);
+});
+
+test("applet constructor initializes guarded lifecycle state", () => {
+  let Constructor;
+  let main;
+  const prototype = loadPrototype((_runtime, loadedConstructor, loadedMain) => {
+    Constructor = loadedConstructor;
+    main = loadedMain;
+  });
+  const calls = [];
+  prototype._refreshFastModeState = () => { calls.push("fast-mode"); };
+  prototype._bindSettings = () => { calls.push("settings"); };
+  prototype._buildLoadingMenu = (message) => { calls.push(["loading", message]); };
+  prototype._scheduleTimer = () => { calls.push("timer"); };
+  prototype._loadCached = (refresh) => { calls.push(["cache", refresh]); };
+
+  const applet = main({path: "/tmp/codex-usage"}, "horizontal", 27, 9);
+
+  assert.equal(applet.metadata.path, "/tmp/codex-usage");
+  assert.equal(applet.instanceId, 9);
+  assert.equal(applet.panelHeight, 27);
+  assert.equal(applet.panelValueCount, "20");
+  assert.equal(applet._safeMode, false);
+  assert.deepEqual(calls, [
+    "fast-mode",
+    "settings",
+    ["loading", "Lade gespeicherte Werte …"],
+    "timer",
+    ["cache", true],
+  ]);
+  assert.equal(applet.menuManager.menus.length, 1);
+  assert.equal(typeof applet.settings.finalize, "function");
+  assert.equal(applet.menu.box.style, "min-width: 38em;");
+  let rebuilds = 0;
+  applet._buildUsageMenu = () => { rebuilds += 1; };
+  applet._menuDirty = true;
+  applet.menu.toggle();
+  applet.menu.toggle();
+  assert.equal(rebuilds, 1);
+  assert.equal(applet instanceof Constructor, true);
+});
+
+test("applet constructor enters safe mode when settings or startup fails", () => {
+  let Constructor;
+  const settingsPrototype = loadPrototype((_runtime, loadedConstructor) => {
+    Constructor = loadedConstructor;
+  });
+  let safeReason = "";
+  settingsPrototype._refreshFastModeState = () => {};
+  settingsPrototype._bindSettings = () => { throw new Error("settings"); };
+  settingsPrototype._enterSafeMode = (reason) => { safeReason = reason; };
+  new Constructor({}, "horizontal", 24, 1);
+  assert.equal(safeReason, "Settings konnten nicht initialisiert werden");
+
+  let startupConstructor;
+  const startupPrototype = loadPrototype((_runtime, loadedConstructor) => {
+    startupConstructor = loadedConstructor;
+  });
+  safeReason = "";
+  startupPrototype._refreshFastModeState = () => {};
+  startupPrototype._bindSettings = () => {};
+  startupPrototype._buildLoadingMenu = () => { throw new Error("startup"); };
+  startupPrototype._enterSafeMode = (reason) => { safeReason = reason; };
+  new startupConstructor({}, "horizontal", 24, 1);
+  assert.equal(safeReason, "Applet-Start fehlgeschlagen");
+});
+
+test("settings binding callbacks stay guarded and custom panel targets dispatch", () => {
+  const applet = makeApplet();
+  const standardCallbacks = {};
+  const customSignals = {};
+  let panelSource = null;
+  let panelDefaults = 0;
+  applet._onPanelDefaultsChanged = () => { panelDefaults += 1; };
+  applet._onPanelValueStylesChanged = (source) => { panelSource = source; };
+  applet.settings = {
+    bindProperty(_direction, key, _property, callback) {
+      standardCallbacks[key] = callback;
+    },
+    getValue(key) {
+      return key === "account-panel-tag-styles" ? [{account: "alpha"}] : undefined;
+    },
+    connect(signal, callback) {
+      customSignals[signal] = callback;
+      return signal;
+    },
+  };
+  applet._bindSettings();
+
+  assert.equal(typeof standardCallbacks["panel-percent-source"], "function");
+  standardCallbacks["panel-percent-source"]("panel-percent-source", "average", "weekly");
+  assert.equal(panelDefaults, 1);
+  assert.equal(typeof customSignals["changed::account-panel-tag-styles"], "function");
+  customSignals["changed::account-panel-tag-styles"]();
+  assert.equal(panelSource, 14);
+});
+
+test("panel defaults callback synchronizes current backend rows", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._syncingAccountSettings = false;
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  let synced = null;
+  let updates = 0;
+  applet._syncAccountSettings = (rows) => { synced = rows; };
+  applet._updatePanel = () => { updates += 1; };
+  applet._onPanelDefaultsChanged();
+  assert.equal(synced.length, 1);
+  assert.equal(synced[0].account, "alpha");
+  assert.equal(updates, 1);
 });
 
 function usageWithoutSparkLimit(account) {
@@ -3964,6 +4148,14 @@ test("panel value style setting rows validate and map per account", () => {
   assert.equal(refreshes, 1);
   applet._onPanelValueStylesChanged(999);
   assert.equal(refreshes, 1);
+});
+
+test("average panel threshold averages both declared windows", () => {
+  const applet = makeApplet();
+  applet._alertSettings = {
+    alpha: {"five-threshold": 20, "weekly-threshold": 40},
+  };
+  assert.equal(applet._panelThreshold({usage: applet._usages[0]}, 3), 30);
 });
 
 test("credit delta style setting rows validate and map independently", () => {
@@ -9562,6 +9754,91 @@ test("safe menu construction contains menu failures", () => {
   assert.doesNotThrow(() => applet._buildSafeMenu());
 });
 
+test("safe menu actions invoke guarded retry and navigation callbacks", () => {
+  const applet = makeApplet();
+  const actions = {};
+  const contexts = [];
+  applet.menu = {
+    removeAll() {},
+    addMenuItem() {},
+    addAction(label, callback) {
+      actions[label] = callback;
+    },
+  };
+  applet._addHealthAction = () => {};
+  applet._runSafely = (context, callback) => {
+    contexts.push(context);
+    return callback();
+  };
+  applet._leaveSafeModeAndRetry = () => { contexts.push("retry"); };
+  applet._openAnalytics = () => { contexts.push("analytics"); };
+  applet._openSettings = () => { contexts.push("settings"); };
+
+  applet._buildSafeMenu();
+  actions["Erneut versuchen"]();
+  actions["Codex Analytics öffnen"]();
+  actions["Einstellungen"]();
+  assert.deepEqual(contexts, [
+    "safe retry", "retry", "safe analytics action", "analytics",
+    "safe settings action", "settings",
+  ]);
+});
+
+test("health event completion releases process state through bounded reader", () => {
+  const applet = makeApplet((runtime) => {
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() { return {}; },
+    });
+  });
+  applet._readBoundedProcessOutput = (_process, callback) => {
+    callback("", "", null);
+  };
+  applet._spawnHealthEvent(["codex-usage", "health"]);
+  assert.equal(applet._healthProcess, null);
+  assert.equal(applet._healthTimeoutId, 0);
+});
+
+test("account menu callbacks toggle consumption delta and copy device login events", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  const menuItems = [];
+  const writes = [];
+  let refreshes = 0;
+  let copied = null;
+  applet.showConsumptionDelta = true;
+  applet.menu = {addMenuItem: (item) => menuItems.push(item)};
+  applet.settings = {setValue: (key, value) => writes.push([key, value])};
+  applet._consumptionParts = () => ({plain: "Verbrauch", markup: "Verbrauch"});
+  applet._creditParts = () => null;
+  applet._creditConsumptionParts = () => null;
+  applet._usageResetParts = () => null;
+  applet._addResetDetail = () => {};
+  applet._addDynamicLimitDetails = () => {};
+  applet._addAccountControls = () => {};
+  applet._addAccountTerminalAction = () => {};
+  applet._setItemMarkup = () => {};
+  applet._refreshFormattedSurfaces = () => { refreshes += 1; };
+  applet._deviceLoginEvents.alpha = [{kind: "url", value: "https://auth.example/device"}];
+  applet._copyDeviceLoginEvent = (event) => { copied = event; };
+  applet._addAccount(usage);
+
+  const group = menuItems[0];
+  const consumption = group.menu.items.find((item) => item.label.text === "Verbrauch");
+  consumption.emit("activate");
+  assert.equal(applet.showConsumptionDelta, false);
+  assert.deepEqual(writes, [["show-consumption-delta", false]]);
+  assert.equal(refreshes, 1);
+
+  const controlTarget = {items: [], addMenuItem(item) { this.items.push(item); }};
+  applet._addAccountControls = Object.getPrototypeOf(applet)._addAccountControls;
+  applet._addAccountControls(usage, controlTarget);
+  const controls = controlTarget.items[0].menu.items;
+  const copy = controls.find((item) => item.label.text === "Device-Login URL kopieren");
+  copy.emit("activate");
+  assert.equal(copied.value, "https://auth.example/device");
+});
+
 test("command error handling survives menu failures", () => {
   const applet = makeApplet();
   applet.menu = { removeAll() { throw new Error("menu broken"); } };
@@ -9960,6 +10237,26 @@ test("primary cache and fresh requests are queued instead of cancelling each oth
   assert.equal(calls[0].subcommand, "latest");
   assert.equal(applet._primaryFreshPending, true);
   assert.equal(applet._primaryCachePending, false);
+});
+
+test("fresh refresh opens a closed menu after a successful payload", () => {
+  const applet = makeApplet();
+  let opens = 0;
+  applet.menu = {
+    isOpen: false,
+    toggle() { opens += 1; },
+  };
+  applet._updatePanel = () => {};
+  applet._buildUsageMenu = () => {};
+  applet._buildLoadingMenu = () => {};
+  applet._applyPayload = () => {};
+  applet._spawnUsageCommand = (subcommand, callback) => {
+    assert.equal(subcommand, "once");
+    callback([{account: "alpha"}], null);
+  };
+  applet._refreshFresh(true);
+  assert.equal(opens, 1);
+  assert.equal(applet._refreshing, false);
 });
 
 test("primary request queue drains even when payload handling throws", () => {
@@ -11175,6 +11472,96 @@ test("startup failures and missing timeout sources terminate every spawned child
       assert.equal(forced, 1);
     }
   }
+});
+
+test("primary process reader classifies output and validates JSON", () => {
+  const cases = [
+    {stdout: "ignored", stderr: "", outputError: "reader failed", expected: /reader failed/},
+    {stdout: "x".repeat(65537), stderr: "", outputError: null, expected: /zu groß/},
+    {stdout: "   ", stderr: "bridge stderr", outputError: null, expected: /bridge stderr/},
+    {stdout: "{\"ok\":true}", stderr: "", outputError: null, payload: {ok: true}},
+    {stdout: "not-json", stderr: "parse stderr", outputError: null, expected: /Ungültige JSON-Ausgabe: parse stderr/},
+  ];
+  for (const scenario of cases) {
+    let result = null;
+    const applet = makeApplet((runtime) => {
+      runtime.launcherFactory = () => ({
+        setenv() {},
+        spawnv() { return {force_exit() {}}; },
+      });
+    });
+    applet._validatePayload = (payload) => payload;
+    applet._readBoundedProcessOutput = (_process, callback) => {
+      callback(scenario.stdout, scenario.stderr, scenario.outputError);
+    };
+    applet._spawnJsonArray(["codex-usage", "latest"], (payload, error) => {
+      result = {payload, error};
+    }, {subcommand: "latest"});
+    if (scenario.payload) {
+      assert.deepEqual(result, {payload: scenario.payload, error: null});
+    } else {
+      assert.equal(result.payload, null);
+      assert.match(result.error, scenario.expected);
+    }
+  }
+});
+
+test("reactivation reader and timeout callbacks finish exactly once", () => {
+  const usage = {account: "alpha", label: "Alpha"};
+  let timeoutCallback;
+  let forced = 0;
+  let builds = 0;
+  const timeoutApplet = makeApplet((runtime) => {
+    runtime.timeoutAdd = (_milliseconds, callback) => {
+      timeoutCallback = callback;
+      return 17;
+    };
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() {
+        return {force_exit() { forced += 1; }};
+      },
+    });
+  });
+  timeoutApplet._buildUsageMenu = () => { builds += 1; };
+  timeoutApplet._readBoundedProcessOutput = () => {};
+  timeoutApplet._spawnReactivation(usage, ["codex-usage", "reactivate", "alpha"]);
+  assert.equal(timeoutCallback(), false);
+  assert.equal(forced, 1);
+  assert.equal(timeoutApplet._reactivations.alpha, undefined);
+  assert.match(timeoutApplet._reactivationErrors.alpha, /15 Minuten/);
+  assert.equal(builds, 2);
+
+  let readerCallback;
+  const readerApplet = makeApplet((runtime) => {
+    runtime.timeoutAdd = () => 19;
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() { return {}; },
+    });
+  });
+  readerApplet._buildUsageMenu = () => { builds += 1; };
+  readerApplet._refreshFresh = () => { builds += 10; };
+  readerApplet._readBoundedProcessOutput = (_process, callback) => { readerCallback = callback; };
+  readerApplet._spawnReactivation(usage, ["codex-usage", "reactivate", "alpha"]);
+  readerCallback("", "reader failed", "reader failed");
+  assert.match(readerApplet._reactivationErrors.alpha, /reader failed/);
+
+  let validReaderCallback;
+  const validApplet = makeApplet((runtime) => {
+    runtime.timeoutAdd = () => 23;
+    runtime.launcherFactory = () => ({
+      setenv() {},
+      spawnv() { return {}; },
+    });
+  });
+  validApplet._buildUsageMenu = () => {};
+  validApplet._refreshFresh = () => { builds += 100; };
+  validApplet._readBoundedProcessOutput = (_process, callback) => { validReaderCallback = callback; };
+  validApplet._spawnReactivation(usage, ["codex-usage", "reactivate", "alpha"]);
+  validReaderCallback(JSON.stringify({ok: true, account: "alpha"}), "", null);
+  assert.equal(validApplet._reactivations.alpha, undefined);
+  assert.equal(validApplet._reactivationErrors.alpha, undefined);
 });
 
 test("refresh and display timers enter safe mode when a timeout source is unavailable", () => {
