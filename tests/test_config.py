@@ -340,6 +340,23 @@ def test_test_home_auth_rollback_refuses_replaced_target(tmp_path):
     assert target.is_symlink()
 
 
+def test_restore_moved_test_home_auth_rejects_existing_source(tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text("existing\n", encoding="utf-8")
+    target = tmp_path / "target.json"
+
+    with pytest.raises(ValueError, match="rollback source already exists"):
+        config_module._restore_moved_test_home_auth((source, target, 1, 1))
+
+
+def test_restore_moved_test_home_auth_rejects_missing_target(tmp_path):
+    source = tmp_path / "source.json"
+    target = tmp_path / "target.json"
+
+    with pytest.raises(ValueError, match="target is unavailable"):
+        config_module._restore_moved_test_home_auth((source, target, 1, 1))
+
+
 def test_internal_all_accounts_lock_name_is_not_a_valid_account_id():
     with pytest.raises(ValueError, match="reserved"):
         config_module._validate_account_id("__all_accounts__")

@@ -12337,3 +12337,15 @@ Verifikation: **147 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **89 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1032: Auth-Restore-Guards direkt belegt
+
+`_restore_moved_test_home_auth()` hatte die Fälle einer bereits vorhandenen
+Rollback-Quelle und eines verschwundenen Ziels noch nicht direkt getestet.
+Zwei Regressionen bestätigen, dass beide Zustände ohne Verschieben abgelehnt
+werden.
+
+Verifikation: **149 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **90 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
