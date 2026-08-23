@@ -767,7 +767,7 @@ def _extract_auth_details(
     if not isinstance(tokens, dict):
         raise DirectAuthError(f"auth.json has no tokens object: {path}")
     access_token = tokens.get("access_token")
-    if not isinstance(access_token, str) or not access_token:
+    if type(access_token) is not str or not access_token:
         raise DirectAuthError(f"auth.json has no access_token: {path}")
     if len(access_token) > MAX_ACCESS_TOKEN_CHARS:
         raise DirectAuthError("auth.json access_token too large")

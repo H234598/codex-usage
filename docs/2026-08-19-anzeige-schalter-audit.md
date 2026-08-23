@@ -10388,3 +10388,17 @@ wird; normale `Path`-/`PosixPath`-Aufrufer bleiben unverändert.
 
 Verifikation: **196 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 864: Access-Tokens auf Built-in-Strings begrenzen
+
+`direct._extract_auth_details()` akzeptierte `str`-Subklassen und rief deren
+Bool-/Längen- und Iterationsoperatoren vor der Tokenvalidierung auf. Ein
+manipulierter Access-Token-Hook konnte den Authentifizierungs-Payloadpfad mit
+einer rohen Exception abbrechen.
+
+Die Access-Token-Grenze verlangt jetzt Built-in-`str` vor Leer-, Längen- und
+Zeichenprüfung. Regression simuliert den fehlerhaften Token-Hook; gültige
+Tokens und JWT-Prüfung bleiben unverändert.
+
+Verifikation: **197 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

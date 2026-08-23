@@ -452,6 +452,18 @@ def test_auth_details_rejects_invalid_access_token_expiry(tmp_path, expiry):
         )
 
 
+def test_auth_details_rejects_access_token_string_subclass_hooks(tmp_path):
+    class BrokenStr(str):
+        def __len__(self):
+            raise RuntimeError("synthetic access token marker")
+
+    with pytest.raises(DirectAuthError, match=r"auth\.json has no access_token"):
+        _extract_auth_details(
+            {"tokens": {"access_token": BrokenStr("token")}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_jwt_claims_reject_extra_segments():
     token = _jwt_with_claims({"sub": "account"}) + ".extra"
 
