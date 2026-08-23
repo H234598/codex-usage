@@ -1205,6 +1205,16 @@ def test_auth_details_rejects_access_token_string_subclass_hooks(tmp_path):
         )
 
 
+def test_auth_details_rejects_oversized_access_token(tmp_path):
+    token = "x" * (direct_module.MAX_ACCESS_TOKEN_CHARS + 1)
+
+    with pytest.raises(DirectAuthError, match="access_token too large"):
+        _extract_auth_details(
+            {"tokens": {"access_token": token}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_validate_access_token_expiry_rejects_string_subclass_hooks(tmp_path):
     class BrokenStr(str):
         def split(self, _separator):

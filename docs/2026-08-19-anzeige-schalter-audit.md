@@ -11720,3 +11720,13 @@ Account-IDs noch nicht direkt belegt. Der neue Test bestätigt fail-closed
 Verifikation: **324 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **95 %**, Missing-Zeilen 53; keine Settings-Fenster
 gestartet.
+
+## Runde 976: Übergroßes Access-Token direkt abgewiesen
+
+`direct._extract_auth_details()` hatte die harte
+`MAX_ACCESS_TOKEN_CHARS`-Grenze noch nicht direkt belegt. Der neue Test
+bestätigt die frühe Ablehnung vor JWT-Parsing.
+
+Verifikation: **325 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **95 %**, Missing-Zeilen 52; keine Settings-Fenster
+gestartet.
