@@ -620,7 +620,7 @@ def _strict_auth_identity_values(
 
 
 def _safe_auth_plan_type(value: Any) -> str | None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         return None
     if not value or len(value) > 64 or any(
         char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value

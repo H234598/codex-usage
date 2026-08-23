@@ -10253,3 +10253,16 @@ gültige Auth-Identitäten bleiben unverändert.
 
 Verifikation: **186 Direct-Tests**, **38 abhängige Browser-/Bridge-Tests**,
 Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 854: Auth-Plan-Typen auf Built-in-Strings begrenzen
+
+`direct._safe_auth_plan_type()` akzeptierte `str`-Subklassen und rief deren
+Längenoperator vor der Plan-Type-Prüfung auf. Ein manipulierter String-Hook
+konnte den Authentifizierungs-Payloadpfad mit einer rohen Exception abbrechen.
+
+Der Auth-Plan-Type-Guard akzeptiert jetzt ausschließlich Built-in-`str` vor
+Länge und Zeichenprüfung. Regression simuliert den fehlerhaften Plan-Type-
+Hook; gültige Auth-Plan-Typen bleiben unverändert.
+
+Verifikation: **187 Direct-Tests**, **38 abhängige Browser-/Bridge-Tests**,
+Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
