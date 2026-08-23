@@ -11176,3 +11176,12 @@ unverändert.
 
 Verifikation: **253 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 920: Standard-Auth-Pfad direkt geprüft
+
+`direct.default_auth_json_path()` hatte bisher keinen direkten Regressionstest.
+Der neue Test bindet `Path.home()` an ein isoliertes Verzeichnis und prüft den
+kanonischen Pfad `${HOME}/.codex/auth.json`.
+
+Verifikation: **254 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Produktionsänderung und keine Settings-Fenster gestartet.

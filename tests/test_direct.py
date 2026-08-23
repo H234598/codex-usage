@@ -82,6 +82,13 @@ class _BrokenFloat(float):
         raise RuntimeError("synthetic direct float conversion marker")
 
 
+def test_default_auth_json_path_uses_codex_home(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+
+    assert direct_module.default_auth_json_path() == home / ".codex" / "auth.json"
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
