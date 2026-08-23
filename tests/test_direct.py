@@ -742,6 +742,26 @@ def test_missing_usage_limits_error_rejects_plan_type_string_subclass_hooks():
     assert "(plan unknown; available window 5h)" in error
 
 
+def test_missing_usage_limits_error_reports_unsupported_backend_window():
+    error = direct_module._missing_usage_limits_error(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 3_600,
+                    "used_percent": 20,
+                }
+            }
+        },
+        "plus",
+    )
+
+    assert (
+        error
+        == "requested 5h/weekly limits unavailable in direct response "
+        "(plan plus; backend window 3600s)"
+    )
+
+
 def test_missing_usage_limits_error_rejects_mapping_subclass_hooks():
     class BrokenDict(dict):
         def get(self, _key, _default=None):

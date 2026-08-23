@@ -11573,3 +11573,14 @@ retrybarer HTTP-500-Status `False` liefert.
 
 Verifikation: **298 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 962: Nicht unterstütztes Backend-Fenster direkt gemeldet
+
+`direct._missing_usage_limits_error()` hatte den Fall eines formal gültigen,
+aber nicht unterstützten `limit_window_seconds`-Werts bisher nicht direkt
+belegt. Der neue Test bestätigt die sortierte Backend-Fensterangabe samt
+normalisiertem Plan im Fehlertext.
+
+Verifikation: **299 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **92 %**, Missing-Zeilen 88; keine Settings-Fenster
+gestartet.
