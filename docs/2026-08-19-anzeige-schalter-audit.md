@@ -11102,3 +11102,18 @@ ab; normale Plantyp-Claims bleiben unverändert.
 
 Verifikation: **247 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 915: Verschachtelte Auth-Plantyp-Claims nur aus nativen Dicts lesen
+
+`direct.auth_plan_type_from_payload()` akzeptierte das verschachtelte
+`https://api.openai.com/auth`-Mapping als Dict-Subclass per `isinstance` und
+führte darauf den Plantyp-Membership-Check aus. Ein fremdes Mapping konnte die
+Auswertung dadurch mit einer rohen Exception abbrechen.
+
+Der Parser verlangt jetzt ein natives Auth-Claims-`dict`; nichtnative
+Mappings werden mit einer kontrollierten `DirectAuthError` abgewiesen.
+Regression deckt den verschachtelten Membership-Hook ab; normale Plantyp-
+Claims bleiben unverändert.
+
+Verifikation: **248 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

@@ -559,7 +559,7 @@ def auth_plan_type_from_payload(
         auth_claims = claims.get("https://api.openai.com/auth")
         if "https://api.openai.com/auth" not in claims:
             continue
-        if not isinstance(auth_claims, dict):
+        if type(auth_claims) is not dict:
             raise DirectAuthError(f"auth.json token auth claims are invalid: {path}")
         if "chatgpt_plan_type" not in auth_claims:
             continue

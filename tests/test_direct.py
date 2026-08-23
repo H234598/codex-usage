@@ -987,6 +987,28 @@ def test_auth_plan_type_rejects_claims_dict_subclass_hooks(tmp_path, monkeypatch
     ) is None
 
 
+def test_auth_plan_type_rejects_nested_auth_claims_dict_subclass_hooks(
+    tmp_path, monkeypatch
+):
+    class BrokenAuthClaims(dict):
+        def __contains__(self, _key):
+            raise RuntimeError("synthetic nested auth plan claims marker")
+
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda _token: {
+            "https://api.openai.com/auth": BrokenAuthClaims(),
+        },
+    )
+
+    with pytest.raises(DirectAuthError, match="token auth claims are invalid"):
+        auth_plan_type_from_payload(
+            {"tokens": {"id_token": "token"}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_auth_identity_rejects_tokens_dict_subclass_hooks(tmp_path):
     class BrokenTokens(dict):
         def get(self, _key, _default=None):
