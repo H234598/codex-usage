@@ -11345,3 +11345,12 @@ einem neueren Payload derselben Reset-Identität und bestätigt den Fortschritt.
 
 Verifikation: **274 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 938: Relativen Reset-Übergang direkt geprüft
+
+`direct._latest_response_is_relative_reset()` hatte bisher keinen direkten
+Test. Der neue Test bindet gleiche Backend- und Fensteridentitäten, senkt das
+Primärfenster und bewegt beide relativen Countdowns in eine frische Laufzeit.
+
+Verifikation: **275 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
