@@ -333,6 +333,7 @@ def test_device_login_finalize_preserves_account_options(tmp_path, monkeypatch):
 def test_device_login_finalization_holds_global_account_lock(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     config = tmp_path / "config.toml"
+    config.write_text("", encoding="utf-8")
     account = _account(profile)
     held_locks = []
 
@@ -1264,6 +1265,27 @@ def test_bounded_subprocess_maps_wait_timeout(monkeypatch):
         profile_login._run_subprocess_bounded(["codex"], env={}, timeout=1)
 
     assert terminated
+
+
+def test_bounded_subprocess_accepts_missing_output_streams(monkeypatch):
+    class Process:
+        stdout = None
+        stderr = None
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(
+        profile_login.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: Process(),
+    )
+
+    result = profile_login._run_subprocess_bounded(["codex"], env={}, timeout=1)
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
 
 
 def test_device_login_cleanup_failure_without_primary_error_is_reported(

@@ -13268,3 +13268,17 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1102: Device-Login-Prozess- und Account-Finalize-Guards vollständig geprüft
+
+`profile_login.py` hatte noch die Account-gleich-Konfiguration beim Finalisieren,
+fehlende stdout/stderr-Streams des bounded subprocess sowie zwei nach dem
+Stream-Filter unerreichbare `None`-Checks. Regressionen decken die echten
+Zustände ab; die redundanten Checks wurden ohne Laufzeitänderung entfernt.
+
+Verifikation: **71 `tests/test_profile_login.py`-Tests**, `profile_login.py`
+**327/327 Statements und 108/108 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.

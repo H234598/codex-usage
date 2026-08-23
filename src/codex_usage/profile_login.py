@@ -364,8 +364,7 @@ def _run_subprocess_bounded(
     deadline = time.monotonic() + timeout
     try:
         for stream in streams:
-            if stream is not None:
-                selector.register(stream, selectors.EVENT_READ)
+            selector.register(stream, selectors.EVENT_READ)
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -419,8 +418,7 @@ def _run_subprocess_bounded(
     finally:
         selector.close()
         for stream in streams:
-            if stream is not None:
-                stream.close()
+            stream.close()
 
 
 def _terminate_bounded_process(
