@@ -14502,6 +14502,58 @@ test("backend overview rejects normalized account and backend identities", () =>
   });
 });
 
+test("backend overview callback covers optional fields, refresh pending and bounds", () => {
+  const validPayload = {
+    accounts: [{
+      id: "alpha", label: "", tag: "TAG", backend: "direct", browser: "chromium",
+      reactivation_browser: "vivaldi", series: "a", series_active: true,
+      profile_dir: "/tmp/profile", auth_json_path: "/tmp/auth.json",
+    }],
+  };
+  const load = (payload, options = {}) => {
+    const applet = makeApplet();
+    applet._baseCommandArgv = () => ["codex-usage"];
+    applet._spawnAuxJson = (_argv, callback) => callback(payload, null);
+    applet._backendAccounts = options.previous || {};
+    applet._usages = options.usages || [];
+    applet._refreshing = options.refreshing === true;
+    applet._cancelRemovedReactivations = () => {};
+    applet._ensureBackendUsageRows = () => false;
+    applet._syncStyleRows = () => {};
+    applet._syncAccountSettings = () => {};
+    applet._refreshFormattedSurfaces = () => {};
+    applet._loadRoutingState = () => {};
+    applet._migrateLegacyReactivationBrowser = () => {};
+    applet._reconcilePendingAccountChanges = () => {};
+    applet._deferGuardRelease = () => {};
+    applet.settings = {
+      setValue: options.throwSettings
+        ? () => { throw new Error("settings unavailable"); }
+        : () => {},
+    };
+    applet._loadAccountBackends();
+    return applet;
+  };
+
+  const applet = load(validPayload, {
+    previous: {alpha: {account: "alpha", backend: 1}},
+    usages: [{account: "alpha", weekly: {remaining: 70}}],
+    refreshing: true,
+    throwSettings: true,
+  });
+  assert.equal(applet.accountBackends[0].account, "alpha");
+  assert.equal(applet.accountBackends[0].label, "alpha");
+  assert.equal(applet.accountBackends[0].tag, "TAG");
+  assert.equal(applet.accountBackends[0].browser, 1);
+  assert.equal(applet.accountBackends[0]["reactivation-browser"], 1);
+  assert.equal(applet.accountBackends[0].series, "A");
+  assert.equal(applet._primaryFreshPending, true);
+
+  load({accounts: Array.from({length: 101}, () => ({id: "alpha", backend: "direct"}))});
+  load({accounts: [null]});
+  load({accounts: [{id: "alpha", backend: "direct", series: "bad series"}]});
+});
+
 test("backend setting rejects normalized account identity", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

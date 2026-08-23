@@ -13892,3 +13892,19 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1140: Applet-Backend-Overview-Callback vollständig ausgeführt
+
+Die Regression für den Backend-Overview-Callback deckt Größen- und Zeilen-
+Guards, optionale Tags/Pfade, Serienvalidierung, Label-Fallback, vorherigen
+Backendzustand, Settings-Schreibfehler und ausstehende Fresh-Refreshes ab.
+Damit sind alle V8-Blockranges des Callbacks erreicht. Produktionslogik blieb
+unverändert.
+
+Verifikation: **538 `tests/applet_runtime.test.js`-Tests**, **538 bestanden**;
+V8-Raw-Coverage: Backend-Overview-Callback ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
