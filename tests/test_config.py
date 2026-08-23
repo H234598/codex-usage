@@ -217,6 +217,48 @@ def test_integrate_test_home_auth_rejects_existing_target(tmp_path):
         config_module._integrate_test_home_auth(source, target)
 
 
+def test_prepare_test_codex_home_rejects_nonregular_config(tmp_path):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    config_path = codex_home / "config.toml"
+    config_path.mkdir(mode=0o700)
+
+    with pytest.raises(ValueError, match="must be a regular file"):
+        config_module._prepare_test_codex_home(codex_home)
+
+
+def test_prepare_test_codex_home_appends_file_store_setting(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    config_path = codex_home / "config.toml"
+    config_path.write_text("other = true\n", encoding="utf-8")
+    config_path.chmod(0o600)
+    monkeypatch.setattr(config_module.subprocess, "run", lambda *_args, **_kwargs: None)
+
+    config_module._prepare_test_codex_home(codex_home)
+
+    assert config_path.read_text(encoding="utf-8") == (
+        "other = true\ncli_auth_credentials_store = \"file\"\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("synthetic codex start error"),
+        config_module.subprocess.TimeoutExpired(["codex", "--help"], 20),
+    ],
+)
+def test_prepare_test_codex_home_maps_probe_failures(tmp_path, monkeypatch, error):
+    def fail_probe(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(config_module.subprocess, "run", fail_probe)
+
+    with pytest.raises(ValueError, match="could not start Codex"):
+        config_module._prepare_test_codex_home(tmp_path / "codex-home")
+
+
 def test_test_home_rejects_insecure_existing_codex_config(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)

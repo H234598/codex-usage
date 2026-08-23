@@ -12314,3 +12314,15 @@ Verifikation: **142 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **89 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1030: Test-Codex-Home-Grenzen direkt abgesichert
+
+`_prepare_test_codex_home()` hatte noch ungetestete Pfade für eine nicht
+reguläre `config.toml`, das Ergänzen des File-Credential-Settings und Fehler
+beim `codex --help`-Probeprozess. Vier Tests bestätigen sichere Ablehnung,
+idempotente Ergänzung und konsistente Fehlerabbildung für OSError/Timeout.
+
+Verifikation: **146 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **89 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
