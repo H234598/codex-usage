@@ -11475,3 +11475,13 @@ redigierte Meldung `direct fetch failed: network error`.
 Verifikation: **288 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 100; keine Settings-Fenster
 gestartet.
+
+## Runde 952: I/O-Fehler im Direct-Fetch direkt abgebildet
+
+`direct._fetch_wham_usage()` hatte den lokalen `OSError`-Zweig bisher nicht
+direkt belegt. Der neue Test injiziert einen I/O-Fehler und bestätigt die
+redigierte `direct fetch failed: I/O error`-Meldung.
+
+Verifikation: **289 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 100; keine Settings-Fenster
+gestartet.

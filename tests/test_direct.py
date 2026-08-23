@@ -907,6 +907,16 @@ def test_fetch_wham_usage_maps_url_error_to_network_error(monkeypatch):
         _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_wham_usage_maps_os_error_to_io_error(monkeypatch):
+    def fail_urlopen(_request, *, timeout):
+        raise OSError("disk error")
+
+    monkeypatch.setattr(direct_module, "urlopen", fail_urlopen)
+
+    with pytest.raises(DirectFetchError, match=r"direct fetch failed: I/O error"):
+        _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 def test_direct_credentials_are_not_forwarded_to_redirect_target(monkeypatch):
     class FakeResponse:
         status = 200
