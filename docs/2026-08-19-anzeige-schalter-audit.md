@@ -10553,3 +10553,18 @@ unverändert.
 
 Verifikation: **208 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 876: Identity-Policy-Flags auf Built-in-Bool begrenzen
+
+`direct.canonical_backend_identity()` verwendete drei Policy-Flags direkt in
+Bool-Ausdrücken. Ein fremdes Objekt mit `__bool__()`-Hook konnte die
+Identitätsprüfung mit einer rohen Exception abbrechen.
+
+Die Funktion verlangt jetzt für `require_backend_identity`,
+`require_backend_account_id` und `reject_ambiguous_backend_identity` exakt
+Built-in-`bool`; andere Typen liefern einen klaren `ValueError`. Regression
+deckt den Flag-Hook ab; alle bisherigen Identitätsentscheidungen bleiben
+unverändert.
+
+Verifikation: **209 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

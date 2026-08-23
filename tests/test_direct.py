@@ -893,6 +893,21 @@ def test_canonical_backend_identity_rejects_string_subclass_hooks():
         )
 
 
+def test_canonical_backend_identity_rejects_bool_flag_hooks():
+    class BrokenBool:
+        def __bool__(self):
+            raise RuntimeError("synthetic canonical flag marker")
+
+    with pytest.raises(ValueError, match="require_backend_identity is invalid"):
+        canonical_backend_identity(
+            None,
+            None,
+            auth_user_id=None,
+            auth_account_id=None,
+            require_backend_identity=BrokenBool(),  # type: ignore[arg-type]
+        )
+
+
 def test_response_identity_match_rejects_string_subclass_hooks():
     class BrokenStr(str):
         def __bool__(self):

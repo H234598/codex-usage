@@ -725,6 +725,13 @@ def canonical_backend_identity(
     require_backend_account_id: bool = False,
     reject_ambiguous_backend_identity: bool = False,
 ) -> tuple[str | None, str | None]:
+    for field, value in (
+        ("require_backend_identity", require_backend_identity),
+        ("require_backend_account_id", require_backend_account_id),
+        ("reject_ambiguous_backend_identity", reject_ambiguous_backend_identity),
+    ):
+        if type(value) is not bool:
+            raise ValueError(f"{field} is invalid")
     for field, value, maximum in (
         ("backend_user_id", backend_user_id, MAX_AUTH_ID_CHARS),
         ("backend_account_id", backend_account_id, MAX_AUTH_ID_CHARS),
