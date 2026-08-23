@@ -878,6 +878,18 @@ def test_auth_metadata_rejects_tokens_dict_subclass_hooks():
     }
 
 
+def test_auth_metadata_rejects_payload_dict_subclass_hooks():
+    class BrokenPayload(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth metadata payload marker")
+
+    assert auth_metadata_from_payload(BrokenPayload()) == {
+        "auth_last_refresh": None,
+        "auth_access_expires_at": None,
+        "auth_id_expires_at": None,
+    }
+
+
 @pytest.mark.parametrize(
     "claims",
     [

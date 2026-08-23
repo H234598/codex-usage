@@ -787,7 +787,7 @@ def canonical_backend_identity(
 
 
 def auth_metadata_from_payload(payload: dict[str, Any]) -> dict[str, datetime | None]:
-    if not isinstance(payload, dict):
+    if type(payload) is not dict:
         return {
             "auth_last_refresh": None,
             "auth_access_expires_at": None,

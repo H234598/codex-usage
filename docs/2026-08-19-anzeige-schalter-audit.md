@@ -10901,3 +10901,18 @@ als fehlendes Tokens-Objekt abgewiesen. Regression deckt den Auth-Details-
 
 Verifikation: **233 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 901: Auth-Metadaten nur aus nativen Payload-Dicts lesen
+
+`direct.auth_metadata_from_payload()` akzeptierte den gesamten Payload als
+Dict-Subclass per `isinstance` und rief dessen `.get()` auf. Ein manipuliertes
+Auth-Mapping konnte die Metadatenbildung dadurch mit einer rohen Exception
+abbrechen.
+
+Der Helper verarbeitet jetzt nur einen nativen `dict`-Payload; Subklassen
+werden ohne Hook-Aufruf wie ein nichtobjektartiger Payload behandelt.
+Regression deckt den äußeren Payload-`.get()`-Hook ab; normale Auth-JSON-
+Strukturen bleiben unverändert.
+
+Verifikation: **234 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
