@@ -12834,3 +12834,17 @@ Verifikation: **265 Scheduler-Tests**, Mypy für `scheduler.py`, Ruff und
 Diff-Check bestanden; Coverage-Auszug für `scheduler.py`: **100 %**. Keine
 Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1076: Service-/Systemd-Pfade vollständig geprüft
+
+Service- und Timer-Rollbacks, Unit-Konfigurationsleser, XDG-/Home-/Symlink-
+Guards, Executable-/Quoting-Prüfung, systemctl-Prozess-Cleanup, Pipe-/Selector-
+EOF-/Timeout-/Wait-Pfade, Status- und Show-Fallbacks sowie unvollständige
+Managed-Unit-Zustände waren noch offen. Achtundzwanzig fokussierte Regressionen
+schließen diese Installations-, Aktivierungs- und Cleanup-Grenzen; Produktions-
+code blieb unverändert.
+
+Verifikation: **98 Service-Tests**, Mypy für `service.py`, Ruff und Diff-Check
+bestanden; Coverage-Auszug für `service.py`: **100 %**. Keine Settings-Fenster
+gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
+nicht ausgeführt.

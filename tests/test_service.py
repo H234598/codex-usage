@@ -7,6 +7,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1382,3 +1383,500 @@ def test_service_install_rejects_symlinked_config_home(tmp_path, monkeypatch):
         service_install(AppConfig(accounts=()), tmp_path / "config.toml")
 
     assert not (outside / "systemd" / "user").exists()
+
+
+def test_service_enable_collects_enable_link_cleanup_failure(monkeypatch):
+    monkeypatch.setattr(service_module, "_unit_directory", lambda: Path("/tmp/units"))
+    monkeypatch.setattr(service_module, "_validate_existing_managed_units", lambda _path: None)
+    monkeypatch.setattr(service_module, "_service_install_unlocked", lambda *_args: {})
+    monkeypatch.setattr(
+        service_module,
+        "_systemd_activation_snapshot",
+        lambda: ("not-found", "inactive"),
+    )
+    monkeypatch.setattr(service_module, "_restore_unit_snapshot", lambda _previous: None)
+    monkeypatch.setattr(service_module, "_restore_systemd_activation", lambda _snapshot: None)
+    monkeypatch.setattr(
+        service_module,
+        "_cleanup_managed_timer_enable_link",
+        lambda: (_ for _ in ()).throw(ServiceError("cleanup failed")),
+    )
+
+    def systemctl(*args, check=True):
+        if args == ("restart", TIMER_NAME):
+            raise ServiceError("restart failed")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+
+    with pytest.raises(ServiceError, match="could not roll back service activation"):
+        service_module._service_enable_unlocked(AppConfig(accounts=()), Path("/tmp/config.toml"))
+
+
+def test_service_install_collects_reload_rollback_failure(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    executable = tmp_path / "codex-usage"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o700)
+    monkeypatch.setattr(service_module, "_resolve_codex_usage", lambda: executable)
+    monkeypatch.setattr(service_module, "_restore_unit_snapshot", lambda _previous: None)
+    calls = 0
+
+    def systemctl(*args, check=True):
+        nonlocal calls
+        if args == ("daemon-reload",):
+            calls += 1
+            raise ServiceError(f"reload {calls} failed")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(service_module, "_systemctl", systemctl)
+
+    with pytest.raises(ServiceError, match="could not roll back service installation"):
+        service_install(AppConfig(accounts=()), tmp_path / "config.toml")
+
+
+def test_managed_service_config_path_handles_read_error_and_missing_execstart(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = _unit_directory()
+    service_path = unit_dir / SERVICE_NAME
+    service_path.write_text(
+        f"{service_module.MANAGED_MARKER}\n[Service]\n",
+        encoding="utf-8",
+    )
+    service_path.chmod(0o600)
+    monkeypatch.setattr(service_module, "_is_managed_unit", lambda _path: True)
+    monkeypatch.setattr(
+        service_module,
+        "read_private_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read failed")),
+    )
+    assert managed_service_config_path() is None
+
+    monkeypatch.undo()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    service_path = _unit_directory() / SERVICE_NAME
+    service_path.write_text(f"{service_module.MANAGED_MARKER}\n", encoding="utf-8")
+    service_path.chmod(0o600)
+    assert managed_service_config_path() is None
+
+
+def test_managed_service_config_path_returns_none_without_managed_unit(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    assert managed_service_config_path() is None
+
+
+def test_unit_directory_rejects_existing_file_and_securing_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config" / "systemd" / "user"
+    unit_dir.parent.mkdir(parents=True)
+    unit_dir.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(service_module, "ensure_private_directory", lambda *_args, **_kwargs: None)
+    with pytest.raises(ServiceError, match="must be a real directory"):
+        _unit_directory()
+
+    unit_dir.unlink()
+    unit_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        service_module,
+        "ensure_private_directory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("chmod failed")),
+    )
+    with pytest.raises(ServiceError, match="could not secure"):
+        _unit_directory(create=False)
+
+
+def test_service_symlink_ancestor_ignores_dot_segments(tmp_path):
+    class FakePath:
+        anchor = "/"
+        parts = ("/", ".", "target")
+
+        def __init__(self, _value="/"):
+            return None
+
+        def is_absolute(self):
+            return True
+
+        @property
+        def parent(self):
+            return self
+
+        def __truediv__(self, _part):
+            return self
+
+        def __itruediv__(self, _part):
+            return self
+
+        def is_symlink(self):
+            return False
+
+        @classmethod
+        def cwd(cls):
+            return cls()
+
+    original_path = service_module.Path
+    service_module.Path = FakePath
+    try:
+        service_module._assert_no_symlink_ancestors(tmp_path / "plain")
+    finally:
+        service_module.Path = original_path
+
+
+@pytest.mark.parametrize("target", [None, "not-executable"])
+def test_resolve_codex_usage_rejects_missing_or_non_executable(target, tmp_path, monkeypatch):
+    path = tmp_path / "codex-usage"
+    if target is not None:
+        path.write_text("#!/bin/sh\n", encoding="utf-8")
+        path.chmod(0o600)
+    monkeypatch.setattr(
+        service_module.shutil,
+        "which",
+        lambda _name: str(path) if target else None,
+    )
+
+    with pytest.raises(ServiceError, match="executable"):
+        service_module._resolve_codex_usage()
+
+
+def test_resolve_codex_usage_returns_executable(tmp_path, monkeypatch):
+    path = tmp_path / "codex-usage"
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    path.chmod(0o700)
+    monkeypatch.setattr(service_module.shutil, "which", lambda _name: str(path))
+
+    assert service_module._resolve_codex_usage() == path.absolute()
+
+
+def test_validate_home_path_maps_resolve_error_and_rejects_unsafe_paths(tmp_path, monkeypatch):
+    class BrokenPath:
+        def resolve(self, strict=True):
+            raise OSError("unavailable")
+
+    with pytest.raises(ServiceError, match="unavailable"):
+        service_module._validate_home_path(BrokenPath())
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(ServiceError, match="inside the home"):
+        service_module._validate_home_path(outside)
+
+    regular = home / "file"
+    regular.write_text("file", encoding="utf-8")
+    with pytest.raises(ServiceError, match="real directory"):
+        service_module._validate_home_path(regular)
+
+
+@pytest.mark.parametrize("value", ["bad\nvalue", "bad\rvalue", "bad\x00value"])
+def test_unit_quote_rejects_control_characters(value):
+    with pytest.raises(ServiceError, match="invalid characters"):
+        service_module._unit_quote(value)
+
+
+@pytest.mark.parametrize("failure", [OSError("killpg failed"), ValueError("killpg failed")])
+def test_systemctl_cleanup_maps_killpg_failures(monkeypatch, failure):
+    calls = []
+
+    class Process:
+        pid = 123
+
+        def kill(self):
+            calls.append("kill")
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+
+    monkeypatch.setattr(
+        service_module.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(failure),
+    )
+
+    _terminate_systemctl_process(Process())
+
+    assert calls == ["kill", ("wait", 1)]
+
+
+def test_systemctl_cleanup_ignores_kill_and_wait_errors(monkeypatch):
+    class Process:
+        pid = 123
+
+        def kill(self):
+            raise OSError("kill failed")
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("systemctl", timeout)
+
+    monkeypatch.setattr(
+        service_module.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(OSError("killpg failed")),
+    )
+
+    _terminate_systemctl_process(Process())
+
+
+def test_run_systemctl_bounded_rejects_missing_output_pipe(monkeypatch):
+    class Process:
+        pid = 123
+        stdout = None
+        stderr = None
+
+    monkeypatch.setattr(service_module.subprocess, "Popen", lambda *_args, **_kwargs: Process())
+    monkeypatch.setattr(service_module, "_terminate_systemctl_process", lambda _process: None)
+
+    with pytest.raises(OSError, match="output pipe unavailable"):
+        service_module._run_systemctl_bounded(["systemctl"])
+
+
+@pytest.mark.parametrize("mode", ["deadline", "empty"])
+def test_run_systemctl_bounded_handles_timeout_and_empty_selector(mode, monkeypatch):
+    class Stream:
+        def fileno(self):
+            return 1
+
+        def close(self):
+            return None
+
+    class Process:
+        pid = 123
+        stdout = Stream()
+        stderr = Stream()
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            return None
+
+        def wait(self, timeout=None):
+            return -9
+
+    class Selector:
+        def register(self, _stream, _event):
+            return None
+
+        def get_map(self):
+            return {1: 1}
+
+        def select(self, _timeout):
+            return []
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(service_module.subprocess, "Popen", lambda *_args, **_kwargs: Process())
+    monkeypatch.setattr(service_module.selectors, "DefaultSelector", Selector)
+    monkeypatch.setattr(service_module, "_terminate_systemctl_process", lambda _process: None)
+    if mode == "deadline":
+        clock = iter((0.0, float(service_module.SYSTEMCTL_TIMEOUT_SECONDS + 1)))
+        monkeypatch.setattr(service_module.time, "monotonic", lambda: next(clock))
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        service_module._run_systemctl_bounded(["systemctl"])
+
+
+def test_run_systemctl_bounded_unregisters_eof_and_returns_completed(monkeypatch):
+    class Stream:
+        def __init__(self, number):
+            self.number = number
+
+        def fileno(self):
+            return self.number
+
+        def close(self):
+            return None
+
+    stdout = Stream(1)
+    stderr = Stream(2)
+
+    class Process:
+        pid = 123
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    process = Process()
+    process.stdout = stdout
+    process.stderr = stderr
+
+    class Selector:
+        def __init__(self):
+            self.active = [stdout, stderr]
+
+        def register(self, _stream, _event):
+            return None
+
+        def get_map(self):
+            return {stream: stream for stream in self.active}
+
+        def select(self, _timeout):
+            return [(SimpleNamespace(fileobj=self.active[0]), None)]
+
+        def unregister(self, stream):
+            self.active.remove(stream)
+
+        def close(self):
+            return None
+
+    reads = iter((b"", b""))
+    monkeypatch.setattr(service_module.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(service_module.selectors, "DefaultSelector", Selector)
+    monkeypatch.setattr(service_module.os, "read", lambda *_args: next(reads))
+
+    result = service_module._run_systemctl_bounded(["systemctl"])
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_run_systemctl_bounded_terminates_process_after_selector_failure(monkeypatch):
+    class Stream:
+        def fileno(self):
+            return 1
+
+        def close(self):
+            return None
+
+    class Process:
+        pid = 123
+        stdout = Stream()
+        stderr = Stream()
+
+        def poll(self):
+            return None
+
+    class Selector:
+        def register(self, _stream, _event):
+            return None
+
+        def get_map(self):
+            return {1: 1}
+
+        def select(self, _timeout):
+            raise RuntimeError("selector failed")
+
+        def close(self):
+            return None
+
+    terminated = []
+    monkeypatch.setattr(service_module.subprocess, "Popen", lambda *_args, **_kwargs: Process())
+    monkeypatch.setattr(service_module.selectors, "DefaultSelector", Selector)
+    monkeypatch.setattr(
+        service_module,
+        "_terminate_systemctl_process",
+        lambda _process: terminated.append(True),
+    )
+
+    with pytest.raises(RuntimeError, match="selector failed"):
+        service_module._run_systemctl_bounded(["systemctl"])
+    assert terminated == [True]
+
+
+def test_run_systemctl_bounded_maps_wait_timeout_after_streams_close(monkeypatch):
+    class Stream:
+        def fileno(self):
+            return 1
+
+        def close(self):
+            return None
+
+    class Process:
+        pid = 123
+        stdout = Stream()
+        stderr = Stream()
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("systemctl", timeout)
+
+    class Selector:
+        def register(self, _stream, _event):
+            return None
+
+        def get_map(self):
+            return {}
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(service_module.subprocess, "Popen", lambda *_args, **_kwargs: Process())
+    monkeypatch.setattr(service_module.selectors, "DefaultSelector", Selector)
+    monkeypatch.setattr(service_module, "_terminate_systemctl_process", lambda _process: None)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        service_module._run_systemctl_bounded(["systemctl"])
+
+
+def test_systemctl_and_state_helpers_fail_closed(monkeypatch):
+    monkeypatch.setattr(service_module.shutil, "which", lambda _name: None)
+    with pytest.raises(ServiceError, match="was not found"):
+        service_module._systemctl("status")
+
+    monkeypatch.setattr(service_module.shutil, "which", lambda _name: "/usr/bin/systemctl")
+    monkeypatch.setattr(
+        service_module,
+        "_run_systemctl_bounded",
+        lambda _command: subprocess.CompletedProcess([], 1, "", ""),
+    )
+    with pytest.raises(ServiceError, match="status failed"):
+        service_module._systemctl("status")
+    assert service_module._systemctl("status", check=False).returncode == 1
+
+    monkeypatch.setattr(
+        service_module,
+        "_systemctl",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ServiceError("failed")),
+    )
+    assert service_module._systemctl_state("status", SERVICE_NAME) == "unknown"
+    assert service_module._systemctl_show(SERVICE_NAME, ("Result",)) == {}
+
+
+def test_cleanup_managed_timer_link_rejects_missing_symlink_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = _unit_directory()
+    wants_dir = unit_dir / "timers.target.wants"
+    wants_dir.symlink_to(tmp_path / "missing-wants", target_is_directory=True)
+    monkeypatch.setattr(service_module, "_assert_no_symlink_ancestors", lambda _path: None)
+
+    with pytest.raises(ServiceError, match="must not be a symlink"):
+        service_module._cleanup_managed_timer_enable_link()
+
+
+def test_cleanup_managed_timer_link_rejects_non_directory_wants_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = _unit_directory()
+    wants_dir = unit_dir / "timers.target.wants"
+    wants_dir.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(ServiceError, match="must be a directory"):
+        service_module._cleanup_managed_timer_enable_link()
+
+
+def test_restore_unit_snapshot_rejects_unexpected_directory(tmp_path):
+    path = tmp_path / SERVICE_NAME
+    path.mkdir()
+
+    with pytest.raises(ServiceError, match="cannot remove unexpected"):
+        service_module._restore_unit_snapshot({path: None})
+
+
+def test_require_complete_managed_units_rejects_partial_install(tmp_path):
+    service_path = tmp_path / SERVICE_NAME
+    service_path.write_text(service_module.MANAGED_MARKER, encoding="utf-8")
+
+    with pytest.raises(ServiceError, match="must both exist"):
+        service_module._require_complete_managed_units(tmp_path)
+
+
+def test_render_service_json_serializes_bounded_payload():
+    assert service_module.render_service_json({"status": "ok"}) == '{\n  "status": "ok"\n}'
