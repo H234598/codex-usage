@@ -13520,3 +13520,24 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1117: Applet-Menü- und Schwellenzweige bereinigt
+
+Die Menü-Lifecycle-Regressionen decken jetzt Signal-Registrierung und
+-Trennung, fehlende Menüs, Loading- und Usage-Menüs, geöffnete Menüs,
+Safe-Mode, Fast-Mode-Hinweis, leere und gefüllte Account-Listen,
+Fehlerhinweise sowie Datumsstand ab. Ungültige Schwellenwerte für 5h, Woche,
+Spark, Monat und Durchschnitt fallen getestet auf 100 zurück. Eine logisch
+unerreichbare Spark-Pool-Auswahl in `_panelThreshold` wurde entfernt: Quellen
+4–7 liefern vorher direkt den Spark-Schwellenwert, daher konnte die spätere
+`source === 6`-Poolauswahl nie laufen. Produktionslogik bleibt funktional
+identisch; die tote Abzweigung entfällt.
+
+Verifikation: **516 `tests/applet_runtime.test.js`-Tests**, **516 bestanden**;
+V8-Raw-Coverage: **570/570 Funktionen** im ausgeführten Nicht-Strict-Lauf;
+`_buildLoadingMenu`, `_buildUsageMenu` und `_panelThreshold` ohne ungezählte
+V8-Blockranges; `git diff --check` bestanden. Keine Settings-Fenster gestartet.
+Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht
+ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
+bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
+Reload-Schritte ab.

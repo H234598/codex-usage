@@ -10201,15 +10201,8 @@ CodexUsageApplet.prototype = {
             return Number.isFinite(monthly) ? monthly : 100;
         }
         let values = [];
-        let pool = source === 6
-            ? this._modelPool(item.usage, "gpt-5.3-codex-spark")
-            : null;
-        let fiveWindow = pool
-            ? this._poolWindowForDuration(pool, 18000)
-            : item.usage.five_hour;
-        let weeklyWindow = pool
-            ? this._poolWindowForDuration(pool, 604800)
-            : item.usage.weekly;
+        let fiveWindow = item.usage.five_hour;
+        let weeklyWindow = item.usage.weekly;
         if (this._remainingPercent(fiveWindow) !== null && Number.isFinite(five)) {
             values.push(five);
         }

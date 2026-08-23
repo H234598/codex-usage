@@ -546,6 +546,104 @@ test("panel defaults callback synchronizes current backend rows", () => {
   assert.equal(updates, 1);
 });
 
+test("menu lifecycle covers signal guards, loading and usage branches", () => {
+  const applet = makeApplet();
+  const prototype = Object.getPrototypeOf(applet);
+  applet._signalConnections = [];
+  const target = {connect: () => 0};
+  assert.throws(() => applet._connectTrackedSignal(null, "signal", () => {}), /unavailable/);
+  assert.equal(applet._connectTrackedSignal(target, "signal", () => {}), 0);
+  target.connect = () => 7;
+  assert.equal(applet._connectTrackedSignal(target, "signal", () => {}), 7);
+  assert.equal(applet._signalConnections.length, 1);
+  applet._signalConnections = null;
+  applet._disconnectTrackedSignals();
+  applet._signalConnections = [{
+    target: {disconnect() { throw new Error("disconnect"); }}, id: 1,
+  }];
+  assert.doesNotThrow(() => applet._disconnectTrackedSignals());
+  assert.equal(JSON.stringify(applet._signalConnections), "[]");
+
+  const items = [];
+  applet.menu = {
+    isOpen: false,
+    removeAll() { items.length = 0; },
+    addMenuItem(item) { items.push(item); },
+    addAction() {},
+  };
+  applet._addDisabled = (_menu, text) => { items.push(text); };
+  applet._addActions = () => { items.push("actions"); };
+  applet._buildLoadingMenu("Lade");
+  assert.equal(items[0], "Lade");
+  assert.equal(items[1].isSeparator, true);
+  assert.equal(items[2], "actions");
+  items.length = 0;
+  applet._buildLoadingMenu();
+  assert.equal(items[0], "Lade …");
+
+  applet._removed = true;
+  applet._buildLoadingMenu("ignored");
+  applet._removed = false;
+  applet.menu = null;
+  applet._buildLoadingMenu("ignored");
+
+  applet.menu = {
+    isOpen: true,
+    removeAll() { items.length = 0; },
+    addMenuItem(item) { items.push(item); },
+    addAction() {},
+  };
+  applet._buildUsageMenu();
+  assert.equal(applet._menuDirty, true);
+  applet.menu.isOpen = false;
+  applet._safeMode = true;
+  let safeBuilds = 0;
+  applet._buildSafeMenu = () => { safeBuilds += 1; };
+  applet._buildUsageMenu();
+  assert.equal(safeBuilds, 1);
+  applet._safeMode = false;
+  applet._fastModeStatusText = () => "Fast mode";
+  applet._newestCapture = () => null;
+  applet._addAccount = () => { items.push("account"); };
+  applet._displaySeparatorEnabled = () => true;
+  applet._usages = [{account: "alpha"}, {account: "beta"}];
+  applet._commandError = "backend failed";
+  applet._buildUsageMenu();
+  assert.equal(items.includes("Fast mode"), true);
+  assert.equal(items.includes("account"), true);
+  assert.equal(items.includes("backend failed"), true);
+  assert.equal(items.at(-1), "actions");
+  applet._commandError = "";
+  applet._newestCapture = () => "2026-08-23T00:00:00.000Z";
+  applet._formatDate = () => "jetzt";
+  applet._buildUsageMenu();
+  assert.equal(items.includes("Codex-Nutzung · Stand jetzt"), true);
+  applet._usages = [];
+  applet._fastModeStatusText = () => null;
+  applet._buildUsageMenu();
+  assert.equal(items.includes("Keine Accounts oder Snapshots vorhanden"), true);
+  assert.equal(typeof prototype._buildUsageMenu, "function");
+});
+
+test("panel threshold falls back safely for invalid source thresholds", () => {
+  const applet = makeApplet();
+  applet._alertSettings = {
+    alpha: {
+      "five-threshold": "bad",
+      "weekly-threshold": "bad",
+      "monthly-threshold": "bad",
+      "spark-threshold": "bad",
+    },
+  };
+  const item = {usage: Object.assign({}, applet._usages[0], {
+    five_hour: null,
+    weekly: null,
+  })};
+  for (const source of [1, 2, 4, 5, 6, 7, 8, 3, 37]) {
+    assert.equal(applet._panelThreshold(item, source), 100);
+  }
+});
+
 function usageWithoutSparkLimit(account) {
   return {
     account,
