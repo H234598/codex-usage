@@ -25,6 +25,14 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _BrokenInt(int):
+    def __mul__(self, _other):
+        return "not-an-int"
+
+    def __mod__(self, _other):
+        return "not-an-int"
+
+
 @pytest.mark.parametrize("payload", [None, [], "invalid", 42, True])
 def test_usage_pool_parsers_fail_closed_for_non_object_payload(payload):
     assert parse_wham_usage_pools(
@@ -168,6 +176,25 @@ def test_wham_parser_drops_relative_reset_with_failing_timezone_callback():
 
     assert main is not None
     assert main.windows[0].reset_at is None
+
+
+def test_app_server_parser_rejects_integer_subclass_window_duration():
+    main, models = parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {
+                        "windowDurationMins": _BrokenInt(300),
+                        "usedPercent": 1,
+                    }
+                }
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is None
+    assert models == ()
 
 
 @pytest.mark.parametrize("pools", [None, 1, True, object()])

@@ -586,7 +586,7 @@ def _nonnegative_int(value: Any) -> int | None:
 
 
 def _strict_int(value: Any) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
+    return value if type(value) is int else None
 
 
 def _optional_bool(value: Any) -> bool | None:

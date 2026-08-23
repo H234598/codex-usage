@@ -9545,3 +9545,20 @@ und Timestamp-Dispatch ab.
 Verifikation: **42 fokussierte Consumption-Tests**, **273 Consumption- und
 abhängige CLI-, History- und Integrationstests**, Ruff, Python-Compile und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 807: Integer-Subklassen in Usage-Limit-Fenstern fail-closed behandeln
+
+`usage_limits._strict_int()` akzeptierte bisher jede `int`-Subclass. Eine
+manipulierte `windowDurationMins`-Subclass konnte dadurch ihre Multiplikation
+überschreiben; der App-Server-Parser brach anschließend mit einem rohen
+`TypeError` statt mit einem verworfenen Fenster ab.
+
+Die Prüfung akzeptiert jetzt ausschließlich den exakten Built-in-Typ
+`int`. Nicht vertrauenswürdige Integer-Subklassen werden wie andere ungültige
+Limitwerte verworfen; Boolean-Werte bleiben weiterhin ausgeschlossen.
+Regression deckt den App-Server-Pfad mit überschriebenem `__mul__()` und
+`__mod__()` ab.
+
+Verifikation: **126 fokussierte Usage-Limit-Tests**, **417 Usage-Limit-, Direct-
+und App-Server-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
