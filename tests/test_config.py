@@ -1228,6 +1228,32 @@ id = "privat"
         load_config(config_path)
 
 
+def test_load_config_rejects_broken_symlink(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.symlink_to(tmp_path / "missing.toml")
+
+    with pytest.raises(ValueError, match="config path must be a regular file"):
+        load_config(config_path)
+
+
+def test_load_config_rejects_non_list_accounts(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("accounts = {}\n", encoding="utf-8")
+    config_path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="accounts must be a list"):
+        load_config(config_path)
+
+
+def test_load_config_rejects_interval_below_minimum(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("interval_seconds = 59\n", encoding="utf-8")
+    config_path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="interval_seconds must be at least 60"):
+        load_config(config_path)
+
+
 @pytest.mark.parametrize(
     "field",
     ("id", "label", "profile_dir", "browser", "auth_json_path", "backend"),

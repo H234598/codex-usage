@@ -12199,3 +12199,14 @@ Drei Regressionen bestätigen jeweils sichere Validierungsfehler.
 Verifikation: **13 JSON-Utility-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `json_utils.py`: **100 %**, keine Missing-Zeilen; keine
 Settings-Fenster gestartet.
+
+## Runde 1020: `load_config()`-Grenzen direkt belegt
+
+`config.load_config()` hatte die Pfade für einen gebrochenen Symlink, einen
+nicht-listigen `accounts`-Wert und ein Intervall unter 60 Sekunden noch offen.
+Drei Regressionen bestätigen jeweils explizite `ValueError`-Ablehnung.
+
+Verifikation: **123 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **85 %**, verbleibende Missing-Zeilen liegen
+in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
