@@ -11194,3 +11194,12 @@ positives Timeout exakt als monotone Deadline zurückgegeben wird.
 
 Verifikation: **255 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Produktionsänderung und keine Settings-Fenster gestartet.
+
+## Runde 922: Rest-Timeout direkt geprüft
+
+`direct._remaining_direct_timeout()` hatte bisher nur indirekte Negativabdeckung.
+Der neue deterministische Test fixiert `time.monotonic()` und prüft, dass eine
+noch gültige Deadline den korrekten positiven Restwert liefert.
+
+Verifikation: **256 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Produktionsänderung und keine Settings-Fenster gestartet.

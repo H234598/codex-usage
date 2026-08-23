@@ -190,6 +190,12 @@ def test_direct_deadline_returns_monotonic_deadline(monkeypatch):
     assert direct_module._direct_deadline(2) == 102.0
 
 
+def test_remaining_direct_timeout_returns_positive_remainder(monkeypatch):
+    monkeypatch.setattr(direct_module.time, "monotonic", lambda: 100.0)
+
+    assert direct_module._remaining_direct_timeout(102.0) == 2.0
+
+
 @pytest.mark.parametrize("auth_json_path", [1, {}, object()])
 def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     account = Account(
