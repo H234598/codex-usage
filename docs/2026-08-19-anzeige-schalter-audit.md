@@ -11465,3 +11465,13 @@ indirekt. Der neue Test injiziert HTTP 500 und bestätigt die getrennte
 Verifikation: **287 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 101; keine Settings-Fenster
 gestartet.
+
+## Runde 951: Netzwerkfehler im Direct-Fetch direkt abgebildet
+
+`direct._fetch_wham_usage()` hatte den `URLError`-Zweig bisher nicht direkt
+belegt. Der neue Test injiziert einen Offline-Fehler und bestätigt die
+redigierte Meldung `direct fetch failed: network error`.
+
+Verifikation: **288 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 100; keine Settings-Fenster
+gestartet.

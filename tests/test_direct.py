@@ -6,7 +6,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler
 from zoneinfo import ZoneInfo
 
@@ -894,6 +894,16 @@ def test_fetch_wham_usage_maps_http_500_to_fetch_error(monkeypatch):
     monkeypatch.setattr(direct_module, "urlopen", fail_urlopen)
 
     with pytest.raises(DirectFetchError, match=r"direct fetch failed: HTTP 500"):
+        _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
+def test_fetch_wham_usage_maps_url_error_to_network_error(monkeypatch):
+    def fail_urlopen(_request, *, timeout):
+        raise URLError("offline")
+
+    monkeypatch.setattr(direct_module, "urlopen", fail_urlopen)
+
+    with pytest.raises(DirectFetchError, match=r"direct fetch failed: network error"):
         _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
