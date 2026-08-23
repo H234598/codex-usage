@@ -1966,6 +1966,16 @@ def test_profile_job_remove_untracked_handles_symlink_and_missing(tmp_path, monk
     profile_jobs._remove_untracked_job(job["job_id"])
 
 
+def test_profile_job_remove_untracked_keeps_tracked_job(tmp_path, monkeypatch):
+    job = _unit_job(tmp_path, monkeypatch)
+    path = profile_jobs._job_path(job["job_id"])
+    profile_jobs._update_job(job["job_id"], status="running", worker_pid=4321)
+
+    profile_jobs._remove_untracked_job(job["job_id"])
+
+    assert path.exists()
+
+
 def test_profile_job_list_cancel_and_status_cover_filters_and_terminal_paths(tmp_path, monkeypatch):
     job = _unit_job(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="account id is invalid"):
@@ -2171,8 +2181,8 @@ def test_profile_job_event_delete_and_read_races_are_fail_closed(tmp_path, monke
 
     @contextmanager
     def remove_inside_lock(*args, **kwargs):
-        event_path.unlink()
         with original_lock(*args, **kwargs):
+            event_path.unlink()
             yield
 
     monkeypatch.setattr(profile_jobs, "private_path_lock", remove_inside_lock)
@@ -2192,6 +2202,25 @@ def test_profile_job_event_delete_and_read_races_are_fail_closed(tmp_path, monke
     event_path.unlink()
     with pytest.raises(ValueError, match="profile job id is invalid"):
         profile_jobs._event_path("invalid")
+
+
+def test_profile_job_event_delete_ignores_missing_after_lock(tmp_path, monkeypatch):
+    job = _unit_job(tmp_path, monkeypatch, json_events=True)
+    event_path = profile_jobs._event_path(job["job_id"])
+    write_private_text(event_path, "[]\n", label="events")
+    original_lock = profile_jobs.private_path_lock
+
+    @contextmanager
+    def remove_inside_lock(*args, **kwargs):
+        with original_lock(*args, **kwargs):
+            event_path.unlink()
+            yield
+
+    monkeypatch.setattr(profile_jobs, "private_path_lock", remove_inside_lock)
+
+    profile_jobs._delete_job_events(job["job_id"])
+
+    assert not event_path.exists()
 
 
 @pytest.mark.parametrize(
@@ -2408,6 +2437,19 @@ def test_profile_job_worker_match_maps_open_failure(monkeypatch):
         lambda *_args: (_ for _ in ()).throw(OSError("proc unavailable")),
     )
     assert profile_jobs._worker_matches(4321, "job-abc") is False
+
+
+def test_profile_job_worker_match_handles_missing_open_flags(monkeypatch):
+    for name in ("O_NOFOLLOW", "O_CLOEXEC"):
+        monkeypatch.delattr(profile_jobs.os, name, raising=False)
+    monkeypatch.setattr(profile_jobs.os, "open", lambda *_args: -1)
+    monkeypatch.setattr(
+        profile_jobs.os,
+        "read",
+        lambda *_args: b"python\0-m\0codex_usage.profile_jobs\0worker\0job-abc\0",
+    )
+
+    assert profile_jobs._worker_matches(4321, "job-abc") is True
 
 
 def test_profile_job_worker_main_maps_worker_failure(monkeypatch):

@@ -13314,3 +13314,19 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1105: Profile-Job-Cleanup- und `/proc`-Guards vollständig geprüft
+
+`profile_jobs.py` hatte noch Kanten beim Schutz eines bereits getrackten Jobs
+vor untracked-Cleanup, beim Verschwinden der Event-Datei innerhalb des Locks
+und bei fehlenden optionalen `/proc`-Open-Flags samt `fd=-1`-Cleanup. Gezielt
+ausgeführte Regressionen decken alle Pfade ab. Produktionslogik blieb
+unverändert.
+
+Verifikation: **127 `tests/test_profile_jobs.py`-Tests**, eine erwartbare
+`runpy`-Warnung beim Worker-Module-Main-Guard, `profile_jobs.py` **510/510
+Statements und 222/222 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.
