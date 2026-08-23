@@ -1523,6 +1523,37 @@ def test_auth_plan_type_rejects_claims_dict_subclass_hooks(tmp_path, monkeypatch
     ) is None
 
 
+def test_auth_plan_type_ignores_claims_without_auth_namespace(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda _token: {"sub": "user-a"},
+    )
+
+    assert auth_plan_type_from_payload(
+        {"tokens": {"id_token": "token"}},
+        path=tmp_path / "auth.json",
+    ) is None
+
+
+def test_auth_plan_type_rejects_conflicting_claims(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda token: {
+            "https://api.openai.com/auth": {
+                "chatgpt_plan_type": {"id": "plus", "access": "pro"}[token]
+            }
+        },
+    )
+
+    with pytest.raises(DirectAuthError, match="token plan types disagree"):
+        auth_plan_type_from_payload(
+            {"tokens": {"id_token": "id", "access_token": "access"}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_auth_plan_type_rejects_nested_auth_claims_dict_subclass_hooks(
     tmp_path, monkeypatch
 ):
@@ -4854,6 +4885,29 @@ def test_auth_plan_type_from_file_rejects_payload_dict_subclass(
         auth_plan_type_from_file(path)
 
 
+def test_auth_plan_type_from_file_rejects_invalid_json(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(
+        direct_module,
+        "read_auth_json_file",
+        lambda _path: ("not-json", None),
+    )
+
+    with pytest.raises(DirectAuthError, match=rf"invalid auth\.json: {path}"):
+        auth_plan_type_from_file(path)
+
+
+def test_auth_plan_type_from_file_returns_empty_plan(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(
+        direct_module,
+        "read_auth_json_file",
+        lambda _path: ('{"tokens": {}}', None),
+    )
+
+    assert auth_plan_type_from_file(path) is None
+
+
 @pytest.mark.parametrize("path", [None, [], "invalid", 1, False, object()])
 def test_auth_file_helpers_reject_non_path(path):
     for helper in (
@@ -4908,6 +4962,36 @@ def test_auth_identity_for_account_delegates_configured_path(monkeypatch):
     )
 
     assert auth_identity_for_account(account) == ("user-a", "account-a")
+    assert captured == [Path("/tmp/auth.json")]
+
+
+@pytest.mark.parametrize("auth_json_path", [None, ""])
+def test_auth_plan_type_for_account_accepts_missing_auth_path(auth_json_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        auth_json_path=auth_json_path,
+    )
+
+    assert auth_plan_type_for_account(account) is None
+
+
+def test_auth_plan_type_for_account_delegates_configured_path(monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        direct_module,
+        "auth_plan_type_from_file",
+        lambda path: captured.append(path) or "plus",
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        auth_json_path="/tmp/auth.json",
+    )
+
+    assert auth_plan_type_for_account(account) == "plus"
     assert captured == [Path("/tmp/auth.json")]
 
 

@@ -11689,3 +11689,14 @@ Rückgabe.
 Verifikation: **314 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **94 %**, Missing-Zeilen 65; keine Settings-Fenster
 gestartet.
+
+## Runde 973: Auth-Plan-Typ-Parserpfade direkt belegt
+
+`direct.auth_plan_type_from_payload()`, `auth_plan_type_from_file()` und
+`auth_plan_type_for_account()` hatten Namespace-Fallback, Konflikt, Datei-
+Parse/Positivpfad sowie fehlende Account-Pfade noch offen. Sieben Tests
+bestätigen diese Fälle.
+
+Verifikation: **321 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **95 %**, Missing-Zeilen 56; keine Settings-Fenster
+gestartet.
