@@ -4687,6 +4687,46 @@ test("credit balances are displayed as whole numbers", () => {
   );
 });
 
+test("credit balance formatting covers fallback usage, visibility and format branches", () => {
+  const applet = makeApplet();
+  applet._styleTargets["alpha:11"] = {panel: true, hover: true, click: true};
+  applet._creditSettings = {
+    alpha: {
+      account: "alpha", "show-panel": true, "show-tooltip": true,
+      format: "verbose", "custom-format": "Credits {remaining}/{limit}",
+      "hide-when-zero": false, "show-coverage-marker": true,
+      "baseline-enabled": true, "baseline-minutes": 60,
+      "consumption-show-panel": false, "consumption-show-tooltip": false,
+    },
+  };
+  applet._usages[0].credits = {
+    remaining: 794, limit: 1000, used: null, percent: 79.44,
+    coverage: "partial", baseline_used_percent: 40,
+    reset_at: "2026-08-30T12:00:00Z",
+  };
+
+  const verbose = applet._creditParts(applet._usages[0], "panel");
+  assert.match(verbose.plain, /^CR: 794 \/ 1000 \(79\.4%\)/);
+  assert.match(verbose.plain, /AW60m=40,0%/);
+
+  applet._creditSettings.alpha.format = "custom";
+  applet._creditSettings.alpha["custom-format"] = "{remaining}/{used}/{limit}/{percent}/{reset}";
+  const custom = applet._creditParts(applet._usages[0], "click");
+  assert.match(custom.plain, /^794\/206\/1000\/79\.4\//);
+
+  applet._creditSettings.alpha.format = "verbose";
+  applet._creditSettings.alpha["consumption-show-tooltip"] = true;
+  const clickVerbose = applet._creditParts(applet._usages[0], "click");
+  assert.match(clickVerbose.plain, /Verbrauch 206/);
+
+  applet._styleTargets["alpha:11"] = {panel: false, hover: false, click: false};
+  assert.equal(applet._creditParts(applet._usages[0], "panel"), null);
+  assert.ok(applet._creditParts(applet._usages[0], "panel", true));
+
+  applet._usages[0].credits = {remaining: 794, limit: null, used: null, percent: null};
+  assert.match(applet._creditParts(applet._usages[0], "panel", true).plain, /Verbrauch –/);
+});
+
 test("credit hide-when-zero does not hide a positive balance with zero usage", () => {
   const applet = makeApplet();
   applet._styleTargets["alpha:11"] = {panel: true, hover: true, click: true};

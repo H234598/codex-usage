@@ -13633,8 +13633,24 @@ ausgeschlossene Fenster sowie vollständige und leere Percent-/Reset-Darstellung
 ab. Damit sind alle V8-Blockranges der Funktion erreicht. Produktionslogik
 blieb unverändert.
 
-Verifikation: **521 `tests/applet_runtime.js`-Tests**, **521 bestanden**;
+Verifikation: **521 `tests/applet_runtime.test.js`-Tests**, **521 bestanden**;
 V8-Raw-Coverage: `_poolDetailParts` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
+
+## Runde 1124: Applet-Credit-Balancedarstellung vollständig ausgeführt
+
+Die Regression für `_creditParts` deckt fehlende und ungültige Guthaben,
+Fallback-Berechnung des Verbrauchs, Rundung, Panel-/Hover-/Click-Sichtbarkeit,
+Force-Visibility, kompakte/verbose/custom Formate, Verbrauchs-Suffix,
+Coverage-Marker und Baseline-Darstellung ab. Damit sind alle V8-Blockranges der
+Funktion erreicht. Produktionslogik blieb unverändert.
+
+Verifikation: **522 `tests/applet_runtime.test.js`-Tests**, **522 bestanden**;
+V8-Raw-Coverage: `_creditParts` ohne ungezählte Blockranges;
 `git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
 Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
