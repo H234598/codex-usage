@@ -218,6 +218,10 @@ def test_parse_iso_datetime_accepts_utc_z_suffix():
     )
 
 
+def test_parse_iso_datetime_rejects_invalid_text():
+    assert direct_module._parse_iso_datetime("not-a-datetime") is None
+
+
 @pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
 def test_direct_fetch_rejects_non_account_input(account):
     with pytest.raises(ValueError, match="account is invalid"):

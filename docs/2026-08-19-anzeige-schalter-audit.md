@@ -11905,3 +11905,13 @@ eine scheinbar vertrauenswürdige Zieladresse.
 Verifikation: **350 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **99 %**, Missing-Zeilen 12; keine Settings-Fenster
 gestartet.
+
+## Runde 994: Ungültigen ISO-Zeitstempel direkt abgewiesen
+
+`direct._parse_iso_datetime()` hatte den echten `datetime.fromisoformat`-
+Fehlerpfad noch nicht direkt belegt. Der neue Test bestätigt `None` für
+ungültigen Text.
+
+Verifikation: **351 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **99 %**, Missing-Zeilen 10; keine Settings-Fenster
+gestartet.
