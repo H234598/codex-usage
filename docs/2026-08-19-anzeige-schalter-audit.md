@@ -12442,3 +12442,14 @@ Verifikation: **170 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **93 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1041: Profil-Setup bündelt Rollback-Fehler korrekt
+
+Der Fehlerpfad in `_prepare_profile_dir()` für ein scheiterndes Cleanup war
+noch ungetestet. Eine Regression erzwingt primären Setup- und sekundären
+Cleanup-Fehler und bestätigt die vollständige `ExceptionGroup`-Zusammenfassung.
+
+Verifikation: **171 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **93 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

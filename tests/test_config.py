@@ -991,6 +991,29 @@ def test_profile_setup_failure_removes_partially_created_ancestors(tmp_path, mon
     assert not profile_dir.parent.parent.exists()
 
 
+def test_profile_setup_rollback_failure_is_grouped(tmp_path, monkeypatch):
+    profile_dir = tmp_path / "rollback-root" / "profile"
+    original_ensure = config_module.ensure_private_directory
+
+    def fail_after_setup(path, *, label, **kwargs):
+        original_ensure(path, label=label, **kwargs)
+        raise OSError("profile setup failed")
+
+    def fail_cleanup(*_args, **_kwargs):
+        raise RuntimeError("profile cleanup failed")
+
+    monkeypatch.setattr(config_module, "ensure_private_directory", fail_after_setup)
+    monkeypatch.setattr(config_module, "_cleanup_created_profile_directories", fail_cleanup)
+
+    with pytest.raises(ExceptionGroup) as exc:
+        config_module._prepare_profile_dir(str(profile_dir))
+
+    assert [str(error) for error in exc.value.exceptions] == [
+        "profile setup failed",
+        "profile cleanup failed",
+    ]
+
+
 def test_profile_cleanup_ignores_missing_created_ancestor(tmp_path):
     created_ancestor = tmp_path / "missing-ancestor"
 
