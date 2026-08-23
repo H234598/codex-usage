@@ -209,6 +209,20 @@ def test_proc_self_fd_parses_only_canonical_fd_paths(path, expected):
     assert direct_module._proc_self_fd(path) == expected
 
 
+def test_open_auth_json_fd_duplicates_inherited_regular_fd(tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_bytes(b"auth-payload")
+    source_fd = os.open(path, os.O_RDONLY)
+    duplicate_fd = -1
+    try:
+        duplicate_fd = direct_module._open_auth_json_fd(Path(f"/proc/self/fd/{source_fd}"))
+        assert os.read(duplicate_fd, 64) == b"auth-payload"
+    finally:
+        if duplicate_fd >= 0:
+            os.close(duplicate_fd)
+        os.close(source_fd)
+
+
 @pytest.mark.parametrize("auth_json_path", [1, {}, object()])
 def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     account = Account(

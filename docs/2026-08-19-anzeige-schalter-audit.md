@@ -11222,3 +11222,12 @@ korrekt als nicht vererbt verworfen werden.
 
 Verifikation: **261 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Produktionsänderung und keine Settings-Fenster gestartet.
+
+## Runde 925: Geerbten Auth-FD direkt geprüft
+
+`direct._open_auth_json_fd()` hatte bisher keinen direkten Positivtest für den
+`/proc/self/fd/<n>`-Pfad. Der neue Test dupliziert einen isolierten regulären
+FD, liest den Inhalt aus dem Duplikat und schließt beide Deskriptoren sicher.
+
+Verifikation: **262 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Produktionsänderung und keine Settings-Fenster gestartet.
