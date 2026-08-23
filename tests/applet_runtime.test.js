@@ -3501,6 +3501,26 @@ test("display targets resolve account id, label and tag per surface", () => {
   assert.equal(applet._accountDisplayText(item, "panel"), "BACKEND");
 });
 
+test("account display text handles direct items, missing identities and backend fallback rows", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._accountDisplayText({account: "gamma", label: "Gamma"}, "panel"), "Ga");
+  assert.equal(applet._accountDisplayText(null, "click"), "?");
+
+  applet._backendAccounts = null;
+  applet.accountBackends = [null, {account: "gamma", tag: "G"}];
+  applet._styleTargets["gamma:9"] = {panel: true, hover: true, click: true};
+  assert.equal(applet._accountDisplayText({account: "gamma", label: "Gamma"}, "click"), "G");
+
+  applet._backendAccounts = {};
+  applet.accountBackends = [];
+  delete applet._styleTargets["gamma:9"];
+  applet._displaySettings.gamma = {
+    account: "gamma", panel: 1, hover: 1, click: 1, tag: ""
+  };
+  assert.equal(applet._accountDisplayText({account: "gamma", label: ""}, "panel"), "gamma");
+});
+
 test("account identity elements can be disabled per surface", () => {
   const applet = makeApplet();
   applet._styleTargets["alpha:8"] = {panel: true, hover: false, click: true};

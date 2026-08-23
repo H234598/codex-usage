@@ -13590,3 +13590,19 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1121: Applet-Account-Anzeige vollständig ausgeführt
+
+Die Regression für `_accountDisplayText` deckt direkte und verschachtelte
+Usage-Objekte, fehlende Account-/Labelwerte, unbekannte Accounts mit
+Defaultzeile, Backend-Tags aus synchronisierten Account-Backends, deaktivierte
+Tag-Ziele sowie Label-Fallbacks ab. Damit sind alle V8-Blockranges der
+Funktion im VM-Runtime-Lauf erreicht. Produktionslogik blieb unverändert.
+
+Verifikation: **519 `tests/applet_runtime.test.js`-Tests**, **519 bestanden**;
+V8-Raw-Coverage: `_accountDisplayText` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
