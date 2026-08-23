@@ -11740,3 +11740,13 @@ native `inf`-Expiry und bestätigt die sichere `DirectAuthError`-Ablehnung.
 Verifikation: **326 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **96 %**, Missing-Zeilen 49; keine Settings-Fenster
 gestartet.
+
+## Runde 978: Ungültige Proc-FD-Nummer direkt abgewiesen
+
+`direct._proc_self_fd()` hatte den defensiven `int()`-Fehlerzweig noch nicht
+direkt belegt. Der neue Test simuliert einen nichtnumerischen Regex-Treffer
+und bestätigt `None` statt einer Ausnahme.
+
+Verifikation: **327 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **96 %**, Missing-Zeilen 47; keine Settings-Fenster
+gestartet.

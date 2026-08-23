@@ -238,6 +238,20 @@ def test_proc_self_fd_parses_only_canonical_fd_paths(path, expected):
     assert direct_module._proc_self_fd(path) == expected
 
 
+def test_proc_self_fd_rejects_non_numeric_regex_match(monkeypatch):
+    class FakeMatch:
+        def group(self, _index):
+            return "not-a-number"
+
+    class FakePattern:
+        def fullmatch(self, _path):
+            return FakeMatch()
+
+    monkeypatch.setattr(direct_module, "PROC_SELF_FD_RE", FakePattern())
+
+    assert direct_module._proc_self_fd(Path("/proc/self/fd/42")) is None
+
+
 def test_open_auth_json_fd_duplicates_inherited_regular_fd(tmp_path):
     path = tmp_path / "auth.json"
     path.write_bytes(b"auth-payload")
