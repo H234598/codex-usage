@@ -11231,3 +11231,12 @@ FD, liest den Inhalt aus dem Duplikat und schließt beide Deskriptoren sicher.
 
 Verifikation: **262 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Produktionsänderung und keine Settings-Fenster gestartet.
+
+## Runde 926: Expandierten Auth-Pfad direkt geprüft
+
+`direct._expanded_auth_path()` hatte bisher keinen direkten Positivtest. Der
+neue Test bindet `HOME` an ein isoliertes Verzeichnis und prüft die kanonische
+Auflösung von `~/.codex/auth.json` ohne Produktionsänderung.
+
+Verifikation: **263 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

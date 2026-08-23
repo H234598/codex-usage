@@ -89,6 +89,15 @@ def test_default_auth_json_path_uses_codex_home(monkeypatch, tmp_path):
     assert direct_module.default_auth_json_path() == home / ".codex" / "auth.json"
 
 
+def test_expanded_auth_path_expands_current_user_home(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+
+    assert direct_module._expanded_auth_path(Path("~/.codex/auth.json")) == (
+        home / ".codex" / "auth.json"
+    )
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
