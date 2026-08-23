@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -1815,3 +1816,619 @@ def test_profile_job_event_rejects_non_string_kind(kind):
 @pytest.mark.parametrize("argv", [None, (), "job", 1, object(), [None], ["a", "b"]])
 def test_profile_job_worker_rejects_invalid_argv(argv):
     assert profile_jobs.worker_main(argv) == 2  # type: ignore[arg-type]
+
+
+def _unit_job(tmp_path, monkeypatch, *, json_events=False):
+    state = tmp_path / "state"
+    monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
+
+    class FakeProcess:
+        pid = 4321
+
+    monkeypatch.setattr(
+        profile_jobs.subprocess,
+        "Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    return profile_jobs.create_profile_job(
+        account_id="alpha",
+        label="Alpha",
+        browser="firefox",
+        backend="direct",
+        profile_dir=str(tmp_path / "profile"),
+        expected_backend_account_id=None,
+        config_path=tmp_path / "config.toml",
+        json_events=json_events,
+    )
+
+
+def test_profile_job_create_rejects_relative_config_and_cleanup_failures(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="config path must be absolute"):
+        profile_jobs.create_profile_job(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir=str(tmp_path / "profile"),
+            expected_backend_account_id=None,
+            config_path=Path("relative/config.toml"),
+            json_events=False,
+        )
+
+    state = tmp_path / "state"
+    monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
+    monkeypatch.setattr(
+        profile_jobs.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("start")),
+    )
+    monkeypatch.setattr(
+        profile_jobs,
+        "_update_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("update")),
+    )
+    monkeypatch.setattr(
+        profile_jobs,
+        "_remove_untracked_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("remove")),
+    )
+    with pytest.raises(ValueError, match="profile job could not be started"):
+        profile_jobs.create_profile_job(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir=str(tmp_path / "profile"),
+            expected_backend_account_id=None,
+            config_path=tmp_path / "config.toml",
+            json_events=False,
+        )
+
+
+def test_profile_job_tracking_cleanup_handles_kill_and_remove_failures(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
+
+    class FakeProcess:
+        pid = 4321
+
+        def kill(self):
+            raise OSError("kill")
+
+        def wait(self, timeout=None):
+            return -15
+
+    monkeypatch.setattr(profile_jobs.subprocess, "Popen", lambda *_a, **_k: FakeProcess())
+    monkeypatch.setattr(
+        profile_jobs.os,
+        "killpg",
+        lambda *_a: (_ for _ in ()).throw(OSError("killpg")),
+    )
+    original_update = profile_jobs._update_job
+
+    def fail_tracking(job_id, **changes):
+        if "worker_pid" in changes:
+            raise ValueError("tracking")
+        if changes.get("status") == "failed":
+            raise ValueError("failed update")
+        return original_update(job_id, **changes)
+
+    monkeypatch.setattr(profile_jobs, "_update_job", fail_tracking)
+    monkeypatch.setattr(
+        profile_jobs,
+        "_remove_untracked_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("remove")),
+    )
+    with pytest.raises(ValueError, match="tracking"):
+        profile_jobs.create_profile_job(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir=str(tmp_path / "profile"),
+            expected_backend_account_id=None,
+            config_path=tmp_path / "config.toml",
+            json_events=False,
+        )
+
+
+def test_profile_job_reap_swallows_group_kill_process_kill_and_wait_errors(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            raise subprocess.TimeoutExpired(["worker"], timeout)
+
+        def kill(self):
+            calls.append(("kill",))
+            raise OSError("kill")
+
+    monkeypatch.setattr(
+        profile_jobs.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(OSError("killpg")),
+    )
+    profile_jobs._reap_untracked_worker(FakeProcess())
+    assert calls == [("wait", 1), ("kill",), ("wait", 1)]
+
+
+def test_profile_job_remove_untracked_handles_symlink_and_missing(tmp_path, monkeypatch):
+    job = _unit_job(tmp_path, monkeypatch)
+    path = profile_jobs._job_path(job["job_id"])
+    path.unlink()
+    path.symlink_to(tmp_path / "target")
+    with pytest.raises(ValueError, match="manifest must not be a symlink"):
+        profile_jobs._remove_untracked_job(job["job_id"])
+    path.unlink()
+    profile_jobs._remove_untracked_job(job["job_id"])
+
+
+def test_profile_job_list_cancel_and_status_cover_filters_and_terminal_paths(tmp_path, monkeypatch):
+    job = _unit_job(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="account id is invalid"):
+        profile_jobs.list_profile_jobs("bad/id")
+    assert profile_jobs.list_profile_jobs("other") == []
+    profile_jobs._update_job(job["job_id"], status="completed")
+    assert profile_jobs.cancel_profile_job(job["job_id"])["status"] == "completed"
+
+    live = _unit_job(tmp_path / "live", monkeypatch)
+    profile_jobs._update_job(live["job_id"], status="running", worker_pid=4321)
+    monkeypatch.setattr(profile_jobs, "_worker_matches", lambda *_args: True)
+    monkeypatch.setattr(
+        profile_jobs.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(OSError("group disappeared")),
+    )
+    assert profile_jobs.cancel_profile_job(live["job_id"])["status"] == "cancel_requested"
+
+
+@pytest.mark.parametrize("terminal_status", ["cancelled", "failed", "completed"])
+def test_profile_job_run_cancel_requested_handles_update_result(
+    tmp_path, monkeypatch, terminal_status
+):
+    job = _unit_job(tmp_path, monkeypatch)
+    profile_jobs._update_job(job["job_id"], status="cancel_requested")
+    monkeypatch.setattr(
+        profile_jobs,
+        "_update_job",
+        lambda *_args, **_kwargs: {"status": terminal_status},
+    )
+    expected = 0 if terminal_status == "cancelled" else 1
+    assert profile_jobs.run_profile_job(job["job_id"]) == expected
+
+
+def test_profile_job_worker_handles_signal_device_error_generic_error_and_failed_result(
+    tmp_path, monkeypatch
+):
+    job = _unit_job(tmp_path, monkeypatch)
+
+    def install_and_terminate(_signal, handler):
+        if callable(handler):
+            handler(profile_jobs.signal.SIGTERM, None)
+
+    monkeypatch.setattr(
+        profile_jobs.signal,
+        "signal",
+        install_and_terminate,
+    )
+    assert profile_jobs.run_profile_job(job["job_id"]) == 0
+    assert profile_jobs._read_job(job["job_id"])["status"] == "cancelled"
+
+    for error in (
+        profile_jobs.profile_login.DeviceLoginError("device failed"),
+        RuntimeError("generic failed"),
+    ):
+        current = _unit_job(tmp_path / str(len(error.args)), monkeypatch)
+        monkeypatch.setattr(profile_jobs.signal, "signal", lambda *_args: None)
+        monkeypatch.setattr(profile_jobs.signal, "getsignal", lambda *_args: object())
+        monkeypatch.setattr(
+            profile_jobs.profile_login,
+            "run_device_login",
+            lambda *_args, error=error, **_kwargs: (_ for _ in ()).throw(error),
+        )
+        assert profile_jobs.run_profile_job(current["job_id"]) == 1
+        assert profile_jobs._read_job(current["job_id"])["status"] == "failed"
+
+    current = _unit_job(tmp_path / "result", monkeypatch)
+    monkeypatch.setattr(profile_jobs.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(profile_jobs.signal, "getsignal", lambda *_args: object())
+    monkeypatch.setattr(
+        profile_jobs.profile_login,
+        "run_device_login",
+        lambda *_args, **_kwargs: DeviceLoginResult(False, "alpha"),
+    )
+    assert profile_jobs.run_profile_job(current["job_id"]) == 1
+    assert profile_jobs._read_job(current["job_id"])["status"] == "failed"
+
+
+def test_profile_job_worker_cancels_after_success_before_completion_check(tmp_path, monkeypatch):
+    job = _unit_job(tmp_path, monkeypatch)
+    monkeypatch.setattr(profile_jobs.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(profile_jobs.signal, "getsignal", lambda *_args: object())
+    checks = iter((False, False, True))
+    monkeypatch.setattr(profile_jobs, "_job_cancel_requested", lambda *_args: next(checks))
+    monkeypatch.setattr(
+        profile_jobs.profile_login,
+        "run_device_login",
+        lambda *_args, **_kwargs: DeviceLoginResult(True, "alpha"),
+    )
+    assert profile_jobs.run_profile_job(job["job_id"]) == 0
+    assert profile_jobs._read_job(job["job_id"])["status"] == "cancelled"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [profile_jobs.profile_login.DeviceLoginError("device"), RuntimeError("generic")],
+)
+def test_profile_job_worker_cancels_while_login_raises(tmp_path, monkeypatch, error):
+    job = _unit_job(tmp_path, monkeypatch)
+    monkeypatch.setattr(profile_jobs.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(profile_jobs.signal, "getsignal", lambda *_args: object())
+    checks = iter((False, True))
+    monkeypatch.setattr(profile_jobs, "_job_cancel_requested", lambda *_args: next(checks))
+    monkeypatch.setattr(
+        profile_jobs.profile_login,
+        "run_device_login",
+        lambda *_args, error=error, **_kwargs: (_ for _ in ()).throw(error),
+    )
+    assert profile_jobs.run_profile_job(job["job_id"]) == 0
+    assert profile_jobs._read_job(job["job_id"])["status"] == "cancelled"
+
+
+def test_profile_job_completion_rejects_auth_file_shape_and_identity_errors(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    write_private_text(auth_path, "{}\n", label="test auth")
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+        browser="firefox",
+        auth_json_path=str(auth_path),
+        backend="direct",
+        reactivation_browser="auto",
+    )
+    monkeypatch.setattr(profile_jobs, "load_config", lambda _path: AppConfig(accounts=(account,)))
+    job = {
+        "account_id": "alpha",
+        "label": "Alpha",
+        "profile_dir": str(tmp_path / "profile"),
+        "browser": "firefox",
+        "backend": "direct",
+        "reactivation_browser": "auto",
+        "config_path": str(tmp_path / "config.toml"),
+    }
+    auth_path.unlink()
+    auth_path.symlink_to(tmp_path / "target")
+    assert profile_jobs._verify_profile_job_completion(job) is False
+    auth_path.unlink()
+    auth_path.mkdir()
+    assert profile_jobs._verify_profile_job_completion(job) is False
+    auth_path.rmdir()
+    write_private_text(auth_path, "{}\n", label="test auth")
+    monkeypatch.setattr(
+        profile_jobs,
+        "auth_identity_from_file",
+        lambda _path: (_ for _ in ()).throw(profile_jobs.DirectAuthError("bad auth")),
+    )
+    job["expected_backend_account_id"] = "backend-alpha"
+    assert profile_jobs._verify_profile_job_completion(job) is False
+
+
+def test_profile_job_events_cover_duplicates_caps_permissions_and_shapes(tmp_path, monkeypatch):
+    job = _unit_job(tmp_path, monkeypatch, json_events=True)
+    event = DeviceLoginEvent("code", "ABCD-1234")
+    profile_jobs._append_job_event(job["job_id"], event)
+    profile_jobs._append_job_event(job["job_id"], event)
+    for index in range(profile_jobs.PROFILE_JOB_MAX_EVENTS):
+        profile_jobs._append_job_event(job["job_id"], DeviceLoginEvent("code", f"CODE-{index}"))
+    events_path = profile_jobs._event_path(job["job_id"])
+    assert len(profile_jobs._read_job_events(job["job_id"])) == profile_jobs.PROFILE_JOB_MAX_EVENTS
+
+    events_path.chmod(0o640)
+    with pytest.raises(ValueError, match="permissions"):
+        profile_jobs._read_job_events_unlocked(events_path)
+    events_path.chmod(0o600)
+    write_private_text(events_path, "{}\n", label="bad events")
+    with pytest.raises(ValueError, match="events are invalid"):
+        profile_jobs._read_job_events_unlocked(events_path)
+
+    too_many = [
+        {"kind": event.kind, "value": event.value}
+        for _ in range(profile_jobs.PROFILE_JOB_MAX_EVENTS + 1)
+    ]
+    write_private_text(events_path, json.dumps(too_many), label="too many events")
+    with pytest.raises(ValueError, match="events are invalid"):
+        profile_jobs._read_job_events_unlocked(events_path)
+
+    for invalid in (
+        {"kind": "code", "value": ""},
+        {"kind": "code", "value": "x\n"},
+        {"kind": "code", "value": "x" * (profile_jobs.PROFILE_JOB_EVENT_VALUE_MAX_CHARS + 1)},
+        {"kind": "url", "value": "http://example.com"},
+    ):
+        with pytest.raises(ValueError):
+            profile_jobs._normalize_job_event(invalid)
+
+    monkeypatch.setattr(profile_jobs, "PROFILE_JOB_EVENT_MAX_BYTES", 10)
+    with pytest.raises(ValueError, match="events are too large"):
+        profile_jobs._serialize_events([{"kind": "code", "value": "x"}])
+
+
+def test_profile_job_event_delete_and_read_races_are_fail_closed(tmp_path, monkeypatch):
+    job = _unit_job(tmp_path, monkeypatch, json_events=True)
+    event_path = profile_jobs._event_path(job["job_id"])
+    event_path.symlink_to(tmp_path / "target")
+    with pytest.raises(ValueError, match="events must not be a symlink"):
+        profile_jobs._delete_job_events(job["job_id"])
+    event_path.unlink()
+    profile_jobs._delete_job_events(job["job_id"])
+
+    write_private_text(event_path, "[]\n", label="events")
+    original_lock = profile_jobs.private_path_lock
+
+    @contextmanager
+    def remove_inside_lock(*args, **kwargs):
+        event_path.unlink()
+        with original_lock(*args, **kwargs):
+            yield
+
+    monkeypatch.setattr(profile_jobs, "private_path_lock", remove_inside_lock)
+    assert profile_jobs._read_job_events(job["job_id"]) == []
+
+    write_private_text(event_path, "[]\n", label="events")
+
+    @contextmanager
+    def symlink_inside_lock(*_args, **_kwargs):
+        event_path.unlink()
+        event_path.symlink_to(tmp_path / "target")
+        yield
+
+    monkeypatch.setattr(profile_jobs, "private_path_lock", symlink_inside_lock)
+    with pytest.raises(ValueError, match="events must not be a symlink"):
+        profile_jobs._delete_job_events(job["job_id"])
+    event_path.unlink()
+    with pytest.raises(ValueError, match="profile job id is invalid"):
+        profile_jobs._event_path("invalid")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("account_id", "__all_accounts__", "account id is invalid"),
+        ("account_id", "bad/id", "account id is invalid"),
+        ("label", "   ", "label is invalid"),
+        ("label", "line\nfeed", "label is invalid"),
+        ("series_active", 1, "series_active is invalid"),
+        ("tag", "123456789", "tag is invalid"),
+        ("series", "", "active series requires a series name"),
+    ],
+)
+def test_profile_job_create_argument_guards(field, value, message):
+    arguments = {
+        "account_id": "alpha",
+        "label": "Alpha",
+        "browser": "firefox",
+        "backend": "direct",
+        "profile_dir": "/tmp/profile",
+        "expected_backend_account_id": None,
+        "json_events": False,
+        "reactivation_browser": "auto",
+        "check_profile_path": False,
+    }
+    if field == "series":
+        arguments["series_active"] = True
+    arguments[field] = value
+    with pytest.raises(ValueError, match=message):
+        profile_jobs._validate_create_arguments(**arguments)
+
+
+def test_profile_job_create_rejects_relative_and_symlink_profile_dirs(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="profile dir must be absolute"):
+        profile_jobs._validate_create_arguments(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir="relative/profile",
+            expected_backend_account_id=None,
+            json_events=False,
+            reactivation_browser="auto",
+            check_profile_path=False,
+        )
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "profile-link"
+    link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(profile_jobs, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
+    with pytest.raises(ValueError, match="profile dir must not be a symlink"):
+        profile_jobs._validate_create_arguments(
+            account_id="alpha",
+            label="Alpha",
+            browser="firefox",
+            backend="direct",
+            profile_dir=str(link),
+            expected_backend_account_id=None,
+            json_events=False,
+            reactivation_browser="auto",
+        )
+
+
+def test_profile_job_root_lock_and_path_guards(tmp_path, monkeypatch):
+    monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: tmp_path / "state")
+    root = tmp_path / "state" / "profile-jobs"
+    root.parent.mkdir(parents=True)
+    root.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(ValueError, match="profile job directory is invalid"):
+        profile_jobs._job_root()
+    with pytest.raises(ValueError, match="profile job id is invalid"):
+        profile_jobs._job_path("bad")
+    root.unlink()
+    with profile_jobs.profile_job_creation_lock():
+        pass
+
+
+def test_profile_job_prune_and_write_guards_cover_directory_and_duplicate_paths(
+    tmp_path, monkeypatch
+):
+    job = _unit_job(tmp_path, monkeypatch)
+    root = profile_jobs._job_root()
+    path = profile_jobs._job_path(job["job_id"])
+    profile_jobs._update_job(job["job_id"], status="completed")
+    path.unlink()
+    path.symlink_to(tmp_path / "missing-target")
+    profile_jobs._prune_terminal_jobs(root)
+    path.unlink()
+
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="profile job id already exists"):
+        profile_jobs._write_new_job({"job_id": job["job_id"]})
+    path.unlink()
+
+    original_read_job = profile_jobs._read_job
+    monkeypatch.setattr(
+        profile_jobs,
+        "_read_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read race")),
+    )
+    candidate = root / ("job-" + "b" * 32 + ".json")
+    candidate.write_text("{}", encoding="utf-8")
+    profile_jobs._prune_terminal_jobs(root)
+    candidate.unlink()
+    monkeypatch.setattr(profile_jobs, "_read_job", original_read_job)
+
+    monkeypatch.setattr(profile_jobs, "PROFILE_JOB_MAX_DIRECTORY_ENTRIES", 0)
+    monkeypatch.setattr(profile_jobs, "_prune_terminal_jobs", lambda _root: None)
+    (root / "unrelated").write_text("x", encoding="utf-8")
+    with pytest.raises(ValueError, match="too many profile job directory entries"):
+        profile_jobs._write_new_job({"job_id": "job-" + "c" * 32})
+
+
+def test_profile_job_read_and_manifest_schema_guards(tmp_path, monkeypatch):
+    job = _unit_job(tmp_path, monkeypatch)
+    path = profile_jobs._job_path(job["job_id"])
+    path.chmod(0o640)
+    with pytest.raises(ValueError, match="manifest permissions"):
+        profile_jobs._read_job(job["job_id"])
+    path.chmod(0o600)
+    write_private_text(path, "[]\n", label="bad manifest")
+    with pytest.raises(ValueError, match="manifest must be an object"):
+        profile_jobs._read_job(job["job_id"])
+
+    manifest = {
+        "schema_version": 1,
+        "job_id": "bad",
+        "account_id": "alpha",
+        "label": "Alpha",
+        "browser": "firefox",
+        "backend": "direct",
+        "profile_dir": str(tmp_path / "profile"),
+        "reactivation_browser": "auto",
+        "tag": "",
+        "series": "",
+        "series_active": False,
+        "expected_backend_account_id": None,
+        "config_path": str(tmp_path / "config.toml"),
+        "json_events": False,
+        "status": "queued",
+        "created_at": "2026-08-16T00:00:00Z",
+        "updated_at": "2026-08-16T00:00:00Z",
+        "worker_pid": None,
+        "error": None,
+    }
+    with pytest.raises(ValueError, match="manifest id is invalid"):
+        profile_jobs._validate_manifest(manifest)
+    manifest["job_id"] = "job-" + "a" * 32
+    manifest["config_path"] = "relative/config.toml"
+    with pytest.raises(ValueError, match="config path is invalid"):
+        profile_jobs._validate_manifest(manifest)
+    manifest["config_path"] = str(tmp_path / "config.toml")
+    manifest["created_at"] = "2026-08-16"
+    with pytest.raises(ValueError, match="timestamp is invalid"):
+        profile_jobs._validate_manifest(manifest)
+    manifest["created_at"] = "2026-08-16T00:00:00Z"
+    manifest["error"] = "x" * 257
+    with pytest.raises(ValueError, match="error is invalid"):
+        profile_jobs._validate_manifest(manifest)
+    with pytest.raises(ValueError, match="manifest schema is invalid"):
+        profile_jobs._validate_manifest({"schema_version": 1})
+
+
+def test_profile_job_manifest_legacy_shapes_and_size_guard(tmp_path):
+    base = {
+        "schema_version": 1,
+        "job_id": "job-" + "a" * 32,
+        "account_id": "alpha",
+        "label": "Alpha",
+        "browser": "firefox",
+        "backend": "direct",
+        "profile_dir": str(tmp_path / "profile"),
+        "expected_backend_account_id": None,
+        "config_path": str(tmp_path / "config.toml"),
+        "json_events": False,
+        "status": "queued",
+        "created_at": "2026-08-16T00:00:00Z",
+        "updated_at": "2026-08-16T00:00:00Z",
+        "worker_pid": None,
+        "error": None,
+    }
+    legacy = profile_jobs._validate_manifest(base)
+    assert legacy["reactivation_browser"] == "auto"
+    newer_legacy = profile_jobs._validate_manifest(
+        {**base, "reactivation_browser": "auto"}
+    )
+    assert newer_legacy["tag"] == ""
+    with pytest.raises(ValueError, match="manifest is too large"):
+        profile_jobs._serialize_manifest({"payload": "x" * profile_jobs.PROFILE_JOB_MAX_BYTES})
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (b"", False),
+        (b"x" * 4097, False),
+        (b"\xff", False),
+        (b"python\0-m\0codex_usage.profile_jobs\0worker\0job-abc\0", True),
+        (b"python\0-m\0other\0worker\0job-abc\0", False),
+    ],
+)
+def test_profile_job_worker_match_parser_bounds(monkeypatch, raw, expected):
+    monkeypatch.setattr(profile_jobs.os, "open", lambda *_args: 42)
+    monkeypatch.setattr(profile_jobs.os, "read", lambda _fd, _size: raw)
+    monkeypatch.setattr(profile_jobs.os, "close", lambda _fd: None)
+    assert profile_jobs._worker_matches(4321, "job-abc") is expected
+
+
+def test_profile_job_worker_match_maps_open_failure(monkeypatch):
+    monkeypatch.setattr(
+        profile_jobs.os,
+        "open",
+        lambda *_args: (_ for _ in ()).throw(OSError("proc unavailable")),
+    )
+    assert profile_jobs._worker_matches(4321, "job-abc") is False
+
+
+def test_profile_job_worker_main_maps_worker_failure(monkeypatch):
+    monkeypatch.setattr(
+        profile_jobs,
+        "run_profile_job",
+        lambda _job_id: (_ for _ in ()).throw(RuntimeError("worker failed")),
+    )
+    assert profile_jobs.worker_main(["job-" + "a" * 32]) == 1
+
+
+def test_profile_job_module_entrypoint_returns_expected_exit_codes(monkeypatch):
+    import runpy
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["profile_jobs", "invalid"])
+    with pytest.raises(SystemExit) as invalid_exit:
+        runpy.run_module("codex_usage.profile_jobs", run_name="__main__")
+    assert invalid_exit.value.code == 2
+
+    monkeypatch.setattr(sys, "argv", ["profile_jobs", "worker", "invalid"])
+    with pytest.raises(SystemExit) as worker_exit:
+        runpy.run_module("codex_usage.profile_jobs", run_name="__main__")
+    assert worker_exit.value.code == 1

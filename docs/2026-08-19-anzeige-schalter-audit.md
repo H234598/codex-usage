@@ -12912,3 +12912,18 @@ Verifikation: **75 `tests/test_integration_snapshot.py`-Tests**,
 `integration_snapshot.py` **482/482 Statements, 100 % Coverage**, Mypy, Ruff
 und Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite
 wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1081: Profile-Job-Worker- und Manifest-Guards vollständig geprüft
+
+`profile_jobs.py` hatte noch unbelegte Prozess-, Lock- und Cleanup-Grenzen:
+absolute Konfigurations-/Profilpfade, Start-/Tracking-Rollbacks, Worker-Reap-
+Fehler, Listen-/Cancel-Rennen, Signal- und Login-Fehlerzustände, Completion-
+Postconditions, Event-Dateien, Manifest-Legacy-/Schemaformen, Root-/Prune-
+Limits sowie `/proc`-Cmdline-Parsing. Die fokussierten Regressionen führen
+alle verbleibenden Guards und Fail-Closed-Zweige direkt aus.
+
+Verifikation: **124 `tests/test_profile_jobs.py`-Tests**,
+`profile_jobs.py` **510/510 Statements, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Eine erwartbare `runpy`-Warnung bleibt beim
+Entry-Point-Test. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
