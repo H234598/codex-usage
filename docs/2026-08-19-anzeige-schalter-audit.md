@@ -10959,3 +10959,18 @@ unverändert.
 
 Verifikation: **237 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 905: Auth-Plantyp nur aus nativen Payload-Dicts lesen
+
+`direct.auth_plan_type_from_payload()` akzeptierte den äußeren Payload als
+Dict-Subclass per `isinstance` und rief dessen `.get()` auf. Ein manipuliertes
+Auth-Mapping konnte die Plantyp-Auswertung dadurch mit einer rohen Exception
+abbrechen.
+
+Der Helper verarbeitet jetzt nur native Payload-`dict`; Subklassen werden ohne
+Hook-Aufruf wie ein nicht verwertbarer Payload behandelt. Regression deckt den
+äußeren Plantyp-`.get()`-Hook ab; normale Auth-JSON-Strukturen bleiben
+unverändert.
+
+Verifikation: **238 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
