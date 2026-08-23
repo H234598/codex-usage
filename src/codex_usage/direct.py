@@ -334,7 +334,10 @@ def _missing_usage_limits_error(
                         and 0 <= used_percent <= 100
                     ):
                         available.add(duration)
-    plan = _normalized_plan_type(backend_plan_type) if backend_plan_type else "unknown"
+    if backend_plan_type is None or type(backend_plan_type) is not str:
+        plan = "unknown"
+    else:
+        plan = _normalized_plan_type(backend_plan_type) or "unknown"
     if not unsupported and len(available) == 1:
         available_window = "5h" if 18_000 in available else "weekly"
         missing_window = "weekly" if 18_000 in available else "5h"

@@ -10539,3 +10539,17 @@ bekannte und unbekannte normale Fehlertexte bleiben unverändert.
 
 Verifikation: **207 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 875: Planwert in Limitfehlerdiagnose typisieren
+
+`direct._missing_usage_limits_error()` prüfte `backend_plan_type` zuerst per
+Bool-Auswertung und normalisierte ihn danach. Eine String-Subclass konnte die
+Diagnose dadurch mit einem rohen Bool-Hook abbrechen.
+
+Die Diagnose behandelt `None` und Fremdtypen jetzt ohne Operator-Hook als
+`unknown`; nur Built-in-Strings werden normalisiert. Regression deckt den
+Bool-Hook im verfügbaren-5h-Fensterpfad ab; bestehende Diagnoseformen bleiben
+unverändert.
+
+Verifikation: **208 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

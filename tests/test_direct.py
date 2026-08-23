@@ -322,6 +322,26 @@ def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path,
         direct_module._validate_access_token_expiry("token", path=tmp_path / "auth.json")
 
 
+def test_missing_usage_limits_error_rejects_plan_type_string_subclass_hooks():
+    class BrokenStr(str):
+        def __bool__(self):
+            raise RuntimeError("synthetic missing limits plan marker")
+
+    error = direct_module._missing_usage_limits_error(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18_000,
+                    "used_percent": 20,
+                }
+            }
+        },
+        BrokenStr("plus"),
+    )
+
+    assert "(plan unknown; available window 5h)" in error
+
+
 def test_credit_window_extracts_nested_absolute_balance():
     window = _credit_window(
         {
