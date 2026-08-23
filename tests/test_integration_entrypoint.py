@@ -337,6 +337,34 @@ def test_execute_rejects_clock_with_failing_astimezone_before_source_read(tmp_pa
     )
 
 
+def test_execute_rejects_clock_with_failing_tzinfo_before_source_read(tmp_path, monkeypatch):
+    from codex_usage import integration_entrypoint
+
+    class BrokenDatetime(datetime):
+        @property
+        def tzinfo(self):
+            raise RuntimeError("synthetic tzinfo marker")
+
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "read_current_usage_records",
+        lambda _: pytest.fail("source/read must not run"),
+    )
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=_environment(tmp_path),
+        clock=lambda: BrokenDatetime(2026, 8, 15, 10, 5, tzinfo=UTC),
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: None,
+    )
+
+    assert result == integration_entrypoint.CommandResult(
+        70,
+        b"",
+        b"integration_snapshot_secure_io_failed\n",
+    )
+
+
 def test_execute_normalizes_clock_before_dst_cost_lookback(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
     from codex_usage.history import HistoryStore, UsageSample

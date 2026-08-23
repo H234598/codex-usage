@@ -73,10 +73,10 @@ def _runtime_paths(environ: Mapping[str, str]) -> RuntimePaths:
 
 
 def _require_aware_utc(value: object) -> datetime:
-    if not isinstance(value, datetime) or value.tzinfo is None:
+    if not isinstance(value, datetime):
         raise ValueError()
     try:
-        if value.utcoffset() is None:
+        if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError()
     except Exception:
         raise ValueError() from None

@@ -10145,3 +10145,16 @@ Quelldaten bei einem fehlerhaften Iterator erreicht werden.
 
 Verifikation: **30 Integration-Entrypoint-Tests**, **57 Snapshot-Tests**, Ruff
 und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 846: Clock-`tzinfo`-Zugriff fail-closed normalisieren
+
+`integration_entrypoint._require_aware_utc()` las `value.tzinfo` vor dem
+geschützten Validierungsblock. Ein fehlerhafter `datetime`-Subclass-Property-
+Hook wurde dadurch als generischer Exit 69 statt Secure-IO-Exit 70 ausgegeben.
+
+`tzinfo`- und `utcoffset()`-Prüfung liegen jetzt gemeinsam im kontrollierten
+`ValueError`-Pfad. Regression bestätigt: keine Quelldaten, Exit 70 und
+datenarme Fehlermeldung.
+
+Verifikation: **31 Integration-Entrypoint-Tests**, **57 Snapshot-Tests**, Ruff
+und Diff-Check bestanden; keine Settings-Fenster gestartet.
