@@ -13876,3 +13876,19 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1139: Applet-Verbrauchsqueue-Aufbau vollständig ausgeführt
+
+Die Regression für `_refreshConsumption` deckt Queue-Initialisierung,
+ungültige Cachewerte, Panel- und Zielfelder, getrennte Forecast-Baselines,
+Main-/Spark-Zusatzabfragen, Creditverbrauch, Baseline-Minuten und
+Smoothing-Fallbacks ab. Damit sind alle V8-Blockranges der Funktion erreicht.
+Produktionslogik blieb unverändert.
+
+Verifikation: **537 `tests/applet_runtime.test.js`-Tests**, **537 bestanden**;
+V8-Raw-Coverage: `_refreshConsumption` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

@@ -7443,6 +7443,107 @@ test("Spark token delta panel source queues a Spark window request", () => {
   assert.equal(sparkRequest.limitWindow, "all");
 });
 
+test("consumption refresh covers queue initialization, target discovery and auxiliary pools", () => {
+  const empty = makeApplet();
+  empty._usages = [];
+  empty._consumptionSettings = null;
+  empty._consumptionQueue = {};
+  empty._consumptionGeneration = "invalid";
+  empty._drainConsumptionRequests = () => {};
+  empty._refreshConsumption();
+  assert.deepEqual(Object.keys(empty._consumptionSettings), []);
+  assert.deepEqual(Array.from(empty._consumptionQueue), []);
+  assert.equal(empty._consumptionGeneration, 1);
+
+  const base = (source, row = {}) => {
+    const applet = makeApplet();
+    const panel = {account: "alpha", order: 1, muted: false};
+    for (let index = 1; index <= 20; index += 1) panel[`slot${index}`] = 0;
+    panel.slot1 = source;
+    applet._usages = [{account: "alpha", cost_windows: []}];
+    applet._panelSettings = {alpha: panel};
+    applet._consumptionSettings = {alpha: Object.assign({
+      account: "alpha", amount: 1, unit: "hours", "limit-window": "weekly",
+      smoothing: "ema-10", "baseline-enabled": false, "baseline-minutes": 60,
+      "forecast-limit-window": "weekly", "forecast-smoothing": "ema-10",
+      "forecast-baseline-enabled": false, "forecast-baseline-minutes": 60,
+      "show-panel": false, "show-tooltip": false,
+    }, row)};
+    applet._drainConsumptionRequests = () => {};
+    return applet;
+  };
+
+  const targets = base(0);
+  targets._panelSettings = {};
+  targets._elementTargetEnabled = () => false;
+  targets._refreshConsumption();
+  assert.equal(targets._consumptionQueue.length, 0);
+
+  const baselineSplit = base(12, {
+    "limit-window": "short", "forecast-limit-window": "weekly",
+    "baseline-enabled": true, "baseline-minutes": 60,
+    "forecast-baseline-enabled": true, "forecast-baseline-minutes": 30,
+  });
+  baselineSplit._refreshConsumption();
+  assert.equal(baselineSplit._consumptionQueue.length, 2);
+
+  const baselineSame = base(12, {
+    "limit-window": "short", "forecast-limit-window": "weekly",
+    "baseline-enabled": true, "baseline-minutes": 60,
+    "forecast-baseline-enabled": true, "forecast-baseline-minutes": 60,
+  });
+  baselineSame._refreshConsumption();
+  assert.equal(baselineSame._consumptionQueue.length, 2);
+
+  const baselineOnly = base(12, {
+    "baseline-enabled": true, "baseline-minutes": 60,
+    "forecast-baseline-enabled": true, "forecast-baseline-minutes": 60,
+  });
+  baselineOnly._refreshConsumption();
+  assert.equal(baselineOnly._consumptionQueue.length, 1);
+
+  const mainForecast = base(32, {
+    "limit-window": "spark", "forecast-limit-window": "weekly",
+  });
+  mainForecast._refreshConsumption();
+  assert.ok(mainForecast._consumptionQueue.some((request) => request.pool === "main" && request.limitWindow === "all"));
+
+  const sparkForecast = base(35, {
+    "limit-window": "weekly", "forecast-limit-window": "spark",
+  });
+  sparkForecast._refreshConsumption();
+  assert.ok(sparkForecast._consumptionQueue.some((request) => request.pool === "gpt-5.3-codex-spark" && request.limitWindow === "all"));
+
+  const sparkExtra = base(35, {
+    smoothing: "", "baseline-enabled": true, "baseline-minutes": 45,
+    "forecast-limit-window": "weekly", "forecast-smoothing": "ema-10",
+    "forecast-baseline-enabled": false,
+  });
+  sparkExtra._refreshConsumption();
+  assert.ok(sparkExtra._consumptionQueue.some((request) => request.pool === "gpt-5.3-codex-spark"));
+
+  const mainExtra = base(32, {
+    "limit-window": "spark", "forecast-limit-window": "spark",
+    smoothing: "", "baseline-enabled": true, "baseline-minutes": 45,
+  });
+  mainExtra._refreshConsumption();
+  assert.ok(mainExtra._consumptionQueue.some((request) => request.pool === "main"));
+
+  const credit = base(10);
+  credit._consumptionSettings = Object.create(null);
+  credit._creditSettings = {alpha: {
+    account: "alpha", "consumption-amount": 2, "consumption-unit": "days",
+    "consumption-smoothing": "", "consumption-baseline-enabled": true,
+    "consumption-baseline-minutes": 30, "consumption-show-panel": false,
+    "consumption-show-tooltip": false,
+  }};
+  credit._refreshConsumption();
+  assert.equal(credit._consumptionQueue.length, 1);
+  assert.equal(credit._consumptionQueue[0].pool, "credits");
+  assert.equal(credit._consumptionQueue[0].smoothing, "none");
+  assert.equal(credit._consumptionQueue[0].baselineValueMinutes, 30);
+});
+
 test("main token delta panel source queues a main request when table uses Spark", () => {
   const applet = makeApplet();
   applet._consumptionSettings = {alpha: {
