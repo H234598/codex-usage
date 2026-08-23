@@ -12349,3 +12349,15 @@ Verifikation: **149 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **90 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1033: Created-Home-Cleanup bei Missing/Symlink abgesichert
+
+`_cleanup_created_test_home()` hatte die Fälle verschwundener Dateien/
+Verzeichnisse und gebrochener Symlinks noch nicht direkt belegt. Vier
+parametrisierte Tests bestätigen toleriertes Verschwinden und fail-closed
+Abbruch bei Identitätsverfälschung.
+
+Verifikation: **153 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **91 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

@@ -357,6 +357,26 @@ def test_restore_moved_test_home_auth_rejects_missing_target(tmp_path):
         config_module._restore_moved_test_home_auth((source, target, 1, 1))
 
 
+@pytest.mark.parametrize("is_directory", [False, True])
+def test_cleanup_created_test_home_ignores_missing_paths(tmp_path, is_directory):
+    path = tmp_path / ("missing-dir" if is_directory else "missing-file")
+    directories = [(path, 1, 1)] if is_directory else []
+    files = [] if is_directory else [(path, 1, 1)]
+
+    config_module._cleanup_created_test_home(directories, files)
+
+
+@pytest.mark.parametrize("is_directory", [False, True])
+def test_cleanup_created_test_home_rejects_broken_symlinks(tmp_path, is_directory):
+    path = tmp_path / ("broken-dir" if is_directory else "broken-file")
+    path.symlink_to(tmp_path / "missing-target", target_is_directory=is_directory)
+    directories = [(path, 1, 1)] if is_directory else []
+    files = [] if is_directory else [(path, 1, 1)]
+
+    with pytest.raises(ValueError, match="became a symlink"):
+        config_module._cleanup_created_test_home(directories, files)
+
+
 def test_internal_all_accounts_lock_name_is_not_a_valid_account_id():
     with pytest.raises(ValueError, match="reserved"):
         config_module._validate_account_id("__all_accounts__")
