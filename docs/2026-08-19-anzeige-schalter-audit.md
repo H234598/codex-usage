@@ -9916,3 +9916,18 @@ Browser-/Authenticated-Frische ab.
 Verifikation: **266 fokussierte Bridge-Tests**, **531 Bridge-, CLI-, Config-
 und Integration-Entrypoint-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 830: Service-PID strikt prüfen
+
+`service.py` akzeptierte beim Beenden gebundener `systemctl`-Prozesse noch
+Integer-Subklassen. Ein überschriebenes Vergleichsoperator konnte den
+Aufräumpfad beim Kill-Handling mit einer rohen Exception abbrechen.
+
+Die PID-Grenze akzeptiert jetzt ausschließlich Built-in-`int`; fremde oder
+boolesche PIDs werden wie unbekannte PIDs verworfen, der normale Prozess-Kill
+läuft trotzdem weiter. Regression deckt Boolean- und Integer-Subklassen sowie
+Service-/CLI-/Integration-Aufrufer ab.
+
+Verifikation: **70 fokussierte Service-Tests**, **301 Service-, CLI-,
+Integration-Entrypoint- und Profile-Job-Tests**, Ruff und Diff-Check bestanden;
+keine Settings-Fenster gestartet.

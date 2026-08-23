@@ -497,7 +497,7 @@ def _unit_quote(value: str) -> str:
 
 def _terminate_systemctl_process(process: subprocess.Popen[bytes]) -> None:
     pid = getattr(process, "pid", None)
-    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+    if type(pid) is int and pid > 0:
         try:
             os.killpg(pid, signal.SIGKILL)
         except (OSError, ValueError):

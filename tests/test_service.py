@@ -28,6 +28,11 @@ from codex_usage.service import (
 )
 
 
+class _BrokenInt(int):
+    def __gt__(self, _other):
+        raise RuntimeError("synthetic service PID comparison marker")
+
+
 def test_relative_xdg_config_home_uses_default_unit_directory(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
@@ -160,6 +165,28 @@ def test_systemctl_cleanup_rejects_boolean_pid(monkeypatch):
 
     class FakeProcess:
         pid = True
+
+        def kill(self):
+            calls.append("kill")
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+
+    monkeypatch.setattr(
+        "codex_usage.service.os.killpg",
+        lambda pid, signum: calls.append(("killpg", pid, signum)),
+    )
+
+    _terminate_systemctl_process(FakeProcess())
+
+    assert calls == ["kill", ("wait", 1)]
+
+
+def test_systemctl_cleanup_rejects_numeric_subclass_pid(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = _BrokenInt(1234)
 
         def kill(self):
             calls.append("kill")
