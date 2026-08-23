@@ -941,6 +941,26 @@ def test_profile_setup_failure_removes_partially_created_ancestors(tmp_path, mon
     assert not profile_dir.parent.parent.exists()
 
 
+def test_profile_cleanup_ignores_missing_created_ancestor(tmp_path):
+    created_ancestor = tmp_path / "missing-ancestor"
+
+    config_module._cleanup_created_profile_directories(
+        tmp_path / "profile",
+        [(created_ancestor, 1, 1)],
+    )
+
+
+def test_profile_cleanup_rejects_created_ancestor_symlink(tmp_path):
+    created_ancestor = tmp_path / "ancestor"
+    created_ancestor.symlink_to(tmp_path / "missing-target", target_is_directory=True)
+
+    with pytest.raises(ValueError, match="became a symlink"):
+        config_module._cleanup_created_profile_directories(
+            tmp_path / "profile",
+            [(created_ancestor, 1, 1)],
+        )
+
+
 def test_profile_rollback_does_not_delete_new_content(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     old_profile = tmp_path / "old-profile"

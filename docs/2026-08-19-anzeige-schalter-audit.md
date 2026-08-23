@@ -12395,3 +12395,15 @@ Verifikation: **161 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **92 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1037: Profil-Rollback bei verschwundenen Ancestors abgesichert
+
+`_cleanup_created_profile_directories()` hatte die Behandlung eines
+verschwundenen Ancestors und eines an seine Stelle gesetzten Symlinks noch
+nicht direkt belegt. Zwei Regressionen bestätigen toleriertes Verschwinden
+und fail-closed Abbruch bei Symlink-Ersatz.
+
+Verifikation: **163 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **92 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
