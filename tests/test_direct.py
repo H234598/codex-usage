@@ -325,6 +325,16 @@ def test_spark_limit_signature_rejects_list_subclass_hooks():
     ) is None
 
 
+def test_spark_limit_signature_rejects_item_dict_subclass_hooks():
+    class BrokenItem(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic spark item marker")
+
+    assert direct_module._spark_limit_signature(
+        {"additional_rate_limits": [BrokenItem()]}
+    ) == ("present-no-spark",)
+
+
 def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path, monkeypatch):
     broken_int = _BrokenInt(200)
     broken_float = _BrokenFloat(1.0)

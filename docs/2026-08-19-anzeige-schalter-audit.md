@@ -10676,3 +10676,16 @@ normale Spark-Signaturen bleiben unverändert.
 
 Verifikation: **217 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 885: Spark-Signatur-Items auf native Dicts begrenzen
+
+`direct._spark_limit_signature()` akzeptierte einzelne `item`-Dict-Subklassen
+und rief deren `.get()` für Spark-Identifikatoren auf. Ein manipuliertes Item
+konnte die Signaturbildung dadurch mit einer rohen Exception abbrechen.
+
+Der innere Loop akzeptiert jetzt ausschließlich native `dict`-Items; fremde
+Items werden wie nicht relevante Limits übersprungen. Regression deckt den
+`.get()`-Hook ab; normale Spark-Items bleiben unverändert.
+
+Verifikation: **218 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

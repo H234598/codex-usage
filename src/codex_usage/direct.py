@@ -1215,7 +1215,7 @@ def _spark_limit_signature(payload: dict[str, Any]) -> tuple | None:
     if not additional:
         return ("empty",)
     for item in additional:
-        if not isinstance(item, dict) or not _is_spark_limit_response(
+        if type(item) is not dict or not _is_spark_limit_response(
             item.get("limit_name"), item.get("metered_feature")
         ):
             continue
