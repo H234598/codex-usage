@@ -13238,3 +13238,18 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1100: Profile-Migrations-Source-Guards vollständig geprüft
+
+`profile_migration.py` hatte noch den Planpfad ohne unambiguous Auth-Quelle
+ohne Regression. Eine fokussierte Prüfung stellt sicher, dass dieser Zustand
+als `missing` mit stabilem Grund und ohne erfundene Quelle gemeldet wird.
+Produktionslogik blieb unverändert.
+
+Verifikation: **93 `tests/test_profile_migration.py`-Tests**,
+`profile_migration.py` **313/313 Statements und 132/132 Branches, 100 %
+Coverage**, Mypy, Ruff und Diff-Check bestanden. Keine Settings-Fenster
+gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
+nicht ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
+bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
+Reload-Schritte ab.

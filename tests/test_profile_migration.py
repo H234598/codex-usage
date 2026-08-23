@@ -53,6 +53,14 @@ def test_auth_migration_dry_run_finds_explicit_source_without_writing(tmp_path):
     assert plan.items[0].secret_marker is None
 
 
+def test_auth_migration_dry_run_reports_missing_source(tmp_path):
+    plan = plan_auth_migration((_account(tmp_path),))
+
+    assert plan.items[0].source is None
+    assert plan.items[0].status == "missing"
+    assert plan.items[0].reason == "no unambiguous auth source"
+
+
 def test_auth_migration_plan_requires_nonempty_tuple_and_account_objects(tmp_path):
     with pytest.raises(ValueError, match="accounts are required"):
         plan_auth_migration(())
