@@ -1068,6 +1068,26 @@ def test_credit_window_extracts_nested_absolute_balance():
     assert window.source == "json:credits"
 
 
+def test_credit_window_extracts_rate_limits_nested_sources():
+    captured_at = datetime(2026, 7, 16, 4, 0, tzinfo=UTC)
+
+    rate_limits = _credit_window(
+        {"rateLimits": {"credits": {"remaining": 12}}},
+        captured_at,
+    )
+    by_limit_id = _credit_window(
+        {
+            "rateLimitsByLimitId": {
+                "credits-limit": {"credits": {"remaining": 34}}
+            }
+        },
+        captured_at,
+    )
+
+    assert rate_limits is not None and rate_limits.remaining == 12
+    assert by_limit_id is not None and by_limit_id.remaining == 34
+
+
 def test_credit_window_extracts_explicit_scalar_balance():
     window = _credit_window(
         {"credits": "123.5"},

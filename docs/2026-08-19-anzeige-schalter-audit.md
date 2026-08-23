@@ -11915,3 +11915,13 @@ ungültigen Text.
 Verifikation: **351 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **99 %**, Missing-Zeilen 10; keine Settings-Fenster
 gestartet.
+
+## Runde 995: Verschachtelte Credit-Quellen direkt extrahiert
+
+`direct._credit_window()` hatte die nativen `rateLimits`- und
+`rateLimitsByLimitId`-Quellen bisher nur über Reject-Hooks berührt. Der neue
+Test bestätigt echte Restmengen aus beiden verschachtelten Strukturen.
+
+Verifikation: **352 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **99 %**, Missing-Zeilen 6; keine Settings-Fenster
+gestartet.
