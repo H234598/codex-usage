@@ -11270,3 +11270,12 @@ Signaturabweichung.
 
 Verifikation: **266 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 930: Main-Limit-Flag-Prädikat direkt geprüft
+
+`direct._has_conflicting_main_limit_flags()` war bisher nur über den stabilen
+Antwortselektor abgedeckt. Der neue direkte Test prüft zwei native Antworten
+mit gegensätzlichem `allowed`-Flag und bestätigt die erkannte Signaturabweichung.
+
+Verifikation: **267 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

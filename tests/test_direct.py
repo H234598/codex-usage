@@ -2179,6 +2179,15 @@ def test_select_stable_wham_usage_rejects_conflicting_main_limit_flags(field):
         _select_stable_wham_usage([response(False), response(False), response(True)])
 
 
+def test_conflicting_main_limit_flags_detects_signature_mismatch():
+    def response(value: bool) -> dict:
+        return {"rate_limit": {"allowed": value, "limit_reached": False}}
+
+    assert direct_module._has_conflicting_main_limit_flags(
+        [response(False), response(True)]
+    ) is True
+
+
 def test_select_stable_wham_usage_rejects_newer_partial_after_complete_quorum():
     complete = {
         "user_id": "user-test",
