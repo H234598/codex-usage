@@ -11308,3 +11308,12 @@ eines nativen Modell-Identifier-Strings.
 
 Verifikation: **270 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 934: Reset-Signatur-Bucketing direkt geprüft
+
+`direct._signature_reset()` hatte bisher keinen direkten Test. Der neue
+deterministische Test bestätigt die Fünf-Sekunden-Bucketbildung eines gültigen
+Reset-Timestamps.
+
+Verifikation: **271 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

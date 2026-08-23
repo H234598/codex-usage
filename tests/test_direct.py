@@ -340,6 +340,10 @@ def test_signature_number_rejects_non_finite_values_without_raising(value):
     assert _signature_number(value) is None
 
 
+def test_signature_reset_buckets_timestamp_by_five_seconds():
+    assert direct_module._signature_reset(12) == 2
+
+
 def test_signature_flag_rejects_string_hooks():
     class BrokenFlag:
         def __str__(self):
