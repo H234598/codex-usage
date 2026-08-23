@@ -10307,3 +10307,17 @@ fehlerhaften `geturl`-Hook.
 
 Verifikation: **190 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 858: Response-Content-Type fail-closed normalisieren
+
+`direct._response_content_type()` las `response.headers` und den Legacy-
+`getheader`-Pfad ohne gemeinsame Fehlergrenze. Ein fehlerhaftes Header-Property
+konnte die HTTP-Response-Verarbeitung mit einer rohen Exception abbrechen.
+
+Header- und Legacy-Zugriffe liegen jetzt in einer vollständigen
+Exception-Grenze; fehlerhafte Response-Metadaten liefern den sicheren leeren
+Content-Type und werden nicht als JSON akzeptiert. Regression simuliert den
+fehlerhaften `headers`-Hook.
+
+Verifikation: **191 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

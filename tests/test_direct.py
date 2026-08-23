@@ -118,6 +118,15 @@ def test_direct_response_content_type_falls_back_for_malformed_headers():
     assert _response_content_type(LegacyResponse()) == "application/json"
 
 
+def test_direct_response_content_type_rejects_header_property_hooks():
+    class Response:
+        @property
+        def headers(self):
+            raise RuntimeError("synthetic response headers marker")
+
+    assert _response_content_type(Response()) == ""
+
+
 def test_direct_response_final_url_rejects_getter_hooks():
     class Response:
         @property
