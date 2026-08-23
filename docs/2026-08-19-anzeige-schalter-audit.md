@@ -12189,3 +12189,13 @@ Converter-Test bestätigt ihn direkt.
 Verifikation: **66 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **100 %**, keine Missing-Zeilen; keine
 Settings-Fenster gestartet.
+
+## Runde 1019: JSON-Helper vollständig abgedeckt
+
+`json_utils` hatte noch Bytes-/Bytearray-Scanning, die Abbildung eines
+Parser-`RecursionError` und das Ablehnen nichtstandardmäßiger Konstanten offen.
+Drei Regressionen bestätigen jeweils sichere Validierungsfehler.
+
+Verifikation: **13 JSON-Utility-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `json_utils.py`: **100 %**, keine Missing-Zeilen; keine
+Settings-Fenster gestartet.
