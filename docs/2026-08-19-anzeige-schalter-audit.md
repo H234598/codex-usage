@@ -11979,3 +11979,18 @@ Verifikation: **129 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `usage_limits.py`: **96 %**, verbleibende Missing-Zeilen
 liegen ausschließlich in weiteren Parser-/Guardpfaden (163, 187, 212, 278,
 366, 436, 465, 512, 526, 538–539, 571–572); keine Settings-Fenster gestartet.
+
+## Runde 1001: App-Server-Main- und Spark-Invalidpfade direkt belegt
+
+`usage_limits.parse_app_server_usage_pools()` hatte noch drei defensive
+Zweige ohne direkte Regression: Ein malformed verschachteltes Main-Window
+kann ohne gültige Restdaten nur einen nicht verfügbaren Main-Pool erzeugen;
+ein ungültiger Spark-Dictionary-Bucket wird als invalid markiert; bei nur
+solchen Spark-Daten wird ein nicht verfügbarer Spark-Pool materialisiert. Zwei
+Tests bestätigen diese fail-closed Semantik.
+
+Verifikation: **131 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `usage_limits.py`: **97 %**, verbleibende Missing-Zeilen
+liegen ausschließlich in weiteren Fallback-/Identitäts-/Konversionspfaden
+(278, 366, 436, 465, 512, 526, 538–539, 571–572); keine Settings-Fenster
+gestartet.

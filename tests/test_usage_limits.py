@@ -1113,6 +1113,20 @@ def test_app_server_retains_top_level_windows_when_nested_codex_primary_is_malfo
     assert main.exhausted is True
 
 
+def test_app_server_materializes_unavailable_main_when_only_nested_window_is_malformed():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {"primary": "malformed"},
+            "rateLimitsByLimitId": {"codex": {"primary": "malformed"}},
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.windows == ()
+
+
 def test_app_server_disables_main_when_codex_bucket_has_wrong_shape():
     main, _ = parse_app_server_usage_pools(
         {
@@ -1284,6 +1298,18 @@ def test_app_server_disables_spark_when_exact_bucket_is_malformed():
     assert len(models) == 1
     assert models[0].available is False
     assert models[0].exhausted is True
+
+
+def test_app_server_materializes_unavailable_spark_for_only_invalid_dict_bucket():
+    _, models = parse_app_server_usage_pools(
+        {"rateLimitsByLimitId": {SPARK_METERED_FEATURE: {}}},
+        captured_at=NOW,
+    )
+
+    assert len(models) == 1
+    assert models[0].key == SPARK_MODEL
+    assert models[0].available is False
+    assert models[0].windows == ()
 
 
 def test_app_server_rejects_explicit_window_duration_above_maximum():
