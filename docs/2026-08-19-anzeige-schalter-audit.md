@@ -13345,3 +13345,18 @@ gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
 nicht ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
 bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
 Reload-Schritte ab.
+
+## Runde 1107: Scheduler-Watchdog- und Persistenz-Guards vollständig geprüft
+
+`scheduler.py` hatte noch vier echte Kanten ohne Regression: konservative
+Direktnutzung ohne Reset-Metadaten, bereits gesetztes Watch-Stop-Event, eine
+weitere Watch-Runde nach nicht stoppendem Wait sowie der Watchdog-Pfad für
+nicht persistierbare Nutzungszustände. Gezielte Regressionen decken alle
+Zustände ab. Produktionslogik blieb unverändert.
+
+Verifikation: **269 `tests/test_scheduler.py`-Tests**, `scheduler.py`
+**871/871 Statements und 396/396 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.

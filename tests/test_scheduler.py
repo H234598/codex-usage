@@ -354,6 +354,24 @@ def test_conservative_direct_usage_treats_failing_reset_comparison_as_unknown():
     assert _is_more_conservative_direct_usage(current, previous) is False
 
 
+def test_conservative_direct_usage_skips_windows_without_reset_metadata():
+    now = datetime.now().astimezone()
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=now,
+        five_hour=LimitWindow(name="5h"),
+    )
+    previous = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=now,
+        five_hour=LimitWindow(name="5h"),
+    )
+
+    assert _is_more_conservative_direct_usage(current, previous) is False
+
+
 def test_pool_forces_watchdog_block_treats_failing_property_as_exhausted():
     assert _pool_forces_watchdog_block(_RaisingPool()) is True
 
@@ -6484,6 +6502,69 @@ def test_scheduler_watch_json_success_handles_keyboard_interrupt_and_signal_guar
     assert len(signal_calls) == 4
 
 
+def test_scheduler_watch_skips_cycle_when_already_stopped(monkeypatch):
+    class AlreadyStopped:
+        def is_set(self):
+            return True
+
+        def wait(self, _delay):
+            raise AssertionError("wait called after stop")
+
+    signal_calls = []
+    monkeypatch.setattr(scheduler_module, "Event", AlreadyStopped)
+    monkeypatch.setattr(scheduler_module.signal, "getsignal", lambda _signum: "previous")
+    monkeypatch.setattr(
+        scheduler_module.signal,
+        "signal",
+        lambda signum, handler: signal_calls.append((signum, handler)),
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "fetch_all",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("fetch called after stop")),
+    )
+
+    watch(AppConfig(accounts=()), (), output="json", interval_seconds=60)
+
+    assert len(signal_calls) == 4
+
+
+def test_scheduler_watch_runs_again_after_non_stopping_wait(monkeypatch):
+    class ContinueOnce:
+        def __init__(self):
+            self.wait_calls = 0
+
+        def is_set(self):
+            return self.wait_calls >= 2
+
+        def wait(self, _delay):
+            self.wait_calls += 1
+            return self.wait_calls >= 2
+
+        def set(self):
+            return None
+
+    event = ContinueOnce()
+    fetch_calls = 0
+    monkeypatch.setattr(scheduler_module, "Event", lambda: event)
+    monkeypatch.setattr(scheduler_module.signal, "getsignal", lambda _signum: "previous")
+    monkeypatch.setattr(scheduler_module.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "render_json", lambda _usages: "[]")
+    monkeypatch.setattr(scheduler_module, "_record_health", lambda *_args, **_kwargs: None)
+
+    def fake_fetch_all(*_args, **_kwargs):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return []
+
+    monkeypatch.setattr(scheduler_module, "fetch_all", fake_fetch_all)
+
+    watch(AppConfig(accounts=()), (), output="json", interval_seconds=60)
+
+    assert fetch_calls == 2
+    assert event.wait_calls == 2
+
+
 def test_scheduler_watch_handles_signal_install_failure(monkeypatch):
     class StopAfterWait:
         def is_set(self):
@@ -6717,6 +6798,45 @@ def test_scheduler_watchdog_contains_snapshot_save_failure(monkeypatch):
 
     assert result[0].status is AccountStatus.ERROR
     assert result[0].error == "snapshot save failed: OSError"
+
+
+def test_scheduler_watchdog_skips_snapshot_for_non_persistable_usage(monkeypatch):
+    account = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        backend="direct",
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        status=AccountStatus.ERROR,
+        error="backend unavailable",
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    saved_current: list[AccountUsage] = []
+    monkeypatch.setattr(scheduler_module, "load_usage_snapshot", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "load_current_usage", lambda *_args: None)
+    monkeypatch.setattr(scheduler_module, "fetch_all", lambda *_args, **_kwargs: [usage])
+    monkeypatch.setattr(scheduler_module, "save_current_usage", saved_current.append)
+    monkeypatch.setattr(
+        scheduler_module,
+        "save_usage_snapshot",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("snapshot should be skipped")),
+    )
+    monkeypatch.setattr(scheduler_module, "_should_persist_snapshot", lambda _usage: False)
+
+    result = watchdog(
+        AppConfig(accounts=(account,)),
+        (account,),
+        output="json",
+        direct=True,
+    )
+
+    assert result == [usage]
+    assert saved_current == [usage]
 
 
 def test_scheduler_blocked_snapshot_helpers_fail_closed(monkeypatch):
