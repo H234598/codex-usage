@@ -132,7 +132,7 @@ def execute(
 ) -> CommandResult:
     try:
         normalized_argv = tuple(argv)
-    except (TypeError, ValueError):
+    except Exception:
         return _error_result(64)
     if (
         len(normalized_argv) != len(_EXPECTED_ARGV)

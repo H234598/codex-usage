@@ -10131,3 +10131,17 @@ und weder Verifier noch Quelldaten anfasst.
 
 Verifikation: **29 Integration-Entrypoint-Tests**, **57 Snapshot-Tests**, Ruff
 und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 845: Fehlerhafte Integration-Argumentiteration normalisieren
+
+`integration_entrypoint.execute()` fing beim Erzeugen des Argument-Tuples nur
+`TypeError` und `ValueError`. Ein `argv`-Iterator, der bei der Iteration eine
+andere Exception warf, konnte den Prozess vor der kontrollierten Antwort
+abbrechen.
+
+Die Normalisierung bildet jetzt alle normalen `Exception`-Fehler auf Exit 64
+mit datenarmem Argument-Token ab. Regression prüft, dass weder Verifier noch
+Quelldaten bei einem fehlerhaften Iterator erreicht werden.
+
+Verifikation: **30 Integration-Entrypoint-Tests**, **57 Snapshot-Tests**, Ruff
+und Diff-Check bestanden; keine Settings-Fenster gestartet.

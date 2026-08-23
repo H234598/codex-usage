@@ -120,6 +120,24 @@ def test_execute_rejects_string_subclass_argv_before_comparison(tmp_path):
     assert result == type(result)(64, b"", b"integration_snapshot_invalid_arguments\n")
 
 
+def test_execute_rejects_argv_iterator_failure_before_source(tmp_path):
+    from codex_usage.integration_entrypoint import execute
+
+    class BrokenArgv:
+        def __iter__(self):
+            raise RuntimeError("synthetic argv iterator marker")
+
+    result = execute(
+        BrokenArgv(),  # type: ignore[arg-type]
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: pytest.fail("verifier"),
+    )
+
+    assert result == type(result)(64, b"", b"integration_snapshot_invalid_arguments\n")
+
+
 def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
 
