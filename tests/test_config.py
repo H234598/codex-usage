@@ -188,6 +188,35 @@ def test_test_home_rejects_hardlinked_auth_source(tmp_path, monkeypatch):
     assert alias.exists()
 
 
+def test_integrate_test_home_auth_is_noop_for_same_source_and_target(tmp_path):
+    source = tmp_path / "auth.json"
+    source.write_text("{}\n", encoding="utf-8")
+    source.chmod(0o600)
+
+    assert config_module._integrate_test_home_auth(source, source) is None
+    assert source.exists()
+
+
+def test_integrate_test_home_auth_rejects_nonregular_source(tmp_path):
+    source = tmp_path / "auth-dir"
+    source.mkdir()
+
+    with pytest.raises(ValueError, match="regular file"):
+        config_module._integrate_test_home_auth(source, tmp_path / "target.json")
+
+
+def test_integrate_test_home_auth_rejects_existing_target(tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text("{}\n", encoding="utf-8")
+    source.chmod(0o600)
+    target = tmp_path / "target.json"
+    target.write_text("{}\n", encoding="utf-8")
+    target.chmod(0o600)
+
+    with pytest.raises(ValueError, match="target already exists"):
+        config_module._integrate_test_home_auth(source, target)
+
+
 def test_test_home_rejects_insecure_existing_codex_config(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: home)

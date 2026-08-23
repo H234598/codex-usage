@@ -12302,3 +12302,15 @@ Verifikation: **139 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **88 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1029: Test-Home-Auth-Integration an Dateigrenzen geprüft
+
+`_integrate_test_home_auth()` hatte den Identitäts-No-op bei gleichem Quell-
+und Zielpfad, die Ablehnung einer Nicht-Datei sowie das bereits belegte Ziel
+noch nicht direkt abgedeckt. Drei Tests bestätigen jeweils unveränderte Quelle
+oder fail-closed `ValueError`.
+
+Verifikation: **142 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **89 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
