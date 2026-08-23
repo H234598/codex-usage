@@ -1150,6 +1150,13 @@ def test_has_usage_values_rejects_window_property_hooks():
     assert direct_module._has_usage_values(BrokenWindow(), object()) is False
 
 
+def test_has_usage_values_accepts_two_valid_limit_windows():
+    five_hour = direct_module.LimitWindow(name="5h", remaining=90)
+    weekly = direct_module.LimitWindow(name="week", remaining=80)
+
+    assert direct_module._has_usage_values(five_hour, weekly) is True
+
+
 def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
     path = tmp_path / "auth.json"
     payload = {

@@ -11426,3 +11426,12 @@ und bestätigt die formatierte Ausgabe für ein natives Ablaufdatum.
 
 Verifikation: **283 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 947: Gültige Usage-Fenster direkt erkannt
+
+`direct._has_usage_values()` hatte bisher nur den Reject-/Hook-Fall direkt
+geprüft. Der neue Test erzeugt zwei native `LimitWindow`-Objekte mit gültigen
+Restwerten und bestätigt die positive Erkennung.
+
+Verifikation: **284 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
