@@ -10226,3 +10226,17 @@ IDs bleiben unverändert.
 Verifikation: **31 Identity-Tests**, **60 abhängige Identity-/Extractor-/Direct-
 und Scheduler-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 852: Backend-Plan-Typen auf Built-in-Strings begrenzen
+
+`identity._plan_type_value()` akzeptierte `str`-Subklassen und rief deren
+Längenoperator vor der Plan-Typ-Prüfung auf. Ein manipulierter String-Hook
+konnte die Payload-Normalisierung mit einer rohen Exception abbrechen.
+
+Die Plan-Type-Grenze verlangt jetzt Built-in-`str` vor Länge und
+Zeichenprüfung. Regression simuliert den fehlerhaften Plan-Type-Hook; gültige
+Plan-Typen bleiben unverändert.
+
+Verifikation: **32 Identity-Tests**, **60 abhängige Identity-/Extractor-/Direct-
+und Scheduler-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.

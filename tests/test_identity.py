@@ -115,6 +115,15 @@ def test_backend_plan_type_rejects_malformed_values(value):
         backend_plan_type_from_payload({"plan_type": value})
 
 
+def test_backend_plan_type_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __len__(self):
+            raise RuntimeError("synthetic plan type marker")
+
+    with pytest.raises(ValueError, match="backend response plan_type is invalid"):
+        backend_plan_type_from_payload({"plan_type": BrokenStr("plus")})
+
+
 def test_identity_helpers_skip_candidates_without_usable_urls():
     malformed = JsonCandidate(url=[], payload={"user_id": "wrong-user"})
     valid = JsonCandidate(

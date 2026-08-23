@@ -274,7 +274,7 @@ def _identity_value(value: Any, *, field: str) -> str | None:
 def _plan_type_value(value: Any) -> str | None:
     if value is None:
         return None
-    if not isinstance(value, str) or not value or len(value) > MAX_BACKEND_PLAN_TYPE_CHARS:
+    if type(value) is not str or not value or len(value) > MAX_BACKEND_PLAN_TYPE_CHARS:
         raise ValueError("backend response plan_type is invalid")
     if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         raise ValueError("backend response plan_type is invalid")
