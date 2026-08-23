@@ -12574,3 +12574,14 @@ alle offenen Guards.
 Verifikation: **20 Account-Lock-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `account_lock.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1053: Consumption-Berechnung vollständig geprüft
+
+Leere/ungültige Samples, Sortierung, Pool-/Fenster-Mismatch,
+Baseline-Insertion, große Gaps, EMA-Sonderfälle, Awareness und Timestamp-
+Overflow waren noch offen. Elf Regressionen schließen alle verbleibenden
+Berechnungspfade.
+
+Verifikation: **54 Consumption-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `consumption.py`: **100 %**; keine Settings-Fenster
+gestartet.

@@ -218,6 +218,113 @@ def test_consumption_smoothing_uses_time_aware_ema_rate():
     assert smoothed.estimated_seconds_to_exhaustion < unsmoothed.estimated_seconds_to_exhaustion
 
 
+def test_consumption_returns_insufficient_window_for_empty_samples():
+    result = calculate_consumption([], amount=1, unit="hours", now=BASE)
+
+    assert result.coverage == "insufficient"
+    assert result.sample_count == 0
+    assert result.pool == "main"
+
+
+def test_consumption_rejects_noncanonical_smoothing_suffix():
+    with pytest.raises(ValueError, match="smoothing"):
+        calculate_consumption(
+            [_sample(0, 10), _sample(30, 20)],
+            amount=1,
+            unit="hours",
+            now=BASE + timedelta(minutes=30),
+            smoothing="ema-abc",
+        )
+
+
+def test_consumption_rejects_non_usage_sample_entry():
+    with pytest.raises(ValueError, match="samples are invalid"):
+        calculate_consumption(
+            [object()],
+            amount=1,
+            unit="hours",
+            now=BASE,
+        )
+
+
+def test_consumption_sorts_samples_that_arrive_out_of_order():
+    result = calculate_consumption(
+        [_sample(30, 20), _sample(0, 10)],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result.consumed_percentage_points == 10.0
+    assert result.coverage == "partial"
+
+
+def test_consumption_rejects_mixed_pool_or_limit_window():
+    other_pool = UsageSample(
+        account_id="alpha",
+        pool="credits",
+        window_seconds=18_000,
+        captured_at=BASE + timedelta(minutes=30),
+        used_percent=20,
+        source="test",
+    )
+    with pytest.raises(ValueError, match="one pool and limit window"):
+        calculate_consumption(
+            [_sample(0, 10), other_pool],
+            amount=1,
+            unit="hours",
+            now=BASE + timedelta(minutes=30),
+        )
+
+
+def test_consumption_inserts_baseline_before_window_observations():
+    result = calculate_consumption(
+        [_sample(-90, 10), _sample(-30, 20)],
+        amount=1,
+        unit="hours",
+        now=BASE,
+    )
+
+    assert result.sample_count == 2
+    assert result.consumed_percentage_points == 10.0
+
+
+def test_consumption_marks_large_observation_gap_partial():
+    result = calculate_consumption(
+        [_sample(0, 10), _sample(120, 20)],
+        amount=3,
+        unit="hours",
+        now=BASE + timedelta(minutes=120),
+        max_gap_seconds=3_600,
+    )
+
+    assert result.coverage == "partial"
+
+
+def test_consumption_ema_skips_duplicate_and_large_gaps():
+    rate = consumption_module._ema_rate(
+        [_sample(0, 10), _sample(0, 20), _sample(120, 30)],
+        time_constant_seconds=300,
+        max_gap_seconds=3_600,
+    )
+
+    assert rate == 0.0
+
+
+def test_consumption_ema_clamps_negative_delta():
+    rate = consumption_module._ema_rate(
+        [_sample(0, 50), _sample(30, 40)],
+        time_constant_seconds=300,
+        max_gap_seconds=3_600,
+    )
+
+    assert rate == 0.0
+
+
+def test_consumption_is_aware_rejects_naive_datetime():
+    assert consumption_module._is_aware(datetime(2026, 8, 16, 10, 0)) is False
+
+
 @pytest.mark.parametrize("smoothing", ["ema-05", "ema+5", "ema-0005"])
 def test_consumption_rejects_noncanonical_smoothing_names(smoothing):
     with pytest.raises(ValueError, match="smoothing"):
@@ -457,6 +564,16 @@ def test_consumption_rejects_capture_time_out_of_range_for_baseline_value():
             unit="minutes",
             baseline_value_minutes=9_999,
             now=datetime.min.replace(tzinfo=UTC) + timedelta(seconds=60),
+        )
+
+
+def test_consumption_rejects_timestamp_normalization_overflow():
+    with pytest.raises(ValueError, match="now is out of range"):
+        calculate_consumption(
+            [],
+            amount=1,
+            unit="hours",
+            now=datetime.max.replace(tzinfo=UTC),
         )
 
 
