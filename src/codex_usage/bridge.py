@@ -1624,11 +1624,9 @@ def _tls_context(
     tls_cert: Path | None,
     tls_key: Path | None,
 ) -> ssl.SSLContext | None:
-    if (tls_cert is None) != (tls_key is None):
-        raise ValueError("TLS requires both certificate and key")
-    if tls_cert is None:
+    if tls_cert is None and tls_key is None:
         return None
-    if tls_key is None:
+    if tls_cert is None or tls_key is None:
         raise ValueError("TLS requires both certificate and key")
     try:
         certificate = tls_cert.expanduser()

@@ -110,6 +110,45 @@ def test_parse_captured_at_uses_dst_aware_local_zone(monkeypatch):
     assert _parse_captured_at("2026-01-14T23:15:00Z") == expected
 
 
+def test_parse_captured_at_non_strict_timezone_failures_return_receive_time(monkeypatch):
+    local_tz = ZoneInfo("Europe/Berlin")
+
+    class NaiveParsed:
+        tzinfo = None
+
+        def replace(self, **_kwargs):
+            raise ValueError("replace")
+
+    class AwareParsed:
+        tzinfo = local_tz
+
+        def utcoffset(self):
+            return timedelta(0)
+
+        def astimezone(self, _timezone):
+            raise ValueError("astimezone")
+
+    real_datetime = datetime
+
+    class ProxyDateTime(real_datetime):
+        parsed = NaiveParsed()
+
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime.now(tz)
+
+        @classmethod
+        def fromisoformat(cls, _value):
+            return cls.parsed
+
+    monkeypatch.setattr(bridge_module, "datetime", ProxyDateTime)
+    monkeypatch.setattr(bridge_module, "LOCAL_TZ", local_tz)
+    assert _parse_captured_at("2026-01-15T00:15:00").tzinfo == local_tz
+
+    ProxyDateTime.parsed = AwareParsed()
+    assert _parse_captured_at("2026-01-15T00:15:00+00:00").tzinfo == local_tz
+
+
 def test_bridge_text_sanitizers_normalize_and_bound_whitespace():
     assert _safe_excerpt("\n  alpha\t beta  ", limit=9) == "alpha ..."
     assert _safe_context_value("alpha\n beta gamma", limit=11) == "alpha be..."
@@ -366,6 +405,7 @@ def test_redact_url_removes_userinfo_and_rejects_invalid_port():
         == "https://example.test:8443/path"
     )
     assert _redact_url("https://example.test:invalid/path") == ""
+    assert _redact_url("https://[::1]:8443/path") == "https://[::1]:8443/path"
 
 
 @pytest.mark.parametrize(
@@ -374,6 +414,16 @@ def test_redact_url_removes_userinfo_and_rejects_invalid_port():
 )
 def test_debug_number_sanitizer_rejects_non_finite_and_unbounded_values(value):
     assert _sanitize_debug_number(value) is None
+
+
+def test_debug_number_sanitizer_handles_float_conversion_failure(monkeypatch):
+    monkeypatch.setattr(
+        bridge_module,
+        "int",
+        lambda _value: (_ for _ in ()).throw(OverflowError("conversion")),
+        raising=False,
+    )
+    assert _sanitize_debug_number(1.5) is None
 
 
 @pytest.mark.parametrize("captured_at", [0, False, [], {}])
@@ -7164,3 +7214,884 @@ def test_write_bridge_extension_rejects_symlink_output_file(tmp_path):
         )
 
     assert outside.read_text(encoding="utf-8") == "keep"
+
+
+def test_bridge_identity_and_debug_sanitizer_reject_invalid_shapes(tmp_path, monkeypatch):
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "backend_identity_from_candidates",
+        lambda _candidates: ("user", "account"),
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "canonical_backend_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("mismatch")),
+    )
+    assert (
+        bridge_module._structured_identity_matches_account(
+            account,
+            [],
+            auth_user_id="user",
+            auth_account_id="account",
+        )
+        is False
+    )
+
+    with pytest.raises(ValueError, match="safe debug filename"):
+        save_bridge_debug_payload("", {}, tmp_path / "snapshots")
+
+    path = save_bridge_debug_payload(
+        "alpha",
+        {
+            "account": 1,
+            "readyState": "complete",
+            "capturedAt": 1,
+            "bodyText": 1,
+            "textLength": 123,
+            "htmlLength": "bad",
+            "fieldLengths": {"bodyText": 1},
+            "truncatedFields": {"bodyText": True},
+            "apiResponses": [
+                {
+                    "bodyText": 1,
+                    "contentType": 1,
+                    "status": "bad",
+                    "requestSequence": "bad",
+                },
+                None,
+            ],
+        },
+        tmp_path / "snapshots",
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert "account" not in payload
+    assert "capturedAt" not in payload
+    assert "bodyText" not in payload
+    assert "apiResponses" in payload and payload["apiResponses"] == []
+    assert payload["readyState"] == "complete"
+    assert payload["textLength"] == 123
+    assert payload["fieldLengths"] == {"bodyText": 1}
+    assert payload["truncatedFields"] == {"bodyText": True}
+
+
+def test_bridge_payload_candidates_and_context_guards():
+    assert bridge_module._safe_context_value("   ", 10) == "-"
+    assert bridge_module._bridge_response_source_priority(1) == 0
+    assert _json_candidates_from_payload(
+        {"apiResponses": [None, {"url": 1}, {"source": "content-probe", "url": "not-url"}]}
+    ) == []
+    assert _json_candidates_from_payload(
+        {
+            "apiResponses": [
+                {
+                    "url": "https://example.test/usage",
+                    "source": "content-probe",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": "not json",
+                }
+            ]
+        }
+    ) == []
+    conflicting = {
+        "apiResponses": [
+            {
+                "url": "https://example.test/usage",
+                "source": "content-probe",
+                "requestSequence": 1,
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": '{"account_id":"a"}',
+            },
+            {
+                "url": "https://example.test/usage",
+                "source": "content-probe",
+                "requestSequence": 1,
+                "status": 200,
+                "contentType": "application/json",
+                "bodyText": '{"account_id":"b"}',
+            },
+        ]
+    }
+    assert _json_candidates_from_payload(conflicting) == []
+    assert bridge_module._json_candidates_from_payload(
+        {
+            "apiResponses": [
+                {
+                    "url": "https://example.test/usage",
+                    "source": "content-probe",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": '{"account_id":"a"}',
+                },
+                {
+                    "url": "https://example.test/usage",
+                    "source": "content-probe",
+                    "status": 200,
+                    "contentType": "application/json",
+                    "bodyText": 1,
+                },
+            ]
+        }
+    ) == []
+
+
+def test_bridge_endpoint_and_api_response_sanitizers_cover_invalid_fields():
+    with pytest.raises(ValueError, match="absolute HTTP"):
+        bridge_module._validate_bridge_endpoint("https://[invalid")
+    assert bridge_module._sanitize_api_response(None) is None
+    response = bridge_module._sanitize_api_response(
+        {
+            "bodyText": 1,
+            "contentType": 1,
+            "ok": "yes",
+            "status": -1,
+            "requestSequence": "bad",
+        }
+    )
+    assert response == {}
+    assert bridge_module._sanitize_api_response(
+        {
+            "contentType": "application/json",
+            "source": "page-fetch",
+            "status": 200,
+            "requestSequence": 1,
+            "bodyText": "safe",
+        }
+    ) == {
+        "bodyText": "safe",
+        "contentType": "application/json",
+        "requestSequence": 1,
+        "source": "page-fetch",
+        "status": 200,
+    }
+    assert bridge_module._sanitize_debug_lengths([]) is None
+    assert bridge_module._sanitize_debug_flags([]) is None
+    assert bridge_module._sanitize_debug_number(-1) is None
+    assert bridge_module._sanitize_debug_number(float("inf")) is None
+    assert bridge_module._sanitize_debug_number(1.5) == 1
+
+
+def test_bridge_token_storage_handles_missing_symlink_and_inspection_errors(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setattr(bridge_module, "default_state_dir", lambda: state)
+    assert revoke_bridge_token("alpha") is False
+    assert bridge_token_matches("bad/id", "A" * 32) is False
+    assert bridge_token_matches("alpha", "A" * 32) is False
+
+    token_dir = state / "bridge-tokens"
+    token_dir.mkdir(parents=True, mode=0o700)
+    path = token_dir / "alpha.token"
+    path.symlink_to(tmp_path / "target")
+    assert revoke_bridge_token("alpha") is True
+
+    path.write_text("A" * 32, encoding="utf-8")
+    path.chmod(0o600)
+    original_lstat = Path.lstat
+
+    def failing_lstat(candidate):
+        if candidate == path:
+            raise OSError("token race")
+        return original_lstat(candidate)
+
+    monkeypatch.setattr(Path, "lstat", failing_lstat)
+    with pytest.raises(ValueError, match="cannot be inspected"):
+        revoke_bridge_token("alpha")
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+
+    path.write_text("A" * 32, encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid bridge token file"):
+        bridge_module._read_existing_bridge_token(path)
+
+
+def test_bridge_candidate_parser_covers_newer_duplicates_empty_bodies_and_source_race(monkeypatch):
+    base = {
+        "source": "content-probe",
+        "url": "https://example.test/usage",
+        "status": 200,
+        "contentType": "application/json",
+        "ok": True,
+        "truncated": False,
+    }
+    newer = {
+        "apiResponses": [
+            {**base, "requestSequence": 1, "bodyText": '{"account_id":"a"}'},
+            {**base, "requestSequence": 2, "bodyText": '{"account_id":"b"}'},
+        ]
+    }
+    candidates = _json_candidates_from_payload(newer)
+    assert len(candidates) == 1 and candidates[0].payload["account_id"] == "b"
+    assert _json_candidates_from_payload({"apiResponses": [{**base}]}) == []
+
+    class UrlSwitch(dict):
+        url_calls = 0
+
+        def get(self, key, default=None):
+            if key == "url":
+                self.url_calls += 1
+                return base["url"] if self.url_calls == 1 else 1
+            return super().get(key, default)
+
+    assert _json_candidates_from_payload({"apiResponses": [UrlSwitch(base)]}) == []
+
+    source_calls = 0
+
+    def source_switch(_item):
+        nonlocal source_calls
+        source_calls += 1
+        return "content-probe" if source_calls == 1 else None
+
+    monkeypatch.setattr(bridge_module, "_bridge_response_source", source_switch)
+    monkeypatch.setattr(bridge_module, "load_json_candidate", lambda *_args: object())
+    assert _json_candidates_from_payload(
+        {"apiResponses": [{**base, "bodyText": '{"account_id":"a"}'}]}
+    ) == []
+
+
+def test_bridge_extension_rollback_reports_cleanup_errors(tmp_path, monkeypatch):
+    output_dir = tmp_path / "extension"
+    output_dir.mkdir()
+    for filename in ("manifest.json", "background.js", "content.js", "page-hook.js"):
+        (output_dir / filename).write_text("old", encoding="utf-8")
+    original_replace = Path.replace
+    original_is_symlink = Path.is_symlink
+    failed = False
+
+    def replace(source, target):
+        nonlocal failed
+        if source.parent.name == "stage" and target.name == "page-hook.js":
+            failed = True
+            raise OSError("primary commit failure")
+        if failed and source.parent.name == "backup" and target.name == "background.js":
+            raise OSError("rollback restore failure")
+        return original_replace(source, target)
+
+    def is_symlink(path):
+        if failed and path == output_dir / "content.js":
+            return True
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    monkeypatch.setattr(Path, "is_symlink", is_symlink)
+    with pytest.raises(ExceptionGroup, match="rollback failed"):
+        write_bridge_extension(
+            "alpha",
+            output_dir,
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 32,
+        )
+
+
+def test_bridge_extension_rejects_hardlinked_output_file(tmp_path):
+    output_dir = tmp_path / "extension"
+    output_dir.mkdir()
+    first = output_dir / "manifest.json"
+    second = output_dir / "background.js"
+    first.write_text("shared", encoding="utf-8")
+    second.hardlink_to(first)
+    with pytest.raises(ValueError, match="hard-linked"):
+        write_bridge_extension(
+            "alpha",
+            output_dir,
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 32,
+        )
+
+
+def test_bridge_server_connection_cleanup_and_plain_request_paths(tmp_path, monkeypatch):
+    handler = _make_handler(AppConfig(accounts=()), tmp_path / "snapshots", {})
+    raw_socket = type(
+        "RawSocket",
+        (),
+        {"settimeout": lambda *_a, **_k: None, "close": lambda self: None},
+    )()
+
+    monkeypatch.setattr(
+        ThreadingHTTPServer,
+        "get_request",
+        lambda _server: (raw_socket, ("127.0.0.1", 1)),
+    )
+    server = _BoundedThreadingHTTPServer(("127.0.0.1", 0), handler)
+    try:
+        assert server.get_request()[0] is raw_socket
+    finally:
+        server.server_close()
+
+    class BadTLS:
+        def wrap_socket(self, *_args, **_kwargs):
+            raise OSError("TLS wrap failure")
+
+    server = _BoundedThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        handler,
+        tls_context=BadTLS(),
+    )
+    try:
+        with pytest.raises(OSError, match="TLS wrap failure"):
+            server.get_request()
+    finally:
+        server.server_close()
+
+    server = _BoundedThreadingHTTPServer(("127.0.0.1", 0), handler)
+    monkeypatch.setattr(
+        ThreadingHTTPServer,
+        "process_request",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("dispatch")),
+    )
+    assert server._connection_slots.acquire(blocking=False)
+    with pytest.raises(RuntimeError, match="dispatch"):
+        server.process_request(raw_socket, ("127.0.0.1", 1))
+    assert server._connection_slots.acquire(blocking=False)
+    server._connection_slots.release()
+    server.server_close()
+
+
+def test_bridge_server_runs_and_closes_on_shutdown(tmp_path, monkeypatch, capsys):
+    account = Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "profile"))
+    config = AppConfig(accounts=(account,))
+    monkeypatch.setattr(bridge_module, "bridge_token_for_account", lambda _account: "A" * 32)
+    events = []
+
+    class FakeServer:
+        def __init__(self, address, handler, *, tls_context):
+            events.append((address, handler, tls_context))
+
+        def serve_forever(self):
+            events.append("serve")
+            raise KeyboardInterrupt()
+
+        def server_close(self):
+            events.append("close")
+
+    monkeypatch.setattr(bridge_module, "_BoundedThreadingHTTPServer", FakeServer)
+    with pytest.raises(KeyboardInterrupt):
+        run_bridge_server(
+            config,
+            host="127.0.0.1",
+            port=8765,
+            snapshot_dir=tmp_path / "snapshots",
+        )
+    assert events[1:] == ["serve", "close"]
+    assert "Bridge-Server: http://127.0.0.1:8765/ingest" in capsys.readouterr().out
+
+
+def test_bridge_tls_validation_covers_host_and_file_shapes(tmp_path, monkeypatch):
+    assert bridge_module._bridge_host_requires_tls("example.test") is True
+    cert = tmp_path / "cert.pem"
+    key = tmp_path / "key.pem"
+    key.write_text("key", encoding="utf-8")
+    key.chmod(0o600)
+    with pytest.raises(ValueError, match="certificate must be a regular file"):
+        _tls_context(cert, key)
+    cert.write_text("cert", encoding="utf-8")
+    cert.chmod(0o600)
+    key.unlink()
+    key.symlink_to(tmp_path / "missing-key")
+    monkeypatch.setattr(bridge_module, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
+    with pytest.raises(ValueError, match="key must be a regular file"):
+        _tls_context(cert, key)
+
+    class FakeContext:
+        def __init__(self, failure=None):
+            self.failure = failure
+
+        def load_cert_chain(self, **_kwargs):
+            if self.failure:
+                raise self.failure
+
+    monkeypatch.setattr(
+        bridge_module.ssl,
+        "SSLContext",
+        lambda _protocol: FakeContext(),
+    )
+    key.unlink()
+    key.write_text("key", encoding="utf-8")
+    key.chmod(0o600)
+    assert _tls_context(cert, key) is not None
+    monkeypatch.setattr(
+        bridge_module.ssl,
+        "SSLContext",
+        lambda _protocol: FakeContext(ssl.SSLError("bad chain")),
+    )
+    with pytest.raises(ValueError, match="invalid TLS"):
+        _tls_context(cert, key)
+
+
+def test_http_bridge_handler_rejects_payload_shapes_and_backend_failures(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    account = Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "profile"))
+    config = AppConfig(accounts=(account,))
+    token = bridge_token_for_account(account.id)
+    handler = _make_handler(config, tmp_path / "snapshots", {account.id: token})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = server.server_address
+
+    def request(method, path, headers, body=b""):
+        connection = HTTPConnection(endpoint[0], endpoint[1], timeout=5)
+        try:
+            connection.putrequest(method, path)
+            for key, value in headers:
+                connection.putheader(key, value)
+            connection.endheaders(body)
+            response = connection.getresponse()
+            payload = response.read()
+            return response.status, payload
+        finally:
+            connection.close()
+
+    base = [
+        ("Origin", "https://chatgpt.com"),
+        ("X-Codex-Usage-Account", "alpha"),
+        ("Authorization", f"Bearer {token}"),
+    ]
+    try:
+        status, _ = request("OPTIONS", "/ingest", [("Origin", "https://evil.example")])
+        assert status == 403
+        status, _ = request(
+            "POST",
+            "/wrong",
+            [*base, ("Content-Length", "2")],
+            b"{}",
+        )
+        assert status == 404
+        status, _ = request(
+            "POST",
+            "/ingest",
+            [*base, ("Content-Length", "2"), ("Content-Length", "2")],
+            b"{}",
+        )
+        assert status == 413
+        status, _ = request(
+            "POST",
+            "/ingest",
+            [*base, ("Transfer-Encoding", "chunked"), ("Content-Length", "2")],
+            b"{}",
+        )
+        assert status == 413
+        for length in ("abc", "0"):
+            status, _ = request(
+                "POST",
+                "/ingest",
+                [*base, ("Content-Length", length)],
+                b"" if length == "0" else b"abc",
+            )
+            assert status == 413
+        monkeypatch.setattr(
+            bridge_module,
+            "int",
+            lambda _value: (_ for _ in ()).throw(ValueError("conversion")),
+            raising=False,
+        )
+        status, _ = request(
+            "POST",
+            "/ingest",
+            [*base, ("Content-Length", "2")],
+            b"{}",
+        )
+        assert status == 413
+        monkeypatch.delattr(bridge_module, "int")
+        status, _ = request(
+            "POST",
+            "/ingest",
+            [("Origin", "https://chatgpt.com"), ("Content-Length", "2")],
+            b"{}",
+        )
+        assert status == 401
+        status, _ = request(
+            "POST",
+            "/ingest",
+            [
+                ("Origin", "https://chatgpt.com"),
+                ("X-Codex-Usage-Account", "other"),
+                ("Authorization", f"Bearer {token}"),
+                ("Content-Length", "2"),
+            ],
+            b"{}",
+        )
+        assert status == 401
+        for body in (b"not-json", b"[]"):
+            status, _ = request(
+                "POST",
+                "/ingest",
+                [*base, ("Content-Length", str(len(body)))],
+                body,
+            )
+            assert status == 400
+        for error, expected in (
+            (KeyError("unknown"), 400),
+            (ValueError("reject"), 400),
+            (RuntimeError("failure"), 500),
+        ):
+            monkeypatch.setattr(
+                bridge_module,
+                "ingest_and_save",
+                lambda *_a, error=error, **_k: (_ for _ in ()).throw(error),
+            )
+            body = b'{"account":"alpha"}'
+            status, _ = request(
+                "POST",
+                "/ingest",
+                [*base, ("Content-Length", str(len(body)))],
+                body,
+            )
+            assert status == expected
+
+        usage = AccountUsage(
+            account_id="alpha",
+            label="Alpha",
+            captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+            status=AccountStatus.PARTIAL,
+            error="diagnostic",
+        )
+        monkeypatch.setattr(
+            bridge_module,
+            "ingest_and_save",
+            lambda *_a, **_k: (usage, tmp_path / "saved.json"),
+        )
+        monkeypatch.setattr(bridge_module, "load_latest_usages", lambda *_a, **_k: [])
+        monkeypatch.setattr(bridge_module, "render_table", lambda _usages: "")
+        monkeypatch.setattr(
+            bridge_module,
+            "save_bridge_debug_payload",
+            lambda *_a, **_k: (_ for _ in ()).throw(OSError("debug failure")),
+        )
+        body = b'{"account":"alpha"}'
+        status, payload = request(
+            "POST",
+            "/ingest",
+            [*base, ("Content-Length", str(len(body)))],
+            body,
+        )
+        assert status == 200 and json.loads(payload)["debug"] is None
+        monkeypatch.setattr(
+            bridge_module,
+            "save_bridge_debug_payload",
+            lambda *_a, **_k: tmp_path / "debug.json",
+        )
+        status, payload = request(
+            "POST",
+            "/ingest",
+            [*base, ("Content-Length", str(len(body)))],
+            body,
+        )
+        assert status == 200 and json.loads(payload)["debug"].endswith("debug.json")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_bridge_handler_authorization_guard_shapes(tmp_path):
+    account = Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "profile"))
+    config = AppConfig(accounts=(account,))
+    handler = _make_handler(config, tmp_path / "snapshots", {account.id: "token"})
+    request = object.__new__(handler)
+    assert handler._is_authorized(request, None, config) is False
+    assert handler._is_authorized(request, "missing", config) is False
+
+
+def test_http_bridge_handler_rejects_dynamic_config_and_authorization_shapes(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    account = Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "profile"))
+    config = AppConfig(accounts=(account,))
+    token = bridge_token_for_account(account.id)
+    handler = _make_handler(
+        config,
+        tmp_path / "snapshots",
+        {account.id: token},
+        config_path=tmp_path / "config.toml",
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = server.server_address
+
+    def post(headers, body=b"{}"):
+        connection = HTTPConnection(endpoint[0], endpoint[1], timeout=5)
+        try:
+            connection.putrequest("POST", "/ingest")
+            for key, value in headers:
+                connection.putheader(key, value)
+            connection.putheader("Content-Length", str(len(body)))
+            connection.endheaders(body)
+            response = connection.getresponse()
+            status = response.status
+            response.read()
+            return status
+        finally:
+            connection.close()
+
+    base = [("Origin", "https://chatgpt.com"), ("X-Codex-Usage-Account", "alpha")]
+    try:
+        monkeypatch.setattr(
+            bridge_module,
+            "load_config",
+            lambda *_a, **_k: (_ for _ in ()).throw(OSError("config")),
+        )
+        assert post([*base, ("Authorization", f"Bearer {token}")]) == 503
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    tokens = {account.id: token}
+    handler = _make_handler(config, tmp_path / "snapshots-2", tokens)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    endpoint = server.server_address
+    try:
+        def post_again(headers):
+            connection = HTTPConnection(endpoint[0], endpoint[1], timeout=5)
+            try:
+                connection.putrequest("POST", "/ingest")
+                for key, value in headers:
+                    connection.putheader(key, value)
+                connection.putheader("Content-Length", "2")
+                connection.endheaders(b"{}")
+                response = connection.getresponse()
+                result = response.status
+                response.read()
+                return result
+            finally:
+                connection.close()
+
+        tokens.clear()
+        assert post_again([*base, ("Authorization", f"Bearer {token}")]) == 401
+        tokens[account.id] = token
+        assert post_again([*base, ("Authorization", f"Token {token}")]) == 401
+        assert post_again([*base, ("Authorization", f"Bearer {token} ")]) == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_bridge_ingest_rejects_incomparable_known_timestamp(tmp_path, monkeypatch):
+    account = Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "profile"))
+    config = AppConfig(accounts=(account,))
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 1, 1),
+        backend_used="browser",
+    )
+    known = replace(
+        usage,
+        captured_at=datetime(2026, 1, 1, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+    monkeypatch.setattr(bridge_module, "usage_from_ingest_payload", lambda *_a, **_k: usage)
+    monkeypatch.setattr(bridge_module, "load_state_generation", lambda *_a, **_k: 0)
+    monkeypatch.setattr(bridge_module, "load_usage_snapshot", lambda *_a, **_k: known)
+    monkeypatch.setattr(bridge_module, "load_current_usage", lambda *_a, **_k: None)
+    monkeypatch.setattr(bridge_module, "backend_identity_matches", lambda *_a, **_k: True)
+    with pytest.raises(ValueError, match="timestamps are not comparable"):
+        ingest_and_save(config, "alpha", {}, tmp_path / "snapshots")
+
+
+def test_bridge_browser_identity_helpers_cover_mismatch_and_ambiguity(tmp_path, monkeypatch):
+    browser = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        backend_used="browser",
+        backend_user_id="user",
+        backend_account_id="account",
+    )
+    direct = replace(browser, backend_used="direct", status=AccountStatus.OK)
+    assert bridge_module._browser_payload_is_covered_by_authenticated_state(
+        AppConfig(accounts=()), replace(browser, backend_used="app-server"), direct
+    ) is False
+    assert bridge_module._browser_payload_is_covered_by_authenticated_state(
+        AppConfig(accounts=()), browser, direct
+    ) is True
+    assert bridge_module._browser_payload_is_covered_by_authenticated_state(
+        AppConfig(accounts=()), browser, replace(direct, backend_account_id="other")
+    ) is False
+
+    account = Account(
+        id="alpha",
+        label="Alpha",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "alpha-auth.json"),
+    )
+    other = replace(account, id="beta", auth_json_path=str(tmp_path / "beta-auth.json"))
+    config = AppConfig(accounts=(account, other))
+    monkeypatch.setattr(
+        bridge_module,
+        "backend_identity_from_candidates",
+        lambda _candidates: ("user", None),
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "auth_identity_for_account",
+        lambda item: ("user", "account-" + item.id),
+    )
+    with pytest.raises(ValueError, match="ambiguous backend account identity"):
+        bridge_module._reject_ambiguous_browser_identity(config, account, {})
+
+    monkeypatch.setattr(
+        bridge_module,
+        "auth_identity_for_account",
+        lambda _item: (_ for _ in ()).throw(bridge_module.DirectAuthError("missing")),
+    )
+    bridge_module._reject_ambiguous_browser_identity(config, account, {})
+
+    monkeypatch.setattr(
+        bridge_module,
+        "backend_identity_from_candidates",
+        lambda _candidates: ("other-user", None),
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "auth_identity_for_account",
+        lambda _item: ("user", "account-alpha"),
+    )
+    bridge_module._reject_ambiguous_browser_identity(config, account, {})
+
+    monkeypatch.setattr(
+        bridge_module,
+        "backend_identity_from_candidates",
+        lambda _candidates: ("user", None),
+    )
+
+    def identity_for_target_only(item):
+        if item.id == account.id:
+            return ("user", "account-alpha")
+        raise bridge_module.DirectAuthError("missing")
+
+    monkeypatch.setattr(bridge_module, "auth_identity_for_account", identity_for_target_only)
+    bridge_module._reject_ambiguous_browser_identity(config, account, {})
+
+    monkeypatch.setattr(
+        bridge_module,
+        "backend_identity_from_candidates",
+        lambda _candidates: (None, None),
+    )
+    bridge_module._reject_browser_identity_from_other_configured_account(config, account, {})
+    monkeypatch.setattr(
+        bridge_module,
+        "backend_identity_from_candidates",
+        lambda _candidates: ("user", "account"),
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "auth_identity_for_account",
+        lambda _item: ("user", "account"),
+    )
+    with pytest.raises(ValueError, match="ambiguous backend account identity"):
+        bridge_module._reject_browser_identity_from_other_configured_account(config, account, {})
+    no_auth = replace(account, auth_json_path=None, backend="browser")
+    bridge_module._invalidate_rejected_browser_state(no_auth, None, None, tmp_path / "snapshots")
+    monkeypatch.setattr(
+        bridge_module,
+        "auth_identity_for_account",
+        lambda _item: (_ for _ in ()).throw(bridge_module.DirectAuthError("auth")),
+    )
+    assert bridge_module._usage_matches_current_auth(account, direct) is False
+
+
+def test_bridge_authenticated_snapshot_and_window_shape_guards():
+    current = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        backend_used="browser",
+        backend_user_id="user",
+        backend_account_id="account",
+    )
+    snapshot = replace(
+        current,
+        backend_used="direct",
+        five_hour=LimitWindow(name="5h", remaining=50),
+        status=AccountStatus.OK,
+    )
+    for candidate in (
+        replace(snapshot, cache_invalidated=True),
+        replace(snapshot, backend_account_id="other"),
+        replace(snapshot, models=[]),
+        replace(snapshot, five_hour=None, weekly=None, main=None, models=()),
+    ):
+        assert bridge_module._authenticated_snapshot_supersedes_browser_current(
+            current, candidate, 300
+        ) is False
+    assert bridge_module._authenticated_snapshot_supersedes_browser_current(
+        current,
+        replace(snapshot, status=AccountStatus.PARTIAL, five_hour=None, weekly=None),
+        300,
+    ) is True
+
+    usage = AccountUsage(account_id="alpha", label="Alpha", captured_at=datetime.now())
+    assert bridge_module._usage_windows(object()) is None
+    assert bridge_module._usage_windows(replace(usage, models=[])) is None
+    assert bridge_module._usage_windows(replace(usage, main=object())) is None  # type: ignore[arg-type]
+    assert bridge_module._usage_windows(
+        replace(
+            usage,
+            main=UsagePool(key="main", display_name="main", windows=[]),
+        )
+    ) is None
+
+
+def test_bridge_future_and_stale_capture_guards():
+    malformed = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=object(),  # type: ignore[arg-type]
+    )
+    reference = datetime.now(ZoneInfo("Europe/Berlin"))
+    assert bridge_module._capture_is_too_far_in_future(malformed, reference) is True
+    marked = bridge_module._mark_latest_stale(malformed, 300)
+    assert marked.stale is True
+
+
+def test_bridge_latest_loader_drops_future_and_untrusted_current_values(tmp_path, monkeypatch):
+    account = Account(id="alpha", label="Alpha", profile_dir=str(tmp_path / "profile"))
+    config = AppConfig(accounts=(account,))
+    future = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin"))
+        + timedelta(seconds=bridge_module.MAX_CAPTURE_FUTURE_SECONDS + 1),
+    )
+    monkeypatch.setattr(bridge_module, "load_usage_snapshot", lambda *_a, **_k: future)
+    monkeypatch.setattr(bridge_module, "load_current_usage", lambda *_a, **_k: None)
+    assert bridge_module._load_latest_usages_unlocked(config, tmp_path / "snapshots") == []
+
+    auth_account = replace(account, auth_json_path=str(tmp_path / "auth.json"))
+    config = AppConfig(accounts=(auth_account,))
+    valid = replace(
+        future,
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+        backend_used="direct",
+    )
+    monkeypatch.setattr(bridge_module, "load_usage_snapshot", lambda *_a, **_k: valid)
+    monkeypatch.setattr(
+        bridge_module,
+        "auth_identity_for_account",
+        lambda *_a: (_ for _ in ()).throw(bridge_module.DirectAuthError("auth")),
+    )
+    monkeypatch.setattr(bridge_module, "backend_provenance_matches_configured", lambda *_a: True)
+    monkeypatch.setattr(bridge_module, "_cached_usage_matches_current_auth", lambda *_a: True)
+    loaded = bridge_module._load_latest_usages_unlocked(config, tmp_path / "snapshots")
+    assert loaded and loaded[0].account_id == "alpha"
+
+    foreign = replace(valid, backend_used="browser")
+    monkeypatch.setattr(bridge_module, "load_usage_snapshot", lambda *_a, **_k: None)
+    monkeypatch.setattr(bridge_module, "load_current_usage", lambda *_a, **_k: foreign)
+    monkeypatch.setattr(
+        bridge_module,
+        "backend_provenance_matches_configured",
+        lambda usage, _backend: usage.backend_used != "browser",
+    )
+    assert bridge_module._load_latest_usages_unlocked(config, tmp_path / "snapshots") == []
