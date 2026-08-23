@@ -1165,6 +1165,23 @@ def test_add_account_rejects_invalid_optional_flags(tmp_path, kwargs, message):
         )
 
 
+def test_account_from_data_rejects_non_table():
+    with pytest.raises(ValueError, match="account entry must be a TOML table"):
+        config_module._account_from_data([])
+
+
+def test_account_from_data_normalizes_empty_auth_path(tmp_path):
+    account = config_module._account_from_data(
+        {
+            "id": "empty-auth",
+            "profile_dir": str(tmp_path / "profile"),
+            "auth_json_path": "",
+        }
+    )
+
+    assert account.auth_json_path is None
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (

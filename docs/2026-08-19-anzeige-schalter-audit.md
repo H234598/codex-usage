@@ -12268,3 +12268,15 @@ Verifikation: **133 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **87 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1026: Account-Datenparser bei Container-/Leerwert-Grenzen
+
+`_account_from_data()` hatte die explizite Ablehnung eines Nicht-TOML-Table-
+Containers und die Normalisierung eines leeren `auth_json_path` noch nicht
+direkt getestet. Zwei Regressionen bestätigen strukturierte Ablehnung bzw.
+kanonisches `None`.
+
+Verifikation: **135 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **87 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
