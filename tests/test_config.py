@@ -1292,6 +1292,21 @@ def test_prepare_config_directory_rejects_unresolvable_path(tmp_path, monkeypatc
         config_module._prepare_config_directory(tmp_path / "config")
 
 
+def test_prepare_config_directory_rejects_symlink(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    target.mkdir()
+    config_dir = tmp_path / "config"
+    config_dir.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(
+        config_module,
+        "assert_no_symlink_ancestors",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        config_module._prepare_config_directory(config_dir)
+
+
 @pytest.mark.parametrize(
     "field",
     ("id", "label", "profile_dir", "browser", "auth_json_path", "backend"),

@@ -12244,3 +12244,15 @@ Verifikation: **126 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **86 %**, verbleibende Missing-Zeilen liegen
 in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1024: Symlink-Guard am Config-Verzeichnis direkt geprüft
+
+`_prepare_config_directory()` hatte den expliziten `config_dir.is_symlink()`-
+Guard hinter dem vorgelagerten Ancestor-Check noch nicht direkt erreicht. Ein
+isolierter Ancestor-Stub bestätigt zusätzlich diese zweite Schranke; ein
+symlinkisches Ziel wird vor jeder Sicherung abgewiesen.
+
+Verifikation: **127 Config-Tests**, fokussierter Test, Ruff und Diff-Check
+bestanden; Coverage-Auszug für `config.py`: **86 %**, verbleibende Missing-
+Zeilen liegen in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden;
+keine Settings-Fenster gestartet.
