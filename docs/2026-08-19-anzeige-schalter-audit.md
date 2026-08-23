@@ -10689,3 +10689,17 @@ Items werden wie nicht relevante Limits übersprungen. Regression deckt den
 
 Verifikation: **218 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 886: Spark-Rate-Limit-Signaturen auf native Dicts begrenzen
+
+`direct._spark_limit_signature()` akzeptierte den inneren `rate_limit`-
+Dictwert per `isinstance` und rief daraus `.get()` für Flags und Fenster auf.
+Ein manipuliertes Mapping konnte die Signaturbildung dadurch mit einer rohen
+Exception abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich ein natives `dict`; Subklassen und
+Fremdtypen liefern `("invalid",)`. Regression deckt den `.get()`-Hook ab;
+normale Spark-Rate-Limit-Signaturen bleiben unverändert.
+
+Verifikation: **219 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

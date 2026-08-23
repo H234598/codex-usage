@@ -335,6 +335,24 @@ def test_spark_limit_signature_rejects_item_dict_subclass_hooks():
     ) == ("present-no-spark",)
 
 
+def test_spark_limit_signature_rejects_rate_limit_dict_subclass_hooks():
+    class BrokenRateLimit(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic spark rate limit marker")
+
+    assert direct_module._spark_limit_signature(
+        {
+            "additional_rate_limits": [
+                {
+                    "limit_name": "GPT-5.3-Codex-Spark",
+                    "metered_feature": "codex_bengalfox",
+                    "rate_limit": BrokenRateLimit(),
+                }
+            ]
+        }
+    ) == ("invalid",)
+
+
 def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path, monkeypatch):
     broken_int = _BrokenInt(200)
     broken_float = _BrokenFloat(1.0)

@@ -1220,7 +1220,7 @@ def _spark_limit_signature(payload: dict[str, Any]) -> tuple | None:
         ):
             continue
         rate_limit = item.get("rate_limit")
-        if not isinstance(rate_limit, dict):
+        if type(rate_limit) is not dict:
             return ("invalid",)
         return (
             _signature_flag(rate_limit.get("allowed")),
