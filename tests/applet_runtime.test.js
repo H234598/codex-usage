@@ -17,6 +17,7 @@ function loadPrototype(onReady, strictMode = false) {
     launcherFactory: () => { throw new Error("launcher not configured"); },
     subprocessFactory: () => ({}),
     appInfoFactory: () => {},
+    glib: {},
     fileUriCalls: 0,
   };
   const mainloop = {
@@ -174,7 +175,7 @@ function loadPrototype(onReady, strictMode = false) {
       byteArray: { toString: (value) => Buffer.from(value).toString("utf8") },
     gi: {
       Gio: gio,
-      GLib: {},
+      GLib: runtime.glib,
       St: {
         ClipboardType: { CLIPBOARD: 1 },
         IconType: { SYMBOLIC: 1 },
@@ -5325,6 +5326,32 @@ test("fast-mode state helpers report active accounts, flex events and safe defau
   assert.equal(applet._fastModeIsActive(), true);
   assert.equal(applet._readEmergencyDisplayOverride(""), null);
   assert.equal(applet._readEmergencyDisplayOverride(42), null);
+});
+
+test("fast-mode state reader normalizes missing, malformed and valid files", () => {
+  let glib;
+  const applet = makeApplet((runtime) => { glib = runtime.glib; });
+  const empty = () => ({modes: {}, last_event: null});
+  const assertEmpty = (state) => assert.deepEqual(JSON.parse(JSON.stringify(state)), empty());
+
+  glib.file_get_contents = () => null;
+  assertEmpty(applet._readFastModeState());
+  glib.file_get_contents = () => [false, Buffer.from("ignored")];
+  assertEmpty(applet._readFastModeState());
+  glib.file_get_contents = () => [true, Buffer.from("[]")];
+  assertEmpty(applet._readFastModeState());
+  glib.file_get_contents = () => [true, Buffer.from(JSON.stringify({modes: 0, last_event: false}))];
+  assertEmpty(applet._readFastModeState());
+  glib.file_get_contents = () => [true, Buffer.from(JSON.stringify({
+    modes: {alpha: {state: "active"}},
+    last_event: {mode: "flex", account: "alpha"},
+  }))];
+  assert.deepEqual(JSON.parse(JSON.stringify(applet._readFastModeState())), {
+    modes: {alpha: {state: "active"}},
+    last_event: {mode: "flex", account: "alpha"},
+  });
+  glib.file_get_contents = () => { throw new Error("read failed"); };
+  assertEmpty(applet._readFastModeState());
 });
 
 test("error notification persistence retries failed writes and menu markup stays bounded", () => {
