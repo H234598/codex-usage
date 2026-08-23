@@ -12510,3 +12510,14 @@ Drei Regressionen bestätigen fail-closed Verhalten; Fokus-Coverage stieg von
 
 Verifikation: **56 Private-IO-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 1047: Private-IO-Verzeichnisanlage gegen Rennen gehärtet
+
+`assert_no_symlink_ancestors()` und `ensure_private_directory()` hatten
+explizite Punktkomponenten, Symlink-/Resolve-/Datei-Guards, `mkdir()`-Race und
+Identity-Aufzeichnung noch nicht vollständig direkt ausgeführt. Sieben
+Regressionen bestätigen diese Pfadgrenzen.
+
+Verifikation: **63 Private-IO-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `private_io.py`: **86 %**; keine Settings-Fenster
+gestartet.

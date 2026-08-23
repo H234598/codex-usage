@@ -63,6 +63,94 @@ def test_chmod_private_directory_rejects_non_directory_descriptor(
         private_io._chmod_private_directory(path, label="private directory")
 
 
+def test_assert_no_symlink_ancestors_ignores_dot_components(tmp_path):
+    assert_no_symlink_ancestors(
+        tmp_path / "nested" / "." / "value",
+        label="private path",
+    )
+
+
+def test_assert_no_symlink_ancestors_handles_explicit_dot_component(monkeypatch):
+    fake_path = SimpleNamespace(
+        is_absolute=lambda: True,
+        anchor="/",
+        parts=("/", ".", "value"),
+    )
+    monkeypatch.setattr(private_io, "_require_path", lambda *_args, **_kwargs: fake_path)
+
+    assert_no_symlink_ancestors(Path("/value"), label="private path")
+
+
+def test_ensure_private_directory_rejects_symlink_path_after_ancestor_check(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(
+        private_io,
+        "assert_no_symlink_ancestors",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        ensure_private_directory(link, label="private directory")
+
+
+def test_ensure_private_directory_maps_resolve_error(tmp_path, monkeypatch):
+    def fail_resolve(_path, **_kwargs):
+        raise OSError("synthetic resolve failure")
+
+    monkeypatch.setattr(private_io.Path, "resolve", fail_resolve)
+
+    with pytest.raises(ValueError, match="cannot be resolved safely"):
+        ensure_private_directory(tmp_path / "new", label="private directory")
+
+
+def test_ensure_private_directory_rejects_existing_file(tmp_path):
+    target = tmp_path / "file"
+    target.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a real directory"):
+        ensure_private_directory(target, label="private directory")
+
+
+def test_ensure_private_directory_keeps_raced_mkdir_as_existing(tmp_path, monkeypatch):
+    target = tmp_path / "new"
+    created_paths: list[tuple[Path, int, int]] = []
+    original_mkdir = Path.mkdir
+
+    def create_then_report_exists(path, *args, **kwargs):
+        original_mkdir(path, *args, **kwargs)
+        raise FileExistsError(path)
+
+    monkeypatch.setattr(Path, "mkdir", create_then_report_exists)
+
+    ensure_private_directory(
+        target,
+        label="private directory",
+        created_paths=created_paths,
+    )
+
+    assert target.is_dir()
+    assert created_paths == []
+
+
+def test_ensure_private_directory_records_created_identity(tmp_path):
+    target = tmp_path / "new"
+    created_paths: list[tuple[Path, int, int]] = []
+
+    ensure_private_directory(
+        target,
+        label="private directory",
+        created_paths=created_paths,
+    )
+
+    assert created_paths[0][0] == target
+    assert created_paths[0][1:] == (target.stat().st_dev, target.stat().st_ino)
+
+
 @pytest.mark.parametrize(
     "timeout_seconds",
     INVALID_LOCK_TIMEOUTS,
