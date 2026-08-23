@@ -32,6 +32,13 @@ def test_error_result_rejects_non_integer_error_codes(code):
     assert result.exit_code == 69
 
 
+def test_require_aware_utc_rejects_non_datetime():
+    from codex_usage.integration_entrypoint import _require_aware_utc
+
+    with pytest.raises(ValueError):
+        _require_aware_utc("invalid")
+
+
 def _environment(tmp_path: Path) -> dict[str, str]:
     data_home = tmp_path / "data"
     state_home = tmp_path / "state"
@@ -260,6 +267,30 @@ def test_execute_normalizes_broad_failures_without_details(tmp_path, monkeypatch
     assert b"tmp" not in result.stderr
     assert b"alpha" not in result.stderr
     assert b"secret" not in result.stderr
+
+
+def test_execute_maps_busy_lock_to_retryable_error(tmp_path, monkeypatch):
+    from codex_usage import integration_entrypoint
+
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "private_path_lock",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("busy")),
+    )
+
+    result = integration_entrypoint.execute(
+        ARGV,
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: None,
+    )
+
+    assert result == integration_entrypoint.CommandResult(
+        75,
+        b"",
+        b"integration_snapshot_busy\n",
+    )
 
 
 @pytest.mark.parametrize(
@@ -569,6 +600,26 @@ def test_cost_window_loader_rejects_out_of_range_lookback(tmp_path):
         )
 
 
+def test_cost_window_loader_includes_credit_history(tmp_path):
+    from types import SimpleNamespace
+
+    from codex_usage.history import HistoryStore
+    from codex_usage.integration_entrypoint import _load_cost_windows
+
+    history_path = tmp_path / "usage-history.sqlite3"
+    with HistoryStore(history_path):
+        pass
+
+    usage = SimpleNamespace(
+        account_id="alpha",
+        credits=SimpleNamespace(duration_seconds=None),
+    )
+    costs = _load_cost_windows(history_path, (usage,), NOW)
+
+    assert "alpha" in costs
+    assert any(item.pool == "credits" for item in costs["alpha"])
+
+
 def test_execute_does_not_publish_when_post_verifier_detects_drift(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
 
@@ -762,3 +813,34 @@ def test_main_writes_success_payload_to_binary_stdout(monkeypatch):
     monkeypatch.setattr(sys, "stdout", type("Stdout", (), {"buffer": output})())
     assert integration_entrypoint.main(ARGV) == 0
     assert output.getvalue() == _payload()
+
+
+def test_main_writes_error_payload_to_binary_stderr(monkeypatch):
+    from codex_usage import integration_entrypoint
+
+    output = io.BytesIO()
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "execute",
+        lambda *args, **kwargs: integration_entrypoint.CommandResult(
+            70, b"", b"integration_snapshot_secure_io_failed\n"
+        ),
+    )
+    monkeypatch.setattr(sys, "stderr", type("Stderr", (), {"buffer": output})())
+
+    assert integration_entrypoint.main(ARGV) == 70
+    assert output.getvalue() == b"integration_snapshot_secure_io_failed\n"
+
+
+def test_module_main_guard_executes(tmp_path, monkeypatch):
+    import runpy
+
+    environ = _environment(tmp_path)
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(sys, "argv", ["integration-entrypoint", *ARGV])
+
+    with pytest.raises(SystemExit) as error:
+        runpy.run_module("codex_usage.integration_entrypoint", run_name="__main__")
+
+    assert isinstance(error.value.code, int)

@@ -12723,3 +12723,13 @@ Regressionen schließen die verbleibenden Darstellungs- und Fail-Closed-Guards.
 
 Verifikation: **80 Render-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `render.py`: **100 %**; keine Settings-Fenster gestartet.
+
+## Runde 1067: Integration-Entrypoint Fehler- und CLI-Pfade geschlossen
+
+Ungültige Clock-Eingaben, Busy-Lock, Credit-History, stderr-Ausgabe und der
+`__main__`-Guard waren noch nicht direkt ausgeführt. Fünf Regressionen
+schließen diese Prozess- und Fehlergrenzen.
+
+Verifikation: **36 Integration-Entrypoint-Tests**, Ruff und Diff-Check
+bestanden; Coverage-Auszug für `integration_entrypoint.py`: **100 %**; keine
+Settings-Fenster gestartet.
