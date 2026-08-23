@@ -12041,3 +12041,14 @@ Verifikation: **136 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `usage_limits.py`: **99 %**, verbleibende Missing-Zeilen
 liegen ausschließlich in absoluter Reset-Zeit- und Prozentkonversion
 (538–539, 571–572); keine Settings-Fenster gestartet.
+
+## Runde 1006: Unrepräsentierbare absolute Reset-Zeit fail-closed verworfen
+
+`usage_limits._reset_at()` hatte die Ausnahmebehandlung bei einer formal
+ganzzahligen, aber nicht darstellbaren Epoch-Zeit noch nicht direkt belegt.
+Ein Regressionstest bestätigt `None` statt eines Parserabbruchs.
+
+Verifikation: **137 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `usage_limits.py`: **99 %**, verbleibende Missing-Zeilen
+liegen ausschließlich in der abgesicherten Float-Konversion von
+Prozentwerten (571–572); keine Settings-Fenster gestartet.

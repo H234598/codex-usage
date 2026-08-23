@@ -162,6 +162,10 @@ def test_window_parsers_reject_empty_window_mappings():
     ) is None
 
 
+def test_reset_parser_drops_unrepresentable_absolute_epoch():
+    assert usage_limits_module._reset_at(10**1000, None, captured_at=NOW) is None
+
+
 def test_percent_rejects_numeric_subclass_before_float_conversion():
     assert usage_limits_module._percent(_BrokenInt(50)) is None
 
