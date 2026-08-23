@@ -258,6 +258,144 @@ def test_read_private_text_rejects_invalid_byte_budget(tmp_path, max_bytes):
         )
 
 
+def test_read_private_text_rejects_symlink_path(tmp_path, monkeypatch):
+    target = tmp_path / "target.txt"
+    target.write_text("secret", encoding="utf-8")
+    path = tmp_path / "link.txt"
+    path.symlink_to(target)
+    monkeypatch.setattr(
+        private_io,
+        "assert_no_symlink_ancestors",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(ValueError, match="must be a regular file"):
+        private_io.read_private_text(
+            path,
+            regular_label="private",
+            read_label="private",
+            max_bytes=100,
+        )
+
+
+@pytest.mark.parametrize(
+    ("error_number", "message"),
+    [
+        (private_io.errno.ELOOP, "must be a regular file"),
+        (private_io.errno.EACCES, "cannot read"),
+    ],
+)
+def test_read_private_text_maps_open_errors(tmp_path, monkeypatch, error_number, message):
+    path = tmp_path / "value.txt"
+    path.write_text("secret", encoding="utf-8")
+
+    def fail_open(*_args, **_kwargs):
+        raise OSError(error_number, "synthetic open failure")
+
+    monkeypatch.setattr(private_io.os, "open", fail_open)
+
+    with pytest.raises(ValueError, match=message):
+        private_io.read_private_text(
+            path,
+            regular_label="private",
+            read_label="private",
+            max_bytes=100,
+        )
+
+
+def test_read_private_text_reads_regular_utf8_file(tmp_path):
+    path = tmp_path / "value.txt"
+    path.write_text("secret", encoding="utf-8")
+
+    text, item = private_io.read_private_text(
+        path,
+        regular_label="private",
+        read_label="private",
+        max_bytes=100,
+    )
+
+    assert text == "secret"
+    assert item.st_size == len("secret")
+
+
+def test_read_private_text_rejects_file_larger_than_budget(tmp_path):
+    path = tmp_path / "value.txt"
+    path.write_text("secret", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="private too large; max 3 bytes"):
+        private_io.read_private_text(
+            path,
+            regular_label="private",
+            read_label="private",
+            max_bytes=3,
+        )
+
+
+def test_read_private_text_maps_fdopen_error(tmp_path, monkeypatch):
+    path = tmp_path / "value.txt"
+    path.write_text("secret", encoding="utf-8")
+
+    def fail_fdopen(*_args, **_kwargs):
+        raise OSError("synthetic read failure")
+
+    monkeypatch.setattr(private_io.os, "fdopen", fail_fdopen)
+
+    with pytest.raises(ValueError, match="cannot read private"):
+        private_io.read_private_text(
+            path,
+            regular_label="private",
+            read_label="private",
+            max_bytes=100,
+        )
+
+
+def test_read_private_text_rejects_read_result_over_budget(tmp_path, monkeypatch):
+    path = tmp_path / "value.txt"
+    path.write_text("secret", encoding="utf-8")
+
+    class OverlongHandle:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size):
+            return b"too long"
+
+    monkeypatch.setattr(
+        private_io.os,
+        "fstat",
+        lambda _fd: SimpleNamespace(
+            st_mode=private_io.stat.S_IFREG,
+            st_uid=private_io.os.getuid(),
+            st_size=0,
+        ),
+    )
+    monkeypatch.setattr(private_io.os, "fdopen", lambda *_args, **_kwargs: OverlongHandle())
+
+    with pytest.raises(ValueError, match="private too large; max 3 bytes"):
+        private_io.read_private_text(
+            path,
+            regular_label="private",
+            read_label="private",
+            max_bytes=3,
+        )
+
+
+def test_read_private_text_rejects_invalid_utf8(tmp_path):
+    path = tmp_path / "value.txt"
+    path.write_bytes(b"\xff")
+
+    with pytest.raises(ValueError, match="private is not valid UTF-8"):
+        private_io.read_private_text(
+            path,
+            regular_label="private",
+            read_label="private",
+            max_bytes=100,
+        )
+
+
 @pytest.mark.parametrize("text", [None, [], 1, object()])
 def test_write_private_text_rejects_invalid_text(tmp_path, text):
     with pytest.raises(ValueError, match="text is invalid"):

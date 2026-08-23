@@ -12521,3 +12521,14 @@ Regressionen bestätigen diese Pfadgrenzen.
 Verifikation: **63 Private-IO-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `private_io.py`: **86 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1048: Private-IO-Lesen fail-closed getestet
+
+`read_private_text()` hatte Symlink-, Open-, Descriptor-, Größen-,
+UTF-8- und erfolgreiche Lesepfade noch nicht vollständig direkt ausgeführt.
+Acht Regressionen bestätigen Fehlerabbildung, Budgetgrenzen und korrektes
+UTF-8-Lesen.
+
+Verifikation: **71 Private-IO-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `private_io.py`: **92 %**; keine Settings-Fenster
+gestartet.
