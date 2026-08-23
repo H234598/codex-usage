@@ -9869,3 +9869,20 @@ Zeitstempel-, Reset- und Prozentpfade ab.
 Verifikation: **200 fokussierte Extractor-Tests**, **534 Extractor-, Browser-,
 Identity- und Usage-Limit-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 827: Scheduler-Numerik strikt validieren
+
+`scheduler.py` akzeptierte bei Prozent-/Limitwerten, Fensterdauern und
+Watch-Intervallen noch numerische Subklassen. Überschriebene Konvertierungs-,
+Vergleichs- oder Additionsoperatoren konnten Stabilisierung, Resetprüfung und
+Watch-Zyklen mit rohen Exceptions abbrechen.
+
+Die Scheduler-Grenzen akzeptieren jetzt ausschließlich Built-in-`int`/`float`.
+`fetch_all()` und `watch()` teilen dieselbe Mindestintervallprüfung; ungültige
+Konfigurationswerte werden vor jeder weiteren Verarbeitung verworfen.
+Regression deckt direkte Numerik-Helper, Reset-Fallback und Watch-/Fetch-
+Einstiegspunkte ab.
+
+Verifikation: **225 fokussierte Scheduler-Tests**, **489 Scheduler-, CLI-,
+Health-, Integration-Entrypoint- und Profile-Job-Tests**, Ruff und Diff-Check
+bestanden; keine Settings-Fenster gestartet.

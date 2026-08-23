@@ -22,6 +22,7 @@ from codex_usage.scheduler import (
     _capture_is_too_far_in_future,
     _current_supersedes_blocked_snapshot,
     _fetch_one,
+    _finite_number,
     _has_unexpired_window_reset_discontinuity,
     _has_usable_core_usage,
     _is_more_conservative_direct_usage,
@@ -32,6 +33,7 @@ from codex_usage.scheduler import (
     _stabilize_authenticated_usage,
     _stabilize_main_pool,
     _usage_map_for_accounts,
+    _valid_percent,
     _watch_core_resets_current,
     _watch_cycle_is_healthy,
     _watchdog_windows,
@@ -61,6 +63,19 @@ class _RaisingSubtractionDatetime(datetime):
         raise RuntimeError("synthetic subtraction marker")
 
 
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic scheduler integer comparison marker")
+
+    def __add__(self, _other):
+        raise RuntimeError("synthetic scheduler integer addition marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic scheduler float conversion marker")
+
+
 class _RaisingPool:
     @property
     def available(self):
@@ -74,6 +89,33 @@ class _RaisingEvidencePool:
     @property
     def availability_sources(self):
         raise RuntimeError("synthetic evidence marker")
+
+
+def test_scheduler_numeric_helpers_reject_subclasses_before_operations():
+    assert _finite_number(_BrokenFloat(50.0)) is None
+    assert _finite_number(_BrokenInt(50)) is None
+    assert _valid_percent(_BrokenFloat(50.0)) is None
+    assert _valid_percent(_BrokenInt(50)) is None
+
+
+def test_scheduler_reset_validation_uses_named_duration_for_numeric_subclass():
+    captured_at = datetime(2026, 8, 23, 10, 0, tzinfo=ZoneInfo("Europe/Berlin"))
+    usage = AccountUsage(
+        account_id="scheduler",
+        label="Scheduler",
+        captured_at=captured_at,
+        status=AccountStatus.OK,
+        main=_usable_main(
+            LimitWindow(
+                name="5h",
+                remaining=80,
+                duration_seconds=_BrokenInt(18_000),
+                reset_at=captured_at + timedelta(hours=1),
+            )
+        ),
+    )
+
+    assert _watch_core_resets_current(usage, now=captured_at) is True
 
 
 class _RaisingWindow:
@@ -1169,7 +1211,7 @@ def test_watch_subtracts_successful_cycle_duration_from_interval(monkeypatch):
     assert delays == [47.5]
 
 
-@pytest.mark.parametrize("interval_seconds", (-1, 0, 59, 60.0, True))
+@pytest.mark.parametrize("interval_seconds", (-1, 0, 59, 60.0, True, _BrokenInt(60)))
 def test_watch_rejects_invalid_interval(interval_seconds):
     with pytest.raises(ValueError, match="interval_seconds"):
         watch(
@@ -1177,6 +1219,14 @@ def test_watch_rejects_invalid_interval(interval_seconds):
             (),
             output="table",
             interval_seconds=interval_seconds,
+        )
+
+
+def test_fetch_all_rejects_numeric_subclass_config_interval():
+    with pytest.raises(ValueError, match="interval_seconds"):
+        fetch_all(
+            AppConfig(accounts=(), interval_seconds=_BrokenInt(300)),
+            (),
         )
 
 

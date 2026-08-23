@@ -97,6 +97,12 @@ def _validated_auth_json_path(auth_json_path: Path | None) -> Path | None:
         raise ValueError("auth_json_path is invalid") from exc
 
 
+def _validated_interval_seconds(value: Any) -> int:
+    if type(value) is not int or value < 60:
+        raise ValueError("interval_seconds must be a finite integer of at least 60")
+    return value
+
+
 def fetch_all(
     config: AppConfig,
     accounts: Iterable[Account],
@@ -109,6 +115,7 @@ def fetch_all(
 ) -> list[AccountUsage]:
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
+    _validated_interval_seconds(config.interval_seconds)
     auth_json_path = _validated_auth_json_path(auth_json_path)
     account_list = _bounded_account_list(accounts)
     # A single-account command must not bypass ambiguity detection by selecting
@@ -963,7 +970,7 @@ def _remaining_percent(window) -> float | None:
 
 
 def _finite_number(value) -> float | None:
-    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+    if value is None or type(value) not in (int, float):
         return None
     try:
         number = float(value)
@@ -973,7 +980,7 @@ def _finite_number(value) -> float | None:
 
 
 def _valid_percent(value: float | None) -> float | None:
-    if value is None or not math.isfinite(value):
+    if value is None or type(value) not in (int, float) or not math.isfinite(value):
         return None
     return value if 0 <= value <= 100 else None
 
@@ -1103,8 +1110,7 @@ def _watch_core_resets_current(
                 return False
             duration = getattr(window, "duration_seconds", None)
             if (
-                not isinstance(duration, int)
-                or isinstance(duration, bool)
+                type(duration) is not int
                 or duration <= 0
                 or duration > MAX_WINDOW_SECONDS
             ):
@@ -1170,13 +1176,9 @@ def watch(
     if not isinstance(config, AppConfig):
         raise ValueError("config is invalid")
     auth_json_path = _validated_auth_json_path(auth_json_path)
-    interval = config.interval_seconds if interval_seconds is None else interval_seconds
-    if (
-        isinstance(interval, bool)
-        or not isinstance(interval, int)
-        or interval < 60
-    ):
-        raise ValueError("interval_seconds must be a finite integer of at least 60")
+    interval = _validated_interval_seconds(
+        config.interval_seconds if interval_seconds is None else interval_seconds
+    )
     account_list = _bounded_account_list(accounts)
     stop_event = Event()
     previous_handlers: dict[int, Any] = {}
