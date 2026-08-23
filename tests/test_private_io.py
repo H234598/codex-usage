@@ -63,6 +63,19 @@ def test_chmod_private_directory_rejects_non_directory_descriptor(
         private_io._chmod_private_directory(path, label="private directory")
 
 
+def test_chmod_private_directory_keeps_sentinel_when_open_fails(tmp_path, monkeypatch):
+    def fail_open(*_args, **_kwargs):
+        raise OSError("synthetic directory open failure")
+
+    monkeypatch.setattr(private_io.os, "open", fail_open)
+
+    with pytest.raises(OSError, match="directory open failure"):
+        private_io._chmod_private_directory(
+            tmp_path,
+            label="private directory",
+        )
+
+
 def test_assert_no_symlink_ancestors_ignores_dot_components(tmp_path):
     assert_no_symlink_ancestors(
         tmp_path / "nested" / "." / "value",
@@ -967,6 +980,29 @@ def test_fsync_directory_opens_and_closes_one_descriptor(tmp_path, monkeypatch):
     assert opened == [41]
     assert synced == [41]
     assert closed == [41]
+
+
+def test_private_io_handles_missing_optional_open_flags(tmp_path, monkeypatch):
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    value = tmp_path / "value.txt"
+    value.write_text("secret", encoding="utf-8")
+
+    for attribute in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
+        monkeypatch.delattr(private_io.os, attribute, raising=False)
+
+    private_io._chmod_private_directory(directory, label="private directory")
+    text, _ = private_io.read_private_text(
+        value,
+        regular_label="private",
+        read_label="private",
+        max_bytes=100,
+    )
+    assert text == "secret"
+    private_io.write_private_text(tmp_path / "written.txt", "new", label="private")
+    private_io._fsync_directory(tmp_path)
+    with private_path_lock(tmp_path / "config", timeout_seconds=0):
+        pass
 
 
 def test_private_path_lock_serializes_same_path(tmp_path):

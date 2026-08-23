@@ -12989,3 +12989,25 @@ Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
 Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
 Installations- und Reload-Schritte ab.
+
+## Runde 1085: Private-I/O- und Lock-Guards vollständig geprüft
+
+`private_io.py` hatte noch nicht ausgeführte Plattformpfade für optionale
+`os.open`-Flags (`O_DIRECTORY`, `O_NOFOLLOW`, `O_CLOEXEC`, `O_NONBLOCK`) sowie
+den Exception-Unwind vor Zuweisung des Directory-FDs. Eine Regression entfernt
+die optionalen Attribute temporär und führt Directory-Chmod, UTF-8-Lesen,
+atomisches Schreiben, Directory-Fsync und Lock-Erzeugung auf dem Fallback-Pfad
+aus. Eine zweite Regression prüft, dass ein fehlgeschlagenes Directory-Open
+den FD-Sentinel unverändert lässt und den Originalfehler weitergibt.
+
+Der Sentinel-Zweig ist bei Exception-Unwind durch Coverage nicht als normale
+falsche Kante messbar; der `no branch`-Kommentar dokumentiert diese
+Messgrenze. Der Fehlerpfad bleibt durch den Test ausgeführt, Cleanup- und
+Laufzeitverhalten wurden nicht verändert.
+
+Verifikation: **90 `tests/test_private_io.py`-Tests**, `private_io.py`
+**277/277 Statements und 118/118 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.

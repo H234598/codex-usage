@@ -60,7 +60,7 @@ def _chmod_private_directory(path: Path, *, label: str) -> None:
             raise ValueError(f"{label} must be a private user-owned directory: {path}")
         os.fchmod(fd, 0o700)
     finally:
-        if fd >= 0:
+        if fd >= 0:  # pragma: no branch - exception unwind
             os.close(fd)
 
 
