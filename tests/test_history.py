@@ -461,6 +461,23 @@ def test_history_store_fails_closed_without_nofollow_support(tmp_path, monkeypat
     assert not path.exists()
 
 
+def test_history_handles_missing_optional_open_flags(tmp_path, monkeypatch):
+    path = tmp_path / "history.sqlite3"
+    store = HistoryStore(path)
+    store.close()
+    for attribute in ("O_CLOEXEC", "O_NONBLOCK"):
+        monkeypatch.delattr(history_module.os, attribute, raising=False)
+
+    with store:
+        assert store.status()["sample_count"] == 0
+    store.close()
+    monkeypatch.delattr(history_module.os, "O_NOFOLLOW", raising=False)
+    regular = tmp_path / "regular"
+    regular.write_bytes(b"value")
+    regular.chmod(0o600)
+    history_module._chmod_private_regular(regular, label="history file")
+
+
 def test_history_connection_initialization_uses_private_path_lock(tmp_path, monkeypatch):
     path = tmp_path / "usage-history.sqlite3"
     observed: list[tuple[object, dict[str, object]]] = []

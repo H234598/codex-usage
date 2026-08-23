@@ -13120,3 +13120,21 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1093: History-Store- und Sidecar-Öffnungs-Guards vollständig geprüft
+
+`history.py` hatte noch sechs Plattform-/Lebenszyklus-Kanten: `close()` auf
+einem noch nicht verbundenen Store sowie fehlende optionale
+`O_CLOEXEC`-/`O_NONBLOCK`-Flags beim Datenbank-Open und fehlende
+`O_NOFOLLOW`-/`O_CLOEXEC`-/`O_NONBLOCK`-Flags beim privaten Sidecar-Open. Eine
+Regression prüft ungeöffnetes und verbundenes Schließen, DB-Initialisierung
+ohne optionale Flags und direkten Sidecar-Fallback ohne `O_NOFOLLOW`.
+Produktionslogik blieb unverändert.
+
+Verifikation: **127 `tests/test_history.py`- und `tests/test_history_cli.py`-Tests**,
+`history.py` **379/379 Statements und 150/150 Branches, 100 % Coverage**,
+Mypy, Ruff und Diff-Check bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
