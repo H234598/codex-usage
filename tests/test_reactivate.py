@@ -146,6 +146,26 @@ def test_reactivate_uses_account_browser_when_override_is_missing(monkeypatch, t
     assert captured["browser"] == "vivaldi"
 
 
+def test_reactivate_maps_account_lock_error(tmp_path, monkeypatch):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+    )
+
+    class Locked:
+        def __enter__(self):
+            raise reactivate_module.AccountLockError("account is busy")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(reactivate_module, "account_lock", lambda _account_id: Locked())
+
+    with pytest.raises(ReactivationError, match="account is busy"):
+        reactivate_account(account)
+
+
 def test_manage_account_opens_the_existing_isolated_browser_profile(monkeypatch, tmp_path):
     account = Account(
         id="work",
@@ -224,6 +244,77 @@ def test_manage_account_auto_reuses_the_account_browser(monkeypatch, tmp_path):
 
     assert result["ok"] is True
     assert captured["browser"] == "firefox"
+
+
+def test_manage_account_auto_falls_back_when_account_browser_is_unavailable(
+    monkeypatch, tmp_path
+):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        browser="firefox",
+        reactivation_browser="auto",
+    )
+    calls = []
+    profile = tmp_path / "profile"
+    helper = str(tmp_path / "helper")
+
+    def select(requested):
+        calls.append(requested)
+        if requested == "firefox":
+            raise ReactivationError("firefox unavailable")
+        return "chromium", "/usr/bin/chromium"
+
+    monkeypatch.setattr(reactivate_module, "_select_browser", select)
+    monkeypatch.setattr(
+        reactivate_module,
+        "_manage_browser_profile",
+        lambda _account, _browser: profile,
+    )
+    monkeypatch.setattr(
+        reactivate_module,
+        "_resolve_executable",
+        lambda _explicit, _fallback, *, label: helper,
+    )
+    monkeypatch.setattr(reactivate_module.subprocess, "Popen", lambda *args, **kwargs: None)
+
+    result = open_account_in_reactivation_browser(account)
+
+    assert result["browser"] == "chromium"
+    assert calls == ["firefox", "auto"]
+
+
+def test_manage_account_maps_browser_start_oserror(monkeypatch, tmp_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profiles" / "work"),
+        reactivation_browser="vivaldi",
+    )
+    monkeypatch.setattr(
+        reactivate_module,
+        "_select_browser",
+        lambda _requested: ("vivaldi", "/usr/bin/vivaldi"),
+    )
+    monkeypatch.setattr(
+        reactivate_module,
+        "_manage_browser_profile",
+        lambda _account, _browser: tmp_path / "profile",
+    )
+    monkeypatch.setattr(
+        reactivate_module,
+        "_resolve_executable",
+        lambda _explicit, _fallback, *, label: "/usr/bin/helper",
+    )
+
+    def fail_start(*_args, **_kwargs):
+        raise OSError("spawn failed")
+
+    monkeypatch.setattr(reactivate_module.subprocess, "Popen", fail_start)
+
+    with pytest.raises(ReactivationError, match="could not start isolated account browser"):
+        open_account_in_reactivation_browser(account)
 
 
 @pytest.mark.parametrize(
@@ -731,6 +822,395 @@ def test_reactivation_wait_oserror_kills_process_group(tmp_path, monkeypatch):
         )
 
     assert ("killpg", 4321, signal.SIGKILL) in calls
+
+
+def test_reactivation_start_oserror_is_mapped(tmp_path, monkeypatch):
+    account = Account(id="work", label="Work", profile_dir=str(tmp_path / "profile"))
+
+    def fail_start(*_args, **_kwargs):
+        raise OSError("start failed")
+
+    monkeypatch.setattr(reactivate_module.subprocess, "Popen", fail_start)
+
+    with pytest.raises(ReactivationError, match="could not start codex login"):
+        reactivate_module._run_reactivation(
+            account,
+            auth_path=tmp_path / "auth.json",
+            browser_kind="chromium",
+            browser_executable="chromium",
+            profile_dir=tmp_path / "profile",
+            codex="codex",
+            helper="helper",
+            timeout_seconds=1,
+        )
+
+
+def test_reactivation_restore_error_wins_over_login_error(tmp_path, monkeypatch):
+    account = Account(id="work", label="Work", profile_dir=str(tmp_path / "profile"))
+
+    class FailedProcess:
+        pid = 1
+
+        def wait(self, timeout):
+            return 1
+
+    monkeypatch.setattr(reactivate_module.subprocess, "Popen", lambda *a, **k: FailedProcess())
+
+    def fail_restore(*_args, **_kwargs):
+        raise ReactivationError("restore failed")
+
+    monkeypatch.setattr(reactivate_module, "_restore_auth_backup", fail_restore)
+
+    with pytest.raises(ReactivationError, match="restore failed"):
+        reactivate_module._run_reactivation(
+            account,
+            auth_path=tmp_path / "auth.json",
+            browser_kind="chromium",
+            browser_executable="chromium",
+            profile_dir=tmp_path / "profile",
+            codex="codex",
+            helper="helper",
+            timeout_seconds=1,
+        )
+
+
+def test_reactivation_unexpected_error_is_wrapped(tmp_path, monkeypatch):
+    account = Account(id="work", label="Work", profile_dir=str(tmp_path / "profile"))
+
+    class SuccessfulProcess:
+        pid = 1
+
+        def wait(self, timeout):
+            return 0
+
+    monkeypatch.setattr(
+        reactivate_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: SuccessfulProcess(),
+    )
+    monkeypatch.setattr(
+        reactivate_module,
+        "_validate_refreshed_auth",
+        lambda _path: (_ for _ in ()).throw(ValueError("unexpected")),
+    )
+    monkeypatch.setattr(reactivate_module, "_restore_auth_backup", lambda *_a, **_k: None)
+
+    with pytest.raises(ReactivationError, match="login failed unexpectedly"):
+        reactivate_module._run_reactivation(
+            account,
+            auth_path=tmp_path / "auth.json",
+            browser_kind="chromium",
+            browser_executable="chromium",
+            profile_dir=tmp_path / "profile",
+            codex="codex",
+            helper="helper",
+            timeout_seconds=1,
+        )
+
+
+def test_kill_login_process_group_ignores_kill_errors(monkeypatch):
+    class UnkillableProcess:
+        pid = 4321
+
+        def kill(self):
+            raise OSError("kill failed")
+
+        def wait(self, timeout):
+            raise subprocess.TimeoutExpired("codex", timeout)
+
+    monkeypatch.setattr(
+        reactivate_module.os,
+        "killpg",
+        lambda _pid, _signal: (_ for _ in ()).throw(OSError("group gone")),
+    )
+
+    _kill_login_process_group(UnkillableProcess())
+
+
+def test_capture_auth_backup_maps_read_error_and_hardlink(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text("{}\n", encoding="utf-8")
+    auth_path.chmod(0o600)
+
+    monkeypatch.setattr(
+        reactivate_module,
+        "read_auth_json_file",
+        lambda _path: (_ for _ in ()).throw(
+            reactivate_module.DirectAuthError("read failed")
+        ),
+    )
+    with pytest.raises(ReactivationError, match="preserve previous auth"):
+        reactivate_module._capture_auth_backup(auth_path)
+
+    alias = tmp_path / "alias"
+    alias.hardlink_to(auth_path)
+    monkeypatch.setattr(
+        reactivate_module,
+        "read_auth_json_file",
+        lambda _path: (
+            "{}\n",
+            type("Stat", (), {"st_nlink": 2, "st_mode": 0o100600})(),
+        ),
+    )
+    with pytest.raises(ReactivationError, match="must not be hard-linked"):
+        reactivate_module._capture_auth_backup(auth_path)
+
+
+def test_identity_from_auth_backup_ignores_invalid_payloads(tmp_path):
+    path = tmp_path / "auth.json"
+
+    assert reactivate_module._identity_from_auth_backup(path, ("[]", 0)) == (None, None)
+    assert reactivate_module._identity_from_auth_backup(path, ("{broken", 0)) == (
+        None,
+        None,
+    )
+
+
+def test_refreshed_identity_rejects_non_object_auth(tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_text("[]\n", encoding="utf-8")
+    path.chmod(0o600)
+
+    with pytest.raises(ReactivationError, match="verifiable account identity"):
+        _validate_refreshed_identity(path, ("user-old", "account-old"))
+
+
+def test_refreshed_identity_accepts_expected_user_as_account_id(tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "account_id": "user-old",
+                    "access_token": _jwt_with_user_id("user-old"),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    _validate_refreshed_identity(path, ("user-old", "account-old"))
+
+
+def test_refreshed_identity_accepts_user_only_identity(tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_text(
+        json.dumps({"tokens": {"access_token": _jwt_with_user_id("user-old")}}),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    _validate_refreshed_identity(path, ("user-old", None))
+
+
+def test_restore_auth_without_backup_rejects_unsafe_targets(tmp_path):
+    symlink_target = tmp_path / "target"
+    symlink_target.write_text("keep\n", encoding="utf-8")
+    symlink = tmp_path / "auth.json"
+    symlink.symlink_to(symlink_target)
+    with pytest.raises(ReactivationError, match="restore previous auth"):
+        reactivate_module._restore_auth_backup(symlink, None)
+
+    hardlinked = tmp_path / "hardlinked-auth.json"
+    hardlinked.write_text("keep\n", encoding="utf-8")
+    hardlink_alias = tmp_path / "hardlinked-alias"
+    hardlink_alias.hardlink_to(hardlinked)
+    with pytest.raises(ReactivationError, match="restore previous auth"):
+        reactivate_module._restore_auth_backup(hardlinked, None)
+
+
+def test_restore_auth_without_backup_removes_existing_file(tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_text("partial\n", encoding="utf-8")
+
+    reactivate_module._restore_auth_backup(path, None)
+
+    assert not path.exists()
+
+
+def test_restore_auth_without_backup_maps_unlink_error(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    path.write_text("partial\n", encoding="utf-8")
+    monkeypatch.setattr(
+        Path,
+        "unlink",
+        lambda _path: (_ for _ in ()).throw(OSError("unlink failed")),
+    )
+
+    with pytest.raises(ReactivationError, match="restore previous auth"):
+        reactivate_module._restore_auth_backup(path, None)
+
+
+@pytest.mark.parametrize(
+    ("auth_json_path", "message"),
+    [
+        (None, "no auth_json_path"),
+        ("/tmp/not-auth.json", "point to auth.json"),
+    ],
+)
+def test_validate_auth_target_rejects_missing_or_wrong_filename(
+    tmp_path, auth_json_path, message
+):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=auth_json_path,
+    )
+
+    with pytest.raises(ReactivationError, match=message):
+        reactivate_module._validate_auth_target(account)
+
+
+def test_validate_auth_target_rejects_non_directory_parent(tmp_path):
+    parent = tmp_path / "parent-file"
+    parent.write_text("not a directory\n", encoding="utf-8")
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(parent / "auth.json"),
+    )
+
+    with pytest.raises(ReactivationError, match="real directory"):
+        reactivate_module._validate_auth_target(account)
+
+
+@pytest.mark.parametrize("target_kind", ["directory", "symlink"])
+def test_validate_auth_target_rejects_non_regular_target(tmp_path, target_kind):
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    target = parent / "auth.json"
+    if target_kind == "directory":
+        target.mkdir()
+    else:
+        real_target = tmp_path / "real-auth"
+        real_target.write_text("keep\n", encoding="utf-8")
+        target.symlink_to(real_target)
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(target),
+    )
+
+    with pytest.raises(ReactivationError, match="regular file"):
+        reactivate_module._validate_auth_target(account)
+
+
+def test_select_browser_rejects_unsupported_and_missing(monkeypatch):
+    with pytest.raises(ReactivationError, match="unsupported reactivation browser"):
+        reactivate_module._select_browser("safari")
+
+    monkeypatch.setattr(reactivate_module.shutil, "which", lambda _command: None)
+    with pytest.raises(ReactivationError, match="browser is not installed"):
+        reactivate_module._select_browser("firefox")
+
+
+@pytest.mark.parametrize("url", [None, "x" * 2049])
+def test_validate_manage_url_rejects_non_string_or_overlong(url):
+    with pytest.raises(ReactivationError, match="manage account URL is invalid"):
+        reactivate_module._validate_manage_url(url)  # type: ignore[arg-type]
+
+
+def test_manage_browser_profile_reuses_compatible_existing_profile(tmp_path):
+    root = tmp_path / "profiles" / "work"
+    browser_dir = root / "firefox"
+    browser_dir.mkdir(parents=True)
+    marker = browser_dir / ".codex-usage-browser-profile"
+    marker.write_text("marker\n", encoding="utf-8")
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(root),
+        browser="firefox",
+    )
+
+    assert reactivate_module._manage_browser_profile(account, "firefox") == browser_dir
+
+
+@pytest.mark.parametrize("error", [OSError("mkdir failed"), ValueError("unsafe")])
+def test_prepare_real_private_directory_maps_creation_errors(
+    tmp_path, monkeypatch, error
+):
+    path = tmp_path / "profile"
+    monkeypatch.setattr(
+        reactivate_module,
+        "ensure_private_directory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(ReactivationError):
+        reactivate_module._prepare_real_private_directory(path, label="profile")
+
+
+def test_prepare_real_private_directory_rejects_symlink(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    target.mkdir()
+    path = tmp_path / "profile"
+    path.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(reactivate_module, "_assert_no_symlink_ancestors", lambda *a, **k: None)
+
+    with pytest.raises(ReactivationError, match="must not be a symlink"):
+        reactivate_module._prepare_real_private_directory(path, label="profile")
+
+
+def test_symlink_ancestor_scanner_skips_dot_segments(monkeypatch):
+    real_path = reactivate_module.Path
+
+    class DottedPath:
+        anchor = "/"
+        parts = ("/", ".", "safe")
+
+        def is_absolute(self):
+            return True
+
+    monkeypatch.setattr(
+        reactivate_module,
+        "Path",
+        lambda value: value if isinstance(value, DottedPath) else real_path(value),
+    )
+
+    reactivate_module._assert_no_symlink_ancestors(DottedPath(), label="profile")
+
+
+def test_resolve_executable_rejects_missing_fallback_and_non_executable(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(reactivate_module.shutil, "which", lambda _name: None)
+    with pytest.raises(ReactivationError, match="codex command was not found"):
+        _resolve_executable(None, "codex", label="codex command")
+
+    path = tmp_path / "codex"
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    path.chmod(0o600)
+    with pytest.raises(ReactivationError, match="codex command is not executable"):
+        _resolve_executable(str(path), "codex", label="codex command")
+
+
+@pytest.mark.parametrize("raw", ["{broken", "[]"])
+def test_validate_refreshed_auth_rejects_malformed_or_non_object(raw, tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_text(raw, encoding="utf-8")
+    path.chmod(0o600)
+
+    with pytest.raises(ReactivationError, match=r"without a valid auth\.json"):
+        _validate_refreshed_auth(path)
+
+
+def test_validate_refreshed_auth_rejects_expired_access_token(tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_text(
+        json.dumps(
+            {"auth_mode": "chatgpt", "tokens": {"access_token": _jwt_with_exp(1)}}
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    with pytest.raises(ReactivationError, match="expired access token"):
+        _validate_refreshed_auth(path)
 
 
 def test_reactivate_rejects_different_account_and_restores_auth_json(tmp_path, monkeypatch):

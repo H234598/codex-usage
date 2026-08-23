@@ -12776,3 +12776,16 @@ noch offen. Sechsundzwanzig Regressionen schließen alle Migrationsgrenzen.
 Verifikation: **92 Profile-Migration-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `profile_migration.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1072: Reaktivierungs- und OAuth-Startpfade vollständig geprüft
+
+`reactivate.py` hatte noch unbelegte Account-Lock-, Browser-Fallback-,
+Prozessstart-, Restore-, Hardlink-, Identitäts-, Pfad-, Resolver- und
+Auth-Expiry-Zweige. Zweiunddreißig fokussierte Regressionen führen alle
+verbleibenden Guards direkt aus; Produktionscode blieb unverändert.
+
+Verifikation: **109 Reactivation/OAuth-Tests**, Mypy, Ruff und Diff-Check
+bestanden; Coverage-Auszug für `reactivate.py`: **100 %**. Die bestehende
+`runpy`-Warnung im OAuth-`__main__`-Test bleibt erwartbar; keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt.
