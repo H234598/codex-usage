@@ -144,6 +144,20 @@ def test_direct_response_content_type_rejects_header_property_hooks():
     assert _response_content_type(Response()) == ""
 
 
+def test_direct_response_content_type_handles_header_getter_errors():
+    class BrokenHeaders:
+        def get(self, _name):
+            raise TypeError("synthetic content type failure")
+
+    class Response:
+        headers = BrokenHeaders()
+
+        def getheader(self, name):
+            return "application/json" if name == "content-type" else None
+
+    assert _response_content_type(Response()) == "application/json"
+
+
 def test_direct_response_final_url_rejects_getter_hooks():
     class Response:
         @property

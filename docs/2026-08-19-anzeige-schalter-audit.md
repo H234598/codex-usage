@@ -11885,3 +11885,13 @@ offen. Drei parametrisierte Tests bestätigen jeweils fail-closed `False`.
 Verifikation: **348 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **99 %**, Missing-Zeilen 15; keine Settings-Fenster
 gestartet.
+
+## Runde 992: Header-Getter-Fehler im Content-Type-Parser abgefangen
+
+`direct._response_content_type()` hatte die geschützte Ausnahme beim
+Header-`.get()` noch nicht direkt belegt. Der neue Test bestätigt Fallback auf
+`getheader()` bei einem fehlerhaften Header-Mapping.
+
+Verifikation: **349 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **99 %**, Missing-Zeilen 13; keine Settings-Fenster
+gestartet.
