@@ -908,6 +908,16 @@ def test_retryable_auth_error_rejects_exception_subclass_hooks():
     assert direct_module._is_retryable_direct_auth_error(BrokenAuthError("401")) is False
 
 
+def test_identity_attribution_error_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __hash__(self):
+            raise RuntimeError("synthetic identity error marker")
+
+    assert _is_identity_attribution_error(
+        BrokenStr("backend response has no account identity")
+    ) is False
+
+
 @pytest.mark.parametrize(
     "error",
     (

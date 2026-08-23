@@ -361,6 +361,8 @@ def _is_retryable_direct_auth_error(error: DirectAuthError) -> bool:
 
 
 def _is_identity_attribution_error(error: str) -> bool:
+    if type(error) is not str:
+        return False
     return error in IDENTITY_CACHE_INVALIDATION_ERRORS
 
 

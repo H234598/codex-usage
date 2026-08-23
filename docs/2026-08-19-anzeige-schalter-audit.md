@@ -10525,3 +10525,17 @@ bleiben unverändert.
 
 Verifikation: **206 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 874: Identity-Fehlerklassifikation typisieren
+
+`direct._is_identity_attribution_error()` prüfte einen Fehlerwert direkt per
+Set-Mitgliedschaft. Eine String-Subclass konnte dabei ihren `__hash__()`-Hook
+ausführen und die Cache-Invalidierungsentscheidung mit einer rohen Exception
+abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich Built-in-`str`; andere Werte
+liefern vor der Set-Prüfung `False`. Regression deckt den Hash-Hook ab;
+bekannte und unbekannte normale Fehlertexte bleiben unverändert.
+
+Verifikation: **207 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
