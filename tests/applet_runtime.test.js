@@ -10149,6 +10149,34 @@ test("safe mode cancels reactivation processes and pending refreshes", () => {
   assert.deepEqual(applet._sources, {});
 });
 
+test("safe mode entry normalizes pending queues and guards display failures", () => {
+  const applet = makeApplet();
+  applet._consumptionQueue = null;
+  applet._profileJobResumeQueue = null;
+  applet._profilePendingAccounts = [];
+  applet._accountChangeQueue = null;
+  applet._removeSource = () => {};
+  applet._cancelProcess = () => {};
+  applet._cancelAuxProcess = () => {};
+  applet._cancelHealthProcess = () => {};
+  applet._cancelReactivations = () => {};
+  applet._clearPanelClasses = () => {};
+  applet._buildSafeMenu = () => {};
+  applet.actor = {add_style_class_name: () => { throw new Error("style unavailable"); }};
+  applet.set_applet_label = () => { throw new Error("label unavailable"); };
+  applet._enterSafeMode("");
+
+  assert.equal(applet._safeMode, true);
+  assert.match(applet._safeModeReason, /Interner Appletfehler/);
+  assert.deepEqual(Array.from(applet._consumptionQueue), []);
+  assert.deepEqual(Array.from(applet._profileJobResumeQueue), []);
+  assert.deepEqual(Object.keys(applet._profilePendingAccounts), []);
+  assert.deepEqual(Array.from(applet._accountChangeQueue), []);
+
+  applet._enterSafeMode("second call");
+  assert.match(applet._safeModeReason, /Interner Appletfehler/);
+});
+
 test("safe mode does not requeue a cancelled profile poll", () => {
   const applet = makeApplet();
   let forced = 0;

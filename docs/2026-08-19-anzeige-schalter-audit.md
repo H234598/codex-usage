@@ -13923,3 +13923,18 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1142: Applet-Safe-Mode-Eintritt vollständig ausgeführt
+
+Die Regression für `_enterSafeMode` deckt erneuten Eintritt, Defaultgrund,
+ungültige Queueformen, Profilstatus-/Pending-Normalisierung sowie Fehler beim
+Panelstil und bei der Safe-Mode-Anzeige ab. Damit sind alle V8-Blockranges der
+Funktion erreicht. Produktionslogik blieb unverändert.
+
+Verifikation: **540 `tests/applet_runtime.test.js`-Tests**, **540 bestanden**;
+V8-Raw-Coverage: `_enterSafeMode` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
