@@ -11317,3 +11317,12 @@ Reset-Timestamps.
 
 Verifikation: **271 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 935: Usage-Vollständigkeit direkt geprüft
+
+`direct._usage_response_completeness()` hatte bisher keinen direkten Test. Der
+neue Test übergibt native Primär- und Sekundärfenster mit unterstützten
+Dauern/gültigen Prozentwerten und bestätigt den Vollständigkeitswert `2`.
+
+Verifikation: **272 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
