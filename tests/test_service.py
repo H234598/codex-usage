@@ -217,12 +217,19 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     auth_home.mkdir()
     profile_dir = tmp_path / "profile"
     profile_dir.mkdir()
+    local_profile_dir = tmp_path / "local-profile"
+    local_profile_dir.mkdir()
     account = Account(
         id="work",
         label="Work",
         profile_dir=str(profile_dir),
         auth_json_path=str(auth_home / "auth.json"),
         backend="app-server",
+    )
+    local_account = Account(
+        id="local",
+        label="Local",
+        profile_dir=str(local_profile_dir),
     )
     calls: list[tuple[str, ...]] = []
 
@@ -254,7 +261,7 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     monkeypatch.setattr("codex_usage.service._systemctl", fake_systemctl)
 
     result = service_enable(
-        AppConfig(accounts=(account,), interval_seconds=420),
+        AppConfig(accounts=(account, local_account), interval_seconds=420),
         tmp_path / "config" / "codex-usage" / "config.toml",
     )
 
@@ -274,6 +281,7 @@ def test_service_enable_renders_private_hardened_units(tmp_path, monkeypatch):
     assert "OOMPolicy=kill" in service
     assert "Restart=no" in service
     assert f'ReadWritePaths="{profile_dir}"' in service
+    assert f'ReadWritePaths="{local_profile_dir}"' in service
     assert f'ReadWritePaths="{auth_home}"' in service
     assert f'ReadWritePaths="{tmp_path / "config" / "codex-usage"}"' not in service
     assert "OnActiveSec=1min" in timer
@@ -1839,6 +1847,23 @@ def test_systemctl_and_state_helpers_fail_closed(monkeypatch):
     )
     assert service_module._systemctl_state("status", SERVICE_NAME) == "unknown"
     assert service_module._systemctl_show(SERVICE_NAME, ("Result",)) == {}
+
+
+def test_systemctl_show_ignores_unrecognized_output(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "_systemctl",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [],
+            0,
+            "unrelated\nResult=success\nOther=ignored\n",
+            "",
+        ),
+    )
+
+    assert service_module._systemctl_show(SERVICE_NAME, ("Result",)) == {
+        "Result": "success"
+    }
 
 
 def test_cleanup_managed_timer_link_rejects_missing_symlink_directory(tmp_path, monkeypatch):

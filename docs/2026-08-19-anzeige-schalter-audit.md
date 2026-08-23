@@ -13360,3 +13360,17 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1108: Service-Unit- und `systemctl show`-Guards vollständig geprüft
+
+`service.py` hatte noch zwei echte Kanten ohne Regression: ein Account ohne
+`auth_json_path` beim Erzeugen der beschreibbaren Service-Pfade sowie
+unbekannte oder formatlose Zeilen aus `systemctl show`. Gezielte Regressionen
+decken beide Zustände ab. Produktionslogik blieb unverändert.
+
+Verifikation: **99 `tests/test_service.py`-Tests**, `service.py` **479/479
+Statements und 132/132 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.
