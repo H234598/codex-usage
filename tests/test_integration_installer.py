@@ -2099,6 +2099,36 @@ def test_attestation_tree_rejects_child_directory_swap_before_open(
     assert not (old_nested / "foreign").exists()
 
 
+def test_attestation_tree_rejects_foreign_owned_child_directory(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    nested = release / "nested"
+    nested.mkdir(mode=0o700)
+    payload = nested / "payload"
+    payload.write_bytes(b"owned")
+    payload.chmod(0o600)
+    original_fstat = integration_attestation.os.fstat
+    nested_inode = nested.stat().st_ino
+
+    def foreign_nested_fstat(fd):
+        item = original_fstat(fd)
+        if stat.S_ISDIR(item.st_mode) and item.st_ino == nested_inode:
+            return SimpleNamespace(
+                st_dev=item.st_dev,
+                st_ino=item.st_ino,
+                st_mode=item.st_mode,
+                st_uid=os.getuid() + 1,
+            )
+        return item
+
+    monkeypatch.setattr(integration_attestation.os, "fstat", foreign_nested_fstat)
+
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation._release_tree_sha256(release_dir=release)
+
+
 def test_attestation_tree_rejects_aggregate_bytes_limit(tmp_path, monkeypatch):
     from codex_usage import integration_attestation
 

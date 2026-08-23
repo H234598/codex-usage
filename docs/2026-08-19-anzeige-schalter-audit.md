@@ -10036,3 +10036,17 @@ Aufzeichnungs- und Parserpfad mit einer absichtlich fehlerhaften Subklasse.
 
 Verifikation: **34 Health-Tests**, **17 abhängige Scheduler-Health-Tests**,
 Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 838: Attestierungsbaum auf Eigentümerwechsel prüfen
+
+`integration_attestation._release_tree_rows()` prüfte Root- und Dateieigentümer,
+akzeptierte aber fremde Eigentümer bei verschachtelten Release-Verzeichnissen.
+Damit konnte ein nicht zum laufenden Benutzer gehörender Directory-FD in den
+attestierten Baum gelangen.
+
+Root, `DirEntry` und geöffnete Kinder verlangen jetzt durchgängig den aktuellen
+Benutzer; fremde Verzeichnisse werden vor Hashbildung fail-closed verworfen.
+Regression simuliert einen fremden Eigentümer am geöffneten Unterverzeichnis.
+
+Verifikation: **156 Installer-/Attestierungs-Tests**, **28 Entrypoint-Tests**,
+Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.

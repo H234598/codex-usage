@@ -165,7 +165,11 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
     try:
         root_fd = os.open(release_dir, directory_flags)
         root_stat = os.fstat(root_fd)
-        if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or stat.S_ISLNK(root_stat.st_mode)
+            or root_stat.st_uid != os.getuid()
+        ):
             raise _unavailable()
     except (OSError, ValueError):
         raise _unavailable() from None
@@ -195,7 +199,7 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
                                 if stat.S_ISLNK(child_item.st_mode) or not (
                                     stat.S_ISDIR(child_item.st_mode)
                                     or stat.S_ISREG(child_item.st_mode)
-                                ):
+                                ) or child_item.st_uid != os.getuid():
                                     raise _unavailable()
                                 child_flags = (
                                     directory_flags
@@ -215,6 +219,7 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
                                         != stat.S_IFMT(child_item.st_mode)
                                         or opened_item.st_dev != child_item.st_dev
                                         or opened_item.st_ino != child_item.st_ino
+                                        or opened_item.st_uid != os.getuid()
                                     ):
                                         raise _unavailable()
                                     children.append((name, child_fd, opened_item))
