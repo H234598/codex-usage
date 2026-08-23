@@ -10887,3 +10887,17 @@ Metadaten-`.get()`-Hook ab; normale Auth-JSON-Strukturen bleiben unverändert.
 
 Verifikation: **232 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 900: Auth-Details nur aus nativen Token-Dicts lesen
+
+`direct._extract_auth_details()` akzeptierte den `tokens`-Block als
+Dict-Subclass per `isinstance` und rief dessen `.get()` für den Access-Token
+auf. Ein manipuliertes Auth-Mapping konnte die Auth-Validierung dadurch mit
+einer rohen Exception abbrechen.
+
+Der Helper verlangt jetzt einen nativen `dict`-Tokenblock; Subklassen werden
+als fehlendes Tokens-Objekt abgewiesen. Regression deckt den Auth-Details-
+`.get()`-Hook ab; normale Auth-JSON-Strukturen bleiben unverändert.
+
+Verifikation: **233 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

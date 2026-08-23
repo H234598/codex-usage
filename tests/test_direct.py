@@ -678,6 +678,18 @@ def test_auth_details_rejects_invalid_access_token_expiry(tmp_path, expiry):
         )
 
 
+def test_auth_details_rejects_tokens_dict_subclass_hooks(tmp_path):
+    class BrokenTokens(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth details mapping marker")
+
+    with pytest.raises(DirectAuthError, match=r"auth\.json has no tokens object"):
+        _extract_auth_details(
+            {"tokens": BrokenTokens()},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_auth_details_rejects_access_token_string_subclass_hooks(tmp_path):
     class BrokenStr(str):
         def __len__(self):

@@ -811,7 +811,7 @@ def _extract_auth_details(
     payload: dict[str, Any], *, path: Path
 ) -> tuple[str, dict[str, datetime | None]]:
     tokens = payload.get("tokens")
-    if not isinstance(tokens, dict):
+    if type(tokens) is not dict:
         raise DirectAuthError(f"auth.json has no tokens object: {path}")
     access_token = tokens.get("access_token")
     if type(access_token) is not str or not access_token:
