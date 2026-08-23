@@ -207,6 +207,21 @@ def test_direct_resolve_auth_path_rejects_string_subclass_hooks():
         direct_module._resolve_auth_json_path(account, None)
 
 
+def test_direct_resolve_auth_override_rejects_path_subclasses():
+    class BrokenPath(type(Path())):
+        pass
+
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+    )
+    with pytest.raises(DirectAuthError, match=r"auth\.json path is invalid"):
+        direct_module._resolve_auth_json_path(
+            account, BrokenPath("/tmp/auth.json")
+        )
+
+
 def test_direct_require_auth_path_rejects_path_subclasses():
     class BrokenPath(type(Path())):
         pass

@@ -10444,3 +10444,16 @@ unverändert.
 
 Verifikation: **200 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 868: Auth-Override auf nativen Path-Typ begrenzen
+
+`direct._resolve_auth_json_path()` akzeptierte beim expliziten Override
+`Path`-Subklassen per `isinstance()` und gab sie nach `expanduser()` weiter.
+Damit konnte eine fremde Pfadsemantik die Auth-Datei-Grenze passieren.
+
+Der Override-Guard verlangt jetzt exakt den nativen Plattform-`Path`-Typ,
+analog zu `_require_auth_path()`. Regression weist eine `Path`-Subklasse vor
+jedem Pfadaufruf ab; native Pfade und bestehende Typfehler bleiben unverändert.
+
+Verifikation: **201 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

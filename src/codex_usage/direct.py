@@ -379,7 +379,7 @@ def auth_identity_changed(
 
 def _resolve_auth_json_path(account: Account, override: Path | None) -> Path:
     if override is not None:
-        if not isinstance(override, Path):
+        if type(override) is not _PATH_TYPE:
             raise DirectAuthError("auth.json path is invalid")
         try:
             return override.expanduser()
