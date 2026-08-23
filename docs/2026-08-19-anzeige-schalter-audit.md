@@ -10498,3 +10498,16 @@ den Bool-Hook ab; gültige Identitätsfälle bleiben unverändert.
 
 Verifikation: **204 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 872: Plan-Typ-Normalisierung typisieren
+
+`direct._normalized_plan_type()` rief `strip()` und `casefold()` direkt auf
+dem annotierten Wert auf. Eine String-Subclass konnte die Normalisierung mit
+einer rohen Exception abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich Built-in-`str`; andere Typen
+werden als leerer Planwert zurückgegeben. Regression deckt den fehlerhaften
+`strip()`-Hook ab; gültige Alias-Normalisierung bleibt unverändert.
+
+Verifikation: **205 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

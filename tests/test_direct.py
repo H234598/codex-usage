@@ -631,6 +631,14 @@ def test_auth_plan_type_changed_rejects_string_subclass_hooks():
     assert direct_module._auth_plan_type_changed(BrokenStr("plus"), None) is True
 
 
+def test_normalized_plan_type_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def strip(self):
+            raise RuntimeError("synthetic auth plan normalization marker")
+
+    assert direct_module._normalized_plan_type(BrokenStr("plus")) == ""
+
+
 def test_auth_identity_rejects_account_id_string_subclass_hooks(tmp_path):
     class BrokenStr(str):
         def __len__(self):

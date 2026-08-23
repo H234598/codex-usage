@@ -661,6 +661,8 @@ def _auth_plan_type_changed(before: str | None, after: str | None) -> bool:
 
 
 def _normalized_plan_type(value: str) -> str:
+    if type(value) is not str:
+        return ""
     normalized = value.strip().casefold()
     return PLAN_TYPE_ALIASES.get(normalized, normalized)
 
