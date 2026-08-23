@@ -11161,3 +11161,18 @@ Payload-Subclass in den Parser; normale Auth-Dateien bleiben unverändert.
 
 Verifikation: **252 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 919: Direct-Response akzeptiert nur native JSON-Objekte
+
+`direct._fetch_wham_usage()` akzeptierte eine von `loads_strict()` gelieferte
+Dict-Subclass per `isinstance` und gab sie als gültige Response weiter. Eine
+manipulierte Parser-Rückgabe konnte dadurch die nachgelagerte Usage-Auswertung
+erreichen.
+
+Der Fetcher verlangt jetzt ein natives JSON-`dict` und meldet fremde Mappings
+als kontrollierten `DirectFetchError`. Regression injiziert ein Payload-
+Subclass in die Response-Parsinggrenze; normale JSON-Responses bleiben
+unverändert.
+
+Verifikation: **253 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

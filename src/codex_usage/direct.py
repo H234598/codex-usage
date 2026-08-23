@@ -1015,7 +1015,7 @@ def _fetch_wham_usage(
         payload = loads_strict(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise DirectFetchError("direct response is not valid JSON") from exc
-    if not isinstance(payload, dict):
+    if type(payload) is not dict:
         raise DirectFetchError("direct response is not a JSON object")
     return payload
 

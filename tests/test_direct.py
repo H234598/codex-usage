@@ -673,6 +673,37 @@ def test_direct_rejects_foreign_final_response_url(monkeypatch):
         _fetch_wham_usage("secret", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_wham_usage_rejects_payload_dict_subclass(monkeypatch):
+    class BrokenPayload(dict):
+        pass
+
+    class FakeResponse:
+        status = 200
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return b"{}"
+
+    monkeypatch.setattr(
+        "codex_usage.direct.urlopen",
+        lambda _request, *, timeout: FakeResponse(),
+    )
+    monkeypatch.setattr(
+        direct_module,
+        "loads_strict",
+        lambda _raw: BrokenPayload(),
+    )
+
+    with pytest.raises(DirectFetchError, match="response is not a JSON object"):
+        _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 def test_jwt_expiry_ignores_non_object_payloads():
     for claims in ([], None, "not-an-object"):
         payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=")
