@@ -25,6 +25,30 @@ from codex_usage.models import Account, AccountUsage, LimitWindow
 from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
 
 
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic config integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic config integer comparison marker")
+
+    def __gt__(self, _other):
+        raise RuntimeError("synthetic config integer comparison marker")
+
+
+def test_config_integer_boundaries_reject_subclasses_before_operations(tmp_path):
+    with pytest.raises(ValueError, match="interval_seconds must be an integer"):
+        config_module._strict_int(_BrokenInt(300), "interval_seconds")
+
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+    )
+    with pytest.raises(ValueError, match="restore index must be an integer"):
+        restore_account(account, path=tmp_path / "config.toml", index=_BrokenInt(0))
+
+
 def test_relative_xdg_data_home_is_ignored_for_default_profile(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setenv("XDG_DATA_HOME", "relative-data")

@@ -9839,3 +9839,17 @@ Installer-Aufrufer ab.
 Verifikation: **54 fokussierte Snapshot-Tests**, **233 Snapshot-, Entrypoint-
 und Installer-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 825: Config-Integergrenzen strikt prüfen
+
+`config.py` akzeptierte bei `restore_account(index)` und dem zentralen
+`_strict_int()` noch Integer-Subklassen. Fremde Vergleichsoperatoren konnten
+Restore-Position oder Intervallvalidierung mit rohen Exceptions abbrechen.
+
+Beide Grenzen akzeptieren jetzt ausschließlich Built-in-`int`; ungültige Werte
+werden kontrolliert als Konfigurationsfehler verworfen. Regression deckt
+direkte Helper sowie CLI-, Scheduler- und Service-Aufrufer ab.
+
+Verifikation: **120 fokussierte Config-Tests**, **527 Config-, CLI-, Scheduler-
+und Service-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.

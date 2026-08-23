@@ -450,9 +450,7 @@ def restore_account(
 ) -> AppConfig:
     if not isinstance(account, Account):
         raise ValueError("account entry must be Account")
-    if index is not None and (
-        isinstance(index, bool) or not isinstance(index, int)
-    ):
+    if index is not None and type(index) is not int:
         raise ValueError("restore index must be an integer")
     config_path = _select_config_path(path)
     _prepare_config_directory(config_path.parent)
@@ -1093,7 +1091,7 @@ def _validate_series(series: str, *, allow_empty: bool = False) -> None:
 
 
 def _strict_int(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(f"{name} must be an integer")
     return value
 
