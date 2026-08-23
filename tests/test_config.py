@@ -1282,6 +1282,16 @@ def test_save_config_rejects_oversized_serialized_text(tmp_path, monkeypatch):
         )
 
 
+def test_prepare_config_directory_rejects_unresolvable_path(tmp_path, monkeypatch):
+    def fail_resolve(_path, **_kwargs):
+        raise RuntimeError("synthetic resolve marker")
+
+    monkeypatch.setattr(config_module.Path, "resolve", fail_resolve)
+
+    with pytest.raises(ValueError, match="cannot be resolved"):
+        config_module._prepare_config_directory(tmp_path / "config")
+
+
 @pytest.mark.parametrize(
     "field",
     ("id", "label", "profile_dir", "browser", "auth_json_path", "backend"),

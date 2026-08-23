@@ -12232,3 +12232,15 @@ Verifikation: **125 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **86 %**, verbleibende Missing-Zeilen liegen
 in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1023: Nicht auflösbares Config-Verzeichnis fail-closed
+
+`config._prepare_config_directory()` hatte den Fehler beim Auflösen des
+Verzeichnisses noch nicht direkt getestet. Ein kontrollierter Resolve-Fehler
+wird als verständlicher `ValueError` gemeldet, bevor Dateisystemänderungen
+erfolgen.
+
+Verifikation: **126 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **86 %**, verbleibende Missing-Zeilen liegen
+in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
