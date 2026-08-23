@@ -247,6 +247,8 @@ def test_consumption_table_exposes_per_account_queries() -> None:
     delta_columns = {column["id"]: column for column in settings["account-delta-styles"]["columns"]}
     assert delta_columns["dynamic"]["title"] == "Dynamisch"
     assert delta_columns["dynamic"]["default"] is False
+    assert settings["account-credit-delta-styles"]["format-copy-of"] == "account-percent-styles"
+    assert "Verbrauch >= Schwelle" in settings["account-credit-delta-styles"]["tooltip"]
 
 
 def test_null_hiding_defaults_true_for_every_value_table() -> None:
@@ -360,6 +362,7 @@ def test_format_and_display_sections_use_new_labels() -> None:
         "account-time-styles",
         "account-duration-styles",
         "account-delta-styles",
+        "account-credit-delta-styles",
         "account-panel-resets-styles",
         "account-panel-tag-styles",
         "account-panel-label-styles",

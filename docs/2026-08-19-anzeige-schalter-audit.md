@@ -9642,3 +9642,23 @@ Used-Percent-Pfad ab.
 Verifikation: **109 fokussierte App-Server-Tests**, **256 App-Server-,
 Usage-Limit- und Usage-Reset-Tests**, Ruff, Python-Compile und Diff-Check
 bestanden; keine Settings-Fenster gestartet.
+
+## Ergänzung 2026-08-23: Delta-Formatierung für Token- und Creditverbrauch
+
+`Tokendelta` formatiert jetzt nicht nur die auswählbaren Leisten-Deltas,
+sondern auch die normale Tokenverbrauch-Ausgabe in Hover- und Klickmenü. Die
+Schwelle ist dort eindeutig ein Verbrauchswert: Formatierung wird ab
+`Verbrauch >= Schwelle` aktiv; die bisherige Restlimit-Richtung bleibt nur für
+Nicht-Delta-Tabellen bestehen.
+
+Für Creditverbrauch gibt es unter `Formatierungen` die neue, unabhängige
+Tabelle `Δ Creditverbrauch`. Sie besitzt dieselben Format-, Null- und
+Hover/Klick-Felder wie `Tokendelta` plus `Dynamisch`. Die dynamische Prüfung
+projiziert Creditverbrauch auf den kürzeren Wert aus Reset-Horizont und
+Fensterdauer und markiert nur bei Erreichen des verbleibenden Creditlimits.
+Alte Creditverbrauch-Abfragen und Leistenquelle `Creditverbrauch` bleiben
+kompatibel; fehlende oder ungültige Werte fallen weiter auf `–`/Ausblenden.
+
+Verifikation: **499 Node-Tests**, **3.263 Python-Tests** (1 übersprungen),
+JSON-Parse, Python-Compile und Node-Syntaxcheck bestanden; keine
+Settings-Fenster gestartet.

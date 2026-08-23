@@ -3966,6 +3966,27 @@ test("panel value style setting rows validate and map per account", () => {
   assert.equal(refreshes, 1);
 });
 
+test("credit delta style setting rows validate and map independently", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {alpha: {}};
+  applet.accountCreditDeltaStyles = [{
+    account: "alpha",
+    mode: 1,
+    threshold: 12,
+    dynamic: true,
+  }];
+  let refreshes = 0;
+  applet._refreshFormattedSurfaces = () => { refreshes += 1; };
+
+  applet._onCreditDeltaStylesChanged();
+
+  assert.equal(applet.accountCreditDeltaStyles.length, 1);
+  assert.equal(applet._creditDeltaStyles.alpha.threshold, 12);
+  assert.equal(applet._creditDeltaStyles.alpha.dynamic, true);
+  assert.equal(refreshes, 1);
+});
+
 test("long-limit exhaustion masks 5h on panel, click and hover only when enabled", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];
@@ -9461,6 +9482,74 @@ test("Tokendelta supports dynamic threshold against the next reset", () => {
   })];
   assert.equal(applet._panelDeltaIsDynamic(usage, usage.cost_windows[0]), true);
   assert.match(applet._panelDeltaPart(usage, 32, "panel").markup, /<span /);
+});
+
+test("token consumption delta uses consumed-value threshold and own styles", () => {
+  const applet = makeApplet();
+  applet._deltaStyles = {
+    alpha: Object.assign({}, applet._defaultStyleRow("alpha", "delta"), {
+      mode: 2,
+      threshold: 10,
+      color: 4,
+      "below-color": 3,
+    }),
+  };
+  applet._styleTargets = {
+    "alpha:14": {panel: true, hover: true, click: true},
+  };
+  const row = applet._defaultConsumptionRow("alpha");
+  row["show-panel"] = true;
+  const usage = applet._usages[0];
+  const high = applet._consumptionWindowPart({
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 12,
+    coverage: "complete",
+  }, row, "panel", null, usage);
+  assert.match(high.markup, /foreground="#dc2626"/);
+
+  const low = applet._consumptionWindowPart({
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 5,
+    coverage: "complete",
+  }, row, "panel", null, usage);
+  assert.match(low.markup, /foreground="#16a34a"/);
+});
+
+test("credit consumption delta uses independent dynamic formatting", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  usage.credits = {
+    remaining: 30,
+    limit: 100,
+    reset_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+  };
+  applet._creditDeltaStyles = {
+    alpha: Object.assign({}, applet._defaultStyleRow("alpha", "credit-delta"), {
+      mode: 2,
+      threshold: 10,
+      dynamic: true,
+      color: 4,
+      "below-color": 3,
+    }),
+  };
+  applet._creditSettings = {
+    alpha: Object.assign({}, applet._defaultCreditRow("alpha"), {
+      "consumption-show-panel": true,
+      "consumption-hide-when-zero": false,
+      "consumption-show-coverage-marker": false,
+    }),
+  };
+  usage.cost_windows = [{
+    pool: "credits",
+    lookback_seconds: 1800,
+    limit_window_seconds: 18000,
+    consumed_percentage_points: 20,
+    coverage: "complete",
+  }];
+
+  assert.equal(applet._panelDeltaIsDynamic(usage, usage.cost_windows[0]), true);
+  const rendered = applet._creditConsumptionParts(usage, "panel");
+  assert.match(rendered.markup, /foreground="#dc2626"/);
 });
 
 test("panel delta prefers the newest matching consumption window", () => {

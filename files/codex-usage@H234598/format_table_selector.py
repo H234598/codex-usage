@@ -13,6 +13,11 @@ from gi.repository import GLib, Gtk  # noqa: E402
 from JsonSettingsWidgets import JSONSettingsBackend, SettingsWidget  # noqa: E402
 from TreeListWidgets import VARIABLE_TYPE_MAP, List  # noqa: E402
 
+_DELTA_STYLE_KEYS = frozenset({
+    "account-delta-styles",
+    "account-credit-delta-styles",
+})
+
 
 def _valid_text(value: object, *, allow_empty: bool = True) -> bool:
     """Return whether value is safe for GTK and GLib text APIs."""
@@ -37,8 +42,8 @@ class _BoundFormatList(List, JSONSettingsBackend):
         else:
             definition = copy.deepcopy(definition)
         copy_from = definition.get("format-copy-of")
-        if key == "account-delta-styles" or isinstance(copy_from, str):
-            base_key = "account-percent-styles" if key == "account-delta-styles" else copy_from
+        if key in _DELTA_STYLE_KEYS or isinstance(copy_from, str):
+            base_key = "account-percent-styles" if key in _DELTA_STYLE_KEYS else copy_from
             schema = getattr(settings, "settings", {})
             if not isinstance(schema, dict):
                 schema = {}
@@ -51,12 +56,22 @@ class _BoundFormatList(List, JSONSettingsBackend):
             }
             definition = copy.deepcopy(base)
             definition.update(overrides)
-            if key == "account-delta-styles":
-                definition["description"] = "Tokendelta"
+            if key in _DELTA_STYLE_KEYS:
+                definition["description"] = (
+                    "Tokendelta" if key == "account-delta-styles"
+                    else "Δ Creditverbrauch"
+                )
                 base_columns = definition.get("columns", [])
                 if not isinstance(base_columns, list):
                     base_columns = []
                 definition["columns"] = base_columns
+                for column in definition["columns"]:
+                    if isinstance(column, dict) and column.get("id") == "threshold":
+                        column["title"] = "Schwelle Verbrauch %"
+                        column["tooltip"] = (
+                            "Formatierung wird ab diesem verbrauchten Prozentwert "
+                            "aktiv (Verbrauch >= Schwelle)."
+                        )
                 definition["columns"].append({
                     "id": "dynamic",
                     "title": "Dynamisch",

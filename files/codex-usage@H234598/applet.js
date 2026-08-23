@@ -175,6 +175,7 @@ CodexUsageApplet.prototype = {
         this.accountTimeStyles = [];
         this.accountDurationStyles = [];
         this.accountDeltaStyles = [];
+        this.accountCreditDeltaStyles = [];
         for (let source in PANEL_FORMATTING_TARGETS) {
             if (Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
                 this[PANEL_FORMATTING_TARGETS[source].property] = [];
@@ -283,6 +284,7 @@ CodexUsageApplet.prototype = {
         this._timeStyles = Object.create(null);
         this._durationStyles = Object.create(null);
         this._deltaStyles = Object.create(null);
+        this._creditDeltaStyles = Object.create(null);
         this._panelValueStyles = Object.create(null);
         this._displaySettings = Object.create(null);
         this._styleTargets = Object.create(null);
@@ -450,6 +452,11 @@ CodexUsageApplet.prototype = {
         bind("account-time-styles", "accountTimeStyles", this._onTimeStylesChanged);
         bind("account-duration-styles", "accountDurationStyles", this._onDurationStylesChanged);
         bind("account-delta-styles", "accountDeltaStyles", this._onDeltaStylesChanged);
+        bind(
+            "account-credit-delta-styles",
+            "accountCreditDeltaStyles",
+            this._onCreditDeltaStylesChanged
+        );
         for (let source in PANEL_FORMATTING_TARGETS) {
             if (!Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
                 continue;
@@ -3696,6 +3703,9 @@ CodexUsageApplet.prototype = {
         let deltaRows = this._mergedStyleRows(
             accounts, this.accountDeltaStyles, "delta", 13
         );
+        let creditDeltaRows = this._mergedStyleRows(
+            accounts, this.accountCreditDeltaStyles, "credit-delta", 12
+        );
         let panelRows = Object.create(null);
         let panelChanged = Object.create(null);
         for (let source in PANEL_FORMATTING_TARGETS) {
@@ -3719,6 +3729,9 @@ CodexUsageApplet.prototype = {
         let timeChanged = !this._styleRowsEqual(this.accountTimeStyles, timeRows);
         let durationChanged = !this._styleRowsEqual(this.accountDurationStyles, durationRows);
         let deltaChanged = !this._styleRowsEqual(this.accountDeltaStyles, deltaRows);
+        let creditDeltaChanged = !this._styleRowsEqual(
+            this.accountCreditDeltaStyles, creditDeltaRows
+        );
         let displayChanged = !this._styleRowsEqual(this.accountDisplaySettings, displayRows);
         let targetsChanged = !this._styleRowsEqual(this.accountStyleTargets, targetRows);
         targetRows = this._applyStyleVisibility(targetRows, percentRows, 0);
@@ -3734,6 +3747,7 @@ CodexUsageApplet.prototype = {
         this._timeStyles = this._styleMap(timeRows);
         this._durationStyles = this._styleMap(durationRows);
         this._deltaStyles = this._styleMap(deltaRows);
+        this._creditDeltaStyles = this._styleMap(creditDeltaRows);
         this._panelValueStyles = Object.create(null);
         for (let source in PANEL_FORMATTING_TARGETS) {
             if (Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
@@ -3748,6 +3762,7 @@ CodexUsageApplet.prototype = {
         this.accountTimeStyles = timeRows;
         this.accountDurationStyles = durationRows;
         this.accountDeltaStyles = deltaRows;
+        this.accountCreditDeltaStyles = creditDeltaRows;
         for (let source in PANEL_FORMATTING_TARGETS) {
             if (Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source)) {
                 this[PANEL_FORMATTING_TARGETS[source].property] = panelRows[source];
@@ -3770,6 +3785,9 @@ CodexUsageApplet.prototype = {
             }
             if (deltaChanged) {
                 this.settings.setValue("account-delta-styles", deltaRows);
+            }
+            if (creditDeltaChanged) {
+                this.settings.setValue("account-credit-delta-styles", creditDeltaRows);
             }
             for (let source in PANEL_FORMATTING_TARGETS) {
                 if (!Object.prototype.hasOwnProperty.call(PANEL_FORMATTING_TARGETS, source) ||
@@ -3919,9 +3937,13 @@ CodexUsageApplet.prototype = {
             return { hover: legacy.hover, click: legacy.click };
         }
         return {
-            hover: targetElement === 0 || kind === "percent" || kind === "delta",
+            hover: targetElement === 0 || kind === "percent" || this._isDeltaStyleKind(kind),
             click: true
         };
+    },
+
+    _isDeltaStyleKind: function(kind) {
+        return kind === "delta" || kind === "credit-delta";
     },
 
     _panelStyleTargetElement: function(source) {
@@ -3964,6 +3986,7 @@ CodexUsageApplet.prototype = {
     },
 
     _defaultStyleRow: function(account, kind, targetElement) {
+        let isDelta = this._isDeltaStyleKind(kind);
         let visibility = this._styleVisibilityDefaults(account, kind, targetElement);
         let row = {
             account: account,
@@ -3987,7 +4010,7 @@ CodexUsageApplet.prototype = {
             background: 0,
             "hover-background": 0
         };
-        if (kind === "delta") {
+        if (isDelta) {
             row.dynamic = false;
             return row;
         }
@@ -4024,6 +4047,7 @@ CodexUsageApplet.prototype = {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
             return null;
         }
+        let isDelta = this._isDeltaStyleKind(kind);
         let visibility = this._styleVisibilityDefaults(account, kind, targetElement);
         let showHover = row["show-hover"] === undefined
             ? visibility.hover : row["show-hover"];
@@ -4031,10 +4055,10 @@ CodexUsageApplet.prototype = {
             ? visibility.click : row["show-click"];
         let hideWhenZero = row["hide-when-zero"] === undefined
             ? true : row["hide-when-zero"];
-        let format = kind === "percent" || kind === "delta"
+        let format = kind === "percent" || isDelta
             ? 0
             : (row.format === undefined ? 0 : this._strictIntegerSetting(row.format));
-        let dynamic = kind === "delta" && row.dynamic === undefined ? false : row.dynamic;
+        let dynamic = isDelta && row.dynamic === undefined ? false : row.dynamic;
         let mode = row.mode === undefined
             ? (row.conditional === true ? 1 : 0)
             : this._strictIntegerSetting(row.mode);
@@ -4070,7 +4094,7 @@ CodexUsageApplet.prototype = {
         let maxFormat = kind === "date" ? 3 : (kind === "duration" ? 3 : 2);
         let maxThreshold = 100;
         if (
-            (kind !== "percent" && kind !== "delta" && (
+            (kind !== "percent" && !isDelta && (
                 !Number.isInteger(format) || format < 0 || format > maxFormat
             )) ||
             !Number.isInteger(mode) || mode < 0 || mode > 3 ||
@@ -4081,7 +4105,7 @@ CodexUsageApplet.prototype = {
             !Number.isInteger(background) || background < 0 || background > 6 ||
             !Number.isInteger(hoverBackground) || hoverBackground < 0 || hoverBackground > 6 ||
             typeof bold !== "boolean" || typeof italic !== "boolean" ||
-            (kind === "delta" && typeof dynamic !== "boolean") ||
+            (isDelta && typeof dynamic !== "boolean") ||
             !Number.isInteger(belowFont) || belowFont < 0 || belowFont > 3 ||
             !Number.isInteger(belowSize) || belowSize < 0 || belowSize > 48 ||
             typeof belowBold !== "boolean" || typeof belowItalic !== "boolean" ||
@@ -4118,7 +4142,7 @@ CodexUsageApplet.prototype = {
         if (kind === "percent") {
             return normalized;
         }
-        if (kind === "delta") {
+        if (isDelta) {
             normalized.dynamic = dynamic;
             return normalized;
         }
@@ -4297,7 +4321,8 @@ CodexUsageApplet.prototype = {
             6: this._panelValueStyles && this._panelValueStyles[11],
             7: this._panelValueStyles && this._panelValueStyles[16],
             8: this._panelValueStyles && this._panelValueStyles[15],
-            9: this._panelValueStyles && this._panelValueStyles[14]
+            9: this._panelValueStyles && this._panelValueStyles[14],
+            12: this._creditDeltaStyles
         }[element];
         return source && source[account] ? source[account] : null;
     },
@@ -4320,6 +4345,10 @@ CodexUsageApplet.prototype = {
 
     _onDeltaStylesChanged: function() {
         this._onStyleRowsChanged("delta");
+    },
+
+    _onCreditDeltaStylesChanged: function() {
+        this._onStyleRowsChanged("credit-delta");
     },
 
     _onPanelValueStylesChanged: function(source) {
@@ -4367,7 +4396,11 @@ CodexUsageApplet.prototype = {
                 ? this.accountDateStyles
                 : (kind === "time"
                     ? this.accountTimeStyles
-                    : (kind === "duration" ? this.accountDurationStyles : this.accountDeltaStyles)));
+                    : (kind === "duration"
+                        ? this.accountDurationStyles
+                        : (kind === "delta"
+                            ? this.accountDeltaStyles
+                            : this.accountCreditDeltaStyles))));
         let expected = Object.keys(this._backendAccounts).length;
         if (!Array.isArray(rows) || rows.length !== expected) {
             this._loadAccountBackends();
@@ -4378,7 +4411,9 @@ CodexUsageApplet.prototype = {
             ? 0
             : (kind === "date" ? 1
                 : (kind === "time" ? 2
-                    : (kind === "duration" ? 3 : 13)));
+                    : (kind === "duration"
+                        ? 3
+                        : (kind === "delta" ? 13 : 12))));
         let seen = Object.create(null);
         for (let i = 0; i < rows.length; i++) {
             let account = this._configuredAccountId(rows[i] && rows[i].account);
@@ -4402,8 +4437,10 @@ CodexUsageApplet.prototype = {
             this._timeStyles = this._styleMap(normalized);
         } else if (kind === "duration") {
             this._durationStyles = this._styleMap(normalized);
-        } else {
+        } else if (kind === "delta") {
             this._deltaStyles = this._styleMap(normalized);
+        } else {
+            this._creditDeltaStyles = this._styleMap(normalized);
         }
         this._refreshFormattedSurfaces();
     },
@@ -9235,7 +9272,7 @@ CodexUsageApplet.prototype = {
         let text = label + " " + valueText;
         let dynamic = candidate ? this._panelDeltaIsDynamic(usage, candidate) : false;
         let markup = style && Number.isFinite(value)
-            ? this._styleSpan(text, style, value, surface, dynamic)
+            ? this._styleSpan(text, style, value, surface, dynamic, "high")
             : this._escapeMarkup(text);
         return {plain: text, markup: markup};
     },
@@ -9255,12 +9292,19 @@ CodexUsageApplet.prototype = {
         let seconds = Number(candidate.limit_window_seconds);
         let pool = candidate.pool === "gpt-5.3-codex-spark"
             ? "spark"
-            : (candidate.pool === "main" ? "main" : "");
+            : (candidate.pool === "main"
+                ? "main"
+                : (candidate.pool === "credits" ? "credits" : ""));
         if (!pool) {
             return false;
         }
         let window;
-        if (pool === "spark") {
+        if (pool === "credits") {
+            window = usage.credits;
+            if (!window) {
+                return false;
+            }
+        } else if (pool === "spark") {
             let sparkPool = this._modelPool(usage, "gpt-5.3-codex-spark");
             if (!this._poolIsUsable(sparkPool)) {
                 return false;
@@ -9399,7 +9443,9 @@ CodexUsageApplet.prototype = {
         )[0] || null;
         let parts = [];
         for (let i = 0; i < windows.length; i++) {
-            let part = this._consumptionWindowPart(windows[i], row, surface, forecastWindow);
+            let part = this._consumptionWindowPart(
+                windows[i], row, surface, forecastWindow, usage
+            );
             if (part) parts.push(part);
         }
         let baseline = this._baselineParts(usage.account, row, surface, windows[0] || null);
@@ -9517,13 +9563,22 @@ CodexUsageApplet.prototype = {
         return { plain: text, markup: this._escapeMarkup(text) };
     },
 
-    _consumptionWindowPart: function(window, row, surface, forecastWindow) {
+    _consumptionWindowPart: function(window, row, surface, forecastWindow, usage) {
         if (!window || typeof window !== "object") {
             return null;
         }
         let value = Number(window.consumed_percentage_points);
         if (!Number.isFinite(value) || value < 0) {
             return null;
+        }
+        let deltaStyle = this._deltaStyles && this._deltaStyles[row.account]
+            ? this._deltaStyles[row.account]
+            : this._defaultStyleRow(row.account, "delta", 13);
+        if (surface === "hover" || surface === "click") {
+            let visibilityKey = surface === "hover" ? "show-hover" : "show-click";
+            if (deltaStyle[visibilityKey] === false) {
+                return null;
+            }
         }
         let coverage = window.coverage;
         if (row["hide-when-zero"] !== false && value === 0 && coverage !== "insufficient") {
@@ -9566,7 +9621,6 @@ CodexUsageApplet.prototype = {
             plain = compactPrefix + period + " " + valueText + "%" + marker;
         }
         let account = row.account;
-        let styleRow = this._percentStyles[account] || this._defaultStyleRow(account, "percent");
         let consumptionElement = Number(window.limit_window_seconds) === 604800
             ? "consumption-weekly"
             : (Number(window.limit_window_seconds) === 2592000
@@ -9581,7 +9635,14 @@ CodexUsageApplet.prototype = {
                 (surface === "hover" ? row["show-tooltip"] : true)
         );
         let consumptionMarkup = visible
-            ? this._styleSpan(plain, styleRow, Math.max(0, 100 - value), surface)
+            ? this._styleSpan(
+                plain,
+                deltaStyle,
+                value,
+                surface,
+                usage ? this._panelDeltaIsDynamic(usage, window) : false,
+                "high"
+            )
             : this._escapeMarkup(plain);
         let parts = [{ plain: plain, markup: consumptionMarkup }];
         let forecastRow = {
@@ -9697,6 +9758,15 @@ CodexUsageApplet.prototype = {
         if (!row) {
             return null;
         }
+        let deltaStyle = this._creditDeltaStyles && this._creditDeltaStyles[usage.account]
+            ? this._creditDeltaStyles[usage.account]
+            : this._defaultStyleRow(usage.account, "credit-delta", 12);
+        if (surface === "hover" || surface === "click") {
+            let visibilityKey = surface === "hover" ? "show-hover" : "show-click";
+            if (deltaStyle[visibilityKey] === false) {
+                return null;
+            }
+        }
         let configuredVisible = surface === "panel"
             ? row["consumption-show-panel"] === true
             : surface === "hover"
@@ -9769,7 +9839,11 @@ CodexUsageApplet.prototype = {
             if (baselineText) {
                 text += " " + baselineText;
             }
-            parts.push({ plain: text, markup: this._escapeMarkup(text) });
+            let dynamic = this._panelDeltaIsDynamic(usage, window);
+            let markup = this._styleSpan(
+                text, deltaStyle, value, surface, dynamic, "high"
+            );
+            parts.push({ plain: text, markup: markup });
         }
         if (!parts.length) {
             return null;
@@ -10894,14 +10968,16 @@ CodexUsageApplet.prototype = {
         return rest + "m";
     },
 
-    _styleSpan: function(text, style, remaining, surface, dynamic) {
+    _styleSpan: function(text, style, remaining, surface, dynamic, thresholdDirection) {
         let escaped = this._escapeMarkup(text);
-        if (!this._styleIsActive(style, remaining, dynamic)) {
+        if (!this._styleIsActive(style, remaining, dynamic, thresholdDirection)) {
             return escaped;
         }
         let mode = this._styleMode(style);
         let below = dynamic === true || (remaining !== null && Number.isFinite(remaining) &&
-            remaining < Number(style.threshold));
+            (thresholdDirection === "high"
+                ? remaining >= Number(style.threshold)
+                : remaining < Number(style.threshold)));
         let useBelow = mode === 2 && below;
         let fontValue = useBelow ? style["below-font"] : style.font;
         let sizeValue = useBelow ? style["below-size"] : style.size;
@@ -10997,7 +11073,7 @@ CodexUsageApplet.prototype = {
         return style.conditional === true ? 1 : 0;
     },
 
-    _styleIsActive: function(style, remaining, dynamic) {
+    _styleIsActive: function(style, remaining, dynamic, thresholdDirection) {
         let mode = this._styleMode(style);
         if (mode === 3) {
             return false;
@@ -11005,9 +11081,11 @@ CodexUsageApplet.prototype = {
         if (mode !== 1) {
             return true;
         }
-        return (style.dynamic === true && dynamic === true) ||
-            (remaining !== null && Number.isFinite(remaining) &&
-                remaining < Number(style.threshold));
+        let thresholdReached = remaining !== null && Number.isFinite(remaining) &&
+            (thresholdDirection === "high"
+                ? remaining >= Number(style.threshold)
+                : remaining < Number(style.threshold));
+        return (style.dynamic === true && dynamic === true) || thresholdReached;
     },
 
     _escapeMarkup: function(value) {

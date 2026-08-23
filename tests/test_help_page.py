@@ -145,6 +145,18 @@ def test_help_materializes_tokendelta_inherited_format_fields() -> None:
     assert "Formatierungsmodus" in field_titles
     assert "Dynamisch" in field_titles
 
+    credit_entries = [
+        entry
+        for group in groups
+        for section in group["sections"]
+        for entry in section["entries"]
+        if entry["title"] == "Δ Creditverbrauch"
+    ]
+    assert len(credit_entries) == 1
+    credit_fields = {field["title"]: field for field in credit_entries[0]["fields"]}
+    assert "Dynamisch" in credit_fields
+    assert "Schwelle Verbrauch %" in credit_fields
+
 
 def test_help_definition_and_table_key_helpers_handle_malformed_input() -> None:
     assert tuple(_iter_table_keys({"tables": [{"key": "a"}, {}, {"key": 2}]})) == ("a",)
@@ -278,7 +290,7 @@ def test_help_page_defers_field_widgets_until_entry_expands() -> None:
     widget = HelpPage({}, "help-content", SimpleNamespace(settings=_schema()))
     try:
         expanders = list(_expanders(widget))
-        assert len(expanders) == 54
+        assert len(expanders) == 55
         initial_count = _widget_count(widget)
         assert initial_count < 300
         assert all(expander.get_child() is None for expander in expanders)

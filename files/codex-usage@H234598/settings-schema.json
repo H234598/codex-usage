@@ -310,6 +310,11 @@
         "heading": "account-delta-styles-heading"
       },
       {
+        "key": "account-credit-delta-styles",
+        "label": "Δ Creditverbrauch",
+        "heading": "account-credit-delta-styles-heading"
+      },
+      {
         "key": "account-panel-resets-styles",
         "label": "Resets",
         "heading": "account-panel-values-styles-heading"
@@ -448,6 +453,10 @@
   "account-delta-styles-heading": {
     "type": "label",
     "description": "Tokendelta. Dynamisch markiert hochgerechneten Verbrauch, der bis zum nächsten Reset das verbleibende Limit erreicht."
+  },
+  "account-credit-delta-styles-heading": {
+    "type": "label",
+    "description": "Δ Creditverbrauch. Die Schwelle wird als verbrauchter Prozentwert geprüft; Dynamisch markiert eine Projektion, die bis zum Credit-Reset das verbleibende Limit erreicht."
   },
   "account-panel-values-styles-heading": {
     "type": "label",
@@ -794,7 +803,7 @@
   "account-delta-styles": {
     "type": "list",
     "description": "Tokendelta",
-    "tooltip": "Wie Verbleibendes Tokenlimit in %, zusätzlich Schwelle Dynamisch.",
+    "tooltip": "Formatierung des Tokenverbrauch-Deltas. Die Schwelle gilt als verbrauchter Prozentwert (Verbrauch >= Schwelle); Dynamisch prüft die Hochrechnung bis zum nächsten Token-Reset.",
     "columns": [
       {
         "id": "account",
@@ -809,6 +818,16 @@
         "tooltip": "Aktiviert, wenn das aktuelle Delta bis zum nächsten Reset statistisch das verbleibende Limit aufbraucht."
       }
     ],
+    "height": 300,
+    "show-buttons": true,
+    "hidden-buttons": ["+", "-", "up", "down"],
+    "default": []
+  },
+  "account-credit-delta-styles": {
+    "type": "list",
+    "format-copy-of": "account-percent-styles",
+    "description": "Δ Creditverbrauch",
+    "tooltip": "Formatierung des Creditverbrauch-Deltas. Die Schwelle gilt als verbrauchter Prozentwert (Verbrauch >= Schwelle); Dynamisch prüft die Hochrechnung bis zum nächsten Credit-Reset.",
     "height": 300,
     "show-buttons": true,
     "hidden-buttons": ["+", "-", "up", "down"],

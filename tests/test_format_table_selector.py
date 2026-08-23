@@ -526,15 +526,59 @@ def test_copy_table_reuses_percent_columns_but_keeps_own_description() -> None:
         widget.destroy()
 
 
-@pytest.mark.parametrize("columns", [None, [None, {"id": "bad", "type": "unknown"}]])
-def test_delta_copy_ignores_malformed_base_columns(columns) -> None:
+def test_credit_delta_copy_adds_dynamic_column_and_consumption_threshold() -> None:
     settings = _Settings()
-    settings.settings["account-percent-styles"] = {"columns": columns, "value": []}
-    settings.settings["account-delta-styles"] = {"value": []}
+    settings.settings = {
+        "account-percent-styles": {
+            "columns": [
+                {"id": "account", "title": "Account", "type": "string"},
+                {
+                    "id": "threshold",
+                    "title": "Schwelle %",
+                    "type": "integer",
+                    "default": 20,
+                    "min": 0,
+                    "max": 100,
+                },
+            ],
+            "value": [],
+        },
+        "account-credit-delta-styles": {
+            "format-copy-of": "account-percent-styles",
+            "value": [],
+        },
+    }
 
     widget = _BoundFormatList(
-        "account-delta-styles",
-        settings.settings["account-delta-styles"],
+        "account-credit-delta-styles",
+        settings.settings["account-credit-delta-styles"],
+        settings,
+    )
+    try:
+        assert [column["id"] for column in widget.columns] == [
+            "account", "threshold", "dynamic"
+        ]
+        assert widget.columns[1]["title"] == "Schwelle Verbrauch %"
+    finally:
+        widget.destroy()
+
+
+@pytest.mark.parametrize(
+    ("key", "columns"),
+    [
+        ("account-delta-styles", None),
+        ("account-delta-styles", [None, {"id": "bad", "type": "unknown"}]),
+        ("account-credit-delta-styles", None),
+    ],
+)
+def test_delta_copy_ignores_malformed_base_columns(key, columns) -> None:
+    settings = _Settings()
+    settings.settings["account-percent-styles"] = {"columns": columns, "value": []}
+    settings.settings[key] = {"value": []}
+
+    widget = _BoundFormatList(
+        key,
+        settings.settings[key],
         settings,
     )
     try:

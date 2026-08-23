@@ -12,6 +12,11 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # noqa: E402
 from JsonSettingsWidgets import SettingsWidget  # noqa: E402
 
+_DELTA_STYLE_KEYS = frozenset({
+    "account-delta-styles",
+    "account-credit-delta-styles",
+})
+
 _COLUMN_GUIDANCE = {
     "mode": (
         "Formatierungsmodus: Immer nutzt das obere Format; Nur unter Schwelle nutzt nur "
@@ -229,12 +234,12 @@ def _help_definition(
     """Materialize copied table columns for the read-only help view."""
     result = dict(definition)
     copy_from = definition.get("format-copy-of")
-    if key == "account-delta-styles" and copy_from is None:
+    if key in _DELTA_STYLE_KEYS and copy_from is None:
         copy_from = "account-percent-styles"
     base = schema.get(copy_from) if isinstance(copy_from, str) else None
     base_columns = base.get("columns") if isinstance(base, dict) else None
     if isinstance(base_columns, list):
-        if key == "account-delta-styles":
+        if key in _DELTA_STYLE_KEYS:
             own_columns = result.get("columns")
             if not isinstance(own_columns, list):
                 own_columns = []
@@ -254,9 +259,18 @@ def _help_definition(
             result["columns"] = columns
         elif isinstance(copy_from, str):
             result["columns"] = base_columns
-    if key == "account-delta-styles":
+    if key in _DELTA_STYLE_KEYS:
         columns = result.get("columns")
         columns = list(columns) if isinstance(columns, list) else []
+        for index, column in enumerate(columns):
+            if isinstance(column, dict) and column.get("id") == "threshold":
+                updated = dict(column)
+                updated["title"] = "Schwelle Verbrauch %"
+                updated["tooltip"] = (
+                    "Formatierung wird ab diesem verbrauchten Prozentwert "
+                    "aktiv (Verbrauch >= Schwelle)."
+                )
+                columns[index] = updated
         if not any(
             isinstance(column, dict) and column.get("id") == "dynamic"
             for column in columns
