@@ -315,6 +315,16 @@ def test_main_limit_signature_rejects_dict_subclass_hooks():
     )
 
 
+def test_spark_limit_signature_rejects_list_subclass_hooks():
+    class BrokenList(list):
+        def __iter__(self):
+            raise RuntimeError("synthetic spark signature marker")
+
+    assert direct_module._spark_limit_signature(
+        {"additional_rate_limits": BrokenList([{}])}
+    ) is None
+
+
 def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path, monkeypatch):
     broken_int = _BrokenInt(200)
     broken_float = _BrokenFloat(1.0)

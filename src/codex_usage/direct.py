@@ -1210,7 +1210,7 @@ def _spark_limit_signature(payload: dict[str, Any]) -> tuple | None:
     additional = payload["additional_rate_limits"]
     if additional is None:
         return ("null",)
-    if not isinstance(additional, list):
+    if type(additional) is not list:
         return None
     if not additional:
         return ("empty",)

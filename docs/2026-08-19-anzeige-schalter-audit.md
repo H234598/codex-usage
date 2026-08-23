@@ -10663,3 +10663,16 @@ Fremdtypen liefern `("invalid-rate-limit",)`. Regression deckt den
 
 Verifikation: **216 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 884: Spark-Limit-Signaturen auf native Listen begrenzen
+
+`direct._spark_limit_signature()` akzeptierte `additional_rate_limits`-
+Listen-Subklassen und iterierte sie direkt. Ein manipulierter Iterator konnte
+die Spark-Stabilitätssignatur dadurch mit einer rohen Exception abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich native `list`-Objekte; Subklassen
+und Fremdtypen liefern `None`. Regression deckt den Iterator-Hook ab;
+normale Spark-Signaturen bleiben unverändert.
+
+Verifikation: **217 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
