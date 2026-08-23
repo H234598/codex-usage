@@ -11133,3 +11133,17 @@ unverändert.
 
 Verifikation: **250 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 917: Auth-E-Mail-Datei akzeptiert nur native JSON-Objekte
+
+`direct.auth_email_from_file()` akzeptierte ein von `loads_strict()` geliefertes
+Dict-Subclass per `isinstance` und reichte es an den Payload-Helper weiter.
+Dadurch konnte eine manipulierte Parser-Rückgabe als leerer E-Mail-Wert
+durchlaufen.
+
+Der Datei-Wrapper verlangt jetzt ein natives JSON-`dict` und meldet fremde
+Mappings kontrolliert als ungültige Struktur. Regression injiziert ein
+Payload-Subclass in den Parser; normale Auth-Dateien bleiben unverändert.
+
+Verifikation: **251 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

@@ -536,7 +536,7 @@ def auth_email_from_file(path: Path) -> str | None:
         payload = loads_strict(raw)
     except ValueError as exc:
         raise DirectAuthError(f"invalid auth.json: {path}") from exc
-    if not isinstance(payload, dict):
+    if type(payload) is not dict:
         raise DirectAuthError(f"invalid auth.json structure: {path}")
     return auth_email_from_payload(payload, path=path)
 
