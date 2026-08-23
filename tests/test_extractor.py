@@ -11,6 +11,7 @@ from codex_usage.extractor import (
     JsonCandidate,
     _coerce_number,
     _extract_progress_width_percent,
+    _finite_float,
     _is_hidden_progress_element,
     _next_label_offset,
     _parse_datetime,
@@ -27,8 +28,28 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _RaisingFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic float hook")
+
+
+class _RaisingInt(int):
+    def __float__(self):
+        raise RuntimeError("synthetic int hook")
+
+
 def test_numeric_coercion_rejects_integer_overflow_without_raising():
     assert _coerce_number(10**10000) is None
+
+
+@pytest.mark.parametrize("value", [_RaisingFloat(10.0), _RaisingInt(10)])
+def test_numeric_helpers_reject_numeric_subclasses_without_invoking_hooks(value):
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+
+    assert _coerce_number(value) is None
+    assert _finite_float(value) is None
+    assert _parse_datetime(value, captured_at) is None
+    assert _relative_reset_at(value, captured_at) is None
 
 
 @pytest.mark.parametrize("value", [{"percent": 97}, [97]])

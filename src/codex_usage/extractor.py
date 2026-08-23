@@ -1832,10 +1832,10 @@ def _is_relative_reset_key(key: str) -> bool:
 def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
     if value is None:
         return None
-    if isinstance(value, bool):
+    if type(value) is bool:
         return None
     timestamp_value: int | float | None = None
-    if isinstance(value, (int, float)):
+    if type(value) in (int, float):
         timestamp_value = value
     elif isinstance(value, str):
         numeric_text = value.strip()
@@ -1846,11 +1846,8 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
             except (OverflowError, ValueError):
                 return None
     if timestamp_value is not None:
-        try:
-            timestamp = float(timestamp_value)
-        except (OverflowError, ValueError):
-            return None
-        if not math.isfinite(timestamp):
+        timestamp = _finite_float(timestamp_value)
+        if timestamp is None:
             return None
         if timestamp > 10_000_000_000:
             timestamp /= 1000
@@ -1882,7 +1879,9 @@ def _parse_datetime(value: Any, captured_at: datetime) -> datetime | None:
 
 
 def _relative_reset_at(seconds: float | None, captured_at: datetime) -> datetime | None:
-    if seconds is None or seconds < 0 or not math.isfinite(seconds):
+    if seconds is None or type(seconds) not in (int, float):
+        return None
+    if seconds < 0 or not math.isfinite(seconds):
         return None
     try:
         if captured_at.tzinfo is None:
@@ -1932,7 +1931,7 @@ def _display_timezone(captured_at: datetime):
 def _coerce_number(value: Any) -> float | None:
     if isinstance(value, bool) or value is None:
         return None
-    if isinstance(value, (int, float)):
+    if type(value) in (int, float):
         return _finite_float(value)
     return _parse_number(value) if isinstance(value, str) else None
 
@@ -1988,6 +1987,8 @@ def _parse_percent(raw: str | None) -> float | None:
 
 
 def _finite_float(value: float) -> float | None:
+    if type(value) not in (int, float):
+        return None
     try:
         coerced = float(value)
     except (OverflowError, TypeError, ValueError):

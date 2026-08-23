@@ -9853,3 +9853,19 @@ direkte Helper sowie CLI-, Scheduler- und Service-Aufrufer ab.
 Verifikation: **120 fokussierte Config-Tests**, **527 Config-, CLI-, Scheduler-
 und Service-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 826: Extractor-Numerik vor Subklassen-Hooks abschirmen
+
+`extractor.py` akzeptierte bei Zeitstempeln, relativen Resetzeiten und der
+allgemeinen Zahlenkonvertierung noch `int`-/`float`-Subklassen. Überschriebene
+`__float__`-Hooks konnten dadurch Zeit-, Limit- und Resetpfade mit rohen
+Exceptions abbrechen oder fremde Zahlenwerte einschleusen.
+
+Die Extraktor-Grenzen akzeptieren jetzt ausschließlich Built-in-`int`/`float`;
+`_finite_float()` ist der gemeinsame fail-closed Konvertierungspunkt. Regression
+deckt Float- und Integer-Subklassen mit absichtlich fehlerhaften Hooks sowie
+Zeitstempel-, Reset- und Prozentpfade ab.
+
+Verifikation: **200 fokussierte Extractor-Tests**, **534 Extractor-, Browser-,
+Identity- und Usage-Limit-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
