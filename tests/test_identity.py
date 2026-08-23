@@ -100,6 +100,15 @@ def test_backend_identity_rejects_malformed_identity_fields(field, value):
         backend_identity_from_payload({field: value})
 
 
+def test_backend_identity_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __len__(self):
+            raise RuntimeError("synthetic identity value marker")
+
+    with pytest.raises(ValueError, match="backend response user_id is invalid"):
+        backend_identity_from_payload({"user_id": BrokenStr("user")})
+
+
 @pytest.mark.parametrize("value", [[], 42, " ", "plan\nforged"])
 def test_backend_plan_type_rejects_malformed_values(value):
     with pytest.raises(ValueError, match="backend response plan_type is invalid"):

@@ -10211,3 +10211,18 @@ fehlerhaften URL-Hook.
 Verifikation: **30 Identity-Tests**, **60 abhängige Identity-/Extractor-/Direct-
 und Scheduler-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 851: Backend-Identitäten auf Built-in-Strings begrenzen
+
+`identity._identity_value()` akzeptierte `str`-Subklassen und rief deren
+Längen-/Iterationsoperatoren vor der Identifier-Prüfung auf. Ein manipulierter
+String-Hook konnte die Payload-Normalisierung mit einer rohen Exception
+abbrechen.
+
+Die Identity-Grenze verlangt jetzt Built-in-`str` vor Länge und Zeichenprüfung.
+Regression simuliert den fehlerhaften Identifier-Hook; normale User-/Account-
+IDs bleiben unverändert.
+
+Verifikation: **31 Identity-Tests**, **60 abhängige Identity-/Extractor-/Direct-
+und Scheduler-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.
