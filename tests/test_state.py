@@ -5028,6 +5028,24 @@ def test_state_transaction_closed_operations_are_noops(tmp_path):
     transaction.commit()
     transaction.rollback()
 
+    closed_calls: list[str] = []
+
+    class _Locks:
+        def close(self):
+            closed_calls.append("closed")
+
+    open_transaction = state_module._StateDeleteTransaction(
+        transaction_dir=None,
+        moved=[],
+        generation_path=tmp_path / "generation-open.json",
+        generation_before=None,
+        locks=_Locks(),  # type: ignore[arg-type]
+    )
+    open_transaction.commit()
+
+    assert open_transaction.closed is True
+    assert closed_calls == ["closed"]
+
 
 def test_state_transaction_commit_groups_cleanup_and_rollback_errors(tmp_path, monkeypatch):
     transaction_dir = tmp_path / "transaction"
@@ -5601,7 +5619,7 @@ def test_expire_pool_windows_handles_empty_and_invalid_window_entries():
     malformed = UsagePool(
         key="spark",
         display_name="Spark",
-        windows=(object(),),  # type: ignore[arg-type]
+        windows=(object(), object()),  # type: ignore[arg-type]
     )
     names = []
     updated, changed = state_module._expire_pool_windows(
@@ -5615,6 +5633,42 @@ def test_expire_pool_windows_handles_empty_and_invalid_window_entries():
     assert changed is True
     assert updated is not None and updated.windows == ()
     assert names == ["spark:invalid"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_error"),
+    (
+        ("values_captured_at", "not-a-timestamp", "invalid cached values timestamp"),
+        ("state_generation", None, "invalid cached state generation"),
+        (
+            "backend_user_id",
+            123,
+            "invalid cached backend identity: backend_user_id",
+        ),
+    ),
+)
+def test_usage_from_dict_keeps_non_ok_status_for_invalid_metadata(
+    field, value, expected_error
+):
+    captured = datetime(2026, 7, 16, 4, tzinfo=UTC)
+    payload = AccountUsage(
+        account_id="invalid-metadata",
+        label="Invalid metadata",
+        captured_at=captured,
+        status=AccountStatus.ERROR,
+        values_captured_at=captured,
+        state_generation=1,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user",
+        backend_account_id="account",
+    ).as_dict()
+    payload[field] = value
+
+    loaded = usage_from_dict(payload)
+
+    assert loaded.status is AccountStatus.ERROR
+    assert loaded.error == expected_error
 
 
 def test_usage_from_dict_marks_invalid_stale_flag():

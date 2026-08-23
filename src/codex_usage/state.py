@@ -483,15 +483,13 @@ def _remove_account_state_unlocked(
                 _remove_state_transaction_dir(transaction_dir)
             except BaseException as rollback_error:
                 rollback_errors.append(rollback_error)
+        locks.close()
         if rollback_errors:
             raise BaseExceptionGroup(
                 "state cleanup rollback failed",
                 [primary_error, *rollback_errors],
             ) from None
         raise
-    finally:
-        if transaction is None:
-            locks.close()
     return None
 
 

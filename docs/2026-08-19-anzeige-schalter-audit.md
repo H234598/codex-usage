@@ -13374,3 +13374,21 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1109: State-Transaktions- und Cache-Metadaten-Guards vollständig geprüft
+
+`state.py` hatte noch sechs echte Kanten ohne Regression: Commit ohne
+Transaktionsverzeichnis, Fehlerpfad ohne vorherige Transaktion, doppelte
+ungültige Poolfenster sowie ungültige Wertezeit-, Generations- und Backend-
+Metadaten bei bereits nicht-OKem Status. Zusätzlich wurde der normal nicht
+erreichbare `finally`-Zweig entfernt: erfolgreicher Commit schließt Locks über
+die Transaktion, Deferred- und Transaktionsfehler verwalten sie selbst; nur
+frühe Fehlerpfade schließen den lokalen Lock-Stack. Gezielte Regressionen
+decken alle Zustände ab.
+
+Verifikation: **328 `tests/test_state.py`-Tests**, `state.py` **1169/1169
+Statements und 590/590 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.
