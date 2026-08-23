@@ -26,6 +26,17 @@ class _ForeignClock(datetime):
         return "not-a-datetime"
 
 
+class _BrokenInt(int):
+    def __ge__(self, _other):
+        raise RuntimeError("synthetic health integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic health integer comparison marker")
+
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic health integer comparison marker")
+
+
 def test_health_is_bounded_and_redacts_invalid_account(tmp_path):
     path = tmp_path / "health.json"
     now = datetime.now(UTC)
@@ -55,6 +66,23 @@ def test_health_is_bounded_and_redacts_invalid_account(tmp_path):
     assert len(serialized.encode("utf-8")) <= 256 * 1024
     assert "secret" not in serialized
     assert all("account" not in event for event in payload["events"][-1:])
+
+
+def test_health_rejects_duration_integer_subclasses_before_arithmetic(tmp_path):
+    broken = _BrokenInt(100)
+    path = tmp_path / "health.json"
+
+    record_health_event("watch", "cycle_ok", duration_ms=broken, path=path)
+
+    assert "duration_ms" not in load_health(path)["events"][0]
+    assert health_module._valid_event(
+        {
+            "at": datetime.now(UTC).isoformat(),
+            "component": "watch",
+            "event": "cycle_ok",
+            "duration_ms": broken,
+        }
+    ) is False
 
 
 @pytest.mark.parametrize("account", [[], {}, 42])

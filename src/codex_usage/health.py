@@ -57,8 +57,7 @@ def record_health_event(
         entry["account"] = account
     if (
         duration_ms is not None
-        and isinstance(duration_ms, int)
-        and not isinstance(duration_ms, bool)
+        and type(duration_ms) is int
     ):
         entry["duration_ms"] = max(0, min(duration_ms, 86_400_000))
     if error_class:
@@ -155,8 +154,7 @@ def _valid_event(event: object) -> bool:
     ):
         return False
     if "duration_ms" in event and (
-        isinstance(event["duration_ms"], bool)
-        or not isinstance(event["duration_ms"], int)
+        type(event["duration_ms"]) is not int
         or not 0 <= event["duration_ms"] <= 86_400_000
     ):
         return False

@@ -10023,3 +10023,16 @@ History-/Watch-/Bridge-CLI-Aufrufer ab.
 
 Verifikation: **118 fokussierte CLI-Tests**, **7 History-CLI-Tests**, Ruff und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 837: Health-Dauerwerte strikt kanonisieren
+
+`health.py` akzeptierte bei `duration_ms` Integer-Subklassen. Dadurch wurden
+fremde numerische Werte gespeichert; beim späteren Validieren konnten
+überschriebene Vergleichsoperatoren mit rohen Exceptions abbrechen.
+
+Aufzeichnung und Lesen akzeptieren `duration_ms` jetzt ausschließlich als
+Built-in-`int`, bevor Clamp oder Bereichsvergleich laufen. Regression prüft
+Aufzeichnungs- und Parserpfad mit einer absichtlich fehlerhaften Subklasse.
+
+Verifikation: **34 Health-Tests**, **17 abhängige Scheduler-Health-Tests**,
+Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
