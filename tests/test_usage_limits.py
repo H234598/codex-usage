@@ -1089,6 +1089,7 @@ def test_app_server_does_not_infer_missing_duration_for_spark_bucket():
         ({"primary": {"usedPercent": 1, "windowDurationMins": 300}}, 99),
         ({}, 91),
         ({"primary": None}, 91),
+        ({"primary": {"usedPercent": 1}, "metadata": "ignored"}, 99),
     ],
 )
 def test_app_server_merges_partial_codex_bucket_with_top_level_windows(
@@ -1108,6 +1109,31 @@ def test_app_server_merges_partial_codex_bucket_with_top_level_windows(
     assert main is not None
     assert [window.name for window in main.windows] == ["5h", "weekly"]
     assert [window.remaining for window in main.windows] == [expected_primary, 60]
+    assert main.has_valid_usage is True
+
+
+@pytest.mark.parametrize(
+    ("secondary_duration", "expected_names"),
+    [(300, ["5h"]), (10080, ["5h", "weekly"])],
+)
+def test_app_server_infers_or_avoids_duplicate_primary_duration(
+    secondary_duration, expected_names
+):
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 10},
+                "secondary": {
+                    "usedPercent": 20,
+                    "windowDurationMins": secondary_duration,
+                },
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert [window.name for window in main.windows] == expected_names
     assert main.has_valid_usage is True
 
 

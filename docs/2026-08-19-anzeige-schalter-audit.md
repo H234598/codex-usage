@@ -13040,3 +13040,20 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1088: Usage-Limit-Parser- und Fenster-Inferenz-Guards vollständig geprüft
+
+`usage_limits.py` hatte noch vier unbelegte Kanten im App-Server-Parser:
+unbekannte Felder im verschachtelten Codex-Bucket, Dauer-loser Bucket mit
+zulässigem Top-Level-Fenster sowie die beiden Fälle, in denen die fehlende
+Primärdauer entweder als 5h ergänzt oder wegen identischer expliziter Dauer
+bewusst nicht dupliziert werden darf. Die neuen Regressionen prüfen beide
+Inferenzvarianten, Fensteridentitäten, verbleibende Nutzung und gültigen
+Pool-Status. Produktionslogik blieb unverändert.
+
+Verifikation: **141 `tests/test_usage_limits.py`-Tests**, `usage_limits.py`
+**291/291 Statements und 150/150 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
