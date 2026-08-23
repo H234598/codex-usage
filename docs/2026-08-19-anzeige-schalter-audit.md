@@ -12702,3 +12702,14 @@ Sieben Regressionen schließen diese Policy-Persistenz- und Eingabegrenzen.
 Verifikation: **135 Routing-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `routing.py`: **91 %**; verbleibende Lücken liegen in
 Entscheidungs-/Window-Helpern; keine Settings-Fenster gestartet.
+
+## Runde 1065: Routing-Entscheidungs- und Window-Guards vollständig geprüft
+
+Globale Defaults, fehlende Remaining-Werte, ungültige Window-Prozente,
+Low-Limit-/Metadata-/Timestamp-Entscheidungen, Spark-Health-Alter,
+Resetfenster, Identitätskanonisierung, Timestamp-/Float-Fallbacks und
+Policy-Validierungszweige waren noch offen. Einunddreißig Regressionen
+schließen sämtliche Routing-Entscheidungs- und Fail-Closed-Guards.
+
+Verifikation: **166 Routing-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `routing.py`: **100 %**; keine Settings-Fenster gestartet.

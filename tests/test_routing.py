@@ -46,6 +46,16 @@ class _BrokenFloat(float):
         raise RuntimeError("synthetic routing float marker")
 
 
+class _ExplodingAstimezone(datetime):
+    def astimezone(self, _tz=UTC):
+        raise RuntimeError("synthetic routing timezone conversion marker")
+
+
+class _ExplodingIsoformat(datetime):
+    def isoformat(self, *args, **kwargs):
+        raise RuntimeError("synthetic routing formatting marker")
+
+
 def _window(name: str, remaining: float, duration: int) -> LimitWindow:
     return LimitWindow(
         name=name,
@@ -145,6 +155,11 @@ def test_policy_apis_reject_non_path_input(path):
         set_credit_limits({"hourly": 1}, path=path)  # type: ignore[arg-type]
 
 
+def test_credit_limits_reject_non_string_scope(tmp_path):
+    with pytest.raises(ValueError, match="credit limit scope"):
+        set_credit_limits({"hourly": 1}, scope=1, path=tmp_path / "routing-policy.json")  # type: ignore[arg-type]
+
+
 def test_default_policy_path_uses_default_state_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(routing_module, "default_state_dir", lambda: tmp_path)
 
@@ -215,6 +230,16 @@ def test_policy_schema_version_requires_strict_integer(schema_version):
 def test_credit_limit_validation_rejects_float_overflow_without_raising():
     with pytest.raises(ValueError, match="credit limit"):
         _validate_credit_limits({"hourly": 10**10_000})
+
+
+def test_effective_policy_defaults_to_global_values():
+    policy = routing_module._empty_policy()
+
+    assert effective_credit_limits(policy, account="private") == (
+        {"hourly": None, "weekly": None, "monthly": None},
+        "global",
+    )
+    assert effective_paid_overage(policy, account="private") == (False, "global")
 
 
 def test_routing_prefers_spark_with_weekly_only_limit():
@@ -1553,3 +1578,213 @@ def test_scoped_credit_limit_zero_removes_override(tmp_path):
     )
     policy = load_policy(path)
     assert policy["credit_limit_overrides"]["account"] == {}
+
+
+def test_main_state_rejects_missing_remaining_percent():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(LimitWindow(name="weekly", remaining=None),),
+        availability_sources=("usage",),
+    )
+
+    assert routing_module._main_state(pool, now=NOW) == ("unknown", {})
+
+
+def test_main_state_rejects_invalid_remaining_percent():
+    class InvalidRemainingWindow(LimitWindow):
+        @property
+        def has_invalid_usage_value(self):
+            return False
+
+        @property
+        def remaining_percent(self):
+            return 101
+
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(InvalidRemainingWindow(name="weekly"),),
+        availability_sources=("usage",),
+    )
+
+    assert routing_module._main_state(pool, now=NOW) == ("unknown", {})
+
+
+def test_main_state_reports_low_when_pool_is_disallowed():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(_window("weekly", 80, 604800),),
+        allowed=False,
+        availability_sources=("usage",),
+    )
+
+    assert routing_module._main_state(pool, now=NOW) == ("low", {"weekly": 80})
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({"cache_invalidated": True}, "cache_invalidated"),
+        ({"stale": True}, "usage_stale"),
+        ({"status": AccountStatus.LOGIN_REQUIRED}, "usage_status_login_required"),
+        ({"captured_at": NOW + timedelta(hours=1)}, "usage_timestamp_in_future"),
+        (
+            {"captured_at": _ExplodingAstimezone(2026, 7, 16, 4, tzinfo=UTC)},
+            "usage_timestamp_invalid",
+        ),
+    ],
+)
+def test_invalid_usage_reason_covers_metadata_and_timestamp_guards(changes, expected):
+    usage = replace(_usage(), **changes)
+
+    assert routing_module._invalid_usage_reason(usage, now=NOW, max_age_seconds=600) == expected
+
+
+def test_expired_resetless_usage_window_fails_closed_on_clock_error():
+    exploding_now = _ExplodingAstimezone(2026, 7, 16, 4, tzinfo=UTC)
+
+    assert routing_module._has_expired_resetless_usage_window(
+        _usage(), captured_at=NOW, now=exploding_now
+    ) is False
+
+
+def test_spark_health_helpers_reject_invalid_payload_timestamps():
+    assert routing_module._spark_health_is_fresh(
+        {"state": "failed", "stale": False}, now=NOW
+    ) is False
+    assert routing_module._spark_health_age_seconds(
+        {"checked_at": "2026-07-16T04:00:00"}, now=NOW
+    ) is None
+
+
+def test_pool_usage_state_rejects_invalid_windows_and_identity():
+    invalid_window_pool = UsagePool(
+        key="main", display_name="Codex", windows=(object(),), availability_sources=("usage",)
+    )
+    unknown_identity_pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(LimitWindow(name="custom", remaining=80),),
+        availability_sources=("usage",),
+    )
+
+    assert routing_module._pool_usage_state(invalid_window_pool, now=NOW) == "unknown"
+    assert routing_module._pool_usage_state(unknown_identity_pool, now=NOW) == "unknown"
+
+
+def test_pool_usage_state_rejects_expired_reset():
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(
+            _window("weekly", 80, 604800),
+        ),
+        availability_sources=("usage",),
+    )
+    window = replace(pool.windows[0], reset_at=NOW - timedelta(seconds=1))
+
+    assert routing_module._pool_usage_state(replace(pool, windows=(window,)), now=NOW) == "unknown"
+
+
+def test_window_reset_guards_fail_closed():
+    window = _window("weekly", 80, 604800)
+    assert routing_module._window_reset_is_current(
+        replace(window, reset_at=NOW.replace(tzinfo=None)), now=NOW
+    ) is False
+    assert routing_module._window_reset_is_current(
+        replace(window, name="custom", reset_at=NOW + timedelta(hours=1)), now=NOW
+    ) is False
+    assert routing_module._window_reset_is_current(
+        replace(window, reset_at=_ExplodingAstimezone(2026, 7, 16, 5, tzinfo=UTC)), now=NOW
+    ) is False
+
+
+@pytest.mark.parametrize(
+    ("duration", "expected"),
+    [(None, None), (86_400, "1d"), (3_600, "1h"), (17, "17s")],
+)
+def test_routing_window_identity_helpers(duration, expected, monkeypatch):
+    if duration is None:
+        monkeypatch.setattr(routing_module, "_window_identity_is_known", lambda _window: True)
+        assert routing_module._window_identity_key(LimitWindow(name=1)) is None  # type: ignore[arg-type]
+        assert routing_module._window_identity_key(LimitWindow(name="custom")) is None
+    else:
+        assert routing_module._canonical_window_name(duration) == expected
+
+
+def test_routing_window_identity_key_uses_name_mapping(monkeypatch):
+    monkeypatch.setattr(routing_module, "_window_identity_is_known", lambda _window: True)
+
+    assert routing_module._window_identity_key(LimitWindow(name="custom")) is None
+
+
+def test_valid_remaining_percent_rejects_float_overflow(monkeypatch):
+    monkeypatch.setitem(
+        routing_module.__dict__,
+        "float",
+        lambda _value: (_ for _ in ()).throw(OverflowError("numeric overflow")),
+    )
+
+    assert routing_module._valid_remaining_percent(80) is False
+
+
+def test_pool_usage_state_rejects_unknown_identity_after_deduplication(monkeypatch):
+    monkeypatch.setattr(routing_module, "_window_identity_key", lambda _window: 604800)
+    monkeypatch.setattr(routing_module, "_window_identity_is_known", lambda _window: False)
+    pool = UsagePool(
+        key="main",
+        display_name="Codex",
+        windows=(_window("weekly", 80, 604800),),
+        availability_sources=("usage",),
+    )
+
+    assert routing_module._pool_usage_state(pool, now=NOW) == "unknown"
+
+
+def test_pool_resets_and_timestamp_helpers_fail_closed():
+    assert routing_module._pool_resets(None) == {}
+    assert routing_module._timestamp_text(
+        _ExplodingIsoformat(2026, 7, 16, 4, tzinfo=UTC)
+    ) is None
+    assert routing_module._aware_datetime(
+        datetime(2026, 7, 16, 4, tzinfo=_RaisingTimezone())
+    ) is False
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"global": "yes"}, "global value is invalid"),
+        ({"account": []}, "account rules are invalid"),
+        ({"account": {"private": "yes"}}, "account value is invalid"),
+        ({"credit_limit_overrides": []}, "credit limit overrides are invalid"),
+        (
+            {"credit_limit_overrides": {"account": []}},
+            "credit limit overrides are invalid",
+        ),
+        (
+            {"credit_limit_overrides": {"account": {"private": {}}}},
+            "empty routing credit limit override",
+        ),
+    ],
+)
+def test_validate_policy_rejects_malformed_scope_payloads(changes, message):
+    payload = routing_module._empty_policy()
+    payload.update(changes)
+
+    with pytest.raises(ValueError, match=message):
+        _validate_policy(payload)
+
+
+def test_validate_credit_limits_rejects_non_mapping_and_negative_values():
+    with pytest.raises(ValueError, match="credit limits are invalid"):
+        _validate_credit_limits([])
+    with pytest.raises(ValueError, match="credit limit is invalid"):
+        _validate_credit_limits({"hourly": -1})
+
+
+def test_validate_identifier_rejects_invalid_value():
+    with pytest.raises(ValueError, match="policy identifier is invalid"):
+        routing_module._validate_identifier("bad identifier")
