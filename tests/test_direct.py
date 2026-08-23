@@ -262,6 +262,20 @@ def test_direct_resolve_auth_path_rejects_string_subclass_hooks():
         direct_module._resolve_auth_json_path(account, None)
 
 
+def test_resolve_auth_path_uses_default_for_missing_or_empty_config(monkeypatch, tmp_path):
+    expected = tmp_path / "default-auth.json"
+    monkeypatch.setattr(direct_module, "default_auth_json_path", lambda: expected)
+
+    for configured_path in (None, ""):
+        account = Account(
+            id="work",
+            label="Work",
+            profile_dir="/tmp/work",
+            auth_json_path=configured_path,
+        )
+        assert direct_module._resolve_auth_json_path(account, None) == expected
+
+
 def test_direct_resolve_auth_override_rejects_path_subclasses():
     class BrokenPath(type(Path())):
         pass

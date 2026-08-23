@@ -11435,3 +11435,13 @@ Restwerten und bestätigt die positive Erkennung.
 
 Verifikation: **284 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 948: Default-Auth-Pfadauflösung vollständig verzweigt geprüft
+
+`direct._resolve_auth_json_path()` hatte für `auth_json_path=None` und den
+leeren String nur indirekte Abdeckung. Der neue Test bindet den kanonischen
+Defaultpfad und bestätigt beide Fallbackzweige ohne Dateisystemzugriff.
+
+Verifikation: **285 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **89 %**, Missing-Zeilen 104; keine Settings-Fenster
+gestartet.
