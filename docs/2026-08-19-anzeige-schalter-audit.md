@@ -9594,3 +9594,20 @@ Account-Iteratoren inklusive JSON- und Tabellenpfad ab.
 Verifikation: **68 fokussierte Render-Tests**, **405 Render-, Scheduler- und
 CLI-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 810: Scheduler-Usage-Iteratoren fail-closed prüfen
+
+`_watch_cycle_is_healthy()` und `_usage_map_for_accounts()` begrenzten ihre
+Usage-Iteratoren zwar per `islice`, kapselten aber keine Fehler aus einem
+formal iterierbaren Container. Ein `ValueError` aus `__next__()` konnte damit
+Watchdog- oder Usage-Zuordnungspfad roh abbrechen.
+
+Beide Validierungspfade fangen solche `TypeError`-/`ValueError`-Fehler jetzt
+direkt am Iterator-Eingang und liefern kontrolliert `False` beziehungsweise
+`None`. Die bestehende Overflow-Grenze bleibt unverändert und liest nicht
+über erwartete Anzahl plus einen Prüfwert hinaus. Regression deckt beide
+Pfade mit demselben fehlerhaften Usage-Iterator ab.
+
+Verifikation: **221 fokussierte Scheduler-Tests**, **601 Scheduler-, Bridge-
+und CLI-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

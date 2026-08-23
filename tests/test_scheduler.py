@@ -5479,6 +5479,22 @@ def test_usage_map_rejects_missing_or_duplicate_results():
     assert _usage_map_for_accounts([usage, usage], [account, account]) is None
 
 
+def test_usage_validation_rejects_iterator_value_errors():
+    account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
+    usage = AccountUsage(
+        account_id="direct",
+        label="Direct",
+        captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+    )
+
+    def broken_usages():
+        yield usage
+        raise ValueError("synthetic usage iterator marker")
+
+    assert _usage_map_for_accounts(broken_usages(), [account]) is None
+    assert _watch_cycle_is_healthy(broken_usages(), [account]) is False
+
+
 def test_usage_validation_stops_after_expected_count_plus_overflow():
     account = Account(id="direct", label="Direct", profile_dir="/tmp/direct")
     usage = AccountUsage(

@@ -987,7 +987,10 @@ def _watch_cycle_is_healthy(
     auth_json_path: Path | None = None,
 ) -> bool:
     account_list = _bounded_account_list(accounts)
-    results = list(islice(usages, len(account_list) + 1))
+    try:
+        results = list(islice(usages, len(account_list) + 1))
+    except (TypeError, ValueError):
+        return False
     expected = tuple(account.id for account in account_list)
     if _usage_map_for_accounts(results, account_list) is None:
         return False
@@ -1037,7 +1040,10 @@ def _usage_map_for_accounts(
         account_list = _bounded_account_list(accounts)
     except (TypeError, ValueError):
         return None
-    results = list(islice(usages, len(account_list) + 1))
+    try:
+        results = list(islice(usages, len(account_list) + 1))
+    except (TypeError, ValueError):
+        return None
     expected = tuple(account.id for account in account_list)
     if len(results) != len(expected):
         return None
