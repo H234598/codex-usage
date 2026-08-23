@@ -1256,7 +1256,11 @@ def _normalized_response_identifier(value: Any) -> str:
 def _signature_flag(value: Any) -> bool | tuple[str, str, str] | None:
     if value is None or isinstance(value, bool):
         return value
-    return ("invalid", type(value).__name__, str(value))
+    try:
+        rendered = str(value)
+    except Exception:
+        rendered = "<unprintable>"
+    return ("invalid", type(value).__name__, rendered)
 
 
 def _supported_window_durations(payload: dict[str, Any]) -> set[int]:

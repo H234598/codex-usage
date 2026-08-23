@@ -285,6 +285,18 @@ def test_signature_number_rejects_non_finite_values_without_raising(value):
     assert _signature_number(value) is None
 
 
+def test_signature_flag_rejects_string_hooks():
+    class BrokenFlag:
+        def __str__(self):
+            raise RuntimeError("synthetic signature flag marker")
+
+    assert direct_module._signature_flag(BrokenFlag()) == (
+        "invalid",
+        "BrokenFlag",
+        "<unprintable>",
+    )
+
+
 def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path, monkeypatch):
     broken_int = _BrokenInt(200)
     broken_float = _BrokenFloat(1.0)

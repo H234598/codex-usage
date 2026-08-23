@@ -10568,3 +10568,17 @@ unverändert.
 
 Verifikation: **209 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 877: Ungültige Signaturflags robust formatieren
+
+`direct._signature_flag()` wandelte nichtboolesche Werte ungeschützt per
+`str(value)` in eine Vergleichssignatur um. Ein fremdes Flagobjekt mit
+defektem `__str__()` konnte dadurch die Stabilitätsprüfung mit einer rohen
+Exception abbrechen.
+
+Die Signaturbildung fängt Formatierungsfehler jetzt lokal ab und verwendet
+`<unprintable>` als datenarmen Marker. Normale Werte behalten ihre bisherige
+Darstellung; Regression deckt den defekten String-Hook ab.
+
+Verifikation: **210 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
