@@ -13721,3 +13721,19 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1129: Applet-Creditverbrauchszeilen-Normalisierung vollständig ausgeführt
+
+Die Regression für `_normalizeCreditConsumptionRow` deckt Null-/Defaultwerte,
+Legacy-`consumption-*`-Aliase, Vorrang der modernen Felder, alle zulässigen
+Creditverbrauchswerte und das Ablehnen eines ungültigen Account-Schlüssels ab.
+Damit sind alle V8-Blockranges der Funktion erreicht. Produktionslogik blieb
+unverändert.
+
+Verifikation: **527 `tests/applet_runtime.test.js`-Tests**, **527 bestanden**;
+V8-Raw-Coverage: `_normalizeCreditConsumptionRow` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

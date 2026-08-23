@@ -6286,6 +6286,71 @@ test("forecast row normalization covers legacy aliases, precedence and bounds", 
   assert.equal(applet._normalizeForecastRow({account: "alpha"}, ""), null);
 });
 
+test("credit consumption row normalization covers legacy aliases, precedence and null", () => {
+  const applet = makeApplet();
+  const fallback = applet._normalizeCreditConsumptionRow(null, "alpha");
+  assert.equal(fallback.amount, 1);
+  assert.equal(fallback.unit, "hours");
+  assert.equal(fallback.format, "compact");
+  assert.equal(fallback.smoothing, "ema-20");
+  assert.equal(fallback["hide-when-zero"], true);
+  assert.equal(fallback["show-coverage-marker"], true);
+  assert.equal(fallback["baseline-enabled"], false);
+  assert.equal(fallback["baseline-minutes"], 60);
+
+  const legacy = applet._normalizeCreditConsumptionRow({
+    account: "alpha",
+    "consumption-show-panel": true,
+    "consumption-show-tooltip": false,
+    "consumption-amount": 7,
+    "consumption-unit": "days",
+    "consumption-format": "verbose",
+    "consumption-custom-format": "Verbrauch {value}",
+    "consumption-smoothing": "ema-5",
+    "consumption-hide-when-zero": false,
+    "consumption-show-coverage-marker": false,
+    "consumption-baseline-enabled": true,
+    "consumption-baseline-minutes": 30,
+  }, "alpha");
+  assert.equal(legacy["show-panel"], true);
+  assert.equal(legacy["show-tooltip"], false);
+  assert.equal(legacy.amount, 7);
+  assert.equal(legacy.unit, "days");
+  assert.equal(legacy.format, "verbose");
+  assert.equal(legacy["custom-format"], "Verbrauch {value}");
+  assert.equal(legacy.smoothing, "ema-5");
+  assert.equal(legacy["hide-when-zero"], false);
+  assert.equal(legacy["show-coverage-marker"], false);
+  assert.equal(legacy["baseline-enabled"], true);
+  assert.equal(legacy["baseline-minutes"], 30);
+
+  const primary = applet._normalizeCreditConsumptionRow({
+    account: "alpha", "show-panel": false, "consumption-show-panel": true,
+    "show-tooltip": true, "consumption-show-tooltip": false,
+    amount: 2, "consumption-amount": 8,
+    unit: "minutes", "consumption-unit": "weeks",
+    format: "custom", "consumption-format": "verbose",
+    "custom-format": "{value}%", "consumption-custom-format": "legacy",
+    smoothing: "none", "consumption-smoothing": "ema-640",
+    "hide-when-zero": false, "consumption-hide-when-zero": true,
+    "show-coverage-marker": true, "consumption-show-coverage-marker": false,
+    "baseline-enabled": false, "consumption-baseline-enabled": true,
+    "baseline-minutes": 15, "consumption-baseline-minutes": 90,
+  }, "alpha");
+  assert.equal(primary["show-panel"], false);
+  assert.equal(primary["show-tooltip"], true);
+  assert.equal(primary.amount, 2);
+  assert.equal(primary.unit, "minutes");
+  assert.equal(primary.format, "custom");
+  assert.equal(primary["custom-format"], "{value}%");
+  assert.equal(primary.smoothing, "none");
+  assert.equal(primary["hide-when-zero"], false);
+  assert.equal(primary["show-coverage-marker"], true);
+  assert.equal(primary["baseline-enabled"], false);
+  assert.equal(primary["baseline-minutes"], 15);
+  assert.equal(applet._normalizeCreditConsumptionRow({account: "alpha"}, ""), null);
+});
+
 test("missing forecast table does not inherit consumption panel visibility", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;
