@@ -10916,3 +10916,16 @@ Strukturen bleiben unverändert.
 
 Verifikation: **234 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 902: Auth-Details nur aus nativen Payload-Dicts lesen
+
+`direct._extract_auth_details()` rief `payload.get()` bisher ohne Prüfung des
+äußeren Mappingtyps auf. Eine Payload-Subclass konnte die Auth-Validierung
+dadurch mit einer rohen Exception abbrechen.
+
+Der Helper verlangt jetzt einen nativen `dict`-Payload und weist fremde
+Mappings als fehlendes Tokens-Objekt ab. Regression deckt den äußeren
+Payload-`.get()`-Hook ab; normale Auth-JSON-Strukturen bleiben unverändert.
+
+Verifikation: **235 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

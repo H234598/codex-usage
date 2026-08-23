@@ -690,6 +690,18 @@ def test_auth_details_rejects_tokens_dict_subclass_hooks(tmp_path):
         )
 
 
+def test_auth_details_rejects_payload_dict_subclass_hooks(tmp_path):
+    class BrokenPayload(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth details payload marker")
+
+    with pytest.raises(DirectAuthError, match=r"auth\.json has no tokens object"):
+        _extract_auth_details(
+            BrokenPayload(),
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_auth_details_rejects_access_token_string_subclass_hooks(tmp_path):
     class BrokenStr(str):
         def __len__(self):

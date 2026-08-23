@@ -810,6 +810,8 @@ def auth_metadata_from_payload(payload: dict[str, Any]) -> dict[str, datetime | 
 def _extract_auth_details(
     payload: dict[str, Any], *, path: Path
 ) -> tuple[str, dict[str, datetime | None]]:
+    if type(payload) is not dict:
+        raise DirectAuthError(f"auth.json has no tokens object: {path}")
     tokens = payload.get("tokens")
     if type(tokens) is not dict:
         raise DirectAuthError(f"auth.json has no tokens object: {path}")
