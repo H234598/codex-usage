@@ -136,6 +136,24 @@ def test_direct_response_final_url_rejects_getter_hooks():
     assert direct_module._response_final_url(Response(), "https://chatgpt.com/") == ""
 
 
+def test_direct_response_final_url_rejects_string_subclass_results():
+    class BrokenStr(str):
+        pass
+
+    class Response:
+        def geturl(self):
+            return BrokenStr("https://chatgpt.com/")
+
+    assert direct_module._response_final_url(Response(), "https://chatgpt.com/") == ""
+
+    class FallbackResponse:
+        url = BrokenStr("https://chatgpt.com/")
+
+    assert direct_module._response_final_url(
+        FallbackResponse(), "https://chatgpt.com/"
+    ) == ""
+
+
 def test_direct_trusted_response_url_rejects_string_subclasses():
     class BrokenStr(str):
         pass

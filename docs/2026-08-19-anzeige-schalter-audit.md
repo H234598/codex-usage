@@ -10415,3 +10415,17 @@ Tokens und fehlende `exp`-Claims bleiben unverändert.
 
 Verifikation: **198 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 866: Response-URLs auf Built-in-Strings begrenzen
+
+`direct._response_final_url()` gab URLwerte aus `geturl()` oder dem
+Fallback-Attribut per `isinstance(value, str)` unverändert weiter. Eine
+`str`-Subklasse konnte dadurch die URL-Vertragsgrenze passieren und spätere
+Verarbeitung mit eigener Semantik belasten.
+
+Beide Rückgabepfade akzeptieren jetzt ausschließlich Built-in-`str`; andere
+Werte werden leer und damit fail-closed zurückgegeben. Regression deckt
+`geturl()`- und Fallback-Attribute ab; Getterfehler bleiben ebenfalls leer.
+
+Verifikation: **199 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

@@ -974,11 +974,11 @@ def _response_final_url(response: Any, fallback: str) -> str:
         geturl = getattr(response, "geturl", None)
         if callable(geturl):
             value = geturl()
-            return value if isinstance(value, str) else ""
+            return value if type(value) is str else ""
         value = getattr(response, "url", fallback)
     except Exception:
         return ""
-    return value if isinstance(value, str) else ""
+    return value if type(value) is str else ""
 
 
 def _is_trusted_wham_response_url(value: str) -> bool:
