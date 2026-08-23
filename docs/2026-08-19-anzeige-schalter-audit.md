@@ -12326,3 +12326,14 @@ Verifikation: **146 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **89 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1031: Fremder Auth-Dateibesitzer fail-closed abgewiesen
+
+`_integrate_test_home_auth()` hatte die Bedingung für einen nicht zum Prozess
+gehörenden Dateibesitzer noch nicht direkt ausgeführt. Ein kontrollierter
+UID-Test bestätigt Ablehnung vor dem Verschieben der Quelle.
+
+Verifikation: **147 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **89 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

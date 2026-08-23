@@ -217,6 +217,17 @@ def test_integrate_test_home_auth_rejects_existing_target(tmp_path):
         config_module._integrate_test_home_auth(source, target)
 
 
+def test_integrate_test_home_auth_rejects_foreign_owner(tmp_path, monkeypatch):
+    source = tmp_path / "source.json"
+    source.write_text("{}\n", encoding="utf-8")
+    source.chmod(0o600)
+    actual_uid = os.getuid()
+    monkeypatch.setattr(config_module.os, "getuid", lambda: actual_uid + 1)
+
+    with pytest.raises(ValueError, match="private user-owned file"):
+        config_module._integrate_test_home_auth(source, tmp_path / "target.json")
+
+
 def test_prepare_test_codex_home_rejects_nonregular_config(tmp_path):
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir(mode=0o700)
