@@ -20,11 +20,50 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic max-age marker")
+
+
+class _BrokenStr(str):
+    def __eq__(self, _other):
+        raise RuntimeError("synthetic health state marker")
+
+    def encode(self, *args, **kwargs):
+        raise RuntimeError("synthetic backend id marker")
+
+
 def test_spark_health_defaults_to_unknown(tmp_path):
     result = spark_health_status("backend-nufker", path=tmp_path / "health.json", now=NOW)
 
     assert result["state"] == "unknown"
     assert result["reason"] == "no_successful_spark_turn"
+
+
+def test_spark_health_rejects_primitive_subclasses_before_operations(tmp_path):
+    with pytest.raises(ValueError, match="max_age_seconds"):
+        spark_health_status(
+            "backend-nufker",
+            path=tmp_path / "health.json",
+            now=NOW,
+            max_age_seconds=_BrokenInt(3_600),
+        )
+
+    with pytest.raises(ValueError, match="backend_account_id"):
+        set_spark_health(
+            _BrokenStr("backend-nufker"),
+            "healthy",
+            path=tmp_path / "health.json",
+            now=NOW,
+        )
+
+    with pytest.raises(ValueError, match="spark health state"):
+        set_spark_health(
+            "backend-nufker",
+            _BrokenStr("healthy"),
+            path=tmp_path / "health.json",
+            now=NOW,
+        )
 
 
 def test_spark_health_rejects_overlong_backend_id(tmp_path):

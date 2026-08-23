@@ -41,14 +41,13 @@ def spark_health_status(
 ) -> dict[str, Any]:
     checked_at = now if now is not None else datetime.now(UTC)
     if (
-        not isinstance(max_age_seconds, int)
-        or isinstance(max_age_seconds, bool)
+        type(max_age_seconds) is not int
         or max_age_seconds < 60
     ):
         raise ValueError("max_age_seconds must be at least 60")
     if not _aware_datetime(checked_at):
         return _unknown_health("invalid_health_clock")
-    if not isinstance(backend_account_id, str) or not _IDENTIFIER_RE.fullmatch(backend_account_id):
+    if type(backend_account_id) is not str or not _IDENTIFIER_RE.fullmatch(backend_account_id):
         return _unknown_health("missing_backend_account_id")
     records = _load_records(_spark_health_path(path))
     record = records.get(_health_key(backend_account_id))
@@ -92,9 +91,9 @@ def set_spark_health(
     path: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    if not isinstance(backend_account_id, str) or not _IDENTIFIER_RE.fullmatch(backend_account_id):
+    if type(backend_account_id) is not str or not _IDENTIFIER_RE.fullmatch(backend_account_id):
         raise ValueError("backend_account_id is invalid")
-    if state not in SPARK_HEALTH_STATES:
+    if type(state) is not str or state not in SPARK_HEALTH_STATES:
         raise ValueError("spark health state must be healthy or failed")
     current_time = now if now is not None else datetime.now(UTC)
     if not _aware_datetime(current_time):

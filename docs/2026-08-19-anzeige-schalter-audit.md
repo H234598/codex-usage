@@ -9720,3 +9720,17 @@ JSON-sichere Account-Ausgabe ab.
 
 Verifikation: **535 Model-, Usage-Limit-, Render- und State-Tests**, Ruff und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 817: Spark-Health-Grenzen gegen primitive Subklassen sichern
+
+`spark_health.py` akzeptierte bei `max_age_seconds`, Backend-Account-ID und
+State noch `int`-/`str`-Subklassen. Überschriebene Vergleichs-,
+`.encode()`- oder Gleichheitsoperatoren konnten dadurch rohe Fremdfehler vor
+der Health-Prüfung oder beim Schreiben auslösen.
+
+Die öffentlichen Grenzen akzeptieren jetzt ausschließlich Built-in-`int` und
+`str`; ungültige Werte werden kontrolliert verworfen. Regression deckt alle
+drei Eingänge ab.
+
+Verifikation: **302 Spark-Health-, Routing- und CLI-Tests**, Ruff und
+Diff-Check bestanden; keine Settings-Fenster gestartet.
