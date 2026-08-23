@@ -484,6 +484,17 @@ def test_render_account_values_rejects_account_iterators_over_account_cap():
         )
 
 
+def test_render_rejects_account_iterator_value_errors():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/privat")
+
+    def broken_accounts():
+        yield account
+        raise ValueError("synthetic account iterator marker")
+
+    with pytest.raises(ValueError, match="account records are invalid"):
+        render_account_values(broken_accounts(), {})
+
+
 @pytest.mark.parametrize("accounts", [None, "invalid", [None], [object()]])
 def test_render_account_values_rejects_invalid_account_records(accounts):
     with pytest.raises(ValueError, match="account records are invalid"):
@@ -801,6 +812,23 @@ def test_render_rejects_usage_iterators_over_account_cap():
         render_table(usage for _ in range(MAX_CONFIG_ACCOUNTS + 1))
     with pytest.raises(ValueError, match="too many usage records"):
         render_json(usage for _ in range(MAX_CONFIG_ACCOUNTS + 1))
+
+
+def test_render_rejects_usage_iterator_value_errors():
+    usage = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    def broken_usages():
+        yield usage
+        raise ValueError("synthetic usage iterator marker")
+
+    with pytest.raises(ValueError, match="usage records are invalid"):
+        render_table(broken_usages())
+    with pytest.raises(ValueError, match="usage records are invalid"):
+        render_json(broken_usages())
 
 
 @pytest.mark.parametrize("usages", [None, "invalid", [None], [object()]])

@@ -9578,3 +9578,19 @@ Regression deckt eine Dauer-Subclass mit fehlerhaftem Modulo-Operator ab.
 Verifikation: **33 fokussierte Model-Tests**, **496 Model-, Usage-Limit-,
 State- und Render-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
 keine Settings-Fenster gestartet.
+
+## Runde 809: Render-Iteratoren kontrolliert abbrechen
+
+`render._bounded_usage_list()` und `_bounded_account_list()` kapselten nur
+`TypeError` beim begrenzten Einlesen ihrer Iteratoren. Ein formal iterierbarer
+Container, dessen `__next__()` `ValueError` wirft, leakte damit den Fremdfehler
+aus JSON-, Tabellen- und Account-Ausgabe.
+
+Beide gemeinsamen Eingangsgrenzen behandeln solche `ValueError` jetzt wie
+andere ungültige Record-Container und liefern die dokumentierten
+`ValueError("… records are invalid")`-Fehler. Regression deckt Usage- und
+Account-Iteratoren inklusive JSON- und Tabellenpfad ab.
+
+Verifikation: **68 fokussierte Render-Tests**, **405 Render-, Scheduler- und
+CLI-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
