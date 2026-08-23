@@ -77,6 +77,10 @@ def calculate_consumption(
     ):
         raise ValueError("baseline_value_minutes must be between 0 and 9999")
     _require_aware(now)
+    try:
+        now = datetime.fromtimestamp(datetime.timestamp(now), tz=UTC)
+    except (OSError, OverflowError, TypeError, ValueError) as exc:
+        raise ValueError("now is out of range") from exc
     if (
         isinstance(stale_after_seconds, bool)
         or not isinstance(stale_after_seconds, int)

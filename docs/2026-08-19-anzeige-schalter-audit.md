@@ -9526,3 +9526,22 @@ Regression deckt die Fremdtyp-Rückgabe ab.
 Verifikation: **33 fokussierte Health-Tests**, **306 Health-, State- und
 CI-Workflow-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 806: Consumption-Clock gegen manipulierte Datetime-Subklassen sichern
+
+`calculate_consumption()` validierte `now` nur als timezone-aware
+`datetime` und führte danach direkt Zeitrechnungen mit dem Objekt aus. Eine
+`datetime`-Subclass konnte `__sub__()` überschreiben und die Berechnung damit
+in einen rohen `TypeError` laufen lassen; auch eine überschriebene
+`timestamp()`-Methode durfte nicht in den Normalisierungspfad gelangen.
+
+Nach der Awareness-Prüfung wird `now` jetzt über die Basisklassenmethode
+`datetime.timestamp()` in einen exakten UTC-`datetime` normalisiert. Nicht
+darstellbare Werte liefern kontrolliert `ValueError("now is out of range")`;
+anschließende Fenster-, Delta- und EMA-Arithmetik arbeitet nur noch mit dem
+normalisierten Basistyp. Regression deckt manipulierte Subclass-Arithmetik
+und Timestamp-Dispatch ab.
+
+Verifikation: **42 fokussierte Consumption-Tests**, **273 Consumption- und
+abhängige CLI-, History- und Integrationstests**, Ruff, Python-Compile und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

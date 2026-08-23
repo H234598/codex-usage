@@ -444,6 +444,14 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _BrokenNow(datetime):
+    def __sub__(self, _other):
+        return "not-a-datetime"
+
+    def timestamp(self):
+        return "not-a-timestamp"
+
+
 def test_consumption_rejects_timezone_callbacks_that_raise():
     with pytest.raises(ValueError, match="timezone-aware"):
         calculate_consumption(
@@ -452,6 +460,18 @@ def test_consumption_rejects_timezone_callbacks_that_raise():
             unit="hours",
             now=datetime(2026, 8, 16, 10, 0, tzinfo=_RaisingTimezone()),
         )
+
+
+def test_consumption_normalizes_datetime_subclass_before_arithmetic():
+    result = calculate_consumption(
+        [_sample(-30, 10), _sample(0, 20)],
+        amount=1,
+        unit="hours",
+        now=_BrokenNow(2026, 8, 16, 10, 0, tzinfo=UTC),
+    )
+
+    assert result.consumed_percentage_points == 10.0
+    assert result.coverage == "partial"
 
 
 def test_consumption_rejects_sample_iterators_over_cap(monkeypatch):
