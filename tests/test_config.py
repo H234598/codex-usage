@@ -749,6 +749,20 @@ def test_prepare_profile_dir_rejects_regular_file(tmp_path):
         config_module._prepare_profile_dir(str(profile_file))
 
 
+@pytest.mark.parametrize("kind", ["symlink", "directory"])
+def test_prepare_profile_dir_rejects_invalid_marker(tmp_path, kind):
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    marker = profile_dir / ".codex-usage-profile"
+    if kind == "symlink":
+        marker.symlink_to(tmp_path / "missing-marker")
+    else:
+        marker.mkdir()
+
+    with pytest.raises(ValueError, match="profile marker must be a regular file"):
+        config_module._prepare_profile_dir(str(profile_dir))
+
+
 def test_add_account_fails_closed_when_config_directory_cannot_be_secured(
     tmp_path, monkeypatch
 ):

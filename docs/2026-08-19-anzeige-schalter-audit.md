@@ -12431,3 +12431,14 @@ Verifikation: **168 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **93 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1040: Profilmarker auf reguläre Datei begrenzt
+
+`_prepare_profile_dir()` hatte die Ablehnung symlinkischer und
+verzeichnisförmiger `.codex-usage-profile`-Marker noch nicht direkt belegt.
+Zwei Regressionen bestätigen, dass Setup nur einen regulären Marker akzeptiert.
+
+Verifikation: **170 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **93 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
