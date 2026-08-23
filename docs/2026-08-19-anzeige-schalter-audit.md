@@ -12256,3 +12256,15 @@ Verifikation: **127 Config-Tests**, fokussierter Test, Ruff und Diff-Check
 bestanden; Coverage-Auszug für `config.py`: **86 %**, verbleibende Missing-
 Zeilen liegen in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden;
 keine Settings-Fenster gestartet.
+
+## Runde 1025: Optionale Account-Flags strikt validiert
+
+`add_or_update_account()` hatte Guards für Tag-/Series-/Test-Home-Typen,
+inkompatible Auth-Optionen und den internen Lock-Parameter noch nicht direkt
+abgedeckt. Sechs parametrische Regressionen bestätigen klare `ValueError`-
+Ablehnung vor jedem Config-I/O.
+
+Verifikation: **133 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **87 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

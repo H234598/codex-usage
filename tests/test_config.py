@@ -1140,6 +1140,32 @@ def test_add_account_rejects_non_boolean_clear_auth_json(tmp_path, clear_auth_js
 
 
 @pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"tag": []}, "account tag"),
+        ({"series_active": 1}, "series_active must be boolean"),
+        ({"test_home": 1}, "test_home must be boolean"),
+        (
+            {"clear_auth_json": True, "auth_json_path": "/tmp/auth.json"},
+            "cannot be combined with auth_json_path",
+        ),
+        (
+            {"clear_auth_json": True, "test_home": True},
+            "cannot be combined with test_home",
+        ),
+        ({"_all_accounts_lock_held": 1}, "_all_accounts_lock_held must be boolean"),
+    ],
+)
+def test_add_account_rejects_invalid_optional_flags(tmp_path, kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        add_or_update_account(
+            "flags",
+            path=tmp_path / "config.toml",
+            **kwargs,
+        )
+
+
+@pytest.mark.parametrize(
     ("field", "value", "message"),
     (
         pytest.param("label", [], "account label must be a string", id="label"),
