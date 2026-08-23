@@ -4159,6 +4159,21 @@ test("panel rows normalize dynamic slots beyond legacy four", () => {
   assert.equal(applet._panelSourceLabel(17), "Abrufweg");
 });
 
+test("legacy panel account content renders optional metric fallbacks", () => {
+  const applet = makeApplet();
+  const item = {usage: applet._usages[0], slots: []};
+  applet._panelTag = () => "A";
+  applet._consumptionParts = () => ({plain: "Token", markup: "<token>"});
+  applet._creditConsumptionParts = () => ({plain: "CV", markup: "<cv>"});
+  applet._creditParts = () => ({plain: "CR", markup: "<cr>"});
+  applet._usageResetParts = () => ({plain: "Resets", markup: "<resets>"});
+  applet.panelAccountSeparator = "brackets";
+
+  const result = applet._panelAccountContent(item);
+  assert.equal(result.plain, "[A Token CV CR Resets]");
+  assert.equal(result.markup, "[A <token> <cv> <cr> <resets>]");
+});
+
 test("extended panel sources render resets, identity, routing and account state", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];

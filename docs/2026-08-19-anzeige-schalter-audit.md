@@ -13798,3 +13798,18 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1134: Applet-Panel-Accountdarstellung vollständig ausgeführt
+
+Die Regression für `_panelAccountContent` deckt den Legacy-Panelpfad ohne
+Slots, Token-/Creditverbrauch, Credits, Resets und die Klammerdarstellung ab.
+Damit sind alle V8-Blockranges der Funktion erreicht. Produktionslogik blieb
+unverändert.
+
+Verifikation: **532 `tests/applet_runtime.test.js`-Tests**, **532 bestanden**;
+V8-Raw-Coverage: `_panelAccountContent` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
