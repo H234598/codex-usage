@@ -11606,3 +11606,14 @@ weitergibt und kein inkonsistenter Ersatztext entsteht.
 Verifikation: **301 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **92 %**, Missing-Zeilen 85; keine Settings-Fenster
 gestartet.
+
+## Runde 965: Backend-only-Identität direkt abgewiesen
+
+`fetch_account_usage_direct()` hatte den Guard nach erfolgreicher
+Backend-Kanonisierung, aber fehlender Auth-Identität noch nicht direkt
+belegt. Der neue Test bestätigt fail-closed `backend response identity cannot
+be verified`, auch wenn Backend User- und Account-ID liefert.
+
+Verifikation: **302 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **92 %**, Missing-Zeilen 84; keine Settings-Fenster
+gestartet.

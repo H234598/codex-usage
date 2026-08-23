@@ -2162,6 +2162,50 @@ def test_fetch_account_usage_direct_rejects_identity_free_response(
     assert usage.cache_invalidated is True
 
 
+def test_fetch_account_usage_direct_rejects_backend_only_identity(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "opaque-token"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    monkeypatch.setattr(
+        direct_module,
+        "_fetch_stable_wham_usage",
+        lambda *_args, **_kwargs: {
+            "user_id": "backend-user",
+            "account_id": "backend-account",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 3,
+                    "limit_window_seconds": 18_000,
+                },
+                "secondary_window": {
+                    "used_percent": 45,
+                    "limit_window_seconds": 604_800,
+                },
+            },
+        },
+    )
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(
+        account,
+        reject_ambiguous_backend_identity=True,
+    )
+
+    assert usage.status == AccountStatus.ERROR
+    assert usage.error == "backend response identity cannot be verified"
+
+
 def test_select_stable_wham_usage_does_not_choose_empty_majority():
     complete = {
         "user_id": "user-test",
