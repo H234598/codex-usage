@@ -33,6 +33,15 @@ class _BrokenStr(str):
         raise RuntimeError("synthetic backend id marker")
 
 
+def test_default_spark_health_path_uses_default_state_dir(monkeypatch, tmp_path):
+    import codex_usage.spark_health as spark_health_module
+
+    monkeypatch.setattr(spark_health_module, "default_state_dir", lambda: tmp_path)
+
+    assert spark_health_module.default_spark_health_path() == tmp_path / "spark-health.json"
+    assert spark_health_module._spark_health_path(None) == tmp_path / "spark-health.json"
+
+
 def test_spark_health_defaults_to_unknown(tmp_path):
     result = spark_health_status("backend-nufker", path=tmp_path / "health.json", now=NOW)
 
@@ -93,6 +102,64 @@ def test_spark_health_ignores_deeply_nested_json(tmp_path):
 
     assert result["state"] == "unknown"
     assert result["reason"] == "no_successful_spark_turn"
+
+
+def test_spark_health_rejects_symlink_to_missing_file(tmp_path):
+    path = tmp_path / "health-link"
+    path.symlink_to(tmp_path / "missing-health.json")
+
+    with pytest.raises(ValueError, match="regular file"):
+        spark_health_status("backend-nufker", path=path, now=NOW)
+
+
+def test_spark_health_recovers_from_private_io_error(tmp_path, monkeypatch):
+    path = tmp_path / "health.json"
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setattr(
+        "codex_usage.spark_health.read_private_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read blocked")),
+    )
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["reason"] == "no_successful_spark_turn"
+
+
+def test_spark_health_rejects_non_mapping_records(tmp_path):
+    path = tmp_path / "health.json"
+    path.write_text(json.dumps({"version": 1, "records": []}), encoding="utf-8")
+    path.chmod(0o600)
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["reason"] == "no_successful_spark_turn"
+
+
+def test_spark_health_rejects_invalid_record_timestamp(tmp_path):
+    path = tmp_path / "health.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "records": {
+                    _health_key("backend-nufker"): {
+                        "state": "healthy",
+                        "checked_at": "not-a-timestamp",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    result = spark_health_status("backend-nufker", path=path, now=NOW)
+
+    assert result["reason"] == "invalid_spark_health_record"
+    import codex_usage.spark_health as spark_health_module
+
+    assert spark_health_module._parse_timestamp(None) is None
 
 
 def test_spark_health_success_is_fresh_until_expiry(tmp_path):
@@ -336,3 +403,12 @@ def test_spark_health_write_fails_when_directory_chmod_fails(tmp_path, monkeypat
         set_spark_health("backend-nufker", "healthy", path=path, now=NOW)
 
     assert not path.exists()
+
+
+def test_spark_health_rejects_oversized_payload(tmp_path, monkeypatch):
+    import codex_usage.spark_health as spark_health_module
+
+    monkeypatch.setattr(spark_health_module, "SPARK_HEALTH_MAX_BYTES", 1)
+
+    with pytest.raises(ValueError, match="file is too large"):
+        set_spark_health("backend-nufker", "healthy", path=tmp_path / "health.json", now=NOW)

@@ -12659,3 +12659,14 @@ schließen Parser-, Retention- und Schreib-Budget-Guards.
 
 Verifikation: **47 Health-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `health.py`: **100 %**; keine Settings-Fenster gestartet.
+
+## Runde 1061: Spark-Health-Parser und Größen-Guards vollständig geprüft
+
+Default-Pfad, fehlende Symlink-Ziele, Private-IO-Fehler, ungültige Record-
+Container und Zeitstempel sowie übergroße Spark-Health-Payloads waren noch
+offen. Sechs Regressionen schließen diese fail-closed Parser- und
+Schreibgrenzen.
+
+Verifikation: **35 Spark-Health-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `spark_health.py`: **100 %**; keine Settings-Fenster
+gestartet.
