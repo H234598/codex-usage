@@ -75,8 +75,7 @@ TRUSTED_BROWSER_HOSTS = frozenset(("chatgpt.com", "openai.com"))
 
 def _validate_browser_timeout_ms(timeout_ms: object) -> None:
     if (
-        isinstance(timeout_ms, bool)
-        or not isinstance(timeout_ms, int)
+        type(timeout_ms) is not int
         or not 1 <= timeout_ms <= BROWSER_TIMEOUT_MAX_MS
     ):
         raise ValueError("browser timeout is invalid")
@@ -722,7 +721,7 @@ def _diagnostic_keys(mapping: dict[Any, Any]) -> list[str]:
 def _diagnostic_value(value: Any) -> str | bool | int | float | None:
     if value is None or isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)):
+    if type(value) in (int, float):
         return value
     if isinstance(value, str):
         return _diagnostic_text(value, limit=DIAGNOSTIC_MAX_FIELD_CHARS)
@@ -1269,9 +1268,7 @@ def _status_for_result(
 def _main_response_failed(status: int | None) -> bool:
     return (
         status is None
-        or
-        isinstance(status, bool)
-        or not isinstance(status, int)
+        or type(status) is not int
         or status < 200
         or status >= 300
     )

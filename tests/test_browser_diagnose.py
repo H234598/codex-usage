@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from playwright.sync_api import sync_playwright
 
+import codex_usage.browser as browser_module
 from codex_usage.browser import (
     DIAGNOSTIC_MAX_RESPONSES,
     _capture_diagnostic_response,
@@ -32,6 +33,24 @@ class FakeScreenshotPage:
         assert full_page is True
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("fake-png")
+
+
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic browser status comparison marker")
+
+    def __ge__(self, _other):
+        raise RuntimeError("synthetic browser status comparison marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic browser diagnostic conversion marker")
+
+
+def test_browser_numeric_boundaries_reject_subclasses_before_operations():
+    assert browser_module._diagnostic_value(_BrokenFloat(50.0)) == "_BrokenFloat"
+    assert browser_module._main_response_failed(_BrokenInt(200)) is True
 
 
 def test_diagnose_auth_json_redacts_token_values(tmp_path):
@@ -404,6 +423,7 @@ def test_status_for_result_prioritizes_logged_out_page_over_stale_usage_values()
         (500, AccountStatus.ERROR),
         (302, AccountStatus.ERROR),
         (304, AccountStatus.ERROR),
+        (_BrokenInt(200), AccountStatus.ERROR),
     ],
 )
 def test_status_for_result_rejects_failed_main_response_with_usage_values(

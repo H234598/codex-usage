@@ -9808,3 +9808,18 @@ Aufrufer ab.
 Verifikation: **185 Direct-Tests**, **448 Direct-, Scheduler- und
 Browser-Diagnose-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 823: Browser-Numerik vor Fremdoperatoren schützen
+
+`browser.py` akzeptierte bei Timeout, Diagnosewerten und HTTP-Status noch
+`int`-/`float`-Subklassen. Überschriebene Vergleichs- oder Konvertierungs-
+operatoren konnten Profil-, Diagnose- und Statuspfade mit rohen Exceptions
+abbrechen oder fremde Zahlen in Diagnose-DTOs zurückgeben.
+
+Die drei Browser-Grenzen akzeptieren jetzt nur Built-in-`int`/`float`; fremde
+Zahlen werden kontrolliert verworfen beziehungsweise als Typname diagnostisch
+ausgegeben. Regression deckt direkte Helper und Browser-/Scheduler-/CLI-
+Aufrufer ab.
+
+Verifikation: **178 fokussierte Browser-Tests**, **516 Browser-, Scheduler- und
+CLI-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.

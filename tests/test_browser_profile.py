@@ -30,6 +30,14 @@ from codex_usage.extractor import JsonCandidate
 from codex_usage.models import Account, LimitWindow
 
 
+class _BrokenInt(int):
+    def __le__(self, _other):
+        raise RuntimeError("synthetic browser integer comparison marker")
+
+    def __ge__(self, _other):
+        raise RuntimeError("synthetic browser integer comparison marker")
+
+
 @pytest.mark.parametrize("entrypoint", ("fetch", "diagnose"))
 @pytest.mark.parametrize(
     "timeout_ms",
@@ -44,6 +52,7 @@ from codex_usage.models import Account, LimitWindow
         pytest.param(float("-inf"), id="negative-infinity"),
         pytest.param("1000", id="string"),
         pytest.param(10**10_000, id="huge-int"),
+        pytest.param(_BrokenInt(1000), id="integer-subclass"),
     ),
 )
 def test_browser_entrypoints_reject_invalid_timeout_before_profile_creation(
