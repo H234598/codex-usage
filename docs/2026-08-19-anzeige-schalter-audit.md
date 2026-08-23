@@ -12280,3 +12280,14 @@ Verifikation: **135 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **87 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1027: Optionale Account-Feldtypen im Parser abgesichert
+
+`_account_from_data()` hatte die Nicht-String-Pfade für `tag`,
+`reactivation_browser` und `series` noch offen. Drei parametrisierte Tests
+bestätigen jeweils klare Ablehnung vor Pfad-/Config-Auflösung.
+
+Verifikation: **138 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **88 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

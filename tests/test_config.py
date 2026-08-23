@@ -1184,6 +1184,27 @@ def test_account_from_data_normalizes_empty_auth_path(tmp_path):
 
 @pytest.mark.parametrize(
     ("field", "value", "message"),
+    [
+        ("tag", 123, "account tag must be a string"),
+        ("reactivation_browser", 123, "reactivation_browser must be a string"),
+        ("series", 123, "series must be a string"),
+    ],
+)
+def test_account_from_data_rejects_non_string_optional_fields(
+    tmp_path, field, value, message
+):
+    data = {
+        "id": "optional-fields",
+        "profile_dir": str(tmp_path / "profile"),
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        config_module._account_from_data(data)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
     (
         pytest.param("label", [], "account label must be a string", id="label"),
         pytest.param("profile_dir", [], "profile_dir must be a string", id="profile-dir"),
