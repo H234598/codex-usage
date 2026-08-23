@@ -1189,7 +1189,7 @@ def _has_malformed_main_limit_structure(payloads: list[dict[str, Any]]) -> bool:
 def _has_malformed_spark_limit_structure(payloads: list[dict[str, Any]]) -> bool:
     return any(
         (additional := payload.get("additional_rate_limits")) is not None
-        and not isinstance(additional, list)
+        and type(additional) is not list
         for payload in payloads
     )
 

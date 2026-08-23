@@ -10717,3 +10717,18 @@ deckt den `.get()`-Hook ab; normale Main-Limit-Antworten bleiben unverändert.
 
 Verifikation: **220 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 888: Spark-Malformed-Guard auf native Listen begrenzen
+
+`direct._has_malformed_spark_limit_structure()` akzeptierte
+`additional_rate_limits`-Listen-Subklassen per `isinstance`. Die nachgelagerte
+Spark-Signatur behandelte solche Werte bereits als ungültig; dadurch konnte die
+Auswahl einen manipulierten Wert passieren lassen, statt ihn als malformed zu
+verwerfen.
+
+Der Malformed-Guard akzeptiert jetzt ausschließlich eine native `list`;
+Subklassen werden vor der Signaturbildung abgewiesen. Regression deckt einen
+manipulierten Iterator ab; normale Spark-Limit-Antworten bleiben unverändert.
+
+Verifikation: **221 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

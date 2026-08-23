@@ -1454,6 +1454,31 @@ def test_select_stable_wham_usage_rejects_malformed_spark_limit_structure(value)
         _select_stable_wham_usage([response, response, response])
 
 
+def test_select_stable_wham_usage_rejects_spark_limit_list_subclass():
+    class BrokenAdditionalLimits(list):
+        def __iter__(self):
+            raise RuntimeError("synthetic Spark malformed marker")
+
+    response = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 3,
+                "limit_window_seconds": 18_000,
+            },
+            "secondary_window": {
+                "used_percent": 45,
+                "limit_window_seconds": 604_800,
+            },
+        },
+        "additional_rate_limits": BrokenAdditionalLimits(),
+    }
+
+    with pytest.raises(DirectFetchError, match="Spark limits were malformed"):
+        _select_stable_wham_usage([response, response, response])
+
+
 def test_select_stable_wham_usage_rejects_mixed_sparse_spark_limit_forms():
     def response(**overrides: object) -> dict:
         base = {
