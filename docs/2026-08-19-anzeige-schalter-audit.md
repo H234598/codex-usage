@@ -12626,3 +12626,26 @@ schließen Dispatcher-Retry und Protokollfehler.
 Verifikation: **129 App-Server-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `app_server.py`: **91 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1058: App-Server Model-/Command-/Window-Guards geschlossen
+
+Ungültige Model-Listen, fehlender Default-Codex-Befehl, Prozessstartfehler,
+ungültiges `CODEX_HOME`, fehlende/ungültige Rate-Limit-Fenster sowie
+unvollständige Usage-Fehlerdetails waren noch nicht direkt belegt. Zehn
+Regressionen schließen diese Protokoll-, Konfigurations- und Mapping-Guards.
+
+Verifikation: **139 App-Server-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `app_server.py`: **93 %**; keine Settings-Fenster
+gestartet.
+
+## Runde 1059: App-Server Prozess-/Reader-Cleanup vollständig geprüft
+
+Timeout-Kill, Kill-Fallback, Join-/Close-Rennen, Signal-Fallback,
+fehlendes Stdout sowie Reader-Queue-, Stderr- und Read-Fehlerpfade waren noch
+offen. Achtzehn Regressionen führen alle Cleanup- und Queue-Guards direkt aus;
+zusätzlich sind ChatGPT-Account-Typ, Refresh-Auth-Fehler und defensive
+Snapshot-Typprüfung abgedeckt.
+
+Verifikation: **157 App-Server-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `app_server.py`: **100 %**; keine Settings-Fenster
+gestartet.

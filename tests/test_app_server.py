@@ -5,6 +5,7 @@ import json
 import queue
 import signal
 import socket
+import subprocess
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -118,11 +119,32 @@ def test_app_server_symlink_check_scans_after_missing_segment(tmp_path):
         )
 
 
+def test_app_server_symlink_check_skips_explicit_dot_segment(monkeypatch):
+    class FakePath:
+        anchor = "/"
+        parts = ("/", ".")
+
+        def __init__(self, _value):
+            pass
+
+        def is_absolute(self):
+            return True
+
+        def is_symlink(self):
+            return False
+
+    monkeypatch.setattr(app_server_module, "Path", FakePath)
+
+    app_server_module._assert_no_symlink_ancestors(FakePath("/"))
+
+
 def _fake_codex(
     path: Path,
     requests_path: Path,
     *,
     reject_initial_account_read: bool = False,
+    reject_account_read: bool = False,
+    account_type: str = "chatgpt",
     account_plan_type: str | None = None,
     account_email: str | None = None,
     account_credits: str | None = None,
@@ -151,7 +173,9 @@ for line in sys.stdin:
     if method == "initialize":
         print(json.dumps({{"id": message["id"], "result": {{}}}}), flush=True)
     elif method == "account/read":
-        if {reject_initial} and not message.get("params", {{}}).get("refreshToken"):
+        if ({reject_account_read} or ({reject_initial} and not message.get(
+                "params", {{}}).get("refreshToken")
+        )):
             response = {{
                 "id": message["id"],
                 "error": {{"code": 401, "message": "unauthorized"}},
@@ -160,7 +184,7 @@ for line in sys.stdin:
             response = {{
                 "id": message["id"],
                 "result": {{
-                    "account": {{"type": "chatgpt"{plan_field}{email_field}{credits_field}}},
+                    "account": {{"type": {account_type!r}{plan_field}{email_field}{credits_field}}},
                     "requiresOpenaiAuth": True,
                 }},
             }}
@@ -524,6 +548,54 @@ def test_app_server_refreshes_when_initial_account_read_is_unauthorized(tmp_path
     requests = json.loads(requests_path.read_text())
     account_reads = [item for item in requests if item["method"] == "account/read"]
     assert [item["params"]["refreshToken"] for item in account_reads] == [False, True]
+
+
+def test_app_server_rejects_non_chatgpt_account_type(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(hours=1))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        account_type="api",
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "Codex app server requires ChatGPT login"
+
+
+def test_app_server_does_not_retry_refresh_auth_error(tmp_path):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    _auth(auth_path, datetime.now(UTC) + timedelta(minutes=5))
+    command = _fake_codex(
+        tmp_path / "codex",
+        tmp_path / "requests.json",
+        reject_account_read=True,
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account, codex_command=command)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "unauthorized"
 
 
 def test_app_server_rejects_auth_identity_changed_during_rate_limit_read(
@@ -1030,6 +1102,94 @@ def test_app_server_deadline_and_primitive_validators_reject_invalid_values():
     assert app_server_module._window_duration_is_missing({"windowDurationMins": 300}) is False
 
 
+def test_resolve_codex_reports_missing_default_command(monkeypatch):
+    monkeypatch.setattr(app_server_module.shutil, "which", lambda _name: None)
+
+    with pytest.raises(AppServerUnavailableError, match="command was not found"):
+        _resolve_codex(None)
+
+
+def test_start_app_server_maps_process_start_error(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    command = tmp_path / "codex"
+    command.write_text("#!/bin/sh\n", encoding="utf-8")
+    command.chmod(0o700)
+    monkeypatch.setattr(
+        app_server_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic start failure")),
+    )
+
+    with pytest.raises(AppServerUnavailableError, match="could not start codex app server"):
+        app_server_module._start_app_server(str(command), codex_home)
+
+
+def test_validate_codex_home_rejects_regular_file(tmp_path):
+    path = tmp_path / "file"
+    path.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(AppServerAuthError, match="real directory"):
+        app_server_module._validate_codex_home(path)
+
+
+def test_window_mapping_requires_rate_limits_object():
+    with pytest.raises(AppServerProtocolError, match="no rateLimits object"):
+        _windows_from_response({})
+
+
+def test_window_mapping_returns_empty_when_all_buckets_invalid():
+    assert _windows_from_response(
+        {"rateLimits": {"primary": {"usedPercent": "invalid"}}}
+    ) == (None, None)
+
+
+def test_window_mapping_defensive_snapshot_type_guard(monkeypatch):
+    builtin_dict = type({})
+
+    class DictProxyMeta(type):
+        def __instancecheck__(_cls, value):
+            return isinstance(value, builtin_dict)
+
+    class DictProxy(metaclass=DictProxyMeta):
+        calls = 0
+
+        def __new__(cls, _value=()):
+            cls.calls += 1
+            return object() if cls.calls == 1 else builtin_dict()
+
+    monkeypatch.setitem(app_server_module.__dict__, "dict", DictProxy)
+
+    with pytest.raises(AppServerProtocolError, match="no rateLimits object"):
+        _windows_from_response({"rateLimits": {}})
+
+
+def test_missing_usage_error_reports_available_five_hour_window():
+    five_hour = LimitWindow(name="5h", used=20, limit=100)
+
+    assert _missing_usage_limits_error({}, "free", five_hour, None) == (
+        "weekly limit unavailable in app server response "
+        "(plan free; available window 5h)"
+    )
+
+
+def test_unsupported_window_duration_scans_codex_snapshot():
+    assert _unsupported_window_durations(
+        {
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {"usedPercent": 1, "windowDurationMins": 43_200}
+                }
+            }
+        }
+    ) == {43_200}
+
+
+def test_window_rejects_invalid_used_percent():
+    with pytest.raises(AppServerProtocolError, match="usedPercent is invalid"):
+        _window("five_hour", {"usedPercent": 101})
+
+
 def test_app_server_strict_int_rejects_integer_subclasses():
     class BrokenInt(int):
         def __ge__(self, _other):
@@ -1136,6 +1296,26 @@ def test_app_server_model_request_rejects_invalid_entries(monkeypatch):
     )
 
     with pytest.raises(AppServerProtocolError, match="model id is invalid"):
+        app_server_module._request_model_ids(
+            object(),
+            object(),
+            request_id=4,
+            deadline=12.5,
+            stderr_reader=object(),
+        )
+
+
+@pytest.mark.parametrize("data", [{}, [None]])
+def test_app_server_model_request_rejects_invalid_data_shapes(monkeypatch, data):
+    monkeypatch.setattr(app_server_module, "_send", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        app_server_module,
+        "_response_for",
+        lambda *_args, **_kwargs: {"data": data},
+    )
+
+    message = "model list is invalid" if isinstance(data, dict) else "model entry is invalid"
+    with pytest.raises(AppServerProtocolError, match=message):
         app_server_module._request_model_ids(
             object(),
             object(),
@@ -1961,6 +2141,209 @@ def test_stop_process_ignores_exit_races():
             raise ProcessLookupError
 
     _stop_process(FakeProcess())
+
+
+@pytest.mark.parametrize("second_error", [None, OSError("kill wait failed")])
+def test_stop_process_kills_after_timeout(monkeypatch, second_error):
+    calls = []
+
+    class FakeProcess:
+        stdin = stdout = stderr = None
+        pid = 1234
+
+        def __init__(self):
+            self.wait_calls = 0
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            calls.append(("wait", timeout))
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired("codex", timeout)
+            if second_error is not None:
+                raise second_error
+
+    def signal_group(_process, signum, *, fallback=True):
+        calls.append(("signal", signum, fallback))
+        return True
+
+    monkeypatch.setattr(app_server_module, "_signal_process_group", signal_group)
+
+    _stop_process(FakeProcess())
+
+    assert calls[:2] == [
+        ("signal", signal.SIGTERM, True),
+        ("wait", 2),
+    ]
+    assert ("signal", signal.SIGKILL, True) in calls
+
+
+def test_stop_process_returns_when_kill_fails(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        stdin = stdout = stderr = None
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            calls.append(("wait", timeout))
+            raise subprocess.TimeoutExpired("codex", timeout)
+
+    def signal_group(_process, signum, *, fallback=True):
+        calls.append(("signal", signum, fallback))
+        return signum != signal.SIGKILL
+
+    monkeypatch.setattr(app_server_module, "_signal_process_group", signal_group)
+
+    _stop_process(FakeProcess())
+
+    assert calls == [
+        ("signal", signal.SIGTERM, True),
+        ("wait", 2),
+        ("signal", signal.SIGKILL, True),
+    ]
+
+
+def test_stop_process_ignores_wait_os_error(monkeypatch):
+    class FakeProcess:
+        stdin = stdout = stderr = None
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            raise OSError("wait failed")
+
+    monkeypatch.setattr(app_server_module, "_signal_process_group", lambda *_args, **_kwargs: True)
+
+    _stop_process(FakeProcess())
+
+
+def test_stop_process_ignores_reader_join_runtime_error(monkeypatch):
+    class FakeProcess:
+        stdin = stdout = stderr = None
+
+        def poll(self):
+            return 0
+
+    class BrokenReader:
+        def join(self, timeout):
+            raise RuntimeError("reader already stopped")
+
+    _stop_process(FakeProcess(), readers=(BrokenReader(),))
+
+
+def test_close_process_stream_ignores_non_callable_close():
+    app_server_module._close_process_stream(SimpleNamespace(close=1))
+
+
+def test_signal_process_group_returns_false_when_killpg_fails_without_fallback(
+    monkeypatch,
+):
+    class FakeProcess:
+        pid = 1234
+
+    monkeypatch.setattr(
+        app_server_module.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(OSError("killpg failed")),
+    )
+
+    assert _signal_process_group(FakeProcess(), signal.SIGTERM, fallback=False) is False
+
+
+def test_signal_process_group_uses_kill_for_sigkill_after_killpg_failure(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = 1234
+
+        def kill(self):
+            calls.append("kill")
+
+    monkeypatch.setattr(
+        app_server_module.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(OSError("killpg failed")),
+    )
+
+    assert _signal_process_group(FakeProcess(), signal.SIGKILL) is True
+    assert calls == ["kill"]
+
+
+def test_line_reader_reports_missing_stdout():
+    reader = _LineReader(None)
+    reader.run()
+
+    item = reader.items.get_nowait()
+    assert isinstance(item, AppServerProtocolError)
+    assert "stdout is unavailable" in str(item)
+
+
+def test_line_reader_replace_oldest_handles_empty_queue(monkeypatch):
+    class EmptyAfterFull:
+        def put_nowait(self, _item):
+            raise queue.Full
+
+        def get_nowait(self):
+            raise queue.Empty
+
+    reader = _LineReader(None)
+    reader.items = EmptyAfterFull()
+
+    assert reader._put_item(b"item", replace_oldest=True) is False
+
+
+def test_line_reader_replace_oldest_handles_second_full_queue():
+    class FullAfterReplacement:
+        def __init__(self):
+            self.put_calls = 0
+
+        def put_nowait(self, _item):
+            self.put_calls += 1
+            raise queue.Full
+
+        def get_nowait(self):
+            return b"old"
+
+    reader = _LineReader(None)
+    reader.items = FullAfterReplacement()
+
+    assert reader._put_item(b"item", replace_oldest=True) is False
+
+
+def test_stderr_reader_collects_and_normalizes_chunks():
+    class Stream:
+        def __init__(self):
+            self.chunks = iter([b" hello\n", b"world", b""])
+
+        def read(self, _size):
+            return next(self.chunks)
+
+    reader = _StderrReader(Stream())
+    reader.run()
+
+    assert reader.text() == "hello world"
+
+
+def test_stderr_reader_ignores_read_error():
+    class BrokenStream:
+        def read(self, _size):
+            raise OSError("stderr closed")
+
+    reader = _StderrReader(BrokenStream())
+    reader.run()
+    assert reader.text() == ""
+
+
+def test_stderr_reader_accepts_missing_stream():
+    reader = _StderrReader(None)
+    reader.run()
+    assert reader.text() == ""
 
 
 def test_reader_cleanup_closes_streams_and_joins_reader_threads(monkeypatch):
