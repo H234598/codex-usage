@@ -10375,3 +10375,16 @@ simuliert den fehlerhaften Vergleichs-Hook.
 
 Verifikation: **195 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 863: Auth-Pfade auf nativen Path-Typ begrenzen
+
+`direct._require_auth_path()` akzeptierte `Path`-Subklassen und gab sie an
+weitere Auth-/Dateipfade weiter. Überschriebene Pfadmethoden konnten damit die
+spätere Sicherheitsprüfung mit fremder Semantik oder rohen Exceptions belasten.
+
+Der Guard akzeptiert jetzt ausschließlich den nativen Plattform-`Path`-Typ.
+Regression stellt sicher, dass eine `Path`-Subklasse fail-closed abgewiesen
+wird; normale `Path`-/`PosixPath`-Aufrufer bleiben unverändert.
+
+Verifikation: **196 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

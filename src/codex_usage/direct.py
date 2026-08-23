@@ -28,6 +28,7 @@ from .usage_limits import (
 from .usage_resets import parse_usage_resets
 
 WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+_PATH_TYPE = type(Path())
 DIRECT_RESPONSE_SAMPLE_COUNT = 3
 DIRECT_STABILITY_ATTEMPTS = 3
 DIRECT_STABILITY_RETRY_DELAY_SECONDS = 0.05
@@ -879,7 +880,7 @@ def validate_auth_json_file(path: Path):
 
 
 def _require_auth_path(path: object) -> Path:
-    if not isinstance(path, Path):
+    if type(path) is not _PATH_TYPE:
         raise DirectAuthError("auth.json path is invalid")
     return path
 
