@@ -12156,3 +12156,14 @@ serialisierten Modellkarte fernbleiben.
 Verifikation: **63 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **98 %**, verbleibende Missing-Zeilen liegen
 in Reset-/Pool- und Float-Exceptionpfaden; keine Settings-Fenster gestartet.
+
+## Runde 1016: Pool-Serialisierung bei Exhaustion-Fehler fail-closed
+
+`models._pool_to_dict()` hatte den Ausnahme-Fallback beim Zugriff auf
+`pool.exhausted` noch nicht direkt belegt. Ein Testdouble bestätigt, dass der
+serialisierte Pool stattdessen sicher `exhausted: true` erhält.
+
+Verifikation: **64 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **99 %**, verbleibende Missing-Zeilen liegen
+im inkonsistenten Reset-Guard und Float-Overflow-Fallback; keine
+Settings-Fenster gestartet.

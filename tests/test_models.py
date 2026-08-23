@@ -43,6 +43,12 @@ class _ExplodingUsageWindow(LimitWindow):
         raise ValueError("synthetic usage marker")
 
 
+class _ExplodingPool(UsagePool):
+    @property
+    def exhausted(self):
+        raise TypeError("synthetic exhaustion marker")
+
+
 @pytest.mark.parametrize("duration", [True, 1.0, "1", 0, -1, None])
 def test_window_for_duration_rejects_invalid_duration_types(duration):
     pool = UsagePool(
@@ -311,6 +317,19 @@ def test_account_usage_as_dict_skips_unhashable_model_pool_keys():
     payload = usage.as_dict()
 
     assert tuple(payload["models"]) == ("valid",)
+
+
+def test_account_usage_as_dict_fails_closed_for_pool_exhaustion_error():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        models=(_ExplodingPool(key="boom", display_name="Boom"),),
+    )
+
+    payload = usage.as_dict()
+
+    assert payload["models"]["boom"]["exhausted"] is True
 
 
 def test_account_usage_as_dict_skips_ambiguous_model_pool_keys():
