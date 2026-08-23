@@ -9792,3 +9792,19 @@ direkte Helper, State-Generation und die Bridge-/Scheduler-/CLI-Aufrufer ab.
 
 Verifikation: **272 State-Tests**, **873 State-, Bridge-, Scheduler- und
 CLI-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 822: Direct-Numerik vor Fremdoperatoren schützen
+
+`direct.py` akzeptierte bei Timeout-/Deadline-Werten, HTTP-Status, WHAM-
+Fensterdaten, Credits, JWT-Ablaufzeiten und Antwortsignaturen noch numerische
+Subklassen. `float()`- oder Vergleichsoperatoren aus solchen Werten konnten
+Fetch-, Auth- und Stabilitätsprüfungen mit rohen Exceptions abbrechen.
+
+Alle Direct-Numerikgrenzen akzeptieren jetzt ausschließlich Built-in-`int`/
+`float` (Credits zusätzlich Built-in-`str`). Ungültige Werte werden kontrolliert
+verworfen. Regression deckt alle zentralen Normalisierer sowie HTTP-/JWT-
+Aufrufer ab.
+
+Verifikation: **185 Direct-Tests**, **448 Direct-, Scheduler- und
+Browser-Diagnose-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.

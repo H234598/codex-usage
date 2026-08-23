@@ -275,7 +275,7 @@ class DirectFetchError(Exception):
 
 
 def _direct_deadline(timeout_seconds: int | float) -> float:
-    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+    if type(timeout_seconds) not in (int, float):
         raise DirectFetchError("direct timeout must be a positive finite number")
     try:
         seconds = float(timeout_seconds)
@@ -292,6 +292,8 @@ def _direct_deadline(timeout_seconds: int | float) -> float:
 
 
 def _remaining_direct_timeout(deadline: float) -> float:
+    if type(deadline) not in (int, float):
+        raise DirectFetchError("direct fetch timed out")
     remaining = deadline - time.monotonic()
     if not math.isfinite(remaining) or remaining <= 0:
         raise DirectFetchError("direct fetch timed out")
@@ -311,7 +313,7 @@ def _missing_usage_limits_error(
             if not isinstance(window, dict):
                 continue
             raw_seconds = window.get("limit_window_seconds")
-            if isinstance(raw_seconds, bool) or not isinstance(raw_seconds, (int, float)):
+            if type(raw_seconds) not in (int, float):
                 continue
             try:
                 seconds = float(raw_seconds)
@@ -327,8 +329,7 @@ def _missing_usage_limits_error(
                 else:
                     used_percent = window.get("used_percent")
                     if (
-                        isinstance(used_percent, (int, float))
-                        and not isinstance(used_percent, bool)
+                        type(used_percent) in (int, float)
                         and 0 <= used_percent <= 100
                     ):
                         available.add(duration)
@@ -780,7 +781,7 @@ def _validate_access_token_expiry(token: str, *, path: Path) -> None:
     if not isinstance(claims, dict) or "exp" not in claims:
         return
     expiry = claims.get("exp")
-    if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
+    if type(expiry) not in (int, float):
         raise DirectAuthError(f"auth.json access_token expiry is invalid: {path}")
     try:
         numeric_expiry = float(expiry)
@@ -933,8 +934,7 @@ def _fetch_wham_usage(
             status = getattr(response, "status", None)
             if (
                 status is None
-                or isinstance(status, bool)
-                or not isinstance(status, int)
+                or type(status) is not int
                 or status < 200
                 or status >= 300
             ):
@@ -1253,7 +1253,7 @@ def _usage_window_signature(value: Any) -> tuple | None:
 
 
 def _signature_number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         return None
     try:
         number = float(value)
@@ -1631,7 +1631,7 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
         return None
     if isinstance(candidate, bool):
         return None
-    if isinstance(candidate, (int, float, str)) and not isinstance(candidate, bool):
+    if type(candidate) in (int, float, str):
         try:
             numeric = float(candidate)
         except (OverflowError, TypeError, ValueError):
@@ -1645,7 +1645,7 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
     def number(*keys: str) -> float | None:
         for key in keys:
             value = candidate.get(key)
-            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            if type(value) not in (int, float, str):
                 continue
             try:
                 numeric = float(value)
@@ -1687,7 +1687,7 @@ def _jwt_expiry(token: Any) -> datetime | None:
     if not isinstance(claims, dict):
         return None
     exp = claims.get("exp")
-    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+    if type(exp) not in (int, float):
         return None
     try:
         return datetime.fromtimestamp(float(exp), tz=UTC).astimezone(LOCAL_TZ)
@@ -1702,7 +1702,7 @@ def _current_jwt_claims(token: Any) -> dict[str, Any] | None:
     if "exp" not in claims:
         return claims
     expiry = claims.get("exp")
-    if isinstance(expiry, bool) or not isinstance(expiry, (int, float)):
+    if type(expiry) not in (int, float):
         return None
     try:
         if not math.isfinite(float(expiry)):

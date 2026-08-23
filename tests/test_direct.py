@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.direct as direct_module
 from codex_usage.direct import (
     MAX_AUTH_JSON_BYTES,
     DirectAuthError,
@@ -63,6 +64,22 @@ def _jwt_with_raw_payload(payload: bytes) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     encoded_payload = base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
     return f"{header}.{encoded_payload}.signature"
+
+
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic direct integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic direct integer comparison marker")
+
+    def __gt__(self, _other):
+        raise RuntimeError("synthetic direct integer comparison marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic direct float conversion marker")
 
 
 @pytest.mark.parametrize(
@@ -177,6 +194,43 @@ def test_signature_number_rejects_non_finite_values_without_raising(value):
     assert _signature_number(value) is None
 
 
+def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path, monkeypatch):
+    broken_int = _BrokenInt(200)
+    broken_float = _BrokenFloat(1.0)
+
+    assert direct_module._signature_number(broken_int) is None
+    assert direct_module._signature_number(broken_float) is None
+    with pytest.raises(DirectFetchError, match="positive finite"):
+        direct_module._direct_deadline(broken_float)
+    with pytest.raises(DirectFetchError, match="timed out"):
+        direct_module._remaining_direct_timeout(broken_float)
+    assert direct_module._missing_usage_limits_error(
+        {
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": broken_float,
+                    "used_percent": broken_float,
+                }
+            }
+        },
+        None,
+    ) == "usage limits not found in direct response"
+    assert direct_module._credit_window(
+        {"credits": broken_float},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    ) is None
+
+    monkeypatch.setattr(
+        direct_module,
+        "_jwt_claims",
+        lambda _token: {"exp": broken_float},
+    )
+    assert direct_module._jwt_expiry("token") is None
+    assert direct_module._current_jwt_claims("token") is None
+    with pytest.raises(DirectAuthError, match="access_token expiry is invalid"):
+        direct_module._validate_access_token_expiry("token", path=tmp_path / "auth.json")
+
+
 def test_credit_window_extracts_nested_absolute_balance():
     window = _credit_window(
         {
@@ -218,7 +272,7 @@ def test_credit_window_rejects_invalid_balances(payload):
     )
 
 
-@pytest.mark.parametrize("status", [None, True, "200", 199, 300])
+@pytest.mark.parametrize("status", [None, True, "200", 199, 300, _BrokenInt(200)])
 def test_fetch_wham_usage_rejects_invalid_http_status(status, monkeypatch):
     class FakeResponse:
         status = 200
