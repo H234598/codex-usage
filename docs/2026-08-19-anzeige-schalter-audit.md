@@ -12743,3 +12743,14 @@ Guard waren noch offen. Sieben Regressionen schließen diese Startgrenzen.
 Verifikation: **77 Reactivation/OAuth-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `oauth_browser.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1069: Profile-Login Validation-/Auth-/Runner-Guards geprüft
+
+Result-Serialisierung, Eingabeformen, Runner-Timeout/-OSError/-Typfehler,
+Staging-Pfad, Auth-JSON-/Identity-Validierung, unsichere Staged-Dateien und
+fehlertolerantes Prozess-Cleanup waren noch offen. Elf Regressionen schließen
+diese Grundpfade.
+
+Verifikation: **59 Profile-Login-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `profile_login.py`: **94 %**; verbleibende Lücken liegen
+in Selector-/EOF-/Timeout-Branches; keine Settings-Fenster gestartet.

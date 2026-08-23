@@ -892,3 +892,159 @@ def test_bounded_device_login_applies_timeout_after_output_eof(monkeypatch):
     finally:
         FakeProcess.stdout.close()
         FakeProcess.stderr.close()
+
+
+def test_device_login_result_serializes_events():
+    result = profile_login.DeviceLoginResult(
+        True,
+        "alpha",
+        (profile_login.DeviceLoginEvent("url", "https://auth.openai.com/device"),),
+        None,
+    )
+
+    assert result.as_dict() == {
+        "ok": True,
+        "account": "alpha",
+        "events": [{"kind": "url", "value": "https://auth.openai.com/device"}],
+        "error": None,
+    }
+
+
+def test_device_login_rejects_invalid_input_shapes(tmp_path):
+    with pytest.raises(DeviceLoginError, match="account is invalid"):
+        run_device_login(object(), tmp_path / "config.toml")  # type: ignore[arg-type]
+    with pytest.raises(DeviceLoginError, match="config path"):
+        run_device_login(_account(tmp_path / "profile"), Path("relative.toml"))
+    with pytest.raises(DeviceLoginError, match="expected backend account id"):
+        run_device_login(
+            _account(tmp_path / "profile"),
+            tmp_path / "config.toml",
+            expected_backend_account_id="bad id",
+        )
+    with pytest.raises(DeviceLoginError, match="process isolation"):
+        run_device_login(
+            _account(tmp_path / "profile"),
+            tmp_path / "config.toml",
+            isolate_process_group=None,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (subprocess.TimeoutExpired(["codex"], 1), "timeout"),
+        (OSError("spawn failed"), "process_failed"),
+    ],
+)
+def test_run_command_maps_runner_failures(failure, message):
+    def runner(*_args, **_kwargs):
+        raise failure
+
+    with pytest.raises(DeviceLoginError, match=message):
+        _run_command(["codex"], env={}, timeout=1, runner=runner)
+
+
+def test_run_command_rejects_invalid_runner_result():
+    with pytest.raises(DeviceLoginError, match="runner_invalid"):
+        _run_command(
+            ["codex"],
+            env={},
+            timeout=1,
+            runner=lambda *_args, **_kwargs: object(),
+        )
+
+
+def test_staging_root_maps_private_directory_error(tmp_path, monkeypatch):
+    layout = profile_login.ProfileLayout(
+        account_id="alpha",
+        profile_dir=tmp_path / "profile",
+        codex_home=tmp_path / "profile" / "codex-home",
+        auth_json=tmp_path / "profile" / "codex-home" / "auth.json",
+        metadata=tmp_path / "profile" / "profile.json",
+        jobs=tmp_path / "profile" / "jobs",
+        migration=tmp_path / "profile" / "migration",
+    )
+    monkeypatch.setattr(
+        profile_login,
+        "ensure_private_directory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("staging path is unsafe")
+        ),
+    )
+
+    with pytest.raises(DeviceLoginError, match="staging path"):
+        profile_login._create_staging_root(layout)
+
+
+def test_staged_auth_validation_rejects_bad_json_and_non_mapping(tmp_path):
+    path = tmp_path / "auth.json"
+
+    with pytest.raises(DeviceLoginError, match="device_auth_invalid"):
+        profile_login._validate_staged_auth_payload(
+            "{invalid", path, expected_backend_account_id=None
+        )
+    with pytest.raises(DeviceLoginError, match="device_auth_invalid"):
+        profile_login._validate_staged_auth_payload(
+            "[]", path, expected_backend_account_id=None
+        )
+
+
+def test_staged_auth_validation_rejects_missing_expected_identity(tmp_path):
+    path = tmp_path / "auth.json"
+    payload = '{"tokens":{"access_token":"test-token"}}'
+
+    with pytest.raises(DeviceLoginError, match="device_auth_identity_mismatch"):
+        profile_login._validate_staged_auth_payload(
+            payload,
+            path,
+            expected_backend_account_id="backend-alpha",
+        )
+
+
+def test_staged_auth_validation_maps_identity_parser_error(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    payload = '{"tokens":{"access_token":"test-token"}}'
+    monkeypatch.setattr(
+        profile_login,
+        "auth_identity_from_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            profile_login.DirectAuthError("identity parser failed")
+        ),
+    )
+
+    with pytest.raises(DeviceLoginError, match="device_auth_identity_invalid"):
+        profile_login._validate_staged_auth_payload(
+            payload,
+            path,
+            expected_backend_account_id="backend-alpha",
+        )
+
+
+def test_staged_auth_and_copy_reject_insecure_files(tmp_path):
+    source = tmp_path / "staged.json"
+    source.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
+    source.chmod(0o640)
+
+    with pytest.raises(DeviceLoginError, match="device_auth_invalid"):
+        profile_login._validate_staged_auth(source)
+    with pytest.raises(DeviceLoginError, match="device_auth_invalid"):
+        profile_login._copy_private_file(source, tmp_path / "target.json")
+
+
+def test_bounded_process_cleanup_ignores_kill_and_wait_errors(monkeypatch):
+    class BrokenProcess:
+        pid = 1234
+
+        def kill(self):
+            raise OSError("already gone")
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("codex", timeout)
+
+    monkeypatch.setattr(
+        profile_login.os,
+        "killpg",
+        lambda *_args: (_ for _ in ()).throw(OSError("group gone")),
+    )
+
+    _terminate_bounded_process(BrokenProcess())
