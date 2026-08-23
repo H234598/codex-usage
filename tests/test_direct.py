@@ -490,6 +490,15 @@ def test_rate_limit_window_returns_native_primary_window():
     ) == window
 
 
+def test_progressive_window_identity_accepts_same_duration_and_reset():
+    assert direct_module._progressive_window_identity_is_stable(
+        [
+            (18_000, 1, ("at", 200), None),
+            (18_000, 2, ("at", 200), None),
+        ]
+    ) is True
+
+
 def test_signature_flag_rejects_string_hooks():
     class BrokenFlag:
         def __str__(self):

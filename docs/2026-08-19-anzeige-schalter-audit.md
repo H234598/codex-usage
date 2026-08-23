@@ -11372,3 +11372,12 @@ abgedeckt. Der neue direkte Test prüft die Rückgabe des nativen
 
 Verifikation: **277 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 941: Stabile Fensteridentität direkt geprüft
+
+`direct._progressive_window_identity_is_stable()` hatte bisher keinen direkten
+Test. Der neue Test bestätigt gleiche Fensterdauer und gleiche absolute
+Reset-Identität über zwei Samples.
+
+Verifikation: **278 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
