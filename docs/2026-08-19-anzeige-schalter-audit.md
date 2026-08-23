@@ -12500,3 +12500,13 @@ verbleibenden Pfade.
 
 Verifikation: **191 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **100 %**; keine Settings-Fenster gestartet.
+
+## Runde 1046: Private-IO-Deadline und Directory-Guards geprüft
+
+`private_io.py` hatte noch keinen direkten Test für nicht-finite monotone
+Deadlines, `lstat()`-Fehler oder einen Descriptor, der kein Verzeichnis ist.
+Drei Regressionen bestätigen fail-closed Verhalten; Fokus-Coverage stieg von
+81 % auf **83 %** (56 Tests).
+
+Verifikation: **56 Private-IO-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

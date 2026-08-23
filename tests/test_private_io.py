@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +24,43 @@ INVALID_LOCK_TIMEOUTS = (
     "1",
     10**10_000,
 )
+
+
+def test_lock_deadline_rejects_non_finite_monotonic_result(monkeypatch):
+    monkeypatch.setattr(private_io.time, "monotonic", lambda: float("inf"))
+
+    with pytest.raises(ValueError, match="non-negative finite"):
+        private_io._lock_deadline(0)
+
+
+def test_require_private_directory_maps_lstat_error(tmp_path, monkeypatch):
+    path = tmp_path / "missing"
+
+    def fail_lstat(_path):
+        raise OSError("synthetic lstat failure")
+
+    monkeypatch.setattr(Path, "lstat", fail_lstat)
+
+    with pytest.raises(ValueError, match="must be a real directory"):
+        private_io._require_private_directory(path, label="private directory")
+
+
+def test_chmod_private_directory_rejects_non_directory_descriptor(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "directory"
+    path.mkdir()
+    descriptor = 41
+    monkeypatch.setattr(private_io.os, "open", lambda *_args, **_kwargs: descriptor)
+    monkeypatch.setattr(
+        private_io.os,
+        "fstat",
+        lambda _fd: SimpleNamespace(st_mode=0, st_uid=private_io.os.getuid()),
+    )
+    monkeypatch.setattr(private_io.os, "close", lambda _fd: None)
+
+    with pytest.raises(ValueError, match="private user-owned directory"):
+        private_io._chmod_private_directory(path, label="private directory")
 
 
 @pytest.mark.parametrize(
