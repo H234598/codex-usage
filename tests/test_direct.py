@@ -733,6 +733,15 @@ def test_jwt_claims_rejects_string_subclass_hooks():
     assert direct_module._jwt_claims(BrokenStr("token")) is None
 
 
+def test_jwt_claims_rejects_dict_subclass_results(monkeypatch):
+    class BrokenClaims(dict):
+        pass
+
+    monkeypatch.setattr(direct_module, "loads_strict", lambda _raw: BrokenClaims())
+
+    assert direct_module._jwt_claims(_jwt_with_claims({})) is None
+
+
 def test_jwt_claims_reject_extra_segments():
     token = _jwt_with_claims({"sub": "account"}) + ".extra"
 

@@ -10989,3 +10989,17 @@ Strukturen bleiben unverändert.
 
 Verifikation: **239 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 907: JWT-Claims nur aus nativen Dicts übernehmen
+
+`direct._jwt_claims()` gab ein von `loads_strict()` geliefertes Dict-Subclass
+über `isinstance` weiter. Nachgelagerte Auth-Parser verwenden darauf `.get()`
+und Membership-Checks; ein manipuliertes Claims-Mapping konnte diese Auswertung
+mit fremden Hooks beeinflussen.
+
+Der Parser akzeptiert jetzt ausschließlich ein natives Claims-`dict` und
+verwirft Subklassen fail-closed. Regression injiziert ein Claims-Subclass in
+den Parser; normale JWT-Claims bleiben unverändert.
+
+Verifikation: **240 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

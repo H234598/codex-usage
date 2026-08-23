@@ -1789,7 +1789,7 @@ def _jwt_claims(token: Any) -> dict[str, Any] | None:
         claims = loads_strict(decoded)
     except (ValueError, OSError, UnicodeError):
         return None
-    return claims if isinstance(claims, dict) else None
+    return claims if type(claims) is dict else None
 
 
 def _is_access_token_expired(expiry: datetime | None, *, now: datetime) -> bool:
