@@ -12961,3 +12961,31 @@ Verifikation: **213 `tests/test_extractor.py`-Tests**, `extractor.py`
 **1046/1046 Statements und 522/522 Branches, 100 % Coverage**, Mypy, Ruff und
 Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1084: Integration-Installer-Prozess-, Manifest- und Cleanup-Guards vollständig geprüft
+
+`integration_installer.py` hatte noch unbelegte Grenzen bei Identitäts- und
+Pfadvalidierung, privaten Verzeichnissen, No-Follow-Kopieren und -Lesen,
+Deadline-/Preflight-Abbruch, Wheel-/`RECORD`-Aufbau und -Prüfung, sicherem
+Wheel-Entpacken, Postwalk- und Aktivierungsdateien, Site-Packages-Ermittlung,
+exklusiven Writes, Release-Entry-Points, Source-Drift, Kandidatenlesefehlern,
+Post-Build-Fehlern sowie aktiver Manifest-/Rollback-Auswahl. Die fokussierten
+Regressionen führen diese Prozess-, Manifest-, Größen-, Typ-, Race- und
+Fail-Closed-Pfade direkt aus. Die letzte Rückgabe der neuen Release- und
+Rollback-Guards wird mit einer zweiten, tatsächlich veränderten Release-Datei
+geprüft; dadurch bleibt auch der aktive-Manifest-Zweig realistisch.
+
+Die elf verbliebenen Branch-Markierungen lagen ausschließlich an
+FD-Sentinel-Cleanup in `finally`-Blöcken: Bei Exception-Unwind kann Coverage
+den bereits ausgeführten Cleanup-Zweig nicht als falsche Kante zurückmelden,
+obwohl die Pfade durch gezielte Regressionen ausgeführt werden. Die
+`no branch`-Kommentare dokumentieren diese Messgrenze; Laufzeitverhalten und
+Fail-Closed-Cleanup bleiben unverändert.
+
+Verifikation: **218 `tests/test_integration_installer.py`-Tests**,
+`integration_installer.py` **1462/1462 Statements und 574/574 Branches,
+100 % Coverage**, Mypy, Ruff, `compileall` und Diff-Check bestanden. Keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
+Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
+Installations- und Reload-Schritte ab.

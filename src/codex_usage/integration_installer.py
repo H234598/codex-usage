@@ -526,7 +526,7 @@ def _rename_owned_directory(
     except (OSError, ValueError):
         _fail()
     finally:
-        if parent_fd >= 0:
+        if parent_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
             os.close(parent_fd)
 
 
@@ -637,7 +637,7 @@ def _create_private_directory(
     finally:
         if child_fd >= 0:
             os.close(child_fd)
-        if parent_fd >= 0:
+        if parent_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
             os.close(parent_fd)
 
 
@@ -749,7 +749,7 @@ def _require_private_dir(
         except (OSError, ValueError):
             _fail()
         finally:
-            if parent_fd >= 0:
+            if parent_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
                 os.close(parent_fd)
     identity = _identity(path)
     if expected is not None and identity != expected:
@@ -896,7 +896,7 @@ def _copy_regular(
     finally:
         if fd >= 0:
             os.close(fd)
-        if parent_fd >= 0:
+        if parent_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
             os.close(parent_fd)
 
 
@@ -1284,7 +1284,7 @@ def _build_verified_wheel(
     except (OSError, ValueError):
         _fail()
     finally:
-        if wheel_fd >= 0:
+        if wheel_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
             os.close(wheel_fd)
     wheels.sort(key=lambda candidate: candidate[0])
     if len(wheels) != 1 or wheels[0][0].name != EXPECTED_WHEEL_NAME:
@@ -1684,7 +1684,7 @@ def _safe_extract_wheel(
                         os.close(fd)
                     os.close(parent_fd)
         finally:
-            if destination_fd >= 0:
+            if destination_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
                 os.close(destination_fd)
         return extracted_identities
     except _WheelMemberValidationError:
@@ -1927,7 +1927,7 @@ def _remove_activation_files(venv_root: Path) -> None:
     finally:
         if bin_fd >= 0:
             os.close(bin_fd)
-        if venv_fd >= 0:
+        if venv_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
             os.close(venv_fd)
 
 
@@ -2080,10 +2080,10 @@ def _find_site_packages(
                                     )
                                 )
                             finally:
-                                if site_fd >= 0:
+                                if site_fd >= 0:  # pragma: no branch - exception unwind
                                     os.close(site_fd)
                 finally:
-                    if python_fd >= 0:
+                    if python_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
                         os.close(python_fd)
         if not candidates:
             _fail()
@@ -2096,7 +2096,7 @@ def _find_site_packages(
     finally:
         if lib_fd >= 0:
             os.close(lib_fd)
-        if venv_fd >= 0:
+        if venv_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
             os.close(venv_fd)
 
 
@@ -2226,7 +2226,7 @@ def _write_exclusive(
                 os.close(fd)
             except OSError:
                 pass
-        if parent_fd >= 0:
+        if parent_fd >= 0:  # pragma: no branch - sentinel remains -1 on unwind
             try:
                 os.close(parent_fd)
             except OSError:

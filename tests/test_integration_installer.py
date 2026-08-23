@@ -4994,26 +4994,2216 @@ def test_attestation_verify_rejects_payload_digest_and_launcher_contract(tmp_pat
             expected_entrypoint_path=release.entrypoint_path,
         )
 
-    manifest = json.loads(active_path.read_text(encoding="utf-8"))
-    launcher = Path(manifest["launcher_path"])
-    launcher.write_bytes(b"wrong launcher")
-    launcher.chmod(0o700)
-    manifest["entrypoint_sha256"] = hashlib.sha256(
-        Path(manifest["entrypoint_path"]).read_bytes()
-    ).hexdigest()
-    manifest["launcher_sha256"] = hashlib.sha256(b"wrong launcher").hexdigest()
-    write_private_text(
-        active_path,
-        json.dumps(manifest, sort_keys=True),
-        label="mutated active manifest",
-        mode=0o600,
+
+def test_installer_low_level_identity_and_path_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    with pytest.raises(ValueError, match="invalid wheel validation reason"):
+        module._WheelMemberValidationError("invalid")
+    for value in (Path("relative"), "not-a-path", Path("\x00invalid")):
+        with pytest.raises(module.IntegrationInstallError):
+            module._absolute(value)  # type: ignore[arg-type]
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    regular = parent / "regular"
+    regular.write_bytes(b"owned")
+    regular.chmod(0o600)
+    wrong_mode = parent / "wrong-mode"
+    wrong_mode.write_bytes(b"owned")
+    wrong_mode.chmod(0o644)
+    directory = parent / "directory"
+    directory.mkdir(mode=0o700)
+    directory.chmod(0o700)
+
+    failing = tmp_path / "failing"
+    original_lstat = Path.lstat
+
+    def fail_lstat(path):
+        if path == failing:
+            raise OSError("lstat")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fail_lstat)
+    with pytest.raises(module.IntegrationInstallError):
+        module._no_symlink_ancestors(failing)
+    with pytest.raises(module.IntegrationInstallError):
+        module._identity(failing)
+    with pytest.raises(module.IntegrationInstallError):
+        module._provisional_path_identity(failing, directory=False)
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+
+    with pytest.raises(module.IntegrationInstallError):
+        module._identity(regular)
+    with pytest.raises(module.IntegrationInstallError):
+        module._directory_identity(regular)
+    with pytest.raises(module.IntegrationInstallError):
+        module._directory_identity(tmp_path / "missing")
+    assert module._file_identity(regular).permissions == 0o600
+    with pytest.raises(module.IntegrationInstallError):
+        module._file_identity(wrong_mode)
+    with pytest.raises(module.IntegrationInstallError):
+        module._provisional_path_identity(regular, directory=True)
+    with pytest.raises(module.IntegrationInstallError):
+        module._provisional_path_identity(directory, directory=False)
+    symlink = parent / "symlink"
+    symlink.symlink_to(regular)
+    with pytest.raises(module.IntegrationInstallError):
+        module._provisional_path_identity(symlink, directory=False)
+
+    with pytest.raises(module.IntegrationInstallError):
+        module._provisional_fd_identity(-1)
+    directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with pytest.raises(module.IntegrationInstallError):
+            module._provisional_fd_identity(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+    parent_identity = module._directory_identity(parent)
+    regular_identity = module._provisional_path_identity(regular, directory=False)
+    assert module._provisional_rebased(
+        regular,
+        regular_identity,
+        parent_identity,
+        directory=False,
+    ) == regular_identity
+    assert module._provisional_rebased(
+        symlink,
+        regular_identity,
+        parent_identity,
+        directory=False,
+    ) is None
+    assert module._provisional_rebased(
+        regular,
+        regular_identity,
+        parent_identity,
+        directory=True,
+    ) is None
+    assert module._provisional_rebased(
+        directory,
+        regular_identity,
+        parent_identity,
+        directory=False,
+    ) is None
+
+
+def test_installer_cleanup_and_rename_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent_identity = module._directory_identity(parent)
+    module._no_symlink_ancestors(
+        SimpleNamespace(anchor=tmp_path.anchor, parts=(tmp_path.anchor, ".", "missing"))
     )
-    with pytest.raises(module.IntegrationAttestationUnavailable):
-        module.verify_active_release(
+
+    failing = parent / "failing"
+    original_lstat = Path.lstat
+
+    def fail_file_lstat(path):
+        if path == failing:
+            raise ValueError("lstat")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fail_file_lstat)
+    with pytest.raises(module.IntegrationInstallError):
+        module._file_identity(failing)
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+
+    regular = parent / "regular"
+    regular.write_bytes(b"owned")
+    regular.chmod(0o600)
+    regular_identity = module._file_identity(regular)
+    provisional = module._provisional_path_identity(regular, directory=False)
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            module,
+            "_directory_identity",
+            lambda _path: (_ for _ in ()).throw(OSError("rebased")),
+        )
+        assert (
+            module._provisional_rebased(
+                regular,
+                provisional,
+                parent_identity,
+                directory=False,
+            )
+            is None
+        )
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            module,
+            "_no_symlink_ancestors",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                module.IntegrationInstallError()
+            ),
+        )
+        assert not module._owned_file_matches(regular, regular_identity, parent_identity)
+        assert not module._owned_directory_matches(
+            parent,
+            parent_identity,
+            parent_identity,
+        )
+
+    wrong_parent = module._DirectoryIdentity(
+        parent_identity.device,
+        parent_identity.inode,
+        0o701,
+    )
+    assert not module._remove_owned_entry(
+        regular,
+        regular_identity,
+        wrong_parent,
+        directory=False,
+    )
+    assert not module._remove_owned_entry(
+        regular,
+        regular_identity,
+        parent_identity,
+        directory=True,
+    )
+    directory_entry = parent / "directory-entry"
+    directory_entry.mkdir(mode=0o700)
+    directory_identity = module._identity(directory_entry)
+    assert not module._remove_owned_entry(
+        directory_entry,
+        directory_identity,
+        parent_identity,
+        directory=False,
+    )
+    wrong_provisional = module._ProvisionalIdentity(
+        provisional.device,
+        provisional.inode + 1,
+        provisional.uid,
+        provisional.file_type,
+        provisional.permissions,
+    )
+    assert not module._remove_owned_entry(
+        regular,
+        wrong_provisional,
+        parent_identity,
+        directory=False,
+    )
+    wrong_directory = module._DirectoryIdentity(
+        regular_identity.device,
+        regular_identity.inode,
+        regular_identity.permissions + 1,
+    )
+    assert not module._remove_owned_entry(
+        regular,
+        wrong_directory,
+        parent_identity,
+        directory=False,
+    )
+    wrong_file = module._FileIdentity(
+        regular_identity.device,
+        regular_identity.inode + 1,
+        regular_identity.permissions,
+    )
+    assert not module._remove_owned_entry(
+        regular,
+        wrong_file,
+        parent_identity,
+        directory=False,
+    )
+
+    original_stat = module.os.stat
+    stat_calls = 0
+
+    def fail_second_stat(path, *args, **kwargs):
+        nonlocal stat_calls
+        stat_calls += 1
+        if stat_calls == 2:
+            raise OSError("replacement")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "stat", fail_second_stat)
+    assert not module._remove_owned_entry(
+        regular,
+        regular_identity,
+        parent_identity,
+        directory=False,
+    )
+    monkeypatch.setattr(module.os, "stat", original_stat)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "unlink", lambda *_args, **_kwargs: None)
+        assert not module._remove_owned_entry(
+            regular,
+            regular_identity,
+            parent_identity,
+            directory=False,
+        )
+    with monkeypatch.context() as context:
+        def fail_open(*_args, **_kwargs):
+            raise OSError("open")
+
+        context.setattr(module.os, "open", fail_open)
+        assert not module._remove_owned_entry(
+            regular,
+            regular_identity,
+            parent_identity,
+            directory=False,
+        )
+
+    for attribute in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+        path = parent / f"without-{attribute}"
+        path.write_bytes(b"owned")
+        path.chmod(0o600)
+        identity = module._file_identity(path)
+        with monkeypatch.context() as context:
+            context.delattr(module.os, attribute, raising=False)
+            assert module._remove_owned_entry(
+                path,
+                identity,
+                parent_identity,
+                directory=False,
+            )
+
+    source = parent / "source"
+    source.mkdir(mode=0o700)
+    source_identity = module._identity(source)
+    target = parent / "target"
+    with pytest.raises(module.IntegrationInstallError):
+        module._rename_owned_directory(
+            source,
+            tmp_path / "other" / "target",
+            parent_identity,
+            source_identity,
+        )
+    with monkeypatch.context() as context:
+        context.setattr(module.sys, "platform", "darwin")
+        with pytest.raises(module.IntegrationInstallError):
+            module._rename_noreplace("source", "target", -1)
+    with monkeypatch.context() as context:
+        context.setattr(module.ctypes, "CDLL", lambda *_args, **_kwargs: SimpleNamespace())
+        with pytest.raises(module.IntegrationInstallError):
+            module._rename_noreplace("source", "target", -1)
+    with monkeypatch.context() as context:
+        def fail_cdll(*_args, **_kwargs):
+            raise OSError("renameat2")
+
+        context.setattr(module.ctypes, "CDLL", fail_cdll)
+        with pytest.raises(module.IntegrationInstallError):
+            module._rename_noreplace("source", "target", -1)
+    with monkeypatch.context() as context:
+        def fail_rename(*_args, **_kwargs):
+            return 1
+
+        context.setattr(
+            module.ctypes,
+            "CDLL",
+            lambda *_args, **_kwargs: SimpleNamespace(renameat2=fail_rename),
+        )
+        with pytest.raises(OSError):
+            module._rename_noreplace("source", "target", -1)
+
+    wrong_source = module._DirectoryIdentity(
+        source_identity.device,
+        source_identity.inode + 1,
+        source_identity.permissions,
+    )
+    with pytest.raises(module.IntegrationInstallError):
+        module._rename_owned_directory(source, target, parent_identity, wrong_source)
+
+    def rename_and_replace(_source_name, _target_name, _parent_fd):
+        source.rename(target)
+        target.rmdir()
+        target.mkdir(mode=0o700)
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_rename_noreplace", rename_and_replace)
+        with pytest.raises(module.IntegrationInstallError):
+            module._rename_owned_directory(source, target, parent_identity, source_identity)
+
+    flags_source = parent / "flags-source"
+    flags_source.mkdir(mode=0o700)
+    flags_target = parent / "flags-target"
+    flags_identity = module._identity(flags_source)
+    with monkeypatch.context() as context:
+        context.delattr(module.os, "O_DIRECTORY", raising=False)
+        context.delattr(module.os, "O_NOFOLLOW", raising=False)
+        context.delattr(module.os, "O_CLOEXEC", raising=False)
+        module._rename_owned_directory(
+            flags_source,
+            flags_target,
+            parent_identity,
+            flags_identity,
+        )
+    assert flags_target.is_dir()
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            module,
+            "_no_symlink_ancestors",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                module.IntegrationInstallError()
+            ),
+        )
+        with pytest.raises(module.IntegrationInstallError):
+            module._rename_owned_directory(
+                flags_target,
+                parent / "never-target",
+                parent_identity,
+                flags_identity,
+            )
+
+
+def test_installer_private_directory_and_bootstrap_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    parent_identity = module._directory_identity(parent)
+
+    target = parent / "target"
+    wrong_parent = module._DirectoryIdentity(
+        parent_identity.device,
+        parent_identity.inode,
+        0o701,
+    )
+    with pytest.raises(module.IntegrationInstallError):
+        module._create_private_directory(target, wrong_parent)
+
+    with monkeypatch.context() as context:
+        target = parent / "invalid-child"
+        original_fstat = module.os.fstat
+        calls = 0
+
+        def regular_child(fd):
+            nonlocal calls
+            calls += 1
+            item = original_fstat(fd)
+            if calls == 2:
+                values = list(item)
+                values[0] = stat.S_IFREG | 0o600
+                return os.stat_result(values)
+            return item
+
+        context.setattr(module.os, "fstat", regular_child)
+        with pytest.raises(module.IntegrationInstallError):
+            module._create_private_directory(target, parent_identity)
+        assert target.is_dir()
+
+    with monkeypatch.context() as context:
+        target = parent / "bad-final"
+        original_fstat = module.os.fstat
+        calls = 0
+
+        def wrong_final(fd):
+            nonlocal calls
+            calls += 1
+            item = original_fstat(fd)
+            if calls == 3:
+                values = list(item)
+                values[0] = stat.S_IFDIR | 0o755
+                return os.stat_result(values)
+            return item
+
+        context.setattr(module.os, "fstat", wrong_final)
+        with pytest.raises(module.IntegrationInstallError):
+            module._create_private_directory(target, parent_identity)
+        assert not target.exists()
+
+    with monkeypatch.context() as context:
+        target = parent / "bad-parent-final"
+        original_fstat = module.os.fstat
+        calls = 0
+
+        def wrong_parent_final(fd):
+            nonlocal calls
+            calls += 1
+            item = original_fstat(fd)
+            if calls == 4:
+                values = list(item)
+                values[0] = stat.S_IFDIR | 0o701
+                return os.stat_result(values)
+            return item
+
+        context.setattr(module.os, "fstat", wrong_parent_final)
+        with pytest.raises(module.IntegrationInstallError):
+            module._create_private_directory(target, parent_identity)
+        assert not target.exists()
+
+    with monkeypatch.context() as context:
+        target = parent / "integration-error"
+
+        def fail_fchmod(*_args, **_kwargs):
+            raise module.IntegrationInstallError()
+
+        context.setattr(module.os, "fchmod", fail_fchmod)
+        with pytest.raises(module.IntegrationInstallError):
+            module._create_private_directory(target, parent_identity)
+        assert not target.exists()
+
+    with monkeypatch.context() as context:
+        target = parent / "cleanup-error"
+
+        def fail_fchmod(*_args, **_kwargs):
+            raise OSError("chmod")
+
+        context.setattr(module.os, "fchmod", fail_fchmod)
+
+        def fail_cleanup(*_args, **_kwargs):
+            return False
+
+        context.setattr(module, "_cleanup_provisional_after_failure", fail_cleanup)
+        with pytest.raises(module.IntegrationInstallError):
+            module._create_private_directory(target, parent_identity)
+
+    with monkeypatch.context() as context:
+        context.delattr(module.os, "O_DIRECTORY", raising=False)
+        context.delattr(module.os, "O_NOFOLLOW", raising=False)
+        context.delattr(module.os, "O_CLOEXEC", raising=False)
+        target = parent / "without-flags"
+        module._create_private_directory(target, parent_identity)
+        assert target.is_dir()
+
+    with monkeypatch.context() as context:
+        def fail_open(*_args, **_kwargs):
+            raise OSError("open")
+
+        context.setattr(module.os, "open", fail_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._create_private_directory(parent / "open-error", parent_identity)
+
+    with pytest.raises(module.IntegrationInstallError):
+        module._require_private_dir(target, wrong_parent, False)
+
+    create_target = parent / "create-without-parent-identity"
+    module._require_private_dir(create_target, None, True)
+    assert create_target.is_dir()
+
+    race_target = parent / "race-target"
+    race_target.mkdir(mode=0o700)
+    original_stat = module.os.stat
+    first_stat = True
+
+    def report_missing_once(name, *args, **kwargs):
+        nonlocal first_stat
+        if first_stat and name == race_target.name:
+            first_stat = False
+            raise FileNotFoundError(name)
+        return original_stat(name, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "stat", report_missing_once)
+
+        def report_exists(*_args, **_kwargs):
+            raise FileExistsError("race")
+
+        context.setattr(module.os, "mkdir", report_exists)
+        assert module._require_private_dir(race_target, None, True).permissions == 0o700
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_require_private_dir", lambda *_args, **_kwargs: wrong_parent)
+        with pytest.raises(module.IntegrationInstallError):
+            module._revalidate_bootstrap(tmp_path, parent_identity, parent_identity)
+
+    create_wrong_parent = parent / "create-wrong-parent"
+    with pytest.raises(module.IntegrationInstallError):
+        module._require_private_dir(
+            create_wrong_parent,
+            None,
+            True,
+            parent_identity=wrong_parent,
+        )
+
+    with monkeypatch.context() as context:
+        context.delattr(module.os, "O_DIRECTORY", raising=False)
+        context.delattr(module.os, "O_NOFOLLOW", raising=False)
+        context.delattr(module.os, "O_CLOEXEC", raising=False)
+        no_flag_target = parent / "require-without-flags"
+        module._require_private_dir(no_flag_target, None, True)
+
+    with monkeypatch.context() as context:
+        def fail_open(*_args, **_kwargs):
+            raise OSError("open")
+
+        context.setattr(module.os, "open", fail_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._require_private_dir(parent / "require-open-error", None, True)
+
+    with monkeypatch.context() as context:
+        original_fstat = module.os.fstat
+        calls = 0
+
+        def wrong_final_parent(fd):
+            nonlocal calls
+            calls += 1
+            item = original_fstat(fd)
+            if calls == 2:
+                values = list(item)
+                values[0] = stat.S_IFDIR | 0o701
+                return os.stat_result(values)
+            return item
+
+        context.setattr(module.os, "fstat", wrong_final_parent)
+        with pytest.raises(module.IntegrationInstallError):
+            module._require_private_dir(
+                parent / "require-final-race",
+                None,
+                True,
+                parent_identity=parent_identity,
+            )
+
+
+def test_installer_copy_reader_resolver_and_builder_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    source = tmp_path / "source"
+    source.write_bytes(b"source")
+    source.chmod(0o600)
+    parent = tmp_path / "destination"
+    parent.mkdir(mode=0o700)
+    parent_identity = module._directory_identity(parent)
+
+    with monkeypatch.context() as context:
+        original_lstat = Path.lstat
+
+        def fail_source_lstat(path):
+            if path == source:
+                raise OSError("source lstat")
+            return original_lstat(path)
+
+        context.setattr(Path, "lstat", fail_source_lstat)
+        with pytest.raises(module.IntegrationInstallError):
+            module._copy_regular(source, parent / "source-lstat-error")
+
+    with pytest.raises(module.IntegrationInstallError):
+        module._copy_regular(parent, parent / "directory-target")
+
+    with monkeypatch.context() as context:
+        original_identity = module._directory_identity
+
+        def wrong_target_parent(path):
+            if path == parent:
+                return module._DirectoryIdentity(
+                    parent_identity.device,
+                    parent_identity.inode,
+                    0o701,
+                )
+            return original_identity(path)
+
+        context.setattr(module, "_directory_identity", wrong_target_parent)
+        with pytest.raises(module.IntegrationInstallError):
+            module._copy_regular(source, parent / "wrong-parent")
+
+    with monkeypatch.context() as context:
+        target = parent / "wrong-output"
+        original_fstat = module.os.fstat
+
+        def wrong_output_mode(fd):
+            item = original_fstat(fd)
+            try:
+                descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+            except OSError:
+                descriptor_path = ""
+            if descriptor_path == str(target):
+                values = list(item)
+                values[0] = stat.S_IFREG | 0o644
+                return os.stat_result(values)
+            return item
+
+        context.setattr(module.os, "fstat", wrong_output_mode)
+        with pytest.raises(module.IntegrationInstallError):
+            module._copy_regular(source, target)
+        assert not target.exists()
+
+    with monkeypatch.context() as context:
+        target = parent / "read-error"
+
+        def fail_read(*_args, **_kwargs):
+            raise OSError("read")
+
+        context.setattr(module, "_read_nofollow", fail_read)
+        with pytest.raises(module.IntegrationInstallError):
+            module._copy_regular(source, target)
+        assert not target.exists()
+
+    with monkeypatch.context() as context:
+        target = parent / "fdopen-error"
+
+        def fail_fdopen(*_args, **_kwargs):
+            raise OSError("fdopen")
+
+        context.setattr(module.os, "fdopen", fail_fdopen)
+        with pytest.raises(module.IntegrationInstallError):
+            module._copy_regular(source, target)
+        assert not target.exists()
+
+    for attribute in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+        target = parent / f"without-{attribute}"
+        with monkeypatch.context() as context:
+            context.delattr(module.os, attribute, raising=False)
+            assert module._copy_regular(source, target).permissions == 0o600
+
+    file_path = parent / "reader"
+    file_path.write_bytes(b"payload")
+    file_path.chmod(0o600)
+    file_identity = module._file_identity(file_path)
+    with monkeypatch.context() as context:
+        context.delattr(module.os, "O_DIRECTORY", raising=False)
+        context.delattr(module.os, "O_NOFOLLOW", raising=False)
+        context.delattr(module.os, "O_CLOEXEC", raising=False)
+        assert module._read_nofollow(
+            file_path,
+            expected_parent_identity=parent_identity,
+            expected_file_identity=file_identity,
+        ) == b"payload"
+
+    wrong_parent = module._DirectoryIdentity(
+        parent_identity.device,
+        parent_identity.inode,
+        0o701,
+    )
+    with pytest.raises(module.IntegrationInstallError):
+        module._read_nofollow(file_path, expected_parent_identity=wrong_parent)
+    with monkeypatch.context() as context:
+        def fail_open(*_args, **_kwargs):
+            raise OSError("open")
+
+        context.setattr(module.os, "open", fail_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._read_nofollow(file_path)
+
+    executable = tmp_path / "python"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o755)
+    original_lstat = Path.lstat
+    lstat_calls = 0
+
+    def fail_final_lstat(path):
+        nonlocal lstat_calls
+        if path == executable:
+            lstat_calls += 1
+            if lstat_calls == 2:
+                raise OSError("final lstat")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fail_final_lstat)
+    with pytest.raises(module.IntegrationInstallError):
+        module._resolve_python_executable(executable)
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+
+    synthetic = tmp_path / "synthetic"
+    synthetic.mkdir(mode=0o700)
+    destination_root = tmp_path / "copy-destination"
+    destination_root.mkdir(mode=0o700)
+    with monkeypatch.context() as context:
+        context.setattr(module, "PROJECT_ROOT", synthetic)
+        context.setattr(module, "SOURCE_MANIFEST_FILES", ("missing.py",))
+        with pytest.raises(module.IntegrationInstallError):
+            module._temporary_source_copy(destination_root)
+
+    synthetic_file = synthetic / "one.py"
+    synthetic_file.write_bytes(b"one")
+    with monkeypatch.context() as context:
+        context.setattr(module, "PROJECT_ROOT", synthetic)
+        context.setattr(module, "SOURCE_MANIFEST_FILES", ("one.py",))
+        context.setattr(module, "_postwalk_release", lambda *_args, **_kwargs: set())
+        with pytest.raises(module.IntegrationInstallError):
+            module._temporary_source_copy(destination_root)
+
+    for value in ("'", "\n", "\r", "\x00"):
+        with pytest.raises(module.IntegrationInstallError):
+            module._shell_single_quote(value)
+
+    class BrokenProcess:
+        pid = 123
+
+        def kill(self):
+            raise OSError("kill")
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired(["builder"], timeout)
+
+    with monkeypatch.context() as context:
+        def fail_killpg(*_args, **_kwargs):
+            raise OSError("killpg")
+
+        context.setattr(module.os, "killpg", fail_killpg)
+        module._terminate_preflight_process(BrokenProcess())
+
+    def make_preflight_result(payload):
+        def run(**_kwargs):
+            return subprocess.CompletedProcess(["python"], 0, payload, "")
+
+        return run
+
+    for stdout in (
+        "[]\n",
+        '{"backend":"setuptools.command.bdist_wheel.bdist_wheel",'
+        '"setuptools":80}\n',
+        '{"backend":"setuptools.command.bdist_wheel.bdist_wheel",'
+        '"setuptools":"broken.version"}\n',
+    ):
+        with monkeypatch.context() as context:
+            context.setattr(module, "_run_builder_preflight", make_preflight_result(stdout))
+            with pytest.raises(module.IntegrationInstallError):
+                module._require_offline_builder(
+                    python_executable=Path(sys.executable),
+                    environment={},
+                )
+
+
+def test_installer_preflight_deadline_and_cleanup_guards(monkeypatch):
+    from codex_usage import integration_installer as module
+
+    class FakeProcess:
+        def __init__(self, stdout, *, poll_value=None, wait_error=None):
+            self.pid = None
+            self.stdout = stdout
+            self.poll_value = poll_value
+            self.wait_error = wait_error
+            self.killed = False
+
+        def kill(self):
+            self.killed = True
+
+        def poll(self):
+            return self.poll_value
+
+        def wait(self, timeout=None):
+            if self.wait_error is not None:
+                raise self.wait_error
+            return 0
+
+    class FakeStream:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeSelector:
+        def __init__(self, *, mode, stream):
+            self.mode = mode
+            self.stream = stream
+            self.registered = False
+
+        def register(self, stream, _events):
+            self.registered = stream
+
+        def unregister(self, _stream):
+            self.registered = False
+
+        def get_map(self):
+            return {1: object()} if self.registered else {}
+
+        def select(self, _timeout):
+            if self.mode == "empty":
+                return []
+            if self.mode == "error":
+                raise RuntimeError("selector")
+            return [(SimpleNamespace(fileobj=self.stream), 1)]
+
+        def close(self):
+            pass
+
+    def run_case(process, selector_mode, monotonic_values):
+        values = iter(monotonic_values)
+        with monkeypatch.context() as context:
+            context.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: process)
+            context.setattr(
+                module.selectors,
+                "DefaultSelector",
+                lambda: FakeSelector(mode=selector_mode, stream=process.stdout),
+            )
+            context.setattr(module.time, "monotonic", lambda: next(values))
+            return module._run_builder_preflight(
+                python_executable=Path("/usr/bin/python"),
+                environment={},
+            )
+
+    with monkeypatch.context() as context:
+        process = FakeProcess(None)
+        context.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: process)
+        with pytest.raises(OSError, match="stdout unavailable"):
+            module._run_builder_preflight(
+                python_executable=Path("/usr/bin/python"),
+                environment={},
+            )
+
+    stream = FakeStream()
+    process = FakeProcess(stream)
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_case(process, "ready", (0.0, module.BUILDER_PREFLIGHT_TIMEOUT_SECONDS + 1.0))
+    stream = FakeStream()
+    process = FakeProcess(stream)
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_case(process, "empty", (0.0, 0.0))
+
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+    stream_file = os.fdopen(read_fd, "rb")
+    process = FakeProcess(
+        stream_file,
+        wait_error=subprocess.TimeoutExpired(["builder"], 1),
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_case(process, "ready", (0.0, 0.0, 0.0))
+
+    stream = FakeStream()
+    process = FakeProcess(stream, poll_value=None)
+    with pytest.raises(RuntimeError, match="selector"):
+        run_case(process, "error", (0.0, 1.0))
+
+
+def test_installer_builder_import_and_record_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    class FakeBuilderProcess:
+        pid = 123
+
+        def wait(self, timeout=None):
+            raise RuntimeError("builder")
+
+        def poll(self):
+            return 1
+
+    killed: list[int] = []
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: FakeBuilderProcess())
+    monkeypatch.setattr(module.os, "getpgid", lambda _pid: 456)
+    monkeypatch.setattr(module, "_kill_process_group", killed.append)
+    with pytest.raises(RuntimeError, match="builder"):
+        module._run_builder_bounded(["builder"], env={}, cwd=tmp_path)
+    assert killed == [456]
+
+    class NoGroupProcess:
+        pid = True
+
+        def wait(self, timeout=None):
+            raise RuntimeError("builder without group")
+
+        def poll(self):
+            return 1
+
+    with monkeypatch.context() as context:
+        context.setattr(module.subprocess, "Popen", lambda *_args, **_kwargs: NoGroupProcess())
+        with pytest.raises(RuntimeError, match="builder without group"):
+            module._run_builder_bounded(["builder"], env={}, cwd=tmp_path)
+
+    assert module._resolve_local_import_targets(node=ast.parse("import os").body[0]) == frozenset()
+    assert module._resolve_local_import_targets(
+        node=ast.parse("import codex_usage").body[0]
+    ) == frozenset({"__init__.py"})
+    assert module._resolve_local_import_targets(node=ast.parse("x = 1").body[0]) == frozenset()
+    assert module._resolve_local_import_targets(
+        node=ast.parse("from os import path").body[0]
+    ) == frozenset()
+    assert module._resolve_local_import_targets(
+        node=ast.parse("from . import config").body[0]
+    ) == frozenset({"config.py"})
+    assert module._resolve_local_import_targets(
+        node=ast.parse("from .models import AccountUsage").body[0]
+    ) == frozenset({"models.py"})
+    assert module._resolve_local_import_targets(
+        node=ast.parse("from codex_usage import config").body[0]
+    ) == frozenset({"config.py"})
+    with pytest.raises(module.IntegrationInstallError):
+        module._resolve_local_import_targets(node=ast.parse("import codex_usage.a.b").body[0])
+    with pytest.raises(module.IntegrationInstallError):
+        module._resolve_local_import_targets(node=ast.parse("from ... import config").body[0])
+    with pytest.raises(module.IntegrationInstallError):
+        module._resolve_local_import_targets(
+            node=ast.parse("from codex_usage.a.b import x").body[0]
+        )
+    with pytest.raises(module.IntegrationInstallError):
+        module._resolve_local_import_targets(node=ast.parse("from . import *").body[0])
+
+    with pytest.raises(module.IntegrationInstallError):
+        module._validate_runtime_import_closure({"foreign.py": b"pass"})
+    with pytest.raises(module.IntegrationInstallError):
+        module._validate_runtime_import_closure({"codex_usage/config.py": b"\xff"})
+    with pytest.raises(module.IntegrationInstallError):
+        module._validate_runtime_import_closure(
+            {"codex_usage/config.py": b"from codex_usage import state\n"}
+        )
+    with pytest.raises(module.IntegrationInstallError):
+        module._validate_runtime_import_closure(
+            {
+                "codex_usage/config.py": b"from codex_usage import state\n",
+                "codex_usage/models.py": b"pass\n",
+            }
+        )
+    module._validate_runtime_import_closure(
+        {"codex_usage/config.py": b"from codex_usage import state\n"},
+        require_available=False,
+    )
+
+    with pytest.raises(module.IntegrationInstallError):
+        module._read_bounded_wheel_member(
+            SimpleNamespace(),
+            SimpleNamespace(file_size=module.MAX_INSTALL_FILE_BYTES + 1),
+        )
+    invalid_records = (
+        b"one,two\n",
+        b"one,sha256=x,1\none,sha256=y,1\n",
+        b"/absolute,,\n",
+        b"a/../b,,\n",
+        b"a,sha256=x,nope\n",
+        b"\xff\n",
+    )
+    for payload in invalid_records:
+        with pytest.raises(module.IntegrationInstallError):
+            module._parse_record(payload)
+
+
+def test_installer_safe_extract_inner_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    wheel = tmp_path / "candidate.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("codex_usage/ok.py", b"x")
+    rows = {"codex_usage/ok.py": (hashlib.sha256(b"x").hexdigest(), 1)}
+
+    destination = tmp_path / "missing-record"
+    destination.mkdir(mode=0o700)
+    with pytest.raises(module._WheelMemberValidationError) as error:
+        module._safe_extract_wheel(
+            wheel_path=wheel,
+            destination=destination,
+            record_rows={},
+        )
+    assert error.value.reason == "record_mismatch"
+
+    destination = tmp_path / "bad-record"
+    destination.mkdir(mode=0o700)
+    with pytest.raises(module._WheelMemberValidationError) as error:
+        module._safe_extract_wheel(
+            wheel_path=wheel,
+            destination=destination,
+            record_rows={"codex_usage/ok.py": ("sha256=bad", 1)},
+        )
+    assert error.value.reason == "record_mismatch"
+
+    destination = tmp_path / "bad-zip"
+    destination.mkdir(mode=0o700)
+    bad_wheel = tmp_path / "bad.whl"
+    bad_wheel.write_bytes(b"not a zip")
+    with pytest.raises(module.IntegrationInstallError):
+        module._safe_extract_wheel(
+            wheel_path=bad_wheel,
+            destination=destination,
+            record_rows={},
+        )
+
+    destination = tmp_path / "wrong-destination"
+    destination.mkdir(mode=0o700)
+    other = tmp_path / "other"
+    other.mkdir(mode=0o700)
+    with pytest.raises(module.IntegrationInstallError):
+        module._safe_extract_wheel(
+            wheel_path=wheel,
+            destination=destination,
+            record_rows=rows,
+            destination_identity=module._directory_identity(other),
+        )
+
+    destination = tmp_path / "missing-parent"
+    destination.mkdir(mode=0o700)
+    original_stat = module.os.stat
+    parent_stat_calls = 0
+
+    def disappear_on_second_pass(name, *args, **kwargs):
+        nonlocal parent_stat_calls
+        if name == "codex_usage":
+            parent_stat_calls += 1
+            if parent_stat_calls in {1, 3}:
+                raise FileNotFoundError(name)
+        return original_stat(name, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "stat", disappear_on_second_pass)
+        with pytest.raises(module.IntegrationInstallError):
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+
+def test_installer_safe_extract_and_wheel_details_validation_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    duplicate = tmp_path / "duplicate.whl"
+    with zipfile.ZipFile(duplicate, "w") as archive:
+        archive.writestr("codex_usage/ok.py", b"x")
+        with pytest.warns(UserWarning):
+            archive.writestr("codex_usage/ok.py", b"y")
+    with pytest.raises(module._WheelMemberValidationError) as error:
+        module._wheel_details(duplicate)
+    assert error.value.reason == "duplicate_member"
+
+    mismatched = tmp_path / "mismatched.whl"
+    with zipfile.ZipFile(mismatched, "w") as archive:
+        archive.writestr("codex_usage/ok.py", b"x")
+    with pytest.raises(module.IntegrationInstallError):
+        module._wheel_details(mismatched)
+
+    installed_root = tmp_path / "installed"
+    installed_root.mkdir(mode=0o700)
+    release, _, _ = _install(installed_root)
+    wheel = release.release_dir / "producer.whl"
+    original_parse = module._parse_record
+    with monkeypatch.context() as context:
+        context.setattr(module, "_parse_record", lambda _payload: {})
+        with pytest.raises(module.IntegrationInstallError):
+            module._wheel_details(wheel)
+
+    original_read = module._read_bounded_wheel_member
+
+    def bad_metadata(archive, info):
+        if info.filename.endswith("METADATA"):
+            return b"invalid metadata"
+        return original_read(archive, info)
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_read_bounded_wheel_member", bad_metadata)
+        with pytest.raises(module.IntegrationInstallError):
+            module._wheel_details(wheel)
+
+    def bad_record_self(payload):
+        rows = original_parse(payload)
+        record_name = f"{module.DIST_INFO_PREFIX}/RECORD"
+        rows[record_name] = ("sha256=bad", -1)
+        return rows
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_parse_record", bad_record_self)
+        with pytest.raises(module.IntegrationInstallError):
+            module._wheel_details(wheel)
+
+    def bad_record_digest(payload):
+        rows = original_parse(payload)
+        name = next(name for name in rows if not name.endswith("/RECORD"))
+        _, size = rows[name]
+        rows[name] = ("sha256=bad", size)
+        return rows
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_parse_record", bad_record_digest)
+        with pytest.raises(module.IntegrationInstallError):
+            module._wheel_details(wheel)
+
+    invalid = tmp_path / "invalid-details.whl"
+    invalid.write_bytes(b"invalid")
+    with pytest.raises(module.IntegrationInstallError):
+        module._wheel_details(invalid)
+
+    wheel = tmp_path / "candidate-inner.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("codex_usage/ok.py", b"x")
+    rows = {"codex_usage/ok.py": (hashlib.sha256(b"x").hexdigest(), 1)}
+
+    destination = tmp_path / "mkdir-race"
+    destination.mkdir(mode=0o700)
+    original_stat = module.os.stat
+    first_parent_stat = True
+
+    def missing_parent_once(name, *args, **kwargs):
+        nonlocal first_parent_stat
+        if name == "codex_usage" and first_parent_stat:
+            first_parent_stat = False
+            raise FileNotFoundError(name)
+        return original_stat(name, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "stat", missing_parent_once)
+
+        def mkdir_race(*_args, **_kwargs):
+            raise FileExistsError("mkdir race")
+
+        context.setattr(module.os, "mkdir", mkdir_race)
+        with pytest.raises(module.IntegrationInstallError):
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+    destination = tmp_path / "bad-parent-identity"
+    destination.mkdir(mode=0o700)
+    original_stat = module.os.stat
+    first_parent_stat = True
+
+    def wrong_parent_stat(name, *args, **kwargs):
+        nonlocal first_parent_stat
+        if name == "codex_usage" and first_parent_stat:
+            first_parent_stat = False
+            raise FileNotFoundError(name)
+        if name == "codex_usage":
+            item = original_stat(name, *args, **kwargs)
+            values = list(item)
+            values[0] = stat.S_IFDIR | 0o701
+            return os.stat_result(values)
+        return original_stat(name, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "stat", wrong_parent_stat)
+        with pytest.raises(module.IntegrationInstallError):
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+
+def test_installer_postwalk_activation_and_safe_extract_remaining_guards(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer as module
+
+    for attribute in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+        root = tmp_path / f"postwalk-{attribute}"
+        root.mkdir(mode=0o700)
+        with monkeypatch.context() as context:
+            context.delattr(module.os, attribute, raising=False)
+            assert module._postwalk_release(root) == set()
+
+    limited = tmp_path / "limited"
+    limited.mkdir(mode=0o700)
+    with monkeypatch.context() as context:
+        context.setattr(module, "MAX_RELEASE_TREE_ENTRIES", 0)
+        with pytest.raises(module.IntegrationInstallError):
+            module._postwalk_release(limited)
+
+    hardlinked = tmp_path / "hardlinked"
+    hardlinked.mkdir(mode=0o700)
+    payload = hardlinked / "payload"
+    payload.write_bytes(b"x")
+    payload_link = hardlinked / "payload-link"
+    payload_link.hardlink_to(payload)
+    with pytest.raises(module.IntegrationInstallError):
+        module._postwalk_release(hardlinked)
+
+    for name in ("__pycache__", "payload.pyc"):
+        root = tmp_path / f"forbidden-{name.replace('.', '-') }"
+        root.mkdir(mode=0o700)
+        target = root / name
+        if name == "__pycache__":
+            target.mkdir(mode=0o700)
+        else:
+            target.write_bytes(b"x")
+        with pytest.raises(module.IntegrationInstallError):
+            module._postwalk_release(root)
+
+    root = tmp_path / "postwalk-open-error"
+    root.mkdir(mode=0o700)
+    with monkeypatch.context() as context:
+        def fail_open(*_args, **_kwargs):
+            raise OSError("open")
+
+        context.setattr(module.os, "open", fail_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._postwalk_release(root)
+
+    wheel = tmp_path / "remaining-candidate.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("codex_usage/ok.py", b"x")
+    rows = {"codex_usage/ok.py": (hashlib.sha256(b"x").hexdigest(), 1)}
+
+    venv = tmp_path / "activation"
+    (venv / "bin").mkdir(parents=True, mode=0o700)
+    for attribute in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+        with monkeypatch.context() as context:
+            context.delattr(module.os, attribute, raising=False)
+            module._remove_activation_files(venv)
+
+    not_directory = tmp_path / "not-directory"
+    not_directory.write_bytes(b"x")
+    with monkeypatch.context() as context:
+        context.delattr(module.os, "O_DIRECTORY", raising=False)
+        with pytest.raises(module.IntegrationInstallError):
+            module._remove_activation_files(not_directory)
+
+    wrong_bin = tmp_path / "wrong-bin"
+    wrong_bin.mkdir(mode=0o700)
+    (wrong_bin / "bin").write_bytes(b"x")
+    with monkeypatch.context() as context:
+        context.delattr(module.os, "O_DIRECTORY", raising=False)
+        with pytest.raises(module.IntegrationInstallError):
+            module._remove_activation_files(wrong_bin)
+
+    directory_entry = tmp_path / "directory-entry"
+    (directory_entry / "bin" / "activate").mkdir(parents=True, mode=0o700)
+    module._remove_activation_files(directory_entry)
+    assert (directory_entry / "bin" / "activate").is_dir()
+
+    stat_error = tmp_path / "activation-stat-error"
+    (stat_error / "bin").mkdir(parents=True, mode=0o700)
+    (stat_error / "bin" / "activate").write_text("x", encoding="utf-8")
+    original_stat = module.os.stat
+
+    def fail_activation_stat(name, *args, **kwargs):
+        if name == "activate" and kwargs.get("dir_fd") is not None:
+            raise OSError("stat")
+        return original_stat(name, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "stat", fail_activation_stat)
+        with pytest.raises(module.IntegrationInstallError):
+            module._remove_activation_files(stat_error)
+
+    lib64_error = tmp_path / "lib64-stat-error"
+    (lib64_error / "bin").mkdir(parents=True, mode=0o700)
+    (lib64_error / "lib64").symlink_to("missing-target")
+    lib64_calls = 0
+
+    def fail_second_lib64_stat(name, *args, **kwargs):
+        nonlocal lib64_calls
+        if name == "lib64" and kwargs.get("dir_fd") is not None:
+            lib64_calls += 1
+            if lib64_calls == 2:
+                raise OSError("lib64 stat")
+        return original_stat(name, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "stat", fail_second_lib64_stat)
+        with pytest.raises(module.IntegrationInstallError):
+            module._remove_activation_files(lib64_error)
+
+    ordinary_lib64 = tmp_path / "ordinary-lib64"
+    (ordinary_lib64 / "bin").mkdir(parents=True, mode=0o700)
+    (ordinary_lib64 / "lib64").mkdir(mode=0o700)
+    module._remove_activation_files(ordinary_lib64)
+
+    open_error = tmp_path / "activation-open-error"
+    (open_error / "bin").mkdir(parents=True, mode=0o700)
+    with monkeypatch.context() as context:
+        def fail_venv_open(*_args, **_kwargs):
+            raise OSError("open")
+
+        context.setattr(module.os, "open", fail_venv_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._remove_activation_files(open_error)
+
+    destination = tmp_path / "child-identity"
+    destination.mkdir(mode=0o700)
+    original_fstat = module.os.fstat
+
+    def wrong_child_identity(fd):
+        item = original_fstat(fd)
+        try:
+            descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            descriptor_path = ""
+        if descriptor_path == str(destination / "codex_usage"):
+            values = list(item)
+            values[0] = stat.S_IFDIR | 0o701
+            return os.stat_result(values)
+        return item
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "fstat", wrong_child_identity)
+        with pytest.raises(module.IntegrationInstallError):
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+    destination = tmp_path / "preexisting-target"
+    (destination / "codex_usage").mkdir(parents=True, mode=0o700)
+    (destination / "codex_usage" / "ok.py").write_bytes(b"old")
+    with pytest.raises(module._WheelMemberValidationError) as error:
+        module._safe_extract_wheel(
+            wheel_path=wheel,
+            destination=destination,
+            record_rows=rows,
+        )
+    assert error.value.reason == "duplicate_member"
+
+    destination = tmp_path / "bad-parent-mode"
+    (destination / "codex_usage").mkdir(parents=True, mode=0o755)
+    (destination / "codex_usage").chmod(0o755)
+    with pytest.raises(module.IntegrationInstallError):
+        module._safe_extract_wheel(
+            wheel_path=wheel,
+            destination=destination,
+            record_rows=rows,
+        )
+
+    destination = tmp_path / "open-race"
+    destination.mkdir(mode=0o700)
+    original_open = module.os.open
+
+    def target_open_race(name, flags, mode=0o777, *, dir_fd=None):
+        if name == "ok.py" and dir_fd is not None:
+            raise FileExistsError("target race")
+        if dir_fd is None:
+            return original_open(name, flags, mode)
+        return original_open(name, flags, mode, dir_fd=dir_fd)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "open", target_open_race)
+        with pytest.raises(module._WheelMemberValidationError) as error:
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+    assert error.value.reason == "duplicate_member"
+
+    destination = tmp_path / "bad-output"
+    destination.mkdir(mode=0o700)
+    original_fstat = module.os.fstat
+
+    def wrong_output_identity(fd):
+        item = original_fstat(fd)
+        try:
+            descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            descriptor_path = ""
+        if descriptor_path == str(destination / "codex_usage" / "ok.py"):
+            values = list(item)
+            values[0] = stat.S_IFREG | 0o644
+            return os.stat_result(values)
+        return item
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "fstat", wrong_output_identity)
+        with pytest.raises(module.IntegrationInstallError):
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+    destination = tmp_path / "fdopen-race"
+    destination.mkdir(mode=0o700)
+    with monkeypatch.context() as context:
+        original_fdopen = module.os.fdopen
+
+        def fail_fdopen(fd, *args, **kwargs):
+            try:
+                descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+            except OSError:
+                descriptor_path = ""
+            if descriptor_path == str(destination / "codex_usage" / "ok.py"):
+                raise OSError("fdopen")
+            return original_fdopen(fd, *args, **kwargs)
+
+        context.setattr(module.os, "fdopen", fail_fdopen)
+        with pytest.raises(module.IntegrationInstallError):
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+    destination = tmp_path / "open-failure"
+    destination.mkdir(mode=0o700)
+    with monkeypatch.context() as context:
+        def fail_destination_open(name, *_args, **_kwargs):
+            if name == destination:
+                raise OSError("destination")
+            return original_open(name, *_args, **_kwargs)
+
+        context.setattr(module.os, "open", fail_destination_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+    for attribute in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+        destination = tmp_path / f"without-{attribute}"
+        destination.mkdir(mode=0o700)
+        with monkeypatch.context() as context:
+            context.delattr(module.os, attribute, raising=False)
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+
+def test_installer_find_site_packages_remaining_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    def make_venv(name, *, lib=True, python=True, site=True):
+        root = tmp_path / name
+        root.mkdir(mode=0o700)
+        if lib:
+            lib_root = root / "lib"
+            lib_root.mkdir(mode=0o700)
+            if python:
+                python_root = lib_root / "python3.14"
+                python_root.mkdir(mode=0o700)
+                if site:
+                    (python_root / "site-packages").mkdir(mode=0o700)
+        return root
+
+    valid = make_venv("site-valid")
+    (valid / "lib" / "other").mkdir(mode=0o700)
+    (valid / "lib" / "python3.14" / "other").mkdir(mode=0o700)
+    identity = module._directory_identity(valid)
+    site_path, site_identity = module._find_site_packages(valid, identity)
+    assert site_path.name == "site-packages"
+    assert site_identity == module._directory_identity(site_path)
+
+    for attribute in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+        root = make_venv(f"site-without-{attribute}")
+        with monkeypatch.context() as context:
+            context.delattr(module.os, attribute, raising=False)
+            module._find_site_packages(root, module._directory_identity(root))
+
+    wrong_identity = module._DirectoryIdentity(
+        identity.device,
+        identity.inode,
+        identity.permissions + 1,
+    )
+    with pytest.raises(module.IntegrationInstallError):
+        module._find_site_packages(valid, wrong_identity)
+
+    missing_lib = make_venv("site-missing-lib", lib=False)
+    with pytest.raises(module.IntegrationInstallError):
+        module._find_site_packages(missing_lib, module._directory_identity(missing_lib))
+
+    invalid_lib = tmp_path / "site-invalid-lib"
+    invalid_lib.mkdir(mode=0o700)
+    (invalid_lib / "lib").write_bytes(b"not a directory")
+    with pytest.raises(module.IntegrationInstallError):
+        module._find_site_packages(invalid_lib, module._directory_identity(invalid_lib))
+
+    opened_lib = make_venv("site-opened-lib")
+    original_fstat = module.os.fstat
+
+    def wrong_lib_identity(fd):
+        item = original_fstat(fd)
+        try:
+            descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            descriptor_path = ""
+        if descriptor_path == str(opened_lib / "lib"):
+            values = list(item)
+            values[0] = stat.S_IFDIR | 0o701
+            return os.stat_result(values)
+        return item
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "fstat", wrong_lib_identity)
+        with pytest.raises(module.IntegrationInstallError):
+            module._find_site_packages(
+                opened_lib,
+                module._directory_identity(opened_lib),
+            )
+
+    invalid_python = make_venv("site-invalid-python", python=False)
+    (invalid_python / "lib" / "python3.14").write_bytes(b"not a directory")
+    with pytest.raises(module.IntegrationInstallError):
+        module._find_site_packages(
+            invalid_python,
+            module._directory_identity(invalid_python),
+        )
+
+    invalid_site = make_venv("site-invalid-site", site=False)
+    (invalid_site / "lib" / "python3.14" / "site-packages").write_bytes(b"file")
+    with pytest.raises(module.IntegrationInstallError):
+        module._find_site_packages(
+            invalid_site,
+            module._directory_identity(invalid_site),
+        )
+
+    opened_site = make_venv("site-opened-site")
+    original_fstat = module.os.fstat
+
+    def wrong_site_identity(fd):
+        item = original_fstat(fd)
+        try:
+            descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            descriptor_path = ""
+        if descriptor_path == str(opened_site / "lib" / "python3.14" / "site-packages"):
+            values = list(item)
+            values[0] = stat.S_IFDIR | 0o701
+            return os.stat_result(values)
+        return item
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "fstat", wrong_site_identity)
+        with pytest.raises(module.IntegrationInstallError):
+            module._find_site_packages(
+                opened_site,
+                module._directory_identity(opened_site),
+            )
+
+    final_site = make_venv("site-final-site")
+    original_fstat = module.os.fstat
+    site_fstats = 0
+
+    def wrong_final_site(fd):
+        nonlocal site_fstats
+        item = original_fstat(fd)
+        try:
+            descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            descriptor_path = ""
+        if descriptor_path == str(final_site / "lib" / "python3.14" / "site-packages"):
+            site_fstats += 1
+            if site_fstats == 2:
+                values = list(item)
+                values[0] = stat.S_IFDIR | 0o701
+                return os.stat_result(values)
+        return item
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "fstat", wrong_final_site)
+        with pytest.raises(module.IntegrationInstallError):
+            module._find_site_packages(
+                final_site,
+                module._directory_identity(final_site),
+            )
+
+    no_candidates = make_venv("site-no-candidates", python=False)
+    (no_candidates / "lib" / "helper").mkdir(mode=0o700)
+    with pytest.raises(module.IntegrationInstallError):
+        module._find_site_packages(
+            no_candidates,
+            module._directory_identity(no_candidates),
+        )
+
+    for stage in ("lib", "python", "site"):
+        root = make_venv(f"site-open-{stage}")
+        with monkeypatch.context() as context:
+            original_open = module.os.open
+
+            def make_fail_stage_open(stage_name, fallback):
+                def fail_stage_open(name, flags, mode=0o777, *, dir_fd=None):
+                    if (
+                        (stage_name == "lib" and name == "lib" and dir_fd is not None)
+                        or (
+                            stage_name == "python"
+                            and name == "python3.14"
+                            and dir_fd is not None
+                        )
+                        or (
+                            stage_name == "site"
+                            and name == "site-packages"
+                            and dir_fd is not None
+                        )
+                    ):
+                        raise OSError("stage open")
+                    if dir_fd is None:
+                        return fallback(name, flags, mode)
+                    return fallback(name, flags, mode, dir_fd=dir_fd)
+
+                return fail_stage_open
+
+            context.setattr(module.os, "open", make_fail_stage_open(stage, original_open))
+            with pytest.raises(module.IntegrationInstallError):
+                module._find_site_packages(root, module._directory_identity(root))
+
+    open_error = make_venv("site-open-error")
+    with monkeypatch.context() as context:
+        def fail_open(*_args, **_kwargs):
+            raise OSError("open")
+
+        context.setattr(module.os, "open", fail_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._find_site_packages(open_error, module._directory_identity(open_error))
+
+
+def test_installer_write_exclusive_remaining_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    parent = tmp_path / "write-parent"
+    parent.mkdir(mode=0o700)
+    parent_identity = module._directory_identity(parent)
+
+    for attribute in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC"):
+        target = parent / f"without-{attribute}"
+        with monkeypatch.context() as context:
+            context.delattr(module.os, attribute, raising=False)
+            assert module._write_exclusive(target, b"payload", mode=0o600).permissions == 0o600
+
+    target = parent / "wrong-parent-fd"
+    original_fstat = module.os.fstat
+
+    def wrong_parent_fd(fd):
+        item = original_fstat(fd)
+        try:
+            descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            descriptor_path = ""
+        if descriptor_path == str(parent):
+            values = list(item)
+            values[0] = stat.S_IFDIR | 0o701
+            return os.stat_result(values)
+        return item
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "fstat", wrong_parent_fd)
+        with pytest.raises(module.IntegrationInstallError):
+            module._write_exclusive(
+                target,
+                b"payload",
+                mode=0o600,
+                parent_identity=parent_identity,
+            )
+
+    target = parent / "zero-write"
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "write", lambda *_args, **_kwargs: 0)
+        with pytest.raises(module.IntegrationInstallError):
+            module._write_exclusive(target, b"payload", mode=0o600)
+        assert not target.exists()
+
+    target = parent / "no-final-rebase"
+    original_rebased = module._provisional_rebased
+    rebase_calls = 0
+
+    def fail_final_rebase(*args, **kwargs):
+        nonlocal rebase_calls
+        rebase_calls += 1
+        if rebase_calls == 2:
+            return None
+        return original_rebased(*args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_provisional_rebased", fail_final_rebase)
+        with pytest.raises(module.IntegrationInstallError):
+            module._write_exclusive(target, b"payload", mode=0o600)
+
+    target = parent / "wrong-final-fstat"
+    original_fstat = module.os.fstat
+
+    def wrong_final_fstat(fd):
+        item = original_fstat(fd)
+        try:
+            descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            descriptor_path = ""
+        if descriptor_path == str(target):
+            values = list(item)
+            values[0] = stat.S_IFREG | 0o644
+            return os.stat_result(values)
+        return item
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "fstat", wrong_final_fstat)
+        with pytest.raises(module.IntegrationInstallError):
+            module._write_exclusive(target, b"payload", mode=0o600)
+
+    target = parent / "open-error"
+    with monkeypatch.context() as context:
+        def fail_open(*_args, **_kwargs):
+            raise OSError("open")
+
+        context.setattr(module.os, "open", fail_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._write_exclusive(target, b"payload", mode=0o600)
+
+    target = parent / "close-error"
+    close_calls = 0
+    original_close = module.os.close
+
+    def fail_first_close(fd):
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls == 1:
+            raise OSError("close")
+        return original_close(fd)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "close", fail_first_close)
+        assert module._write_exclusive(target, b"payload", mode=0o600).permissions == 0o600
+
+    target = parent / "parent-close-error"
+    close_calls = 0
+
+    def fail_second_close(fd):
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls == 2:
+            raise OSError("parent close")
+        return original_close(fd)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "close", fail_second_close)
+        assert module._write_exclusive(target, b"payload", mode=0o600).permissions == 0o600
+
+
+def test_installer_build_wheel_directory_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    build_root = tmp_path / "build"
+    build_root.mkdir(mode=0o700)
+    wheel_parent = tmp_path / "wheel-parent"
+    wheel_parent.mkdir(mode=0o700)
+
+    monkeypatch.setattr(module, "_require_offline_builder", lambda **_kwargs: None)
+
+    wheel_dir = wheel_parent / "wheel"
+
+    def run_and_create(command, *, env, cwd):
+        del command, env, cwd
+        wheel_dir.mkdir(mode=0o700, exist_ok=True)
+        wheel = wheel_dir / module.EXPECTED_WHEEL_NAME
+        wheel.write_bytes(b"wheel")
+        wheel.chmod(0o600)
+        return subprocess.CompletedProcess(["builder"], 0)
+
+    monkeypatch.setattr(module, "_run_builder_bounded", run_and_create)
+    with monkeypatch.context() as context:
+        context.delattr(module.os, "O_DIRECTORY", raising=False)
+        context.delattr(module.os, "O_NOFOLLOW", raising=False)
+        context.delattr(module.os, "O_CLOEXEC", raising=False)
+        path, identity = module._build_verified_wheel(
+            python_executable=Path(sys.executable),
+            environment={},
+            build_root=build_root,
+            wheel_dir=wheel_dir,
+        )
+        assert path.name == module.EXPECTED_WHEEL_NAME
+        assert identity.permissions == 0o600
+
+    invalid_identity_dir = wheel_parent / "invalid-identity"
+
+    def run_invalid_identity(command, *, env, cwd):
+        del command, env, cwd
+        invalid_identity_dir.mkdir(mode=0o700, exist_ok=True)
+        wheel = invalid_identity_dir / module.EXPECTED_WHEEL_NAME
+        wheel.write_bytes(b"wheel")
+        wheel.chmod(0o600)
+        return subprocess.CompletedProcess(["builder"], 0)
+
+    original_fstat = module.os.fstat
+
+    def wrong_wheel_identity(fd):
+        item = original_fstat(fd)
+        try:
+            descriptor_path = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            descriptor_path = ""
+        if descriptor_path == str(invalid_identity_dir):
+            values = list(item)
+            values[0] = stat.S_IFDIR | 0o701
+            return os.stat_result(values)
+        return item
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_run_builder_bounded", run_invalid_identity)
+        context.setattr(module.os, "fstat", wrong_wheel_identity)
+        with pytest.raises(module.IntegrationInstallError):
+            module._build_verified_wheel(
+                python_executable=Path(sys.executable),
+                environment={},
+                build_root=build_root,
+                wheel_dir=invalid_identity_dir,
+            )
+
+    scan_error_dir = wheel_parent / "scan-error"
+
+    def run_scan_error(command, *, env, cwd):
+        del command, env, cwd
+        scan_error_dir.mkdir(mode=0o700, exist_ok=True)
+        return subprocess.CompletedProcess(["builder"], 0)
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_run_builder_bounded", run_scan_error)
+
+        def fail_scandir(*_args, **_kwargs):
+            raise OSError("scandir")
+
+        context.setattr(module.os, "scandir", fail_scandir)
+        with pytest.raises(module.IntegrationInstallError):
+            module._build_verified_wheel(
+                python_executable=Path(sys.executable),
+                environment={},
+                build_root=build_root,
+                wheel_dir=scan_error_dir,
+            )
+
+    no_open_dir = wheel_parent / "no-open"
+    with monkeypatch.context() as context:
+        context.setattr(module, "_run_builder_bounded", run_scan_error)
+        context.setattr(
+            module,
+            "_no_symlink_ancestors",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                module.IntegrationInstallError()
+            ),
+        )
+        with pytest.raises(module.IntegrationInstallError):
+            module._build_verified_wheel(
+                python_executable=Path(sys.executable),
+                environment={},
+                build_root=build_root,
+                wheel_dir=no_open_dir,
+            )
+
+
+def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    source_root = _temporary_source_copy(tmp_path)
+    build_root = tmp_path / "build"
+    build_root.mkdir(mode=0o700)
+    build_identity = module._directory_identity(build_root)
+    wrong_identity = module._DirectoryIdentity(
+        build_identity.device,
+        build_identity.inode,
+        build_identity.permissions + 1,
+    )
+    with pytest.raises(module.IntegrationInstallError):
+        module._copy_source_into_project(
+            source_root,
+            build_root,
+            build_identity=wrong_identity,
+        )
+
+    guard_root = tmp_path / "version-guard"
+    guard_root.mkdir(mode=0o700)
+    data_home, state_home, temporary_root = _roots(guard_root)
+    bad_source_root = _temporary_source_copy(guard_root)
+    pyproject = bad_source_root / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace(
+            'version = "0.6.532"',
+            'version = "0.0.0"',
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(module.IntegrationInstallError):
+        module.install_release(
+            source_root=bad_source_root,
             state_home=state_home,
             data_home=data_home,
-            expected_entrypoint_path=release.entrypoint_path,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
         )
+
+    with monkeypatch.context() as context:
+        def fail_install(**_kwargs):
+            raise RuntimeError("wrapper")
+
+        context.setattr(module, "_install_release", fail_install)
+        with pytest.raises(module.IntegrationInstallError):
+            module.install_release(
+                source_root=source_root,
+                state_home=tmp_path,
+                data_home=tmp_path,
+                python_executable=Path(sys.executable),
+                temporary_root=tmp_path,
+            )
+
+
+@pytest.mark.parametrize("drift_call", [3, 4])
+def test_installer_source_drift_guards_at_build_seams(tmp_path, monkeypatch, drift_call):
+    from codex_usage import integration_installer as module
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    original_rehash = module._rehash_source_manifest
+    calls = 0
+
+    def drift_at_seam(path):
+        nonlocal calls
+        calls += 1
+        result = original_rehash(path)
+        if calls == drift_call:
+            return {"changed.py": "0" * 64}
+        return result
+
+    monkeypatch.setattr(module, "_rehash_source_manifest", drift_at_seam)
+    with pytest.raises(module.IntegrationInstallError):
+        module.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert calls >= drift_call
+
+
+def test_installer_candidate_read_failure_guard(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation
+    from codex_usage import integration_installer as module
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    original_read_manifest = module._read_manifest
+
+    def fail_candidate_manifest(path):
+        if path.name.startswith("candidate-"):
+            raise integration_attestation.IntegrationAttestationUnavailable()
+        return original_read_manifest(path)
+
+    monkeypatch.setattr(module, "_read_manifest", fail_candidate_manifest)
+    with pytest.raises(module.IntegrationInstallError):
+        module.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+
+@pytest.mark.parametrize("failure", ["tree", "wheel"])
+def test_installer_post_build_failure_guards(tmp_path, monkeypatch, failure):
+    from codex_usage import integration_installer as module
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    if failure == "tree":
+        original_tree_hash = module._release_tree_sha256
+        calls = 0
+
+        def fail_final_tree_hash(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            result = original_tree_hash(*args, **kwargs)
+            if calls == 2:
+                return "0" * 64
+            return result
+
+        monkeypatch.setattr(module, "_release_tree_sha256", fail_final_tree_hash)
+    else:
+        monkeypatch.setattr(
+            module,
+            "_wheel_details",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("wheel details")),
+        )
+    with pytest.raises(module.IntegrationInstallError):
+        module.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+
+def test_installer_active_manifest_and_rollback_guards(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+    from codex_usage.private_io import write_private_text
+
+    first, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    previous = integration / module.PREVIOUS_NAME
+    active = integration / module.ACTIVE_NAME
+    write_private_text(
+        previous,
+        active.read_text(encoding="utf-8"),
+        label="test previous manifest",
+        mode=0o600,
+    )
+
+    original_read = module.read_private_text
+
+    second_root = tmp_path / "second-install"
+    second_root.mkdir(mode=0o700)
+    second_source = _temporary_source_copy(second_root)
+    second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+    second_entrypoint.write_bytes(second_entrypoint.read_bytes() + b"\n# second release\n")
+    second_temporary = second_root / "temporary"
+    second_temporary.mkdir(mode=0o700)
+
+    def bad_active_mode(path, **kwargs):
+        text, item = original_read(path, **kwargs)
+        if path == active:
+            values = list(item)
+            values[0] = stat.S_IFREG | 0o644
+            return text, os.stat_result(values)
+        return text, item
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "read_private_text", bad_active_mode)
+        with pytest.raises(module.IntegrationInstallError):
+            module.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    def bad_previous_mode(path, **kwargs):
+        text, item = original_read(path, **kwargs)
+        if path == previous:
+            values = list(item)
+            values[0] = stat.S_IFREG | 0o644
+            return text, os.stat_result(values)
+        return text, item
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "read_private_text", bad_previous_mode)
+        with pytest.raises(module.IntegrationInstallError):
+            module.rollback_active_release(state_home=state_home, data_home=data_home)
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            module,
+            "_require_private_dir",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                module.IntegrationInstallError()
+            ),
+        )
+        with pytest.raises(module.IntegrationInstallError):
+            module.rollback_active_release(state_home=state_home, data_home=data_home)
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            module,
+            "_verify_manifest",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("verify")),
+        )
+        with pytest.raises(module.IntegrationInstallError):
+            module.rollback_active_release(state_home=state_home, data_home=data_home)
+
+    assert first.release_dir.is_dir()
+
+
+def test_installer_finally_false_edges(tmp_path, monkeypatch):
+    from codex_usage import integration_installer as module
+
+    parent = tmp_path / "finally-parent"
+    parent.mkdir(mode=0o700)
+    parent_identity = module._directory_identity(parent)
+    original_open = module.os.open
+
+    source = parent / "source"
+    source.mkdir(mode=0o700)
+    source_identity = module._identity(source)
+    target = parent / "target"
+
+    def fail_parent_open(path, *args, **kwargs):
+        if path == parent:
+            raise OSError("parent open")
+        return original_open(path, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "open", fail_parent_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._rename_owned_directory(source, target, parent_identity, source_identity)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "open", fail_parent_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._create_private_directory(parent / "create-failure", parent_identity)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "open", fail_parent_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._require_private_dir(
+                parent / "require-failure",
+                None,
+                True,
+                parent_identity=parent_identity,
+            )
+
+    source_file = parent / "source-file"
+    source_file.write_bytes(b"source")
+    source_file.chmod(0o600)
+    original_lstat = Path.lstat
+
+    def fail_source_lstat(path):
+        if path == source_file:
+            raise OSError("source lstat")
+        return original_lstat(path)
+
+    with monkeypatch.context() as context:
+        context.setattr(Path, "lstat", fail_source_lstat)
+        with pytest.raises(module.IntegrationInstallError):
+            module._copy_regular(source_file, parent / "copy-failure")
+
+    build_root = tmp_path / "finally-build"
+    build_root.mkdir(mode=0o700)
+    wheel_parent = tmp_path / "finally-wheel-parent"
+    wheel_parent.mkdir(mode=0o700)
+    wheel_dir = wheel_parent / "wheel"
+    original_no_symlink = module._no_symlink_ancestors
+
+    def fail_wheel_ancestors(path):
+        if path == wheel_dir:
+            raise module.IntegrationInstallError()
+        return original_no_symlink(path)
+
+    with monkeypatch.context() as context:
+        context.setattr(module, "_require_offline_builder", lambda **_kwargs: None)
+        context.setattr(
+            module,
+            "_run_builder_bounded",
+            lambda *_args, **_kwargs: subprocess.CompletedProcess(["builder"], 0),
+        )
+        context.setattr(module, "_no_symlink_ancestors", fail_wheel_ancestors)
+        with pytest.raises(module.IntegrationInstallError):
+            module._build_verified_wheel(
+                python_executable=Path(sys.executable),
+                environment={},
+                build_root=build_root,
+                wheel_dir=wheel_dir,
+            )
+
+    wheel = tmp_path / "finally-candidate.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("codex_usage/ok.py", b"x")
+    destination = tmp_path / "finally-destination"
+    destination.mkdir(mode=0o700)
+    rows = {"codex_usage/ok.py": (hashlib.sha256(b"x").hexdigest(), 1)}
+
+    def fail_destination_open(path, *args, **kwargs):
+        if path == destination:
+            raise OSError("destination open")
+        return original_open(path, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "open", fail_destination_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._safe_extract_wheel(
+                wheel_path=wheel,
+                destination=destination,
+                record_rows=rows,
+            )
+
+    venv = tmp_path / "finally-venv"
+    (venv / "bin").mkdir(parents=True, mode=0o700)
+
+    def fail_venv_open(path, *args, **kwargs):
+        if path == venv:
+            raise OSError("venv open")
+        return original_open(path, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "open", fail_venv_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._remove_activation_files(venv)
+
+    site_venv = tmp_path / "finally-site-venv"
+    (site_venv / "lib" / "python3.14" / "site-packages").mkdir(
+        parents=True,
+        mode=0o700,
+    )
+
+    def fail_lib_open(name, flags, mode=0o777, *, dir_fd=None):
+        if name == "lib" and dir_fd is not None:
+            raise OSError("lib open")
+        if dir_fd is None:
+            return original_open(name, flags, mode)
+        return original_open(name, flags, mode, dir_fd=dir_fd)
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "open", fail_lib_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._find_site_packages(
+                site_venv,
+                module._directory_identity(site_venv),
+            )
+
+    with monkeypatch.context() as context:
+        context.setattr(module.os, "open", fail_parent_open)
+        with pytest.raises(module.IntegrationInstallError):
+            module._write_exclusive(parent / "exclusive-failure", b"x", mode=0o600)
 
 
 def test_attestation_verify_maps_metadata_read_and_content_failures(tmp_path, monkeypatch):
