@@ -11935,3 +11935,13 @@ Credit-Fenster ausgegeben wird.
 Verifikation: **353 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **99 %**, Missing-Zeilen 5; keine Settings-Fenster
 gestartet.
+
+## Runde 997: Nicht-finite JWT-Expiry direkt verworfen
+
+`direct._jwt_expiry()` hatte den `datetime.fromtimestamp`-Exceptionpfad für
+native, nicht-finite Werte noch nicht direkt belegt. Der neue Test bestätigt
+sichere `None`-Rückgabe bei `exp=inf`.
+
+Verifikation: **354 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **99 %**, Missing-Zeilen 3; keine Settings-Fenster
+gestartet.

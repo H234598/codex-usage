@@ -1552,6 +1552,16 @@ def test_jwt_expiry_rejects_dict_subclass_results(monkeypatch):
     assert direct_module._jwt_expiry("token") is None
 
 
+def test_jwt_expiry_rejects_non_finite_native_expiry(monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_jwt_claims",
+        lambda _token: {"exp": float("inf")},
+    )
+
+    assert direct_module._jwt_expiry("token") is None
+
+
 def test_jwt_claims_reject_extra_segments():
     token = _jwt_with_claims({"sub": "account"}) + ".extra"
 
