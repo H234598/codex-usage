@@ -9562,3 +9562,19 @@ Regression deckt den App-Server-Pfad mit überschriebenem `__mul__()` und
 Verifikation: **126 fokussierte Usage-Limit-Tests**, **417 Usage-Limit-, Direct-
 und App-Server-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 808: Fensteridentität gegen manipulierte Dauerwerte härten
+
+`LimitWindow.has_known_identity` akzeptierte bisher `int`-Subklassen und
+führte für unbekannte Fenster deren überschriebenen Operator `%` aus. Eine
+fehlerhafte Dauer konnte dadurch die Modellprüfung mit einem rohen Fremd-
+Exception abbrechen, statt die Fensteridentität abzulehnen.
+
+Die Identitätsprüfung akzeptiert jetzt nur den exakten Built-in-Typ `int`.
+Damit bleiben Boolean-, Float-, String- und Integer-Subclass-Dauern
+fail-closed ungültig, bevor Kanonisierung oder Fenstervergleich rechnen.
+Regression deckt eine Dauer-Subclass mit fehlerhaftem Modulo-Operator ab.
+
+Verifikation: **33 fokussierte Model-Tests**, **496 Model-, Usage-Limit-,
+State- und Render-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
+keine Settings-Fenster gestartet.

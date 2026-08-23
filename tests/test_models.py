@@ -6,6 +6,11 @@ import pytest
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 
 
+class _BrokenDuration(int):
+    def __mod__(self, _other):
+        raise RuntimeError("synthetic duration marker")
+
+
 @pytest.mark.parametrize("duration", [True, 1.0, "1", 0, -1, None])
 def test_window_for_duration_rejects_invalid_duration_types(duration):
     pool = UsagePool(
@@ -75,6 +80,12 @@ def test_account_usage_model_pool_rejects_invalid_model_input(model):
 )
 def test_limit_window_known_identity_is_strict(window, expected):
     assert window.has_known_identity is expected
+
+
+def test_limit_window_known_identity_rejects_integer_subclass_duration():
+    window = LimitWindow(name="custom", duration_seconds=_BrokenDuration(61))
+
+    assert window.has_known_identity is False
 
 
 def test_limit_window_is_complete_requires_usage_limit_and_reset():

@@ -113,8 +113,7 @@ class LimitWindow:
     def has_known_identity(self) -> bool:
         if self.duration_seconds is not None:
             if (
-                not isinstance(self.duration_seconds, int)
-                or isinstance(self.duration_seconds, bool)
+                type(self.duration_seconds) is not int
                 or self.duration_seconds <= 0
             ):
                 return False
