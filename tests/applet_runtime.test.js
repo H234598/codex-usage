@@ -14404,6 +14404,67 @@ test("backend setting rejects a non-boolean series-active value", () => {
   assert.equal(reloads, 1);
 });
 
+test("backend setting change covers canonical fallbacks and validation guards", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._backendAccounts = {
+    alpha: {
+      account: "alpha", label: "Canonical", tag: "CA",
+      "auth-json": "", "profile-dir": "", "test-home": true,
+      browser: 1, "reactivation-browser": 2, backend: 1,
+      series: "A", "series-active": false,
+    },
+  };
+  let reloads = 0;
+  let backendRows = null;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._reconcileBackendChanges = (rows) => { backendRows = rows; };
+  applet._reconcileAccountChanges = () => { throw new Error("unexpected account reconcile"); };
+
+  applet.accountBackends = [{account: "alpha"}];
+  applet._onAccountBackendsChanged();
+  assert.equal(reloads, 0);
+  assert.equal(backendRows[0].label, "Canonical");
+  assert.equal(backendRows[0].tag, "CA");
+  assert.equal(backendRows[0]["test-home"], true);
+  assert.equal(backendRows[0].browser, 1);
+  assert.equal(backendRows[0].backend, 1);
+
+  applet._reconcileAccountChanges = (rows) => { backendRows = rows; };
+  applet.accountBackends = [{account: "alpha", "test-home": false}];
+  applet._onAccountBackendsChanged();
+  assert.equal(backendRows[0]["test-home"], false);
+  applet._reconcileAccountChanges = () => { throw new Error("unexpected account reconcile"); };
+
+  for (const rows of [null, Array.from({length: 101}, () => ({account: "alpha"})), [null]]) {
+    applet.accountBackends = rows;
+    applet._onAccountBackendsChanged();
+  }
+  assert.equal(reloads, 3);
+
+  for (const row of [
+    {account: "bad key"},
+    {account: "alpha", series: "bad series"},
+    {account: "alpha", series: "", "series-active": true},
+  ]) {
+    applet.accountBackends = [row];
+    applet._onAccountBackendsChanged();
+  }
+  assert.equal(reloads, 6);
+
+  applet._backendAccounts.beta = {
+    account: "beta", label: "Beta", browser: 0, backend: 0,
+    "reactivation-browser": 0, series: "", "series-active": false,
+  };
+  applet.accountBackends = [
+    {account: "alpha", series: "A", "series-active": true},
+    {account: "beta", series: "A", "series-active": true},
+  ];
+  applet._showCommandError = () => {};
+  applet._onAccountBackendsChanged();
+  assert.equal(reloads, 7);
+});
+
 test("backend synchronization clears its guard after a settings exception", () => {
   const applet = makeApplet();
   applet._baseCommandArgv = () => ["codex-usage"];
