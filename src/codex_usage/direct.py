@@ -423,7 +423,7 @@ def _load_auth_token_and_metadata(
         payload = loads_strict(raw)
     except ValueError as exc:
         raise DirectAuthError(f"invalid auth.json: {path}") from exc
-    if not isinstance(payload, dict):
+    if type(payload) is not dict:
         raise DirectAuthError(f"invalid auth.json structure: {path}")
     token, metadata = _extract_auth_details(payload, path=path)
     auth_user_id, auth_account_id = auth_identity_from_payload(payload, path=path)
@@ -487,7 +487,7 @@ def auth_identity_from_file(path: Path) -> tuple[str | None, str | None]:
         payload = loads_strict(raw)
     except ValueError as exc:
         raise DirectAuthError(f"invalid auth.json: {path}") from exc
-    if not isinstance(payload, dict):
+    if type(payload) is not dict:
         raise DirectAuthError(f"invalid auth.json structure: {path}")
     return auth_identity_from_payload(payload, path=path)
 

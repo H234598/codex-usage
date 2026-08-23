@@ -3967,6 +3967,28 @@ def test_auth_json_helpers_accept_inherited_regular_fd(tmp_path):
     assert file_stat.st_ino == validated.st_ino
 
 
+def test_auth_identity_from_file_rejects_payload_dict_subclass(
+    tmp_path, monkeypatch
+):
+    class BrokenPayload(dict):
+        pass
+
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(
+        direct_module,
+        "read_auth_json_file",
+        lambda _path: ("{}", None),
+    )
+    monkeypatch.setattr(
+        direct_module,
+        "loads_strict",
+        lambda _raw: BrokenPayload(),
+    )
+
+    with pytest.raises(DirectAuthError, match=r"invalid auth\.json structure"):
+        auth_identity_from_file(path)
+
+
 @pytest.mark.parametrize("path", [None, [], "invalid", 1, False, object()])
 def test_auth_file_helpers_reject_non_path(path):
     for helper in (

@@ -11117,3 +11117,17 @@ Claims bleiben unverändert.
 
 Verifikation: **248 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 916: Auth-Identitätsdatei akzeptiert nur native JSON-Objekte
+
+`direct.auth_identity_from_file()` akzeptierte ein von `loads_strict()`
+geliefertes Dict-Subclass per `isinstance`. Dadurch wurde eine manipulierte
+Parser-Rückgabe an den Payload-Helper weitergereicht und als leerer
+Identitätswert behandelt statt als ungültige Auth-Struktur.
+
+Der Datei-Wrapper verlangt jetzt ein natives JSON-`dict` und meldet fremde
+Mappings kontrolliert als ungültige Struktur. Regression injiziert ein
+Payload-Subclass in den Parser; normale Auth-Dateien bleiben unverändert.
+
+Verifikation: **249 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
