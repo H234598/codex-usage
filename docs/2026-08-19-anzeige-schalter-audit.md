@@ -12880,3 +12880,19 @@ Verifikation: **126 History-Tests** (`test_history.py` plus
 `test_history_cli.py`), `history.py` **379/379 Statements, 100 % Coverage**,
 Mypy, Ruff und Diff-Check bestanden. Keine Settings-Fenster gestartet. Die
 Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1079: Integration-Attestation- und Release-Tree-Guards vollständig geprüft
+
+`integration_attestation.py` hatte noch unbelegte Grenzen bei privaten Pfaden,
+Descriptor-Identität, Größen- und Hardlink-Limits, sicherer Release-Tree-
+Traversal, No-Follow-Lesern, Manifest-/RECORD-Parsing, Digest-/Entrypoint-
+Verträgen sowie Fehlerabbildung in `verify_active_release`. Die fokussierten
+Regressionen führen diese Guards und Cleanup-Pfade direkt aus. Dabei wurde ein
+echter Root-Descriptor-Leak bei ungültigem Release-Root gefunden: Der bereits
+geöffnete Root-FD wurde bei einer Validierungsablehnung nicht geschlossen.
+Cleanup wurde fail-closed ergänzt; Regression deckt auch einen Close-Fehler ab.
+
+Verifikation: **70 fokussierte Attestation-/Release-Tree-/Manifest-Tests**,
+`integration_attestation.py` **386/386 Statements, 100 % Coverage**, Mypy,
+Ruff und Diff-Check bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.

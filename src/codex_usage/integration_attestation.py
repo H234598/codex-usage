@@ -171,7 +171,13 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
             or root_stat.st_uid != os.getuid()
         ):
             raise _unavailable()
-    except (OSError, ValueError):
+    except (OSError, ValueError, IntegrationAttestationUnavailable):
+        if root_fd >= 0:
+            try:
+                os.close(root_fd)
+            except OSError:
+                pass
+            root_fd = -1
         raise _unavailable() from None
     rows: list[bytes] = []
     entries_seen = 1
@@ -268,8 +274,6 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
     except (OSError, ValueError):
         raise _unavailable() from None
     finally:
-        if root_fd >= 0:
-            os.close(root_fd)
         for directory_fd, _, _ in stack:
             os.close(directory_fd)
 

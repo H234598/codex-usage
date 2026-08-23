@@ -4288,3 +4288,772 @@ def test_installer_cleanup_errors_have_distinct_data_sparse_result(tmp_path, mon
     assert result == 70
     assert captured.out == ""
     assert captured.err == "integration_producer_cleanup_failed\n"
+
+
+def test_attestation_private_path_guards_reject_missing_and_wrong_types(tmp_path):
+    from codex_usage import integration_attestation as module
+
+    missing = tmp_path / "missing"
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._private_regular(missing, mode=0o600)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._private_directory(missing)
+
+    directory = tmp_path / "directory"
+    directory.mkdir(mode=0o700)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._private_regular(directory, mode=0o600)
+    file_path = tmp_path / "file"
+    file_path.write_bytes(b"x")
+    file_path.chmod(0o600)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._private_directory(file_path)
+
+
+@pytest.mark.parametrize("value", [None, "", "relative", "/tmp/a//b", "/tmp/a\x00b"])
+def test_attestation_absolute_path_and_containment_guards(value, tmp_path):
+    from codex_usage import integration_attestation as module
+
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._absolute_path(value)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._contained(tmp_path / "outside", tmp_path / "root")
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._contained(tmp_path / "root" / "bad\\name", tmp_path / "root")
+
+
+def test_attestation_file_reader_rejects_parent_and_opened_identity_changes(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_attestation as module
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    path = parent / "payload"
+    path.write_bytes(b"payload")
+    path.chmod(0o600)
+    original_lstat = Path.lstat
+
+    def parent_not_directory(candidate):
+        if candidate == parent:
+            return SimpleNamespace(
+                st_mode=stat.S_IFREG | 0o600,
+                st_uid=os.getuid(),
+                st_dev=1,
+                st_ino=1,
+            )
+        return original_lstat(candidate)
+
+    monkeypatch.setattr(Path, "lstat", parent_not_directory)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._file_bytes(path, mode=0o600)
+
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+    original_fstat = module.os.fstat
+    calls = 0
+
+    def mismatched_parent(candidate_fd):
+        nonlocal calls
+        calls += 1
+        item = original_fstat(candidate_fd)
+        if calls == 1:
+            return SimpleNamespace(
+                st_mode=item.st_mode,
+                st_uid=item.st_uid,
+                st_dev=item.st_dev,
+                st_ino=item.st_ino + 1,
+            )
+        return item
+
+    monkeypatch.setattr(module.os, "fstat", mismatched_parent)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._file_bytes(path, mode=0o600)
+
+
+def test_attestation_file_reader_rejects_oversized_opened_file(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    path = tmp_path / "payload"
+    path.write_bytes(b"x")
+    path.chmod(0o600)
+    original_fstat = module.os.fstat
+    calls = 0
+
+    def oversized_file(candidate_fd):
+        nonlocal calls
+        calls += 1
+        item = original_fstat(candidate_fd)
+        if calls == 2:
+            return SimpleNamespace(
+                st_mode=item.st_mode,
+                st_uid=item.st_uid,
+                st_nlink=item.st_nlink,
+                st_dev=item.st_dev,
+                st_ino=item.st_ino,
+                st_size=module.MAX_ATTESTATION_FILE_BYTES + 1,
+            )
+        return item
+
+    monkeypatch.setattr(module.os, "fstat", oversized_file)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._file_bytes(path, mode=0o600)
+
+
+def test_attestation_file_reader_rejects_oversized_read_payload(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    path = tmp_path / "payload"
+    path.write_bytes(b"x")
+    path.chmod(0o600)
+    original_fdopen = module.os.fdopen
+    fd_holder = {"fd": -1}
+
+    class _OversizedHandle:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            os.close(fd_holder["fd"])
+
+        def read(self, _size):
+            return b"xx"
+
+    def fdopen(candidate_fd, *args, **kwargs):
+        fd_holder["fd"] = candidate_fd
+        return _OversizedHandle()
+
+    monkeypatch.setattr(module.os, "fdopen", fdopen)
+    monkeypatch.setattr(module, "MAX_ATTESTATION_FILE_BYTES", 1)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._file_bytes(path, mode=0o600)
+    monkeypatch.setattr(module.os, "fdopen", original_fdopen)
+
+
+def test_attestation_file_reader_maps_open_error(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    path = tmp_path / "payload"
+    path.write_bytes(b"x")
+    path.chmod(0o600)
+    original_open = module.os.open
+
+    def fail_file_open(candidate, flags, *args, **kwargs):
+        if candidate == path.name and kwargs.get("dir_fd") is not None:
+            raise OSError("synthetic open marker")
+        return original_open(candidate, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", fail_file_open)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._file_bytes(path, mode=0o600)
+
+
+def test_attestation_tree_rejects_invalid_root_and_child_entries(tmp_path):
+    from codex_usage import integration_attestation as module
+
+    missing = tmp_path / "missing"
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=missing)
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    (release / "bad\\name").write_bytes(b"x")
+    (release / "bad\\name").chmod(0o600)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=release)
+
+    target = release / "target"
+    target.write_bytes(b"x")
+    target.chmod(0o600)
+    (release / "link").symlink_to(target)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=release)
+
+
+def test_attestation_tree_rejects_hardlink_and_file_size_limits(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    target = release / "target"
+    target.write_bytes(b"x")
+    target.chmod(0o600)
+    hardlink = release / "hardlink"
+    hardlink.hardlink_to(target)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=release)
+
+    hardlink.unlink()
+    monkeypatch.setattr(module, "MAX_ATTESTATION_FILE_BYTES", 1)
+    target.write_bytes(b"xx")
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=release)
+
+
+def test_attestation_tree_rejects_payload_growth_after_descriptor_read(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    target = release / "target"
+    target.write_bytes(b"x")
+    target.chmod(0o600)
+    monkeypatch.setattr(module, "MAX_RELEASE_TREE_BYTES", 1)
+    monkeypatch.setattr(module, "_read_nofollow_fd", lambda _fd: b"xx")
+
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=release)
+
+
+def test_attestation_tree_closes_child_fd_when_sorting_fails(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    child = release / "child"
+    child.write_bytes(b"x")
+    child.chmod(0o600)
+    second = release / "second"
+    second.write_bytes(b"y")
+    second.chmod(0o600)
+    original_scandir = module.os.scandir
+
+    class _UnsortableName(str):
+        def __lt__(self, _other):
+            raise RuntimeError("synthetic sorting marker")
+
+    class _Entry:
+        def __init__(self, name, target):
+            self.name = _UnsortableName(name)
+            self.target = target
+
+        def stat(self, *, follow_symlinks):
+            assert follow_symlinks is False
+            return self.target.lstat()
+
+    class _Scan:
+        def __enter__(self):
+            return iter((_Entry("child", child), _Entry("second", second)))
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(module.os, "scandir", lambda _fd: _Scan())
+    with pytest.raises(RuntimeError, match="synthetic sorting marker"):
+        module._release_tree_rows(release_dir=release)
+    monkeypatch.setattr(module.os, "scandir", original_scandir)
+
+
+def test_attestation_tree_catches_reader_failure_and_closes_root_fd(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    target = release / "target"
+    target.write_bytes(b"x")
+    target.chmod(0o600)
+    monkeypatch.setattr(
+        module,
+        "_read_nofollow_fd",
+        lambda _fd: (_ for _ in ()).throw(OSError("synthetic reader marker")),
+    )
+
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=release)
+
+
+def test_attestation_tree_rejects_unsupported_opened_entry_type(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    release.mkdir(mode=0o700)
+    child = release / "child"
+    child.write_bytes(b"x")
+    child.chmod(0o600)
+    original_isdir = module.stat.S_ISDIR
+    original_isreg = module.stat.S_ISREG
+    child_mode = child.stat().st_mode
+    regular_calls = 0
+
+    def fake_isdir(mode):
+        return original_isdir(mode)
+
+    def fake_isreg(mode):
+        nonlocal regular_calls
+        if mode == child_mode:
+            regular_calls += 1
+            return regular_calls == 1
+        return original_isreg(mode)
+
+    monkeypatch.setattr(module.stat, "S_ISDIR", fake_isdir)
+    monkeypatch.setattr(module.stat, "S_ISREG", fake_isreg)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=release)
+
+
+def test_attestation_tree_closes_root_fd_when_root_stat_is_invalid(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    release.write_bytes(b"not a directory")
+    release.chmod(0o600)
+    original_open = module.os.open
+    original_close = module.os.close
+    closed: list[int] = []
+
+    def open_root(candidate, flags, *args, **kwargs):
+        if candidate == release:
+            return original_open(candidate, os.O_RDONLY)
+        return original_open(candidate, flags, *args, **kwargs)
+
+    def close_traced(fd):
+        closed.append(fd)
+        original_close(fd)
+        raise OSError(errno.EIO, "close trace")
+
+    monkeypatch.setattr(module.os, "open", open_root)
+    monkeypatch.setattr(module.os, "close", close_traced)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_rows(release_dir=release)
+    assert closed
+
+
+def test_attestation_read_nofollow_fd_rejects_invalid_and_oversized_payload(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_attestation as module
+
+    directory = tmp_path / "directory"
+    directory.mkdir(mode=0o700)
+    fd = os.open(directory, os.O_RDONLY)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_nofollow_fd(fd)
+
+    payload = tmp_path / "payload"
+    payload.write_bytes(b"x")
+    payload.chmod(0o600)
+    fd = os.open(payload, os.O_RDONLY)
+    original_fdopen = module.os.fdopen
+
+    class _OversizedHandle:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            os.close(fd)
+
+        def read(self, _size):
+            return b"xx"
+
+    monkeypatch.setattr(module.os, "fdopen", lambda *_args, **_kwargs: _OversizedHandle())
+    monkeypatch.setattr(module, "MAX_ATTESTATION_FILE_BYTES", 1)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_nofollow_fd(fd)
+    monkeypatch.setattr(module.os, "fdopen", original_fdopen)
+
+
+def test_attestation_read_nofollow_fd_maps_fstat_error(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    payload = tmp_path / "payload"
+    payload.write_bytes(b"x")
+    payload.chmod(0o600)
+    fd = os.open(payload, os.O_RDONLY)
+    monkeypatch.setattr(
+        module.os,
+        "fstat",
+        lambda _fd: (_ for _ in ()).throw(OSError("synthetic fstat marker")),
+    )
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_nofollow_fd(fd)
+
+
+def test_attestation_read_nofollow_bytes_rejects_parent_and_opened_identity(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_attestation as module
+
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    path = parent / "payload"
+    path.write_bytes(b"x")
+    path.chmod(0o600)
+    original_lstat = Path.lstat
+
+    def parent_not_directory(candidate):
+        if candidate == parent:
+            return SimpleNamespace(st_mode=stat.S_IFREG, st_uid=os.getuid())
+        return original_lstat(candidate)
+
+    monkeypatch.setattr(Path, "lstat", parent_not_directory)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_nofollow_bytes(path)
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+
+    original_fstat = module.os.fstat
+    calls = 0
+
+    def mismatched_parent(candidate_fd):
+        nonlocal calls
+        calls += 1
+        item = original_fstat(candidate_fd)
+        if calls == 1:
+            return SimpleNamespace(
+                st_mode=item.st_mode,
+                st_uid=item.st_uid,
+                st_dev=item.st_dev,
+                st_ino=item.st_ino + 1,
+            )
+        return item
+
+    monkeypatch.setattr(module.os, "fstat", mismatched_parent)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_nofollow_bytes(path)
+
+
+def test_attestation_read_nofollow_bytes_rejects_file_identity_and_read_size(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_attestation as module
+
+    path = tmp_path / "payload"
+    path.write_bytes(b"x")
+    path.chmod(0o600)
+    identity = path.stat()
+    wrong_identity = SimpleNamespace(
+        st_dev=identity.st_dev,
+        st_ino=identity.st_ino + 1,
+        st_mode=identity.st_mode,
+    )
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_nofollow_bytes(path, expected_file_identity=wrong_identity)
+
+    fd_holder = {"fd": -1}
+    original_fdopen = module.os.fdopen
+
+    class _OversizedHandle:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            os.close(fd_holder["fd"])
+
+        def read(self, _size):
+            return b"xx"
+
+    def fdopen(candidate_fd, *args, **kwargs):
+        fd_holder["fd"] = candidate_fd
+        return _OversizedHandle()
+
+    monkeypatch.setattr(module.os, "fdopen", fdopen)
+    monkeypatch.setattr(module, "MAX_ATTESTATION_FILE_BYTES", 1)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_nofollow_bytes(path)
+    monkeypatch.setattr(module.os, "fdopen", original_fdopen)
+
+
+def test_attestation_read_nofollow_bytes_maps_open_error(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    path = tmp_path / "payload"
+    path.write_bytes(b"x")
+    path.chmod(0o600)
+    original_open = module.os.open
+
+    def fail_file_open(candidate, flags, *args, **kwargs):
+        if candidate == path.name and kwargs.get("dir_fd") is not None:
+            raise OSError("synthetic open marker")
+        return original_open(candidate, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, "open", fail_file_open)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_nofollow_bytes(path)
+
+
+def test_attestation_release_tree_sha256_maps_unexpected_errors(monkeypatch, tmp_path):
+    from codex_usage import integration_attestation as module
+
+    monkeypatch.setattr(
+        module,
+        "_release_tree_rows",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("synthetic tree marker")),
+    )
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._release_tree_sha256(release_dir=tmp_path)
+
+
+def test_attestation_manifest_reader_rejects_io_mode_json_and_shape(tmp_path):
+    from codex_usage import integration_attestation as module
+
+    missing = tmp_path / "missing.json"
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_manifest(missing)
+
+    path = tmp_path / "manifest.json"
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o644)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_manifest(path)
+    path.chmod(0o600)
+    path.write_text("not json", encoding="utf-8")
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_manifest(path)
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._read_manifest(path)
+
+
+@pytest.mark.parametrize("value", [None, "", 1])
+def test_attestation_manifest_string_requires_nonempty_text(value):
+    from codex_usage import integration_attestation as module
+
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._manifest_string({"field": value}, "field")
+
+
+def test_attestation_manifest_string_returns_valid_value():
+    from codex_usage import integration_attestation as module
+
+    assert module._manifest_string({"field": "value"}, "field") == "value"
+
+
+def test_attestation_record_digest_rejects_prefix_and_decode_errors(monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    assert module._record_digest("invalid", b"x") is False
+    monkeypatch.setattr(
+        module.base64,
+        "urlsafe_b64decode",
+        lambda _value: (_ for _ in ()).throw(module.binascii.Error("synthetic decode marker")),
+    )
+    assert module._record_digest("sha256=" + "A" * 43, b"x") is False
+
+
+def test_attestation_record_rows_rejects_invalid_path_and_digest_rows(tmp_path):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    site_packages = release / "site-packages"
+    dist_info = site_packages / "dist-info"
+    target_dir = site_packages / "codex_usage"
+    dist_info.mkdir(mode=0o700, parents=True)
+    target_dir.mkdir(mode=0o700)
+    release.chmod(0o700)
+    site_packages.chmod(0o700)
+    target = target_dir / "ok.py"
+    target.write_bytes(b"x")
+    target.chmod(0o600)
+    record = dist_info / "RECORD"
+    record.write_text("../bad,,\n", encoding="utf-8")
+    record.chmod(0o600)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._record_rows(record, release)
+
+    record.write_text("dist-info/RECORD,,1\n", encoding="utf-8")
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._record_rows(record, release)
+    record.write_text("codex_usage/ok.py,sha256=" + "A" * 43 + ",1\n", encoding="utf-8")
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._record_rows(record, release)
+
+
+@pytest.mark.parametrize("payload", [b"\xff", b""])
+def test_attestation_record_rows_rejects_invalid_or_empty_csv(tmp_path, payload):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    dist_info = release / "site-packages" / "dist-info"
+    dist_info.mkdir(mode=0o700, parents=True)
+    release.chmod(0o700)
+    record = dist_info / "RECORD"
+    record.write_bytes(payload)
+    record.chmod(0o600)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._record_rows(record, release)
+
+
+def test_attestation_record_rows_requires_record_self_row(tmp_path):
+    from codex_usage import integration_attestation as module
+
+    release = tmp_path / "release"
+    site_packages = release / "site-packages"
+    dist_info = site_packages / "dist-info"
+    target_dir = site_packages / "codex_usage"
+    dist_info.mkdir(mode=0o700, parents=True)
+    target_dir.mkdir(mode=0o700)
+    release.chmod(0o700)
+    site_packages.chmod(0o700)
+    target = target_dir / "ok.py"
+    target.write_bytes(b"x")
+    target.chmod(0o600)
+    digest = base64.urlsafe_b64encode(hashlib.sha256(b"x").digest()).decode().rstrip("=")
+    record = dist_info / "RECORD"
+    record.write_text(f"codex_usage/ok.py,sha256={digest},1\n", encoding="utf-8")
+    record.chmod(0o600)
+
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._record_rows(record, release)
+
+
+def test_attestation_manifest_rejects_version_and_home_mismatch(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    state_home = tmp_path / "state"
+    data_home = tmp_path / "data"
+    manifest_path = tmp_path / "active.json"
+    monkeypatch.setattr(
+        module,
+        "_read_manifest",
+        lambda _path: {"schema_version": 1, "version": "wrong"},
+    )
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._verify_manifest(
+            manifest_path=manifest_path,
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=None,
+        )
+
+    monkeypatch.setattr(
+        module,
+        "_read_manifest",
+        lambda _path: {
+            "schema_version": 1,
+            "version": module._EXPECTED_VERSION,
+            "source_manifest_sha256": "a" * 64,
+            "state_home": str(tmp_path / "other-state"),
+            "data_home": str(data_home),
+        },
+    )
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module._verify_manifest(
+            manifest_path=manifest_path,
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=None,
+        )
+
+
+def test_attestation_verify_maps_unexpected_exception(monkeypatch, tmp_path):
+    from codex_usage import integration_attestation as module
+
+    def fail_verify(**_kwargs):
+        raise RuntimeError("synthetic verifier marker")
+
+    monkeypatch.setattr(module, "_verify_manifest", fail_verify)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module.verify_active_release(
+            state_home=tmp_path / "state",
+            data_home=tmp_path / "data",
+            expected_entrypoint_path=tmp_path / "entrypoint",
+        )
+
+
+def test_attestation_verify_rejects_expected_entrypoint_type_and_path(tmp_path):
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+
+    release, data_home, state_home = _install(tmp_path)
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path="not-a-path",  # type: ignore[arg-type]
+        )
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.release_dir / "wrong.py",
+        )
+
+
+def test_attestation_verify_rejects_payload_digest_and_launcher_contract(tmp_path):
+    from codex_usage import integration_attestation as module
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    manifest["entrypoint_sha256"] = "0" * 64
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True),
+        label="mutated active manifest",
+        mode=0o600,
+    )
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    launcher = Path(manifest["launcher_path"])
+    launcher.write_bytes(b"wrong launcher")
+    launcher.chmod(0o700)
+    manifest["entrypoint_sha256"] = hashlib.sha256(
+        Path(manifest["entrypoint_path"]).read_bytes()
+    ).hexdigest()
+    manifest["launcher_sha256"] = hashlib.sha256(b"wrong launcher").hexdigest()
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True),
+        label="mutated active manifest",
+        mode=0o600,
+    )
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+
+
+def test_attestation_verify_maps_metadata_read_and_content_failures(tmp_path, monkeypatch):
+    from codex_usage import integration_attestation as module
+
+    release, data_home, state_home = _install(tmp_path)
+    original_read = module._read_nofollow_bytes
+    metadata_calls = 0
+
+    def fail_metadata(path, **kwargs):
+        nonlocal metadata_calls
+        if path.name == "METADATA":
+            metadata_calls += 1
+            if metadata_calls == 2:
+                raise module.IntegrationAttestationUnavailable()
+        return original_read(path, **kwargs)
+
+    monkeypatch.setattr(module, "_read_nofollow_bytes", fail_metadata)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+
+    monkeypatch.setattr(module, "_read_nofollow_bytes", original_read)
+    metadata_calls = 0
+
+    def bad_metadata(path, **kwargs):
+        nonlocal metadata_calls
+        if path.name == "METADATA":
+            metadata_calls += 1
+            if metadata_calls == 2:
+                return b"Name: wrong\nVersion: wrong\n"
+        return original_read(path, **kwargs)
+
+    monkeypatch.setattr(module, "_read_nofollow_bytes", bad_metadata)
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
