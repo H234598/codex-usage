@@ -436,7 +436,7 @@ def auth_identity_from_payload(
     *,
     path: Path,
 ) -> tuple[str | None, str | None]:
-    if not isinstance(payload, dict):
+    if type(payload) is not dict:
         return None, None
     tokens = payload.get("tokens")
     if type(tokens) is not dict:

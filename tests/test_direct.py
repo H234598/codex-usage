@@ -902,6 +902,17 @@ def test_auth_metadata_rejects_payload_dict_subclass_hooks():
     }
 
 
+def test_auth_identity_rejects_payload_dict_subclass_hooks(tmp_path):
+    class BrokenPayload(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth identity payload marker")
+
+    assert auth_identity_from_payload(
+        BrokenPayload(),
+        path=tmp_path / "auth.json",
+    ) == (None, None)
+
+
 @pytest.mark.parametrize(
     "claims",
     [
