@@ -10775,3 +10775,17 @@ unverändert.
 
 Verifikation: **224 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 892: Credit-Kandidaten auf native Dicts begrenzen
+
+`direct._credit_window()` akzeptierte einen strukturierten Credit-Kandidaten
+als Dict-Subclass und rief dessen `.get()` in der Zahlen- und Resetauflösung
+auf. Ein manipuliertes Mapping konnte die Credit-Extraktion dadurch mit einer
+rohen Exception abbrechen.
+
+Strukturierte Kandidaten werden jetzt nur bei einem nativen `dict` verarbeitet;
+Subklassen und Fremdtypen liefern `None`. Regression deckt den Credit-`.get()`-
+Hook ab; skalare und normale strukturierte Creditwerte bleiben unverändert.
+
+Verifikation: **225 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

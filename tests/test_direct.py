@@ -468,6 +468,20 @@ def test_credit_window_extracts_nested_absolute_balance():
     assert window.source == "json:credits"
 
 
+def test_credit_window_rejects_credit_dict_subclass_hooks():
+    class BrokenCredits(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic credit mapping marker")
+
+    assert (
+        _credit_window(
+            {"credits": BrokenCredits()},
+            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "payload",
     [

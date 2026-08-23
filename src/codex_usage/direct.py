@@ -1699,7 +1699,7 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
         if not math.isfinite(numeric) or numeric < 0:
             return None
         return LimitWindow(name="credits", remaining=numeric)
-    if not isinstance(candidate, dict):
+    if type(candidate) is not dict:
         return None
 
     def number(*keys: str) -> float | None:
