@@ -11875,3 +11875,13 @@ fail-closed Rückgaben.
 Verifikation: **345 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **98 %**, Missing-Zeilen 18; keine Settings-Fenster
 gestartet.
+
+## Runde 991: Progressive-Window-Mismatchpfade direkt abgewiesen
+
+`direct._latest_response_progresses_beyond_group()` hatte die Fälle
+fehlender Gegenfenster, fehlender Nutzungswerte und rückläufiger Nutzung noch
+offen. Drei parametrisierte Tests bestätigen jeweils fail-closed `False`.
+
+Verifikation: **348 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **99 %**, Missing-Zeilen 15; keine Settings-Fenster
+gestartet.

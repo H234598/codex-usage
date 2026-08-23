@@ -524,6 +524,40 @@ def test_latest_response_progresses_beyond_stable_group():
     ) is True
 
 
+@pytest.mark.parametrize(
+    ("latest_window", "stable_window"),
+    [
+        (None, (18_000, 1, ("at", 200), None)),
+        ((18_000, None, ("at", 200), None), (18_000, 1, ("at", 200), None)),
+        ((18_000, 1, ("at", 200), None), (18_000, 2, ("at", 200), None)),
+    ],
+)
+def test_latest_response_progresses_beyond_group_rejects_window_mismatches(
+    monkeypatch, latest_window, stable_window
+):
+    identity = ("user-test", "account-test")
+    signatures = iter(
+        [
+            (identity, (latest_window, None)),
+            (identity, (stable_window, None)),
+        ]
+    )
+    monkeypatch.setattr(
+        direct_module,
+        "_usage_response_progresses",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        direct_module,
+        "_usage_response_signature",
+        lambda _payload: next(signatures),
+    )
+
+    assert direct_module._latest_response_progresses_beyond_group(
+        [{}, {}], [(0, {})]
+    ) is False
+
+
 def test_latest_response_detects_relative_reset_transition():
     previous = {
         "user_id": "user-test",
