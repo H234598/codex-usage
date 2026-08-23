@@ -470,7 +470,7 @@ def _json_candidates_from_payload(payload: dict[str, Any]) -> list[JsonCandidate
             key = (source, url)
             if "requestSequence" in item:
                 sequence = item["requestSequence"]
-                if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+                if type(sequence) is not int or sequence < 0:
                     continue
             else:
                 sequence = None
@@ -570,7 +570,7 @@ def _response_metadata_is_valid(item: dict[str, Any]) -> bool:
     if not isinstance(truncated, bool) or truncated:
         return False
     status = item["status"]
-    if isinstance(status, bool) or not isinstance(status, int) or not 200 <= status < 300:
+    if type(status) is not int or not 200 <= status < 300:
         return False
     ok = item["ok"]
     if not isinstance(ok, bool) or not ok:
@@ -653,7 +653,7 @@ def _validate_bridge_endpoint(value: object) -> str:
 
 
 def _validate_bridge_interval(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 60:
+    if type(value) is not int or value < 60:
         raise ValueError("interval must be at least 60 seconds")
     return value
 
@@ -740,11 +740,9 @@ def _sanitize_api_response(item: Any) -> dict[str, Any] | None:
 
 
 def _sanitize_debug_number(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
+    if type(value) is int:
         return value if value >= 0 else None
-    if isinstance(value, float):
+    if type(value) is float:
         if not math.isfinite(value) or value < 0:
             return None
         try:
@@ -1570,7 +1568,7 @@ def run_bridge_server(
         raise ValueError("config is invalid")
     if not isinstance(host, str) or not host.strip():
         raise ValueError("bridge host is invalid")
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+    if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError("bridge port is invalid")
     for value, label in (
         (snapshot_dir, "snapshot directory"),
@@ -1739,7 +1737,8 @@ def _browser_payload_is_covered_by_authenticated_state(
 ) -> bool:
     if browser_usage.backend_used != "browser":
         return False
-    freshness_window = max(int(config.interval_seconds), 60) + AUTHENTICATED_BRIDGE_GRACE_SECONDS
+    interval_seconds = _validate_bridge_interval(config.interval_seconds)
+    freshness_window = interval_seconds + AUTHENTICATED_BRIDGE_GRACE_SECONDS
     for known_usage in known_usages:
         if known_usage is None:
             continue
@@ -1977,6 +1976,7 @@ def _authenticated_snapshot_supersedes_browser_current(
     """Prefer a fresh authoritative authenticated snapshot over browser state."""
     if current.backend_used != "browser":
         return False
+    interval_seconds = _validate_bridge_interval(interval_seconds)
     if (
         not isinstance(snapshot.backend_used, str)
         or snapshot.backend_used not in {"direct", "app-server"}
@@ -2011,7 +2011,7 @@ def _authenticated_snapshot_supersedes_browser_current(
         # Do not merge browser values when authenticated freshness cannot be
         # established.
         return True
-    freshness_window = max(int(interval_seconds), 60) + AUTHENTICATED_BRIDGE_GRACE_SECONDS
+    freshness_window = interval_seconds + AUTHENTICATED_BRIDGE_GRACE_SECONDS
     if not 0 <= age_seconds <= freshness_window:
         return False
     if snapshot.stale and not 0 <= values_age_seconds <= freshness_window:
@@ -2148,6 +2148,7 @@ def _capture_is_too_far_in_future(
 
 
 def _mark_latest_stale(usage: AccountUsage, interval_seconds: int) -> AccountUsage:
+    interval_seconds = _validate_bridge_interval(interval_seconds)
     grace_seconds = max(60, interval_seconds + 60)
     try:
         age_seconds = (datetime.now(tz=LOCAL_TZ) - usage.captured_at).total_seconds()

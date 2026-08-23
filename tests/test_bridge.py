@@ -28,10 +28,12 @@ from codex_usage.bridge import (
     _newest_known_usage,
     _parse_captured_at,
     _redact_url,
+    _response_metadata_is_valid,
     _safe_context_value,
     _safe_excerpt,
     _sanitize_debug_number,
     _tls_context,
+    _validate_bridge_interval,
     bridge_token_for_account,
     bridge_token_matches,
     ingest_and_save,
@@ -60,6 +62,43 @@ def _jwt_with_claims(claims: dict) -> str:
     header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=").decode()
     return f"{header}.{payload}.signature"
+
+
+class _BrokenInt(int):
+    def __ge__(self, _other):
+        raise RuntimeError("synthetic bridge integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic bridge integer comparison marker")
+
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic bridge integer comparison marker")
+
+
+def test_bridge_numeric_boundaries_reject_subclasses_before_operations():
+    broken = _BrokenInt(200)
+
+    with pytest.raises(ValueError, match="interval"):
+        _validate_bridge_interval(broken)
+    assert _sanitize_debug_number(broken) is None
+    assert _response_metadata_is_valid(
+        {
+            "status": broken,
+            "ok": True,
+            "truncated": False,
+            "contentType": "application/json",
+        }
+    ) is False
+    with pytest.raises(ValueError, match="interval"):
+        bridge_module._browser_payload_is_covered_by_authenticated_state(
+            AppConfig(accounts=(), interval_seconds=_BrokenInt(300)),
+            AccountUsage(
+                account_id="bridge",
+                label="Bridge",
+                captured_at=datetime.now(ZoneInfo("Europe/Berlin")),
+                backend_used="browser",
+            ),
+        )
 
 
 def test_parse_captured_at_uses_dst_aware_local_zone(monkeypatch):
@@ -258,7 +297,7 @@ def test_bridge_server_rejects_invalid_host_before_bind(host):
         run_bridge_server(AppConfig(accounts=()), host=host, port=8765)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("port", [None, [], "8765", 0, 65536, True, object()])
+@pytest.mark.parametrize("port", [None, [], "8765", 0, 65536, True, _BrokenInt(8765), object()])
 def test_bridge_server_rejects_invalid_port_before_bind(port):
     with pytest.raises(ValueError, match="bridge port is invalid"):
         run_bridge_server(AppConfig(accounts=()), host="127.0.0.1", port=port)  # type: ignore[arg-type]
@@ -2927,7 +2966,7 @@ def test_json_candidates_reject_oversized_combined_response_collection():
 
 @pytest.mark.parametrize(
     "request_sequence",
-    (None, True, False, -1, 1.5, "1", "", "invalid", [], {}),
+    (None, True, False, -1, 1.5, "1", "", "invalid", _BrokenInt(1), [], {}),
 )
 def test_json_candidates_reject_malformed_request_sequence(request_sequence):
     candidates = _json_candidates_from_payload(

@@ -9899,3 +9899,20 @@ unsichtbar. Regression deckt beide Subklassen sowie Tabellen-/CLI-Anzeige ab.
 
 Verifikation: **70 fokussierte Render-Tests**, **187 Render- und CLI-Tests**,
 Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 829: Bridge-Numerik strikt an Trust-Grenzen prüfen
+
+`bridge.py` akzeptierte bei API-Status, Request-Sequenzen, Intervallen,
+Debugzahlen und Serverports noch numerische Subklassen. Fremde Vergleichs-,
+Konvertierungs- oder Intervalloperatoren konnten ingest-, Sanitizer-,
+Frische- und Serverpfade mit rohen Exceptions abbrechen.
+
+Alle Bridge-Grenzen akzeptieren jetzt ausschließlich Built-in-`int`/`float`;
+Frischeberechnung nutzt denselben validierten Intervallwert. Ungültige Werte
+werden vor Vergleich, `int()` oder Zeitfensterarithmetik verworfen. Regression
+deckt Ingest-Metadaten, Debug-Sanitizer, Port-/Intervallvalidierung und
+Browser-/Authenticated-Frische ab.
+
+Verifikation: **266 fokussierte Bridge-Tests**, **531 Bridge-, CLI-, Config-
+und Integration-Entrypoint-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
