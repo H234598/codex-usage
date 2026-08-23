@@ -10789,3 +10789,17 @@ Hook ab; skalare und normale strukturierte Creditwerte bleiben unverändert.
 
 Verifikation: **225 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 893: Verschachtelte Credit-Quellen auf native Dicts begrenzen
+
+`direct._credit_window()` akzeptierte verschachtelte `rateLimits`,
+`rateLimitsByLimitId`- und `account`-Mappings per `isinstance`. Deren
+`.get()`-/`.values()`-Hooks konnten die Credit-Extraktion mit einer rohen
+Exception abbrechen.
+
+Alle drei Quellenebenen werden jetzt nur bei nativen `dict`-Objekten gelesen;
+Subklassen werden ohne Hook-Aufruf ignoriert. Regression deckt alle drei
+verschachtelten Eingangsformen ab; normale Credit-Quellen bleiben unverändert.
+
+Verifikation: **226 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

@@ -1663,12 +1663,12 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
     sources: list[dict[str, Any]] = [payload]
     for key in ("rateLimits", "rate_limits"):
         nested = payload.get(key)
-        if isinstance(nested, dict):
+        if type(nested) is dict:
             sources.append(nested)
     by_id = payload.get("rateLimitsByLimitId")
-    if isinstance(by_id, dict):
+    if type(by_id) is dict:
         for nested in by_id.values():
-            if isinstance(nested, dict):
+            if type(nested) is dict:
                 sources.append(nested)
     for source in sources:
         for key in (
@@ -1683,8 +1683,9 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
                 break
         if candidate is not None:
             break
-        if isinstance(source.get("account"), dict):
-            candidate = source["account"].get("credits")
+        account = source.get("account")
+        if type(account) is dict:
+            candidate = account.get("credits")
             if candidate is not None:
                 break
     if candidate is None:

@@ -482,6 +482,37 @@ def test_credit_window_rejects_credit_dict_subclass_hooks():
     )
 
 
+def test_credit_window_rejects_nested_source_mapping_hooks():
+    class BrokenMapping(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic nested credit get marker")
+
+        def values(self):
+            raise RuntimeError("synthetic nested credit values marker")
+
+    assert (
+        _credit_window(
+            {"rateLimits": BrokenMapping()},
+            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+        )
+        is None
+    )
+    assert (
+        _credit_window(
+            {"rateLimitsByLimitId": BrokenMapping()},
+            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+        )
+        is None
+    )
+    assert (
+        _credit_window(
+            {"account": BrokenMapping()},
+            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "payload",
     [
