@@ -11326,3 +11326,13 @@ Dauern/gültigen Prozentwerten und bestätigt den Vollständigkeitswert `2`.
 
 Verifikation: **272 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 936: Usage-Progression direkt geprüft
+
+`direct._usage_response_progresses()` hatte bisher keinen direkten Positivtest.
+Der neue Test belegt zwei identische Backend-/Reset-Identitäten mit kleinem,
+monotonem Nutzungsanstieg. Der erste Lauf war wegen fehlender Reset-Identität
+korrekt rot; konstantes `reset_at` vervollständigt den spezifizierten Vertrag.
+
+Verifikation: **273 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
