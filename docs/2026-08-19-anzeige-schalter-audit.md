@@ -12383,3 +12383,15 @@ Verifikation: **157 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **91 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1036: Profilverzeichnis-Cleanup gegen falsche Typen gehärtet
+
+`_remove_created_profile_dir()` hatte die Ablehnung von Dateien/Symlinks als
+Profilpfad und von Symlink-/Verzeichnis-Markern noch nicht direkt belegt. Vier
+Regressionen bestätigen, dass Rollback nur echte Verzeichnisse mit regulärer
+Markerdatei entfernt.
+
+Verifikation: **161 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **92 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

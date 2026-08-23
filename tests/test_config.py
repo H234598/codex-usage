@@ -787,6 +787,34 @@ def test_profile_directory_rollback_stops_at_first_unexpected_entry(
         config_module._remove_created_profile_dir(profile_dir)
 
 
+@pytest.mark.parametrize("kind", ["file", "symlink"])
+def test_remove_created_profile_dir_rejects_non_directory(tmp_path, kind):
+    profile_dir = tmp_path / "profile"
+    if kind == "file":
+        profile_dir.write_text("not a directory", encoding="utf-8")
+    else:
+        target = tmp_path / "target"
+        target.mkdir()
+        profile_dir.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="not a real directory"):
+        config_module._remove_created_profile_dir(profile_dir)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory"])
+def test_remove_created_profile_dir_rejects_invalid_marker(tmp_path, kind):
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    marker = profile_dir / ".codex-usage-profile"
+    if kind == "symlink":
+        marker.symlink_to(tmp_path / "missing-marker")
+    else:
+        marker.mkdir()
+
+    with pytest.raises(ValueError, match="not a regular file"):
+        config_module._remove_created_profile_dir(profile_dir)
+
+
 def test_failed_account_add_does_not_create_profile_before_config_validation(tmp_path):
     config_path = tmp_path / "config.toml"
     first_profile = tmp_path / "first-profile"
