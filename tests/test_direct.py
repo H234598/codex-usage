@@ -4851,6 +4851,16 @@ def test_validate_auth_json_stat_accepts_secure_regular_file(tmp_path):
     direct_module._validate_auth_json_stat(auth_path, auth_path.stat())
 
 
+def test_read_auth_json_file_rejects_oversized_post_read(tmp_path, monkeypatch):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_bytes(b"x" * (MAX_AUTH_JSON_BYTES + 1))
+    auth_path.chmod(0o600)
+    monkeypatch.setattr(direct_module, "_validate_auth_json_stat", lambda *_args: None)
+
+    with pytest.raises(DirectAuthError, match=r"auth\.json too large"):
+        read_auth_json_file(auth_path)
+
+
 def test_auth_identity_from_file_rejects_payload_dict_subclass(
     tmp_path, monkeypatch
 ):

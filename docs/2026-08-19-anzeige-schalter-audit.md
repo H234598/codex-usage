@@ -11781,3 +11781,14 @@ das abschließende Schließen des Dateideskriptors.
 Verifikation: **331 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **96 %**, Missing-Zeilen 41; keine Settings-Fenster
 gestartet.
+
+## Runde 982: Post-Read-Auth-Größenlimit direkt belegt
+
+`direct.read_auth_json_file()` hatte den zweiten Oversize-Schutz nach dem
+tatsächlichen Read noch nicht direkt belegt; der Stat-Guard greift normalerweise
+früher. Der neue Test bestätigt die erneute Begrenzung mit
+`MAX_AUTH_JSON_BYTES`.
+
+Verifikation: **332 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **96 %**, Missing-Zeilen 40; keine Settings-Fenster
+gestartet.
