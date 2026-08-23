@@ -11832,3 +11832,14 @@ neue Test bestätigt die explizite Weitergabe bei unvollständigem Batch.
 Verifikation: **336 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **97 %**, Missing-Zeilen 34; keine Settings-Fenster
 gestartet.
+
+## Runde 987: Latest-Sample bei gleichbleibender Nutzung und Reset direkt gewählt
+
+`direct._select_stable_wham_usage()` hatte den Reset-Rückgabepfad ohne
+Nutzungsabfall noch nicht direkt belegt. Der neue Test bestätigt, dass ein
+vorgerückter absoluter Reset mit gleicher Nutzung als aktuelles Sample
+zurückgegeben wird.
+
+Verifikation: **337 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **97 %**, Missing-Zeilen 33; keine Settings-Fenster
+gestartet.

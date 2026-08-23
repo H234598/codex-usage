@@ -2961,6 +2961,32 @@ def test_select_stable_wham_usage_does_not_choose_unsupported_window_majority():
         _select_stable_wham_usage([complete, unsupported, unsupported])
 
 
+def test_select_stable_wham_usage_returns_latest_equal_usage_reset():
+    def response(reset_at: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 50,
+                    "limit_window_seconds": 18_000,
+                    "reset_at": reset_at,
+                },
+                "secondary_window": {
+                    "used_percent": 10,
+                    "limit_window_seconds": 604_800,
+                    "reset_at": 1784415934,
+                },
+            },
+        }
+
+    selected = _select_stable_wham_usage(
+        [response(1783860000), response(1783860000), response(1783878000)]
+    )
+
+    assert selected["rate_limit"]["primary_window"]["reset_at"] == 1783878000
+
+
 def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):
     responses = iter(
         (
