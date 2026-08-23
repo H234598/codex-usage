@@ -9748,3 +9748,18 @@ und `float`; ungültige Werte führen kontrolliert zu `unknown` beziehungsweise
 
 Verifikation: **402 Routing-, Spark-Health- und CLI-Tests**, Ruff und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 819: Usage-Limit-Prozente nur aus Built-in-Zahlen bilden
+
+`usage_limits.py` akzeptierte bei `used_percent` weiterhin `int`- und
+`float`-Subklassen. Die anschließende `float()`-Konvertierung konnte dadurch
+einen fremden Konvertierungs-Hook ausführen und den Parser mit einem rohen
+Fehler abbrechen lassen.
+
+`_percent()` akzeptiert jetzt ausschließlich Built-in-`int` und `float`.
+Numerische Subklassen werden vor jeder Konvertierung verworfen. Regression
+deckt den Hook-Aufruf direkt sowie alle Parser-Aufrufer ab.
+
+Verifikation: **886 Usage-Limit-, App-Server-, Direct-, State-, Render- und
+Routing-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.

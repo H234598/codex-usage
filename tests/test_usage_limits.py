@@ -32,6 +32,9 @@ class _BrokenInt(int):
     def __mod__(self, _other):
         return "not-an-int"
 
+    def __float__(self):
+        raise AssertionError("numeric subclass conversion must not run")
+
 
 @pytest.mark.parametrize("payload", [None, [], "invalid", 42, True])
 def test_usage_pool_parsers_fail_closed_for_non_object_payload(payload):
@@ -138,6 +141,10 @@ def test_usage_limit_private_helpers_cover_window_and_identity_contracts():
     assert usage_limits_module._optional_bool(False) is False
     assert usage_limits_module._optional_bool(0) is None
     assert usage_limits_module._unique(("a", "a", "b")) == ("a", "b")
+
+
+def test_percent_rejects_numeric_subclass_before_float_conversion():
+    assert usage_limits_module._percent(_BrokenInt(50)) is None
 
 
 def test_wham_parser_drops_overflowing_relative_reset_time():
