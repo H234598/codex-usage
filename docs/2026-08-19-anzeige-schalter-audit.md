@@ -11700,3 +11700,13 @@ bestätigen diese Fälle.
 Verifikation: **321 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **95 %**, Missing-Zeilen 56; keine Settings-Fenster
 gestartet.
+
+## Runde 974: Ungültige Auth-Identitäts-/Plan-Strings direkt abgewiesen
+
+`direct._safe_auth_identity()` und `_safe_auth_plan_type()` hatten die
+inhaltlich ungültigen, aber typmäßig korrekten Strings noch nicht direkt
+belegt. Zwei Tests bestätigen fail-closed `None` für Leer-/Whitespace-Werte.
+
+Verifikation: **323 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **95 %**, Missing-Zeilen 54; keine Settings-Fenster
+gestartet.

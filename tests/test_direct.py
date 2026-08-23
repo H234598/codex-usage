@@ -1698,12 +1698,20 @@ def test_safe_auth_identity_rejects_string_subclass_hooks():
     assert direct_module._safe_auth_identity(BrokenStr("user")) is None
 
 
+def test_safe_auth_identity_rejects_invalid_string_content():
+    assert direct_module._safe_auth_identity(" ") is None
+
+
 def test_safe_auth_plan_type_rejects_string_subclass_hooks():
     class BrokenStr(str):
         def __len__(self):
             raise RuntimeError("synthetic auth plan marker")
 
     assert direct_module._safe_auth_plan_type(BrokenStr("plus")) is None
+
+
+def test_safe_auth_plan_type_rejects_invalid_string_content():
+    assert direct_module._safe_auth_plan_type(" ") is None
 
 
 def test_auth_plan_type_changed_rejects_string_subclass_hooks():
