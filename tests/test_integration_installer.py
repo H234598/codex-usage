@@ -776,6 +776,17 @@ def test_attestation_requires_exact_integer_schema_version(tmp_path):
     assert active_path.read_bytes() == before
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["+" + "a" * 63, " " + "a" * 63, "A" * 64],
+)
+def test_attestation_manifest_hash_requires_lowercase_hex(value):
+    from codex_usage import integration_attestation
+
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation._valid_hash(value)
+
+
 def test_source_drift_before_active_swap_keeps_prior_active_release(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

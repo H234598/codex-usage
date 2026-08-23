@@ -128,12 +128,12 @@ def _sha256_bytes(payload: bytes) -> str:
 
 
 def _valid_hash(value: object) -> str:
-    if not isinstance(value, str) or len(value) != 64:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
         raise _unavailable()
-    try:
-        int(value, 16)
-    except ValueError:
-        raise _unavailable() from None
     return value
 
 

@@ -10050,3 +10050,17 @@ Regression simuliert einen fremden Eigentümer am geöffneten Unterverzeichnis.
 
 Verifikation: **156 Installer-/Attestierungs-Tests**, **28 Entrypoint-Tests**,
 Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 839: Manifest-Hashes kanonisch validieren
+
+`integration_attestation._valid_hash()` akzeptierte bisher Werte wie führendes
+`+`, Whitespace oder Großbuchstaben, weil `int(value, 16)` weiter gefasst ist
+als der erzeugte kanonische SHA-256-Text. Besonders der Source-Digest gelangte
+damit ungefiltert in die Release-ID.
+
+Die Validierung akzeptiert jetzt ausschließlich Built-in-`str` mit exakt 64
+Kleinbuchstaben-Hexzeichen. Regression deckt alle drei nichtkanonischen Formen
+ab; keine Manifest- oder Runtime-Reparatur erfolgt.
+
+Verifikation: **187 Installer-/Attestierungs- und Entrypoint-Tests**, Ruff und
+Diff-Check bestanden; keine Settings-Fenster gestartet.
