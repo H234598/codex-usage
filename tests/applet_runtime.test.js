@@ -10488,6 +10488,81 @@ test("partial usage enters the per-account warning notification state", () => {
   assert.equal(applet._warningState["alpha:partial"], true);
 });
 
+test("usage notifications cover login, partial, limit and Spark branches", () => {
+  const notifications = [];
+  const applet = makeApplet((runtime) => {
+    runtime.onNotify = (...args) => notifications.push(args);
+  });
+  const usage = applet._usages[0];
+  applet.notifyErrors = true;
+  applet.notifyWarnings = true;
+  applet._shouldNotifyError = () => true;
+  applet._alertSettings = {
+    alpha: {
+      account: "alpha", warnings: true, errors: true,
+      "five-threshold": 10, "weekly-threshold": 10,
+      "monthly-threshold": 10, "spark-threshold": 10,
+    },
+  };
+  usage.five_hour = {remaining: 5};
+  usage.weekly = {remaining: 80};
+  usage.models = {
+    "gpt-5.3-codex-spark": {
+      available: true, allowed: true, limit_reached: false, exhausted: false,
+      windows: [
+        {name: "5h", duration_seconds: 18000, remaining: 4},
+        {name: "mystery", duration_seconds: 86400, remaining: 1},
+      ],
+    },
+  };
+  applet._poolIsUsable = (pool) => pool === usage.models["gpt-5.3-codex-spark"];
+  applet._modelPool = (candidate) => candidate === usage
+    ? usage.models["gpt-5.3-codex-spark"] : null;
+  applet._windowIdentityIsKnown = (window) => window && window.name === "5h";
+
+  usage.status = "login_required";
+  applet._notifyForPayload();
+  assert.match(notifications[0][1], /Token abgelaufen/);
+
+  usage.status = "blocked";
+  usage.error = "backend failed";
+  applet._errorState = {};
+  applet._notifyForPayload();
+  assert.ok(notifications.some((entry) => /backend failed/.test(entry[1])));
+
+  usage.error = "";
+  applet._errorState = {};
+  applet._notifyForPayload();
+  assert.ok(notifications.some((entry) => /Limit erreicht/.test(entry[1])));
+
+  usage.status = "partial";
+  usage.error = "weekly unavailable";
+  applet._warningState = {};
+  applet._notifyForPayload();
+  assert.ok(notifications.some((entry) => /unvollständig/.test(entry[0])));
+
+  usage.error = "";
+  applet._warningState = {};
+  applet._notifyForPayload();
+  assert.ok(notifications.some((entry) => /Nicht alle Nutzungsfenster verfügbar/.test(entry[1])));
+
+  usage.status = "ok";
+  applet._warningState = {};
+  applet._notifyForPayload();
+  const limitMessages = notifications.slice(3).map((entry) => entry[1]);
+  assert.ok(limitMessages.some((message) => /5h: 5%/.test(message)));
+  assert.ok(limitMessages.some((message) => /4% verbleibend/.test(message)));
+
+  const beforeNoSpark = notifications.length;
+  applet._warningState = {};
+  applet._alertSettings.alpha["spark-threshold"] = "no Spark";
+  applet._notifyForPayload();
+  assert.equal(
+    notifications.slice(beforeNoSpark).some((entry) => /Spark/.test(entry[1])),
+    false
+  );
+});
+
 test("oversized process output force-stops the child and reports a bounded error", () => {
   const applet = makeApplet();
   let forced = 0;
