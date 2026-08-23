@@ -11299,3 +11299,12 @@ wird.
 
 Verifikation: **269 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 933: Response-Identifier direkt normalisiert
+
+`direct._normalized_response_identifier()` war bisher nur über die Spark-
+Erkennung abgedeckt. Der neue direkte Test prüft die Casefold-Normalisierung
+eines nativen Modell-Identifier-Strings.
+
+Verifikation: **270 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

@@ -2156,6 +2156,12 @@ def test_spark_response_identifier_rejects_string_subclass_hooks():
     assert _is_spark_limit_response(BrokenStr("GPT-5.3-Codex-Spark"), "other") is False
 
 
+def test_normalized_response_identifier_casefolds_native_string():
+    assert direct_module._normalized_response_identifier(
+        "GPT-5.3-Codex-Spark"
+    ) == "gpt-5.3-codex-spark"
+
+
 @pytest.mark.parametrize("field", ["allowed", "limit_reached"])
 def test_select_stable_wham_usage_rejects_conflicting_main_limit_flags(field):
     def response(value: bool) -> dict:
