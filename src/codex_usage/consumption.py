@@ -42,11 +42,7 @@ class ConsumptionWindow:
 def consumption_lookback_seconds(amount: int, unit: str) -> int:
     if not isinstance(unit, str) or unit not in _UNIT_SECONDS:
         raise ValueError("unit must be minutes, hours, days or weeks")
-    if (
-        isinstance(amount, bool)
-        or not isinstance(amount, int)
-        or not 0 < amount <= _UNIT_LIMITS[unit]
-    ):
+    if type(amount) is not int or not 0 < amount <= _UNIT_LIMITS[unit]:
         raise ValueError(f"amount must be between 1 and {_UNIT_LIMITS[unit]}")
     return amount * _UNIT_SECONDS[unit]
 
@@ -65,14 +61,12 @@ def calculate_consumption(
 ) -> ConsumptionWindow:
     lookback_seconds = consumption_lookback_seconds(amount, unit)
     if baseline_minutes is not None and (
-        isinstance(baseline_minutes, bool)
-        or not isinstance(baseline_minutes, int)
+        type(baseline_minutes) is not int
         or not 0 <= baseline_minutes <= 9_999
     ):
         raise ValueError("baseline_minutes must be between 0 and 9999")
     if baseline_value_minutes is not None and (
-        isinstance(baseline_value_minutes, bool)
-        or not isinstance(baseline_value_minutes, int)
+        type(baseline_value_minutes) is not int
         or not 0 <= baseline_value_minutes <= 9_999
     ):
         raise ValueError("baseline_value_minutes must be between 0 and 9999")
@@ -82,16 +76,14 @@ def calculate_consumption(
     except (OSError, OverflowError, TypeError, ValueError) as exc:
         raise ValueError("now is out of range") from exc
     if (
-        isinstance(stale_after_seconds, bool)
-        or not isinstance(stale_after_seconds, int)
+        type(stale_after_seconds) is not int
         or stale_after_seconds <= 0
     ):
         raise ValueError("stale_after_seconds must be positive")
     if max_gap_seconds is None:
         max_gap_seconds = 3_600
     if (
-        isinstance(max_gap_seconds, bool)
-        or not isinstance(max_gap_seconds, int)
+        type(max_gap_seconds) is not int
         or max_gap_seconds <= 0
     ):
         raise ValueError("max_gap_seconds must be positive")

@@ -14,6 +14,17 @@ from codex_usage.history import UsageSample
 BASE = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
 
 
+class _BrokenInt(int):
+    def __gt__(self, _other):
+        raise RuntimeError("synthetic consumption integer marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic consumption integer marker")
+
+    def __mul__(self, _other):
+        raise RuntimeError("synthetic consumption integer marker")
+
+
 def _sample(
     offset_minutes: int,
     used: float,
@@ -39,6 +50,28 @@ def test_consumption_lookback_seconds_converts_supported_units():
     assert consumption_lookback_seconds(2, "hours") == 7_200
     assert consumption_lookback_seconds(1, "days") == 86_400
     assert consumption_lookback_seconds(1, "weeks") == 604_800
+
+
+def test_consumption_rejects_integer_subclasses_before_arithmetic():
+    broken = _BrokenInt(1)
+
+    with pytest.raises(ValueError, match="amount must be between"):
+        consumption_lookback_seconds(broken, "hours")
+
+    for name in (
+        "baseline_minutes",
+        "baseline_value_minutes",
+        "stale_after_seconds",
+        "max_gap_seconds",
+    ):
+        with pytest.raises(ValueError, match=name):
+            calculate_consumption(
+                [],
+                amount=1,
+                unit="hours",
+                now=BASE,
+                **{name: broken},
+            )
 
 
 def test_consumption_window_as_dict_preserves_optional_forecast_fields():

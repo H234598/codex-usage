@@ -9676,3 +9676,15 @@ Regression deckt Timeout, `max_bytes` und Dateimodus mit absichtlich fehlerhafte
 numerischen Subklassen ab. Verifikation: **538 direkte Private-I/O-, State-,
 Service-, Spark-Health- und Config-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 814: Verbrauchsparameter gegen Integer-Subklassen absichern
+
+`consumption_lookback_seconds()` und `calculate_consumption()` akzeptierten
+bei Menge, Baseline, Stale-Grenze und Lückenlimit beliebige `int`-Subklassen.
+Vergleiche und Multiplikationen konnten dadurch überschreibbare Operatoren
+ausführen und rohe Fremdfehler in CLI- oder Integrationspfade leaken.
+Alle fünf Eingangsgrenzen akzeptieren jetzt ausschließlich Built-in-`int`.
+
+Regression prüft jede Grenze mit einer absichtlich fehlerhaften Integer-
+Subclass. Verifikation: **188 Consumption-, CLI- und Integration-Entrypoint-
+Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
