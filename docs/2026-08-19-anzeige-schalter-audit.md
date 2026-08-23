@@ -9886,3 +9886,16 @@ Einstiegspunkte ab.
 Verifikation: **225 fokussierte Scheduler-Tests**, **489 Scheduler-, CLI-,
 Health-, Integration-Entrypoint- und Profile-Job-Tests**, Ruff und Diff-Check
 bestanden; keine Settings-Fenster gestartet.
+
+## Runde 828: Render-Numerik vor Fremd-Konvertierung schützen
+
+`render.py` akzeptierte bei Zahlenformatierung und Prozentanzeige noch
+`int`-/`float`-Subklassen. Überschriebene `__float__`-Hooks konnten dadurch
+Darstellung und Restprozentberechnung mit rohen Exceptions abbrechen.
+
+`_fmt_number()` und `_is_finite_number()` akzeptieren jetzt ausschließlich
+Built-in-`int`/`float`; ungültige Werte bleiben bei `-` beziehungsweise
+unsichtbar. Regression deckt beide Subklassen sowie Tabellen-/CLI-Anzeige ab.
+
+Verifikation: **70 fokussierte Render-Tests**, **187 Render- und CLI-Tests**,
+Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.

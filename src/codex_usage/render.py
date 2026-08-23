@@ -546,7 +546,7 @@ def _auth_value(usage: AccountUsage | None) -> str:
 
 
 def _fmt_number(value: float) -> str:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         return "-"
     try:
         number = float(value)
@@ -558,7 +558,7 @@ def _fmt_number(value: float) -> str:
 
 
 def _is_finite_number(value: object) -> TypeGuard[int | float]:
-    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+    if value is None or type(value) not in (int, float):
         return False
     try:
         return math.isfinite(float(value))

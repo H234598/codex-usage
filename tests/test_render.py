@@ -30,6 +30,23 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _BrokenInt(int):
+    def __float__(self):
+        raise RuntimeError("synthetic render integer conversion marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic render float conversion marker")
+
+
+@pytest.mark.parametrize("value", [_BrokenInt(50), _BrokenFloat(50.0)])
+def test_render_numeric_subclasses_fail_closed_before_formatting(value):
+    assert _fmt_number(value) == "-"
+    assert _is_finite_number(value) is False
+    assert _remaining_percent(LimitWindow(name="5h", percent=value)) is None
+
+
 def test_render_table_contains_values(monkeypatch):
     now = datetime(2026, 7, 10, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
 
