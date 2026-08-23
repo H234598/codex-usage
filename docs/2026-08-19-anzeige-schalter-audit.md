@@ -10485,3 +10485,16 @@ Vergleichen als geändert zurück. Regression deckt den Vergleichs-Hook ab;
 
 Verifikation: **203 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 871: Response-Identitätsvergleich typisieren
+
+`direct._response_identity_matches_auth()` wertete Backend- und Auth-IDs
+direkt per Bool- und Gleichheitsoperator aus. Eine String-Subclass konnte den
+Matchpfad dadurch mit einer rohen Exception abbrechen.
+
+Der Helper prüft jetzt alle vier Identitätswerte vor jeder Operation auf
+Built-in-`str` und liefert bei einem ungültigen Typ `False`. Regression deckt
+den Bool-Hook ab; gültige Identitätsfälle bleiben unverändert.
+
+Verifikation: **204 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

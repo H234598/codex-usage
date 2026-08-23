@@ -672,6 +672,16 @@ def _response_identity_matches_auth(
     auth_user_id: str | None,
     auth_account_id: str | None,
 ) -> bool:
+    if any(
+        value is not None and type(value) is not str
+        for value in (
+            backend_user_id,
+            backend_account_id,
+            auth_user_id,
+            auth_account_id,
+        )
+    ):
+        return False
     if backend_account_id and auth_account_id:
         if backend_account_id == auth_account_id:
             return (

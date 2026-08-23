@@ -865,6 +865,19 @@ def test_canonical_backend_identity_rejects_string_subclass_hooks():
         )
 
 
+def test_response_identity_match_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __bool__(self):
+            raise RuntimeError("synthetic response identity marker")
+
+    assert direct_module._response_identity_matches_auth(
+        backend_user_id=None,
+        backend_account_id=BrokenStr("account"),
+        auth_user_id=None,
+        auth_account_id=None,
+    ) is False
+
+
 @pytest.mark.parametrize(
     "error",
     (
