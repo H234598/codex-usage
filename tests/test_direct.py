@@ -964,6 +964,23 @@ def test_auth_identity_rejects_tokens_dict_subclass_hooks(tmp_path):
     ) == (None, None)
 
 
+def test_auth_identity_rejects_claims_dict_subclass_hooks(tmp_path, monkeypatch):
+    class BrokenClaims(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth identity claims marker")
+
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda _token: BrokenClaims(),
+    )
+
+    assert auth_identity_from_payload(
+        {"tokens": {"id_token": "token"}},
+        path=tmp_path / "auth.json",
+    ) == (None, None)
+
+
 def test_auth_metadata_rejects_tokens_dict_subclass_hooks():
     class BrokenTokens(dict):
         def get(self, _key, _default=None):

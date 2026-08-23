@@ -449,7 +449,7 @@ def auth_identity_from_payload(
         account_ids.append(top_level_account_id)
     for token_name in ("id_token", "access_token"):
         claims = _current_jwt_claims(tokens.get(token_name))
-        if not isinstance(claims, dict):
+        if type(claims) is not dict:
             continue
         claim_sources = [claims]
         auth_claims = claims.get("https://api.openai.com/auth")

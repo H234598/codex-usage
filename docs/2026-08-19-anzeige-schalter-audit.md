@@ -11045,3 +11045,17 @@ den Claims-`__contains__`-Hook ab; normale Ablaufvalidierung bleibt unverändert
 
 Verifikation: **243 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 911: Auth-Identität verwirft nichtnative aktuelle Claims
+
+`direct.auth_identity_from_payload()` akzeptierte vom aktuellen JWT-Helper
+gelieferte Claims-Subklassen per `isinstance` und rief darauf `.get()` auf. Ein
+injiziertes Mapping konnte die Identitätsauswertung dadurch mit einer rohen
+Exception abbrechen.
+
+Der Identitätsparser verlangt jetzt native Claims-`dict`; fremde Mappings
+werden ohne Hook-Aufruf übersprungen. Regression deckt den Claims-`.get()`-Hook
+ab; normale Tokenidentitäten bleiben unverändert.
+
+Verifikation: **244 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
