@@ -100,6 +100,13 @@ def test_limit_window_known_identity_is_strict(window, expected):
     assert window.has_known_identity is expected
 
 
+@pytest.mark.parametrize(
+    ("duration", "name"), [(86_400, "1d"), (3_600, "1h"), (61, "61s")]
+)
+def test_limit_window_known_identity_accepts_canonical_dynamic_names(duration, name):
+    assert LimitWindow(name=name, duration_seconds=duration).has_known_identity is True
+
+
 def test_limit_window_known_identity_rejects_integer_subclass_duration():
     window = LimitWindow(name="custom", duration_seconds=_BrokenDuration(61))
 

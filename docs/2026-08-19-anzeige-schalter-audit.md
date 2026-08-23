@@ -12062,3 +12062,14 @@ bestätigt sichere `None`-Rückgabe statt eines `OverflowError`.
 Verifikation: **138 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `usage_limits.py`: **100 %**, keine Missing-Zeilen; keine
 Settings-Fenster gestartet.
+
+## Runde 1008: Dynamische Fensteridentitäten im Modell direkt belegt
+
+`models.LimitWindow.has_known_identity()` hatte die kanonischen
+Fallback-Namen für dynamische Tages-, Stunden- und Sekundenfenster noch nicht
+direkt getestet. Drei Parametervarianten bestätigen `1d`, `1h` und `61s`.
+
+Verifikation: **38 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **81 %**, verbleibende Missing-Zeilen liegen
+in weiteren Identity-, Usage-, Pool- und Serialisierungszweigen; keine
+Settings-Fenster gestartet.
