@@ -454,7 +454,7 @@ def auth_identity_from_payload(
         claim_sources = [claims]
         auth_claims = claims.get("https://api.openai.com/auth")
         if "https://api.openai.com/auth" in claims:
-            if not isinstance(auth_claims, dict):
+            if type(auth_claims) is not dict:
                 raise DirectAuthError(f"auth.json token auth claims are invalid: {path}")
             claim_sources.append(auth_claims)
         for claim_source in claim_sources:

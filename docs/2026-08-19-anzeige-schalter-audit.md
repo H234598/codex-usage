@@ -11059,3 +11059,18 @@ ab; normale Tokenidentitäten bleiben unverändert.
 
 Verifikation: **244 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 912: Verschachtelte Auth-Claims nur aus nativen Dicts übernehmen
+
+`direct.auth_identity_from_payload()` akzeptierte das verschachtelte
+`https://api.openai.com/auth`-Mapping als Dict-Subclass per `isinstance` und
+gab es an die Identitätsclaim-Prüfung weiter. Ein fremdes Mapping konnte dort
+über `__contains__` oder weitere Hooks eine rohe Exception auslösen.
+
+Der Parser verlangt jetzt ein natives Auth-Claims-`dict`; nichtnative
+Mappings werden mit einer kontrollierten `DirectAuthError` abgewiesen.
+Regression deckt den verschachtelten Membership-Hook ab; normale Auth-Claims
+bleiben unverändert.
+
+Verifikation: **245 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

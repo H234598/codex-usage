@@ -981,6 +981,28 @@ def test_auth_identity_rejects_claims_dict_subclass_hooks(tmp_path, monkeypatch)
     ) == (None, None)
 
 
+def test_auth_identity_rejects_nested_auth_claims_dict_subclass_hooks(
+    tmp_path, monkeypatch
+):
+    class BrokenAuthClaims(dict):
+        def __contains__(self, _key):
+            raise RuntimeError("synthetic nested auth claims marker")
+
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda _token: {
+            "https://api.openai.com/auth": BrokenAuthClaims(),
+        },
+    )
+
+    with pytest.raises(DirectAuthError, match="token auth claims are invalid"):
+        auth_identity_from_payload(
+            {"tokens": {"id_token": "token"}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_auth_metadata_rejects_tokens_dict_subclass_hooks():
     class BrokenTokens(dict):
         def get(self, _key, _default=None):
