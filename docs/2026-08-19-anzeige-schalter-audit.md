@@ -11240,3 +11240,13 @@ Auflösung von `~/.codex/auth.json` ohne Produktionsänderung.
 
 Verifikation: **263 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 927: Sichere Auth-Statistik direkt geprüft
+
+`direct._validate_auth_json_stat()` hatte bisher keinen direkten Positivtest.
+Der neue Test übergibt den nativen `stat()`-Befund einer isolierten regulären
+`auth.json` mit Modus `0600` und bestätigt, dass die vollständige Sicherheits-
+prüfung ohne Ausnahme durchläuft.
+
+Verifikation: **264 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

@@ -4061,6 +4061,14 @@ def test_auth_json_helpers_accept_inherited_regular_fd(tmp_path):
     assert file_stat.st_ino == validated.st_ino
 
 
+def test_validate_auth_json_stat_accepts_secure_regular_file(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text('{"tokens": {"access_token": "token"}}', encoding="utf-8")
+    auth_path.chmod(0o600)
+
+    direct_module._validate_auth_json_stat(auth_path, auth_path.stat())
+
+
 def test_auth_identity_from_file_rejects_payload_dict_subclass(
     tmp_path, monkeypatch
 ):
