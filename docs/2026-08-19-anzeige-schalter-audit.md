@@ -11485,3 +11485,13 @@ redigierte `direct fetch failed: I/O error`-Meldung.
 Verifikation: **289 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 100; keine Settings-Fenster
 gestartet.
+
+## Runde 953: Ungültigen JSON-Körper direkt abgewiesen
+
+`direct._fetch_wham_usage()` hatte die Parsefehler nach gültigem HTTP-Transport
+nicht direkt belegt. Der neue Test liefert `not-json` als JSON-Response und
+bestätigt die redigierte `direct response is not valid JSON`-Ablehnung.
+
+Verifikation: **290 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 99; keine Settings-Fenster
+gestartet.
