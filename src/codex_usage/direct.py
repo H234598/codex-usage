@@ -1788,7 +1788,11 @@ def _jwt_claims(token: Any) -> dict[str, Any] | None:
 
 
 def _is_access_token_expired(expiry: datetime | None, *, now: datetime) -> bool:
-    return bool(expiry is not None and expiry <= now)
+    if expiry is None:
+        return False
+    if type(expiry) is not datetime or type(now) is not datetime:
+        return True
+    return expiry <= now
 
 
 def _expired_auth_error(account_id: str, expiry: datetime | None) -> str:

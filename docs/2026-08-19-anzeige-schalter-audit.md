@@ -10595,3 +10595,17 @@ normale JWT-, Expiry- und malformed-Tokenpfade bleiben unverändert.
 
 Verifikation: **211 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 879: Token-Ablaufvergleich auf native Datetimes begrenzen
+
+`direct._is_access_token_expired()` verglich `expiry` und `now` direkt per
+`<=`. Eine manipulierbare Datetime-Subclass konnte den Login-/Refreshpfad
+damit mit einer rohen Vergleichs-Exception abbrechen.
+
+Der Helper akzeptiert nur native `datetime`-Werte; ungültige Zeittypen gelten
+fail-closed als abgelaufen, `None` bleibt „nicht abgelaufen“. Regression
+deckt den Vergleichs-Hook ab; normale Ablaufentscheidungen bleiben
+unverändert.
+
+Verifikation: **212 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

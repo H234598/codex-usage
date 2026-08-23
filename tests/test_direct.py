@@ -586,6 +586,17 @@ def test_jwt_expiry_uses_dst_aware_local_zone(monkeypatch):
     assert expiry == expected
 
 
+def test_access_token_expired_rejects_datetime_subclass_hooks():
+    class BrokenDateTime(datetime):
+        def __le__(self, _other):
+            raise RuntimeError("synthetic token expiry marker")
+
+    assert direct_module._is_access_token_expired(
+        BrokenDateTime(2026, 1, 1, tzinfo=UTC),
+        now=datetime(2026, 1, 2, tzinfo=UTC),
+    ) is True
+
+
 def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
     path = tmp_path / "auth.json"
     payload = {
