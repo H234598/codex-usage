@@ -149,7 +149,7 @@ function loadPrototype(onReady, strictMode = false) {
     RegExp,
   };
   vm.runInNewContext(
-    `${strictMode ? '"use strict";\n' : ""}${source}\nglobalThis.__CodexUsageApplet = CodexUsageApplet;`,
+    `${strictMode ? '"use strict";\n' : ""}${source}\nglobalThis.__CodexUsageApplet = CodexUsageApplet;\n//# sourceURL=${path.join(__dirname, "../files/codex-usage@H234598/applet.js")}`,
     sandbox
   );
   if (onReady) {
@@ -7823,6 +7823,91 @@ test("routing limit helpers distinguish disabled values and produce scoped comma
     {credit_limits: {hourly: 0, weekly: 0, monthly: 0}},
     {scope: "global", identifier: null, limits: {hourly: 1, weekly: 0, monthly: 0}}
   ), false);
+});
+
+test("routing credit limit writer handles guards, scoped ids and responses", () => {
+  const applet = makeApplet();
+  let reloads = 0;
+  const errors = [];
+  const calls = [];
+  applet._loadRoutingState = () => { reloads += 1; };
+  applet._showCommandError = (message) => { errors.push(message); };
+
+  applet._routingPolicyApplying = true;
+  applet._removed = true;
+  applet._applyRoutingLimitCommands([{scope: "global", identifier: null, limits: {}}], 0);
+  assert.equal(applet._routingPolicyApplying, false);
+  applet._removed = false;
+  applet._safeMode = true;
+  applet._routingPolicyApplying = true;
+  applet._applyRoutingLimitCommands([{scope: "global", identifier: null, limits: {}}], 0);
+  assert.equal(applet._routingPolicyApplying, false);
+  applet._safeMode = false;
+
+  applet._pendingRoutingLimitCommands = [{scope: "account", identifier: "alpha", limits: {}}];
+  applet._applyRoutingLimitCommands([], 0);
+  assert.equal(applet._routingPolicyApplying, false);
+  assert.equal(JSON.stringify(applet._pendingRoutingLimitCommands), "[]");
+  assert.equal(reloads, 1);
+
+  applet._baseCommandArgv = () => { throw new Error("missing command"); };
+  applet._routingPolicyApplying = true;
+  applet._applyRoutingLimitCommands([{scope: "global", identifier: null, limits: {}}], 0);
+  assert.equal(applet._routingPolicyApplying, false);
+  assert.equal(reloads, 1);
+
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    callback(null, "bridge failed");
+  };
+  applet._routingPolicyApplying = true;
+  applet._applyRoutingLimitCommands([{
+    scope: "account", identifier: "alpha", limits: {hourly: null, weekly: 2, monthly: undefined},
+  }], 0);
+  assert.deepEqual(calls.pop(), [
+    "codex-usage", "policy", "set-limits", "--scope", "account", "--id", "alpha",
+    "--hourly", "0", "--weekly", "2", "--monthly", "0", "--format", "json",
+  ]);
+  assert.equal(applet._routingPolicyApplying, false);
+  assert.equal(reloads, 2);
+  assert.equal(errors.length, 1);
+
+  applet._validateRoutingPolicy = () => { throw new Error("malformed"); };
+  applet._spawnAuxJson = (_argv, callback) => callback({}, null);
+  applet._routingPolicyApplying = true;
+  applet._applyRoutingLimitCommands([{
+    scope: "global", identifier: null, limits: {hourly: 1, weekly: 2, monthly: 3},
+  }], 0);
+  assert.equal(applet._routingPolicyApplying, false);
+  assert.equal(reloads, 3);
+  assert.equal(errors.length, 2);
+
+  applet._validateRoutingPolicy = (payload) => payload;
+  applet._routingCreditLimitCommandApplied = () => false;
+  applet._routingPolicyApplying = true;
+  applet._applyRoutingLimitCommands([{
+    scope: "global", identifier: null, limits: {hourly: 1, weekly: 2, monthly: 3},
+  }], 0);
+  assert.equal(applet._routingPolicyApplying, false);
+  assert.equal(reloads, 4);
+  assert.equal(errors.length, 3);
+
+  applet._routingCreditLimitCommandApplied = (policy, command) => (
+    policy.credit_limits.hourly === command.limits.hourly &&
+    policy.credit_limits.weekly === command.limits.weekly &&
+    policy.credit_limits.monthly === command.limits.monthly
+  );
+  applet._spawnAuxJson = (argv, callback) => {
+    calls.push(argv);
+    callback({credit_limits: {hourly: 4, weekly: 5, monthly: 6}}, null);
+  };
+  applet._applyRoutingCreditLimits({hourly: 4, weekly: 5, monthly: 6});
+  assert.equal(reloads, 5);
+  assert.deepEqual(calls.pop(), [
+    "codex-usage", "policy", "set-limits", "--scope", "global",
+    "--hourly", "4", "--weekly", "5", "--monthly", "6", "--format", "json",
+  ]);
 });
 
 test("routing policy command application recognizes allow, deny and inheritance", () => {

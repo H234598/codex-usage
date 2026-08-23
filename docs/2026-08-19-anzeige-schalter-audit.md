@@ -13462,3 +13462,22 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1114: Applet-Routing-Limit-Writer und VM-Quellabdeckung geprüft
+
+`applet.js` hatte bei den fokussierten Runtime-Tests noch keine ausgeführten
+Pfade für `_applyRoutingLimitCommands` und `_applyRoutingCreditLimits`. Eine
+gezielte Regression deckt jetzt Removed-/Safe-Mode-Guards, leere Command-Listen,
+fehlende Command-Argumente, globale und scoped Limits, Null-Normalisierung,
+Bridge-Fehler, ungültige Antworten, nicht angewendete Antworten und den
+erfolgreichen Abschluss ab. Der VM-Testlauf erhält außerdem eine `sourceURL`,
+damit V8-Coverage die tatsächlich evaluierte Applet-Datei statt einer
+abstrakten VM-Zeichenkette zuordnet. Produktionslogik blieb unverändert.
+
+Verifikation: **500 `tests/applet_runtime.test.js`-Tests**, **500 bestanden**;
+V8-Raw-Coverage zeigt die beiden Routing-Limit-Writer im ausgeführten
+Nicht-Strict-Lauf; `git diff --check` bestanden. Keine Settings-Fenster
+gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
+nicht ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
+bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
+Reload-Schritte ab.
