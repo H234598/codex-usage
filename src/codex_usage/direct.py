@@ -1749,7 +1749,7 @@ def _credit_window(payload: dict[str, Any], captured_at: datetime) -> LimitWindo
 
 def _jwt_expiry(token: Any) -> datetime | None:
     claims = _jwt_claims(token)
-    if not isinstance(claims, dict):
+    if type(claims) is not dict:
         return None
     exp = claims.get("exp")
     if type(exp) not in (int, float):

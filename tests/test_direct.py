@@ -751,6 +751,19 @@ def test_current_jwt_claims_rejects_dict_subclass_results(monkeypatch):
     assert _current_jwt_claims("token") is None
 
 
+def test_jwt_expiry_rejects_dict_subclass_results(monkeypatch):
+    class BrokenClaims(dict):
+        pass
+
+    monkeypatch.setattr(
+        direct_module,
+        "_jwt_claims",
+        lambda _token: BrokenClaims({"exp": 1_700_000_000}),
+    )
+
+    assert direct_module._jwt_expiry("token") is None
+
+
 def test_jwt_claims_reject_extra_segments():
     token = _jwt_with_claims({"sub": "account"}) + ".extra"
 

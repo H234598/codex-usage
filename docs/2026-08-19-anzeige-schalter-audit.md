@@ -11017,3 +11017,17 @@ am Helper-Rand; normale aktuelle JWT-Claims bleiben unverändert.
 
 Verifikation: **241 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 909: JWT-Ablaufzeit nur aus nativen Claims-Dicts berechnen
+
+`direct._jwt_expiry()` akzeptierte einen injizierten Claims-Subclass per
+`isinstance` und las daraus den `exp`-Wert. Ein fremdes Mapping konnte dadurch
+die Ablaufzeitberechnung über eigene Hooks beeinflussen.
+
+Der Helper verlangt jetzt ein natives Claims-`dict`; nichtnative Mappings
+werden fail-closed als unbekannte Ablaufzeit behandelt. Regression injiziert
+ein Claims-Subclass mit gültigem `exp`; normale JWT-Ablaufzeiten bleiben
+unverändert.
+
+Verifikation: **242 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
