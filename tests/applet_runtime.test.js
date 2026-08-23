@@ -5134,6 +5134,109 @@ test("missing token-end estimate does not duplicate its configured baseline in m
   assert.equal((rendered.markup.match(/AW60m=42,0%/g) || []).length, 1);
 });
 
+test("forecast window formatting covers invalid estimates, surfaces and warning branches", () => {
+  const applet = makeApplet();
+  const baseRow = {
+    account: "alpha", "show-panel": true, "show-tooltip": true,
+    "forecast-hide-when-zero": false, "show-coverage-marker": true,
+    "baseline-enabled": false, "forecast-warn-amount": 0,
+    "forecast-warn-unit": "hours", "forecast-warn-format": "red",
+  };
+
+  const invalid = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: "bad", coverage: "complete",
+  }, Object.assign({}, baseRow, {"forecast-hide-when-zero": true}), "panel", 50);
+  assert.equal(invalid, null);
+
+  const hover = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "complete",
+  }, Object.assign({}, baseRow, {
+    "forecast-show-tooltip": false, "forecast-format": "verbose",
+  }), "hover", 50);
+  assert.equal(hover, null);
+
+  const verbose = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "complete",
+  }, Object.assign({}, baseRow, {"forecast-format": "verbose"}), "panel", 50);
+  assert.match(verbose.plain, /^Zeit bis Tokenende:/);
+
+  const defaultFormat = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "complete",
+  }, baseRow, "panel", 50);
+  assert.match(defaultFormat.plain, /^TE=/);
+
+  const customMarker = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "partial",
+  }, Object.assign({}, baseRow, {
+    format: "custom", "custom-format": "Ende {duration}",
+  }), "panel", 50);
+  assert.match(customMarker.plain, /Ende 1h \(mindestens\)/);
+
+  const customCoverage = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "partial",
+  }, Object.assign({}, baseRow, {
+    format: "custom", "custom-format": "Ende {duration} {coverage}",
+  }), "panel", 50);
+  assert.match(customCoverage.plain, /Ende 1h mindestens/);
+
+  const customFallback = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "complete",
+  }, Object.assign({}, baseRow, {
+    format: "custom", "custom-format": "", "forecast-custom-format": "Fallback {duration}",
+  }), "panel", 50);
+  assert.equal(customFallback.plain, "Fallback 1h (vollständig)");
+
+  const customNoMarker = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "partial",
+  }, Object.assign({}, baseRow, {
+    format: "custom", "custom-format": "Ende {duration}",
+    "show-coverage-marker": false,
+  }), "panel", 50);
+  assert.equal(customNoMarker.plain, "Ende 1h");
+
+  const customEmpty = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "complete",
+  }, Object.assign({}, baseRow, {
+    format: "custom", "custom-format": "", "forecast-custom-format": "",
+  }), "panel", 50);
+  assert.match(customEmpty.plain, /Zeit bis Tokenende/);
+
+  const customNoMarkerCoverage = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 3600, coverage: "partial",
+  }, Object.assign({}, baseRow, {
+    format: "custom", "custom-format": "Ende {coverage}",
+    "show-coverage-marker": false,
+  }), "panel", 50);
+  assert.equal(customNoMarkerCoverage.plain, "Ende vollständig");
+
+  const missingVerbose = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: null, coverage: "stale",
+  }, Object.assign({}, baseRow, {format: "verbose"}), "panel", 50);
+  assert.match(missingVerbose.plain, /^Zeit bis Tokenende: —$/);
+  assert.doesNotMatch(missingVerbose.markup, /<span /);
+
+  applet._forecastWarningMarkup = (markup) => "WARN(" + markup + ")";
+  const warning = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 300, coverage: "complete",
+  }, Object.assign({}, baseRow, {
+    format: "compact", "forecast-warn-amount": 1,
+  }), "panel", 50);
+  assert.match(warning.markup, /^WARN\(/);
+  const warningDefaultFormat = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: 300, coverage: "complete",
+  }, Object.assign({}, baseRow, {
+    format: "compact", "forecast-warn-amount": 1, "forecast-warn-format": "",
+  }), "panel", 50);
+  assert.match(warningDefaultFormat.markup, /^WARN\(/);
+
+  const noWarning = applet._forecastWindowPart({
+    estimated_seconds_to_exhaustion: null, coverage: "stale",
+  }, Object.assign({}, baseRow, {
+    format: "compact", "forecast-warn-amount": 1,
+  }), "panel", 50);
+  assert.doesNotMatch(noWarning.markup, /foreground=\"#ff5555\"/);
+});
+
 test("emergency display override enables delta and selects its window without mutating settings", () => {
   const applet = makeApplet();
   applet.showConsumptionDelta = false;

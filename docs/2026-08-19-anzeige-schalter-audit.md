@@ -13673,3 +13673,20 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1126: Applet-Tokenend-Prognose vollständig ausgeführt
+
+Die Regression für `_forecastWindowPart` deckt ungültige Schätzwerte,
+Panel-/Hover-Sichtbarkeit, Verbose-/Compact-/Custom-/Fallback-Formate,
+Coverage-Platzhalter und Marker, fehlende Schätzwerte mit Verbose-Markup,
+Baseline-unabhängige Ausgabe sowie Warnschwelle und Warnformat-Fallback ab.
+Damit sind alle V8-Blockranges der Funktion erreicht. Produktionslogik blieb
+unverändert.
+
+Verifikation: **524 `tests/applet_runtime.test.js`-Tests**, **524 bestanden**;
+V8-Raw-Coverage: `_forecastWindowPart` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
