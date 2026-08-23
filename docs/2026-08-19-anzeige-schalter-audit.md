@@ -12085,3 +12085,15 @@ Verifikation: **40 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **87 %**, verbleibende Missing-Zeilen liegen
 in weiteren Usage-, Pool- und Serialisierungszweigen; keine Settings-Fenster
 gestartet.
+
+## Runde 1010: Remaining-Percent-Quellen im Modell direkt geprüft
+
+`LimitWindow.remaining_percent` hatte gültige absolute Nutzung, Restmenge,
+passenden/abweichenden expliziten Prozentwert und Prozent-only-Fallback noch
+nicht vollständig direkt belegt. Zusätzlich prüfen die Tests `limit=0` und
+Restmengen ohne Limit als fail-closed Invalidwerte.
+
+Verifikation: **47 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **92 %**, verbleibende Missing-Zeilen liegen
+in defensiven Exception-/Pool-/Serialisierungszweigen; keine Settings-Fenster
+gestartet.

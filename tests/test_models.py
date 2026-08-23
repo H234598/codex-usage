@@ -161,11 +161,27 @@ def test_limit_window_is_complete_requires_usage_limit_and_reset():
         LimitWindow(name="weekly", remaining=-1),
         LimitWindow(name="weekly", percent=101),
         LimitWindow(name="weekly", remaining=120, limit=100),
+        LimitWindow(name="weekly", limit=0),
+        LimitWindow(name="weekly", remaining=120),
     ],
 )
 def test_limit_window_invalid_usage_values_fail_closed(window):
     assert window.has_invalid_usage_value is True
     assert window.has_usage_value is False
+
+
+@pytest.mark.parametrize(
+    ("window", "expected"),
+    [
+        (LimitWindow(name="weekly", used=25, limit=100), 75.0),
+        (LimitWindow(name="weekly", remaining=50, limit=100), 50.0),
+        (LimitWindow(name="weekly", remaining=50, percent=50), 50.0),
+        (LimitWindow(name="weekly", remaining=50, percent=60), None),
+        (LimitWindow(name="weekly", percent=75), 75.0),
+    ],
+)
+def test_limit_window_remaining_percent_uses_valid_sources(window, expected):
+    assert window.remaining_percent == expected
 
 
 def test_limit_window_numeric_subclasses_fail_closed_and_stay_json_safe():
