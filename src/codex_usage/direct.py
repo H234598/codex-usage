@@ -554,7 +554,7 @@ def auth_plan_type_from_payload(
     plan_types: list[str] = []
     for token_name in ("id_token", "access_token"):
         claims = _current_jwt_claims(tokens.get(token_name))
-        if not isinstance(claims, dict):
+        if type(claims) is not dict:
             continue
         auth_claims = claims.get("https://api.openai.com/auth")
         if "https://api.openai.com/auth" not in claims:

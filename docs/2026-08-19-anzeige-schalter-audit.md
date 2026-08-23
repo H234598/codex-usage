@@ -11088,3 +11088,17 @@ werden ohne Hook-Aufruf übersprungen. Regression deckt den Claims-
 
 Verifikation: **246 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 914: Auth-Plantyp nur aus nativen Claims-Dicts lesen
+
+`direct.auth_plan_type_from_payload()` akzeptierte aktuelle Claims-Subklassen
+per `isinstance` und rief darauf `.get()` für die OpenAI-Authstruktur auf. Ein
+fremdes Mapping konnte die Plantyp-Auswertung dadurch mit einer rohen Exception
+abbrechen.
+
+Der Helper verlangt jetzt ein natives Claims-`dict`; nichtnative Mappings
+werden ohne Hook-Aufruf übersprungen. Regression deckt den Claims-`.get()`-Hook
+ab; normale Plantyp-Claims bleiben unverändert.
+
+Verifikation: **247 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
