@@ -2117,6 +2117,60 @@ def test_restore_account_rejects_different_parallel_readd(tmp_path, monkeypatch)
     assert load_config(config_path).accounts[0].label == "New"
 
 
+def test_restore_account_returns_unchanged_config_for_identical_account(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("same", path=config_path)
+    config = load_config(config_path)
+
+    assert restore_account(config.accounts[0], path=config_path) == config
+
+
+def test_restore_account_replaces_expected_existing_account(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("same", label="Old", path=config_path)
+    existing = load_config(config_path).accounts[0]
+    replacement = Account(
+        id=existing.id,
+        label="Restored",
+        profile_dir=existing.profile_dir,
+        tag=existing.tag,
+        browser=existing.browser,
+        auth_json_path=existing.auth_json_path,
+        backend=existing.backend,
+        reactivation_browser=existing.reactivation_browser,
+        series=existing.series,
+        series_active=existing.series_active,
+    )
+
+    restored = restore_account(replacement, path=config_path, expected=existing)
+
+    assert restored.accounts[0] == replacement
+
+
+def test_restore_account_inserts_missing_account_at_requested_index(tmp_path):
+    config_path = tmp_path / "config.toml"
+    add_or_update_account("existing", path=config_path)
+    account = Account(
+        id="restored",
+        label="Restored",
+        profile_dir=str(tmp_path / "restored-profile"),
+    )
+
+    restored = restore_account(account, path=config_path, index=0)
+
+    assert [item.id for item in restored.accounts] == ["restored", "existing"]
+
+
+def test_get_account_returns_match_and_rejects_unknown_id():
+    config = AppConfig(
+        accounts=(Account(id="known", label="Known", profile_dir="/tmp/known"),)
+    )
+
+    assert get_account(config, "known").label == "Known"
+    with pytest.raises(KeyError, match="unknown account"):
+        get_account(config, "missing")
+
+
 def test_remove_account_rejects_different_parallel_update(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     config_path = tmp_path / "config.toml"

@@ -12478,3 +12478,15 @@ Verifikation: **175 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **95 %**, verbleibende Missing-Zeilen liegen
 in Account-Entfernungs-, Serialisierungs- und Validierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1044: Restore-/Lookup-Branches geschlossen
+
+`restore_account()` hatte unveränderte Accounts, erwartete Ersetzung und
+Insertion an definierter Position noch nicht direkt getestet; `get_account()`
+fehlte für Treffer und unbekannte IDs. Vier Regressionen bestätigen alle
+Zweige und behalten Konfigurationsreihenfolge korrekt.
+
+Verifikation: **179 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **97 %**, verbleibende Missing-Zeilen liegen
+in Normalisierung, Config-Validierung und URL-Prüfung; keine Settings-Fenster
+gestartet.
