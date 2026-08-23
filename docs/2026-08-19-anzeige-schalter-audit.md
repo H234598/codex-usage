@@ -9734,3 +9734,17 @@ drei Eingänge ab.
 
 Verifikation: **302 Spark-Health-, Routing- und CLI-Tests**, Ruff und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 818: Routing-Numerik gegen Subklassen absichern
+
+`routing.py` akzeptierte bei maximalem Usage-Alter, Fensterdauer,
+Restprozentsatz und Credit-Limits noch numerische Subklassen. Dadurch konnten
+Hash-, Vergleichs-, Rechen- oder Float-Konvertierungsoperatoren in Routing-
+Entscheidungen und Policy-Validierung gelangen.
+
+Die vier numerischen Grenzen akzeptieren jetzt ausschließlich Built-in-`int`
+und `float`; ungültige Werte führen kontrolliert zu `unknown` beziehungsweise
+`ValueError`. Regression deckt alle vier Eingänge ab.
+
+Verifikation: **402 Routing-, Spark-Health- und CLI-Tests**, Ruff und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

@@ -421,8 +421,7 @@ def _invalid_usage_reason(
     usage: AccountUsage, *, now: datetime, max_age_seconds: int
 ) -> str | None:
     if (
-        not isinstance(max_age_seconds, int)
-        or isinstance(max_age_seconds, bool)
+        type(max_age_seconds) is not int
         or max_age_seconds < 60
     ):
         raise ValueError("max_age_seconds must be a finite integer of at least 60")
@@ -653,8 +652,7 @@ def _window_identity_is_known(window: Any) -> bool:
     if not isinstance(name, str):
         return False
     if duration is not None and (
-        not isinstance(duration, int)
-        or isinstance(duration, bool)
+        type(duration) is not int
         or duration not in SUPPORTED_WINDOW_SECONDS
     ):
         return False
@@ -689,7 +687,7 @@ def _canonical_window_name(duration: int | None) -> str:
 
 
 def _valid_remaining_percent(value: Any) -> bool:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         return False
     try:
         numeric = float(value)
@@ -805,7 +803,7 @@ def _validate_credit_limits(value: Any) -> dict[str, float | None]:
         if raw is None:
             result[key] = None
             continue
-        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        if type(raw) not in (int, float):
             raise ValueError("routing credit limit is invalid")
         try:
             number = float(raw)

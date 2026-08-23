@@ -11,6 +11,7 @@ from codex_usage.routing import (
     MAIN_MODEL,
     SPARK_HEALTH_MAX_AGE_SECONDS,
     _backend_identity_is_valid,
+    _valid_remaining_percent,
     _validate_credit_limits,
     _validate_policy,
     _window_identity_is_known,
@@ -31,6 +32,19 @@ class _RaisingTimezone(tzinfo):
         raise RuntimeError("synthetic timezone marker")
 
 
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic routing integer marker")
+
+    def __hash__(self):
+        raise RuntimeError("synthetic routing hash marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic routing float marker")
+
+
 def _window(name: str, remaining: float, duration: int) -> LimitWindow:
     return LimitWindow(
         name=name,
@@ -42,6 +56,25 @@ def _window(name: str, remaining: float, duration: int) -> LimitWindow:
 
 def test_window_identity_unknown_name_without_duration_fails_closed():
     assert _window_identity_is_known(LimitWindow(name="custom")) is False
+
+
+def test_routing_numeric_subclasses_fail_closed_before_operations():
+    duration = _BrokenInt(18_000)
+    with pytest.raises(ValueError, match="max_age_seconds"):
+        evaluate_routing(
+            _usage(main_windows=(_window("5h", 80, 18_000),)),
+            role="user",
+            paid_overage_allowed=False,
+            now=NOW,
+            max_age_seconds=duration,
+        )
+
+    assert _window_identity_is_known(
+        LimitWindow(name="5h", duration_seconds=duration, remaining=80)
+    ) is False
+    assert _valid_remaining_percent(_BrokenFloat(80)) is False
+    with pytest.raises(ValueError, match="credit limit"):
+        _validate_credit_limits({"hourly": _BrokenFloat(10)})
 
 
 def _usage(
