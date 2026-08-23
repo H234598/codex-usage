@@ -13557,3 +13557,20 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1119: Applet-Cache-Ablaufkanten vollständig ausgeführt
+
+Die Regression für `_windowCacheExpired` deckt nun inferred-inactive-Fenster
+ohne Reset, implizite bekannte Fensterdauern, unbekannte Fenster, ungültige
+Reset-/Capture-/Referenzzeitpunkte, Reset-Zeitpunkte außerhalb der zulässigen
+Capture-Horizon sowie normale Ablauf- und Nichtablaufpfade ab. Damit sind alle
+V8-Blockranges der Funktion im ausgeführten VM-Runtime-Lauf erreicht.
+Produktionslogik blieb unverändert.
+
+Verifikation: **518 `tests/applet_runtime.test.js`-Tests**, **518 bestanden**;
+V8-Raw-Coverage: `_windowCacheExpired` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

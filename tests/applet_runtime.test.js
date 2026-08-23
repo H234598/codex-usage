@@ -3078,6 +3078,45 @@ test("window duration matching rejects malformed, conflicting and wrong-kind win
   assert.equal(applet._windowDurationMatches({name: "custom", duration_seconds: 86400}, {name: "custom", duration_seconds: 86400}, null), true);
 });
 
+test("cache window expiry handles inferred, malformed and future reset metadata", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._windowCacheExpired({
+    name: "5h",
+    source: "inferred:inactive-five-hour:direct"
+  }, "2026-08-19T10:00:00Z", "2026-08-19T12:00:00Z"), false);
+  assert.equal(applet._windowCacheExpired({
+    name: "weekly",
+    reset_at: "bad"
+  }, "2026-08-19T10:00:00Z", "2026-08-19T12:00:00Z"), true);
+  assert.equal(applet._windowCacheExpired({
+    name: "weekly",
+    reset_at: "2026-08-20T10:00:00Z"
+  }, "bad", "2026-08-19T12:00:00Z"), true);
+  assert.equal(applet._windowCacheExpired({
+    name: "weekly",
+    reset_at: "2026-08-20T10:00:00Z"
+  }, "2026-08-19T10:00:00Z", "bad"), true);
+  assert.equal(applet._windowCacheExpired({
+    name: "weekly",
+    reset_at: "2026-08-27T00:00:00Z"
+  }, "2026-08-19T00:00:00Z", "2026-08-19T12:00:00Z"), true);
+  assert.equal(applet._windowCacheExpired({
+    name: "weekly",
+    reset_at: "2026-08-19T12:00:00Z"
+  }, "2026-08-19T00:00:00Z", "2026-08-19T10:00:00Z"), false);
+  assert.equal(applet._windowCacheExpired({
+    name: "unknown"
+  }, "2026-08-19T00:00:00Z", "2026-08-19T12:00:00Z"), true);
+  assert.equal(applet._windowCacheExpired({
+    name: "weekly"
+  }, "bad", "2026-08-19T12:00:00Z"), true);
+  assert.equal(applet._windowCacheExpired({
+    name: "unknown",
+    reset_at: "2026-08-20T00:00:00Z"
+  }, "2026-08-19T00:00:00Z", "2026-08-19T12:00:00Z"), false);
+});
+
 test("window identity helpers fail closed on malformed duration and reset metadata", () => {
   const applet = makeApplet();
 
