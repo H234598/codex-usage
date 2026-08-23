@@ -30,6 +30,13 @@ class _BrokenInt(int):
     def __ge__(self, _other):
         raise RuntimeError("synthetic health integer comparison marker")
 
+
+def test_default_health_path_uses_default_state_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(health_module, "default_state_dir", lambda: tmp_path)
+
+    assert health_module.default_health_path() == tmp_path / "health.json"
+    assert health_module._health_path(None) == tmp_path / "health.json"
+
     def __le__(self, _other):
         raise RuntimeError("synthetic health integer comparison marker")
 
@@ -272,6 +279,81 @@ def test_health_load_ignores_hard_linked_file(tmp_path):
     os.link(path, linked)
 
     assert path.stat().st_nlink == 2
+    assert load_health(path)["event_count"] == 0
+
+
+def test_health_read_rejects_non_list_events(tmp_path):
+    path = tmp_path / "health.json"
+    path.write_text(json.dumps({"version": 1, "events": {}}), encoding="utf-8")
+    path.chmod(0o600)
+
+    assert load_health(path)["event_count"] == 0
+
+
+def test_health_read_recovers_from_private_io_error(tmp_path, monkeypatch):
+    path = tmp_path / "health.json"
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setattr(
+        health_module,
+        "read_private_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("read blocked")),
+    )
+
+    assert load_health(path)["event_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        None,
+        {},
+        {"at": None, "component": "watch", "event": "cycle_ok"},
+        {"at": "2026-08-16T10:00:00+00:00", "component": "bad token", "event": "cycle_ok"},
+        {"at": "2026-08-16T10:00:00+00:00", "component": "watch", "event": "bad token"},
+        {
+            "at": "2026-08-16T10:00:00+00:00",
+            "component": "watch",
+            "event": "cycle_ok",
+            "account": "bad token",
+        },
+        {
+            "at": "2026-08-16T10:00:00+00:00",
+            "component": "watch",
+            "event": "cycle_ok",
+            "error_class": "bad token",
+        },
+        {"at": "not-a-timestamp", "component": "watch", "event": "cycle_ok"},
+    ],
+)
+def test_health_valid_event_rejects_malformed_fields(event):
+    assert health_module._valid_event(event) is False
+
+
+def test_health_trim_skips_malformed_event_and_normalizes_naive_timestamp():
+    now = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    naive = {
+        "at": "2026-08-16T09:00:00",
+        "component": "watch",
+        "event": "cycle_ok",
+    }
+
+    assert health_module._trim_events([{}, naive], now) == [naive]
+
+
+def test_health_write_discards_oldest_events_until_size_fits(tmp_path, monkeypatch):
+    path = tmp_path / "health.json"
+    monkeypatch.setattr(health_module, "MAX_HEALTH_BYTES", 1)
+
+    health_module._write_events(
+        path,
+        [{
+            "at": datetime.now(UTC).isoformat(),
+            "component": "watch",
+            "event": "cycle_ok",
+        }],
+    )
+
     assert load_health(path)["event_count"] == 0
 
 

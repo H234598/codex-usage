@@ -12649,3 +12649,13 @@ Snapshot-Typprüfung abgedeckt.
 Verifikation: **157 App-Server-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `app_server.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1060: Health-Parser und Retention vollständig geprüft
+
+Default-Pfad, ungültige Event-Listen/-Felder, Private-IO-Lesefehler,
+malformierte Zeitstempel, naive Zeitstempel-Normalisierung und
+Größenbereinigung waren noch nicht direkt belegt. Dreizehn Regressionen
+schließen Parser-, Retention- und Schreib-Budget-Guards.
+
+Verifikation: **47 Health-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `health.py`: **100 %**; keine Settings-Fenster gestartet.
