@@ -13026,3 +13026,17 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1087: Health-Event-Parser-Guard vollständig geprüft
+
+`health.py` hatte noch eine unbelegte Parserkante: Ein ungültiges Event musste
+übersprungen und anschließend ein späteres gültiges Event weiter verarbeitet
+werden. Eine fokussierte Regression persistiert genau diese gemischte Sequenz
+und prüft, dass nur das gültige Event geladen und gezählt wird.
+
+Verifikation: **48 `tests/test_health.py`-Tests**, `health.py` **131/131
+Statements und 54/54 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.

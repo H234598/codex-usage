@@ -230,6 +230,29 @@ def test_health_read_stops_after_valid_tail(tmp_path, monkeypatch):
     assert [event["index"] for event in events] == list(range(1, MAX_HEALTH_EVENTS + 1))
 
 
+def test_health_read_skips_invalid_event_before_valid_event(tmp_path):
+    path = tmp_path / "health.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "events": [
+                    {"at": "invalid", "component": "watch", "event": "bad"},
+                    {
+                        "at": datetime.now(UTC).isoformat(),
+                        "component": "watch",
+                        "event": "cycle_ok",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+    assert [event["event"] for event in load_health(path)["events"]] == ["cycle_ok"]
+
+
 @pytest.mark.parametrize("version", [True, 1.0, "1"])
 def test_health_requires_strict_version(tmp_path, version):
     path = tmp_path / "health.json"
