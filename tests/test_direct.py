@@ -1915,6 +1915,12 @@ def test_retryable_auth_error_rejects_exception_subclass_hooks():
     assert direct_module._is_retryable_direct_auth_error(BrokenAuthError("401")) is False
 
 
+def test_retryable_auth_error_rejects_non_retryable_http_code():
+    assert direct_module._is_retryable_direct_auth_error(
+        DirectAuthError("direct auth failed: HTTP 500")
+    ) is False
+
+
 def test_identity_attribution_error_rejects_string_subclass_hooks():
     class BrokenStr(str):
         def __hash__(self):

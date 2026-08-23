@@ -11564,3 +11564,12 @@ Restmenge.
 
 Verifikation: **297 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 961: Nicht retrybaren Direct-Auth-Status direkt abgewiesen
+
+`direct._is_retryable_direct_auth_error()` hatte bisher nur den Subklassen-
+Reject direkt belegt. Der neue Test bestätigt, dass ein passender, aber nicht
+retrybarer HTTP-500-Status `False` liefert.
+
+Verifikation: **298 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
