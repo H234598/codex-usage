@@ -10859,3 +10859,17 @@ normale Auth-JSON-Strukturen bleiben unverändert.
 
 Verifikation: **230 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 898: Auth-Identität nur aus nativen Token-Dicts lesen
+
+`direct.auth_identity_from_payload()` akzeptierte den `tokens`-Block als
+Dict-Subclass per `isinstance` und rief dessen `.get()` für beide Token auf.
+Ein manipuliertes Auth-Mapping konnte die Identitätsauswertung dadurch mit
+einer rohen Exception abbrechen.
+
+Der Helper verarbeitet jetzt nur native `dict`-Tokenblöcke; Subklassen werden
+ohne Hook-Aufruf ignoriert. Regression deckt den Identitäts-`.get()`-Hook ab;
+normale Auth-JSON-Strukturen bleiben unverändert.
+
+Verifikation: **231 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

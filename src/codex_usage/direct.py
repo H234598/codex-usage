@@ -439,7 +439,7 @@ def auth_identity_from_payload(
     if not isinstance(payload, dict):
         return None, None
     tokens = payload.get("tokens")
-    if not isinstance(tokens, dict):
+    if type(tokens) is not dict:
         return None, None
 
     user_ids: list[str] = []

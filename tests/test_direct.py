@@ -843,6 +843,17 @@ def test_auth_plan_type_rejects_tokens_dict_subclass_hooks(tmp_path):
     ) is None
 
 
+def test_auth_identity_rejects_tokens_dict_subclass_hooks(tmp_path):
+    class BrokenTokens(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth identity mapping marker")
+
+    assert auth_identity_from_payload(
+        {"tokens": BrokenTokens()},
+        path=tmp_path / "auth.json",
+    ) == (None, None)
+
+
 @pytest.mark.parametrize(
     "claims",
     [
