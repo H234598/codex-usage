@@ -12606,3 +12606,23 @@ Cache-Invalidierung und fail-closed Auth-Rotation.
 Verifikation: **113 App-Server-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `app_server.py`: **87 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1056: App-Server-Sendegrenzen geprüft
+
+`_send()` hatte fehlendes/zu großes Stdin, Fileno-/Nonblocking-/Select-/Write-
+Fehler, abgelaufene Deadlines und Null-Write noch nicht direkt ausgeführt.
+Acht Regressionen bestätigen begrenztes, fail-closed RPC-Senden.
+
+Verifikation: **121 App-Server-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `app_server.py`: **89 %**; keine Settings-Fenster
+gestartet.
+
+## Runde 1057: App-Server-Response-Dispatcher abgesichert
+
+`_response_for()` und `_request_rate_limits()` hatten Timeout-, Reader-, JSON-,
+Ergebnis- und Nachrichtenlimit-Fehlerpfade noch offen. Sieben Regressionen
+schließen Dispatcher-Retry und Protokollfehler.
+
+Verifikation: **129 App-Server-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `app_server.py`: **91 %**; keine Settings-Fenster
+gestartet.

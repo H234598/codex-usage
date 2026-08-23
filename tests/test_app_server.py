@@ -219,6 +219,130 @@ def test_app_server_send_honors_deadline_when_stdin_is_full():
         receiver.close()
 
 
+def test_app_server_send_rejects_missing_stdin():
+    with pytest.raises(AppServerProtocolError, match="stdin is unavailable"):
+        _send(
+            SimpleNamespace(stdin=None),
+            {"method": "initialize", "id": 1},
+            deadline=time.monotonic() + 1,
+        )
+
+
+def test_app_server_send_rejects_oversized_request():
+    with pytest.raises(AppServerProtocolError, match="request is too large"):
+        _send(
+            SimpleNamespace(stdin=object()),
+            {"payload": "x" * 65_000},
+            deadline=time.monotonic() + 1,
+        )
+
+
+def test_app_server_send_maps_stdin_fileno_error():
+    class BrokenStdin:
+        def fileno(self):
+            raise OSError("synthetic fileno failure")
+
+    with pytest.raises(AppServerProtocolError, match="stdin is unavailable"):
+        _send(
+            SimpleNamespace(stdin=BrokenStdin()),
+            {"method": "initialize", "id": 1},
+            deadline=time.monotonic() + 1,
+        )
+
+
+def test_app_server_send_maps_set_blocking_error(monkeypatch):
+    stdin = SimpleNamespace(fileno=lambda: 3)
+    monkeypatch.setattr(
+        app_server_module.os,
+        "set_blocking",
+        lambda *_args: (_ for _ in ()).throw(OSError("synthetic blocking failure")),
+    )
+
+    with pytest.raises(AppServerProtocolError, match="configure codex app server stdin"):
+        _send(
+            SimpleNamespace(stdin=stdin),
+            {"method": "initialize", "id": 1},
+            deadline=time.monotonic() + 1,
+        )
+
+
+def test_app_server_send_rejects_expired_deadline():
+    with pytest.raises(AppServerFetchError, match="timed out"):
+        _send(
+            SimpleNamespace(stdin=SimpleNamespace(fileno=lambda: 3)),
+            {"method": "initialize", "id": 1},
+            deadline=time.monotonic() - 1,
+        )
+
+
+def test_app_server_send_maps_select_error(monkeypatch):
+    monkeypatch.setattr(app_server_module.os, "set_blocking", lambda *_args: None)
+    monkeypatch.setattr(
+        app_server_module.select,
+        "select",
+        lambda *_args: (_ for _ in ()).throw(OSError("synthetic select failure")),
+    )
+
+    with pytest.raises(AppServerProtocolError, match="monitor codex app server stdin"):
+        _send(
+            SimpleNamespace(stdin=SimpleNamespace(fileno=lambda: 3)),
+            {"method": "initialize", "id": 1},
+            deadline=time.monotonic() + 1,
+        )
+
+
+def test_app_server_send_maps_write_error(monkeypatch):
+    monkeypatch.setattr(app_server_module.os, "set_blocking", lambda *_args: None)
+    monkeypatch.setattr(app_server_module.select, "select", lambda *_args: ([], [3], []))
+    monkeypatch.setattr(
+        app_server_module.os,
+        "write",
+        lambda *_args: (_ for _ in ()).throw(OSError("synthetic write failure")),
+    )
+
+    with pytest.raises(AppServerProtocolError, match="write to codex app server"):
+        _send(
+            SimpleNamespace(stdin=SimpleNamespace(fileno=lambda: 3)),
+            {"method": "initialize", "id": 1},
+            deadline=time.monotonic() + 1,
+        )
+
+
+def test_app_server_send_rejects_zero_write(monkeypatch):
+    monkeypatch.setattr(app_server_module.os, "set_blocking", lambda *_args: None)
+    monkeypatch.setattr(app_server_module.select, "select", lambda *_args: ([], [3], []))
+    monkeypatch.setattr(app_server_module.os, "write", lambda *_args: 0)
+
+    with pytest.raises(AppServerProtocolError, match="write to codex app server"):
+        _send(
+            SimpleNamespace(stdin=SimpleNamespace(fileno=lambda: 3)),
+            {"method": "initialize", "id": 1},
+            deadline=time.monotonic() + 1,
+        )
+
+
+def test_app_server_send_retries_blocking_write(monkeypatch):
+    writes = []
+    monkeypatch.setattr(app_server_module.os, "set_blocking", lambda *_args: None)
+    monkeypatch.setattr(app_server_module.select, "select", lambda *_args: ([], [3], []))
+
+    def write(_fd, raw):
+        writes.append(raw)
+        if len(writes) == 1:
+            raise BlockingIOError
+        return len(raw)
+
+    monkeypatch.setattr(app_server_module.os, "write", write)
+
+    _send(
+        SimpleNamespace(stdin=SimpleNamespace(fileno=lambda: 3)),
+        {"method": "initialize", "id": 1},
+        deadline=time.monotonic() + 1,
+    )
+
+    assert len(writes) == 2
+
+
 @pytest.mark.parametrize(
     "timeout_seconds",
     (
@@ -796,6 +920,97 @@ def test_response_for_rejects_explicit_null_error():
         )
 
     assert "invalid error" in str(error.value)
+
+
+def test_response_for_rejects_expired_deadline():
+    reader = type("Reader", (), {})()
+    reader.items = queue.Queue()
+
+    with pytest.raises(AppServerFetchError, match="timed out"):
+        _response_for(
+            reader,
+            1,
+            deadline=time.monotonic() - 1,
+            stderr_reader=object(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("item", "error_type", "message"),
+    [
+        (EOFError("closed"), AppServerUnavailableError, "exited unexpectedly"),
+        (RuntimeError("reader failed"), AppServerProtocolError, "reader failed"),
+    ],
+)
+def test_response_for_maps_reader_exceptions(item, error_type, message):
+    reader = type("Reader", (), {})()
+    reader.items = queue.Queue()
+    reader.items.put(item)
+
+    with pytest.raises(error_type, match=message):
+        _response_for(
+            reader,
+            1,
+            deadline=time.monotonic() + 1,
+            stderr_reader=object(),
+        )
+
+
+def test_response_for_rejects_invalid_json():
+    reader = type("Reader", (), {})()
+    reader.items = queue.Queue()
+    reader.items.put(b"not-json")
+
+    with pytest.raises(AppServerProtocolError, match="invalid JSON"):
+        _response_for(
+            reader,
+            1,
+            deadline=time.monotonic() + 1,
+            stderr_reader=object(),
+        )
+
+
+def test_response_for_rejects_non_object_result():
+    reader = type("Reader", (), {})()
+    reader.items = queue.Queue()
+    reader.items.put(b'{"id":1,"result":[]}')
+
+    with pytest.raises(AppServerProtocolError, match="result is not an object"):
+        _response_for(
+            reader,
+            1,
+            deadline=time.monotonic() + 1,
+            stderr_reader=object(),
+        )
+
+
+def test_response_for_rejects_too_many_unrelated_messages(monkeypatch):
+    reader = type("Reader", (), {})()
+    reader.items = queue.Queue()
+    reader.items.put(b'{"id":2,"result":{}}')
+    monkeypatch.setattr(app_server_module, "APP_SERVER_MAX_MESSAGES", 1)
+
+    with pytest.raises(AppServerProtocolError, match="too many"):
+        _response_for(
+            reader,
+            1,
+            deadline=time.monotonic() + 1,
+            stderr_reader=object(),
+        )
+
+
+def test_request_rate_limits_rejects_non_object_result(monkeypatch):
+    monkeypatch.setattr(app_server_module, "_send", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(app_server_module, "_response_for", lambda *_args, **_kwargs: [])
+
+    with pytest.raises(AppServerProtocolError, match="rate-limit result is not an object"):
+        app_server_module._request_rate_limits(
+            object(),
+            object(),
+            request_id=3,
+            deadline=time.monotonic() + 1,
+            stderr_reader=object(),
+        )
 
 
 def test_app_server_deadline_and_primitive_validators_reject_invalid_values():
