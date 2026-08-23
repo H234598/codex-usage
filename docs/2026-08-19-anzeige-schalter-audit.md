@@ -11213,3 +11213,12 @@ gemeinsamen Helpervertrag.
 
 Verifikation: **257 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Produktionsänderung und keine Settings-Fenster gestartet.
+
+## Runde 924: `/proc/self/fd`-Parser direkt geprüft
+
+`direct._proc_self_fd()` hatte bisher keinen direkten Test. Die neue Matrix
+prüft gültige FD-Pfade (`0`, `42`) sowie Verzeichnis- und Fremdpfade, die
+korrekt als nicht vererbt verworfen werden.
+
+Verifikation: **261 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Produktionsänderung und keine Settings-Fenster gestartet.

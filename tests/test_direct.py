@@ -196,6 +196,19 @@ def test_remaining_direct_timeout_returns_positive_remainder(monkeypatch):
     assert direct_module._remaining_direct_timeout(102.0) == 2.0
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (Path("/proc/self/fd/42"), 42),
+        (Path("/proc/self/fd/0"), 0),
+        (Path("/proc/self/fd"), None),
+        (Path("/tmp/auth.json"), None),
+    ],
+)
+def test_proc_self_fd_parses_only_canonical_fd_paths(path, expected):
+    assert direct_module._proc_self_fd(path) == expected
+
+
 @pytest.mark.parametrize("auth_json_path", [1, {}, object()])
 def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     account = Account(
