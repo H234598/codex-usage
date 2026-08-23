@@ -12490,3 +12490,13 @@ Verifikation: **179 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **97 %**, verbleibende Missing-Zeilen liegen
 in Normalisierung, Config-Validierung und URL-Prüfung; keine Settings-Fenster
 gestartet.
+
+## Runde 1045: Config-Validierung vollständig abgedeckt
+
+Normalisierung bei `resolve()`-Fehler, Top-Level-Typen und -Grenzen,
+Account-Typen, Text-/URL-/Serienregeln sowie `series_active`-Konsistenz waren
+noch nicht vollständig direkt getestet. Zwölf Regressionen schließen alle
+verbleibenden Pfade.
+
+Verifikation: **191 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **100 %**; keine Settings-Fenster gestartet.

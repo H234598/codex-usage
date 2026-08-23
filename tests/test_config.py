@@ -1898,6 +1898,101 @@ id = "privat"
         load_config(config_path)
 
 
+def test_normalized_config_path_falls_back_after_resolve_error(tmp_path, monkeypatch):
+    def fail_resolve(_path, **_kwargs):
+        raise OSError("synthetic resolve failure")
+
+    monkeypatch.setattr(config_module.Path, "resolve", fail_resolve)
+
+    value = str(tmp_path / "profile")
+    assert config_module._normalized_config_path(value) == os.path.normcase(
+        os.path.abspath(value)
+    )
+
+
+def test_validate_config_rejects_invalid_container_and_account_count():
+    with pytest.raises(ValueError, match="config must be an AppConfig"):
+        config_module._validate_config(None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="accounts must be a tuple"):
+        config_module._validate_config(AppConfig(accounts=[]))  # type: ignore[arg-type]
+
+    account = Account(id="account", label="Account", profile_dir="/tmp/account")
+    with pytest.raises(ValueError, match="at most 100 entries"):
+        config_module._validate_config(
+            AppConfig(accounts=(account,) * (config_module.MAX_CONFIG_ACCOUNTS + 1))
+        )
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (AppConfig(accounts=(), interval_seconds=59), "at least 60"),
+        (AppConfig(accounts=(), analytics_url=123), "analytics_url"),
+        (AppConfig(accounts=(), headless="yes"), "headless must be a boolean"),
+    ],
+)
+def test_validate_config_rejects_invalid_top_level_values(config, message):
+    with pytest.raises(ValueError, match=message):
+        config_module._validate_config(config)
+
+
+def test_validate_account_rejects_non_account_and_non_string_id():
+    with pytest.raises(ValueError, match="account entry must be Account"):
+        config_module._validate_config(AppConfig(accounts=(object(),)))
+
+    invalid = Account(id=123, label="Account", profile_dir="/tmp/account")
+    with pytest.raises(ValueError, match="account id must be a string"):
+        config_module._validate_config(AppConfig(accounts=(invalid,)))
+
+    invalid_type = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        series_active=1,
+    )
+    with pytest.raises(ValueError, match="series_active must be boolean"):
+        config_module._validate_config(AppConfig(accounts=(invalid_type,)))
+
+    invalid_empty = Account(
+        id="account",
+        label="Account",
+        profile_dir="/tmp/account",
+        series_active=True,
+    )
+    with pytest.raises(ValueError, match="active series requires a series name"):
+        config_module._validate_config(AppConfig(accounts=(invalid_empty,)))
+
+
+@pytest.mark.parametrize(
+    ("value", "max_chars", "message"),
+    [
+        ("", 3, "must not be empty"),
+        ("abcd", 3, "at most 3 characters"),
+        ("bad\x00value", 32, "must not contain NUL bytes"),
+    ],
+)
+def test_validate_text_field_rejects_empty_long_and_nul(value, max_chars, message):
+    with pytest.raises(ValueError, match=message):
+        config_module._validate_text_field(value, "field", max_chars)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://chatgpt.com:invalid/codex/cloud/settings/analytics",
+        "https://chatgpt.com/codex/cloud/settings/other",
+    ],
+)
+def test_validate_analytics_url_rejects_invalid_port_or_path(url):
+    with pytest.raises(ValueError, match="analytics_url"):
+        config_module._validate_analytics_url(url)
+
+
+def test_validate_series_rejects_invalid_name():
+    with pytest.raises(ValueError, match="series must be a letter"):
+        config_module._validate_series("1-invalid")
+
+
 def test_load_config_rejects_duplicate_accounts(tmp_path):
     config_path = tmp_path / "config.toml"
     config_path.write_text(
