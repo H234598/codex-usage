@@ -428,6 +428,28 @@ def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path,
         direct_module._validate_access_token_expiry("token", path=tmp_path / "auth.json")
 
 
+def test_validate_access_token_expiry_rejects_dict_subclass_results(
+    tmp_path, monkeypatch
+):
+    class BrokenClaims(dict):
+        def __contains__(self, _key):
+            raise RuntimeError("synthetic access expiry claims marker")
+
+    monkeypatch.setattr(
+        direct_module,
+        "_jwt_claims",
+        lambda _token: BrokenClaims(),
+    )
+
+    assert (
+        direct_module._validate_access_token_expiry(
+            "token",
+            path=tmp_path / "auth.json",
+        )
+        is None
+    )
+
+
 def test_missing_usage_limits_error_rejects_plan_type_string_subclass_hooks():
     class BrokenStr(str):
         def __bool__(self):

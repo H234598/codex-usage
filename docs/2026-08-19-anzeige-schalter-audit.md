@@ -11031,3 +11031,17 @@ unverändert.
 
 Verifikation: **242 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 910: Access-Token-Expiry nur aus nativen Claims-Dicts prüfen
+
+`direct._validate_access_token_expiry()` akzeptierte einen injizierten
+Claims-Subclass per `isinstance` und führte darauf den `exp`-Membership-Check
+aus. Ein fremdes Mapping konnte die Tokenvalidierung dadurch mit einer rohen
+Exception abbrechen.
+
+Die Validierung verlangt jetzt ein natives Claims-`dict`; nichtnative Mappings
+werden ohne Hook-Aufruf wie fehlende Ablaufclaims behandelt. Regression deckt
+den Claims-`__contains__`-Hook ab; normale Ablaufvalidierung bleibt unverändert.
+
+Verifikation: **243 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
