@@ -11627,3 +11627,13 @@ die sichere `DirectFetchError`-Ablehnung bei `inf`.
 Verifikation: **303 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **92 %**, Missing-Zeilen 83; keine Settings-Fenster
 gestartet.
+
+## Runde 967: Auth-Fehler ohne HTTP-Code direkt abgewiesen
+
+`direct._is_retryable_direct_auth_error()` hatte den Regex-No-Match-Zweig noch
+nicht direkt belegt. Der neue Test bestätigt `False` für einen Auth-Fehlertext
+ohne HTTP-Status und hält Retry auf bekannte 401/403-Signaturen begrenzt.
+
+Verifikation: **304 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **93 %**, Missing-Zeilen 82; keine Settings-Fenster
+gestartet.

@@ -1948,6 +1948,12 @@ def test_retryable_auth_error_rejects_non_retryable_http_code():
     ) is False
 
 
+def test_retryable_auth_error_rejects_message_without_http_code():
+    assert direct_module._is_retryable_direct_auth_error(
+        DirectAuthError("direct auth failed")
+    ) is False
+
+
 def test_identity_attribution_error_rejects_string_subclass_hooks():
     class BrokenStr(str):
         def __hash__(self):
