@@ -1762,7 +1762,7 @@ def _jwt_expiry(token: Any) -> datetime | None:
 
 def _current_jwt_claims(token: Any) -> dict[str, Any] | None:
     claims = _jwt_claims(token)
-    if not isinstance(claims, dict):
+    if type(claims) is not dict:
         return None
     if "exp" not in claims:
         return claims

@@ -11003,3 +11003,17 @@ den Parser; normale JWT-Claims bleiben unverändert.
 
 Verifikation: **240 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 908: Aktuelle JWT-Claims nur aus nativen Dicts verwenden
+
+`direct._current_jwt_claims()` akzeptierte einen von `_jwt_claims()` gelieferten
+Dict-Subclass per `isinstance` und gab ihn direkt an Auth-Parser weiter. Ein
+injizierter Claims-Wrapper konnte damit die Expiry- und Membership-Auswertung
+über fremde Mapping-Hooks beeinflussen.
+
+Der Verbraucher verlangt jetzt ebenfalls ein natives Claims-`dict`; fremde
+Mappings werden fail-closed verworfen. Regression injiziert ein Claims-Subclass
+am Helper-Rand; normale aktuelle JWT-Claims bleiben unverändert.
+
+Verifikation: **241 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
