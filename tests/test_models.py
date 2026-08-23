@@ -7,8 +7,16 @@ from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePo
 
 
 class _BrokenDuration(int):
+    def __le__(self, _other):
+        raise RuntimeError("synthetic duration comparison marker")
+
     def __mod__(self, _other):
         raise RuntimeError("synthetic duration marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic number marker")
 
 
 @pytest.mark.parametrize("duration", [True, 1.0, "1", 0, -1, None])
@@ -20,6 +28,16 @@ def test_window_for_duration_rejects_invalid_duration_types(duration):
     )
 
     assert pool.window_for_duration(duration) is None
+
+
+def test_window_for_duration_rejects_integer_subclass_before_comparison():
+    pool = UsagePool(
+        key="custom",
+        display_name="Custom",
+        windows=(LimitWindow(name="1s", duration_seconds=1, remaining=1),),
+    )
+
+    assert pool.window_for_duration(_BrokenDuration(1)) is None
 
 
 def test_account_usage_model_pool_requires_one_exact_key_match():
@@ -112,6 +130,28 @@ def test_limit_window_is_complete_requires_usage_limit_and_reset():
 def test_limit_window_invalid_usage_values_fail_closed(window):
     assert window.has_invalid_usage_value is True
     assert window.has_usage_value is False
+
+
+def test_limit_window_numeric_subclasses_fail_closed_and_stay_json_safe():
+    window = LimitWindow(
+        name="weekly",
+        duration_seconds=_BrokenDuration(604_800),
+        used=_BrokenFloat(10),
+        limit=100,
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        five_hour=window,
+    )
+
+    assert window.has_invalid_usage_value is True
+    assert window.remaining_percent is None
+    payload = usage.as_dict()
+    json.dumps(payload, allow_nan=False)
+    assert payload["five_hour"]["duration_seconds"] is None
+    assert payload["five_hour"]["used"] is None
 
 
 def test_account_usage_as_dict_skips_unhashable_model_pool_keys():

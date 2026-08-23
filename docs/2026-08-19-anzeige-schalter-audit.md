@@ -9704,3 +9704,19 @@ zurück. Regression deckt Sample-, Millisekunden- und Creditpfad ab.
 Verifikation: **344 History-, History-CLI-, Scheduler- und Integration-
 Entrypoint-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 816: Model-Zahlen normalisieren und fail-closed serialisieren
+
+`models.py` akzeptierte bei `UsagePool.window_for_duration()` Integer-
+Subklassen. Zusätzlich reichten `_finite_number()`, `_safe_int()` und
+`_safe_number()` geprüfte, aber weiterhin fremde numerische Objekte zurück.
+Überschriebene Operatoren konnten dadurch Vergleiche, Serialisierung oder
+nachgelagerte JSON-Ausgabe beeinflussen.
+
+Alle numerischen Model-Grenzen akzeptieren jetzt ausschließlich Built-in-
+`int`/`float`; abgewiesene Werte werden als ungültig behandelt und nicht in
+Payloads zurückgegeben. Regression deckt Dauervergleich, Prozentberechnung und
+JSON-sichere Account-Ausgabe ab.
+
+Verifikation: **535 Model-, Usage-Limit-, Render- und State-Tests**, Ruff und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

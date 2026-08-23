@@ -280,8 +280,7 @@ class UsagePool:
 
     def window_for_duration(self, duration_seconds: int) -> LimitWindow | None:
         if (
-            isinstance(duration_seconds, bool)
-            or not isinstance(duration_seconds, int)
+            type(duration_seconds) is not int
             or duration_seconds <= 0
             or
             not isinstance(self.windows, tuple)
@@ -507,17 +506,17 @@ def _safe_text(value: object) -> str | None:
 
 
 def _safe_int(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
+    return value if type(value) is int else None
 
 
 def _safe_number(value: object) -> int | float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         return None
     return value if _finite_number(value) is not None else None
 
 
 def _finite_number(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         return None
     try:
         number = float(value)
