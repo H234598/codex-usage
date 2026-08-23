@@ -2194,6 +2194,12 @@ def test_malformed_main_limit_structure_detects_non_dict_rate_limit():
     ) is True
 
 
+def test_malformed_spark_limit_structure_detects_non_list_additional_limits():
+    assert direct_module._has_malformed_spark_limit_structure(
+        [{"additional_rate_limits": {}}]
+    ) is True
+
+
 def test_select_stable_wham_usage_rejects_newer_partial_after_complete_quorum():
     complete = {
         "user_id": "user-test",

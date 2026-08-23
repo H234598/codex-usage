@@ -11289,3 +11289,13 @@ wird.
 
 Verifikation: **268 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 932: Malformed-Spark-Limit-Prädikat direkt geprüft
+
+`direct._has_malformed_spark_limit_structure()` war bisher nur über den
+Antwortselektor abgedeckt. Der neue direkte Test bestätigt, dass ein Mapping
+statt einer Liste in `additional_rate_limits` als ungültige Struktur erkannt
+wird.
+
+Verifikation: **269 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
