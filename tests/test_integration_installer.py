@@ -2231,6 +2231,21 @@ def test_attestation_record_parser_rejects_oversized_csv_before_materializing(
         integration_attestation._record_rows(record, release)
 
 
+def test_attestation_record_digest_requires_canonical_urlsafe_base64():
+    from codex_usage import integration_attestation
+
+    canonical = base64.urlsafe_b64encode(hashlib.sha256(b"x").digest()).decode().rstrip(
+        "="
+    )
+
+    assert integration_attestation._record_digest("sha256=" + canonical, b"x")
+    for suffix in ("=", "!!"):
+        assert not integration_attestation._record_digest(
+            "sha256=" + canonical + suffix,
+            b"x",
+        )
+
+
 def test_attestation_record_parser_rejects_duplicate_paths(tmp_path):
     from codex_usage import integration_attestation
 

@@ -394,14 +394,23 @@ def _manifest_string(manifest: Mapping[str, object], key: str) -> str:
 
 
 def _record_digest(value: str, payload: bytes) -> bool:
-    if not value.startswith("sha256="):
+    if type(value) is not str or not value.startswith("sha256="):
         return False
     encoded = value[7:]
+    if len(encoded) != 43 or any(
+        character not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        for character in encoded
+    ):
+        return False
     try:
         decoded = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
     except (ValueError, binascii.Error):
         return False
-    return decoded == hashlib.sha256(payload).digest()
+    expected = hashlib.sha256(payload).digest()
+    return (
+        decoded == expected
+        and encoded == base64.urlsafe_b64encode(expected).decode("ascii").rstrip("=")
+    )
 
 
 def _record_rows(record_path: Path, release_dir: Path) -> dict[str, tuple[str, int]]:

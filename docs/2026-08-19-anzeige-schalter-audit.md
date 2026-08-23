@@ -10064,3 +10064,17 @@ ab; keine Manifest- oder Runtime-Reparatur erfolgt.
 
 Verifikation: **187 Installer-/Attestierungs- und Entrypoint-Tests**, Ruff und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 840: RECORD-Digests auf kanonische Base64 begrenzen
+
+`integration_attestation._record_digest()` ließ die Python-Base64-Decodierung
+zusätzliche Padding-/Fremdzeichen ignorieren. Ein RECORD-Digest mit angehängtem
+`=` oder `!!` wurde dadurch trotz nichtkanonischer Darstellung akzeptiert.
+
+Der Parser verlangt jetzt exakt 43 URL-safe-Base64-Zeichen ohne Padding,
+dekodiert mit fester Ergänzung und vergleicht zusätzlich die kanonische
+Rekodierung mit dem Eingabewert. Regression deckt gültigen Digest sowie beide
+malformten Varianten ab.
+
+Verifikation: **188 Installer-/Attestierungs- und Entrypoint-Tests**, Ruff und
+Diff-Check bestanden; keine Settings-Fenster gestartet.
