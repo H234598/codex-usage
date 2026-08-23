@@ -931,6 +931,23 @@ def test_auth_email_rejects_payload_dict_subclass_hooks(tmp_path):
     ) is None
 
 
+def test_auth_email_rejects_claims_dict_subclass_hooks(tmp_path, monkeypatch):
+    class BrokenClaims(dict):
+        def __contains__(self, _key):
+            raise RuntimeError("synthetic auth email claims marker")
+
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda _token: BrokenClaims(),
+    )
+
+    assert auth_email_from_payload(
+        {"tokens": {"id_token": "token"}},
+        path=tmp_path / "auth.json",
+    ) is None
+
+
 def test_auth_plan_type_rejects_tokens_dict_subclass_hooks(tmp_path):
     class BrokenTokens(dict):
         def get(self, _key, _default=None):

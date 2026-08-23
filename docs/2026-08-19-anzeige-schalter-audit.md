@@ -11074,3 +11074,17 @@ bleiben unverändert.
 
 Verifikation: **245 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 913: Auth-E-Mail nur aus nativen Claims-Dicts lesen
+
+`direct.auth_email_from_payload()` akzeptierte aktuelle Claims-Subklassen per
+`isinstance` und führte darauf den E-Mail-Membership-Check aus. Ein fremdes
+Mapping konnte die E-Mail-Auswertung dadurch mit einer rohen Exception
+abbrechen.
+
+Der Helper verlangt jetzt ein natives Claims-`dict`; nichtnative Mappings
+werden ohne Hook-Aufruf übersprungen. Regression deckt den Claims-
+`__contains__`-Hook ab; normale E-Mail-Claims bleiben unverändert.
+
+Verifikation: **246 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

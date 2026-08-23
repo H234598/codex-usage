@@ -518,7 +518,7 @@ def auth_email_from_payload(
     emails: list[str] = []
     for token_name in ("id_token", "access_token"):
         claims = _current_jwt_claims(tokens.get(token_name))
-        if not isinstance(claims, dict) or "email" not in claims:
+        if type(claims) is not dict or "email" not in claims:
             continue
         email = _safe_auth_identity(claims.get("email"))
         if email is None:
