@@ -10442,6 +10442,93 @@ test("panel delta prefers the newest matching consumption window", () => {
   assert.equal(applet._panelDeltaPart(applet._usages[0], 32, "panel").plain, "Δ5h –");
 });
 
+test("panel delta rendering covers visibility, configured windows and fallback candidates", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  const style = (overrides = {}) => Object.assign(
+    {}, applet._defaultStyleRow("alpha", "delta"),
+    {"hide-when-zero": false}, overrides
+  );
+
+  applet._deltaStyles = {alpha: style({"show-hover": false})};
+  const hidden = applet._panelDeltaPart(usage, 32, "hover");
+  assert.equal(hidden.plain, "");
+  assert.equal(hidden.markup, "");
+  applet._deltaStyles.alpha["show-hover"] = true;
+  applet._deltaStyles.alpha["show-click"] = false;
+  const hiddenClick = applet._panelDeltaPart(usage, 32, "click");
+  assert.equal(hiddenClick.plain, "");
+  assert.equal(hiddenClick.markup, "");
+  assert.equal(applet._panelDeltaPart({}, 32, "panel").plain, "Δ5h –");
+
+  applet._deltaStyles.alpha = style({"hide-when-zero": true});
+  usage.cache_invalidated = true;
+  assert.equal(applet._panelDeltaPart(usage, 32, "panel").plain, "");
+  applet._deltaStyles.alpha["hide-when-zero"] = false;
+  assert.equal(applet._panelDeltaPart(usage, 32, "panel").plain, "Δ5h –");
+  usage.cache_invalidated = false;
+
+  usage.cost_windows = [{
+    pool: "main", limit_window_seconds: 18000,
+    consumed_percentage_points: 4, coverage: "complete",
+  }];
+  delete applet._deltaStyles.alpha;
+  assert.match(applet._panelDeltaPart(usage, 32, "panel").plain, /^Δ5h 4,0%$/);
+
+  applet._deltaStyles.alpha = style();
+  applet._consumptionSettings.alpha = {"limit-window": "weekly"};
+  usage.cost_windows = [{
+    pool: "main", limit_window_seconds: 604800,
+    consumed_percentage_points: 5, coverage: "complete",
+  }];
+  assert.match(applet._panelDeltaPart(usage, 13, "panel").plain, /^Δ 5,0%$/);
+
+  applet._consumptionSettings.alpha["limit-window"] = "spark";
+  usage.cost_windows = [{
+    pool: "gpt-5.3-codex-spark", limit_window_seconds: 18000,
+    consumed_percentage_points: 6, coverage: "complete",
+  }];
+  assert.match(applet._panelDeltaPart(usage, 13, "panel").plain, /^Δ 6,0%$/);
+
+  applet._consumptionSettings.alpha["limit-window"] = "unknown";
+  usage.cost_windows = [{
+    pool: "main", limit_window_seconds: 18000,
+    consumed_percentage_points: 7, coverage: "complete",
+  }];
+  assert.match(applet._panelDeltaPart(usage, 13, "panel").plain, /^Δ 7,0%$/);
+
+  applet._consumptionSettings.alpha["limit-window"] = "monthly";
+  usage.cost_windows = [{
+    pool: "main", limit_window_seconds: 18000,
+    consumed_percentage_points: 7.5, coverage: "complete",
+  }];
+  assert.match(applet._panelDeltaPart(usage, 13, "panel").plain, /^Δ 7,5%$/);
+
+  usage.cost_windows = [{
+    pool: "main", limit_window_seconds: 86400,
+    consumed_percentage_points: 8, coverage: "complete",
+  }];
+  assert.match(applet._panelDeltaPart(usage, 36, "panel").plain, /^Δsonst\. 8,0%$/);
+
+  usage.cost_windows = [{
+    pool: "gpt-5.3-codex-spark", limit_window_seconds: 18000,
+    consumed_percentage_points: 9, coverage: "complete",
+  }];
+  assert.match(applet._panelDeltaPart(usage, 35, "panel").plain, /^ΔSpark 9,0%$/);
+
+  usage.cost_windows = [{
+    pool: "main", limit_window_seconds: 18000,
+    consumed_percentage_points: 0, coverage: "insufficient",
+  }];
+  applet._deltaStyles.alpha["hide-when-zero"] = true;
+  assert.equal(applet._panelDeltaPart(usage, 32, "panel").plain, "");
+  applet._deltaStyles.alpha["hide-when-zero"] = false;
+  assert.equal(applet._panelDeltaPart(usage, 32, "panel").plain, "Δ5h –");
+
+  usage.cost_windows = "bad";
+  assert.equal(applet._panelDeltaPart(usage, 32, "panel").plain, "Δ5h –");
+});
+
 test("date, time and restlaufzeit styles honor all modes and font colors", () => {
   const applet = makeApplet();
   const kinds = ["date", "time", "duration"];
