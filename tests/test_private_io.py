@@ -151,6 +151,66 @@ def test_ensure_private_directory_records_created_identity(tmp_path):
     assert created_paths[0][1:] == (target.stat().st_dev, target.stat().st_ino)
 
 
+def test_ensure_private_directory_rejects_symlink_created_in_missing_loop(
+    monkeypatch,
+):
+    class RacingPath:
+        def __init__(self):
+            self.symlink_checks = 0
+            self.parent = self
+
+        def is_absolute(self):
+            return True
+
+        def is_symlink(self):
+            self.symlink_checks += 1
+            return self.symlink_checks >= 2
+
+        def resolve(self, **_kwargs):
+            return Path("/not-protected")
+
+        def exists(self):
+            return False
+
+        def __str__(self):
+            return "/racing-path"
+
+    path = RacingPath()
+    monkeypatch.setattr(private_io, "_require_path", lambda *_args, **_kwargs: path)
+    monkeypatch.setattr(private_io, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        ensure_private_directory(Path("/racing-path"), label="private directory")
+
+
+def test_ensure_private_directory_rejects_path_without_parent(monkeypatch):
+    class RootlessPath:
+        parent = None
+
+        def is_absolute(self):
+            return True
+
+        def is_symlink(self):
+            return False
+
+        def resolve(self, **_kwargs):
+            return Path("/not-protected")
+
+        def exists(self):
+            return False
+
+        def __str__(self):
+            return "/rootless-path"
+
+    path = RootlessPath()
+    path.parent = path
+    monkeypatch.setattr(private_io, "_require_path", lambda *_args, **_kwargs: path)
+    monkeypatch.setattr(private_io, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(ValueError, match="no usable directory parent"):
+        ensure_private_directory(Path("/rootless-path"), label="private directory")
+
+
 @pytest.mark.parametrize(
     "timeout_seconds",
     INVALID_LOCK_TIMEOUTS,
@@ -793,6 +853,98 @@ def test_write_private_text_keeps_old_value_when_fsync_fails(tmp_path, monkeypat
 
     assert path.read_text(encoding="utf-8") == "old"
     assert list(tmp_path.glob(".value.json.tmp-*")) == []
+
+
+@pytest.mark.parametrize("error_number", [private_io.errno.EINVAL, private_io.errno.EACCES])
+def test_fsync_directory_maps_open_errors(tmp_path, monkeypatch, error_number):
+    def fail_open(*_args, **_kwargs):
+        raise OSError(error_number, "synthetic directory open failure")
+
+    monkeypatch.setattr(private_io.os, "open", fail_open)
+
+    if error_number == private_io.errno.EINVAL:
+        private_io._fsync_directory(tmp_path)
+    else:
+        with pytest.raises(OSError, match="directory open failure"):
+            private_io._fsync_directory(tmp_path)
+
+
+def test_private_path_lock_rejects_non_directory_parent(tmp_path):
+    parent = tmp_path / "parent"
+    parent.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="parent must be a real directory"):
+        with private_path_lock(parent / "config", label="config lock"):
+            pass
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory"])
+def test_private_path_lock_rejects_invalid_lock_path(tmp_path, kind):
+    path = tmp_path / "config"
+    lock_path = path.with_name(path.name + ".lock")
+    if kind == "symlink":
+        target = tmp_path / "target"
+        target.write_text("target", encoding="utf-8")
+        lock_path.symlink_to(target)
+    else:
+        lock_path.mkdir()
+
+    with pytest.raises(ValueError, match="must be a regular file"):
+        with private_path_lock(path, label="config lock"):
+            pass
+
+
+@pytest.mark.parametrize("error_number", [private_io.errno.ELOOP, private_io.errno.EACCES])
+def test_private_path_lock_maps_open_errors(tmp_path, monkeypatch, error_number):
+    def fail_open(*_args, **_kwargs):
+        raise OSError(error_number, "synthetic lock open failure")
+
+    monkeypatch.setattr(private_io.os, "open", fail_open)
+
+    if error_number == private_io.errno.ELOOP:
+        with pytest.raises(ValueError, match="must be a regular file"):
+            with private_path_lock(tmp_path / "config", label="config lock"):
+                pass
+    else:
+        with pytest.raises(OSError, match="lock open failure"):
+            with private_path_lock(tmp_path / "config", label="config lock"):
+                pass
+
+
+def test_private_path_lock_retries_after_transient_contention(tmp_path, monkeypatch):
+    path = tmp_path / "config"
+    flock_calls = []
+    sleeps = []
+
+    def fake_flock(_fd, operation):
+        flock_calls.append(operation)
+        if (
+            operation == private_io.fcntl.LOCK_EX | private_io.fcntl.LOCK_NB
+            and len(flock_calls) == 1
+        ):
+            raise BlockingIOError
+
+    monotonic_values = iter([0.0, 0.1])
+    monkeypatch.setattr(private_io.fcntl, "flock", fake_flock)
+    monkeypatch.setattr(private_io.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(private_io.time, "sleep", sleeps.append)
+
+    with private_path_lock(path, timeout_seconds=1, label="config lock"):
+        pass
+
+    assert sleeps == [0.05]
+    assert flock_calls[-1] == private_io.fcntl.LOCK_UN
+
+
+def test_private_path_lock_ignores_unlock_error(tmp_path, monkeypatch):
+    def fail_unlock(_fd, operation):
+        if operation == private_io.fcntl.LOCK_UN:
+            raise OSError("synthetic unlock failure")
+
+    monkeypatch.setattr(private_io.fcntl, "flock", fail_unlock)
+
+    with private_path_lock(tmp_path / "config", label="config lock"):
+        pass
 
 
 def test_fsync_directory_opens_and_closes_one_descriptor(tmp_path, monkeypatch):

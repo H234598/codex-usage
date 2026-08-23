@@ -12543,3 +12543,24 @@ fail-closed Schreibgrenzen.
 Verifikation: **77 Private-IO-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `private_io.py`: **95 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1050: Private-Lock und Directory-fsync geprüft
+
+`_fsync_directory()` und `private_path_lock()` hatten Parent-/Lock-Typen,
+Open-Fehler, nicht unterstützte fsyncs, Contention-Retry und Unlock-Fehler
+noch nicht vollständig direkt ausgeführt. Neun Regressionen bestätigen
+fail-closed Lock-Erstellung und toleriertes Plattform-fsync-Verhalten.
+
+Verifikation: **86 Private-IO-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `private_io.py`: **99 %**; keine Settings-Fenster
+gestartet.
+
+## Runde 1051: Letzte Ensure-Race-Guards geschlossen
+
+Die seltenen `ensure_private_directory()`-Pfade für einen während der
+Missing-Schleife auftauchenden Symlink und einen Pfad ohne nutzbaren Parent
+waren noch offen. Zwei isolierte Regressionen schließen beide Guards.
+
+Verifikation: **88 Private-IO-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `private_io.py`: **100 %**; keine Settings-Fenster
+gestartet.
