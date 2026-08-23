@@ -11966,3 +11966,16 @@ Rückgabe.
 Verifikation: **23 Usage-Reset-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `usage_resets.py`: **100 %**, keine Missing-Zeilen; keine
 Settings-Fenster gestartet.
+
+## Runde 1000: Ungültige WHAM-Spark-Einträge fail-closed behandelt
+
+`usage_limits.parse_wham_usage_pools()` hatte die beiden Pfade für ungültige
+Spark-Einträge noch nicht direkt belegt: Ein ungültiger Duplikateintrag muss
+einen vorhandenen gültigen Spark-Pool deaktivieren; bei ausschließlich
+ungültigen Spark-Daten muss trotzdem ein nicht verfügbarer Spark-Pool
+materialisiert werden. Zwei Regressionstests bestätigen beide Verträge.
+
+Verifikation: **129 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `usage_limits.py`: **96 %**, verbleibende Missing-Zeilen
+liegen ausschließlich in weiteren Parser-/Guardpfaden (163, 187, 212, 278,
+366, 436, 465, 512, 526, 538–539, 571–572); keine Settings-Fenster gestartet.

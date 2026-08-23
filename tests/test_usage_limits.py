@@ -777,6 +777,54 @@ def test_wham_disables_spark_pool_with_conflicting_duplicate_entries():
     assert models[0].exhausted is True
 
 
+def test_wham_disables_valid_spark_pool_when_duplicate_entry_is_invalid():
+    _, models = parse_wham_usage_pools(
+        {
+            "additional_rate_limits": [
+                {
+                    "limit_name": SPARK_MODEL,
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 1,
+                            "limit_window_seconds": 604800,
+                        }
+                    },
+                },
+                {
+                    "metered_feature": SPARK_METERED_FEATURE,
+                    "rate_limit": {},
+                },
+            ]
+        },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert len(models) == 1
+    assert models[0].available is False
+    assert models[0].exhausted is True
+
+
+def test_wham_materializes_unavailable_spark_for_only_invalid_entry():
+    _, models = parse_wham_usage_pools(
+        {
+            "additional_rate_limits": [
+                {
+                    "limit_name": SPARK_MODEL,
+                    "rate_limit": {},
+                }
+            ]
+        },
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert len(models) == 1
+    assert models[0].key == SPARK_MODEL
+    assert models[0].available is False
+    assert models[0].windows == ()
+
+
 def test_wham_keeps_only_first_identical_spark_duplicate():
     item = {
         "limit_name": SPARK_MODEL,
