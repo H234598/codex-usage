@@ -827,3 +827,566 @@ def test_canonical_document_rejects_unhashable_status(status):
                 ],
             }
         )
+
+
+def test_snapshot_path_helpers_fail_closed_on_path_and_owner_errors(tmp_path, monkeypatch):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        IntegrationUnavailable,
+        _directory_identity,
+        _safe_account_filename,
+        _source_file_identity,
+    )
+
+    assert _safe_account_filename(tmp_path / "missing.json") is None
+    invalid_name = tmp_path / "bad name.json"
+    invalid_name.write_text("{}", encoding="utf-8")
+    invalid_name.chmod(0o600)
+    assert _safe_account_filename(invalid_name) is None
+
+    with pytest.raises(IntegrationUnavailable):
+        _directory_identity(tmp_path / "not-a-directory")
+    with pytest.raises(IntegrationInvalidSource):
+        _source_file_identity(tmp_path)
+    with pytest.raises(IntegrationInvalidSource):
+        _source_file_identity(tmp_path / "missing.json")
+
+    def raise_value(*_args, **_kwargs):
+        raise ValueError("synthetic path marker")
+
+    monkeypatch.setattr(snapshot_module, "assert_no_symlink_ancestors", raise_value)
+    with pytest.raises(IntegrationInvalidSource):
+        _directory_identity(tmp_path)
+
+    def raise_os(*_args, **_kwargs):
+        raise OSError("synthetic path marker")
+
+    monkeypatch.setattr(snapshot_module, "assert_no_symlink_ancestors", raise_os)
+    with pytest.raises(IntegrationUnavailable):
+        _directory_identity(tmp_path)
+
+    monkeypatch.setattr(snapshot_module, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
+    original_lstat = Path.lstat
+
+    def failing_lstat(path):
+        if path == tmp_path:
+            raise OSError("synthetic lstat marker")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", failing_lstat)
+    with pytest.raises(IntegrationUnavailable):
+        _directory_identity(tmp_path)
+
+
+def test_snapshot_current_reader_rejects_relative_and_iterator_failures(tmp_path, monkeypatch):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        IntegrationUnavailable,
+        read_current_usage_records,
+    )
+
+    with pytest.raises(IntegrationInvalidSource):
+        read_current_usage_records(Path("relative/current"))
+
+    current = tmp_path / "current"
+    current.mkdir(mode=0o700)
+    original_iterdir = Path.iterdir
+
+    def failing_iterdir(path):
+        if path == current:
+            raise OSError("synthetic iterator marker")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", failing_iterdir)
+    with pytest.raises(IntegrationUnavailable):
+        read_current_usage_records(current)
+
+
+def test_snapshot_current_reader_rejects_directory_identity_races(tmp_path, monkeypatch):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        read_current_usage_records,
+    )
+
+    current = tmp_path / "current"
+    current.mkdir(mode=0o700)
+    identity = (1, 2, 0o700)
+
+    identities = iter((identity, (1, 3, 0o700)))
+    monkeypatch.setattr(snapshot_module, "_directory_identity", lambda _path: next(identities))
+    with pytest.raises(IntegrationInvalidSource):
+        read_current_usage_records(current)
+
+    _write_current_fixture(current, _usage("alpha"))
+    identities = iter((identity, identity, (1, 3, 0o700)))
+    monkeypatch.setattr(snapshot_module, "_directory_identity", lambda _path: next(identities))
+    with pytest.raises(IntegrationInvalidSource):
+        read_current_usage_records(current)
+
+
+@pytest.mark.parametrize("failure", ["load", "after-load", "file", "type", "final"])
+def test_snapshot_current_reader_rejects_record_races_and_load_failures(
+    tmp_path, monkeypatch, failure
+):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        read_current_usage_records,
+    )
+
+    current = tmp_path / "current"
+    _write_current_fixture(current, _usage("alpha"))
+    identity = (1, 2, 0o700)
+    directory_calls = {
+        "load": (identity, identity, identity),
+        "after-load": (identity, identity, identity, (1, 3, 0o700)),
+        "file": (identity, identity, identity, identity, identity),
+        "type": (identity, identity, identity, identity, identity),
+        "final": (identity, identity, identity, identity, (1, 3, 0o700)),
+    }
+    identities = iter(directory_calls[failure])
+    monkeypatch.setattr(snapshot_module, "_directory_identity", lambda _path: next(identities))
+    if failure == "load":
+        monkeypatch.setattr(
+            snapshot_module,
+            "load_current_usage",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("synthetic load")),
+        )
+    elif failure == "type":
+        monkeypatch.setattr(snapshot_module, "load_current_usage", lambda *_args, **_kwargs: None)
+    elif failure == "file":
+        original_identity = snapshot_module._source_file_identity
+        calls = 0
+
+        def changing_file(candidate):
+            nonlocal calls
+            calls += 1
+            result = original_identity(candidate)
+            return result if calls == 1 else (*result[:3], result[3] + 1)
+
+        monkeypatch.setattr(snapshot_module, "_source_file_identity", changing_file)
+    with pytest.raises(IntegrationInvalidSource):
+        read_current_usage_records(current)
+
+
+def test_snapshot_pool_projection_covers_invalid_pool_and_window_shapes():
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        _pool_windows,
+    )
+
+    base = _pool("main", (LimitWindow(name="5h", remaining=75, duration_seconds=18_000),))
+    invalid_pools = [
+        replace(base, key=1),
+        replace(base, key="x" * 65),
+        replace(base, windows=[]),
+        replace(base, available=1),
+        replace(base, allowed=1),
+        replace(base, limit_reached=1),
+        replace(base, availability_sources=(1,)),
+        replace(base, available=False),
+        replace(base, windows=(object(),)),
+    ]
+    for pool in invalid_pools:
+        if pool.available is False:
+            assert _pool_windows(pool) == []
+            continue
+        with pytest.raises(IntegrationInvalidSource):
+            _pool_windows(pool)
+
+    assert _pool_windows(
+        _pool("main", (LimitWindow(name="weekly", remaining=50),))
+    ) == [
+        {
+            "pool": "main",
+            "window_seconds": 604_800,
+            "used_percent": 50.0,
+            "remaining_percent": 50.0,
+        }
+    ]
+    assert _pool_windows(_pool("main", (LimitWindow(name="unknown", remaining=50),))) == []
+
+    class InvalidDurationWindow(LimitWindow):
+        @property
+        def has_known_identity(self):
+            return True
+
+    with pytest.raises(IntegrationInvalidSource):
+        _pool_windows(
+            _pool(
+                "main",
+                tuple(
+                    LimitWindow(
+                        name=f"{18_001 + index}s",
+                        remaining=75,
+                        duration_seconds=18_001 + index,
+                    )
+                    for index in range(33)
+                ),
+            )
+        )
+    assert _pool_windows(
+        _pool("main", (InvalidDurationWindow(name="5h", remaining=75, duration_seconds=0),))
+    ) == []
+    assert _pool_windows(
+        _pool("main", (LimitWindow(name="5h", remaining=75, reset_at="invalid"),))
+    ) == []
+    assert _pool_windows(
+        _pool("main", (LimitWindow(name="5h", remaining=75, reset_at=datetime(2026, 8, 15, 10)),))
+    ) == []
+
+
+def test_snapshot_status_and_source_limits_reject_invalid_state():
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        _source_limits,
+        _status_text,
+    )
+
+    with pytest.raises(IntegrationInvalidSource):
+        _status_text(object())
+    assert _status_text(AccountStatus.BLOCKED) == "error"
+
+    class FakeStatus:
+        BLOCKED = object()
+
+        def __init__(self, value):
+            self.value = value
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(snapshot_module, "AccountStatus", FakeStatus)
+    try:
+        with pytest.raises(IntegrationInvalidSource):
+            _status_text(FakeStatus("unsupported"))
+    finally:
+        monkeypatch.undo()
+
+    usage = _usage("alpha")
+    with pytest.raises(IntegrationInvalidSource):
+        _source_limits(replace(usage, models=[]))
+    with pytest.raises(IntegrationInvalidSource):
+        _source_limits(replace(usage, models=(object(),)))
+    with pytest.raises(IntegrationInvalidSource):
+        _source_limits(replace(usage, models=(replace(_pool("main", ()), key=1),)))
+    with pytest.raises(IntegrationInvalidSource):
+        _source_limits(replace(usage, models=(_pool("main", ()),)))
+    with pytest.raises(IntegrationInvalidSource):
+        _source_limits(
+            replace(
+                usage,
+                main=_pool("main", (LimitWindow(name="5h", remaining=75),)),
+                models=tuple(
+                    _pool(f"pool-{index}", (LimitWindow(name="5h", remaining=75),))
+                    for index in range(32)
+                ),
+            )
+        )
+
+
+def test_snapshot_document_projection_rejects_invalid_inputs_and_preserves_optional_fields():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema1_document([], generated_at=GENERATED)  # type: ignore[arg-type]
+    for source_commit in (1, "", "ä", "bad value"):
+        with pytest.raises(IntegrationInvalidSource):
+            build_schema1_document((), generated_at=GENERATED, source_commit=source_commit)  # type: ignore[arg-type]
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema1_document((), generated_at=GENERATED, cost_windows_by_account=[])
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema1_document((object(),), generated_at=GENERATED)  # type: ignore[arg-type]
+
+    for usage in (
+        replace(_usage("bad id"), account_id="bad/id"),
+        replace(_usage("alpha"), stale=1),  # type: ignore[arg-type]
+        replace(_usage("alpha"), usage_resets=None),  # type: ignore[arg-type]
+    ):
+        with pytest.raises(IntegrationInvalidSource):
+            build_schema1_document((usage,), generated_at=GENERATED)
+
+    document = build_schema1_document(
+        (_usage("alpha"),),
+        generated_at=GENERATED,
+        source_commit="abc123",
+        cost_windows_by_account={"alpha": [None]},
+    )
+    assert document["source_commit"] == "abc123"
+    assert document["accounts"][0]["cost_windows"] == [None]
+
+    class FailingConverter:
+        def as_dict(self):
+            raise RuntimeError("synthetic converter marker")
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema1_document(
+            (_usage("alpha"),),
+            generated_at=GENERATED,
+            cost_windows_by_account={"alpha": (FailingConverter(),)},
+        )
+
+
+def test_snapshot_secret_and_primitive_canonicalizers_reject_malformed_values():
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        _canonical_cost,
+        _canonical_limit,
+        _canonical_percent,
+        _canonical_timestamp,
+        _canonical_token,
+        _scan_secrets,
+    )
+
+    nested: object = "safe"
+    for _ in range(66):
+        nested = [nested]
+    with pytest.raises(IntegrationInvalidSource):
+        _scan_secrets(nested)
+    with pytest.raises(IntegrationInvalidSource):
+        _scan_secrets({"Bad-Key": "value"})
+    with pytest.raises(IntegrationInvalidSource):
+        _scan_secrets({1: "value"})
+
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_timestamp("not-a-Timestamp")
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_timestamp("2026-08-15T10:00:00")
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_timestamp("2026-08-15T10:00:00+01:00")
+    for value in ("bad value", "ä", ""):
+        with pytest.raises(IntegrationInvalidSource):
+            _canonical_token(value, maximum=64)
+    for helper, value in ((_canonical_percent, 101), (_canonical_cost, 10_001)):
+        with pytest.raises(IntegrationInvalidSource):
+            helper(value)
+
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_limit([])
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_limit({"pool": "main"})
+    canonical_limit = _canonical_limit(
+        {
+            "pool": "main",
+            "window_seconds": 18_000,
+            "reset_at": "2026-08-15T10:00:00Z",
+        }
+    )
+    assert canonical_limit["reset_at"] == "2026-08-15T10:00:00Z"
+
+
+def test_snapshot_cost_window_canonicalizer_covers_optional_and_required_contracts():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, _canonical_cost_window
+
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_cost_window([])
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_cost_window({"pool": "main"})
+    base = {
+        "lookback_seconds": 3600,
+        "pool": "main",
+        "limit_window_seconds": 18_000,
+        "consumed_percentage_points": 12.5,
+        "coverage": "complete",
+        "sample_count": 4,
+    }
+    for estimate in (-1, snapshot_module.MAX_FORECAST_SECONDS + 1, True):
+        with pytest.raises(IntegrationInvalidSource):
+            _canonical_cost_window({**base, "estimated_seconds_to_exhaustion": estimate})
+    assert _canonical_cost_window(
+        {**base, "estimated_seconds_to_exhaustion": None, "baseline_used_percent": None}
+    )["baseline_used_percent"] is None
+    assert _canonical_cost_window(
+        {**base, "baseline_used_percent": 25.0}
+    )["baseline_used_percent"] == 25.0
+
+
+def _canonical_document_base(account: object) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "generated_at": "2026-08-15T10:05:00Z",
+        "accounts": [account],
+    }
+
+
+def test_snapshot_canonical_document_rejects_shapes_and_canonicalizes_optional_sections():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, _canonical_document
+
+    invalid_documents = [
+        None,
+        {"accounts": {}},
+        {"accounts": [], "schema_version": True, "generated_at": "2026-08-15T10:05:00Z"},
+    ]
+    for document in invalid_documents:
+        with pytest.raises(IntegrationInvalidSource):
+            _canonical_document(document)
+    for account in (None, {"account_id": "alpha"}):
+        with pytest.raises(IntegrationInvalidSource):
+            _canonical_document(_canonical_document_base(account))
+
+    base_account = {
+        "account_id": "alpha",
+        "status": "ok",
+        "freshness": {"captured_at": "2026-08-15T10:00:00Z", "stale": False},
+    }
+    malformed_accounts = [
+        {**base_account, "account_id": "bad/id"},
+        {**base_account, "freshness": {}},
+        {**base_account, "freshness": {"captured_at": "2026-08-15T10:00:00Z", "stale": 1}},
+        {**base_account, "limits": {}},
+        {**base_account, "cost_windows": {}},
+        {**base_account, "usage_resets": {}},
+    ]
+    for account in malformed_accounts:
+        with pytest.raises(IntegrationInvalidSource):
+            _canonical_document(_canonical_document_base(account))
+
+    duplicate_limit = {
+        "pool": "main",
+        "window_seconds": 18_000,
+        "remaining_percent": 75.0,
+    }
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_document(
+            _canonical_document_base({**base_account, "limits": [duplicate_limit, duplicate_limit]})
+        )
+
+    document = _canonical_document_base(
+        {
+            **base_account,
+            "limits": [duplicate_limit],
+            "cost_windows": [
+                {
+                    "lookback_seconds": 3600,
+                    "pool": "main",
+                    "limit_window_seconds": 18_000,
+                    "consumed_percentage_points": 12.5,
+                    "coverage": "complete",
+                    "sample_count": 4,
+                }
+            ],
+            "usage_resets": {"available": None, "known": False, "redeem_capability": False},
+        }
+    )
+    document["source_commit"] = "abc123"
+    valid = _canonical_document(document)
+    assert valid["accounts"][0]["usage_resets"]["available"] is None
+    assert valid["source_commit"] == "abc123"
+
+
+def test_snapshot_canonical_document_rejects_invalid_reset_contracts():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, _canonical_document
+
+    base = {
+        "account_id": "alpha",
+        "status": "ok",
+        "freshness": {"captured_at": "2026-08-15T10:00:00Z", "stale": False},
+    }
+    for resets in (
+        {"available": 1, "known": 1, "redeem_capability": False},
+        {"available": -1, "known": True, "redeem_capability": False},
+        {"available": 10_001, "known": True, "redeem_capability": False},
+        {"available": None, "known": True, "redeem_capability": False},
+        {"available": 1, "known": False, "redeem_capability": False},
+        {"available": None, "known": False, "redeem_capability": 1},
+    ):
+        with pytest.raises(IntegrationInvalidSource):
+            _canonical_document(_canonical_document_base({**base, "usage_resets": resets}))
+
+
+def test_snapshot_serializer_rejects_oversized_and_noncanonical_payloads(tmp_path, monkeypatch):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        publish_schema1_cache,
+        serialize_schema1_document,
+    )
+
+    monkeypatch.setattr(snapshot_module, "_MAX_DOCUMENT_BYTES", 1)
+    with pytest.raises(IntegrationInvalidSource):
+        serialize_schema1_document(
+            {
+                "accounts": [],
+                "generated_at": "2026-08-15T10:05:00Z",
+                "schema_version": 1,
+            }
+        )
+
+    monkeypatch.setattr(snapshot_module, "_MAX_DOCUMENT_BYTES", 2 * 1024 * 1024)
+    cache = _cache_path(tmp_path)
+    noncanonical = b'{"schema_version":1,"generated_at":"2026-08-15T10:05:00Z","accounts":[]}'
+    with pytest.raises(IntegrationInvalidSource):
+        publish_schema1_cache(noncanonical, cache_path=cache)
+
+
+def test_snapshot_cache_security_guards_cover_missing_and_io_errors(tmp_path, monkeypatch):
+    from codex_usage.integration_snapshot import (
+        IntegrationSecureIOError,
+        _require_integration_directory,
+        _validate_existing_cache,
+    )
+
+    with pytest.raises(IntegrationSecureIOError):
+        _require_integration_directory(Path("relative/cache.json"))
+
+    cache = _cache_path(tmp_path)
+
+    def raise_value(*_args, **_kwargs):
+        raise ValueError("synthetic ancestor marker")
+
+    monkeypatch.setattr(snapshot_module, "assert_no_symlink_ancestors", raise_value)
+    with pytest.raises(IntegrationSecureIOError):
+        _require_integration_directory(cache)
+
+    monkeypatch.setattr(snapshot_module, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
+    original_lstat = Path.lstat
+
+    def fail_directory_lstat(path):
+        if path == cache.parent:
+            raise OSError("synthetic directory marker")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fail_directory_lstat)
+    with pytest.raises(IntegrationSecureIOError):
+        _require_integration_directory(cache)
+    monkeypatch.setattr(Path, "lstat", original_lstat)
+
+    _validate_existing_cache(tmp_path / "missing-cache.json")
+
+    def fail_cache_lstat(path):
+        if path == cache:
+            raise OSError("synthetic cache marker")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fail_cache_lstat)
+    with pytest.raises(IntegrationSecureIOError):
+        _validate_existing_cache(cache)
+
+
+def test_snapshot_publish_maps_decode_and_lock_failures(tmp_path, monkeypatch):
+    from codex_usage.integration_snapshot import (
+        IntegrationBusy,
+        IntegrationInvalidSource,
+        publish_schema1_cache,
+    )
+
+    cache = _cache_path(tmp_path)
+    with pytest.raises(IntegrationInvalidSource):
+        publish_schema1_cache(b"\xff", cache_path=cache)
+
+    valid = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":1}'
+    original_loads_strict = snapshot_module.loads_strict
+    def fail_parse(_payload):
+        raise ValueError("synthetic parse")
+
+    monkeypatch.setattr(snapshot_module, "loads_strict", fail_parse)
+    with pytest.raises(IntegrationInvalidSource):
+        publish_schema1_cache(valid, cache_path=cache)
+    monkeypatch.setattr(snapshot_module, "loads_strict", original_loads_strict)
+
+    class BusyLock:
+        def __enter__(self):
+            raise TimeoutError("synthetic lock marker")
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(snapshot_module, "private_path_lock", lambda *_a, **_k: BusyLock())
+    with pytest.raises(IntegrationBusy):
+        publish_schema1_cache(valid, cache_path=cache)

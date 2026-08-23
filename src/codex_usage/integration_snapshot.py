@@ -470,7 +470,7 @@ def _canonical_percent(value: object) -> float:
     if type(value) not in (int, float):
         _invalid()
     try:
-        result = float(value)
+        result = float(cast(int | float, value))
     except (OverflowError, TypeError, ValueError):
         _invalid()
     if not math.isfinite(result) or not 0 <= result <= 100:
@@ -482,7 +482,7 @@ def _canonical_cost(value: object) -> float:
     if type(value) not in (int, float):
         _invalid()
     try:
-        result = float(value)
+        result = float(cast(int | float, value))
     except (OverflowError, TypeError, ValueError):
         _invalid()
     if not math.isfinite(result) or not 0 <= result <= 10_000:

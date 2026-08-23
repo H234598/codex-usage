@@ -12896,3 +12896,19 @@ Verifikation: **70 fokussierte Attestation-/Release-Tree-/Manifest-Tests**,
 `integration_attestation.py` **386/386 Statements, 100 % Coverage**, Mypy,
 Ruff und Diff-Check bestanden. Keine Settings-Fenster gestartet. Die
 Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1080: Integration-Snapshot-Guards vollständig geprüft
+
+`integration_snapshot.py` hatte noch unbelegte Fehlergrenzen bei sicheren
+Pfad-/Owner-Identitäten, Directory-/Record-Races, Pool-/Fenster-Projektion,
+Status- und Reset-Verträgen, Geheimnis-Scan, kanonischen Dokument-/Cost-
+Window-Feldern sowie Cache-Directory-, Decode- und Lock-Fehlern. Fünfzehn
+fokussierte Regressionen decken diese Zweige und Cleanup-/Fail-Closed-Pfade
+jetzt direkt ab. Zusätzlich wurden zwei Mypy-Narrowing-Fehler in den
+kanonischen Float-Helfern mit typischer Laufzeit-neutraler `cast`-Grenze
+behoben.
+
+Verifikation: **75 `tests/test_integration_snapshot.py`-Tests**,
+`integration_snapshot.py` **482/482 Statements, 100 % Coverage**, Mypy, Ruff
+und Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite
+wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
