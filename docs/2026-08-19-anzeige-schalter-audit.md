@@ -10279,3 +10279,17 @@ vor Länge und Zeichenprüfung. Regression prüft den öffentlichen
 
 Verifikation: **188 Direct-Tests**, **38 abhängige Browser-/Bridge-Tests**,
 Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 856: Kanonische Backend-Identität auf Built-in-Strings begrenzen
+
+`direct.canonical_backend_identity()` akzeptierte in seiner öffentlichen
+Feldvalidierung `str`-Subklassen und rief deren Längen-/Iterationsoperatoren
+auf. Ein manipulierter Auth- oder Backend-Identifier konnte damit vor der
+kontrollierten Fehlermeldung eine rohe Exception auslösen.
+
+Die gemeinsame Identitätsvalidierung verlangt jetzt Built-in-`str` vor Länge
+und Zeichenprüfung. Regression simuliert einen fehlerhaften `auth_user_id`-
+Hook; normale kanonische Identitätsaufrufe bleiben unverändert.
+
+Verifikation: **189 Direct-Tests**, **38 abhängige Browser-/Bridge-Tests**,
+Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.

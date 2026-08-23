@@ -690,7 +690,7 @@ def canonical_backend_identity(
         ("backend_plan_type", backend_plan_type, 64),
     ):
         if value is not None and (
-            not isinstance(value, str)
+            type(value) is not str
             or not value
             or len(value) > maximum
             or any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value)

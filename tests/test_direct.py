@@ -716,6 +716,20 @@ def test_canonical_backend_identity_rejects_malformed_fields(field, value):
         canonical_backend_identity(**arguments)
 
 
+def test_canonical_backend_identity_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __len__(self):
+            raise RuntimeError("synthetic canonical identity marker")
+
+    with pytest.raises(ValueError, match="auth_user_id is invalid"):
+        canonical_backend_identity(
+            "user",
+            "account",
+            auth_user_id=BrokenStr("user"),
+            auth_account_id="account",
+        )
+
+
 @pytest.mark.parametrize(
     "error",
     (
