@@ -11,6 +11,22 @@ from codex_usage.history import HistoryStore, UsageSample, usage_samples_from_us
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 
 
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic history integer marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic history integer marker")
+
+    def __truediv__(self, _other):
+        raise RuntimeError("synthetic history integer marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic history float marker")
+
+
 def _sample(*, captured_at: datetime, used_percent: float, account_id: str = "alpha"):
     return UsageSample(
         account_id=account_id,
@@ -879,6 +895,31 @@ def test_history_rejects_malformed_millis(value):
         history_module._from_millis(value)
 
 
+def test_history_rejects_numeric_subclasses_before_arithmetic():
+    broken_int = _BrokenInt(1_000)
+    broken_float = _BrokenFloat(10.0)
+
+    with pytest.raises(ValueError, match="window_seconds"):
+        UsageSample(
+            account_id="alpha",
+            pool="main",
+            window_seconds=broken_int,
+            captured_at=datetime(2026, 8, 16, tzinfo=UTC),
+            used_percent=10.0,
+        )
+    with pytest.raises(ValueError, match="used_percent"):
+        UsageSample(
+            account_id="alpha",
+            pool="main",
+            window_seconds=18_000,
+            captured_at=datetime(2026, 8, 16, tzinfo=UTC),
+            used_percent=broken_float,
+        )
+    for helper in (history_module._from_millis, history_module._validated_millis):
+        with pytest.raises(ValueError, match="history timestamp"):
+            helper(broken_int)
+
+
 @pytest.mark.parametrize("captured_at_ms", ["invalid", 1.5])
 def test_history_status_rejects_malformed_timestamp_aggregate(tmp_path, captured_at_ms):
     path = tmp_path / "history.sqlite3"
@@ -926,6 +967,28 @@ def test_usage_samples_extract_only_fresh_valid_limit_windows():
         ("main", 18_000, 25.0),
         ("main", 604_800, 60.0),
         ("credits", history_module.CREDIT_HISTORY_WINDOW_SECONDS, 30.0),
+    ]
+
+
+def test_usage_samples_fall_back_for_integer_subclass_credit_duration():
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=LimitWindow(
+            name="credits",
+            remaining=70,
+            duration_seconds=_BrokenInt(3_600),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    samples = usage_samples_from_usage(usage)
+
+    assert [(sample.pool, sample.window_seconds) for sample in samples] == [
+        ("credits", history_module.CREDIT_HISTORY_WINDOW_SECONDS)
     ]
 
 

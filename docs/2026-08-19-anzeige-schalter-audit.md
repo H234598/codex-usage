@@ -9688,3 +9688,19 @@ Alle fünf Eingangsgrenzen akzeptieren jetzt ausschließlich Built-in-`int`.
 Regression prüft jede Grenze mit einer absichtlich fehlerhaften Integer-
 Subclass. Verifikation: **188 Consumption-, CLI- und Integration-Entrypoint-
 Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 815: History-Zeitstempel und Samples strikt numerisch prüfen
+
+`history.py` akzeptierte bei Fensterdauer, `used_percent` und Millisekunden-
+Konvertierung numerische Subklassen. Überschriebene Vergleichs-, Divisions-
+oder Float-Konvertierungsoperatoren konnten dadurch rohe Fremdfehler aus
+History-, CLI- und Scheduler-Pfaden auslösen. Auch eine Credit-Fensterdauer aus
+einer Subclass wurde vor dem Fallback verglichen.
+
+Die Grenzen akzeptieren jetzt nur Built-in-`int` beziehungsweise Built-in-
+`float`; ungültige Credit-Dauern fallen kontrolliert auf das 30-Tage-Fenster
+zurück. Regression deckt Sample-, Millisekunden- und Creditpfad ab.
+
+Verifikation: **344 History-, History-CLI-, Scheduler- und Integration-
+Entrypoint-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.

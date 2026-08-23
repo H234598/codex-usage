@@ -53,7 +53,7 @@ def _validate_history_key(
         raise ValueError("account_id is invalid")
     if not isinstance(pool, str) or not pool or len(pool) > 64:
         raise ValueError("pool is invalid")
-    if not isinstance(window_seconds, int) or isinstance(window_seconds, bool):
+    if type(window_seconds) is not int:
         raise ValueError("window_seconds is invalid")
     if not 0 < window_seconds <= MAX_HISTORY_WINDOW_SECONDS:
         raise ValueError("window_seconds is invalid")
@@ -77,9 +77,7 @@ class UsageSample:
             window_seconds=self.window_seconds,
         )
         _require_aware(self.captured_at, "captured_at")
-        if isinstance(self.used_percent, bool) or not isinstance(
-            self.used_percent, (int, float)
-        ):
+        if type(self.used_percent) not in (int, float):
             raise ValueError("used_percent is invalid")
         try:
             used_percent = float(self.used_percent)
@@ -123,7 +121,7 @@ def _to_millis(value: datetime) -> int:
 
 
 def _from_millis(value: object) -> datetime:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError("history timestamp is invalid")
     try:
         return datetime.fromtimestamp(value / 1000, tz=UTC)
@@ -132,7 +130,7 @@ def _from_millis(value: object) -> datetime:
 
 
 def _validated_millis(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError("history timestamp is invalid")
     _from_millis(value)
     return value
@@ -584,8 +582,7 @@ def _iter_usage_samples(usage: AccountUsage):
                 continue
             duration = (
                 window.duration_seconds
-                if isinstance(window.duration_seconds, int)
-                and not isinstance(window.duration_seconds, bool)
+                if type(window.duration_seconds) is int
                 and window.duration_seconds > 0
                 else None
             ) or {
@@ -631,8 +628,7 @@ def _iter_usage_samples(usage: AccountUsage):
         if remaining_percent is not None:
             duration = (
                 credit.duration_seconds
-                if isinstance(credit.duration_seconds, int)
-                and not isinstance(credit.duration_seconds, bool)
+                if type(credit.duration_seconds) is int
                 and credit.duration_seconds > 0
                 else CREDIT_HISTORY_WINDOW_SECONDS
             )
