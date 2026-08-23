@@ -292,6 +292,18 @@ def test_open_auth_json_fd_closes_duplicate_when_stat_fails(monkeypatch):
     assert closed == [123]
 
 
+def test_open_auth_json_fd_maps_directory_errno(monkeypatch, tmp_path):
+    path = tmp_path / "auth.json"
+
+    def fail_open(*_args, **_kwargs):
+        raise OSError(direct_module.errno.EISDIR, "synthetic directory")
+
+    monkeypatch.setattr(direct_module.os, "open", fail_open)
+
+    with pytest.raises(DirectAuthError, match=r"auth\.json is not a regular file"):
+        direct_module._open_auth_json_fd(path)
+
+
 @pytest.mark.parametrize("auth_json_path", [1, {}, object()])
 def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     account = Account(

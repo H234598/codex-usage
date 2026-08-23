@@ -11761,3 +11761,13 @@ Duplikats.
 Verifikation: **329 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **96 %**, Missing-Zeilen 43; keine Settings-Fenster
 gestartet.
+
+## Runde 980: Directory-Errno beim Auth-Open korrekt gemappt
+
+`direct._open_auth_json_fd()` hatte das `EISDIR`-/Nicht-reguläre-Datei-
+Mapping von `os.open` noch nicht direkt belegt. Der neue Test bestätigt den
+fachlich passenden Fehlertext statt eines generischen Leseproblems.
+
+Verifikation: **330 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **96 %**, Missing-Zeilen 42; keine Settings-Fenster
+gestartet.
