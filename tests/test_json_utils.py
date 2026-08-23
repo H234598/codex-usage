@@ -27,3 +27,17 @@ def test_loads_strict_rejects_duplicate_object_keys():
 def test_loads_strict_rejects_invalid_input_type(value):
     with pytest.raises(ValueError, match="JSON input is invalid"):
         loads_strict(value)  # type: ignore[arg-type]
+
+
+def test_loads_strict_rejects_input_subclass_hooks():
+    class BrokenStr(str):
+        def __iter__(self):
+            raise RuntimeError("synthetic JSON string marker")
+
+    class BrokenBytes(bytes):
+        def decode(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic JSON bytes marker")
+
+    for value in (BrokenStr("{}"), BrokenBytes(b"{}")):
+        with pytest.raises(ValueError, match="JSON input is invalid"):
+            loads_strict(value)

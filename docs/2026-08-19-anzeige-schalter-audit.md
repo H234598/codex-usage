@@ -10158,3 +10158,15 @@ datenarme Fehlermeldung.
 
 Verifikation: **31 Integration-Entrypoint-Tests**, **57 Snapshot-Tests**, Ruff
 und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 847: JSON-Eingaben auf Built-in-Sequenzen begrenzen
+
+`json_utils.loads_strict()` akzeptierte `str`-/`bytes`-/`bytearray`-Subklassen.
+Manipulierte Iterations- oder Decode-Hooks konnten vor JSON-Fehlernormalisierung
+rohe Exceptions auslösen.
+
+Der strikte Loader akzeptiert jetzt nur Built-in-`str`, `bytes` oder `bytearray`
+vor Nesting-Scan und `json.loads`. Regression deckt String- und Bytes-Hooks ab.
+
+Verifikation: **9 JSON-Utility-Tests**, **272 State-Tests**, Ruff und Diff-Check
+bestanden; keine Settings-Fenster gestartet.
