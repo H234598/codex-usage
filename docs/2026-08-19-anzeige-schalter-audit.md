@@ -11822,3 +11822,13 @@ Umwandlung in `DirectFetchError` ohne Retry- oder Iterator-Leak.
 Verifikation: **335 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **97 %**, Missing-Zeilen 35; keine Settings-Fenster
 gestartet.
+
+## Runde 986: Unvollständigen Stable-Sample-Iterator kontrolliert behandelt
+
+`direct._fetch_stable_wham_usage()` hatte den defensiven
+`StopIteration`-Pfad für Test-/Stub-Iteratoren noch nicht direkt belegt. Der
+neue Test bestätigt die explizite Weitergabe bei unvollständigem Batch.
+
+Verifikation: **336 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **97 %**, Missing-Zeilen 34; keine Settings-Fenster
+gestartet.

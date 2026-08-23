@@ -3068,6 +3068,18 @@ def test_fetch_stable_wham_usage_maps_selector_value_error(monkeypatch):
         _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_stable_wham_usage_re_raises_incomplete_sample_iterator(monkeypatch):
+    responses = iter(({},))
+    monkeypatch.setattr(
+        direct_module,
+        "_fetch_wham_usage",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    with pytest.raises(StopIteration):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 @pytest.mark.parametrize(
     "timeout_seconds",
     (
