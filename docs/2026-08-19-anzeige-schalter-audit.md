@@ -10471,3 +10471,17 @@ unverändert.
 
 Verifikation: **202 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 870: Plan-Typ-Vergleich auf Built-in-Strings begrenzen
+
+`direct._auth_plan_type_changed()` verglich einen vorhandenen Planwert vor
+der Normalisierung direkt mit `None` beziehungsweise dem Gegenwert. Eine
+String-Subclass konnte dadurch den Wechseltest mit einem rohen `!=`-Hook
+abbrechen.
+
+Der Helper weist jetzt jeden nichtleeren Nicht-Built-in-Planwert vor allen
+Vergleichen als geändert zurück. Regression deckt den Vergleichs-Hook ab;
+`None`-, Alias- und normale Gleichheitsfälle bleiben unverändert.
+
+Verifikation: **203 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

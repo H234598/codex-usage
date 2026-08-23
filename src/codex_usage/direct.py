@@ -650,6 +650,11 @@ def _safe_auth_plan_type(value: Any) -> str | None:
 
 
 def _auth_plan_type_changed(before: str | None, after: str | None) -> bool:
+    if (
+        (before is not None and type(before) is not str)
+        or (after is not None and type(after) is not str)
+    ):
+        return True
     if before is None or after is None:
         return before != after
     return _normalized_plan_type(before) != _normalized_plan_type(after)
