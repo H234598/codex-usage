@@ -4163,6 +4163,40 @@ test("extended panel sources render resets, identity, routing and account state"
   assert.match(values[15], /Status ok/);
 });
 
+test("panel slot raw content handles fallback branches", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  const item = {usage};
+
+  applet._panelForecastPart = () => null;
+  assert.equal(applet._panelSlotContentRaw(item, {source: 12}).plain, "TE –");
+
+  usage.label = "";
+  assert.equal(applet._panelSlotContentRaw(item, {source: 15}).plain, "Label –");
+  usage.label = "Alpha";
+
+  usage.account = "";
+  assert.equal(applet._panelSlotContentRaw(item, {source: 16}).plain, "Acc ID –");
+  usage.account = "alpha";
+
+  applet._routingDecisionParts = () => null;
+  assert.equal(applet._panelSlotContentRaw(item, {source: 43}).plain, "Routing –");
+  applet._routingDecisions = {alpha: {decision: "other", paid_overage_allowed: false}};
+  assert.equal(applet._panelSlotContentRaw(item, {source: 44}).plain, "CV aktiv aus");
+
+  applet._alertSettings = {};
+  assert.equal(applet._panelSlotContentRaw(item, {source: 48}).plain, "Warnung an");
+  assert.equal(applet._panelSlotContentRaw(item, {source: 49}).plain, "Fehler an");
+
+  usage.cache_invalidated = true;
+  assert.equal(applet._panelSlotContentRaw(item, {source: 50}).plain, "Login nein");
+  usage.cache_invalidated = false;
+
+  applet._percentPartsFromValue = () => ({plain: "", markup: ""});
+  applet._windowResetParts = () => ({plain: "", markup: ""});
+  assert.equal(applet._panelSlotContentRaw(item, {source: 1}).plain, "5h");
+});
+
 test("every configured panel source has a safe render path", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];
