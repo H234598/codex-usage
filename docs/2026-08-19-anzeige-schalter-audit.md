@@ -10402,3 +10402,16 @@ Tokens und JWT-Prüfung bleiben unverändert.
 
 Verifikation: **197 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 865: JWT-Tokenprüfung auf Built-in-Strings begrenzen
+
+`direct._validate_access_token_expiry()` war separat aufrufbar und übergab
+String-Subklassen direkt an `_jwt_claims()`. Ein manipulierter Token-Hook konnte
+die JWT-Prüfung mit einer rohen Exception abbrechen.
+
+Die Expiry-Grenze verlangt jetzt Built-in-`str` vor JWT-Splitting und
+Expiry-Auswertung. Regression simuliert den fehlerhaften Token-Hook; normale
+Tokens und fehlende `exp`-Claims bleiben unverändert.
+
+Verifikation: **198 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

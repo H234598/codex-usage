@@ -781,6 +781,8 @@ def _extract_auth_details(
 
 
 def _validate_access_token_expiry(token: str, *, path: Path) -> None:
+    if type(token) is not str:
+        raise DirectAuthError(f"auth.json access_token expiry is invalid: {path}")
     claims = _jwt_claims(token)
     if not isinstance(claims, dict) or "exp" not in claims:
         return
