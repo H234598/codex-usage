@@ -9627,3 +9627,18 @@ Vergleichsoperator.
 Verifikation: **21 fokussierte Usage-Reset-Tests**, **451 Reset-, Model-,
 Usage-Limit- und State-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
 keine Settings-Fenster gestartet.
+
+## Runde 812: App-Server-Integer nur als Built-in akzeptieren
+
+`app_server._strict_int()` akzeptierte bisher beliebige `int`-Subklassen.
+Manipulierte Vergleichs- oder Rechenoperatoren konnten dadurch die
+Used-Percent-/Fensterprüfung mit einem rohen Fremd-Exception abbrechen.
+
+Die Grenze akzeptiert jetzt ausschließlich den exakten Built-in-Typ `int`.
+Boolean-Werte und Integer-Subklassen werden wie andere ungültige
+App-Server-Payloadwerte verworfen. Regression deckt direkten Strict-Int- und
+Used-Percent-Pfad ab.
+
+Verifikation: **109 fokussierte App-Server-Tests**, **256 App-Server-,
+Usage-Limit- und Usage-Reset-Tests**, Ruff, Python-Compile und Diff-Check
+bestanden; keine Settings-Fenster gestartet.

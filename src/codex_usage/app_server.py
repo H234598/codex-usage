@@ -832,7 +832,7 @@ def _window(name: str, payload: dict[str, Any]) -> LimitWindow:
 
 
 def _strict_int(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         return None
     return value
 

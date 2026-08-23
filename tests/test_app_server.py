@@ -755,6 +755,17 @@ def test_app_server_deadline_and_primitive_validators_reject_invalid_values():
     assert app_server_module._window_duration_is_missing({"windowDurationMins": 300}) is False
 
 
+def test_app_server_strict_int_rejects_integer_subclasses():
+    class BrokenInt(int):
+        def __ge__(self, _other):
+            raise RuntimeError("synthetic app-server integer marker")
+
+    value = BrokenInt(1)
+
+    assert app_server_module._strict_int(value) is None
+    assert app_server_module._valid_used_percent({"usedPercent": value}) is False
+
+
 def test_app_server_environment_keeps_runtime_names_and_sets_codex_home(monkeypatch, tmp_path):
     monkeypatch.setenv("PATH", "/safe/bin")
     monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
