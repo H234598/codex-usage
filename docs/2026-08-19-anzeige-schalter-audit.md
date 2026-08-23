@@ -13206,3 +13206,20 @@ Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
 Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
 Installations- und Reload-Schritte ab.
+
+## Runde 1098: App-Server-Response-, Fenster- und stderr-Guards vollständig geprüft
+
+`app_server.py` hatte noch echte Kanten bei Default-Codex-Auflösung,
+dauerlosen verschachtelten Codex-Fenstern, der Filterung bekannter
+Fensterdauern sowie dem stderr-Byte-Cap. Vier Regressionen decken diese Pfade.
+Zwei nach `read_account()` redundante `dict`-Doppelprüfungen wurden entfernt;
+der lokale Reader validiert den Account bereits strikt als Objekt, daher bleibt
+Laufzeitverhalten unverändert und die Abdeckung wird nicht mit künstlichem
+Builtin-Monkeypatching erkauft.
+
+Verifikation: **160 `tests/test_app_server.py`-Tests**, `app_server.py`
+**535/535 Statements und 202/202 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.

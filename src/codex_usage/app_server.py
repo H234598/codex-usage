@@ -324,9 +324,8 @@ def _read_rate_limits(
                 deadline=deadline,
                 stderr_reader=stderr_reader,
             )
-            if isinstance(account_payload, dict):
-                rate_limits = dict(rate_limits)
-                rate_limits["account"] = account_payload
+            rate_limits = dict(rate_limits)
+            rate_limits["account"] = account_payload
             return _with_model_ids(
                 rate_limits,
                 _request_model_ids(
@@ -348,9 +347,8 @@ def _read_rate_limits(
                 deadline=deadline,
                 stderr_reader=stderr_reader,
             )
-            if isinstance(account_payload, dict):
-                rate_limits = dict(rate_limits)
-                rate_limits["account"] = account_payload
+            rate_limits = dict(rate_limits)
+            rate_limits["account"] = account_payload
             return _with_model_ids(
                 rate_limits,
                 _request_model_ids(

@@ -1109,6 +1109,15 @@ def test_resolve_codex_reports_missing_default_command(monkeypatch):
         _resolve_codex(None)
 
 
+def test_resolve_codex_accepts_default_command(tmp_path, monkeypatch):
+    fallback = tmp_path / "codex"
+    fallback.write_text("#!/bin/sh\n", encoding="utf-8")
+    fallback.chmod(0o700)
+    monkeypatch.setattr(app_server_module.shutil, "which", lambda _name: str(fallback))
+
+    assert _resolve_codex(None) == str(fallback)
+
+
 def test_start_app_server_maps_process_start_error(tmp_path, monkeypatch):
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
@@ -1178,11 +1187,26 @@ def test_unsupported_window_duration_scans_codex_snapshot():
         {
             "rateLimitsByLimitId": {
                 "codex": {
-                    "primary": {"usedPercent": 1, "windowDurationMins": 43_200}
+                    "primary": {"usedPercent": 1, "windowDurationMins": 43_200},
+                    "secondary": {"usedPercent": 1, "windowDurationMins": 300},
                 }
             }
         }
     ) == {43_200}
+
+
+def test_window_mapping_accepts_durationless_nested_bucket_when_top_level_has_none():
+    five, weekly = _windows_from_response(
+        {
+            "rateLimits": {"primary": {"windowDurationMins": None}},
+            "rateLimitsByLimitId": {
+                "codex": {"primary": {"usedPercent": 17}}
+            },
+        }
+    )
+
+    assert five is not None and five.remaining == 83
+    assert weekly is None
 
 
 def test_window_rejects_invalid_used_percent():
@@ -2328,6 +2352,22 @@ def test_stderr_reader_collects_and_normalizes_chunks():
     reader.run()
 
     assert reader.text() == "hello world"
+
+
+def test_stderr_reader_stops_collecting_after_byte_cap(monkeypatch):
+    monkeypatch.setattr(app_server_module, "APP_SERVER_STDERR_BYTES", 3)
+
+    class Stream:
+        def __init__(self):
+            self.chunks = iter([b"abc", b"def", b""])
+
+        def read(self, _size):
+            return next(self.chunks)
+
+    reader = _StderrReader(Stream())
+    reader.run()
+
+    assert reader.text() == "abc"
 
 
 def test_stderr_reader_ignores_read_error():
