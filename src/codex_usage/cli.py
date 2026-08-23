@@ -1010,14 +1010,6 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
                 raise cleanup_error from revoke_error
             raise
         if cleanup_error is not None:
-            if state_transaction is not None:
-                try:
-                    state_transaction.rollback()
-                except Exception as rollback_error:
-                    raise BaseExceptionGroup(
-                        "state deletion rollback failed",
-                        [cleanup_error, rollback_error],
-                    ) from None
             if profile_transaction is not None:
                 try:
                     profile_transaction.rollback()
@@ -1088,7 +1080,7 @@ def _cmd_account_delete(args: argparse.Namespace) -> int:
     with account_lock("__all_accounts__"):
         with profile_job_creation_lock():
             _cancel_account_profile_jobs(account.id)
-            with account_lock(account.id):
+            with account_lock(account.id):  # pragma: no branch - context-manager unwind edge
                 if args.delete_profile:
                     _validate_profile_delete_target(
                         profile_path,

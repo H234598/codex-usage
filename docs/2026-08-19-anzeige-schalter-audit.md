@@ -13425,3 +13425,27 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1112: CLI-Command-, Rollback- und Eingabe-Guards vollständig geprüft
+
+`cli.py` hatte noch ungetestete Command- und Fehlerkanten: History-JSON und
+Consumption-Baselines, Profilmigration und optionale Profilfelder,
+Reaktivierung/Account-Manage/Terminal, Probe/Diagnose/Latest/Health, Policy-
+und Spark-Health-Commands, Service- und Bridge-Validierung, Account-Lösch-
+Transaktionen mit State-/Profil-/Token-Rollbackfehlern, Profilpfad- und
+OAuth-Lock-Guards sowie Datei-/Stdin-Ingestgrenzen. Gezielte Regressionen
+decken alle Zustände ab. Ein logisch unerreichbarer State-Rollback-Zweig wurde
+entfernt: `cleanup_error` entsteht nur, wenn `remove_account_state` keine
+Transaktion zurückgibt. Der verbleibende synthetische Context-Manager-Unwind-
+Arc ist mit `pragma: no branch` dokumentiert.
+
+Verifikation: **156 fokussierte Tests** aus `tests/test_cli.py`,
+`tests/test_history_cli.py` und `tests/test_profile_cli.py`; `cli.py`
+**1241/1241 Statements und 356/356 Branches, 100 % Coverage**, Mypy und Ruff
+für Produktionsdatei bestanden. Die Testdatei meldet nur bestehende bzw.
+neu hinzugekommene E501-Zeilenlängen bei separatem Ruff-Lauf; keine
+funktionalen oder typbezogenen Fehler. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
