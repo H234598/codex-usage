@@ -12453,3 +12453,16 @@ Verifikation: **171 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **93 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1042: Update-Rollback sammelt Auth-/Home-Fehler
+
+Der erste Transaktions-Rollback in `add_or_update_account()` hatte die
+Fehlerbehandlung für Auth-Wiederherstellung und Test-Home-Cleanup sowie den
+fehlenden kanonischen Auth-Pfad noch nicht direkt ausgeführt. Zwei Regressionen
+bestätigen fail-closed Einzelablehnung und vollständige `ExceptionGroup`-
+Zusammenfassung mehrerer Rollback-Fehler.
+
+Verifikation: **173 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **94 %**, verbleibende Missing-Zeilen liegen
+in State-Rollback-/Account-Entfernungs- und Validierungspfaden; keine
+Settings-Fenster gestartet.

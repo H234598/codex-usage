@@ -188,6 +188,88 @@ def test_test_home_rejects_hardlinked_auth_source(tmp_path, monkeypatch):
     assert alias.exists()
 
 
+def test_test_home_rejects_missing_canonical_auth_path(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(config_module.subprocess, "run", lambda *_args, **_kwargs: None)
+    source = tmp_path / "incoming" / "auth.json"
+    source.parent.mkdir()
+    source.write_text('{"tokens": {}}\n', encoding="utf-8")
+    source.chmod(0o600)
+    original_absolute = config_module._absolute_account_path
+
+    def drop_auth_path(value, name):
+        if name == "auth_json_path":
+            return None
+        return original_absolute(value, name)
+
+    monkeypatch.setattr(config_module, "_absolute_account_path", drop_auth_path)
+
+    with pytest.raises(ValueError, match="test home auth path is missing"):
+        add_or_update_account(
+            "test-account",
+            auth_json_path=str(source),
+            test_home=True,
+            path=tmp_path / "config.toml",
+        )
+
+    assert source.exists()
+    assert not (home / ".codex-test" / "test-account").exists()
+
+
+def test_test_home_update_groups_auth_and_cleanup_rollback_errors(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(config_module.subprocess, "run", lambda *_args, **_kwargs: None)
+    source = tmp_path / "incoming" / "auth.json"
+    source.parent.mkdir()
+    source.write_text('{"tokens": {}}\n', encoding="utf-8")
+    source.chmod(0o600)
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("save failed")
+
+    def fail_auth_rollback(*_args, **_kwargs):
+        raise RuntimeError("auth rollback failed")
+
+    def fail_home_rollback(*_args, **_kwargs):
+        raise RuntimeError("home rollback failed")
+
+    def ignore_profile_rollback(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(config_module, "_save_config_unlocked", fail_save)
+    monkeypatch.setattr(
+        config_module,
+        "_restore_moved_test_home_auth",
+        fail_auth_rollback,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "_cleanup_created_test_home",
+        fail_home_rollback,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "_cleanup_created_profile_directories",
+        ignore_profile_rollback,
+    )
+
+    with pytest.raises(ExceptionGroup) as exc:
+        add_or_update_account(
+            "test-account",
+            auth_json_path=str(source),
+            test_home=True,
+            path=tmp_path / "config.toml",
+        )
+
+    assert [str(error) for error in exc.value.exceptions] == [
+        "save failed",
+        "auth rollback failed",
+        "home rollback failed",
+    ]
+
+
 def test_integrate_test_home_auth_is_noop_for_same_source_and_target(tmp_path):
     source = tmp_path / "auth.json"
     source.write_text("{}\n", encoding="utf-8")
