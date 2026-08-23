@@ -13690,3 +13690,19 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1127: Applet-Creditverbrauchsdarstellung vollständig ausgeführt
+
+Die Regression für `_creditConsumptionParts` deckt fehlende Zeilen, Hover-/
+Click-/Panel-Sichtbarkeit, Force-Visibility, leere und ungültige Cost-Windows,
+Null-/Insufficient-Regeln, mehrere Perioden, Verbose-/Custom-/Compact-Formate,
+Coverage-Marker, Baseline sowie Prefix- und Delta-Fallbacks ab. Damit sind alle
+V8-Blockranges der Funktion erreicht. Produktionslogik blieb unverändert.
+
+Verifikation: **525 `tests/applet_runtime.test.js`-Tests**, **525 bestanden**;
+V8-Raw-Coverage: `_creditConsumptionParts` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

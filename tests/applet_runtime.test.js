@@ -10519,6 +10519,99 @@ test("credit consumption delta uses independent dynamic formatting", () => {
   assert.match(rendered.markup, /foreground="#dc2626"/);
 });
 
+test("credit consumption rendering covers visibility, formats and empty windows", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  const row = Object.assign({}, applet._defaultCreditRow("alpha"), {
+    "consumption-show-panel": true,
+    "consumption-show-tooltip": true,
+    "consumption-hide-when-zero": true,
+    "consumption-show-coverage-marker": true,
+    "consumption-baseline-enabled": true,
+    "consumption-baseline-minutes": 60,
+  });
+  applet._creditSettings = {alpha: row};
+  applet._styleTargets["alpha:12"] = {panel: true, hover: true, click: true};
+  applet._creditDeltaStyles = {
+    alpha: Object.assign({}, applet._defaultStyleRow("alpha", "credit-delta"), {
+      "show-hover": false, "show-click": false,
+    }),
+  };
+
+  assert.equal(applet._creditConsumptionParts(null, "panel"), null);
+  assert.equal(applet._creditConsumptionParts({account: "alpha"}, "panel"), null);
+  assert.equal(applet._creditConsumptionParts(usage, "hover"), null);
+  assert.equal(applet._creditConsumptionParts(usage, "click"), null);
+
+  applet._creditDeltaStyles.alpha["show-hover"] = true;
+  applet._creditDeltaStyles.alpha["show-click"] = true;
+  row["consumption-show-panel"] = false;
+  row["consumption-show-tooltip"] = false;
+  assert.equal(applet._creditConsumptionParts(usage, "hover"), null);
+  row["consumption-show-tooltip"] = true;
+  assert.equal(applet._creditConsumptionParts(usage, "click"), null);
+  assert.equal(applet._creditConsumptionParts(usage, "panel"), null);
+  assert.equal(applet._creditConsumptionParts(usage, "panel", true), null);
+
+  usage.cost_windows = [];
+  assert.equal(applet._creditConsumptionParts(usage, "panel", true), null);
+  usage.cost_windows = [{
+    pool: "credits", limit_window_seconds: 18000,
+    consumed_percentage_points: "bad", coverage: "complete",
+  }];
+  assert.equal(applet._creditConsumptionParts(usage, "panel", true), null);
+
+  row["consumption-show-panel"] = true;
+  row["consumption-hide-when-zero"] = true;
+  usage.cost_windows = [{
+    pool: "credits", limit_window_seconds: 18000,
+    consumed_percentage_points: 0, coverage: "complete",
+  }];
+  assert.equal(applet._creditConsumptionParts(usage, "panel"), null);
+
+  usage.cost_windows[0].coverage = "insufficient";
+  const insufficient = applet._creditConsumptionParts(usage, "panel", true, "CV");
+  assert.match(insufficient.plain, /^CV 1 h: nicht genügend Messdaten/);
+
+  row["consumption-hide-when-zero"] = false;
+  usage.cost_windows = [{
+    pool: "credits", limit_window_seconds: 18000,
+    consumed_percentage_points: 12.5, coverage: "partial",
+    baseline_used_percent: 40,
+  }, {
+    pool: "credits", limit_window_seconds: 604800,
+    consumed_percentage_points: 8, coverage: "complete",
+  }];
+  row["consumption-format"] = "verbose";
+  const verbose = applet._creditConsumptionParts(usage, "panel", true, "CV");
+  assert.match(verbose.plain, /CV 1 h: 12,5%/);
+  assert.match(verbose.plain, /CV 1 h: 8,0%/);
+  assert.match(verbose.plain, /AW60m=40,0%/);
+  const verboseDefaultPrefix = applet._creditConsumptionParts(usage, "panel", true);
+  assert.match(verboseDefaultPrefix.plain, /Creditverbrauch 1 h: 12,5%/);
+
+  row["consumption-format"] = "custom";
+  row["consumption-custom-format"] = "X {period} {value}";
+  const custom = applet._creditConsumptionParts(usage, "panel", true);
+  assert.match(custom.plain, /X 1 h 12,5 \(mindestens\)/);
+  row["consumption-custom-format"] = "X {period} {value} {coverage}";
+  const customCoverage = applet._creditConsumptionParts(usage, "panel", true);
+  assert.match(customCoverage.plain, /X 1 h 12,5 mindestens/);
+  row["consumption-show-coverage-marker"] = false;
+  row["consumption-custom-format"] = "X {period} {value} {coverage}";
+  const customNoMarker = applet._creditConsumptionParts(usage, "panel", true);
+  assert.match(customNoMarker.plain, /X 1 h 12,5 vollständig/);
+  row["consumption-show-coverage-marker"] = true;
+  row["consumption-custom-format"] = "";
+  const customDefault = applet._creditConsumptionParts(usage, "panel", true);
+  assert.match(customDefault.plain, /Δ1 h 12,5 Credit-% \(mindestens\)/);
+
+  row["consumption-format"] = "compact";
+  applet.showConsumptionDelta = false;
+  const compact = applet._creditConsumptionParts(usage, "panel", true, "CV");
+  assert.match(compact.plain, /^CV 1 h 12,5 Credit-%/);
+});
+
 test("panel delta prefers the newest matching consumption window", () => {
   const applet = makeApplet();
   applet._deltaStyles = {
