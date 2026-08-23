@@ -304,6 +304,23 @@ def test_open_auth_json_fd_maps_directory_errno(monkeypatch, tmp_path):
         direct_module._open_auth_json_fd(path)
 
 
+def test_read_auth_json_file_maps_fstat_error(monkeypatch, tmp_path):
+    closed = []
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(direct_module, "_open_auth_json_fd", lambda _path: 123)
+
+    def fail_fstat(_fd):
+        raise OSError("synthetic fstat failure")
+
+    monkeypatch.setattr(direct_module.os, "fstat", fail_fstat)
+    monkeypatch.setattr(direct_module.os, "close", lambda fd: closed.append(fd))
+
+    with pytest.raises(DirectAuthError, match=r"cannot read auth\.json"):
+        read_auth_json_file(path)
+
+    assert closed == [123]
+
+
 @pytest.mark.parametrize("auth_json_path", [1, {}, object()])
 def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     account = Account(

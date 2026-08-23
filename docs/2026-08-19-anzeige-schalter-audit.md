@@ -11771,3 +11771,13 @@ fachlich passenden Fehlertext statt eines generischen Leseproblems.
 Verifikation: **330 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **96 %**, Missing-Zeilen 42; keine Settings-Fenster
 gestartet.
+
+## Runde 981: Auth-Dateileser-I/O-Fehler direkt gemappt
+
+`direct.read_auth_json_file()` hatte den `OSError`-Handler bei `fstat`/Read
+noch nicht direkt belegt. Der neue Test bestätigt den sicheren Fehlertext und
+das abschließende Schließen des Dateideskriptors.
+
+Verifikation: **331 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **96 %**, Missing-Zeilen 41; keine Settings-Fenster
+gestartet.
