@@ -18,6 +18,7 @@ function loadPrototype(onReady, strictMode = false) {
     subprocessFactory: () => ({}),
     appInfoFactory: () => {},
     glib: {},
+    throwStyleClass: false,
     fileUriCalls: 0,
   };
   const mainloop = {
@@ -57,7 +58,11 @@ function loadPrototype(onReady, strictMode = false) {
   };
   class PopupItem {
     constructor(text) {
-      this.actor = { add_style_class_name() {} };
+      this.actor = {
+        add_style_class_name() {
+          if (runtime.throwStyleClass) throw new Error("style unavailable");
+        },
+      };
       this.label = { text: text || "", clutter_text: { set_markup() {} } };
       this._signals = {};
       this.menu = {
@@ -10681,6 +10686,65 @@ test("account menu callbacks toggle consumption delta and copy device login even
   const copy = controls.find((item) => item.label.text === "Device-Login URL kopieren");
   copy.emit("activate");
   assert.equal(copied.value, "https://auth.example/device");
+});
+
+test("account menu rendering covers optional metrics, stale status and reactivation", () => {
+  let runtime;
+  const applet = makeApplet((value) => { runtime = value; });
+  const usage = applet._usages[0];
+  usage.status = "login_required";
+  usage.stale = true;
+  usage.values_captured_at = "2026-08-20T10:00:00Z";
+  usage.error = "backend failed";
+  applet.showReactivationActions = true;
+  usage.main = {
+    available: true, allowed: true, limit_reached: false, exhausted: false,
+    windows: [{name: "30d", duration_seconds: 2592000, remaining: 50}],
+  };
+  applet.menu = {items: [], addMenuItem(item) { this.items.push(item); }};
+  applet._percentParts = (window) => ({
+    plain: window ? "50%" : "",
+    markup: window ? "50%" : "",
+  });
+  applet._accountDisplayText = () => "Alpha";
+  applet._usageSeverity = () => "codex-usage-error";
+  applet._formatDate = () => "gestern";
+  applet._creditParts = () => ({plain: "Credits", markup: "Credits"});
+  applet._creditConsumptionParts = () => ({plain: "Creditverbrauch", markup: "Creditverbrauch"});
+  applet._consumptionParts = () => ({plain: "Tokenverbrauch", markup: "Tokenverbrauch"});
+  applet._usageResetParts = () => ({plain: "Resets", markup: "Resets"});
+  applet._addResetDetail = () => {};
+  applet._addDynamicLimitDetails = () => {};
+  applet._addAccountControls = () => {};
+  applet._addAccountTerminalAction = () => {};
+  applet._addReactivationAction = (_usage, menu) => {
+    menu.addMenuItem({label: {text: "Reaktivieren"}});
+  };
+  applet._setItemMarkup = () => {};
+
+  applet._addAccount(usage);
+
+  const group = applet.menu.items[0];
+  assert.match(group.label.text, /Alpha/);
+  assert.ok(group.menu.items.some((item) => item.label && item.label.text === "Credits"));
+  assert.ok(group.menu.items.some((item) => item.label && item.label.text === "Creditverbrauch"));
+  assert.ok(group.menu.items.some((item) => item.label && item.label.text === "Tokenverbrauch"));
+  assert.ok(group.menu.items.some((item) => item.label && item.label.text === "Resets"));
+  assert.ok(group.menu.items.some((item) => item.label && /Token abgelaufen/.test(item.label.text)));
+  assert.ok(group.menu.items.some((item) => item.label && item.label.text === "Reaktivieren"));
+
+  applet._accountDisplayText = () => "";
+  applet._addAccount(usage);
+  runtime.throwStyleClass = true;
+  applet._addAccount(usage);
+  runtime.throwStyleClass = false;
+
+  usage.values_captured_at = "";
+  usage.captured_at = "2026-08-21T10:00:00Z";
+  usage.status = "ok";
+  usage.error = "";
+  applet._accountDisplayText = () => "Alpha";
+  applet._addAccount(usage);
 });
 
 test("command error handling survives menu failures", () => {
