@@ -335,6 +335,26 @@ def test_prepare_test_codex_home_appends_file_store_setting(tmp_path, monkeypatc
     )
 
 
+def test_prepare_test_codex_home_keeps_existing_file_store_setting(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(mode=0o700)
+    config_path = codex_home / "config.toml"
+    original = 'cli_auth_credentials_store = "file"\n'
+    config_path.write_text(original, encoding="utf-8")
+    config_path.chmod(0o600)
+    calls = []
+    monkeypatch.setattr(
+        config_module.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs)),
+    )
+
+    config_module._prepare_test_codex_home(codex_home)
+
+    assert config_path.read_text(encoding="utf-8") == original
+    assert calls and calls[0][0] == ["codex", "--help"]
+
+
 @pytest.mark.parametrize(
     "error",
     [

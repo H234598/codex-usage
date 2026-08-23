@@ -13088,3 +13088,18 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1091: Test-CODEX_HOME-Konfigurations-Guard vollständig geprüft
+
+`config.py` hatte noch eine unbelegte Erhaltens-Kante beim Test-CODEX_HOME:
+Wenn `cli_auth_credentials_store = "file"` bereits vorhanden ist, darf die
+Konfiguration nicht doppelt erweitert oder verändert werden; die Help-Probe
+muss dennoch laufen. Eine Regression prüft unveränderten Dateiinhalt und den
+ausgeführten Probe-Aufruf. Produktionslogik blieb unverändert.
+
+Verifikation: **192 `tests/test_config.py`-Tests**, `config.py` **700/700
+Statements und 328/328 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.
