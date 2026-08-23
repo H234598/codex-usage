@@ -131,6 +131,17 @@ def test_account_lock_maps_open_errors(tmp_path, monkeypatch, error_number, mess
             pass
 
 
+def test_account_lock_handles_missing_optional_open_flags(tmp_path, monkeypatch):
+    from codex_usage import account_lock as account_lock_module
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    for attribute in ("O_NOFOLLOW", "O_CLOEXEC"):
+        monkeypatch.delattr(account_lock_module.os, attribute, raising=False)
+
+    with account_lock("work"):
+        pass
+
+
 def test_account_lock_retries_after_transient_contention(tmp_path, monkeypatch):
     from codex_usage import account_lock as account_lock_module
 

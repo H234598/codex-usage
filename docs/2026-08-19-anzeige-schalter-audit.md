@@ -13011,3 +13011,18 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1086: Account-Lock-Plattform-Guards vollständig geprüft
+
+`account_lock.py` hatte noch unbelegte Fallback-Kanten für fehlende optionale
+`O_NOFOLLOW`- und `O_CLOEXEC`-Flags. Eine fokussierte Regression entfernt
+beide Attribute temporär und führt Verzeichnisvorbereitung, Lock-Erzeugung,
+Exklusiv-Lock, Freigabe und Descriptor-Cleanup auf dem portablen Fallback-Pfad
+aus. Produktionslogik blieb unverändert.
+
+Verifikation: **21 `tests/test_account_lock.py`-Tests**, `account_lock.py`
+**66/66 Statements und 14/14 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
