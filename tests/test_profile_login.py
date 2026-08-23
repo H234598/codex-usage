@@ -1048,3 +1048,249 @@ def test_bounded_process_cleanup_ignores_kill_and_wait_errors(monkeypatch):
     )
 
     _terminate_bounded_process(BrokenProcess())
+
+
+def test_device_login_live_event_sink_deduplicates_observed_events(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    observed = []
+
+    def runner(argv, **kwargs):
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        sink = kwargs["output_stream_sink"]
+        chunk = "Open https://auth.openai.com/device and device code: ABCD-1234\n"
+        sink("stdout", chunk)
+        sink("stdout", chunk)
+        auth = Path(kwargs["env"]["CODEX_HOME"]) / "auth.json"
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
+        auth.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(profile_login, "account_lock", lambda _account: nullcontext())
+    monkeypatch.setattr(
+        profile_login,
+        "add_or_update_account",
+        lambda *args, **kwargs: None,
+    )
+
+    result = run_device_login(
+        _account(profile),
+        tmp_path / "config.toml",
+        runner=runner,
+        event_sink=observed.append,
+    )
+
+    assert result.ok is True
+    assert [(event.kind, event.value) for event in observed] == [
+        ("url", "https://auth.openai.com/device"),
+        ("code", "ABCD-1234"),
+    ]
+
+
+def test_device_login_reports_missing_staged_auth(tmp_path, monkeypatch):
+    def runner(argv, **_kwargs):
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(profile_login, "account_lock", lambda _account: nullcontext())
+
+    result = run_device_login(
+        _account(tmp_path / "profile"), tmp_path / "config.toml", runner=runner
+    )
+
+    assert result.ok is False
+    assert result.error == "device_auth_missing"
+
+
+def test_device_login_maps_raw_runner_timeout(tmp_path, monkeypatch):
+    calls = []
+
+    def run_command(argv, **_kwargs):
+        calls.append(argv)
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        raise subprocess.TimeoutExpired(argv, 1)
+
+    monkeypatch.setattr(profile_login, "_run_command", run_command)
+    monkeypatch.setattr(profile_login, "account_lock", lambda _account: nullcontext())
+
+    with pytest.raises(DeviceLoginError, match="device_login_timeout"):
+        run_device_login(_account(tmp_path / "profile"), tmp_path / "config.toml")
+
+    assert len(calls) == 2
+
+
+def test_device_login_ignores_auth_unlink_failure_during_publish_error(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    original_unlink = Path.unlink
+    original_write_config = profile_login._write_file_store_config
+
+    def fail_auth_unlink(path, *args, **kwargs):
+        if path == profile / "codex-home" / "auth.json":
+            raise OSError("auth already gone")
+        return original_unlink(path, *args, **kwargs)
+
+    def fail_config_publish(path):
+        if path == profile / "codex-home" / "config.toml":
+            raise OSError("config publish failed")
+        return original_write_config(path)
+
+    def runner(argv, **kwargs):
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        auth = Path(kwargs["env"]["CODEX_HOME"]) / "auth.json"
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
+        auth.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(profile_login, "account_lock", lambda _account: nullcontext())
+    monkeypatch.setattr(profile_login, "_write_file_store_config", fail_config_publish)
+    monkeypatch.setattr(Path, "unlink", fail_auth_unlink)
+
+    with pytest.raises(DeviceLoginError, match="device_login_io_failed"):
+        run_device_login(_account(profile), tmp_path / "config.toml", runner=runner)
+
+
+def test_device_login_ignores_auth_unlink_failure_during_finalize_error(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    original_unlink = Path.unlink
+
+    def fail_auth_unlink(path, *args, **kwargs):
+        if path == profile / "codex-home" / "auth.json":
+            raise OSError("auth already gone")
+        return original_unlink(path, *args, **kwargs)
+
+    def runner(argv, **kwargs):
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        auth = Path(kwargs["env"]["CODEX_HOME"]) / "auth.json"
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
+        auth.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(profile_login, "account_lock", lambda _account: nullcontext())
+    monkeypatch.setattr(
+        profile_login,
+        "add_or_update_account",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("finalize failed")),
+    )
+    monkeypatch.setattr(Path, "unlink", fail_auth_unlink)
+
+    with pytest.raises(DeviceLoginError, match="device_login_finalize_failed"):
+        run_device_login(_account(profile), tmp_path / "config.toml", runner=runner)
+
+
+def test_device_events_stops_code_scan_after_eight_urls():
+    urls = " ".join(f"https://auth.example/device/{index}" for index in range(8))
+
+    assert len(profile_login._device_events(f"{urls} device code: ABCD-1234")) == 8
+
+
+def test_bounded_subprocess_flushes_split_utf8_at_eof():
+    chunks = []
+    result = _run_command(
+        [sys.executable, "-c", "import os; os.write(1, bytes([195]))"],
+        env={},
+        timeout=10,
+        runner=None,
+        output_stream_sink=lambda name, chunk: chunks.append((name, chunk)),
+    )
+
+    assert result.returncode == 0
+    assert chunks == [("stdout", "�")]
+
+
+def test_bounded_subprocess_flushes_split_utf8_to_plain_sink():
+    chunks = []
+    result = _run_command(
+        [sys.executable, "-c", "import os; os.write(1, bytes([195]))"],
+        env={},
+        timeout=10,
+        runner=None,
+        output_sink=chunks.append,
+    )
+
+    assert result.returncode == 0
+    assert chunks == ["�"]
+
+
+def test_bounded_subprocess_deadline_expiry_before_select(monkeypatch):
+    read_fd, write_fd = os.pipe()
+
+    class FakeProcess:
+        pid = 1234
+        stdout = os.fdopen(read_fd, "rb")
+        stderr = None
+
+        def wait(self, timeout=None):
+            raise AssertionError("wait must not run before selector")
+
+    clock = iter((0.0, 2.0))
+    monkeypatch.setattr(profile_login.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(profile_login.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+    monkeypatch.setattr(profile_login, "_terminate_bounded_process", lambda *_args, **_kwargs: None)
+
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            profile_login._run_subprocess_bounded(
+                ["codex"], env={}, timeout=1
+            )
+    finally:
+        os.close(write_fd)
+
+
+def test_bounded_subprocess_maps_wait_timeout(monkeypatch):
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+    terminated = []
+
+    class FakeProcess:
+        pid = 1234
+        stdout = os.fdopen(read_fd, "rb")
+        stderr = None
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("codex", timeout)
+
+    monkeypatch.setattr(profile_login.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+    monkeypatch.setattr(
+        profile_login,
+        "_terminate_bounded_process",
+        lambda *_args, **_kwargs: terminated.append(True),
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        profile_login._run_subprocess_bounded(["codex"], env={}, timeout=1)
+
+    assert terminated
+
+
+def test_device_login_cleanup_failure_without_primary_error_is_reported(
+    tmp_path, monkeypatch
+):
+    profile = tmp_path / "profile"
+
+    def runner(argv, **kwargs):
+        if argv[-1] == "--help":
+            return subprocess.CompletedProcess(argv, 0, "--device-auth", "")
+        auth = Path(kwargs["env"]["CODEX_HOME"]) / "auth.json"
+        auth.write_text('{"tokens":{"access_token":"test-token"}}', encoding="utf-8")
+        auth.chmod(0o600)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(profile_login, "account_lock", lambda _account: nullcontext())
+    monkeypatch.setattr(
+        profile_login,
+        "add_or_update_account",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        profile_login.shutil,
+        "rmtree",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("cleanup failed")),
+    )
+    monkeypatch.setattr(profile_login.sys, "exc_info", lambda: (None, None, None))
+
+    with pytest.raises(DeviceLoginError, match="device_login_cleanup_failed"):
+        run_device_login(_account(profile), tmp_path / "config.toml", runner=runner)

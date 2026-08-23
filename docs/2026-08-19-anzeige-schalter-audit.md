@@ -12754,3 +12754,14 @@ diese Grundpfade.
 Verifikation: **59 Profile-Login-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `profile_login.py`: **94 %**; verbleibende Lücken liegen
 in Selector-/EOF-/Timeout-Branches; keine Settings-Fenster gestartet.
+
+## Runde 1070: Profile-Login Selector-/EOF-/Timeout-Guards geschlossen
+
+Live-Event-Deduplizierung, fehlendes staged `auth.json`, raw Runner-Timeout,
+Rollback-Unlink-Fehler, Event-Limit, UTF-8-EOF-Flush, Deadline vor `select()`,
+`wait()`-Timeout und defensive Cleanup-Fehler waren noch offen. Elf
+Regressionen schließen alle verbleibenden Prozess- und Streamingpfade.
+
+Verifikation: **70 Profile-Login-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `profile_login.py`: **100 %**; keine Settings-Fenster
+gestartet.
