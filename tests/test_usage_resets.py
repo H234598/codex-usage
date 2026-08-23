@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import pytest
 
 from codex_usage.usage_resets import (
@@ -11,6 +13,17 @@ from codex_usage.usage_resets import (
 class _BrokenResetCount(int):
     def __ge__(self, _other):
         raise RuntimeError("synthetic reset count marker")
+
+
+class _ExplodingMapping(Mapping):
+    def __getitem__(self, _key):
+        raise RuntimeError("synthetic mapping callback marker")
+
+    def __iter__(self):
+        return iter(("resets",))
+
+    def __len__(self):
+        return 1
 
 
 def test_reset_parser_distinguishes_unknown_zero_and_positive():
@@ -87,6 +100,10 @@ def test_reset_state_rejects_integer_subclass_count():
     with pytest.raises(ValueError, match="bounded"):
         UsageResetState(count, True)
     assert parse_usage_resets({"resets": count}) == UsageResetState(None, False, False)
+
+
+def test_reset_parser_rejects_mapping_callback_errors():
+    assert parse_usage_resets(_ExplodingMapping()) == UsageResetState(None, False, False)
 
 
 def test_reset_state_serializes_canonical_fields():

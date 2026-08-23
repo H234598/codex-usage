@@ -9763,3 +9763,18 @@ deckt den Hook-Aufruf direkt sowie alle Parser-Aufrufer ab.
 Verifikation: **886 Usage-Limit-, App-Server-, Direct-, State-, Render- und
 Routing-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 820: Usage-Reset-Mapping-Callbacks fail-closed behandeln
+
+`parse_usage_resets()` akzeptierte `Mapping`-Objekte, ließ aber Exceptions aus
+deren `__contains__()`, `get()` oder `__getitem__()` nach außen leaken. Ein
+formal gültiges, fehlerhaftes DTO konnte dadurch Direct-, App-Server-, Bridge-
+oder State-Verarbeitung abbrechen.
+
+Der Mapping-Parser läuft jetzt unter einer Exception-Grenze und liefert bei
+Callback-Fehlern den unbekannten Reset-Zustand. Regression deckt ein
+explodierendes Mapping direkt sowie alle vier Aufruferpfade ab.
+
+Verifikation: **22 fokussierte Usage-Reset-Tests**, **848 Reset-, Direct-,
+App-Server-, Bridge- und State-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

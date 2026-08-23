@@ -36,6 +36,13 @@ class UsageResetState:
 def parse_usage_resets(payload: object) -> UsageResetState:
     if not isinstance(payload, Mapping):
         return UsageResetState(None, False, False)
+    try:
+        return _parse_usage_resets_mapping(payload)
+    except Exception:
+        return UsageResetState(None, False, False)
+
+
+def _parse_usage_resets_mapping(payload: Mapping) -> UsageResetState:
     canonical = None
     canonical_nested = False
     if all(
