@@ -923,6 +923,14 @@ def test_auth_identity_rejects_conflicting_id_and_access_tokens(tmp_path):
         auth_identity_from_payload(payload, path=path)
 
 
+def test_strict_auth_identity_values_extracts_requested_claims(tmp_path):
+    assert direct_module._strict_auth_identity_values(
+        {"chatgpt_user_id": "user-1", "other": "ignored"},
+        ("chatgpt_user_id", "chatgpt_account_id"),
+        path=tmp_path / "auth.json",
+    ) == ["user-1"]
+
+
 @pytest.mark.parametrize("payload", [None, [], "invalid", 1, True, object()])
 def test_auth_payload_helpers_ignore_non_object_payloads(tmp_path, payload):
     path = tmp_path / "auth.json"

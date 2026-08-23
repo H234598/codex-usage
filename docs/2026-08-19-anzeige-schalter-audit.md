@@ -11203,3 +11203,13 @@ noch gültige Deadline den korrekten positiven Restwert liefert.
 
 Verifikation: **256 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Produktionsänderung und keine Settings-Fenster gestartet.
+
+## Runde 923: Strikten Auth-Claim-Extractor direkt geprüft
+
+`direct._strict_auth_identity_values()` hatte bisher keinen direkten
+Positivtest. Der neue Test prüft angeforderte Identitätsclaims, ignoriert
+unbekannte Felder und bestätigt die native String-Normalisierung über den
+gemeinsamen Helpervertrag.
+
+Verifikation: **257 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Produktionsänderung und keine Settings-Fenster gestartet.
