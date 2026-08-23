@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.render as render_module
 from codex_usage.config import MAX_CONFIG_ACCOUNTS, AppConfig
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.render import (
@@ -541,6 +542,40 @@ def test_render_account_overview_rejects_invalid_config(config):
         render_account_overview(config, Path("/tmp/config"))  # type: ignore[arg-type]
 
 
+def test_render_account_overview_handles_empty_account_list():
+    rendered = render_account_overview(AppConfig(accounts=()), Path("/tmp/config"))
+
+    assert "Keine Accounts konfiguriert." in rendered
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (None, "-"),
+        ("/definitely/missing/auth.json", "fehlt"),
+    ],
+)
+def test_render_auth_state_handles_missing_paths(tmp_path, path, expected):
+    if path is None:
+        assert render_module._auth_state(path) == expected
+        return
+    assert render_module._auth_state(path) == expected
+
+
+def test_render_path_states_cover_directory_file_and_invalid_values(tmp_path):
+    directory = tmp_path / "profile"
+    directory.mkdir()
+    file_path = tmp_path / "not-directory"
+    file_path.write_text("x", encoding="utf-8")
+
+    assert render_module._profile_state(str(directory)) == "vorhanden"
+    assert render_module._profile_state(str(file_path)) == "kein Ordner"
+    assert render_module._profile_state(1) == "ungültig"  # type: ignore[arg-type]
+    assert render_module._auth_state(str(file_path)) == "vorhanden"
+    assert render_module._auth_state(str(directory)) == "keine Datei"
+    assert render_module._auth_state(1) == "ungültig"  # type: ignore[arg-type]
+
+
 def test_render_account_overview_rejects_non_string_account_id():
     accounts = (
         Account(id=[], label="Bad", profile_dir="/tmp/bad"),  # type: ignore[arg-type]
@@ -682,6 +717,38 @@ def test_extra_main_value_uses_name_only_core_window_identity():
     assert _extra_main_value(usage) == "30d 95% verbleibend"
 
 
+def test_render_safe_usage_appends_existing_error_to_provenance_failure():
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="app-server",
+        error="backend warning",
+    )
+
+    safe = _safe_usage_for_display(usage)
+
+    assert safe.error == "backend warning; incomplete usage backend provenance"
+
+
+def test_render_provenance_exception_fails_closed(monkeypatch):
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    monkeypatch.setattr(
+        render_module,
+        "backend_provenance_matches_configured",
+        lambda *_args: (_ for _ in ()).throw(TypeError("provenance marker")),
+    )
+
+    assert render_module._usage_provenance_is_displayable(usage) is False
+
+
 @pytest.mark.parametrize(
     "main",
     [[], UsagePool(key="main", display_name="Codex", windows=None)],  # type: ignore[arg-type]
@@ -804,6 +871,62 @@ def test_render_table_hides_dynamic_pools_without_window_identity():
     assert "nicht verfügbar" in rendered
 
 
+def test_render_spark_value_handles_malformed_and_exhausted_pools():
+    malformed = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        models=(UsagePool(key="gpt-5.3-codex-spark", display_name="Spark", windows=None),),  # type: ignore[arg-type]
+    )
+    exhausted = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        models=(
+            UsagePool(
+                key="gpt-5.3-codex-spark",
+                display_name="Spark",
+                windows=(LimitWindow(name="weekly", remaining=0),),
+            ),
+        ),
+    )
+
+    assert render_module._spark_value(malformed) == "nicht verfügbar"
+    assert render_module._spark_value(exhausted) == "erschöpft"
+
+
+def test_render_usage_value_covers_single_fields_and_raw_fallback():
+    assert _usage_value(LimitWindow(name="5h", used=3)) == "3 genutzt"
+    assert _usage_value(LimitWindow(name="5h", limit=100)) == "Limit 100"
+    raw_value = _usage_value(LimitWindow(name="5h", raw="x" * 40))
+    assert len(raw_value) == 28
+    assert raw_value.endswith("…")
+
+
+def test_render_percent_helpers_fail_closed_for_derived_and_invalid_values():
+    class ValidityOverrideWindow(LimitWindow):
+        @property
+        def has_invalid_usage_value(self):
+            return False
+
+    assert _is_remaining_percent_window(
+        ValidityOverrideWindow(name="5h", used=10, limit=100, remaining=50, percent=50)
+    ) is False
+    assert _is_remaining_percent_window(
+        ValidityOverrideWindow(name="5h", used=-1, limit=100, remaining=50, percent=50)
+    ) is False
+    assert _remaining_percent(ValidityOverrideWindow(name="5h", used=float("nan"))) is None
+    assert _remaining_percent(ValidityOverrideWindow(name="5h", percent=101)) is None
+    assert _remaining_percent(ValidityOverrideWindow(name="5h", limit=0)) is None
+    assert _remaining_percent(
+        ValidityOverrideWindow(name="5h", used=-1, limit=100)
+    ) is None
+    assert _remaining_percent(
+        ValidityOverrideWindow(name="5h", remaining=101, limit=100)
+    ) is None
+    assert _remaining_percent(ValidityOverrideWindow(name="5h", remaining=101)) is None
+
+
 def test_render_json_is_machine_readable():
     usage = AccountUsage(
         account_id="privat",
@@ -901,6 +1024,25 @@ def test_render_table_ignores_invalid_reset_at():
 
     assert "50% verbleibend" in rendered
     assert "invalid" not in rendered
+
+
+def test_render_auth_and_number_helpers_cover_refresh_expiry_and_nonfinite():
+    usage = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        auth_last_refresh=datetime(2026, 7, 22, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+    expired = AccountUsage(
+        account_id="private",
+        label="Private",
+        captured_at=datetime(2026, 7, 23, 4, 0, tzinfo=ZoneInfo("Europe/Berlin")),
+        auth_access_expires_at=datetime(2000, 1, 1, tzinfo=ZoneInfo("Europe/Berlin")),
+    )
+
+    assert _auth_value(usage).startswith("refresh ")
+    assert _auth_value(expired).startswith("abgelaufen ")
+    assert _fmt_number(float("inf")) == "-"
 
 
 def test_render_table_marks_stale_values_as_saved():

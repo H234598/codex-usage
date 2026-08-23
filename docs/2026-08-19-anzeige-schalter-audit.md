@@ -12713,3 +12713,13 @@ schließen sämtliche Routing-Entscheidungs- und Fail-Closed-Guards.
 
 Verifikation: **166 Routing-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `routing.py`: **100 %**; keine Settings-Fenster gestartet.
+
+## Runde 1066: Render-Formatter und Statusdarstellung vollständig geprüft
+
+Leere Übersichten, Profil-/Auth-Pfadstatus, Provenance-Fehler, malformed oder
+erschöpfte Spark-Pools, Einzelwert-/Raw-Fallbacks, Prozent-/Remaining-Grenzen,
+Refresh-/Expiry-Anzeige und nichtfinite Zahlen waren noch offen. Zehn
+Regressionen schließen die verbleibenden Darstellungs- und Fail-Closed-Guards.
+
+Verifikation: **80 Render-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `render.py`: **100 %**; keine Settings-Fenster gestartet.
