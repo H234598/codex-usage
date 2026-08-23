@@ -10335,3 +10335,17 @@ URL-Subklasse nicht als vertrauenswürdig gilt.
 
 Verifikation: **192 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 860: Response-Identifier auf Built-in-Strings begrenzen
+
+`direct._normalized_response_identifier()` akzeptierte `str`-Subklassen und
+iterierte sie vor der Spark-/Metered-Feature-Prüfung. Ein manipulierter
+Identifier-Hook konnte die Limitklassifikation mit einer rohen Exception
+abbrechen.
+
+Der Identifier-Normalizer verlangt jetzt Built-in-`str` vor Leerzeichen-,
+Steuerzeichen- und Casefold-Prüfung. Regression simuliert einen fehlerhaften
+Spark-Identifier-Hook; normale Spark-/Nicht-Spark-Werte bleiben unverändert.
+
+Verifikation: **193 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

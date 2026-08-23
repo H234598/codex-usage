@@ -1285,6 +1285,14 @@ def test_spark_response_identifier_is_not_normalized(field, value):
     ) is False
 
 
+def test_spark_response_identifier_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __iter__(self):
+            raise RuntimeError("synthetic spark identifier marker")
+
+    assert _is_spark_limit_response(BrokenStr("GPT-5.3-Codex-Spark"), "other") is False
+
+
 @pytest.mark.parametrize("field", ["allowed", "limit_reached"])
 def test_select_stable_wham_usage_rejects_conflicting_main_limit_flags(field):
     def response(value: bool) -> dict:

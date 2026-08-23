@@ -1190,7 +1190,7 @@ def _is_spark_limit_response(name: Any, metered_feature: Any) -> bool:
 
 
 def _normalized_response_identifier(value: Any) -> str:
-    if not isinstance(value, str) or not value:
+    if type(value) is not str or not value:
         return ""
     if any(
         char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
