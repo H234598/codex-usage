@@ -194,6 +194,12 @@ def test_parse_iso_datetime_rejects_string_subclass_hooks():
     assert direct_module._parse_iso_datetime(BrokenStr("2026-08-23T12:00:00Z")) is None
 
 
+def test_parse_iso_datetime_accepts_utc_z_suffix():
+    assert direct_module._parse_iso_datetime("2026-08-23T12:00:00Z") == datetime(
+        2026, 8, 23, 12, 0, tzinfo=UTC
+    )
+
+
 @pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
 def test_direct_fetch_rejects_non_account_input(account):
     with pytest.raises(ValueError, match="account is invalid"):

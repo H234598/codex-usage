@@ -11515,3 +11515,13 @@ Port und bestätigt fail-closed `False`.
 Verifikation: **292 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 96; keine Settings-Fenster
 gestartet.
+
+## Runde 956: ISO-UTC-Zeitstempel direkt geparst
+
+`direct._parse_iso_datetime()` hatte bisher nur einen Subklassen-Reject-Test.
+Der neue Positivtest bestätigt die native ISO-8601-`Z`-Auflösung in einen
+UTC-bezogenen `datetime`-Wert.
+
+Verifikation: **293 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 93; keine Settings-Fenster
+gestartet.
