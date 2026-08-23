@@ -31,6 +31,18 @@ class _TrustedUsageWindow(LimitWindow):
         return False
 
 
+class _ExplodingIdentityWindow(LimitWindow):
+    @property
+    def has_known_identity(self):
+        raise AttributeError("synthetic identity marker")
+
+
+class _ExplodingUsageWindow(LimitWindow):
+    @property
+    def has_invalid_usage_value(self):
+        raise ValueError("synthetic usage marker")
+
+
 @pytest.mark.parametrize("duration", [True, 1.0, "1", 0, -1, None])
 def test_window_for_duration_rejects_invalid_duration_types(duration):
     pool = UsagePool(
@@ -227,6 +239,61 @@ def test_limit_window_numeric_subclasses_fail_closed_and_stay_json_safe():
     json.dumps(payload, allow_nan=False)
     assert payload["five_hour"]["duration_seconds"] is None
     assert payload["five_hour"]["used"] is None
+
+
+def test_usage_pool_validity_catches_identity_property_errors():
+    pool = UsagePool(
+        key="custom",
+        display_name="Custom",
+        windows=(_ExplodingIdentityWindow(name="weekly", remaining=97),),
+    )
+
+    assert pool.has_valid_usage is False
+
+
+def test_usage_pool_exhausted_rejects_non_tuple_windows():
+    pool = UsagePool(key="custom", display_name="Custom", windows=[])
+
+    assert pool.exhausted is True
+
+
+def test_usage_pool_usage_source_empty_is_exhausted():
+    pool = UsagePool(
+        key="custom",
+        display_name="Custom",
+        availability_sources=("usage",),
+    )
+
+    assert pool.exhausted is True
+
+
+@pytest.mark.parametrize(
+    ("available", "allowed", "limit_reached"),
+    [(False, None, None), (True, "bad", None), (True, None, "bad")],
+)
+def test_usage_pool_exhausted_rejects_invalid_controls(
+    available, allowed, limit_reached
+):
+    pool = UsagePool(
+        key="custom",
+        display_name="Custom",
+        windows=(LimitWindow(name="weekly", remaining=97),),
+        available=available,
+        allowed=allowed,
+        limit_reached=limit_reached,
+    )
+
+    assert pool.exhausted is True
+
+
+def test_usage_pool_exhausted_catches_window_property_errors():
+    pool = UsagePool(
+        key="custom",
+        display_name="Custom",
+        windows=(_ExplodingUsageWindow(name="weekly", remaining=97),),
+    )
+
+    assert pool.exhausted is True
 
 
 def test_account_usage_as_dict_skips_unhashable_model_pool_keys():

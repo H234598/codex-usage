@@ -12122,3 +12122,15 @@ Verifikation: **55 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **94 %**, verbleibende Missing-Zeilen liegen
 in Pool-/Serialisierungs- und defensiven Exceptionpfaden; keine Settings-Fenster
 gestartet.
+
+## Runde 1013: UsagePool-Validity und Exhaustion fail-closed geprüft
+
+`UsagePool.has_valid_usage` und `.exhausted` hatten noch ungetestete Grenzen
+für Property-Fehler, nicht-tuple Fenster, leere Usage-Quellen und ungültige
+Control-Flags. Sieben Regressionen bestätigen sichere False/True-Fallbacks
+ohne Ausnahmeleck.
+
+Verifikation: **62 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **98 %**, verbleibende Missing-Zeilen liegen
+in AccountUsage-/Serialisierungs- und einem inkonsistenten Reset-Guard;
+keine Settings-Fenster gestartet.
