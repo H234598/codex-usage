@@ -12681,3 +12681,14 @@ Profil- und Rollback-Grenzen.
 Verifikation: **35 Profile-Layout-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `profile_layout.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1063: Terminal-Start und Resolver-Guards geschlossen
+
+Ungültige Accounts und fehlende Profile, Prozessstart-/Auth-Inspektionsfehler,
+Symlink-Auth, fehlende Codex-Befehle, nicht verfügbare Terminals und
+Wrapper-Namen waren noch nicht direkt belegt. Acht Regressionen schließen
+Start-, Sicherheits- und Resolver-Fallbacks.
+
+Verifikation: **35 Terminal-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `terminal.py`: **100 %**; keine Settings-Fenster
+gestartet.

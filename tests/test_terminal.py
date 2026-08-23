@@ -52,6 +52,31 @@ def test_start_account_terminal_uses_canonical_auth_home_and_cwd(monkeypatch, tm
     assert "CODEX_API_KEY" not in captured["kwargs"]["env"]
 
 
+def test_start_account_terminal_rejects_non_account_input():
+    with pytest.raises(TerminalError, match="account is invalid"):
+        start_account_terminal(object())  # type: ignore[arg-type]
+
+
+def test_start_account_terminal_rejects_missing_profile_directory(tmp_path):
+    account = Account(id="work", label="Work", profile_dir=str(tmp_path / "profile"))
+
+    with pytest.raises(TerminalError, match="profile directory does not exist"):
+        start_account_terminal(account)
+
+
+def test_start_account_terminal_maps_process_start_error(monkeypatch, tmp_path):
+    account = _account(tmp_path)
+    monkeypatch.setattr(terminal_module.shutil, "which", lambda candidate: f"/usr/bin/{candidate}")
+    monkeypatch.setattr(
+        terminal_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("terminal unavailable")),
+    )
+
+    with pytest.raises(TerminalError, match="could not start terminal"):
+        start_account_terminal(account)
+
+
 @pytest.mark.parametrize("account_id", [None, [], "../escape", "__all_accounts__"])
 def test_start_account_terminal_rejects_invalid_account_id(tmp_path, account_id):
     account = Account(
@@ -82,6 +107,30 @@ def test_terminal_auth_validation_rejects_group_readable_file(tmp_path):
         terminal_module._validate_auth_json(auth)
 
 
+def test_terminal_auth_validation_maps_inspection_error(tmp_path, monkeypatch):
+    auth = tmp_path / "auth.json"
+    auth.write_text("{}\n", encoding="utf-8")
+    auth.chmod(0o600)
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda _path: (_ for _ in ()).throw(OSError("auth disappeared")),
+    )
+
+    with pytest.raises(TerminalError, match="cannot be inspected"):
+        terminal_module._validate_auth_json(auth)
+
+
+def test_terminal_auth_validation_rejects_symlink(tmp_path):
+    target = tmp_path / "target"
+    target.write_text("{}\n", encoding="utf-8")
+    auth = tmp_path / "auth.json"
+    auth.symlink_to(target)
+
+    with pytest.raises(TerminalError, match="regular file"):
+        terminal_module._validate_auth_json(auth)
+
+
 def test_terminal_auth_validation_rejects_hardlink(tmp_path):
     auth = tmp_path / "auth.json"
     auth.write_text("{}\n", encoding="utf-8")
@@ -104,6 +153,33 @@ def test_terminal_candidates_prefer_ghostty(monkeypatch):
 
     assert terminal_module._resolve_terminal() == ("/usr/bin/ghostty", "ghostty")
     assert seen[0] == "ghostty"
+
+
+def test_executable_resolver_reports_missing_command(monkeypatch):
+    monkeypatch.setattr(terminal_module.shutil, "which", lambda _candidate: None)
+
+    with pytest.raises(TerminalError, match="codex command was not found"):
+        terminal_module._resolve_executable(None, "codex", label="codex command")
+
+
+def test_terminal_resolver_skips_unavailable_candidates(monkeypatch):
+    monkeypatch.setattr(terminal_module.shutil, "which", lambda _candidate: None)
+
+    with pytest.raises(TerminalError, match="no supported terminal"):
+        terminal_module._resolve_terminal("ghostty")
+
+
+def test_terminal_resolver_strips_wrapper_suffix(monkeypatch):
+    monkeypatch.setattr(
+        terminal_module.shutil,
+        "which",
+        lambda _candidate: "/usr/bin/ghostty.wrapper",
+    )
+
+    assert terminal_module._resolve_terminal("ghostty") == (
+        "/usr/bin/ghostty.wrapper",
+        "ghostty",
+    )
 
 
 @pytest.mark.parametrize(
