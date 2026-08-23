@@ -2188,6 +2188,12 @@ def test_conflicting_main_limit_flags_detects_signature_mismatch():
     ) is True
 
 
+def test_malformed_main_limit_structure_detects_non_dict_rate_limit():
+    assert direct_module._has_malformed_main_limit_structure(
+        [{"rate_limit": []}]
+    ) is True
+
+
 def test_select_stable_wham_usage_rejects_newer_partial_after_complete_quorum():
     complete = {
         "user_id": "user-test",

@@ -11279,3 +11279,13 @@ mit gegensätzlichem `allowed`-Flag und bestätigt die erkannte Signaturabweichu
 
 Verifikation: **267 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 931: Malformed-Main-Limit-Prädikat direkt geprüft
+
+`direct._has_malformed_main_limit_structure()` war bisher nur über den
+Antwortselektor abgedeckt. Der neue direkte Test bestätigt, dass ein
+`rate_limit`-Array statt eines nativen Dicts als ungültige Struktur erkannt
+wird.
+
+Verifikation: **268 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
