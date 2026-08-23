@@ -9662,3 +9662,17 @@ kompatibel; fehlende oder ungültige Werte fallen weiter auf `–`/Ausblenden.
 Verifikation: **499 Node-Tests**, **3.263 Python-Tests** (1 übersprungen),
 JSON-Parse, Python-Compile und Node-Syntaxcheck bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 813: Private-I/O-Grenzen gegen numerische Subklassen härten
+
+`private_io` akzeptierte bei Lock-Timeout, Bytebudget und Dateimodus beliebige
+`int`-/`float`-Subklassen. Deren überschreibbare Konvertierungs-, Vergleichs-
+oder Bitoperatoren konnten vor der eigentlichen Dateiprüfung rohe
+Fremdfehler auslösen. Die drei Grenzen akzeptieren jetzt ausschließlich
+Built-in-`int` beziehungsweise Built-in-`float`; ungültige Subklassen werden
+kontrolliert als `ValueError` abgewiesen.
+
+Regression deckt Timeout, `max_bytes` und Dateimodus mit absichtlich fehlerhaften
+numerischen Subklassen ab. Verifikation: **538 direkte Private-I/O-, State-,
+Service-, Spark-Health- und Config-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

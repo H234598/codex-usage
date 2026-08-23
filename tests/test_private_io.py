@@ -46,6 +46,46 @@ def test_private_path_lock_rejects_invalid_timeout_before_creating_lock(
     assert not (tmp_path / "config.toml.lock").exists()
 
 
+def test_private_io_rejects_numeric_subclasses_before_arithmetic(tmp_path):
+    class BrokenFloat(float):
+        def __float__(self):
+            raise RuntimeError("synthetic lock timeout marker")
+
+    class BrokenInt(int):
+        def __lt__(self, _other):
+            raise RuntimeError("synthetic byte budget marker")
+
+        def __and__(self, _other):
+            raise RuntimeError("synthetic mode marker")
+
+    with pytest.raises(ValueError, match="non-negative finite"):
+        with private_path_lock(
+            tmp_path / "config.toml",
+            timeout_seconds=BrokenFloat(1),
+            label="config lock",
+        ):
+            pass
+
+    with pytest.raises(ValueError, match="max_bytes is invalid"):
+        read_private_text(
+            tmp_path / "value.txt",
+            regular_label="private",
+            read_label="private",
+            max_bytes=BrokenInt(10),
+        )
+
+    with pytest.raises(ValueError, match="mode must be private"):
+        write_private_text(
+            tmp_path / "value.txt",
+            "secret",
+            label="private",
+            mode=BrokenInt(0o600),
+        )
+
+    assert not (tmp_path / "config.toml.lock").exists()
+    assert not (tmp_path / "value.txt").exists()
+
+
 @pytest.mark.parametrize("path", [None, [], "invalid", 1, False, object()])
 def test_private_io_rejects_non_path(path):
     with pytest.raises(ValueError, match="path is invalid"):

@@ -16,9 +16,7 @@ PRIVATE_LOCK_TIMEOUT_SECONDS = 30
 
 def _lock_deadline(timeout_seconds: int | float) -> float:
     error = "lock timeout must be a non-negative finite number"
-    if isinstance(timeout_seconds, bool) or not isinstance(
-        timeout_seconds, (int, float)
-    ):
+    if type(timeout_seconds) not in (int, float):
         raise ValueError(error)
     try:
         seconds = float(timeout_seconds)
@@ -142,7 +140,7 @@ def read_private_text(
     too_large_label: str | None = None,
     invalid_utf8_label: str | None = None,
 ) -> tuple[str, os.stat_result]:
-    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 0:
+    if type(max_bytes) is not int or max_bytes < 0:
         raise ValueError(f"{read_label} max_bytes is invalid")
     path = _require_path(path, label=regular_label)
     assert_no_symlink_ancestors(path, label=regular_label)
@@ -205,8 +203,7 @@ def write_private_text(
         raise ValueError(f"{label} text is invalid")
     path = _require_path(path, label=label)
     if (
-        isinstance(mode, bool)
-        or not isinstance(mode, int)
+        type(mode) is not int
         or mode < 0
         or mode & ~0o700
     ):
