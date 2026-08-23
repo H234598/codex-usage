@@ -10104,3 +10104,16 @@ unverändert.
 
 Verifikation: **56 Snapshot-Tests**, **28 Integration-Entrypoint-Tests**, Ruff
 und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 843: Snapshot-Tokens auf Built-in-Strings begrenzen
+
+`integration_snapshot._canonical_token()` akzeptierte `str`-Subklassen und
+rief deren `__len__` vor der ASCII-/Regex-Prüfung auf. Ein fremder Hook konnte
+damit den direkten Contract-Helper mit einer rohen Exception abbrechen.
+
+Die Token-Grenze verlangt jetzt Built-in-`str` vor Längen- und Zeichenprüfung.
+Regression simuliert den fehlerhaften Längen-Hook; normale Account-/Pool-/Commit-
+Tokens bleiben unverändert.
+
+Verifikation: **57 Snapshot-Tests**, **28 Integration-Entrypoint-Tests**, Ruff
+und Diff-Check bestanden; keine Settings-Fenster gestartet.

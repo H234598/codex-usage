@@ -107,6 +107,17 @@ def test_schema1_canonical_timestamp_rejects_string_subclass_hooks():
         _canonical_timestamp(BrokenStr("2026-08-15T10:00:00Z"))
 
 
+def test_schema1_canonical_token_rejects_string_subclass_hooks():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, _canonical_token
+
+    class BrokenStr(str):
+        def __len__(self):
+            raise RuntimeError("synthetic snapshot token marker")
+
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_token(BrokenStr("alpha"), maximum=64)
+
+
 @pytest.mark.parametrize("value", [None, [], {}, "invalid", 1, True])
 def test_schema1_projection_rejects_malformed_usage_timestamp(value):
     from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document

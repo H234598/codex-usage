@@ -459,7 +459,7 @@ def _canonical_timestamp(value: object) -> str:
 
 
 def _canonical_token(value: object, *, maximum: int) -> str:
-    if not isinstance(value, str) or len(value) < 1 or len(value) > maximum:
+    if type(value) is not str or len(value) < 1 or len(value) > maximum:
         _invalid()
     if not value.isascii() or not _ASCII_TOKEN_RE.fullmatch(value):
         _invalid()
