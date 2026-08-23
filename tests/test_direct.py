@@ -1889,6 +1889,28 @@ def test_select_stable_wham_usage_rejects_conflicting_spark_windows():
         _select_stable_wham_usage([response(1), response(1), response(99)])
 
 
+def test_conflicting_spark_limits_detects_signature_mismatch():
+    def response(used: int) -> dict:
+        return {
+            "additional_rate_limits": [
+                {
+                    "limit_name": "GPT-5.3-Codex-Spark",
+                    "metered_feature": "codex_bengalfox",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": used,
+                            "limit_window_seconds": 604_800,
+                        }
+                    },
+                }
+            ]
+        }
+
+    assert direct_module._has_conflicting_spark_limits(
+        [response(1), response(99)]
+    ) is True
+
+
 @pytest.mark.parametrize(
     ("spark_index", "other_index"),
     [(100, 101), (101, 100)],

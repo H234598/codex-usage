@@ -11260,3 +11260,13 @@ verliert, als widersprüchlich erkannt wird.
 
 Verifikation: **265 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 929: Spark-Konfliktprädikat direkt geprüft
+
+`direct._has_conflicting_spark_limits()` war bisher nur über den stabilen
+Antwortselektor abgedeckt. Der neue direkte Test prüft zwei native Spark-
+Antworten mit unterschiedlichen Nutzungswerten und bestätigt die erkannte
+Signaturabweichung.
+
+Verifikation: **266 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
