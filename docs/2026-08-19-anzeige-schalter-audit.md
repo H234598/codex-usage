@@ -11381,3 +11381,12 @@ Reset-Identität über zwei Samples.
 
 Verifikation: **278 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 942: Reset-Regression direkt erkannt
+
+`direct._has_reset_regression()` hatte bisher keinen direkten Test. Der neue
+Test hält die absolute Reset-Identität stabil, senkt aber `used_percent`; der
+Helper muss diesen Rücksprung als Regression markieren.
+
+Verifikation: **279 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

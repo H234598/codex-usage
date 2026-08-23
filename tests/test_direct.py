@@ -499,6 +499,25 @@ def test_progressive_window_identity_accepts_same_duration_and_reset():
     ) is True
 
 
+def test_reset_regression_detects_usage_drop_with_same_absolute_reset():
+    def response(used: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18_000,
+                    "used_percent": used,
+                    "reset_at": 1_000,
+                }
+            },
+        }
+
+    assert direct_module._has_reset_regression(
+        [response(10), response(5)]
+    ) is True
+
+
 def test_signature_flag_rejects_string_hooks():
     class BrokenFlag:
         def __str__(self):
