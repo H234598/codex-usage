@@ -1451,6 +1451,39 @@ def test_auth_email_rejects_claims_dict_subclass_hooks(tmp_path, monkeypatch):
     ) is None
 
 
+def test_auth_email_rejects_invalid_claim(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda _token: {"email": 123},
+    )
+
+    with pytest.raises(DirectAuthError, match="token email is invalid"):
+        auth_email_from_payload(
+            {"tokens": {"id_token": "token"}},
+            path=tmp_path / "auth.json",
+        )
+
+
+def test_auth_email_rejects_conflicting_claims(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_current_jwt_claims",
+        lambda token: {
+            "email": {
+                "id": "first@example.com",
+                "access": "second@example.com",
+            }[token]
+        },
+    )
+
+    with pytest.raises(DirectAuthError, match="token emails disagree"):
+        auth_email_from_payload(
+            {"tokens": {"id_token": "id", "access_token": "access"}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_auth_plan_type_rejects_tokens_dict_subclass_hooks(tmp_path):
     class BrokenTokens(dict):
         def get(self, _key, _default=None):
@@ -4756,6 +4789,18 @@ def test_load_auth_token_and_metadata_rejects_payload_dict_subclass(
         direct_module._load_auth_token_and_metadata(path)
 
 
+def test_auth_email_from_file_rejects_invalid_json(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(
+        direct_module,
+        "read_auth_json_file",
+        lambda _path: ("not-json", None),
+    )
+
+    with pytest.raises(DirectAuthError, match=rf"invalid auth\.json: {path}"):
+        auth_email_from_file(path)
+
+
 def test_auth_email_from_file_rejects_payload_dict_subclass(tmp_path, monkeypatch):
     class BrokenPayload(dict):
         pass
@@ -4774,6 +4819,17 @@ def test_auth_email_from_file_rejects_payload_dict_subclass(tmp_path, monkeypatc
 
     with pytest.raises(DirectAuthError, match=r"invalid auth\.json structure"):
         auth_email_from_file(path)
+
+
+def test_auth_email_from_file_returns_empty_email(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(
+        direct_module,
+        "read_auth_json_file",
+        lambda _path: ('{"tokens": {}}', None),
+    )
+
+    assert auth_email_from_file(path) is None
 
 
 def test_auth_plan_type_from_file_rejects_payload_dict_subclass(

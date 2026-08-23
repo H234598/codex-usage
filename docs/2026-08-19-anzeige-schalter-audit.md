@@ -11678,3 +11678,14 @@ Delegation eines gesetzten Pfads.
 Verifikation: **310 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **93 %**, Missing-Zeilen 73; keine Settings-Fenster
 gestartet.
+
+## Runde 972: Auth-E-Mail-Parser vollständigere Fehlerpfade
+
+`direct.auth_email_from_payload()` und `auth_email_from_file()` hatten
+ungültige bzw. widersprüchliche Claim-Werte sowie Parse- und Positivpfade noch
+nicht direkt belegt. Vier Tests bestätigen präzise Ablehnung und leere
+Rückgabe.
+
+Verifikation: **314 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **94 %**, Missing-Zeilen 65; keine Settings-Fenster
+gestartet.
