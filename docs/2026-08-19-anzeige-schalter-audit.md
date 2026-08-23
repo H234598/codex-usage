@@ -11657,3 +11657,13 @@ noch nicht direkt belegt. Der neue Test bestätigt den kontextgebundenen
 Verifikation: **306 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **93 %**, Missing-Zeilen 78; keine Settings-Fenster
 gestartet.
+
+## Runde 970: Leere Auth-Identität sauber zurückgegeben
+
+`direct.auth_identity_from_file()` hatte den erfolgreichen Rückgabepfad nach
+gültigem JSON noch nicht direkt belegt. Der neue Test bestätigt `(None, None)`
+für eine tokenlose, syntaktisch gültige Datei.
+
+Verifikation: **307 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **93 %**, Missing-Zeilen 77; keine Settings-Fenster
+gestartet.

@@ -4711,6 +4711,17 @@ def test_auth_identity_from_file_rejects_invalid_json(tmp_path, monkeypatch):
         auth_identity_from_file(path)
 
 
+def test_auth_identity_from_file_returns_empty_identity(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(
+        direct_module,
+        "read_auth_json_file",
+        lambda _path: ('{"tokens": {}}', None),
+    )
+
+    assert auth_identity_from_file(path) == (None, None)
+
+
 def test_load_auth_token_and_metadata_rejects_invalid_json(tmp_path, monkeypatch):
     path = tmp_path / "auth.json"
     monkeypatch.setattr(
