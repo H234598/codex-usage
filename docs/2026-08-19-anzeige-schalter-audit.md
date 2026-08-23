@@ -11536,3 +11536,13 @@ Fenster als `credits`.
 Verifikation: **294 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 92; keine Settings-Fenster
 gestartet.
+
+## Runde 958: Credit-Restmenge direkt abgeleitet
+
+`direct._credit_window()` hatte die `used`-/`limit`-Ableitung bisher nur
+indirekt. Der neue Test bestätigt `remaining=limit-used` und die daraus
+berechnete Prozentangabe für eine explizite Credit-Struktur.
+
+Verifikation: **295 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 91; keine Settings-Fenster
+gestartet.

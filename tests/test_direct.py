@@ -795,6 +795,19 @@ def test_credit_window_extracts_explicit_scalar_balance():
     assert window.name == "credits"
 
 
+def test_credit_window_derives_remaining_from_used_and_limit():
+    window = _credit_window(
+        {"credits": {"used": 25, "limit": 100}},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    )
+
+    assert window is not None
+    assert window.used == 25
+    assert window.limit == 100
+    assert window.remaining == 75
+    assert window.percent == 75
+
+
 def test_credit_window_rejects_credit_dict_subclass_hooks():
     class BrokenCredits(dict):
         def get(self, _key, _default=None):
