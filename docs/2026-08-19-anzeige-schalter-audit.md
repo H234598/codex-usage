@@ -12532,3 +12532,14 @@ UTF-8-Lesen.
 Verifikation: **71 Private-IO-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `private_io.py`: **92 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1049: Private-IO-Schreiben und Rollback abgesichert
+
+`write_private_text()` hatte Directory-/Parent-Typen, temporäre Descriptoren,
+Short-Write, create-only-Fehlergruppen und `replace()`-Symlinkfehler noch nicht
+vollständig direkt ausgeführt. Sechs Regressionen bestätigen atomare und
+fail-closed Schreibgrenzen.
+
+Verifikation: **77 Private-IO-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `private_io.py`: **95 %**; keine Settings-Fenster
+gestartet.

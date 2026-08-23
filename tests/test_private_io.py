@@ -589,6 +589,77 @@ def test_write_private_text_rejects_non_private_mode(tmp_path, mode):
     assert not path.exists()
 
 
+def test_write_private_text_rejects_existing_directory(tmp_path):
+    path = tmp_path / "value"
+    path.mkdir()
+
+    with pytest.raises(ValueError, match="must be a regular file"):
+        write_private_text(path, "secret", label="value")
+
+
+def test_write_private_text_rejects_non_directory_parent(tmp_path):
+    parent = tmp_path / "parent"
+    parent.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="parent must be a real directory"):
+        write_private_text(parent / "value", "secret", label="value")
+
+
+def test_write_private_text_rejects_invalid_temporary_descriptor(tmp_path, monkeypatch):
+    path = tmp_path / "value"
+    monkeypatch.setattr(
+        private_io.os,
+        "fstat",
+        lambda _fd: SimpleNamespace(
+            st_mode=0,
+            st_nlink=1,
+            st_uid=private_io.os.getuid(),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="temporary value is not a private regular file"):
+        write_private_text(path, "secret", label="value")
+
+
+def test_write_private_text_rejects_short_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(private_io.os, "write", lambda *_args: 0)
+
+    with pytest.raises(OSError, match="short write for value"):
+        write_private_text(tmp_path / "value", "secret", label="value")
+
+
+def test_create_only_write_groups_unlink_and_rollback_errors(tmp_path, monkeypatch):
+    path = tmp_path / "value.json"
+    original_unlink = Path.unlink
+
+    def fail_target_and_temporary_unlink(self, *, missing_ok=False):
+        if self == path or self.name.startswith(".value.json.tmp-"):
+            raise OSError("unlink failed")
+        return original_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_target_and_temporary_unlink)
+
+    with pytest.raises(ExceptionGroup) as exc:
+        write_private_text(path, "new", label="value", replace_existing=False)
+
+    assert [str(error) for error in exc.value.exceptions] == [
+        "unlink failed",
+        "unlink failed",
+    ]
+
+
+def test_write_private_text_maps_replace_symlink_error(tmp_path, monkeypatch):
+    path = tmp_path / "value"
+
+    def fail_replace(*_args, **_kwargs):
+        raise OSError(private_io.errno.ELOOP, "synthetic replace symlink")
+
+    monkeypatch.setattr(private_io.os, "replace", fail_replace)
+
+    with pytest.raises(ValueError, match="must be a regular file"):
+        write_private_text(path, "secret", label="value")
+
+
 def test_write_private_text_rejects_string_subclass_before_encode(tmp_path):
     class BrokenStr(str):
         def encode(self, *_args, **_kwargs):
