@@ -6223,6 +6223,69 @@ test("incomplete forecast rows retain the disabled token-end panel default", () 
   assert.equal(forecast["show-tooltip"], true);
 });
 
+test("forecast row normalization covers legacy aliases, precedence and bounds", () => {
+  const applet = makeApplet();
+  assert.ok(applet._normalizeForecastRow(null, "alpha"));
+
+  const legacy = applet._normalizeForecastRow({
+    account: "alpha",
+    "forecast-show-panel": true,
+    "forecast-show-tooltip": false,
+    "forecast-limit-window": "weekly",
+    "forecast-format": "verbose",
+    "forecast-custom-format": "Ende {duration}",
+    "forecast-smoothing": "ema-5",
+    "forecast-hide-when-zero": false,
+    "forecast-warn-amount": 7,
+    "forecast-warn-unit": "minutes",
+    "forecast-warn-format": "red",
+    "forecast-show-coverage-marker": false,
+    "forecast-baseline-enabled": true,
+    "forecast-baseline-minutes": 30,
+  }, "alpha");
+  assert.equal(legacy["show-panel"], true);
+  assert.equal(legacy["show-tooltip"], false);
+  assert.equal(legacy["limit-window"], "weekly");
+  assert.equal(legacy.format, "verbose");
+  assert.equal(legacy["custom-format"], "Ende {duration}");
+  assert.equal(legacy.smoothing, "ema-5");
+  assert.equal(legacy["warn-amount"], 7);
+  assert.equal(legacy["warn-unit"], "minutes");
+  assert.equal(legacy["warn-format"], "red");
+  assert.equal(legacy["show-coverage-marker"], false);
+  assert.equal(legacy["baseline-enabled"], true);
+  assert.equal(legacy["baseline-minutes"], 30);
+
+  const primary = applet._normalizeForecastRow({
+    account: "alpha", format: "compact", "forecast-format": "verbose",
+    "show-panel": false, "forecast-show-panel": true,
+    "warn-amount": 3, "forecast-warn-amount": 8,
+  }, "alpha");
+  assert.equal(primary.format, "compact");
+  assert.equal(primary["show-panel"], false);
+  assert.equal(primary["warn-amount"], 3);
+
+  const invalidCases = [
+    ["show-panel", "yes"], ["show-tooltip", 1], ["hide-when-zero", null],
+    ["show-coverage-marker", "false"], ["baseline-enabled", 1],
+    ["baseline-minutes", -1], ["baseline-minutes", 10000], ["baseline-minutes", 1.5],
+    ["warn-amount", -1], ["warn-amount", 366], ["warn-amount", 1.5],
+    ["limit-window", "other"], ["format", "other"], ["smoothing", "ema-999"],
+    ["warn-unit", "months"], ["warn-format", "blue"],
+  ];
+  for (const [key, value] of invalidCases) {
+    const row = Object.assign({}, applet._defaultForecastRow("alpha"), {[key]: value});
+    assert.equal(applet._normalizeForecastRow(row, "alpha"), null, `${key} accepts ${value}`);
+  }
+  assert.throws(() => applet._normalizeForecastRow(
+    Object.assign({}, applet._defaultForecastRow("alpha"), {"custom-format": 1}), "alpha"
+  ), /invalid text value/);
+  assert.throws(() => applet._normalizeForecastRow({
+    account: "alpha", "custom-format": "x".repeat(161)
+  }, "alpha"), /text value exceeds strict limit/);
+  assert.equal(applet._normalizeForecastRow({account: "alpha"}, ""), null);
+});
+
 test("missing forecast table does not inherit consumption panel visibility", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

@@ -13706,3 +13706,18 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1128: Applet-Prognosezeilen-Normalisierung vollständig ausgeführt
+
+Die Regression für `_normalizeForecastRow` deckt Null-/Defaultwerte,
+Legacy-`forecast-*`-Aliase, Primärfeld-Vorrang, alle zulässigen Text- und
+Enumwerte sowie Bool-, Ganzzahl-, Bereichs- und Stringfehler ab. Damit sind
+alle V8-Blockranges der Funktion erreicht. Produktionslogik blieb unverändert.
+
+Verifikation: **526 `tests/applet_runtime.test.js`-Tests**, **526 bestanden**;
+V8-Raw-Coverage: `_normalizeForecastRow` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
