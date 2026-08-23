@@ -12178,3 +12178,14 @@ Usage-/JSON-Pfade gelangen.
 Verifikation: **65 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **99 %**, einzige Missing-Zeile bleibt der
 redundante inkonsistente-Reset-Guard (186); keine Settings-Fenster gestartet.
+
+## Runde 1018: Model-Modul vollständig abgedeckt
+
+Der letzte `LimitWindow.has_invalid_usage_value`-Guard für inkonsistente
+Konversion (`remaining` zunächst `None`, anschließend wieder numerisch) war
+semantisch redundant, aber defensiv vorhanden. Ein kontrollierter
+Converter-Test bestätigt ihn direkt.
+
+Verifikation: **66 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **100 %**, keine Missing-Zeilen; keine
+Settings-Fenster gestartet.

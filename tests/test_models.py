@@ -337,6 +337,24 @@ def test_finite_number_drops_overflowing_builtin_integer():
     assert models_module._finite_number(10**1000) is None
 
 
+def test_limit_window_invalid_usage_guard_handles_inconsistent_conversion(
+    monkeypatch,
+):
+    original = models_module._finite_number
+    calls = 0
+
+    def inconsistent(value):
+        nonlocal calls
+        if value == 5:
+            calls += 1
+            return None if calls == 1 else 5.0
+        return original(value)
+
+    monkeypatch.setattr(models_module, "_finite_number", inconsistent)
+
+    assert LimitWindow(name="weekly", remaining=5).has_invalid_usage_value is True
+
+
 def test_account_usage_as_dict_skips_ambiguous_model_pool_keys():
     usage = AccountUsage(
         account_id="account",
