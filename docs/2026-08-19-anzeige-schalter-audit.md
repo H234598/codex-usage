@@ -11417,3 +11417,12 @@ zukünftiger nativer, UTC-bezogener Ablaufzeitpunkt nicht als abgelaufen gilt.
 
 Verifikation: **282 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 946: Ablauf-Fehlertext direkt formatiert
+
+`direct._expired_auth_error()` hatte bisher nur den fail-closed Subklassenfall
+direkt geprüft. Der neue Test bindet die lokale Zeitzone deterministisch an UTC
+und bestätigt die formatierte Ausgabe für ein natives Ablaufdatum.
+
+Verifikation: **283 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

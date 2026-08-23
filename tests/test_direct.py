@@ -1119,6 +1119,17 @@ def test_access_token_expired_rejects_datetime_subclass_hooks():
     ) is True
 
 
+def test_expired_auth_error_formats_native_expiry(monkeypatch):
+    monkeypatch.setattr(direct_module, "LOCAL_TZ", UTC)
+
+    assert direct_module._expired_auth_error(
+        "account", datetime(2026, 1, 1, 12, 34, tzinfo=UTC)
+    ) == (
+        "auth.json access_token expired at 01.01.2026 12:34; "
+        "run `codex-usage reactivate account`"
+    )
+
+
 def test_expired_auth_error_rejects_datetime_subclass_hooks():
     class BrokenDateTime(datetime):
         def astimezone(self, _tz=None):
