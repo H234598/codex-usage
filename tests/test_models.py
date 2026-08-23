@@ -19,6 +19,12 @@ class _BrokenFloat(float):
         raise RuntimeError("synthetic number marker")
 
 
+class _TrustedMalformedWindow(LimitWindow):
+    @property
+    def has_known_identity(self):
+        return True
+
+
 @pytest.mark.parametrize("duration", [True, 1.0, "1", 0, -1, None])
 def test_window_for_duration_rejects_invalid_duration_types(duration):
     pool = UsagePool(
@@ -38,6 +44,29 @@ def test_window_for_duration_rejects_integer_subclass_before_comparison():
     )
 
     assert pool.window_for_duration(_BrokenDuration(1)) is None
+
+
+def test_window_for_duration_resolves_duration_and_named_identities():
+    by_duration = LimitWindow(
+        name="1s", duration_seconds=1, remaining=1
+    )
+    by_name = LimitWindow(name="weekly", remaining=1)
+    pool = UsagePool(key="custom", display_name="Custom", windows=(by_duration, by_name))
+
+    assert pool.window_for_duration(1) is by_duration
+    assert pool.window_for_duration(604_800) is by_name
+
+
+def test_usage_pool_identity_validation_fails_closed_for_unhashable_duration():
+    pool = UsagePool(
+        key="custom",
+        display_name="Custom",
+        windows=(
+            _TrustedMalformedWindow(name="weekly", duration_seconds=[], remaining=97),
+        ),
+    )
+
+    assert pool.has_valid_usage is False
 
 
 def test_account_usage_model_pool_requires_one_exact_key_match():

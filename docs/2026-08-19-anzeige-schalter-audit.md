@@ -12073,3 +12073,15 @@ Verifikation: **38 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **81 %**, verbleibende Missing-Zeilen liegen
 in weiteren Identity-, Usage-, Pool- und Serialisierungszweigen; keine
 Settings-Fenster gestartet.
+
+## Runde 1009: Model-Pool-Identitätslookup defensiv abgesichert
+
+`UsagePool.window_for_duration()` hatte erfolgreiche Auflösung über explizite
+Dauer und kanonischen Fensternamen noch nicht direkt belegt. Zusätzlich prüft
+ein Regressionstest den nicht-hashbaren Identitätswert; der Pool bleibt dabei
+fail-closed statt mit einem `TypeError` abzubrechen.
+
+Verifikation: **40 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **87 %**, verbleibende Missing-Zeilen liegen
+in weiteren Usage-, Pool- und Serialisierungszweigen; keine Settings-Fenster
+gestartet.
