@@ -4825,6 +4825,36 @@ def test_auth_account_helpers_reject_non_account(account):
             helper(account)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("auth_json_path", [None, ""])
+def test_auth_identity_for_account_accepts_missing_auth_path(auth_json_path):
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        auth_json_path=auth_json_path,
+    )
+
+    assert auth_identity_for_account(account) == (None, None)
+
+
+def test_auth_identity_for_account_delegates_configured_path(monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        direct_module,
+        "auth_identity_from_file",
+        lambda path: captured.append(path) or ("user-a", "account-a"),
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        auth_json_path="/tmp/auth.json",
+    )
+
+    assert auth_identity_for_account(account) == ("user-a", "account-a")
+    assert captured == [Path("/tmp/auth.json")]
+
+
 def test_auth_account_helpers_reject_auth_path_string_subclass_hooks():
     class BrokenStr(str):
         def __bool__(self):

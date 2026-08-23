@@ -11667,3 +11667,14 @@ für eine tokenlose, syntaktisch gültige Datei.
 Verifikation: **307 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **93 %**, Missing-Zeilen 77; keine Settings-Fenster
 gestartet.
+
+## Runde 971: Account-Identitätshelper deckt Pfadvarianten ab
+
+`direct.auth_identity_for_account()` hatte fehlenden, leeren und gesetzten
+`auth_json_path` bisher nicht direkt zusammen belegt. Die neuen Tests
+bestätigen `(None, None)` für fehlende Konfiguration und die korrekte
+Delegation eines gesetzten Pfads.
+
+Verifikation: **310 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **93 %**, Missing-Zeilen 73; keine Settings-Fenster
+gestartet.
