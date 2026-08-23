@@ -901,7 +901,7 @@ def _signal_process_group(
     process: subprocess.Popen[bytes], signum: int, *, fallback: bool = True
 ) -> bool:
     pid = getattr(process, "pid", None)
-    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+    if type(pid) is int and pid > 0:
         try:
             os.killpg(pid, signum)
             return True

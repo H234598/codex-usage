@@ -1650,6 +1650,31 @@ def test_signal_process_group_rejects_boolean_pid(monkeypatch):
     assert calls == ["terminate"]
 
 
+def test_signal_process_group_rejects_numeric_subclass_pid(monkeypatch):
+    calls = []
+
+    class BrokenPid(int):
+        def __gt__(self, _other):
+            raise RuntimeError("synthetic app-server PID comparison marker")
+
+    class FakeProcess:
+        pid = BrokenPid(1234)
+
+        def terminate(self):
+            calls.append("terminate")
+
+        def kill(self):
+            calls.append("kill")
+
+    monkeypatch.setattr(
+        "codex_usage.app_server.os.killpg",
+        lambda pid, signum: calls.append((pid, signum)),
+    )
+
+    assert _signal_process_group(FakeProcess(), signal.SIGTERM) is True
+    assert calls == ["terminate"]
+
+
 def test_stop_process_ignores_exit_races():
     class FakeProcess:
         stdin = None

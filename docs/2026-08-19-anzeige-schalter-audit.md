@@ -9978,3 +9978,18 @@ Cancel und Manifestvalidierung ab.
 Verifikation: **89 fokussierte Profile-Job-Tests**, **93 Profile-Job- und
 Profile-CLI-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 834: App-Server-Prozessgruppen-PID strikt prüfen
+
+`app_server.py` akzeptierte beim Signalisieren isolierter Prozessgruppen noch
+Integer-Subklassen. Ein überschriebenes Vergleichsoperator konnte den Stop-/
+Fallbackpfad mit einer rohen Exception abbrechen.
+
+Die PID-Grenze akzeptiert jetzt ausschließlich Built-in-`int`; unbekannte,
+boolesche oder fremde PIDs verwenden kontrolliert den Einzelprozess-Fallback.
+Regression deckt Subklassen-PID sowie bestehende Stop-/Timeout-/Protocol-
+Aufrufer ab.
+
+Verifikation: **110 fokussierte App-Server-Tests**, **762 App-Server-,
+Integration-Entrypoint-, Scheduler-, State- und Usage-Limit-Tests**, Ruff und
+Diff-Check bestanden; keine Settings-Fenster gestartet.
