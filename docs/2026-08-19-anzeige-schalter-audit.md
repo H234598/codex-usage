@@ -11408,3 +11408,12 @@ Der neue Test prüft, dass ein Countdown auf voller Fensterdauer die Phase
 
 Verifikation: **281 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 945: Nicht abgelaufenes Access-Token direkt geprüft
+
+`direct._is_access_token_expired()` hatte bisher nur einen Negativtest gegen
+eine `datetime`-Subklasse. Der neue direkte Positivtest bestätigt, dass ein
+zukünftiger nativer, UTC-bezogener Ablaufzeitpunkt nicht als abgelaufen gilt.
+
+Verifikation: **282 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

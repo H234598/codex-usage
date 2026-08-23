@@ -1100,6 +1100,14 @@ def test_jwt_expiry_uses_dst_aware_local_zone(monkeypatch):
     assert expiry == expected
 
 
+def test_access_token_expiry_accepts_future_native_datetime():
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    assert direct_module._is_access_token_expired(
+        datetime(2026, 1, 2, tzinfo=UTC), now=now
+    ) is False
+
+
 def test_access_token_expired_rejects_datetime_subclass_hooks():
     class BrokenDateTime(datetime):
         def __le__(self, _other):
