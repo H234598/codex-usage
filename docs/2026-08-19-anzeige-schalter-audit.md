@@ -12052,3 +12052,13 @@ Verifikation: **137 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `usage_limits.py`: **99 %**, verbleibende Missing-Zeilen
 liegen ausschließlich in der abgesicherten Float-Konversion von
 Prozentwerten (571–572); keine Settings-Fenster gestartet.
+
+## Runde 1007: Usage-Limits-Modul vollständig abgedeckt
+
+`usage_limits._percent()` hatte zuletzt noch die Ausnahmebehandlung bei der
+Konversion eines extrem großen Built-in-Integerwerts offen. Der neue Test
+bestätigt sichere `None`-Rückgabe statt eines `OverflowError`.
+
+Verifikation: **138 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `usage_limits.py`: **100 %**, keine Missing-Zeilen; keine
+Settings-Fenster gestartet.

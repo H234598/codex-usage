@@ -170,6 +170,10 @@ def test_percent_rejects_numeric_subclass_before_float_conversion():
     assert usage_limits_module._percent(_BrokenInt(50)) is None
 
 
+def test_percent_drops_overflowing_builtin_integer():
+    assert usage_limits_module._percent(10**1000) is None
+
+
 def test_wham_parser_drops_overflowing_relative_reset_time():
     main, _ = parse_wham_usage_pools(
         {
