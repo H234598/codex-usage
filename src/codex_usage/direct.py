@@ -1196,7 +1196,7 @@ def _has_malformed_spark_limit_structure(payloads: list[dict[str, Any]]) -> bool
 
 def _main_limit_signature(payload: dict[str, Any]) -> tuple:
     rate_limit = payload.get("rate_limit")
-    if not isinstance(rate_limit, dict):
+    if type(rate_limit) is not dict:
         return ("invalid-rate-limit",)
     return (
         _signature_flag(rate_limit.get("allowed")),

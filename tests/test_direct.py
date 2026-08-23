@@ -305,6 +305,16 @@ def test_usage_window_signature_rejects_dict_subclass_hooks():
     assert direct_module._usage_window_signature(BrokenDict()) is None
 
 
+def test_main_limit_signature_rejects_dict_subclass_hooks():
+    class BrokenDict(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic main signature marker")
+
+    assert direct_module._main_limit_signature({"rate_limit": BrokenDict()}) == (
+        "invalid-rate-limit",
+    )
+
+
 def test_direct_numeric_boundaries_reject_subclasses_before_operations(tmp_path, monkeypatch):
     broken_int = _BrokenInt(200)
     broken_float = _BrokenFloat(1.0)

@@ -10650,3 +10650,16 @@ normale Usage-Signaturen bleiben unverändert.
 
 Verifikation: **215 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 883: Main-Limit-Signaturen auf native Dicts begrenzen
+
+`direct._main_limit_signature()` akzeptierte `rate_limit`-Dict-Subklassen
+und rief deren `.get()` direkt für Flags auf. Ein manipuliertes Mapping konnte
+die Stabilitätssignatur dadurch mit einer rohen Exception abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich ein natives `dict`; Subklassen und
+Fremdtypen liefern `("invalid-rate-limit",)`. Regression deckt den
+`.get()`-Hook ab; normale Main-Limit-Signaturen bleiben unverändert.
+
+Verifikation: **216 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
