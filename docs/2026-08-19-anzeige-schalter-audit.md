@@ -12110,3 +12110,15 @@ Verifikation: **52 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **94 %**, verbleibende Missing-Zeilen liegen
 in Identity-, Pool- und Serialisierungs-Exceptionpfaden; keine Settings-Fenster
 gestartet.
+
+## Runde 1012: Strikte Fensteridentität mit expliziter Dauer geprüft
+
+`LimitWindow.has_known_identity()` hatte die Abzweige für bekannte Aliasnamen
+mit passender/falscher expliziter Dauer sowie nicht-stringige Namen noch offen.
+Parametrisierte Tests bestätigen Annahme nur bei konsistenter Identität und
+fail-closed Ablehnung sonstiger Werte.
+
+Verifikation: **55 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **94 %**, verbleibende Missing-Zeilen liegen
+in Pool-/Serialisierungs- und defensiven Exceptionpfaden; keine Settings-Fenster
+gestartet.

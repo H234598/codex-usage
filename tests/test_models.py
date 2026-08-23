@@ -127,8 +127,11 @@ def test_account_usage_model_pool_rejects_invalid_model_input(model):
     [
         (LimitWindow(name="weekly", remaining=97), True),
         (LimitWindow(name="", duration_seconds=604800, remaining=97), True),
+        (LimitWindow(name="weekly", duration_seconds=604800), True),
+        (LimitWindow(name="weekly", duration_seconds=18000), False),
         (LimitWindow(name="unknown", remaining=97), False),
         (LimitWindow(name="weekly", duration_seconds=True, remaining=97), False),
+        (LimitWindow(name=42), False),
     ],
 )
 def test_limit_window_known_identity_is_strict(window, expected):
