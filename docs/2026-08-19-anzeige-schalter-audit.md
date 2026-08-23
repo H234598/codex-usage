@@ -10746,3 +10746,17 @@ normale Fensterdauern bleiben unverändert.
 
 Verifikation: **222 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 890: Response-Signaturen auf native Rate-Limit-Dicts begrenzen
+
+`direct._usage_response_signature()` akzeptierte `rate_limit`-Dict-Subklassen
+per `isinstance` und rief deren `.get()` für beide Fenster auf. Ein
+manipuliertes Mapping konnte die Signaturbildung dadurch mit einer rohen
+Exception abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich ein natives `dict`; fremde
+Mappings liefern eine Signatur ohne Fensterwerte. Regression deckt den
+`.get()`-Hook ab; normale Response-Signaturen bleiben unverändert.
+
+Verifikation: **223 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

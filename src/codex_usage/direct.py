@@ -1287,7 +1287,7 @@ def _supported_window_durations(payload: dict[str, Any]) -> set[int]:
 
 def _usage_response_signature(payload: dict[str, Any]) -> tuple:
     rate_limit = payload.get("rate_limit")
-    if not isinstance(rate_limit, dict):
+    if type(rate_limit) is not dict:
         return (backend_identity_from_payload(payload), (None, None))
     return (
         backend_identity_from_payload(payload),

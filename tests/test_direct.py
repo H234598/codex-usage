@@ -318,6 +318,18 @@ def test_supported_window_durations_rejects_mapping_subclass_hooks():
     ) == set()
 
 
+def test_usage_response_signature_rejects_rate_limit_dict_subclass_hooks():
+    class BrokenRateLimit(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic response signature marker")
+
+    signature = direct_module._usage_response_signature(
+        {"rate_limit": BrokenRateLimit()}
+    )
+
+    assert signature[1] == (None, None)
+
+
 def test_main_limit_signature_rejects_dict_subclass_hooks():
     class BrokenDict(dict):
         def get(self, _key, _default=None):
