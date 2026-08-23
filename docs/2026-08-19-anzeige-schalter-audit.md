@@ -11595,3 +11595,14 @@ auslöst und als `LOGIN_REQUIRED` zurückkommt.
 Verifikation: **300 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **92 %**, Missing-Zeilen 87; keine Settings-Fenster
 gestartet.
+
+## Runde 964: Ursprünglichen Auth-Fehler bei fehlgeschlagenem Refresh erhalten
+
+`fetch_account_usage_direct()` hatte den Ausnahmezweig beim zweiten
+`auth.json`-Laden nach HTTP 401/403 noch nicht direkt belegt. Der neue Test
+bestätigt, dass ein Refresh-Lesefehler den ursprünglichen Direct-Auth-Fehler
+weitergibt und kein inkonsistenter Ersatztext entsteht.
+
+Verifikation: **301 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **92 %**, Missing-Zeilen 85; keine Settings-Fenster
+gestartet.

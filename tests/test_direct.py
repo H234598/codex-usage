@@ -3747,6 +3747,40 @@ def test_fetch_account_usage_direct_does_not_retry_non_retryable_auth_error(
     assert usage.error == "direct auth failed: HTTP 500"
 
 
+def test_fetch_account_usage_direct_preserves_auth_error_when_refresh_fails(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text("{}", encoding="utf-8")
+    auth_path.chmod(0o600)
+    load_calls = []
+
+    def fake_load(path):
+        load_calls.append(path)
+        if len(load_calls) == 1:
+            return "same-token", {}, "user-a", "account-a", "plus"
+        raise DirectAuthError("refresh auth failed")
+
+    def fake_fetch(*_args, **_kwargs):
+        raise DirectAuthError("direct auth failed: HTTP 401")
+
+    monkeypatch.setattr(direct_module, "_load_auth_token_and_metadata", fake_load)
+    monkeypatch.setattr(direct_module, "_fetch_stable_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert load_calls == [auth_path, auth_path]
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "direct auth failed: HTTP 401"
+
+
 def test_fetch_account_usage_direct_does_not_retry_expired_rotated_auth(
     tmp_path,
     monkeypatch,
