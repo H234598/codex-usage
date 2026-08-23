@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -103,6 +104,73 @@ def test_account_lock_wraps_lock_file_io_error(tmp_path, monkeypatch):
             pass
 
     assert isinstance(captured.value.__cause__, OSError)
+
+
+@pytest.mark.parametrize(
+    ("error_number", "message"),
+    [
+        (errno.ELOOP, "regular file"),
+        (errno.EACCES, "could not open account lock"),
+    ],
+)
+def test_account_lock_maps_open_errors(tmp_path, monkeypatch, error_number, message):
+    from codex_usage import account_lock as account_lock_module
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    lock_dir = tmp_path / "codex-usage" / "locks"
+    lock_dir.mkdir(parents=True, mode=0o700)
+    monkeypatch.setattr(account_lock_module, "_prepare_lock_directory", lambda _: None)
+
+    def fail_open(*_args, **_kwargs):
+        raise OSError(error_number, "synthetic lock open failure")
+
+    monkeypatch.setattr(account_lock_module.os, "open", fail_open)
+
+    with pytest.raises(AccountLockError, match=message):
+        with account_lock("work"):
+            pass
+
+
+def test_account_lock_retries_after_transient_contention(tmp_path, monkeypatch):
+    from codex_usage import account_lock as account_lock_module
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    flock_calls = []
+    sleeps = []
+
+    def fake_flock(_fd, operation):
+        flock_calls.append(operation)
+        if (
+            operation == account_lock_module.fcntl.LOCK_EX | account_lock_module.fcntl.LOCK_NB
+            and len(flock_calls) == 1
+        ):
+            raise BlockingIOError
+
+    monkeypatch.setattr(account_lock_module.fcntl, "flock", fake_flock)
+    monkeypatch.setattr(account_lock_module, "_lock_deadline", lambda _timeout: 1.0)
+    monkeypatch.setattr(account_lock_module.time, "monotonic", lambda: 0.1)
+    monkeypatch.setattr(account_lock_module.time, "sleep", sleeps.append)
+
+    with account_lock("work", timeout_seconds=1):
+        pass
+
+    assert sleeps == [0.05]
+    assert flock_calls[-1] == account_lock_module.fcntl.LOCK_UN
+
+
+def test_account_lock_ignores_unlock_error(tmp_path, monkeypatch):
+    from codex_usage import account_lock as account_lock_module
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
+    def fail_unlock(_fd, operation):
+        if operation == account_lock_module.fcntl.LOCK_UN:
+            raise OSError("synthetic unlock failure")
+
+    monkeypatch.setattr(account_lock_module.fcntl, "flock", fail_unlock)
+
+    with account_lock("work"):
+        pass
 
 
 def test_account_lock_rejects_path_traversal(tmp_path, monkeypatch):

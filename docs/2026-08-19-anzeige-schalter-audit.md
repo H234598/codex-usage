@@ -12564,3 +12564,13 @@ waren noch offen. Zwei isolierte Regressionen schließen beide Guards.
 Verifikation: **88 Private-IO-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `private_io.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1052: Account-Lock vollständig geprüft
+
+`account_lock()` hatte Open-Fehler, transienten Contention-Retry und
+fehlertolerantes Unlock noch nicht direkt belegt. Vier Regressionen schließen
+alle offenen Guards.
+
+Verifikation: **20 Account-Lock-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `account_lock.py`: **100 %**; keine Settings-Fenster
+gestartet.
