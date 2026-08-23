@@ -1388,6 +1388,91 @@ def test_reconfiguring_account_aggregates_multiple_rollback_failures(
     ]
 
 
+def test_test_home_state_rollback_groups_auth_home_and_profile_errors(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setattr(config_module.subprocess, "run", lambda *_args, **_kwargs: None)
+    source = tmp_path / "incoming" / "auth.json"
+    source.parent.mkdir()
+    source.write_text('{"tokens": {}}\n', encoding="utf-8")
+    source.chmod(0o600)
+
+    def fail_state_cleanup(*_args, **_kwargs):
+        raise OSError("state cleanup failed")
+
+    def fail_auth_rollback(*_args, **_kwargs):
+        raise RuntimeError("auth rollback failed")
+
+    def fail_home_rollback(*_args, **_kwargs):
+        raise RuntimeError("home rollback failed")
+
+    def fail_profile_rollback(*_args, **_kwargs):
+        raise RuntimeError("profile rollback failed")
+
+    monkeypatch.setattr("codex_usage.state.remove_account_state", fail_state_cleanup)
+    monkeypatch.setattr(
+        config_module,
+        "_restore_moved_test_home_auth",
+        fail_auth_rollback,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "_cleanup_created_test_home",
+        fail_home_rollback,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "_cleanup_created_profile_directories",
+        fail_profile_rollback,
+    )
+
+    with pytest.raises(ExceptionGroup) as exc:
+        add_or_update_account(
+            "test-account",
+            auth_json_path=str(source),
+            test_home=True,
+            path=tmp_path / "config.toml",
+        )
+
+    assert [str(error) for error in exc.value.exceptions] == [
+        "state cleanup failed",
+        "auth rollback failed",
+        "home rollback failed",
+        "profile rollback failed",
+    ]
+
+
+def test_state_rollback_reports_single_profile_error(tmp_path, monkeypatch):
+    profile_dir = tmp_path / "profile"
+
+    def fail_state_cleanup(*_args, **_kwargs):
+        raise OSError("state cleanup failed")
+
+    def fail_profile_rollback(*_args, **_kwargs):
+        raise RuntimeError("profile rollback failed")
+
+    monkeypatch.setattr("codex_usage.state.remove_account_state", fail_state_cleanup)
+    monkeypatch.setattr(
+        config_module,
+        "_cleanup_created_profile_directories",
+        fail_profile_rollback,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"could not roll back account configuration \(profile rollback\)",
+    ) as exc:
+        add_or_update_account(
+            "profile-account",
+            profile_dir=str(profile_dir),
+            path=tmp_path / "config.toml",
+        )
+
+    assert str(exc.value.__cause__) == "profile rollback failed"
+
+
 def test_reconfiguring_account_rolls_back_service_if_callback_fails(
     tmp_path,
 ):

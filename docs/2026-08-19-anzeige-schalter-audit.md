@@ -12466,3 +12466,15 @@ Verifikation: **173 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **94 %**, verbleibende Missing-Zeilen liegen
 in State-Rollback-/Account-Entfernungs- und Validierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1043: State-Rollback klassifiziert Einzel-/Mehrfachfehler
+
+Der State-Rollback hatte die Auth-, Test-Home- und Profil-Cleanup-Fehler sowie
+die spezielle Einzel-Fehler-Zuordnung noch nicht vollständig ausgeführt. Zwei
+Regressionen bestätigen `ExceptionGroup` bei mehreren Fehlern und die präzise
+`ValueError`-Klassifikation bei genau einem Profil-Rollback-Fehler.
+
+Verifikation: **175 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **95 %**, verbleibende Missing-Zeilen liegen
+in Account-Entfernungs-, Serialisierungs- und Validierungspfaden; keine
+Settings-Fenster gestartet.
