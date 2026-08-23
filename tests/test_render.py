@@ -48,6 +48,21 @@ def test_render_numeric_subclasses_fail_closed_before_formatting(value):
     assert _remaining_percent(LimitWindow(name="5h", percent=value)) is None
 
 
+def test_usage_value_skips_unformattable_numeric_fields():
+    class ValidityOverrideWindow(LimitWindow):
+        @property
+        def has_invalid_usage_value(self):
+            return False
+
+    windows = (
+        ValidityOverrideWindow(name="5h", used=_BrokenInt(1), limit=100),
+        ValidityOverrideWindow(name="5h", used=_BrokenInt(1)),
+        ValidityOverrideWindow(name="5h", limit=_BrokenFloat(100)),
+    )
+
+    assert [_usage_value(window) for window in windows] == ["-", "-", "-"]
+
+
 def test_render_table_contains_values(monkeypatch):
     now = datetime(2026, 7, 10, 12, 0, tzinfo=ZoneInfo("Europe/Berlin"))
 
@@ -654,6 +669,12 @@ def test_render_table_includes_dynamic_main_and_spark_limits():
                 key="gpt-5.3-codex-spark",
                 display_name="Spark",
                 windows=(
+                    LimitWindow(
+                        name="5h",
+                        remaining=90,
+                        percent=90,
+                        duration_seconds=18_000,
+                    ),
                     LimitWindow(
                         name="weekly",
                         remaining=100,

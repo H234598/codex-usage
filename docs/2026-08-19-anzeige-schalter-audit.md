@@ -13153,3 +13153,20 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1095: Render-Fallback- und Spark-Anzeige-Guards vollständig geprüft
+
+`render.py` hatte noch vier Formatierungskanten: Spark-Fenster ohne Reset-
+Zeit sowie `_usage_value`-Pfade, in denen strikt geprüfte, aber nicht
+formatierbare numerische Werte sicher als `-` behandelt werden müssen. Die
+Regressionen prüfen alle Varianten. Beim fokussierten Mypy-Lauf wurde zusätzlich
+ein bestehender Typfehler in `_is_finite_number` sichtbar; die geprüfte Zahl
+wird dort jetzt per minimaler `cast`-Grenze an `float` übergeben. Keine
+Laufzeitänderung.
+
+Verifikation: **81 `tests/test_render.py`-Tests**, `render.py` **319/319
+Statements und 154/154 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.

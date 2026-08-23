@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import datetime
 from itertools import islice
 from pathlib import Path
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 from .config import MAX_CONFIG_ACCOUNTS, AppConfig
 from .extractor import LOCAL_TZ
@@ -561,7 +561,7 @@ def _is_finite_number(value: object) -> TypeGuard[int | float]:
     if value is None or type(value) not in (int, float):
         return False
     try:
-        return math.isfinite(float(value))
+        return math.isfinite(float(cast(int | float, value)))
     except (OverflowError, TypeError, ValueError):
         return False
 
