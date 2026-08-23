@@ -12670,3 +12670,14 @@ Schreibgrenzen.
 Verifikation: **35 Spark-Health-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `spark_health.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1062: Profile-Layout Pfad- und Metadata-Guards geschlossen
+
+Ungültige Accounts und relative Profile, direkte Symlink-Ziele, nichtreguläre
+`auth.json`, geschützte/verschwundene bestehende Metadata, Write-Rollback und
+Created-File-Aufzeichnung waren noch offen. Neun Regressionen schließen diese
+Profil- und Rollback-Grenzen.
+
+Verifikation: **35 Profile-Layout-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `profile_layout.py`: **100 %**; keine Settings-Fenster
+gestartet.

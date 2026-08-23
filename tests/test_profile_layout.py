@@ -33,6 +33,16 @@ def test_profile_layout_uses_canonical_codex_home_and_private_metadata(tmp_path)
     }
 
 
+def test_profile_layout_rejects_non_account_input():
+    with pytest.raises(ValueError, match="account is invalid"):
+        layout_for_account(object())  # type: ignore[arg-type]
+
+
+def test_profile_layout_requires_absolute_profile_directory():
+    with pytest.raises(ValueError, match="must be absolute"):
+        layout_for_account(Account(id="alpha", label="Alpha", profile_dir="relative"))
+
+
 def test_profile_metadata_write_uses_private_path_lock(tmp_path, monkeypatch):
     observed: list[tuple[object, dict[str, object]]] = []
     original_lock = profile_layout_module.private_path_lock
@@ -74,6 +84,23 @@ def test_profile_layout_rejects_symlink_profile(tmp_path):
     link = tmp_path / "profile"
     link.symlink_to(target, target_is_directory=True)
     with pytest.raises(ValueError, match="symlink"):
+        layout_for_account(Account(id="alpha", label="Alpha", profile_dir=str(link)))
+
+
+def test_profile_layout_rejects_symlink_profile_target_after_ancestor_scan(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "profile"
+    link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(
+        profile_layout_module,
+        "assert_no_symlink_ancestors",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
         layout_for_account(Account(id="alpha", label="Alpha", profile_dir=str(link)))
 
 
@@ -132,6 +159,78 @@ def test_profile_directory_helper_rejects_protected_target_before_chmod(
 
     with pytest.raises(ValueError, match="protected"):
         profile_layout_module._ensure_directory(protected, "profile dir")
+
+
+def test_profile_layout_rejects_non_regular_auth_json(tmp_path):
+    profile = tmp_path / "profile"
+    (profile / "codex-home").mkdir(parents=True)
+    (profile / "codex-home" / "auth.json").mkdir()
+
+    with pytest.raises(ValueError, match=r"canonical auth\.json"):
+        ensure_profile_layout(_account(tmp_path))
+
+
+def test_profile_layout_rejects_preserved_metadata_symlink(tmp_path):
+    layout = ensure_profile_layout(_account(tmp_path))
+    layout.metadata.unlink()
+    target = tmp_path / "metadata-target"
+    target.write_text("{}\n", encoding="utf-8")
+    layout.metadata.symlink_to(target)
+
+    with pytest.raises(ValueError, match="profile metadata must be a regular file"):
+        ensure_profile_layout(_account(tmp_path), preserve_existing_metadata=True)
+
+
+def test_profile_layout_maps_metadata_lstat_error(tmp_path, monkeypatch):
+    layout = ensure_profile_layout(_account(tmp_path))
+    original_lstat = Path.lstat
+
+    def fail_metadata_lstat(path):
+        if path == layout.metadata:
+            raise OSError("metadata disappeared")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fail_metadata_lstat)
+
+    with pytest.raises(ValueError, match="profile metadata must be a regular file"):
+        ensure_profile_layout(_account(tmp_path), preserve_existing_metadata=True)
+
+
+def test_profile_layout_preserves_secure_existing_metadata(tmp_path):
+    layout = ensure_profile_layout(_account(tmp_path))
+
+    preserved = ensure_profile_layout(_account(tmp_path), preserve_existing_metadata=True)
+
+    assert preserved == layout
+
+
+def test_profile_layout_records_metadata_write_failure(tmp_path, monkeypatch):
+    path = tmp_path / "profile" / "profile.json"
+    monkeypatch.setattr(
+        profile_layout_module,
+        "write_private_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("metadata write failed")),
+    )
+
+    with pytest.raises(OSError, match="metadata write failed"):
+        ensure_profile_layout(_account(tmp_path), created_files=[])
+
+    assert not path.exists()
+
+
+def test_profile_layout_records_only_private_regular_created_files(tmp_path):
+    missing = tmp_path / "missing"
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    regular = tmp_path / "regular"
+    regular.write_text("data", encoding="utf-8")
+    created = []
+
+    profile_layout_module._record_created_file(missing, created)
+    profile_layout_module._record_created_file(directory, created)
+    profile_layout_module._record_created_file(regular, created)
+
+    assert created == [(regular, regular.stat().st_dev, regular.stat().st_ino)]
 
 
 @pytest.mark.parametrize("created_directories", ["invalid", (), {}])
