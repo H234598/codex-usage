@@ -13139,6 +13139,19 @@ Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
 
+## Runde 1113: History-Timestamp- und Consumption-Baseline-Guards vollständig geprüft
+
+`history.py` hatte zwei echte Restkanten: repräsentierbare Millisekundenwerte
+im Validierungshelfer sowie Verbrauchsabfragen ohne Baseline-Zeile. Gezielte
+Regressionen decken beide Zustände ab. Produktionslogik blieb unverändert.
+
+Verifikation: **122 `tests/test_history.py`-Tests**, `history.py` **379/379
+Statements und 150/150 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.
+
 ## Runde 1094: Consumption-Forecast-Grenze vollständig geprüft
 
 `consumption.py` hatte noch die Kante einer mathematisch endlichen, aber über

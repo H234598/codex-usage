@@ -941,6 +941,25 @@ def test_history_rejects_numeric_subclasses_before_arithmetic():
             helper(broken_int)
 
 
+def test_history_validated_millis_accepts_representable_timestamp():
+    assert history_module._validated_millis(0) == 0
+
+
+def test_history_consumption_samples_without_baseline(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    base = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    with HistoryStore(path) as store:
+        store.record(_sample(captured_at=base + timedelta(minutes=10), used_percent=4))
+        samples = store.samples_for_consumption(
+            "alpha",
+            pool="main",
+            window_seconds=18_000,
+            start=base,
+            end=base + timedelta(minutes=20),
+        )
+    assert [sample.used_percent for sample in samples] == [4]
+
+
 @pytest.mark.parametrize("captured_at_ms", ["invalid", 1.5])
 def test_history_status_rejects_malformed_timestamp_aggregate(tmp_path, captured_at_ms):
     path = tmp_path / "history.sqlite3"
