@@ -12866,3 +12866,17 @@ Verifikation: **325 `tests/test_state.py`-Tests**, `state.py` **1170/1170
 Statements, 100 % Coverage**, Mypy, Ruff und Diff-Check bestanden. Keine
 Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1078: History-Speicher-, Query- und Sample-Guards vollständig geprüft
+
+`history.py` hatte noch unbelegte Grenzen bei Sample-Metadaten, sicherem
+SQLite-Öffnen, Descriptor-/Pfad-Rennen, Schemafehlern, privaten Sidecars,
+Transaktions-Rollback, Zeitbereichsabfragen, Prune-Guards und der Extraktion
+frischer Usage-/Credit-Samples. Einunddreißig fokussierte Regressionen führen
+alle verbleibenden Guards und defensiven Parserpfade direkt aus; Produktionscode
+blieb unverändert.
+
+Verifikation: **126 History-Tests** (`test_history.py` plus
+`test_history_cli.py`), `history.py` **379/379 Statements, 100 % Coverage**,
+Mypy, Ruff und Diff-Check bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.

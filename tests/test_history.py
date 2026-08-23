@@ -1,7 +1,11 @@
+import errno
 import os
 import sqlite3
+from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1118,3 +1122,411 @@ def test_record_usage_samples_batch_rejects_combined_cap_before_next_batch(
         )
 
     assert consumed == [1, 1, 1]
+
+
+def test_default_history_path_uses_default_state_directory(monkeypatch, tmp_path):
+    monkeypatch.setattr(history_module, "default_state_dir", lambda: tmp_path)
+
+    assert history_module.default_history_path() == tmp_path / "usage-history.sqlite3"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    (
+        ("reset_generation", "x" * 129, "reset_generation"),
+        ("reset_generation", "ä", "reset_generation"),
+        ("source", "", "source"),
+        ("source", "x" * 65, "source"),
+    ),
+)
+def test_history_sample_rejects_malformed_metadata(field, value, error):
+    kwargs = {
+        "account_id": "alpha",
+        "pool": "main",
+        "window_seconds": 18_000,
+        "captured_at": datetime(2026, 8, 16, 10, tzinfo=UTC),
+        "used_percent": 10,
+    }
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=error):
+        UsageSample(**kwargs)
+
+
+def test_history_connect_returns_connection_created_inside_lock(tmp_path, monkeypatch):
+    path = tmp_path / "history.sqlite3"
+    store = HistoryStore(path)
+    sentinel = object()
+
+    class _RaceLock:
+        def __enter__(self):
+            store._connection = sentinel  # type: ignore[assignment]
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(history_module, "private_path_lock", lambda *_args, **_kwargs: _RaceLock())
+
+    assert store._connect() is sentinel
+
+
+@pytest.mark.parametrize(
+    ("error_number", "expected"),
+    (
+        (errno.ENOENT, "history path changed while opening"),
+        (errno.EEXIST, "history path changed while opening"),
+        (errno.ELOOP, "history path must be a regular file"),
+        (errno.EISDIR, "history path must be a regular file"),
+        (errno.ENXIO, "history path must be a regular file"),
+        (errno.EACCES, "Permission denied"),
+    ),
+)
+def test_history_connect_classifies_open_errors(
+    tmp_path, monkeypatch, error_number, expected
+):
+    path = tmp_path / "history.sqlite3"
+    store = HistoryStore(path)
+    monkeypatch.setattr(
+        history_module,
+        "private_path_lock",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(HistoryStore, "_prepare_path", lambda _self: (path, None))
+
+    def fail_open(*_args, **_kwargs):
+        raise OSError(error_number, os.strerror(error_number))
+
+    monkeypatch.setattr(history_module.os, "open", fail_open)
+    with pytest.raises((ValueError, OSError), match=expected):
+        store._connect()
+
+
+def test_history_connect_rejects_nonregular_descriptor(tmp_path, monkeypatch):
+    path = tmp_path / "history.sqlite3"
+    path.parent.mkdir(exist_ok=True)
+    store = HistoryStore(path)
+    monkeypatch.setattr(
+        history_module,
+        "private_path_lock",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(HistoryStore, "_prepare_path", lambda _self: (path, None))
+    monkeypatch.setattr(
+        history_module.os,
+        "fstat",
+        lambda _fd: SimpleNamespace(
+            st_mode=0,
+            st_uid=os.getuid(),
+            st_nlink=1,
+            st_dev=1,
+            st_ino=1,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="private regular file"):
+        store._connect()
+
+
+def test_history_connect_rejects_path_lstat_failure_after_sqlite_open(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "history.sqlite3"
+    store = HistoryStore(path)
+    monkeypatch.setattr(
+        history_module,
+        "private_path_lock",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(HistoryStore, "_prepare_path", lambda _self: (path, None))
+    original_lstat = Path.lstat
+
+    def fail_target_lstat(candidate):
+        if candidate == path:
+            raise OSError("synthetic lstat marker")
+        return original_lstat(candidate)
+
+    monkeypatch.setattr(Path, "lstat", fail_target_lstat)
+
+    with pytest.raises(ValueError, match="history path changed while opening"):
+        store._connect()
+
+
+def test_history_connect_rejects_metadata_view(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE VIEW metadata AS SELECT 1 AS value")
+    path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="unsupported history schema version"):
+        HistoryStore(path)._connect()
+
+
+def test_history_connect_translates_schema_database_error(tmp_path, monkeypatch):
+    path = tmp_path / "history.sqlite3"
+    store = HistoryStore(path)
+    monkeypatch.setattr(
+        history_module,
+        "private_path_lock",
+        lambda *_args, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(HistoryStore, "_prepare_path", lambda _self: (path, None))
+
+    class _BrokenConnection:
+        row_factory = None
+
+        def execute(self, *_args, **_kwargs):
+            raise sqlite3.DatabaseError("synthetic schema marker")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        history_module.sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: _BrokenConnection(),
+    )
+
+    with pytest.raises(ValueError, match="unsupported history schema version"):
+        store._connect()
+
+
+def test_history_prepare_path_rejects_relative_path(tmp_path):
+    store = HistoryStore(tmp_path / "history.sqlite3")
+    store.path = Path("relative-history.sqlite3")
+
+    with pytest.raises(ValueError, match="history path must be absolute"):
+        store._prepare_path()
+
+
+def test_history_prepare_path_translates_lstat_error(tmp_path, monkeypatch):
+    path = tmp_path / "history.sqlite3"
+    store = HistoryStore(path)
+    original_lstat = Path.lstat
+
+    def fail_target_lstat(candidate):
+        if candidate == path:
+            raise PermissionError("synthetic path marker")
+        return original_lstat(candidate)
+
+    monkeypatch.setattr(Path, "lstat", fail_target_lstat)
+
+    with pytest.raises(ValueError, match="history path must be a regular file"):
+        store._prepare_path()
+
+
+@pytest.mark.parametrize("kind", ["directory", "non_private"])
+def test_history_prepare_path_rejects_invalid_existing_file(tmp_path, kind):
+    path = tmp_path / "history.sqlite3"
+    if kind == "directory":
+        path.mkdir()
+    else:
+        path.write_bytes(b"history")
+        path.chmod(0o644)
+    store = HistoryStore(path)
+
+    with pytest.raises(ValueError, match="history path"):
+        store._prepare_path()
+
+
+def test_history_record_many_validates_shape_and_empty_batch(tmp_path):
+    with HistoryStore(tmp_path / "history.sqlite3") as store:
+        with pytest.raises(ValueError, match="samples are invalid"):
+            store.record_many([])  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="samples are invalid"):
+            store.record_many((object(),))  # type: ignore[arg-type]
+        assert store.record_many(()) == 0
+
+
+def test_history_record_many_reraises_after_rollback_failure(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    store = HistoryStore(path)
+    connection = store._connect()
+
+    class _BrokenConnection:
+        def execute(self, *args, **kwargs):
+            return connection.execute(*args, **kwargs)
+
+        def executemany(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic insert marker")
+
+        def rollback(self):
+            raise ValueError("synthetic rollback marker")
+
+        def __getattr__(self, name):
+            return getattr(connection, name)
+
+    store._connection = _BrokenConnection()  # type: ignore[assignment]
+    with pytest.raises(RuntimeError, match="synthetic insert marker"):
+        store.record_many((_sample(captured_at=datetime(2026, 8, 16, tzinfo=UTC), used_percent=1),))
+
+
+def test_history_queries_apply_aware_start_and_end_bounds(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    base = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    sample = _sample(captured_at=base, used_percent=10)
+    with HistoryStore(path) as store:
+        store.record(sample)
+        assert store.samples(
+            "alpha",
+            pool="main",
+            window_seconds=18_000,
+            start=base - timedelta(minutes=1),
+            end=base + timedelta(minutes=1),
+        ) == (sample,)
+
+
+def test_history_consumption_and_window_queries_reject_reversed_range(tmp_path):
+    base = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    with HistoryStore(tmp_path / "history.sqlite3") as store:
+        assert store.samples_for_consumption(
+            "alpha",
+            pool="main",
+            window_seconds=18_000,
+            start=base,
+            end=base - timedelta(minutes=1),
+        ) == ()
+        assert store.consumption_window_seconds(
+            "alpha",
+            pool="main",
+            start=base,
+            end=base - timedelta(minutes=1),
+        ) == ()
+
+
+def test_history_samples_reject_naive_start_and_end(tmp_path):
+    base = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    with HistoryStore(tmp_path / "history.sqlite3") as store:
+        with pytest.raises(ValueError, match="start"):
+            store.samples(
+                "alpha",
+                pool="main",
+                window_seconds=18_000,
+                start=base.replace(tzinfo=None),
+            )
+        with pytest.raises(ValueError, match="end"):
+            store.samples(
+                "alpha",
+                pool="main",
+                window_seconds=18_000,
+                end=base.replace(tzinfo=None),
+            )
+
+
+def test_history_sidecar_open_reraises_unclassified_os_error(tmp_path, monkeypatch):
+    target = tmp_path / "history.sqlite3-wal"
+
+    def fail_open(*_args, **_kwargs):
+        raise OSError(errno.EACCES, "synthetic sidecar marker")
+
+    monkeypatch.setattr(history_module.os, "open", fail_open)
+    with pytest.raises(OSError, match="synthetic sidecar marker"):
+        history_module._chmod_private_regular(target, label="history sidecar")
+
+
+def test_usage_samples_reject_invalid_usage_account_and_capture_time():
+    captured = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="main",
+            windows=(LimitWindow(name="5h", percent=75),),
+            availability_sources=("usage",),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+    with pytest.raises(ValueError, match="usage is invalid"):
+        tuple(history_module._iter_usage_samples(None))  # type: ignore[arg-type]
+    assert usage_samples_from_usage(replace(usage, account_id="")) == ()
+    assert usage_samples_from_usage(replace(usage, captured_at=captured.replace(tzinfo=None))) == ()
+
+
+def test_usage_samples_skip_non_iterable_models_and_non_window_entries():
+    captured = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="main",
+            windows=(object(),),  # type: ignore[arg-type]
+            availability_sources=("usage",),
+        ),
+        models=object(),  # type: ignore[arg-type]
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_window_identity_and_duration_failures():
+    class _ExplodingIdentityWindow(LimitWindow):
+        @property
+        def has_known_identity(self):
+            raise AttributeError("synthetic identity marker")
+
+    class _TrustedUnknownWindow(LimitWindow):
+        @property
+        def has_known_identity(self):
+            return True
+
+    captured = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    windows = (
+        _ExplodingIdentityWindow(name="5h", percent=75),
+        LimitWindow(name="5h"),
+        _TrustedUnknownWindow(name="mystery", percent=75),
+    )
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="main",
+            windows=windows,
+            availability_sources=("usage",),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_credit_remaining_property_failure():
+    class _ExplodingRemainingWindow(LimitWindow):
+        @property
+        def remaining_percent(self):
+            raise ValueError("synthetic credit marker")
+
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, tzinfo=UTC),
+        credits=_ExplodingRemainingWindow(name="credits", percent=75),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_record_usage_sample_wrappers_validate_batch_and_empty_results(tmp_path):
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, tzinfo=UTC),
+        status=AccountStatus.PARTIAL,
+    )
+    path = tmp_path / "history.sqlite3"
+    assert history_module.record_usage_samples(usage, path=path) == 0
+    with pytest.raises(ValueError, match="usages are invalid"):
+        history_module.record_usage_samples_batch([], path=path)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="usages are invalid"):
+        history_module.record_usage_samples_batch((object(),), path=path)  # type: ignore[arg-type]
