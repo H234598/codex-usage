@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta, tzinfo
 
 import pytest
 
+import codex_usage.routing as routing_module
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.routing import (
     MAIN_MODEL,
@@ -142,6 +143,29 @@ def test_policy_apis_reject_non_path_input(path):
         set_policy_rule("global", None, True, path=path)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="policy path is invalid"):
         set_credit_limits({"hourly": 1}, path=path)  # type: ignore[arg-type]
+
+
+def test_default_policy_path_uses_default_state_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(routing_module, "default_state_dir", lambda: tmp_path)
+
+    assert routing_module.default_policy_path() == tmp_path / "routing-policy.json"
+
+
+def test_load_policy_rejects_missing_symlink_target(tmp_path):
+    path = tmp_path / "routing-policy.json"
+    path.symlink_to(tmp_path / "missing-policy.json")
+
+    with pytest.raises(ValueError, match="regular file"):
+        load_policy(path)
+
+
+def test_load_policy_maps_invalid_json(tmp_path):
+    path = tmp_path / "routing-policy.json"
+    path.write_text("{invalid", encoding="utf-8")
+    path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        load_policy(path)
 
 
 def test_load_policy_requires_exact_private_file_permissions(tmp_path):
@@ -1349,6 +1373,39 @@ def test_routing_does_not_select_noncanonical_spark_pool():
 def test_policy_rejects_truthy_non_boolean_rule(tmp_path):
     with pytest.raises(ValueError, match="policy value must be a boolean or None"):
         set_policy_rule("global", None, "false", path=tmp_path / "routing-policy.json")
+
+
+def test_policy_rejects_unknown_scope_and_global_identifier(tmp_path):
+    with pytest.raises(ValueError, match="policy scope"):
+        set_policy_rule("unknown", None, False, path=tmp_path / "routing-policy.json")
+    with pytest.raises(ValueError, match="does not accept an identifier"):
+        set_policy_rule("global", "private", False, path=tmp_path / "routing-policy.json")
+
+
+def test_policy_rejects_oversized_rule_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr(routing_module, "MAX_POLICY_BYTES", 1)
+
+    with pytest.raises(ValueError, match="policy is too large"):
+        set_policy_rule("global", None, True, path=tmp_path / "routing-policy.json")
+
+
+def test_credit_limits_reject_scope_and_global_identifier(tmp_path):
+    with pytest.raises(ValueError, match="credit limit scope"):
+        set_credit_limits({"hourly": 1}, scope="unknown", path=tmp_path / "routing-policy.json")
+    with pytest.raises(ValueError, match="do not accept an identifier"):
+        set_credit_limits(
+            {"hourly": 1},
+            scope="global",
+            identifier="private",
+            path=tmp_path / "routing-policy.json",
+        )
+
+
+def test_credit_limits_reject_oversized_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr(routing_module, "MAX_POLICY_BYTES", 1)
+
+    with pytest.raises(ValueError, match="policy is too large"):
+        set_credit_limits({"hourly": 1}, path=tmp_path / "routing-policy.json")
 
 
 @pytest.mark.parametrize("scope", [None, 1, []])

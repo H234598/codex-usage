@@ -12692,3 +12692,13 @@ Start-, Sicherheits- und Resolver-Fallbacks.
 Verifikation: **35 Terminal-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `terminal.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1064: Routing-Policy-Persistenz und Scope-Guards geprüft
+
+Default-Pfad, fehlende Symlink-Ziele, ungültiges JSON, unbekannte Scopes,
+globale Identifier und übergroße Rule-/Credit-Limit-Payloads waren noch offen.
+Sieben Regressionen schließen diese Policy-Persistenz- und Eingabegrenzen.
+
+Verifikation: **135 Routing-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `routing.py`: **91 %**; verbleibende Lücken liegen in
+Entscheidungs-/Window-Helpern; keine Settings-Fenster gestartet.
