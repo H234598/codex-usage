@@ -12210,3 +12210,14 @@ Verifikation: **123 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **85 %**, verbleibende Missing-Zeilen liegen
 in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1021: Config-Account-Cap direkt abgesichert
+
+`load_config()` hatte die Begrenzung auf `MAX_CONFIG_ACCOUNTS` noch nicht
+direkt getestet. Ein Regressionstest mit 101 TOML-Accounts bestätigt
+fail-closed Ablehnung vor Account-Materialisierung.
+
+Verifikation: **124 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **86 %**, verbleibende Missing-Zeilen liegen
+in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

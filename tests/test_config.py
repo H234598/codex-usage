@@ -1254,6 +1254,21 @@ def test_load_config_rejects_interval_below_minimum(tmp_path):
         load_config(config_path)
 
 
+def test_load_config_rejects_too_many_accounts(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "\n".join(
+            f"[[accounts]]\nid = \"account-{index}\""
+            for index in range(config_module.MAX_CONFIG_ACCOUNTS + 1)
+        ),
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+
+    with pytest.raises(ValueError, match="at most 100 entries"):
+        load_config(config_path)
+
+
 @pytest.mark.parametrize(
     "field",
     ("id", "label", "profile_dir", "browser", "auth_json_path", "backend"),
