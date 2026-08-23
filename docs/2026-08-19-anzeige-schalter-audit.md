@@ -10637,3 +10637,16 @@ Property-Hook ab; normale native Fensterentscheidungen bleiben unverändert.
 
 Verifikation: **214 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 882: Usage-Window-Signaturen auf native Dicts begrenzen
+
+`direct._usage_window_signature()` akzeptierte `dict`-Subklassen und rief
+deren `.get()` direkt für alle Fensterwerte auf. Ein manipuliertes Mapping
+konnte die Stabilitätssignatur dadurch mit einer rohen Exception abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich native `dict`-Objekte und liefert
+für Subklassen/Fremdtypen `None`. Regression deckt den `.get()`-Hook ab;
+normale Usage-Signaturen bleiben unverändert.
+
+Verifikation: **215 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

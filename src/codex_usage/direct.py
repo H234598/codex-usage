@@ -1299,7 +1299,7 @@ def _usage_response_signature(payload: dict[str, Any]) -> tuple:
 
 
 def _usage_window_signature(value: Any) -> tuple | None:
-    if not isinstance(value, dict):
+    if type(value) is not dict:
         return None
     return (
         _signature_number(value.get("limit_window_seconds")),
