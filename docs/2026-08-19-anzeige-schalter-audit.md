@@ -11994,3 +11994,14 @@ Coverage-Auszug für `usage_limits.py`: **97 %**, verbleibende Missing-Zeilen
 liegen ausschließlich in weiteren Fallback-/Identitäts-/Konversionspfaden
 (278, 366, 436, 465, 512, 526, 538–539, 571–572); keine Settings-Fenster
 gestartet.
+
+## Runde 1002: Legacy-Fenster ohne Main-Pool direkt abgesichert
+
+`usage_limits.legacy_windows()` hatte den `main is None`-Guard noch nicht
+direkt getestet. Ein Regressionstest bestätigt, dass beide Legacy-Slots bei
+fehlendem Main-Pool sicher als `None` zurückgegeben werden.
+
+Verifikation: **132 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `usage_limits.py`: **97 %**, verbleibende Missing-Zeilen
+liegen ausschließlich in Fallback-/Identitäts-/Konversionspfaden (366, 436,
+465, 512, 526, 538–539, 571–572); keine Settings-Fenster gestartet.

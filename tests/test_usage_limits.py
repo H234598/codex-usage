@@ -75,6 +75,10 @@ def test_usage_pool_parsers_fail_closed_for_invalid_capture_time(captured_at):
     ) == (None, ())  # type: ignore[arg-type]
 
 
+def test_legacy_windows_returns_empty_slots_without_main_pool():
+    assert legacy_windows(None) == (None, None)
+
+
 def test_usage_limit_private_helpers_cover_window_and_identity_contracts():
     wham_pool = usage_limits_module._wham_pool(
         key="main",
