@@ -12765,3 +12765,14 @@ Regressionen schließen alle verbleibenden Prozess- und Streamingpfade.
 Verifikation: **70 Profile-Login-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `profile_login.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1071: Profile-Migration Plan-/Apply-/Rollback-Guards geschlossen
+
+Leere/ungültige Pläne, Mehrfachquellen, kanonische und ungeplante Items,
+Rollback-Manifestformen, Digest-/Rechtefehler, Ziel-Stat-Rennen,
+Cleanup-Notizen, Source-Stat-/JSON-/Pfadfehler und Manifest-Resolve-Races waren
+noch offen. Sechsundzwanzig Regressionen schließen alle Migrationsgrenzen.
+
+Verifikation: **92 Profile-Migration-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `profile_migration.py`: **100 %**; keine Settings-Fenster
+gestartet.

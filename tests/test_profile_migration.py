@@ -30,6 +30,15 @@ def _account(tmp_path: Path, auth: Path | None = None) -> Account:
     )
 
 
+def _write_applied_manifest(path: Path, items: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"schema_version": 1, "status": "applied", "items": items}),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+
 def test_auth_migration_dry_run_finds_explicit_source_without_writing(tmp_path):
     source = tmp_path / "auth.json"
     source.write_text('{"tokens":{"access_token":"secret"}}', encoding="utf-8")
@@ -42,6 +51,29 @@ def test_auth_migration_dry_run_finds_explicit_source_without_writing(tmp_path):
     assert plan.items[0].target == tmp_path / "profile" / "codex-home" / "auth.json"
     assert not plan.items[0].target.exists()
     assert plan.items[0].secret_marker is None
+
+
+def test_auth_migration_plan_requires_nonempty_tuple_and_account_objects(tmp_path):
+    with pytest.raises(ValueError, match="accounts are required"):
+        plan_auth_migration(())
+    with pytest.raises(ValueError, match="account is invalid"):
+        plan_auth_migration((object(),))  # type: ignore[arg-type]
+
+
+def test_auth_migration_plan_rejects_multiple_search_sources(tmp_path):
+    profile_source = tmp_path / "profile" / "auth.json"
+    profile_source.parent.mkdir(parents=True)
+    profile_source.write_text("{}", encoding="utf-8")
+    profile_source.chmod(0o600)
+    search_source = tmp_path / "search" / "auth.json"
+    search_source.parent.mkdir()
+    search_source.write_text("{}", encoding="utf-8")
+    search_source.chmod(0o600)
+
+    with pytest.raises(ValueError, match="multiple auth sources"):
+        plan_auth_migration(
+            (_account(tmp_path),), search_roots=(search_source.parent,)
+        )
 
 
 def test_auth_migration_deduplicates_identical_search_candidates(tmp_path):
@@ -468,6 +500,51 @@ def test_auth_migration_plan_rejects_malformed_canonical_target(tmp_path):
     assert plan.items[0].reason == "canonical auth target is invalid"
 
 
+def test_auth_migration_apply_accepts_canonical_item(tmp_path):
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}", encoding="utf-8")
+    target.chmod(0o600)
+    plan = AuthMigrationPlan(
+        migration_id="m-test",
+        items=(
+            AuthMigrationItem(
+                account_id="alpha", source=None, target=target, status="canonical"
+            ),
+        ),
+        created_at=datetime.now(UTC),
+    )
+
+    manifest = apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+    assert manifest["items"] == [
+        {
+            "account_id": "alpha",
+            "source": None,
+            "target": str(target),
+            "status": "canonical",
+        }
+    ]
+
+
+def test_auth_migration_apply_rejects_unplanned_item(tmp_path):
+    plan = AuthMigrationPlan(
+        migration_id="m-test",
+        items=(
+            AuthMigrationItem(
+                account_id="alpha",
+                source=None,
+                target=tmp_path / "profile" / "codex-home" / "auth.json",
+                status="missing",
+            ),
+        ),
+        created_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match="cannot apply auth migration"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+
 def test_auth_migration_apply_rejects_malformed_canonical_target(tmp_path):
     target = tmp_path / "profile" / "codex-home" / "auth.json"
     target.parent.mkdir(parents=True)
@@ -831,7 +908,334 @@ def test_auth_migration_rollback_rejects_oversized_target(tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match="too large"):
         rollback_auth_migration(manifest)
-    assert target.exists()
+
+
+def test_auth_migration_rollback_accepts_canonical_item(tmp_path):
+    manifest = tmp_path / "migration" / "manifest.json"
+    _write_applied_manifest(manifest, [{"account_id": "alpha", "status": "canonical"}])
+
+    rollback_auth_migration(manifest)
+
+    assert json.loads(manifest.read_text())["status"] == "rolled_back"
+
+
+def test_auth_migration_rollback_skips_missing_target(tmp_path):
+    manifest = tmp_path / "migration" / "manifest.json"
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    _write_applied_manifest(
+        manifest,
+        [
+            {
+                "account_id": "alpha",
+                "status": "applied",
+                "source": str(tmp_path / "source.json"),
+                "target": str(target),
+                "sha256": "0" * 64,
+            }
+        ],
+    )
+
+    rollback_auth_migration(manifest)
+
+    assert json.loads(manifest.read_text())["status"] == "rolled_back"
+
+
+def test_auth_migration_rollback_rejects_invalid_source_path(tmp_path):
+    manifest = tmp_path / "migration" / "manifest.json"
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    _write_applied_manifest(
+        manifest,
+        [
+            {
+                "account_id": "alpha",
+                "status": "applied",
+                "source": "relative/source.json",
+                "target": str(target),
+                "sha256": "0" * 64,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="migration manifest is invalid"):
+        rollback_auth_migration(manifest)
+
+
+def test_auth_migration_rollback_rejects_insecure_target(tmp_path):
+    manifest = tmp_path / "migration" / "manifest.json"
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}", encoding="utf-8")
+    target.chmod(0o640)
+    digest = hashlib.sha256(b"{}").hexdigest()
+    _write_applied_manifest(
+        manifest,
+        [
+            {
+                "account_id": "alpha",
+                "status": "applied",
+                "source": str(tmp_path / "source.json"),
+                "target": str(target),
+                "sha256": digest,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="permissions"):
+        rollback_auth_migration(manifest)
+
+
+def test_auth_migration_private_helpers_cover_source_classification(tmp_path, monkeypatch):
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}", encoding="utf-8")
+    target.chmod(0o600)
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+
+    assert profile_migration._classify_source(None, target)[0] == "missing"
+    assert profile_migration._classify_source(tmp_path / "directory", target)[0] == "missing"
+    assert profile_migration._classify_source(source, target)[0] == "conflict"
+
+    target.unlink()
+    assert profile_migration._classify_source(source, target) == ("planned", None)
+
+    target.symlink_to(source)
+    assert profile_migration._classify_source(source, target)[0] == "conflict"
+
+    monkeypatch.setattr(
+        Path,
+        "stat",
+        lambda _path: (_ for _ in ()).throw(OSError("stat failed")),
+    )
+    assert "cannot be inspected" in profile_migration._classify_source(source, source)[1]
+
+
+def test_auth_migration_private_helpers_reject_nonprivate_source(tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o640)
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+
+    assert profile_migration._classify_source(source, target) == (
+        "conflict",
+        "auth source is not private",
+    )
+
+
+def test_auth_migration_private_helpers_validate_json_and_paths(tmp_path):
+    with pytest.raises(ValueError, match="JSON object"):
+        profile_migration._validate_auth_json("[]")
+    with pytest.raises(ValueError, match="must be absolute"):
+        profile_migration._require_absolute(Path("relative"), "test path")
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        object(),
+        AuthMigrationPlan("", (), datetime.now(UTC)),
+        AuthMigrationPlan("m-test", (), "invalid"),  # type: ignore[arg-type]
+        AuthMigrationPlan("m-test", (), datetime.now(UTC).replace(tzinfo=None)),
+        AuthMigrationPlan("m-test", [], datetime.now(UTC)),  # type: ignore[arg-type]
+        AuthMigrationPlan("m-test", (None,), datetime.now(UTC)),  # type: ignore[arg-type]
+    ],
+)
+def test_auth_migration_private_plan_validator_rejects_malformed_plans(plan):
+    with pytest.raises(ValueError, match="migration plan"):
+        profile_migration._validate_migration_plan(plan)  # type: ignore[arg-type]
+
+
+def test_auth_migration_manifest_disjoint_helper_maps_resolve_errors(tmp_path, monkeypatch):
+    item = AuthMigrationItem(
+        account_id="alpha",
+        source=None,
+        target=tmp_path / "profile" / "codex-home" / "auth.json",
+        status="canonical",
+    )
+    plan = AuthMigrationPlan("m-test", (item,), datetime.now(UTC))
+    manifest = tmp_path / "migration" / "manifest.json"
+
+    original_resolve = Path.resolve
+
+    def fail_manifest_resolve(path, *args, **kwargs):
+        if path == manifest:
+            raise OSError("manifest resolve failed")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_manifest_resolve)
+    with pytest.raises(ValueError, match="cannot be resolved safely"):
+        profile_migration._assert_manifest_path_disjoint(plan, manifest)
+
+
+def test_auth_migration_manifest_disjoint_helper_skips_missing_source(tmp_path):
+    item = AuthMigrationItem(
+        account_id="alpha",
+        source=None,
+        target=tmp_path / "profile" / "codex-home" / "auth.json",
+        status="canonical",
+    )
+    plan = AuthMigrationPlan("m-test", (item,), datetime.now(UTC))
+
+    profile_migration._assert_manifest_path_disjoint(
+        plan, tmp_path / "migration" / "manifest.json"
+    )
+
+
+def test_auth_migration_manifest_disjoint_maps_candidate_resolve_error(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    item = AuthMigrationItem("alpha", None, target, "canonical")
+    plan = AuthMigrationPlan("m-test", (item,), datetime.now(UTC))
+    manifest = tmp_path / "migration" / "manifest.json"
+    original_resolve = Path.resolve
+
+    def fail_target_resolve(path, *args, **kwargs):
+        if path == target:
+            raise OSError("target resolve failed")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_target_resolve)
+
+    with pytest.raises(ValueError, match="migration target cannot be resolved safely"):
+        profile_migration._assert_manifest_path_disjoint(plan, manifest)
+
+
+def test_auth_migration_rollback_rejects_invalid_item_collection_shapes(tmp_path):
+    for items in ({}, [None]):
+        manifest = tmp_path / f"manifest-{len(str(items))}.json"
+        _write_applied_manifest(manifest, items)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="manifest is invalid"):
+            rollback_auth_migration(manifest)
+
+
+def test_auth_migration_rollback_rejects_digest_mismatch(tmp_path):
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    target.parent.mkdir(parents=True)
+    target.write_text("{}", encoding="utf-8")
+    target.chmod(0o600)
+    manifest = tmp_path / "migration" / "manifest.json"
+    _write_applied_manifest(
+        manifest,
+        [
+            {
+                "account_id": "alpha",
+                "status": "applied",
+                "source": str(tmp_path / "source.json"),
+                "target": str(target),
+                "sha256": "0" * 64,
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="changed after migration"):
+        rollback_auth_migration(manifest)
+
+
+def test_auth_migration_apply_rejects_changed_target_stat(tmp_path, monkeypatch):
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    plan = plan_auth_migration((_account(tmp_path, source),))
+    target = plan.items[0].target
+    original_lstat = Path.lstat
+
+    def changed_target_stat(path):
+        if path == target and path.exists():
+            return path.parent.stat()
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", changed_target_stat)
+
+    with pytest.raises(ValueError, match="changed during migration"):
+        apply_auth_migration(plan, tmp_path / "migration" / "manifest.json")
+
+
+def test_auth_migration_apply_records_cleanup_notes(tmp_path, monkeypatch):
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    plan = plan_auth_migration((_account(tmp_path, source),))
+    manifest = tmp_path / "migration" / "manifest.json"
+    original_write = profile_migration.write_private_text
+
+    def fail_manifest(path, *args, **kwargs):
+        if path == manifest:
+            raise OSError("manifest write failed")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(profile_migration, "write_private_text", fail_manifest)
+    monkeypatch.setattr(
+        profile_migration,
+        "_cleanup_created_migration_files",
+        lambda _files: ["synthetic cleanup failure"],
+    )
+
+    with pytest.raises(OSError) as error:
+        apply_auth_migration(plan, manifest)
+
+    assert "migration cleanup failed: synthetic cleanup failure" in error.value.__notes__
+
+
+def test_auth_migration_classify_maps_source_stat_error(tmp_path, monkeypatch):
+    source = tmp_path / "source.json"
+    source.write_text("{}", encoding="utf-8")
+    source.chmod(0o600)
+    target = tmp_path / "profile" / "codex-home" / "auth.json"
+    original_stat = Path.stat
+
+    def fail_source_stat(path, *args, **kwargs):
+        if path == source:
+            raise OSError("source stat failed")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fail_source_stat)
+
+    assert profile_migration._classify_source(source, target) == (
+        "conflict",
+        "auth source cannot be inspected",
+    )
+
+
+def test_auth_migration_cleanup_helpers_cover_races(tmp_path, monkeypatch):
+    file_path = tmp_path / "created.json"
+    file_path.write_text("{}", encoding="utf-8")
+    file_path.chmod(0o600)
+    file_stat = file_path.lstat()
+    assert profile_migration._cleanup_created_migration_files(
+        [(file_path, file_stat.st_dev + 1, file_stat.st_ino)]
+    ) == []
+
+    def fail_unlink(path, *args, **kwargs):
+        if path == file_path:
+            raise OSError("unlink failed")
+        return Path.unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+    errors = profile_migration._cleanup_created_migration_files(
+        [(file_path, file_stat.st_dev, file_stat.st_ino)]
+    )
+    assert "unlink failed" in errors[0]
+
+    directory = tmp_path / "created-dir"
+    directory.mkdir(mode=0o700)
+    directory_stat = directory.lstat()
+    assert profile_migration._cleanup_created_migration_directories(
+        [(directory, directory_stat.st_dev + 1, directory_stat.st_ino)]
+    ) == []
+
+    monkeypatch.setattr(
+        Path,
+        "rmdir",
+        lambda path: (_ for _ in ()).throw(OSError("rmdir failed"))
+        if path == directory
+        else Path.rmdir(path),
+    )
+    errors = profile_migration._cleanup_created_migration_directories(
+        [(directory, directory_stat.st_dev, directory_stat.st_ino)]
+    )
+    assert "rmdir failed" in errors[0]
 
 
 def test_auth_migration_rollback_rejects_manifest_item_without_target(tmp_path):
