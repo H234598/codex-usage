@@ -13282,3 +13282,18 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1103: Integration-Attestation-Launcher-Guard vollständig geprüft
+
+`integration_attestation.py` hatte noch den Pfad, in dem Hashes gültig sind,
+der Launcher aber den verpflichtenden isolierten Entrypoint-Aufruf nicht
+enthält. Eine Installer-Regression mutiert nur diesen Vertrag und erwartet die
+fail-closed Attestation-Ablehnung. Produktionslogik blieb unverändert.
+
+Verifikation: **219 `tests/test_integration_installer.py`-Tests** in 76,64 s,
+`integration_attestation.py` **386/386 Statements und 128/128 Branches, 100 %
+Coverage**, Mypy, Ruff und Diff-Check bestanden. Keine Settings-Fenster
+gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
+nicht ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
+bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
+Reload-Schritte ab.

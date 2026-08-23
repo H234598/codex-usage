@@ -4995,6 +4995,33 @@ def test_attestation_verify_rejects_payload_digest_and_launcher_contract(tmp_pat
         )
 
 
+def test_attestation_verify_rejects_launcher_without_entrypoint_contract(tmp_path):
+    from codex_usage import integration_attestation as module
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    release.launcher_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    release.launcher_path.chmod(0o700)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    manifest["launcher_sha256"] = hashlib.sha256(
+        release.launcher_path.read_bytes()
+    ).hexdigest()
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True),
+        label="mutated launcher manifest",
+        mode=0o600,
+    )
+
+    with pytest.raises(module.IntegrationAttestationUnavailable):
+        module.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+
+
 def test_installer_low_level_identity_and_path_guards(tmp_path, monkeypatch):
     from codex_usage import integration_installer as module
 
