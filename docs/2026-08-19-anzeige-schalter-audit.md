@@ -9778,3 +9778,17 @@ explodierendes Mapping direkt sowie alle vier Aufruferpfade ab.
 Verifikation: **22 fokussierte Usage-Reset-Tests**, **848 Reset-, Direct-,
 App-Server-, Bridge- und State-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 821: State-Snapshot-Numerik auf Built-in-Typen begrenzen
+
+`state.py` akzeptierte bei Generationswerten, Fensterdauern und Snapshot-
+Zahlen noch `int`-/`float`-Subklassen. Überschriebene Vergleichs- oder
+`float()`-Operatoren konnten dadurch Cache-, Expiry- und State-Generation-
+Pfade mit rohen Fremdfehlern abbrechen.
+
+Alle sechs State-Numerikgrenzen akzeptieren jetzt ausschließlich Built-in-
+`int`/`float`; ungültige Werte werden kontrolliert verworfen. Regression deckt
+direkte Helper, State-Generation und die Bridge-/Scheduler-/CLI-Aufrufer ab.
+
+Verifikation: **272 State-Tests**, **873 State-, Bridge-, Scheduler- und
+CLI-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.

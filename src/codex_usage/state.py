@@ -566,7 +566,7 @@ def _read_state_generation(path: Path, account_id: str) -> int:
     if not isinstance(payload, dict) or payload.get("account") != account_id:
         raise ValueError(f"state generation account mismatch: {path}")
     generation = payload.get("generation")
-    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+    if type(generation) is not int or generation < 0:
         raise ValueError(f"invalid state generation: {path}")
     return generation
 
@@ -1635,7 +1635,7 @@ def _is_inferred_inactive_five_hour(window: LimitWindow | None) -> bool:
 
 def _window_duration_seconds(window: LimitWindow | None) -> int | None:
     duration = getattr(window, "duration_seconds", None)
-    if isinstance(duration, int) and not isinstance(duration, bool) and duration > 0:
+    if type(duration) is int and duration > 0:
         return duration
     raw = getattr(window, "raw", None)
     if not isinstance(raw, str):
@@ -1988,7 +1988,7 @@ def _model_pools_from_dict(payload: Any) -> tuple[UsagePool, ...] | None:
 def _snapshot_window_duration(value: Any) -> int | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         return None
     return value if 0 < value <= MAX_WINDOW_SECONDS else None
 
@@ -2048,7 +2048,7 @@ def _snapshot_number_is_invalid(payload: dict[str, Any], field: str) -> bool:
     if field not in payload or payload[field] is None:
         return False
     value = payload[field]
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         return True
     try:
         return not math.isfinite(float(value))
@@ -2057,7 +2057,7 @@ def _snapshot_number_is_invalid(payload: dict[str, Any], field: str) -> bool:
 
 
 def _optional_float(value: Any) -> float | None:
-    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+    if value is None or type(value) not in (int, float):
         return None
     try:
         coerced = float(value)
@@ -2071,7 +2071,7 @@ def _optional_bool(value: Any) -> bool | None:
 
 
 def _optional_state_generation(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if type(value) is not int or value < 0:
         return None
     return value
 

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.state as state_module
 from codex_usage.account_lock import account_lock
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.state import (
@@ -70,6 +71,49 @@ class _RaisingAstimezone(datetime):
 class _RaisingComparison(datetime):
     def __le__(self, _other):
         raise RuntimeError("synthetic comparison marker")
+
+
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic integer comparison marker")
+
+    def __gt__(self, _other):
+        raise RuntimeError("synthetic integer comparison marker")
+
+    def __float__(self):
+        raise RuntimeError("synthetic integer conversion marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic float conversion marker")
+
+
+def test_state_numeric_helpers_reject_subclasses_before_operations(tmp_path, monkeypatch):
+    broken_int = _BrokenInt(18_000)
+    broken_float = _BrokenFloat(50.0)
+
+    assert state_module._window_duration_seconds(
+        LimitWindow(name="5h", duration_seconds=broken_int)
+    ) is None
+    assert state_module._snapshot_window_duration(broken_int) is None
+    assert state_module._optional_state_generation(broken_int) is None
+    assert state_module._snapshot_number_is_invalid({"value": broken_float}, "value") is True
+    assert state_module._optional_float(broken_float) is None
+
+    path = tmp_path / "generation.json"
+    path.write_text("{}\n", encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setattr(
+        state_module,
+        "loads_strict",
+        lambda _text: {"account": "account", "generation": broken_int},
+    )
+    with pytest.raises(ValueError, match="invalid state generation"):
+        state_module._read_state_generation(path, "account")
 
 
 def test_state_times_with_failing_timezone_callback_use_local_zone(monkeypatch):
