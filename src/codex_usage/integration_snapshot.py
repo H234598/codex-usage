@@ -724,7 +724,7 @@ def _validate_existing_cache(cache_path: Path) -> None:
 
 
 def publish_schema1_cache(payload: bytes, *, cache_path: Path) -> None:
-    if not isinstance(payload, bytes) or not payload or len(payload) > _MAX_DOCUMENT_BYTES:
+    if type(payload) is not bytes or not payload or len(payload) > _MAX_DOCUMENT_BYTES:
         raise IntegrationInvalidSource()
     try:
         parsed = loads_strict(payload)

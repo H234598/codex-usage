@@ -619,6 +619,24 @@ def test_publish_schema1_cache_keeps_old_bytes_when_replace_fails(tmp_path, monk
     assert cache.read_bytes() == b'{"old":"safe"}'
 
 
+def test_publish_schema1_cache_rejects_bytes_subclass_before_decode(tmp_path):
+    from codex_usage import integration_snapshot
+
+    class BrokenBytes(bytes):
+        def decode(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic snapshot bytes marker")
+
+    cache = _cache_path(tmp_path)
+    payload = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":1}'
+
+    with pytest.raises(integration_snapshot.IntegrationInvalidSource):
+        integration_snapshot.publish_schema1_cache(
+            BrokenBytes(payload),
+            cache_path=cache,
+        )
+    assert not cache.exists()
+
+
 def test_publish_rejects_foreign_integration_directory(tmp_path, monkeypatch):
     from codex_usage import integration_snapshot
     from codex_usage.integration_snapshot import IntegrationSecureIOError

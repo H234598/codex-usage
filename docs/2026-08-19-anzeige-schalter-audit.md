@@ -10078,3 +10078,16 @@ malformten Varianten ab.
 
 Verifikation: **188 Installer-/Attestierungs- und Entrypoint-Tests**, Ruff und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 841: Snapshot-Payload auf Built-in-Bytes begrenzen
+
+`integration_snapshot.publish_schema1_cache()` akzeptierte `bytes`-Subklassen.
+Eine fremde `decode()`-Implementierung konnte bereits beim JSON-Lesen rohe
+Exceptions auslösen, bevor der kontrollierte Invalid-Source-Pfad griff.
+
+Der Cache-Publisher akzeptiert jetzt ausschließlich Built-in-`bytes` vor JSON-
+Parsing oder Dateiarbeit. Regression prüft die fehlerhafte Subklasse und stellt
+sicher, dass kein Cache angelegt wird.
+
+Verifikation: **55 Snapshot-Tests**, **28 Integration-Entrypoint-Tests**, Ruff
+und Diff-Check bestanden; keine Settings-Fenster gestartet.
