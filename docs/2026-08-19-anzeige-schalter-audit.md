@@ -12848,3 +12848,21 @@ Verifikation: **98 Service-Tests**, Mypy für `service.py`, Ruff und Diff-Check
 bestanden; Coverage-Auszug für `service.py`: **100 %**. Keine Settings-Fenster
 gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
 nicht ausgeführt.
+
+## Runde 1077: State-/Snapshot-/Merge-Guards vollständig geprüft
+
+`state.py` hatte noch unbelegte Fail-Closed-Grenzen in Backend-Provenienz,
+Snapshot-Größen- und Capture-Reihenfolge, transaktionalem Account-Cleanup,
+Generations-Rollback, Snapshot-Parsing, Fensterablauf, partieller
+Merge-Wiederherstellung sowie dynamischer Fensteridentität. Zusätzlich fehlten
+direkte Regressionen für ungültige Pool-/Fensterformen, Browser-Identitätslücken,
+Timezone-/Timestamp-Fehler und defensive Kleinst-Parser.
+
+Die fokussierte Suite wurde um **53** Regressionen erweitert. Sie deckt jetzt
+alle verbleibenden Guards und Rollback-Fehlergruppen direkt ab; Produktionscode
+blieb unverändert.
+
+Verifikation: **325 `tests/test_state.py`-Tests**, `state.py` **1170/1170
+Statements, 100 % Coverage**, Mypy, Ruff und Diff-Check bestanden. Keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt.

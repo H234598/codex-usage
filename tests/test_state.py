@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -4899,3 +4900,1170 @@ def test_save_current_usage_fails_when_directory_chmod_fails(tmp_path, monkeypat
         )
 
     assert not (current_dir / "privat.json").exists()
+
+
+def test_state_provenance_accepts_unknown_non_authenticated_backend_marker(monkeypatch):
+    monkeypatch.setattr(state_module, "KNOWN_BACKENDS", frozenset(("direct", "legacy")))
+    monkeypatch.setattr(state_module, "AUTHENTICATED_BACKENDS", frozenset(("direct",)))
+    left = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="legacy",
+    )
+    right = replace(left, captured_at=left.captured_at - timedelta(seconds=1))
+
+    assert backend_provenance_matches_configured(left, "direct") is True
+    assert backend_provenance_matches(left, right) is True
+
+
+def test_state_save_rejects_symlink_directory_after_ancestor_check_is_bypassed(
+    tmp_path, monkeypatch
+):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match="snapshot directory must not be a symlink"):
+        state_module._save_usage(usage, link)
+
+
+def test_state_save_handles_unorderable_existing_capture(tmp_path, monkeypatch):
+    class _TypeErrorOnGreater(datetime):
+        def __gt__(self, _other):
+            raise TypeError("synthetic capture comparison marker")
+
+    existing = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=_TypeErrorOnGreater(2026, 1, 1, tzinfo=UTC),
+    )
+    monkeypatch.setattr(state_module, "_load_usage", lambda *_args: existing)
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+
+    path = state_module._save_usage(usage, tmp_path / "current")
+
+    assert path == tmp_path / "current" / "account.json"
+    assert path.exists()
+
+
+def test_state_save_rejects_oversized_serialized_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        AccountUsage,
+        "as_dict",
+        lambda self: {"account": self.account_id, "blob": "x" * state_module.MAX_SNAPSHOT_BYTES},
+    )
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ValueError, match="snapshot file too large"):
+        state_module._save_usage(usage, tmp_path / "current")
+
+
+def test_state_equal_capture_handles_comparison_and_backend_ties():
+    class _TypeErrorOnNotEqual(datetime):
+        def __ne__(self, _other):
+            raise TypeError("synthetic capture comparison marker")
+
+    timestamp = _TypeErrorOnNotEqual(2026, 1, 1, tzinfo=UTC)
+    existing = AccountUsage(account_id="account", label="Account", captured_at=timestamp)
+    incoming = replace(existing, captured_at=datetime(2026, 1, 1, tzinfo=UTC))
+    assert state_module._equal_capture_prefers_existing(existing, incoming) is False
+
+    same_backend = replace(existing, captured_at=datetime(2026, 1, 1, tzinfo=UTC))
+    assert state_module._equal_capture_prefers_existing(same_backend, same_backend) is False
+
+    cross_backend_left = replace(
+        same_backend,
+        backend_configured="app-server",
+        backend_used="direct",
+    )
+    cross_backend_right = replace(
+        same_backend,
+        backend_configured="direct",
+        backend_used="app-server",
+    )
+    assert state_module._equal_capture_prefers_existing(
+        cross_backend_left, cross_backend_right
+    ) is True
+
+
+def test_state_backend_capture_priority_marks_authenticated_fallback():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="direct",
+        backend_used="app-server",
+    )
+
+    assert _backend_capture_priority(usage) == 1
+
+
+def test_state_transaction_closed_operations_are_noops(tmp_path):
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=None,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=state_module.ExitStack(),
+        closed=True,
+    )
+
+    transaction.commit()
+    transaction.rollback()
+
+
+def test_state_transaction_commit_groups_cleanup_and_rollback_errors(tmp_path, monkeypatch):
+    transaction_dir = tmp_path / "transaction"
+    transaction_dir.mkdir()
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=transaction_dir,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=state_module.ExitStack(),
+    )
+
+    def fail_cleanup(_path):
+        raise RuntimeError("synthetic cleanup marker")
+
+    def fail_rollback():
+        raise ValueError("synthetic rollback marker")
+
+    monkeypatch.setattr(state_module, "_remove_state_transaction_dir", fail_cleanup)
+    transaction.rollback = fail_rollback  # type: ignore[method-assign]
+
+    with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed"):
+        transaction.commit()
+
+
+def test_state_transaction_rollback_collects_generation_path_and_cleanup_errors(
+    tmp_path, monkeypatch
+):
+    transaction_dir = tmp_path / "transaction"
+    transaction_dir.mkdir()
+    target = tmp_path / "target.json"
+    backup = transaction_dir / "backup.json"
+    target.write_text("appeared", encoding="utf-8")
+    backup.write_text("backup", encoding="utf-8")
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=transaction_dir,
+        moved=[(target, backup)],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=state_module.ExitStack(),
+    )
+
+    def fail_restore(*_args):
+        raise RuntimeError("synthetic generation marker")
+
+    def fail_cleanup(_path):
+        raise ValueError("synthetic cleanup marker")
+
+    monkeypatch.setattr(state_module, "_restore_generation_state", fail_restore)
+    monkeypatch.setattr(state_module, "_remove_state_transaction_dir", fail_cleanup)
+
+    with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed"):
+        transaction.rollback()
+
+
+def test_remove_account_state_requires_held_lock_for_deferred_commit():
+    with pytest.raises(ValueError, match="held account lock"):
+        remove_account_state("account", defer_commit=True)
+
+
+def test_remove_account_state_commits_unheld_transaction(monkeypatch):
+    class _Transaction:
+        def __init__(self):
+            self.committed = False
+
+        def commit(self):
+            self.committed = True
+
+    transaction = _Transaction()
+    monkeypatch.setattr(state_module, "account_state_lock", lambda _account: nullcontext())
+    monkeypatch.setattr(
+        state_module,
+        "_remove_account_state_unlocked",
+        lambda _account, *, defer_commit: transaction,
+    )
+
+    assert remove_account_state("account") is None
+    assert transaction.committed is True
+
+
+def test_state_provenance_rejects_configured_backend_mismatch():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="app-server",
+        backend_used="app-server",
+    )
+
+    assert backend_provenance_matches_configured(usage, "direct") is False
+
+
+def test_state_fallback_proof_accepts_known_legacy_reason():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_configured="app-server",
+        backend_used="direct",
+        fallback_reason="previous direct limits retained after reset transition",
+    )
+
+    assert state_module._has_backend_fallback_proof(usage) is True
+
+
+def test_state_transaction_commit_reraises_primary_after_successful_rollback(
+    tmp_path, monkeypatch
+):
+    transaction_dir = tmp_path / "transaction"
+    transaction_dir.mkdir()
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=transaction_dir,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=state_module.ExitStack(),
+    )
+    calls = 0
+
+    def cleanup(path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("synthetic cleanup marker")
+        path.rmdir()
+
+    monkeypatch.setattr(state_module, "_remove_state_transaction_dir", cleanup)
+
+    with pytest.raises(RuntimeError, match="synthetic cleanup marker"):
+        transaction.commit()
+    assert transaction.closed is True
+
+
+def test_state_transaction_rollback_reports_transaction_cleanup_failure(
+    tmp_path, monkeypatch
+):
+    transaction_dir = tmp_path / "transaction"
+    transaction_dir.mkdir()
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=transaction_dir,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=state_module.ExitStack(),
+    )
+    monkeypatch.setattr(
+        state_module,
+        "_remove_state_transaction_dir",
+        lambda _path: (_ for _ in ()).throw(RuntimeError("synthetic cleanup marker")),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed"):
+        transaction.rollback()
+
+
+def test_remove_state_rejects_non_directory_target(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    root.mkdir()
+    snapshot = root / "snapshots"
+    snapshot.write_text("not a directory", encoding="utf-8")
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: root / "current")
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+
+    with pytest.raises(ValueError, match="snapshot path directory must be a real directory"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_remove_state_rejects_symlink_target_file(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    target = root / "other.json"
+    target.write_text("target", encoding="utf-8")
+    (snapshot / "account.json").symlink_to(target)
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+
+    with pytest.raises(ValueError, match="snapshot path must be a regular file"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_remove_state_rejects_directory_target_file(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    (snapshot / "account.json").mkdir()
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+
+    with pytest.raises(ValueError, match="snapshot path must be a regular file"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_remove_state_rejects_non_regular_target_file(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    os.mkfifo(snapshot / "account.json")
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+
+    with pytest.raises(ValueError, match="snapshot path must be a regular file"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_remove_state_groups_transaction_rollback_errors(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    (snapshot / "account.json").write_text("snapshot", encoding="utf-8")
+
+    class _BrokenTransaction:
+        def __init__(self, **_kwargs):
+            pass
+
+        def commit(self):
+            raise RuntimeError("synthetic commit marker")
+
+        def rollback(self):
+            raise ValueError("synthetic rollback marker")
+
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(state_module, "_StateDeleteTransaction", _BrokenTransaction)
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_remove_state_reraises_primary_after_transaction_rollback(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    (snapshot / "account.json").write_text("snapshot", encoding="utf-8")
+
+    class _Transaction:
+        def __init__(self, **_kwargs):
+            pass
+
+        def commit(self):
+            raise RuntimeError("synthetic commit marker")
+
+        def rollback(self):
+            return None
+
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(state_module, "_StateDeleteTransaction", _Transaction)
+
+    with pytest.raises(RuntimeError, match="synthetic commit marker"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_remove_state_groups_generation_restore_error(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    (snapshot / "account.json").write_text("snapshot", encoding="utf-8")
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(
+        state_module,
+        "_increment_state_generation",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("synthetic increment marker")),
+    )
+    monkeypatch.setattr(
+        state_module,
+        "_restore_generation_state",
+        lambda *_args: (_ for _ in ()).throw(ValueError("synthetic restore marker")),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_remove_state_groups_path_appearance_during_rollback(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    path = snapshot / "account.json"
+    path.write_text("snapshot", encoding="utf-8")
+
+    def fail_increment(_account, _root):
+        path.write_text("appeared", encoding="utf-8")
+        raise RuntimeError("synthetic increment marker")
+
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(state_module, "_increment_state_generation", fail_increment)
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_remove_state_groups_transaction_cleanup_error(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    (snapshot / "account.json").write_text("snapshot", encoding="utf-8")
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(
+        state_module,
+        "_increment_state_generation",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("synthetic increment marker")),
+    )
+    monkeypatch.setattr(
+        state_module,
+        "_remove_state_transaction_dir",
+        lambda _path: (_ for _ in ()).throw(ValueError("synthetic cleanup marker")),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed"):
+        state_module._remove_account_state_unlocked("account")
+
+
+def test_state_generation_capture_and_restore_paths(tmp_path):
+    path = tmp_path / "generations" / "account.json"
+    path.parent.mkdir()
+    text = json.dumps({"account": "account", "generation": 3})
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o600)
+
+    captured = state_module._capture_generation_state(path, "account")
+    assert captured == (text, 0o600)
+
+    missing = tmp_path / "missing.json"
+    missing.mkdir()
+    with pytest.raises(ValueError, match="state generation must be a regular file"):
+        state_module._restore_generation_state(missing, None)
+
+    restored = tmp_path / "restored.json"
+    state_module._restore_generation_state(restored, (text, 0o600))
+    assert restored.read_text(encoding="utf-8") == text
+
+
+def test_state_generation_read_rejects_dangling_symlink_and_account_mismatch(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+    dangling = tmp_path / "dangling.json"
+    dangling.symlink_to(tmp_path / "missing.json")
+    with pytest.raises(ValueError, match="state generation must be a regular file"):
+        state_module._read_state_generation(dangling, "account")
+
+    mismatch = tmp_path / "mismatch.json"
+    mismatch.write_text(json.dumps({"account": "other", "generation": 1}), encoding="utf-8")
+    mismatch.chmod(0o600)
+    with pytest.raises(ValueError, match="state generation account mismatch"):
+        state_module._read_state_generation(mismatch, "account")
+
+
+def test_state_generation_increment_rejects_symlink_directory(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    root.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    (root / "generations").symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(ValueError, match="state generation directory must not be a symlink"):
+        state_module._increment_state_generation("account", root)
+
+
+def test_load_usage_rejects_non_object_and_wrong_account_payloads(tmp_path):
+    path = tmp_path / "account.json"
+    path.write_text("[]", encoding="utf-8")
+    path.chmod(0o600)
+    assert state_module._load_usage("account", tmp_path) is None
+
+    _write_trusted_snapshot(
+        path,
+        {
+            "account": "other",
+            "label": "Other",
+            "captured_at": "2026-07-16T04:00:00+00:00",
+            "status": "partial",
+            "stale": False,
+            "cache_invalidated": False,
+        },
+    )
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_rejects_state_generation_mismatch(tmp_path):
+    snapshot_dir = tmp_path / "snapshots"
+    generation_dir = tmp_path / "generations"
+    snapshot_dir.mkdir()
+    generation_dir.mkdir()
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="direct",
+        state_generation=1,
+    )
+    payload = usage.as_dict()
+    payload["state_generation"] = 1
+    _write_trusted_snapshot(snapshot_dir / "account.json", payload)
+    generation_path = generation_dir / "account.json"
+    generation_path.write_text(
+        json.dumps({"account": "account", "generation": 2}), encoding="utf-8"
+    )
+    generation_path.chmod(0o600)
+
+    assert state_module._load_usage("account", snapshot_dir) is None
+
+
+def test_expire_state_handles_model_pool_property_failure():
+    class _FlakyPool(UsagePool):
+        def __init__(
+            self,
+            key="flaky",
+            display_name="Flaky",
+            windows=(),
+            available=True,
+            allowed=None,
+            limit_reached=None,
+            metered_feature=None,
+            availability_sources=(),
+        ):
+            object.__setattr__(self, "_key_calls", 0)
+            super().__init__(
+                key=key,
+                display_name=display_name,
+                windows=windows,
+                available=available,
+                allowed=allowed,
+                limit_reached=limit_reached,
+                metered_feature=metered_feature,
+                availability_sources=availability_sources,
+            )
+
+        @property
+        def key(self):
+            calls = object.__getattribute__(self, "_key_calls")
+            object.__setattr__(self, "_key_calls", calls + 1)
+            if calls == 0:
+                raise AttributeError("synthetic pool key marker")
+            return object.__getattribute__(self, "_stored_key")
+
+        @key.setter
+        def key(self, value):
+            object.__setattr__(self, "_stored_key", value)
+
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+        models=(_FlakyPool(windows=(object(),)),),
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=datetime(2026, 7, 16, 4, 30, tzinfo=UTC),
+    )
+
+    assert expired.models
+    assert expired.status == AccountStatus.PARTIAL
+    assert "model pool catalog invalid" in (expired.error or "")
+
+
+def test_expire_state_appends_invalid_catalog_to_expired_core_error():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=80,
+            reset_at=datetime(2026, 7, 16, 3, tzinfo=UTC),
+        ),
+        models=(object(),),  # type: ignore[arg-type]
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=datetime(2026, 7, 16, 4, 30, tzinfo=UTC),
+    )
+
+    assert expired.five_hour is None
+    assert expired.error == (
+        "cached limit window expired: 5h; refresh required; model pool catalog invalid"
+    )
+
+
+def test_expire_state_clears_expired_blocked_state():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+        status=AccountStatus.BLOCKED,
+        blocked_until=datetime(2026, 7, 16, 3, tzinfo=UTC),
+        blocked_reason="temporary",
+    )
+
+    expired = expire_reset_windows(
+        usage,
+        reference_at=datetime(2026, 7, 16, 4, 30, tzinfo=UTC),
+    )
+
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.blocked_until is None
+    assert expired.blocked_reason is None
+    assert expired.error == "cached blocked state expired; refresh required"
+
+
+def test_expire_pool_windows_handles_empty_and_invalid_window_entries():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+    )
+    empty = UsagePool(key="main", display_name="Main", windows=())
+    assert state_module._expire_pool_windows(
+        empty,
+        usage=usage,
+        values_captured_at=usage.captured_at,
+        reference_at=usage.captured_at,
+        expired_names=[],
+    ) == (empty, False)
+
+    malformed = UsagePool(
+        key="spark",
+        display_name="Spark",
+        windows=(object(),),  # type: ignore[arg-type]
+    )
+    names = []
+    updated, changed = state_module._expire_pool_windows(
+        malformed,
+        usage=usage,
+        values_captured_at=usage.captured_at,
+        reference_at=usage.captured_at,
+        expired_names=names,
+        name_prefix="spark",
+    )
+    assert changed is True
+    assert updated is not None and updated.windows == ()
+    assert names == ["spark:invalid"]
+
+
+def test_usage_from_dict_marks_invalid_stale_flag():
+    loaded = usage_from_dict(
+        {
+            "account": "invalid-stale",
+            "label": "Invalid stale",
+            "captured_at": "2026-07-16T04:00:00+00:00",
+            "status": "partial",
+            "stale": "false",
+            "cache_invalidated": False,
+            "five_hour": {"name": "5h", "remaining": 90},
+        }
+    )
+
+    assert loaded.stale is True
+    assert "invalid cached stale flag" in (loaded.error or "")
+
+
+def test_merge_current_with_last_success_returns_current_without_previous():
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+
+    assert merge_current_with_last_success(current, None) is current
+
+
+def test_merge_rejects_complete_cross_configured_backend_snapshots():
+    captured = datetime(2026, 7, 16, 4, tzinfo=UTC)
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=captured,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user",
+        backend_account_id="account-id",
+        five_hour=LimitWindow(name="5h", remaining=90),
+    )
+    previous = replace(
+        current,
+        backend_configured="app-server",
+        backend_used="app-server",
+        captured_at=captured - timedelta(minutes=1),
+    )
+
+    assert merge_current_with_last_success(current, previous) is current
+
+
+def test_merge_newer_partial_usage_path_combines_reset_only_values():
+    older = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="user",
+        backend_account_id="account-id",
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=80,
+            reset_at=datetime(2026, 7, 16, 8, tzinfo=UTC),
+        ),
+    )
+    newer = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, 1, tzinfo=UTC),
+        status=AccountStatus.PARTIAL,
+        backend_configured="browser",
+        backend_used="browser",
+        backend_user_id="user",
+        backend_account_id="account-id",
+        five_hour=LimitWindow(
+            name="5h",
+            reset_at=datetime(2026, 7, 16, 9, tzinfo=UTC),
+        ),
+    )
+
+    merged = state_module._merge_newer_partial_usage(older, newer)
+
+    assert merged.stale is True
+    assert merged.five_hour is not None
+    assert merged.five_hour.remaining == 80
+    assert merged.five_hour.reset_at == datetime(2026, 7, 16, 9, tzinfo=UTC)
+
+
+def test_merge_handles_unorderable_capture_timestamp():
+    class _TypeErrorOnGreater(datetime):
+        def __gt__(self, _other):
+            raise TypeError("synthetic capture comparison marker")
+
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-id",
+    )
+    previous = replace(
+        current,
+        captured_at=_TypeErrorOnGreater(2026, 7, 16, 3, tzinfo=UTC),
+    )
+
+    assert merge_current_with_last_success(current, previous) is current
+
+
+def test_merge_selects_newer_partial_path_from_public_merge():
+    current = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_user_id="user",
+        backend_account_id="account-id",
+        main=UsagePool(key="main", display_name="Main", windows=()),
+    )
+    newer = replace(
+        current,
+        captured_at=datetime(2026, 7, 16, 4, 1, tzinfo=UTC),
+        status=AccountStatus.PARTIAL,
+        error="partial",
+    )
+
+    merged = merge_current_with_last_success(current, newer)
+
+    assert merged is newer
+
+
+def test_merge_newer_partial_usage_returns_newer_when_no_values_change():
+    older = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime(2026, 7, 16, 4, tzinfo=UTC),
+    )
+    newer = replace(older, captured_at=datetime(2026, 7, 16, 4, 1, tzinfo=UTC))
+
+    assert state_module._merge_newer_partial_usage(older, newer) is newer
+
+
+def test_state_complete_usage_checks_legacy_window_pair_without_main():
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+    object.__setattr__(usage, "main", None)
+    object.__setattr__(usage, "five_hour", LimitWindow(name="5h", remaining=90))
+    object.__setattr__(usage, "weekly", LimitWindow(name="weekly", remaining=80))
+
+    assert state_module._has_complete_usage_windows(usage) is True
+
+
+def test_merge_pool_windows_rejects_ambiguous_window_identity():
+    current = UsagePool(
+        key="main",
+        display_name="Main",
+        windows=(
+            LimitWindow(name="weekly", remaining=90),
+            LimitWindow(name="7d", remaining=80),
+        ),
+    )
+    previous = UsagePool(
+        key="main",
+        display_name="Main",
+        windows=(LimitWindow(name="weekly", remaining=70),),
+    )
+
+    assert state_module._merge_pool_windows_with_last_success(
+        current,
+        previous,
+        reference_at=datetime.now(UTC),
+        current_captured_at=datetime.now(UTC),
+        last_success_captured_at=datetime.now(UTC),
+        preserve_missing_value=True,
+    ) is current
+
+
+def test_merge_pool_windows_returns_current_when_window_merge_returns_none(
+    monkeypatch,
+):
+    current = UsagePool(
+        key="main",
+        display_name="Main",
+        windows=(LimitWindow(name="weekly", remaining=90),),
+    )
+    previous = UsagePool(
+        key="main",
+        display_name="Main",
+        windows=(LimitWindow(name="weekly", remaining=70),),
+    )
+    monkeypatch.setattr(
+        state_module,
+        "_merge_window_with_last_success",
+        lambda *_args, **_kwargs: None,
+    )
+
+    assert state_module._merge_pool_windows_with_last_success(
+        current,
+        previous,
+        reference_at=datetime.now(UTC),
+        current_captured_at=datetime.now(UTC),
+        last_success_captured_at=datetime.now(UTC),
+        preserve_missing_value=True,
+    ) is current
+
+
+def test_merge_model_pools_rejects_non_tuple_and_none_pool_merge(monkeypatch):
+    current = (UsagePool(key="spark", display_name="Spark"),)
+    previous = (UsagePool(key="spark", display_name="Spark"),)
+    assert state_module._merge_model_pools_with_last_success(
+        [],
+        previous,
+        reference_at=datetime.now(UTC),
+        current_captured_at=None,
+        last_success_captured_at=None,
+        preserve_missing_value=True,
+    ) == []
+
+    monkeypatch.setattr(
+        state_module,
+        "_merge_pool_windows_with_last_success",
+        lambda *_args, **_kwargs: None,
+    )
+    assert state_module._merge_model_pools_with_last_success(
+        current,
+        previous,
+        reference_at=datetime.now(UTC),
+        current_captured_at=None,
+        last_success_captured_at=None,
+        preserve_missing_value=True,
+    ) is current
+
+
+def test_merge_window_rejects_kind_duration_and_inferred_mismatches():
+    reference = datetime(2026, 7, 16, 4, tzinfo=UTC)
+    weekly = LimitWindow(name="weekly", remaining=90)
+    five_hour = LimitWindow(name="5h", remaining=80)
+    assert state_module._merge_window_with_last_success(
+        weekly,
+        five_hour,
+        reference_at=reference,
+        expected_kind="weekly",
+    ) is weekly
+    assert state_module._merge_window_with_last_success(
+        LimitWindow(name="5h", duration_seconds=604800, remaining=90),
+        five_hour,
+        reference_at=reference,
+    ).remaining == 90
+    inferred = LimitWindow(
+        name="5h",
+        remaining=100,
+        source="inferred:inactive-five-hour:direct",
+    )
+    assert state_module._merge_window_with_last_success(
+        inferred,
+        LimitWindow(name="5h", remaining=80, reset_at=reference + timedelta(hours=1)),
+        reference_at=reference,
+    ) is inferred
+
+
+def test_merge_window_respects_preserve_missing_and_expiry_guards():
+    reference = datetime(2026, 7, 16, 4, tzinfo=UTC)
+    current = LimitWindow(name="5h", reset_at=reference + timedelta(hours=1))
+    previous = LimitWindow(name="5h", remaining=80)
+    assert state_module._merge_window_with_last_success(
+        current,
+        previous,
+        reference_at=reference,
+        preserve_missing_value=False,
+    ) is current
+
+    expired_current = replace(current, reset_at=reference - timedelta(minutes=1))
+    assert state_module._merge_window_with_last_success(
+        expired_current,
+        previous,
+        reference_at=reference,
+    ) is expired_current
+
+    current_with_usage = LimitWindow(name="5h", remaining=80)
+    expired_previous = LimitWindow(
+        name="5h",
+        remaining=70,
+        reset_at=reference - timedelta(minutes=1),
+    )
+    assert state_module._merge_window_with_last_success(
+        current_with_usage,
+        expired_previous,
+        reference_at=reference,
+        last_success_captured_at=reference - timedelta(hours=1),
+    ) is current_with_usage
+
+    resetless_current = LimitWindow(name="5h")
+    expired_resetless = LimitWindow(name="5h", remaining=70)
+    assert state_module._merge_window_with_last_success(
+        resetless_current,
+        expired_resetless,
+        reference_at=reference,
+        last_success_captured_at=reference - timedelta(days=1),
+    ) is resetless_current
+
+    fresh_previous = LimitWindow(name="5h", remaining=70)
+    assert state_module._merge_window_with_last_success(
+        resetless_current,
+        fresh_previous,
+        reference_at=reference,
+        current_captured_at=reference,
+        last_success_captured_at=reference,
+    ) is fresh_previous
+
+    resetful_current = LimitWindow(
+        name="5h", reset_at=reference + timedelta(hours=1)
+    )
+    assert state_module._merge_window_with_last_success(
+        resetful_current,
+        expired_resetless,
+        reference_at=reference,
+        current_captured_at=reference,
+        last_success_captured_at=reference - timedelta(days=1),
+    ) is resetful_current
+
+
+def test_state_window_identity_and_duration_guards(monkeypatch):
+    weekly_wrong_duration = LimitWindow(
+        name="weekly", duration_seconds=18_000, remaining=90
+    )
+    assert state_module._window_identity_key(weekly_wrong_duration) is None
+    overlong = LimitWindow(
+        name=f"{state_module.MAX_WINDOW_SECONDS + 1}s",
+        duration_seconds=state_module.MAX_WINDOW_SECONDS + 1,
+    )
+    assert state_module._window_identity_key(overlong) is None
+    assert state_module._window_identity_key(
+        LimitWindow(name="", duration_seconds=1)
+    ) == 1
+
+    unknown = LimitWindow(name="custom", duration_seconds=1)
+    assert state_module._window_duration_matches(weekly_wrong_duration, unknown) is False
+    assert state_module._window_duration_matches(
+        LimitWindow(name="5h", remaining=90),
+        LimitWindow(name="weekly", remaining=80),
+    ) is False
+    monkeypatch.setattr(state_module, "_window_kind", lambda _window: "weekly")
+    assert state_module._window_identity_key(
+        LimitWindow(name="", duration_seconds=1)
+    ) is None
+    monkeypatch.setattr(state_module, "WINDOW_DURATIONS", {"weekly": 1})
+    assert state_module._window_duration_matches(
+        LimitWindow(name="weekly", duration_seconds=604800, remaining=90),
+        LimitWindow(name="weekly", duration_seconds=604800, remaining=80),
+    ) is False
+
+
+def test_state_window_kind_handles_unknown_identity_and_raw_duration():
+    assert state_module._window_kind(None) is None
+    assert state_module._window_kind(
+        LimitWindow(name="5h", duration_seconds=604800)
+    ) is None
+    assert state_module._window_kind(
+        LimitWindow(name="weekly", duration_seconds=18_000)
+    ) is None
+    assert state_module._window_kind(
+        LimitWindow(name="", duration_seconds=18_000)
+    ) == "five_hour"
+
+
+def test_state_window_duration_and_expiry_defensive_guards(monkeypatch):
+    reference = datetime(2026, 7, 16, 4, tzinfo=UTC)
+    assert state_module._window_duration_seconds(LimitWindow(name="5h", raw="{}")) is None
+
+    def fail_float(_value):
+        raise ValueError("synthetic float marker")
+
+    monkeypatch.setattr(state_module, "float", fail_float, raising=False)
+    assert state_module._window_duration_seconds(
+        LimitWindow(name="", raw='{"limit_window_seconds": 18000}')
+    ) is None
+
+    assert state_module._window_reset_expired(None, reference) is False
+    assert state_module._cached_window_expired(
+        object(), captured_at=reference, reference_at=reference
+    ) is True
+    resetful = LimitWindow(name="5h", remaining=90, reset_at=reference + timedelta(hours=1))
+    assert state_module._cached_window_expired(
+        resetful, captured_at=None, reference_at=reference
+    ) is True
+    resetless = LimitWindow(name="5h", remaining=90)
+    assert state_module._cached_window_expired(
+        resetless, captured_at=None, reference_at=reference
+    ) is True
+
+    monkeypatch.setattr(
+        state_module,
+        "_localize_datetime",
+        lambda _value: (_ for _ in ()).throw(RuntimeError("synthetic localization marker")),
+    )
+    assert state_module._cached_window_expired(
+        resetless, captured_at=reference, reference_at=reference
+    ) is True
+
+
+def test_state_localize_datetime_handles_timezone_without_offset():
+    class _NoOffset(tzinfo):
+        def utcoffset(self, _value):
+            return None
+
+    localized = _localize_datetime(datetime(2026, 7, 16, 4, tzinfo=_NoOffset()))
+
+    assert localized.tzinfo is state_module.LOCAL_TZ
+
+
+def test_backend_identity_rejects_browser_snapshot_without_right_identity():
+    left = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        backend_used="browser",
+        backend_user_id="user",
+    )
+    right = replace(left, backend_user_id=None, backend_account_id=None)
+
+    assert backend_identity_matches(left, right) is False
+
+
+def test_state_pool_parser_rejects_window_shape_and_availability_type():
+    base = {
+        "key": "main",
+        "windows": [],
+        "available": True,
+    }
+    assert state_module._pool_from_dict({**base, "windows": "invalid"}) is None
+    assert state_module._pool_from_dict(
+        {**base, "windows": [{"name": "", "duration_seconds": 0}]}
+    ) is None
+    assert state_module._pool_from_dict({**base, "available": "true"}) is None
+
+
+def test_state_snapshot_small_helpers_cover_empty_and_invalid_values():
+    assert state_module._snapshot_window_name(None) == ""
+    assert state_module._snapshot_window_name("") == ""
+    assert state_module._window_had_invalid_cached_value(
+        {"remaining": 101},
+        LimitWindow(name="5h", limit=100, remaining=50),
+    ) is False
+    assert state_module._optional_bool(True) is True
+    assert state_module._optional_bool("true") is None
+    with pytest.raises(ValueError, match="captured_at must be a datetime"):
+        _saved_datetime(None)
