@@ -12361,3 +12361,14 @@ Verifikation: **153 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **91 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1034: Absolute Account-Pfade strikt begrenzt
+
+`_absolute_account_path()` hatte noch keinen direkten Test für relative Pfade
+und File-URIs mit Query oder Fragment. Drei Regressionen bestätigen, dass nur
+absolute lokale Pfade ohne URI-Zusatz akzeptiert werden.
+
+Verifikation: **156 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **91 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

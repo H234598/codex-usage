@@ -446,6 +446,20 @@ def test_account_paths_accept_localhost_file_uri(tmp_path):
     )
 
 
+@pytest.mark.parametrize("suffix", ["?query=1", "#fragment"])
+def test_account_paths_reject_file_uri_query_or_fragment(tmp_path, suffix):
+    with pytest.raises(ValueError, match="local file URI"):
+        config_module._absolute_account_path(
+            f"{(tmp_path / 'profile').as_uri()}{suffix}",
+            "profile_dir",
+        )
+
+
+def test_account_paths_reject_relative_paths():
+    with pytest.raises(ValueError, match="absolute path"):
+        config_module._absolute_account_path("relative/profile", "profile_dir")
+
+
 def test_account_paths_reject_decoded_nul_in_local_file_uri():
     with pytest.raises(ValueError, match="local file URI"):
         config_module._absolute_account_path(
