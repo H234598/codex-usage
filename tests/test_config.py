@@ -713,6 +713,42 @@ def test_prepare_profile_dir_rejects_replacement_before_directory_open(
     assert not (outside / ".codex-usage-profile").exists()
 
 
+def test_prepare_profile_dir_rejects_existing_symlink_after_ancestor_check(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "target"
+    target.mkdir()
+    profile_link = tmp_path / "profile-link"
+    profile_link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(config_module, "assert_no_symlink_ancestors", lambda *args, **kwargs: None)
+
+    with pytest.raises(ValueError, match="profile dir must not be a symlink"):
+        config_module._prepare_profile_dir(str(profile_link))
+
+
+def test_prepare_profile_dir_rejects_symlink_created_during_setup(tmp_path, monkeypatch):
+    profile_dir = tmp_path / "profile"
+    target = tmp_path / "target"
+    target.mkdir()
+
+    def create_symlink(path, *, label, created_paths=None):
+        path.symlink_to(target, target_is_directory=True)
+        return path
+
+    monkeypatch.setattr(config_module, "ensure_private_directory", create_symlink)
+
+    with pytest.raises(ValueError, match="profile dir must not be a symlink"):
+        config_module._prepare_profile_dir(str(profile_dir))
+
+
+def test_prepare_profile_dir_rejects_regular_file(tmp_path):
+    profile_file = tmp_path / "profile"
+    profile_file.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="profile path is not a directory"):
+        config_module._prepare_profile_dir(str(profile_file))
+
+
 def test_add_account_fails_closed_when_config_directory_cannot_be_secured(
     tmp_path, monkeypatch
 ):

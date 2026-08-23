@@ -12419,3 +12419,15 @@ Verifikation: **165 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **92 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1039: Profilpfad-Rennen gegen Symlink und Datei abgedeckt
+
+`_prepare_profile_dir()` hatte die Prüfungen eines bereits symlinkischen
+Pfads, eines während Setup ersetzten Pfads und eines regulären Dateipfads noch
+nicht direkt ausgeführt. Drei Regressionen bestätigen fail-closed Verhalten in
+allen drei Zuständen.
+
+Verifikation: **168 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **93 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
