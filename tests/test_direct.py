@@ -729,6 +729,20 @@ def test_validate_access_token_expiry_rejects_dict_subclass_results(
     )
 
 
+def test_validate_access_token_expiry_rejects_non_finite_expiry(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_jwt_claims",
+        lambda _token: {"exp": float("inf")},
+    )
+
+    with pytest.raises(DirectAuthError, match="access_token expiry is invalid"):
+        direct_module._validate_access_token_expiry(
+            "token",
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_missing_usage_limits_error_rejects_plan_type_string_subclass_hooks():
     class BrokenStr(str):
         def __bool__(self):

@@ -11730,3 +11730,13 @@ bestätigt die frühe Ablehnung vor JWT-Parsing.
 Verifikation: **325 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **95 %**, Missing-Zeilen 52; keine Settings-Fenster
 gestartet.
+
+## Runde 977: Nicht-finite JWT-Ablaufzeit direkt abgewiesen
+
+`direct._validate_access_token_expiry()` hatte den `math.isfinite`-/Exception-
+Pfad bisher nur über typfremde Werte gestreift. Der neue Test injiziert eine
+native `inf`-Expiry und bestätigt die sichere `DirectAuthError`-Ablehnung.
+
+Verifikation: **326 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **96 %**, Missing-Zeilen 49; keine Settings-Fenster
+gestartet.
