@@ -134,7 +134,11 @@ def execute(
         normalized_argv = tuple(argv)
     except (TypeError, ValueError):
         return _error_result(64)
-    if normalized_argv != _EXPECTED_ARGV:
+    if (
+        len(normalized_argv) != len(_EXPECTED_ARGV)
+        or any(type(value) is not str for value in normalized_argv)
+        or normalized_argv != _EXPECTED_ARGV
+    ):
         return _error_result(64)
     try:
         paths = _runtime_paths(environ)

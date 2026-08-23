@@ -94,6 +94,32 @@ def test_execute_rejects_non_sequence_argv(tmp_path, argv):
     assert result == type(result)(64, b"", b"integration_snapshot_invalid_arguments\n")
 
 
+def test_execute_rejects_string_subclass_argv_before_comparison(tmp_path):
+    from codex_usage.integration_entrypoint import execute
+
+    class BrokenStr(str):
+        def __eq__(self, _other):
+            raise RuntimeError("synthetic argv comparison marker")
+
+    argv = (
+        BrokenStr("integration-snapshot"),
+        "--schema",
+        "1",
+        "--format",
+        "json",
+    )
+
+    result = execute(
+        argv,
+        environ=_environment(tmp_path),
+        clock=lambda: NOW,
+        expected_entrypoint_path=_expected_entrypoint(tmp_path),
+        verifier=lambda *_: pytest.fail("verifier"),
+    )
+
+    assert result == type(result)(64, b"", b"integration_snapshot_invalid_arguments\n")
+
+
 def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
 

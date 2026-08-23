@@ -10117,3 +10117,17 @@ Tokens bleiben unverändert.
 
 Verifikation: **57 Snapshot-Tests**, **28 Integration-Entrypoint-Tests**, Ruff
 und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 844: Integration-Argumente vor Vergleich kanonisieren
+
+`integration_entrypoint.execute()` verglich normalisierte `argv`-Elemente
+direkt mit dem festen Kommando. Ein `str`-Subclass konnte per `__eq__` vor der
+Fehlernormalisierung eine rohe Exception auslösen.
+
+Der Entry-Point akzeptiert Argumente jetzt nur nach exakter Built-in-`str`-
+Prüfung und Längenvergleich; erst danach erfolgt der Tuple-Vergleich.
+Regression stellt sicher, dass der manipulative Argumentwert Exit 64 liefert
+und weder Verifier noch Quelldaten anfasst.
+
+Verifikation: **29 Integration-Entrypoint-Tests**, **57 Snapshot-Tests**, Ruff
+und Diff-Check bestanden; keine Settings-Fenster gestartet.
