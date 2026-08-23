@@ -266,6 +266,32 @@ def test_open_auth_json_fd_duplicates_inherited_regular_fd(tmp_path):
         os.close(source_fd)
 
 
+def test_open_auth_json_fd_rejects_closed_inherited_fd(tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_bytes(b"auth-payload")
+    source_fd = os.open(path, os.O_RDONLY)
+    os.close(source_fd)
+
+    with pytest.raises(DirectAuthError, match=r"cannot read auth\.json"):
+        direct_module._open_auth_json_fd(Path(f"/proc/self/fd/{source_fd}"))
+
+
+def test_open_auth_json_fd_closes_duplicate_when_stat_fails(monkeypatch):
+    closed = []
+    monkeypatch.setattr(direct_module.os, "dup", lambda _fd: 123)
+
+    def fail_fstat(_fd):
+        raise OSError("synthetic fstat failure")
+
+    monkeypatch.setattr(direct_module.os, "fstat", fail_fstat)
+    monkeypatch.setattr(direct_module.os, "close", lambda fd: closed.append(fd))
+
+    with pytest.raises(DirectAuthError, match=r"cannot read auth\.json"):
+        direct_module._open_auth_json_fd(Path("/proc/self/fd/42"))
+
+    assert closed == [123]
+
+
 @pytest.mark.parametrize("auth_json_path", [1, {}, object()])
 def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     account = Account(

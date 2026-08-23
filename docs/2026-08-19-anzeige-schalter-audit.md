@@ -11750,3 +11750,14 @@ und bestätigt `None` statt einer Ausnahme.
 Verifikation: **327 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **96 %**, Missing-Zeilen 47; keine Settings-Fenster
 gestartet.
+
+## Runde 979: Inherited-Auth-FD-Fehler sicher bereinigt
+
+`direct._open_auth_json_fd()` hatte die Fehlerfälle eines geschlossenen
+Inherited-FDs und eines Fehlschlags nach erfolgreichem `dup()` noch nicht
+direkt belegt. Zwei Tests bestätigen Fehlerweitergabe und Schließen des
+Duplikats.
+
+Verifikation: **329 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **96 %**, Missing-Zeilen 43; keine Settings-Fenster
+gestartet.
