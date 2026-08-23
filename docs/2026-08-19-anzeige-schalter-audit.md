@@ -11647,3 +11647,13 @@ Pfad-gebundenen `invalid auth.json`-Fehlertext bei ungültigem JSON.
 Verifikation: **305 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **93 %**, Missing-Zeilen 80; keine Settings-Fenster
 gestartet.
+
+## Runde 969: Ungültiges Auth-JSON im Identitätsleser direkt abgewiesen
+
+`direct.auth_identity_from_file()` hatte den Parsefehler nach dem Datei-Read
+noch nicht direkt belegt. Der neue Test bestätigt den kontextgebundenen
+`invalid auth.json`-Fehler statt einer unkontrollierten JSON-Ausnahme.
+
+Verifikation: **306 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **93 %**, Missing-Zeilen 78; keine Settings-Fenster
+gestartet.
