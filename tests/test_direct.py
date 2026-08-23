@@ -305,6 +305,19 @@ def test_usage_window_signature_rejects_dict_subclass_hooks():
     assert direct_module._usage_window_signature(BrokenDict()) is None
 
 
+def test_supported_window_durations_rejects_mapping_subclass_hooks():
+    class BrokenDict(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic supported duration marker")
+
+    assert direct_module._supported_window_durations(
+        {"rate_limit": BrokenDict()}
+    ) == set()
+    assert direct_module._supported_window_durations(
+        {"rate_limit": {"primary_window": BrokenDict()}}
+    ) == set()
+
+
 def test_main_limit_signature_rejects_dict_subclass_hooks():
     class BrokenDict(dict):
         def get(self, _key, _default=None):

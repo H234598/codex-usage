@@ -1265,12 +1265,12 @@ def _signature_flag(value: Any) -> bool | tuple[str, str, str] | None:
 
 def _supported_window_durations(payload: dict[str, Any]) -> set[int]:
     rate_limit = payload.get("rate_limit")
-    if not isinstance(rate_limit, dict):
+    if type(rate_limit) is not dict:
         return set()
     durations: set[int] = set()
     for key in ("primary_window", "secondary_window"):
         window = rate_limit.get(key)
-        if not isinstance(window, dict):
+        if type(window) is not dict:
             continue
         duration = _signature_number(window.get("limit_window_seconds"))
         used_percent = _signature_number(window.get("used_percent"))

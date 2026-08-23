@@ -10732,3 +10732,17 @@ manipulierten Iterator ab; normale Spark-Limit-Antworten bleiben unverändert.
 
 Verifikation: **221 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 889: Unterstützte Fensterdauern auf native Dicts begrenzen
+
+`direct._supported_window_durations()` akzeptierte Rate-Limit- und Fenster-
+Dict-Subklassen per `isinstance` und rief deren `.get()` auf. Manipulierte
+Mappings konnten die Stabilitätsauswahl dadurch mit einer rohen Exception
+abbrechen.
+
+Der Helper akzeptiert jetzt ausschließlich native `dict`-Objekte; Subklassen
+werden ohne Hook-Aufruf verworfen. Regression deckt beide Mapping-Ebenen ab;
+normale Fensterdauern bleiben unverändert.
+
+Verifikation: **222 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
