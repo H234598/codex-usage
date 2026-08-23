@@ -11250,3 +11250,13 @@ prüfung ohne Ausnahme durchläuft.
 
 Verifikation: **264 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 928: Teilfenster-Konfliktprädikat direkt geprüft
+
+`direct._has_conflicting_partial_windows()` war bisher nur über den stabilen
+Antwortselektor abgedeckt. Der neue direkte Test belegt, dass ein neuester
+Payload, der bei gleicher Backend-Identität ein zuvor vorhandenes Wochenfenster
+verliert, als widersprüchlich erkannt wird.
+
+Verifikation: **265 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

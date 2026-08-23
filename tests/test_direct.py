@@ -1827,6 +1827,35 @@ def test_select_stable_wham_usage_rejects_conflicting_partial_windows():
         )
 
 
+def test_conflicting_partial_windows_detects_dropped_latest_window():
+    def response(*, include_week: bool) -> dict:
+        rate_limit = {
+            "primary_window": {
+                "limit_window_seconds": 18_000,
+                "used_percent": 3,
+            }
+        }
+        if include_week:
+            rate_limit["secondary_window"] = {
+                "limit_window_seconds": 604_800,
+                "used_percent": 45,
+            }
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": rate_limit,
+        }
+
+    complete = response(include_week=True)
+    latest_partial = response(include_week=False)
+
+    assert direct_module._has_conflicting_partial_windows(
+        [(0, complete)],
+        {("complete",): [(0, complete)]},
+        latest_payload=latest_partial,
+    ) is True
+
+
 def test_select_stable_wham_usage_rejects_conflicting_spark_windows():
     def response(used: int) -> dict:
         return {
