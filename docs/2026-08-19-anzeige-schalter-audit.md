@@ -11584,3 +11584,14 @@ normalisiertem Plan im Fehlertext.
 Verifikation: **299 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **92 %**, Missing-Zeilen 88; keine Settings-Fenster
 gestartet.
+
+## Runde 963: Nicht retrybaren Auth-Fehler direkt beendet
+
+`fetch_account_usage_direct()` hatte den Nicht-Retry-Zweig nach einem direkten
+Auth-Fehler noch nicht über den öffentlichen Rückgabepfad belegt. Der neue
+Test bestätigt, dass HTTP 500 keinen zweiten Auth-Read oder Usage-Versuch
+auslöst und als `LOGIN_REQUIRED` zurückkommt.
+
+Verifikation: **300 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **92 %**, Missing-Zeilen 87; keine Settings-Fenster
+gestartet.

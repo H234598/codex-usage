@@ -3716,6 +3716,37 @@ def test_fetch_account_usage_direct_does_not_retry_unchanged_auth_after_401(
     assert usage.cache_invalidated is True
 
 
+def test_fetch_account_usage_direct_does_not_retry_non_retryable_auth_error(
+    tmp_path,
+    monkeypatch,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "same-token", "account_id": "account-a"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    calls = []
+
+    def fake_fetch(token: str, **_kwargs):
+        calls.append(token)
+        raise DirectAuthError("direct auth failed: HTTP 500")
+
+    monkeypatch.setattr("codex_usage.direct._fetch_stable_wham_usage", fake_fetch)
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir="/tmp/profile",
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert calls == ["same-token"]
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "direct auth failed: HTTP 500"
+
+
 def test_fetch_account_usage_direct_does_not_retry_expired_rotated_auth(
     tmp_path,
     monkeypatch,
