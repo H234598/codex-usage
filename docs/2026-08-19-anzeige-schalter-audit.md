@@ -10582,3 +10582,16 @@ Darstellung; Regression deckt den defekten String-Hook ab.
 
 Verifikation: **210 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 878: JWT-Claims auf Built-in-Strings begrenzen
+
+`direct._jwt_claims()` akzeptierte `str`-Subklassen und rief deren `split()`
+direkt auf. Ein manipulierter Tokenwert konnte den zentralen JWT-Parser damit
+mit einer rohen Exception abbrechen.
+
+Der Parser verlangt jetzt exakt Built-in-`str` vor Segmentierung und
+Base64-Verarbeitung. Regression deckt den fehlerhaften `split()`-Hook ab;
+normale JWT-, Expiry- und malformed-Tokenpfade bleiben unverändert.
+
+Verifikation: **211 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

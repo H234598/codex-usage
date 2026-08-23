@@ -540,6 +540,14 @@ def test_validate_access_token_expiry_rejects_string_subclass_hooks(tmp_path):
         )
 
 
+def test_jwt_claims_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def split(self, _separator):
+            raise RuntimeError("synthetic JWT claims marker")
+
+    assert direct_module._jwt_claims(BrokenStr("token")) is None
+
+
 def test_jwt_claims_reject_extra_segments():
     token = _jwt_with_claims({"sub": "account"}) + ".extra"
 

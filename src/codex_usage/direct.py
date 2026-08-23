@@ -1773,7 +1773,7 @@ def _current_jwt_claims(token: Any) -> dict[str, Any] | None:
 
 
 def _jwt_claims(token: Any) -> dict[str, Any] | None:
-    if not isinstance(token, str):
+    if type(token) is not str:
         return None
     parts = token.split(".")
     if len(parts) != 3 or not parts[1]:
