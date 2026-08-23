@@ -6,6 +6,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler
 from zoneinfo import ZoneInfo
 
@@ -861,6 +862,22 @@ def test_fetch_wham_usage_rejects_invalid_http_status(status, monkeypatch):
     )
 
     with pytest.raises(DirectFetchError, match="invalid HTTP status"):
+        _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
+def test_fetch_wham_usage_maps_http_401_to_auth_error(monkeypatch):
+    def fail_urlopen(_request, *, timeout):
+        raise HTTPError(
+            direct_module.WHAM_USAGE_URL,
+            401,
+            "Unauthorized",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(direct_module, "urlopen", fail_urlopen)
+
+    with pytest.raises(DirectAuthError, match=r"direct auth failed: HTTP 401"):
         _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
 
 

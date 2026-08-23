@@ -11445,3 +11445,13 @@ Defaultpfad und bestätigt beide Fallbackzweige ohne Dateisystemzugriff.
 Verifikation: **285 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **89 %**, Missing-Zeilen 104; keine Settings-Fenster
 gestartet.
+
+## Runde 949: HTTP-401 im Direct-Fetch direkt abgebildet
+
+`direct._fetch_wham_usage()` hatte den `HTTPError`-Authentifizierungszweig nur
+indirekt über den stabilen Fetchpfad. Der neue Test injiziert einen 401-Fehler
+und bestätigt die kontrollierte `DirectAuthError`-Meldung ohne Secret-Leak.
+
+Verifikation: **286 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **89 %**, Missing-Zeilen 102; keine Settings-Fenster
+gestartet.
