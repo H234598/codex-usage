@@ -11863,3 +11863,15 @@ bestätigt, dass der letzte `DirectFetchError` unverändert weitergegeben wird.
 Verifikation: **339 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **97 %**, Missing-Zeilen 30; keine Settings-Fenster
 gestartet.
+
+## Runde 990: Reset-Helper-Guardpfade direkt belegt
+
+`direct._latest_response_is_relative_reset()` und
+`_latest_response_is_absolute_reset()` hatten Grenzfälle für kurze/alte
+Gruppen, fremde Identitäten, fehlende Gegenfenster/Nutzungswerte und fehlende
+Reset-Identitäten noch offen. Acht fokussierte Assertions bestätigen alle
+fail-closed Rückgaben.
+
+Verifikation: **345 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **98 %**, Missing-Zeilen 18; keine Settings-Fenster
+gestartet.

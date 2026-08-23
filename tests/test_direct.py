@@ -563,6 +563,44 @@ def test_latest_response_detects_relative_reset_transition():
     ) is True
 
 
+def test_latest_relative_reset_rejects_short_and_stale_group_boundaries():
+    assert direct_module._latest_response_is_relative_reset([], []) is False
+    payload = [{}, {}]
+
+    assert direct_module._latest_response_is_relative_reset(
+        payload,
+        [(2, {})],
+    ) is False
+
+
+def test_latest_relative_reset_rejects_foreign_identity():
+    previous = {"user_id": "user-a", "account_id": "account-a"}
+    latest = {"user_id": "user-b", "account_id": "account-b"}
+
+    assert direct_module._latest_response_is_relative_reset(
+        [previous, latest],
+        [(0, previous)],
+    ) is False
+
+
+def test_latest_relative_reset_accepts_missing_counterparts_and_usage():
+    empty = {"rate_limit": {}}
+    assert direct_module._latest_response_is_relative_reset(
+        [empty, empty],
+        [(0, empty)],
+    ) is False
+
+    missing_usage = {
+        "rate_limit": {
+            "primary_window": {"limit_window_seconds": 18_000},
+        }
+    }
+    assert direct_module._latest_response_is_relative_reset(
+        [missing_usage, missing_usage],
+        [(0, missing_usage)],
+    ) is False
+
+
 def test_latest_response_detects_absolute_reset_timestamp_advance():
     previous = {
         "user_id": "user-test",
@@ -600,6 +638,69 @@ def test_latest_response_detects_absolute_reset_timestamp_advance():
     assert direct_module._latest_response_is_absolute_reset(
         [previous, latest], [(0, previous)]
     ) is True
+
+
+def test_latest_absolute_reset_rejects_short_stale_and_foreign_groups():
+    assert direct_module._latest_response_is_absolute_reset([], []) is False
+    assert direct_module._latest_response_is_absolute_reset(
+        [{}, {}], [(2, {})]
+    ) is False
+
+    previous = {"user_id": "user-a", "account_id": "account-a"}
+    latest = {"user_id": "user-b", "account_id": "account-b"}
+    assert direct_module._latest_response_is_absolute_reset(
+        [previous, latest], [(0, previous)]
+    ) is False
+
+
+def test_latest_absolute_reset_accepts_missing_counterparts_and_usage():
+    empty = {"rate_limit": {}}
+    assert direct_module._latest_response_is_absolute_reset(
+        [empty, empty], [(0, empty)]
+    ) is False
+
+    missing_usage = {
+        "rate_limit": {
+            "primary_window": {"limit_window_seconds": 18_000},
+        }
+    }
+    assert direct_module._latest_response_is_absolute_reset(
+        [missing_usage, missing_usage], [(0, missing_usage)]
+    ) is False
+
+
+def test_latest_absolute_reset_rejects_lower_usage_without_reset_identity():
+    previous = {
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 20,
+                "limit_window_seconds": 18_000,
+            }
+        }
+    }
+    lower = {
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 10,
+                "limit_window_seconds": 18_000,
+            }
+        }
+    }
+    equal = {
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 20,
+                "limit_window_seconds": 18_000,
+            }
+        }
+    }
+
+    assert direct_module._latest_response_is_absolute_reset(
+        [previous, lower], [(0, previous)]
+    ) is False
+    assert direct_module._latest_response_is_absolute_reset(
+        [previous, equal], [(0, previous)]
+    ) is False
 
 
 def test_rate_limit_window_returns_native_primary_window():
