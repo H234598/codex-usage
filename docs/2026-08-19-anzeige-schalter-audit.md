@@ -12221,3 +12221,14 @@ Verifikation: **124 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **86 %**, verbleibende Missing-Zeilen liegen
 in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1022: Config-Save-Größenlimit direkt geprüft
+
+`config._save_config_unlocked()` hatte den Guard für übergroßen bereits
+serialisierten TOML-Text noch nicht direkt belegt. Ein Testdouble bestätigt
+Ablehnung vor dem Dateischreiben.
+
+Verifikation: **125 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **86 %**, verbleibende Missing-Zeilen liegen
+in weiteren Account-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

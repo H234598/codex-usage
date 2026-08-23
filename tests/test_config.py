@@ -1269,6 +1269,19 @@ def test_load_config_rejects_too_many_accounts(tmp_path):
         load_config(config_path)
 
 
+def test_save_config_rejects_oversized_serialized_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        config_module,
+        "_to_toml",
+        lambda _config: "x" * (MAX_CONFIG_BYTES + 1),
+    )
+
+    with pytest.raises(ValueError, match="config file too large"):
+        config_module._save_config_unlocked(
+            AppConfig(accounts=()), tmp_path / "config.toml"
+        )
+
+
 @pytest.mark.parametrize(
     "field",
     ("id", "label", "profile_dir", "browser", "auth_json_path", "backend"),
