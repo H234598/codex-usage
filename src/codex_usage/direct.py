@@ -602,6 +602,8 @@ def _auth_account_id_from_payload(
     *,
     path: Path,
 ) -> str | None:
+    if type(payload) is not dict:
+        return None
     tokens = payload.get("tokens")
     if type(tokens) is not dict:
         return None

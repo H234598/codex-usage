@@ -845,6 +845,17 @@ def test_auth_account_id_rejects_tokens_dict_subclass_hooks(tmp_path):
     ) is None
 
 
+def test_auth_account_id_rejects_payload_dict_subclass_hooks(tmp_path):
+    class BrokenPayload(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth account payload marker")
+
+    assert direct_module._auth_account_id_from_payload(
+        BrokenPayload(),
+        path=tmp_path / "auth.json",
+    ) is None
+
+
 def test_auth_email_rejects_tokens_dict_subclass_hooks(tmp_path):
     class BrokenTokens(dict):
         def get(self, _key, _default=None):

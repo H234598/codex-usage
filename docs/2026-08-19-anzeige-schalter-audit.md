@@ -10974,3 +10974,18 @@ unverändert.
 
 Verifikation: **238 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 906: Auth-Account-ID nur aus nativen Payload-Dicts lesen
+
+`direct._auth_account_id_from_payload()` prüfte bisher nur das verschachtelte
+Tokens-Objekt. Ein äußerer Payload als Dict-Subclass konnte deshalb dessen
+`.get()`-Hook ausführen und die Auth-Identitätsauswertung mit einer rohen
+Exception abbrechen.
+
+Der interne Extractor verlangt jetzt ebenfalls einen nativen Payload-`dict`;
+Subklassen werden ohne Hook-Aufruf wie ein nicht verwertbarer Payload behandelt.
+Regression deckt den äußeren Account-ID-`.get()`-Hook ab; normale Auth-JSON-
+Strukturen bleiben unverändert.
+
+Verifikation: **239 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
