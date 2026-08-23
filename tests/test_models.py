@@ -433,3 +433,16 @@ def test_account_usage_skips_malformed_legacy_windows(
         assert tuple(window.name for window in usage.main.windows) == expected_windows
     else:
         assert usage.main is None
+
+
+def test_account_usage_preserves_explicit_main_pool():
+    main = UsagePool(key="main", display_name="Codex")
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+        main=main,
+        five_hour=LimitWindow(name="5h", remaining=97),
+    )
+
+    assert usage.main is main

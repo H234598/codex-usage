@@ -12134,3 +12134,14 @@ Verifikation: **62 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **98 %**, verbleibende Missing-Zeilen liegen
 in AccountUsage-/Serialisierungs- und einem inkonsistenten Reset-Guard;
 keine Settings-Fenster gestartet.
+
+## Runde 1014: Expliziten AccountUsage-Main-Pool erhalten
+
+`AccountUsage.__post_init__()` hatte den Preserve-Return bei bereits gesetztem
+Main-Pool noch nicht direkt belegt. Der neue Test bestätigt, dass vorhandener
+Pool nicht durch Legacy-Fenster rekonstruiert oder überschrieben wird.
+
+Verifikation: **63 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **98 %**, verbleibende Missing-Zeilen liegen
+in einem inkonsistenten Reset-Guard und Serialisierungs-Exceptionpfaden; keine
+Settings-Fenster gestartet.
