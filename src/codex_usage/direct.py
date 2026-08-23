@@ -510,7 +510,7 @@ def auth_email_from_payload(
     *,
     path: Path,
 ) -> str | None:
-    if not isinstance(payload, dict):
+    if type(payload) is not dict:
         return None
     tokens = payload.get("tokens")
     if type(tokens) is not dict:
