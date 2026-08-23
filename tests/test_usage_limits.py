@@ -147,6 +147,15 @@ def test_usage_limit_private_helpers_cover_window_and_identity_contracts():
     assert usage_limits_module._unique(("a", "a", "b")) == ("a", "b")
 
 
+def test_window_parsers_reject_empty_window_mappings():
+    assert usage_limits_module._wham_window(
+        {}, captured_at=NOW, source="test"
+    ) is None
+    assert usage_limits_module._app_server_window(
+        {}, captured_at=NOW, source="test"
+    ) is None
+
+
 def test_percent_rejects_numeric_subclass_before_float_conversion():
     assert usage_limits_module._percent(_BrokenInt(50)) is None
 

@@ -12017,3 +12017,15 @@ Verifikation: **133 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `usage_limits.py`: **97 %**, verbleibende Missing-Zeilen
 liegen ausschließlich in Fenster-/Identitäts-/Zeit- und Prozentkonversionen
 (436, 465, 512, 526, 538–539, 571–572); keine Settings-Fenster gestartet.
+
+## Runde 1004: Leere WHAM-/App-Server-Fenster fail-closed verworfen
+
+`_wham_window()` und `_app_server_window()` hatten den Fall einer formal
+gültigen, aber vollständig leeren Mapping-Eingabe noch nicht direkt belegt.
+Ein gemeinsamer Regressionstest bestätigt, dass ohne Dauer, Nutzung oder
+Resetdatum kein erfundenes Fenster entsteht.
+
+Verifikation: **134 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `usage_limits.py`: **98 %**, verbleibende Missing-Zeilen
+liegen ausschließlich in Fensteridentitäts-, Zeit- und Prozentkonversionen
+(512, 526, 538–539, 571–572); keine Settings-Fenster gestartet.
