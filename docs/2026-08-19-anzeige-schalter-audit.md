@@ -10240,3 +10240,16 @@ Plan-Typen bleiben unverändert.
 Verifikation: **32 Identity-Tests**, **60 abhängige Identity-/Extractor-/Direct-
 und Scheduler-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
 gestartet.
+
+## Runde 853: Auth-Identitäten auf Built-in-Strings begrenzen
+
+`direct._safe_auth_identity()` akzeptierte `str`-Subklassen und rief deren
+Längenoperator vor der Auth-Claim-Prüfung auf. Ein manipulierter String-Hook
+konnte den Authentifizierungs-Payloadpfad mit einer rohen Exception abbrechen.
+
+Der Auth-Identitäts-Guard akzeptiert jetzt ausschließlich Built-in-`str` vor
+Länge und Zeichenprüfung. Regression simuliert den fehlerhaften Claim-Hook;
+gültige Auth-Identitäten bleiben unverändert.
+
+Verifikation: **186 Direct-Tests**, **38 abhängige Browser-/Bridge-Tests**,
+Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.

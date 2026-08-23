@@ -493,6 +493,14 @@ def test_auth_identity_rejects_malformed_or_conflicting_claims(tmp_path, claims)
         auth_identity_from_payload(payload, path=path)
 
 
+def test_safe_auth_identity_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __len__(self):
+            raise RuntimeError("synthetic auth identity marker")
+
+    assert direct_module._safe_auth_identity(BrokenStr("user")) is None
+
+
 def test_auth_identity_ignores_expired_id_token_when_access_token_is_current(tmp_path):
     path = tmp_path / "auth.json"
     payload = {

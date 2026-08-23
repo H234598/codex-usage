@@ -592,7 +592,7 @@ def _auth_account_id_from_payload(
 
 
 def _safe_auth_identity(value: Any) -> str | None:
-    if not isinstance(value, str):
+    if type(value) is not str:
         return None
     if not value or len(value) > MAX_AUTH_ID_CHARS or any(
         char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
