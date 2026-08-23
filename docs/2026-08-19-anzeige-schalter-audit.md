@@ -13541,3 +13541,19 @@ Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht
 ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
 bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
 Reload-Schritte ab.
+
+## Runde 1118: Applet-Fensterdauer-Abgleich vollständig ausgeführt
+
+Die Regression für `_windowDurationMatches` deckt jetzt auch unklassifizierte
+Fenster, falsche erwartete Fensterarten, widersprüchliche bekannte Arten,
+fehlende Dauern, ungleiche explizite Dauern sowie gültige Null-/Fallback-
+Kombinationen ab. Damit sind alle V8-Blockranges dieser Funktion im
+ausgeführten VM-Runtime-Lauf erreicht. Produktionslogik blieb unverändert.
+
+Verifikation: **517 `tests/applet_runtime.test.js`-Tests**, **517 bestanden**;
+V8-Raw-Coverage: `_windowDurationMatches` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

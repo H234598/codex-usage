@@ -3060,6 +3060,24 @@ test("cache window matching and expiry use the declared kind and duration", () =
     "2026-08-17T00:00:00Z", "2026-08-25T00:00:00Z"), true);
 });
 
+test("window duration matching rejects malformed, conflicting and wrong-kind windows", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._windowDurationMatches({name: "custom"}, {name: "five_hour"}, "five_hour"), false);
+  assert.equal(applet._windowDurationMatches({name: "five_hour"}, {name: "custom"}, "five_hour"), false);
+  assert.equal(applet._windowDurationMatches({name: "weekly"}, {name: "weekly"}, "five_hour"), false);
+  assert.equal(applet._windowDurationMatches({name: "five_hour"}, {name: "weekly"}, "five_hour"), false);
+  assert.equal(applet._windowDurationMatches({name: "five_hour"}, {name: "weekly"}, null), false);
+  assert.equal(applet._windowDurationMatches({name: "custom", duration_seconds: 86400}, {name: "five_hour"}, null), false);
+  assert.equal(applet._windowDurationMatches({name: "custom", duration_seconds: 86400}, {name: "custom", duration_seconds: 172800}, null), false);
+  assert.equal(applet._windowDurationMatches({name: "five_hour", duration_seconds: 604800}, null, "five_hour"), false);
+  assert.equal(applet._windowDurationMatches(null, {name: "five_hour", duration_seconds: 604800}, "five_hour"), false);
+  assert.equal(applet._windowDurationMatches({name: "custom", duration_seconds: 86400}, {name: "custom"}, null), true);
+  assert.equal(applet._windowDurationMatches({name: "custom"}, {name: "custom", duration_seconds: 86400}, null), true);
+  assert.equal(applet._windowDurationMatches({name: "custom"}, {name: "custom"}, null), false);
+  assert.equal(applet._windowDurationMatches({name: "custom", duration_seconds: 86400}, {name: "custom", duration_seconds: 86400}, null), true);
+});
+
 test("window identity helpers fail closed on malformed duration and reset metadata", () => {
   const applet = makeApplet();
 
