@@ -218,6 +218,32 @@ def test_profile_layout_records_metadata_write_failure(tmp_path, monkeypatch):
     assert not path.exists()
 
 
+def test_profile_layout_does_not_record_existing_metadata_on_write_failure(
+    tmp_path, monkeypatch
+):
+    layout = ensure_profile_layout(_account(tmp_path))
+    original = layout.metadata.read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        profile_layout_module,
+        "write_private_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("metadata write failed")),
+    )
+
+    with pytest.raises(OSError, match="metadata write failed"):
+        ensure_profile_layout(_account(tmp_path), created_files=[])
+
+    assert layout.metadata.read_text(encoding="utf-8") == original
+
+
+def test_profile_layout_rewrite_does_not_record_existing_metadata(tmp_path):
+    ensure_profile_layout(_account(tmp_path))
+    created_files = []
+
+    ensure_profile_layout(_account(tmp_path), created_files=created_files)
+
+    assert created_files == []
+
+
 def test_profile_layout_records_only_private_regular_created_files(tmp_path):
     missing = tmp_path / "missing"
     directory = tmp_path / "directory"

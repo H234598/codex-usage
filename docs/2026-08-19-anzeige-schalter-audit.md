@@ -13223,3 +13223,18 @@ Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
 wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
 sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
 Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1099: Profile-Layout-Metadata-Guards vollständig geprüft
+
+`profile_layout.py` hatte noch zwei Metadata-Kanten: ein fehlgeschlagener
+Rewrite eines bereits vorhandenen Metadata-Files darf dieses nicht als neu
+angelegt markieren, und ein erfolgreicher Rewrite darf die Created-File-Liste
+nicht verändern. Zwei Regressionen prüfen beide Zustände. Produktionslogik
+blieb unverändert.
+
+Verifikation: **37 `tests/test_profile_layout.py`-Tests**, `profile_layout.py`
+**85/85 Statements und 34/34 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
