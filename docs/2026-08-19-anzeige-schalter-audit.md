@@ -10873,3 +10873,17 @@ normale Auth-JSON-Strukturen bleiben unverändert.
 
 Verifikation: **231 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 899: Auth-Metadaten nur aus nativen Token-Dicts lesen
+
+`direct.auth_metadata_from_payload()` akzeptierte den `tokens`-Block als
+Dict-Subclass per `isinstance` und rief dessen `.get()` für Access- und
+Identity-Token auf. Ein manipuliertes Auth-Mapping konnte die Metadatenbildung
+dadurch mit einer rohen Exception abbrechen.
+
+Der Helper verarbeitet jetzt nur native `dict`-Tokenblöcke; Subklassen werden
+ohne Hook-Aufruf wie ein fehlender Tokenblock behandelt. Regression deckt den
+Metadaten-`.get()`-Hook ab; normale Auth-JSON-Strukturen bleiben unverändert.
+
+Verifikation: **232 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

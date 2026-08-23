@@ -792,9 +792,9 @@ def auth_metadata_from_payload(payload: dict[str, Any]) -> dict[str, datetime | 
             "auth_last_refresh": None,
             "auth_access_expires_at": None,
             "auth_id_expires_at": None,
-        }
+    }
     tokens = payload.get("tokens")
-    if not isinstance(tokens, dict):
+    if type(tokens) is not dict:
         return {
             "auth_last_refresh": _parse_iso_datetime(payload.get("last_refresh")),
             "auth_access_expires_at": None,
