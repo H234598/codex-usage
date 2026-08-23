@@ -12585,3 +12585,13 @@ Berechnungspfade.
 Verifikation: **54 Consumption-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `consumption.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1054: Backend-Identity-Gruppierung vollständig geprüft
+
+Identity-Payload-Typen, Gruppen-Merge/-Ambiguität, Auth-Mismatch,
+Partial-Identities sowie Prioritäts- und Helper-Sonderfälle waren noch nicht
+vollständig direkt belegt. Zwölf Regressionen schließen alle offenen Zweige.
+
+Verifikation: **43 Identity-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `identity.py`: **100 %**; keine Settings-Fenster
+gestartet.

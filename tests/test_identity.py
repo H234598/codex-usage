@@ -1,5 +1,6 @@
 import pytest
 
+import codex_usage.identity as identity_module
 from codex_usage.extractor import JsonCandidate
 from codex_usage.identity import (
     backend_identity_from_candidates,
@@ -109,6 +110,11 @@ def test_backend_identity_rejects_string_subclass_hooks():
         backend_identity_from_payload({"user_id": BrokenStr("user")})
 
 
+def test_identity_payload_helpers_reject_non_mapping_values():
+    assert backend_identity_from_payload([]) == (None, None)
+    assert backend_plan_type_from_payload([]) is None
+
+
 @pytest.mark.parametrize("value", [[], 42, " ", "plan\nforged"])
 def test_backend_plan_type_rejects_malformed_values(value):
     with pytest.raises(ValueError, match="backend response plan_type is invalid"):
@@ -150,6 +156,228 @@ def test_identity_helpers_skip_candidates_with_malformed_urls():
     assert select_identity_consistent_candidates(
         [malformed, valid], auth_user_id=None, auth_account_id=None
     ) == [valid]
+
+
+def test_identity_selection_merges_compatible_duplicate_groups():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user", "account_id": "account"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage/settings",
+            payload={"user_id": "user", "account_id": "account"},
+        ),
+    ]
+
+    assert select_identity_consistent_candidates(
+        candidates,
+        auth_user_id=None,
+        auth_account_id=None,
+    ) == candidates
+
+
+def test_identity_selection_rejects_ambiguous_partial_without_auth():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "shared", "account_id": "account-a"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "shared", "account_id": "account-b"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage/settings",
+            payload={"user_id": "shared"},
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="multiple backend accounts"):
+        select_identity_consistent_candidates(
+            candidates,
+            auth_user_id=None,
+            auth_account_id=None,
+        )
+
+
+def test_identity_selection_returns_empty_for_auth_only_ambiguous_partial():
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={"user_id": "shared"},
+    )
+
+    assert select_identity_consistent_candidates(
+        [candidate],
+        auth_user_id="shared",
+        auth_account_id="account-a",
+    ) == []
+
+
+def test_identity_selection_rejects_multiple_groups_without_auth():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user-a", "account_id": "account-a"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user-b", "account_id": "account-b"},
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="multiple backend accounts"):
+        select_identity_consistent_candidates(
+            candidates,
+            auth_user_id=None,
+            auth_account_id=None,
+        )
+
+
+def test_identity_selection_rejects_auth_without_matching_group():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user-a", "account_id": "account-a"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user-b", "account_id": "account-b"},
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="different account"):
+        select_identity_consistent_candidates(
+            candidates,
+            auth_user_id="user-c",
+            auth_account_id="account-c",
+        )
+
+
+def test_identity_selection_rejects_two_exact_account_groups():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user-a", "account_id": "account"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user-b", "account_id": "account"},
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="does not identify one account"):
+        select_identity_consistent_candidates(
+            candidates,
+            auth_user_id=None,
+            auth_account_id="account",
+        )
+
+
+def test_identity_selection_rejects_two_user_matching_groups(monkeypatch):
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user", "account_id": "account-a"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user", "account_id": "account-b"},
+        ),
+    ]
+
+    monkeypatch.setattr(
+        identity_module,
+        "_response_identity_matches_auth",
+        lambda **_kwargs: True,
+    )
+
+    with pytest.raises(ValueError, match="does not identify one account"):
+        select_identity_consistent_candidates(
+            candidates,
+            auth_user_id="user",
+            auth_account_id=None,
+        )
+
+
+def test_identity_helpers_cover_partial_compatibility_and_priority_helpers():
+    assert identity_module._identities_compatible(("user", None), (None, "account")) is False
+    assert identity_module._candidate_priority(
+        JsonCandidate(
+            url="https://chatgpt.com/other",
+            payload={"rateLimits": {}},
+        )
+    ) == 1
+    assert backend_identity_from_candidates(
+        [
+            JsonCandidate(
+                url="https://chatgpt.com/backend-api/wham/usage",
+                payload={},
+            )
+        ]
+    ) == (None, None)
+    empty = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={},
+    )
+    assert select_identity_consistent_candidates(
+        [empty],
+        auth_user_id=None,
+        auth_account_id=None,
+    ) == [empty]
+    assert backend_plan_type_from_payload({}) is None
+
+
+def test_identity_selection_returns_one_matching_group(monkeypatch):
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user-a", "account_id": "account-a"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "user-b", "account_id": "account-b"},
+        ),
+    ]
+
+    monkeypatch.setattr(
+        identity_module,
+        "_response_identity_matches_auth",
+        lambda **kwargs: kwargs["backend_account_id"] == "account-a",
+    )
+
+    assert select_identity_consistent_candidates(
+        candidates,
+        auth_user_id="user",
+        auth_account_id=None,
+    ) == [candidates[0]]
+
+
+def test_response_identity_auth_matching_edge_cases():
+    assert identity_module._response_identity_matches_auth(
+        backend_user_id=None,
+        backend_account_id="user",
+        auth_user_id="user",
+        auth_account_id=None,
+    ) is True
+    assert identity_module._response_identity_matches_auth(
+        backend_user_id="foreign",
+        backend_account_id="user",
+        auth_user_id="user",
+        auth_account_id=None,
+    ) is False
+    assert identity_module._response_identity_matches_auth(
+        backend_user_id="foreign",
+        backend_account_id=None,
+        auth_user_id="user",
+        auth_account_id=None,
+    ) is False
+    assert identity_module._response_identity_matches_auth(
+        backend_user_id=None,
+        backend_account_id=None,
+        auth_user_id=None,
+        auth_account_id=None,
+    ) is True
 
 
 def test_identity_helpers_skip_url_string_subclass_hooks():
