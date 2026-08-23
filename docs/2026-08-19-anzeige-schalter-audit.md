@@ -11925,3 +11925,13 @@ Test bestätigt echte Restmengen aus beiden verschachtelten Strukturen.
 Verifikation: **352 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **99 %**, Missing-Zeilen 6; keine Settings-Fenster
 gestartet.
+
+## Runde 996: Credit-Prozent über 100 direkt verworfen
+
+`direct._credit_window()` hatte den Schutz gegen überhöhte Prozentwerte noch
+nicht direkt belegt. Der neue Test bestätigt, dass `percent=101` nicht als
+Credit-Fenster ausgegeben wird.
+
+Verifikation: **353 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **99 %**, Missing-Zeilen 5; keine Settings-Fenster
+gestartet.

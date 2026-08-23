@@ -1135,6 +1135,16 @@ def test_credit_window_accepts_percent_only_balance():
     assert window.percent == 75
 
 
+def test_credit_window_rejects_percent_above_hundred():
+    assert (
+        _credit_window(
+            {"credits": {"percent": 101}},
+            datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+        )
+        is None
+    )
+
+
 def test_credit_window_rejects_credit_dict_subclass_hooks():
     class BrokenCredits(dict):
         def get(self, _key, _default=None):
