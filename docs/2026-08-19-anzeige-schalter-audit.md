@@ -11185,3 +11185,12 @@ kanonischen Pfad `${HOME}/.codex/auth.json`.
 
 Verifikation: **254 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Produktionsänderung und keine Settings-Fenster gestartet.
+
+## Runde 921: Deadline-Berechnung direkt geprüft
+
+`direct._direct_deadline()` hatte bisher nur indirekte Negativabdeckung.
+Der neue deterministische Test fixiert `time.monotonic()` und prüft, dass ein
+positives Timeout exakt als monotone Deadline zurückgegeben wird.
+
+Verifikation: **255 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Produktionsänderung und keine Settings-Fenster gestartet.

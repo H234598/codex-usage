@@ -184,6 +184,12 @@ def test_direct_fetch_rejects_non_account_input(account):
         fetch_account_usage_direct(account)  # type: ignore[arg-type]
 
 
+def test_direct_deadline_returns_monotonic_deadline(monkeypatch):
+    monkeypatch.setattr(direct_module.time, "monotonic", lambda: 100.0)
+
+    assert direct_module._direct_deadline(2) == 102.0
+
+
 @pytest.mark.parametrize("auth_json_path", [1, {}, object()])
 def test_direct_fetch_rejects_invalid_auth_json_path_type(auth_json_path):
     account = Account(
