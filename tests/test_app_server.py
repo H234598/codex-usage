@@ -592,6 +592,33 @@ def test_app_server_rejects_nonstandard_auth_json_filename(tmp_path):
     assert usage.error == "app-server requires auth_json_path filename auth.json"
 
 
+@pytest.mark.parametrize(
+    ("raw_auth", "message"),
+    [
+        ("{invalid", "invalid auth.json"),
+        ("[]", "invalid auth.json structure"),
+    ],
+)
+def test_app_server_rejects_invalid_auth_json_payload(tmp_path, raw_auth, message):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    auth_path.write_text(raw_auth, encoding="utf-8")
+    auth_path.chmod(0o600)
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == message
+
+
 @pytest.mark.parametrize("account_plan_type", ["enterprise", " free "])
 def test_app_server_rejects_server_plan_mismatch(tmp_path, account_plan_type):
     auth_home = tmp_path / "codex-home"
@@ -644,6 +671,39 @@ def test_app_server_rejects_server_email_mismatch(tmp_path, account_email):
 
     assert usage.status == AccountStatus.LOGIN_REQUIRED
     assert usage.error == "Codex app server email differs from auth.json"
+
+
+def test_app_server_rejects_auth_email_change_during_rate_limit_read(
+    tmp_path, monkeypatch
+):
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    auth_path = auth_home / "auth.json"
+    expiry = datetime.now(UTC) + timedelta(hours=1)
+    _auth(auth_path, expiry, email="before@example.com")
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+        backend="app-server",
+    )
+
+    def mutate_auth(*_args, **_kwargs):
+        _auth(auth_path, expiry, email="after@example.com")
+        return {
+            "rateLimits": {
+                "primary": {"usedPercent": 17, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 42, "windowDurationMins": 10080},
+            }
+        }
+
+    monkeypatch.setattr("codex_usage.app_server._read_rate_limits", mutate_auth)
+
+    usage = fetch_account_usage_app_server(account)
+
+    assert usage.status == AccountStatus.LOGIN_REQUIRED
+    assert usage.error == "auth.json email changed during rate-limit request"
 
 
 def test_app_server_rejects_auth_without_account_identity(tmp_path):

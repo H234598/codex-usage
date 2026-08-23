@@ -12595,3 +12595,14 @@ vollständig direkt belegt. Zwölf Regressionen schließen alle offenen Zweige.
 Verifikation: **43 Identity-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `identity.py`: **100 %**; keine Settings-Fenster
 gestartet.
+
+## Runde 1055: App-Server-Auth-Parsing und E-Mail-Rotation geprüft
+
+`_auth_context()` hatte ungültiges JSON und nicht-dictionaryförmige Payloads
+noch nicht direkt belegt; außerdem fehlte die E-Mail-Identitätsänderung während
+des Rate-Limit-Requests. Drei Regressionen bestätigen Login-Required,
+Cache-Invalidierung und fail-closed Auth-Rotation.
+
+Verifikation: **113 App-Server-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `app_server.py`: **87 %**; keine Settings-Fenster
+gestartet.
