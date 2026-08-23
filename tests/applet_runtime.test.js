@@ -8957,6 +8957,90 @@ test("routing status rejects normalized trusted identities", () => {
   });
 });
 
+test("routing status validation covers decision shape, limits, models and usage states", () => {
+  const policy = {
+    schema_version: 1,
+    global: false,
+    account: {},
+    group: {},
+    agent: {},
+    job: {},
+  };
+  const decision = (overrides = {}) => Object.assign({
+    decision: "spark",
+    model: "gpt-5.3-codex-spark",
+    reason: "available",
+    paid_overage_allowed: false,
+    policy_source: "global",
+    usage_state: "known",
+  }, overrides);
+  const payload = (decisions) => ({
+    schema_version: 1,
+    policy,
+    decisions,
+  });
+
+  const applet = makeApplet();
+  assert.throws(() => applet._validateRoutingState(null), /unsupported routing status/);
+  assert.throws(() => applet._validateRoutingState({schema_version: 2}), /unsupported routing status/);
+  assert.throws(() => applet._validateRoutingState(payload(null)), /invalid routing decisions/);
+  assert.throws(() => applet._validateRoutingState(payload([])), /invalid routing decisions/);
+
+  const tooMany = {};
+  for (let i = 0; i < 101; i += 1) tooMany[`account-${i}`] = {};
+  assert.throws(() => applet._validateRoutingState(payload(tooMany)), /too many routing decisions/);
+
+  const synced = makeApplet();
+  synced._backendRowsReady = true;
+  synced._backendAccounts = {alpha: {}, beta: {}};
+  assert.throws(() => synced._validateRoutingState(payload({
+    alpha: decision(),
+  })), /incomplete routing decisions/);
+
+  synced._backendAccounts = null;
+  assert.deepEqual(Object.keys(synced._validateRoutingState(payload({})).decisions), []);
+
+  synced._backendAccounts = {alpha: {}, beta: {}};
+  assert.throws(() => synced._validateRoutingState(payload({
+    alpha: decision(), gamma: decision(),
+  })), /incomplete routing decisions/);
+
+  synced._backendAccounts = {alpha: {}, beta: null};
+  assert.throws(() => synced._validateRoutingState(payload({
+    alpha: decision(), beta: decision(),
+  })), /unknown routing decision account/);
+
+  for (const decisions of [
+    {"bad key": decision()},
+    {alpha: null},
+    {alpha: []},
+    {alpha: decision({decision: "unknown"})},
+    {alpha: decision({paid_overage_allowed: "false"})},
+    {alpha: decision({decision: "spark", model: "gpt-5.4-mini"})},
+    {alpha: decision({decision: "main", model: "gpt-5.3-codex-spark"})},
+    {alpha: decision({decision: "credits", model: "gpt-5.3-codex-spark", paid_overage_allowed: true})},
+    {alpha: decision({decision: "blocked", model: "gpt-5.4-mini"})},
+    {alpha: decision({decision: "unchanged", model: "gpt-5.4-mini"})},
+    {alpha: decision({usage_state: "stale"})},
+  ]) {
+    assert.throws(() => applet._validateRoutingState(payload(decisions)));
+  }
+
+  const valid = applet._validateRoutingState(payload({
+    spark: decision({}),
+    main: decision({decision: "main", model: "gpt-5.4-mini", usage_state: "unknown"}),
+    credits: decision({decision: "credits", model: "gpt-5.4-mini", paid_overage_allowed: true}),
+    blocked: decision({decision: "blocked", model: null, usage_state: "not_applicable"}),
+    unchanged: decision({decision: "unchanged", model: null}),
+  }));
+  assert.deepEqual(
+    Object.keys(valid.decisions).sort(),
+    ["blocked", "credits", "main", "spark", "unchanged"]
+  );
+  assert.equal(valid.decisions.credits.paid_overage_allowed, true);
+  assert.equal(valid.decisions.blocked.model, "");
+});
+
 test("routing status rejects incomplete synchronized account decisions", () => {
   const applet = makeApplet();
   applet._backendRowsReady = true;

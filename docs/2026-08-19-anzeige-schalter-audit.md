@@ -13752,3 +13752,19 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1131: Applet-Routingstatus-Validierung vollständig ausgeführt
+
+Die Regression für `_validateRoutingState` deckt ungültige Status- und
+Entscheidungscontainer, Mengen- und Synchronisationsgrenzen, unbekannte und
+ungültige Accounts, alle Entscheidungswerte, Creditfreigaben,
+Modellkombinationen und Usage-States ab. Damit sind alle V8-Blockranges der
+Funktion erreicht. Produktionslogik blieb unverändert.
+
+Verifikation: **529 `tests/applet_runtime.test.js`-Tests**, **529 bestanden**;
+V8-Raw-Coverage: `_validateRoutingState` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.
