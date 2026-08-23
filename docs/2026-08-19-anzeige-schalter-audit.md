@@ -11710,3 +11710,13 @@ belegt. Zwei Tests bestätigen fail-closed `None` für Leer-/Whitespace-Werte.
 Verifikation: **323 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **95 %**, Missing-Zeilen 54; keine Settings-Fenster
 gestartet.
+
+## Runde 975: Fremde Backend-User-ID direkt abgewiesen
+
+`direct._response_identity_matches_auth()` hatte den Mismatch-Zweig ohne
+Account-IDs noch nicht direkt belegt. Der neue Test bestätigt fail-closed
+`False` bei abweichender Backend- und Auth-User-ID.
+
+Verifikation: **324 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **95 %**, Missing-Zeilen 53; keine Settings-Fenster
+gestartet.

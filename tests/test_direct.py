@@ -1992,6 +1992,15 @@ def test_response_identity_match_rejects_string_subclass_hooks():
     ) is False
 
 
+def test_response_identity_match_rejects_foreign_user_without_account_ids():
+    assert direct_module._response_identity_matches_auth(
+        backend_user_id="backend-user",
+        backend_account_id=None,
+        auth_user_id="auth-user",
+        auth_account_id=None,
+    ) is False
+
+
 @pytest.mark.parametrize(
     "error",
     (
