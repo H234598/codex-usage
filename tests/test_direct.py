@@ -180,6 +180,12 @@ def test_direct_trusted_response_url_rejects_string_subclasses():
     )
 
 
+def test_direct_trusted_response_url_rejects_invalid_port():
+    assert not direct_module._is_trusted_wham_response_url(
+        "https://chatgpt.com:invalid/backend-api/wham/usage"
+    )
+
+
 def test_parse_iso_datetime_rejects_string_subclass_hooks():
     class BrokenStr(str):
         def strip(self):

@@ -11505,3 +11505,13 @@ bestätigt die Ablehnung vor JSON-Parsing.
 Verifikation: **291 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 98; keine Settings-Fenster
 gestartet.
+
+## Runde 955: Ungültigen Wham-URL-Port direkt abgewiesen
+
+`direct._is_trusted_wham_response_url()` hatte den `urlsplit`-/Port-
+Fehlerzweig bisher nur indirekt. Der neue Test liefert einen nichtnumerischen
+Port und bestätigt fail-closed `False`.
+
+Verifikation: **292 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 96; keine Settings-Fenster
+gestartet.
