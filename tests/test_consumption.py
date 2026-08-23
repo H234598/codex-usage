@@ -381,6 +381,17 @@ def test_consumption_omits_unrepresentable_forecast_without_raising():
     assert result.estimated_seconds_to_exhaustion is None
 
 
+def test_consumption_omits_forecast_beyond_maximum():
+    result = calculate_consumption(
+        [_sample(0, 0.0), _sample(1, 1e-6)],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=1),
+    )
+
+    assert result.estimated_seconds_to_exhaustion is None
+
+
 def test_consumption_handles_confirmed_reset_without_false_partial_status():
     reset = BASE + timedelta(minutes=45)
     result = calculate_consumption(

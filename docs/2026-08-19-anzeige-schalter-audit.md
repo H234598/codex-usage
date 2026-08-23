@@ -13138,3 +13138,18 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1094: Consumption-Forecast-Grenze vollständig geprüft
+
+`consumption.py` hatte noch die Kante einer mathematisch endlichen, aber über
+`MAX_FORECAST_SECONDS` liegenden Erschöpfungsprognose. Eine Regression erzeugt
+mit winziger positiver Verbrauchsrate genau diesen Fall und prüft, dass die
+Prognose sicher als `None` verworfen wird statt einen unbounded Wert zu
+persistieren oder anzuzeigen. Produktionslogik blieb unverändert.
+
+Verifikation: **55 `tests/test_consumption.py`-Tests**, `consumption.py`
+**187/187 Statements und 94/94 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.
