@@ -1168,12 +1168,6 @@ def _window_from_mapping(
         # still handled below.
         limit = None
         remaining = None
-    if remaining is not None and remaining < 0:
-        remaining = (
-            None
-            if has_explicit_remaining_percent or percent is not None
-            else 0
-        )
     if (
         used_percent is not None
         and used is None
@@ -1192,13 +1186,11 @@ def _window_from_mapping(
             remaining = None
     if used is not None and limit is not None:
         remaining = max(limit - used, 0)
-        if limit > 0:
-            # `percent` is the remaining percentage across WHAM, app-server,
-            # rendering, and applet consumers. Absolute usage is authoritative
-            # over conflicting percentage fields, so derive it from used/limit.
-            percent = max(0, min(100, 100 - (used / limit * 100)))
-        else:
-            percent = None
+        # `percent` is the remaining percentage across WHAM, app-server,
+        # rendering, and applet consumers. Absolute usage is authoritative
+        # over conflicting percentage fields, so derive it from used/limit.
+        # Earlier denominator validation guarantees a positive limit here.
+        percent = max(0, min(100, 100 - (used / limit * 100)))
     else:
         if remaining is None:
             if has_explicit_remaining_percent:
@@ -1225,19 +1217,6 @@ def _window_from_mapping(
             percent = remaining
         elif used_percent is not None and used is None and remaining is not None:
             percent = remaining
-    if percent is not None and not 0 <= percent <= 100:
-        percent = None
-    if (
-        limit is None
-        and remaining is not None
-        and percent is None
-        and not has_explicit_remaining_percent
-        and not 0 <= remaining <= 100
-    ):
-        # Never let an absolute, denominator-less count become a clamped
-        # 100% remaining value in the renderer.
-        remaining = None
-
     if all(value is None for value in (used, limit, remaining, percent, reset_at)):
         return None
 
@@ -1357,20 +1336,6 @@ def _extract_text_window(
 
         if all(value is None for value in (used, limit, remaining, percent, reset_at)):
             continue
-
-        if remaining is None and used is not None and limit is not None:
-            remaining = max(limit - used, 0)
-        if percent is None and used is not None and limit:
-            percent = used / limit * 100
-        if (
-            limit is None
-            and remaining is not None
-            and percent is None
-            and not 0 <= remaining <= 100
-        ):
-            # Without a denominator this absolute count cannot be rendered as
-            # a percentage; preserve only the reset metadata.
-            remaining = None
 
         window = LimitWindow(
             name=name,

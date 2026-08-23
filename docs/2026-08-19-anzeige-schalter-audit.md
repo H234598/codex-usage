@@ -12945,3 +12945,19 @@ Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
 Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
 Installations- und Reload-Schritte ab.
+
+## Runde 1083: Extractor-Parser- und Mapping-Guards vollständig geprüft
+
+`extractor.py` hatte noch unbelegte Grenzen bei lokaler Zeitzonenauflösung,
+Textquellen-/Reset-Merge, WHAM-Priorisierung, widersprüchlichen Prozentwerten,
+strukturellen HTML-Progress-Tags, Parser-Cleanup und Overflow, Timestamp- und
+Timezone-Fallbacks sowie JSON-Walk-/Flatten-Caps. Die fokussierten Regressionen
+führen alle erreichbaren Parser-, Typ-, Größen- und Fail-Closed-Pfade direkt
+aus. Dabei wurden sieben nach vorgelagerter Validierung logisch unerreichbare
+Nachbereinigungszweige entfernt; die positive Denominator-/Counter-Invariante
+bleibt an ihrer früheren Validierungsgrenze erhalten.
+
+Verifikation: **213 `tests/test_extractor.py`-Tests**, `extractor.py`
+**1046/1046 Statements und 522/522 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo
 
 import pytest
 
+import codex_usage.extractor as extractor
 from codex_usage.extractor import (
     MAX_PROGRESS_PARSER_ENTRIES,
     MAX_TEXT_LABEL_OFFSETS,
@@ -21,6 +22,7 @@ from codex_usage.extractor import (
     extract_windows,
     load_json_candidate,
 )
+from codex_usage.models import LimitWindow
 
 
 class _RaisingTimezone(tzinfo):
@@ -55,6 +57,321 @@ def test_numeric_helpers_reject_numeric_subclasses_without_invoking_hooks(value)
 @pytest.mark.parametrize("value", [{"percent": 97}, [97]])
 def test_numeric_coercion_rejects_non_scalar_values(value):
     assert _coerce_number(value) is None
+
+
+def test_system_local_timezone_skips_invalid_environment_and_realpath(monkeypatch):
+    monkeypatch.setenv("TZ", ":/absolute")
+    monkeypatch.setattr(
+        extractor.os.path,
+        "realpath",
+        lambda _path: (_ for _ in ()).throw(OSError("realpath")),
+    )
+
+    assert extractor._system_local_timezone() is not None
+
+
+def test_system_local_timezone_skips_unknown_zone(monkeypatch):
+    original_zone_info = extractor.ZoneInfo
+    monkeypatch.setenv("TZ", "unknown/zone")
+    monkeypatch.setattr(extractor.os.path, "realpath", lambda _path: "")
+
+    def fake_zone_info(name):
+        if name == "unknown/zone":
+            raise KeyError(name)
+        return original_zone_info(name)
+
+    monkeypatch.setattr(extractor, "ZoneInfo", fake_zone_info)
+    assert extractor._system_local_timezone() is not None
+
+
+def test_text_candidates_merge_reset_and_progress_sources():
+    captured_at = datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin"))
+    selected = LimitWindow(
+        name="5h",
+        remaining=97,
+        percent=97,
+        raw="3% used",
+        source="bodyText",
+    )
+    progress = LimitWindow(
+        name="5h",
+        remaining=55,
+        percent=55,
+        raw='<div style="width: 55%"></div>',
+        source="htmlText",
+    )
+    assert extractor._select_text_usage_candidate([(0, selected), (1, progress)]) is progress
+
+    usage = extractor._extract_text_windows(
+        (
+            ("bodyText", "5-hour limit 3% used"),
+            ("htmlText", "5-hour limit Reset 08.06.2026 04:26"),
+        ),
+        name="5h",
+        labels=extractor.FIVE_HOUR_LABELS,
+        stop_labels=extractor.WEEKLY_LABELS,
+        captured_at=captured_at,
+    )
+    assert usage is not None
+    assert usage.reset_at is not None
+    assert usage.source == "bodyText+htmlText"
+
+
+def test_merge_window_sources_handles_secondary_usage_and_empty_resets():
+    primary = LimitWindow(name="5h", source="json:primary")
+    secondary = LimitWindow(name="5h", used=3, limit=100, source="bodyText")
+    assert extractor._merge_window_sources(primary, secondary) is secondary
+    assert extractor._merge_window_sources(primary, LimitWindow(name="5h")) is not None
+    assert extractor._json_window_has_usage_metadata(primary) is False
+    assert extractor._json_window_has_usage_metadata(
+        LimitWindow(name="5h", source="bodyText", raw='"used": 3')
+    ) is False
+    assert extractor._merge_window_source_names(
+        LimitWindow(name="5h", source="bodyText"),
+        LimitWindow(name="5h", source="bodyText"),
+    ) == "bodyText"
+
+
+def test_json_loader_and_wham_priority_guards():
+    valid = load_json_candidate("https://example.test/usage", '{"ok": true}')
+    assert valid is not None and valid.payload == {"ok": True}
+    assert load_json_candidate("https://example.test/usage", "not-json") is None
+    assert extractor._wham_candidate_priority(
+        "https://chatgpt.com/backend-api/wham/usage/extra"
+    ) == 1
+    assert extractor._wham_window_path_priority(
+        "$.rate_limit.primary_window.value", "five_hour"
+    ) == 1
+    five, _weekly = extract_windows(
+        body_text="",
+        text_sources=(
+            ("dom-text", ""),
+            ("dom-text", "5-hour limit 50% remaining"),
+        ),
+    )
+    assert five is not None and five.remaining == 50
+
+
+def test_wham_mapping_rejects_invalid_and_contradictory_usage():
+    captured_at = datetime(2026, 6, 8, 3, 3, tzinfo=ZoneInfo("Europe/Berlin"))
+    kwargs = {
+        "target": "five_hour",
+        "captured_at": captured_at,
+        "source": "json:wham",
+        "raw": "{}",
+    }
+    assert extractor._window_from_wham_rate_limit_mapping(
+        {"limit_window_seconds": 18_000, "used": "bad"}, **kwargs
+    ) is None
+    assert extractor._window_from_wham_rate_limit_mapping(
+        {"limit_window_seconds": 18_000}, **kwargs
+    ) is None
+    contradictory = extractor._window_from_wham_rate_limit_mapping(
+        {
+            "limit_window_seconds": 18_000,
+            "used_percent": 20,
+            "remaining_percent": 20,
+        },
+        **kwargs,
+    )
+    assert contradictory is not None
+    assert contradictory.used is None
+    assert contradictory.remaining is None
+
+
+def test_extractor_progress_parser_cleanup_and_shape_guards(monkeypatch):
+    parser = _ProgressWidthParser("first\nsecond")
+    monkeypatch.setattr(parser, "getpos", lambda: (2, 3))
+    assert parser._absolute_position() == 9
+
+    no_newline = _ProgressWidthParser("single")
+    monkeypatch.setattr(no_newline, "getpos", lambda: (2, 3))
+    assert no_newline._absolute_position() == 3
+
+    self_closing = _ProgressWidthParser()
+    self_closing.handle_startendtag(
+        "div",
+        [("role", "progressbar"), ("style", "width: 50%")],
+    )
+    assert self_closing.candidates
+    assert self_closing.candidates[0][0] < 0
+
+    invalid_width = _ProgressWidthParser()
+    invalid_width._record_width([("style", "width: 101%")])
+    assert invalid_width.candidates == []
+
+    full = _ProgressWidthParser()
+    full.candidates = [(0, index, 1.0) for index in range(MAX_PROGRESS_PARSER_ENTRIES)]
+    full._record_width([("style", "width: 50%")])
+    assert full.overflowed is True
+
+    end_overflow = _ProgressWidthParser()
+    end_overflow.hidden_ranges = [(0, 0)] * MAX_PROGRESS_PARSER_ENTRIES
+    end_overflow._hidden_stack = [("div", True, 0)]
+    end_overflow._open_tag_indices = {"div": [0]}
+    end_overflow.handle_endtag("div")
+    assert end_overflow.overflowed is True
+
+    finished = _ProgressWidthParser()
+    finished._hidden_stack = [("div", True, 1)]
+    finished.finish(5)
+    assert finished.hidden_ranges == [(1, 5)]
+
+    finish_overflow = _ProgressWidthParser()
+    finish_overflow.hidden_ranges = [(0, 0)] * MAX_PROGRESS_PARSER_ENTRIES
+    finish_overflow._hidden_stack = [("div", True, 1)]
+    finish_overflow.finish(5)
+    assert finish_overflow.overflowed is True
+
+    already_overflowed = _ProgressWidthParser()
+    already_overflowed.overflowed = True
+    already_overflowed._hidden_stack = [("div", True, 1)]
+    already_overflowed._open_tag_indices = {"div": [0]}
+    already_overflowed._hidden_ancestor_count = 1
+    already_overflowed.finish(5)
+    assert already_overflowed._hidden_stack == []
+
+    self_closing_overflow = _ProgressWidthParser()
+    self_closing_overflow.overflowed = True
+    self_closing_overflow.handle_startendtag("div", [])
+
+    void_tag = _ProgressWidthParser()
+    void_tag.handle_starttag("br", [])
+    assert void_tag._hidden_stack == []
+
+    visible_stack = _ProgressWidthParser()
+    visible_stack._hidden_stack = [("div", False, 1)]
+    visible_stack.finish(5)
+    assert visible_stack.hidden_ranges == []
+
+
+def test_extractor_html_parser_error_paths_return_safely(monkeypatch):
+    def fail_feed(parser, _text):
+        parser.overflowed = True
+        raise ValueError("synthetic parser failure")
+
+    monkeypatch.setattr(_ProgressWidthParser, "feed", fail_feed)
+    assert _extract_progress_width_percent("<div>") is None
+    assert extractor._extract_hidden_html_ranges("<div>") is None
+
+
+def test_extractor_datetime_and_numeric_guard_paths(monkeypatch):
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    assert extractor._has_invalid_number(
+        {"used": "bad"}, ("used",), extractor._coerce_number
+    ) is True
+    assert extractor._has_invalid_number(
+        {"used": None}, ("used",), extractor._coerce_number
+    ) is False
+    assert extractor._parse_datetime(10_000_000_001, captured_at) is not None
+    assert extractor._parse_datetime(10**20, captured_at) is None
+    assert extractor._parse_datetime("not-a-date", captured_at) is None
+    assert extractor._relative_reset_at(-1, captured_at) is None
+    assert extractor._relative_reset_at(float("inf"), captured_at) is None
+    assert extractor._relative_reset_at(60, datetime(2026, 6, 8, 4, 20)) is not None
+    assert extractor._relative_reset_at(
+        60,
+        datetime(2026, 6, 8, 4, 20, tzinfo=_RaisingTimezone()),
+    ) is None
+    assert extractor._parse_time_today_or_next("bad", captured_at) is None
+    assert extractor._parse_time_today_or_next("24:00", captured_at) is None
+    assert extractor._display_timezone(datetime(2026, 6, 8, 4, 20)) is None
+    assert extractor._display_timezone(
+        datetime(2026, 6, 8, 4, 20, tzinfo=UTC)
+    ) is UTC
+    assert extractor._parse_number(None) is None
+
+    monkeypatch.setattr(
+        extractor,
+        "float",
+        lambda _value: (_ for _ in ()).throw(ValueError("conversion")),
+        raising=False,
+    )
+    assert extractor._parse_datetime("1234", captured_at) is None
+
+
+def test_extractor_reset_and_datetime_picker_continue_after_invalid_matches():
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    assert extractor._extract_reset_at("Reset 25:00", captured_at) is None
+    assert extractor._extract_reset_at("Reset 99.99.9999 99:99", captured_at) is None
+    assert extractor._pick_datetime(
+        {"reset_at": "bad"}, ("reset_at",), captured_at
+    ) is None
+
+
+def test_extractor_mapping_walk_and_preview_caps():
+    recursive = []
+    recursive.append(recursive)
+    assert extractor._json_preview(recursive) == "list"
+    assert extractor._flatten_mapping(
+        {}, depth=extractor.MAX_JSON_WALK_DEPTH
+    ) == {}
+    many_fields = {str(index): index for index in range(extractor.MAX_JSON_WALK_ITEMS + 1)}
+    assert len(extractor._flatten_mapping(many_fields)) == extractor.MAX_JSON_WALK_ITEMS
+    assert extractor._flatten_mapping(
+        {"child": {"first": 1, "second": 2}}, max_fields=1
+    ) == {"child.first": 1}
+    assert list(extractor._walk_dicts({}, depth=extractor.MAX_JSON_WALK_DEPTH + 1)) == []
+    many_children = {
+        str(index): {} for index in range(extractor.MAX_JSON_WALK_ITEMS + 1)
+    }
+    assert len(list(extractor._walk_dicts(many_children))) == extractor.MAX_JSON_WALK_ITEMS + 1
+    assert len(
+        list(extractor._walk_dicts([{}] * (extractor.MAX_JSON_WALK_ITEMS + 1)))
+    ) == extractor.MAX_JSON_WALK_ITEMS
+    assert extractor._has_direct_structural_window(None, "five_hour") is False
+
+
+def test_extractor_generic_mapping_explicit_remaining_percentage_and_hidden_guard(monkeypatch):
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    window = extractor._window_from_mapping(
+        {"remaining_percent": 50, "limit": 100},
+        name="5h",
+        captured_at=captured_at,
+        source="json:test",
+        raw="{}",
+    )
+    assert window is not None
+    assert window.remaining == 50
+
+    monkeypatch.setattr(extractor, "_extract_hidden_html_ranges", lambda _text: None)
+    assert extractor._extract_text_window(
+        "5-hour limit 50% remaining",
+        name="5h",
+        labels=extractor.FIVE_HOUR_LABELS,
+        stop_labels=extractor.WEEKLY_LABELS,
+        captured_at=captured_at,
+        source="htmlText",
+    ) is None
+
+
+def test_extractor_json_mapping_scope_and_structural_duration_guards():
+    captured_at = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    assert extractor._extract_json_window(
+        [
+            JsonCandidate(
+                "https://example.test/usage",
+                {"unrelated": {"nested": {"value": 1}}},
+            )
+        ],
+        "five_hour",
+        captured_at,
+    ) is None
+    assert extractor._extract_json_window(
+        [JsonCandidate("https://example.test/usage", {"label": "5 hours"})],
+        "five_hour",
+        captured_at,
+    ) is None
+    structural = extractor._window_from_mapping(
+        {"limit_window_seconds": 18_000, "used_percent": 3},
+        name="5h",
+        captured_at=captured_at,
+        source="json:test",
+        raw="{}",
+        target="five_hour",
+        path="$.primary_window",
+    )
+    assert structural is not None
 
 
 def test_json_loader_rejects_non_string_inputs():
