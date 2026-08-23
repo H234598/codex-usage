@@ -13189,3 +13189,20 @@ Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
 Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
 Installations- und Reload-Schritte ab.
+
+## Runde 1097: Browser-, Profil-Lock- und Diagnose-Guards vollständig geprüft
+
+`browser.py` hatte noch ungetestete Kanten bei optionalen Playwright-Response-
+Hooks, leerer URL-Redaktion, expliziter Diagnose-Auth-Datei, nicht-dict-
+Tokenfeldern, fehlenden Profil-Markern, OAuth-Lock-Root-Auflösung, fehlenden
+optionalen `os.open`-Flags, belegten Profil-Locks, leerem Kontext sowie dem
+Rollback-Pfad, wenn eine bereits commitete Datei vor dem Löschen verschwindet.
+Gezielte Regressionen decken jede Kante ab. Produktionslogik blieb unverändert.
+
+Verifikation: **233 `tests/test_browser_diagnose.py`-/
+`tests/test_browser_profile.py`-Tests**, `browser.py` **663/663 Statements und
+204/204 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check bestanden. Keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
+Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
+Installations- und Reload-Schritte ab.

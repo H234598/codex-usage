@@ -405,6 +405,24 @@ def test_capture_json_response_keeps_known_small_body() -> None:
     assert len(candidates) == 1
 
 
+def test_capture_json_response_accepts_response_without_finished_hook() -> None:
+    candidates = []
+
+    class FakeResponse:
+        url = "https://chatgpt.com/backend-api/wham/usage"
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "application/json",
+            "content-length": "2",
+        }
+
+        def text(self):
+            return "{}"
+
+    _capture_json_response(FakeResponse(), candidates)
+
+    assert len(candidates) == 1
+
+
 @pytest.mark.parametrize(
     "mode",
     [
@@ -628,6 +646,34 @@ def test_profile_lock_file_maps_unlock_error(tmp_path, monkeypatch):
         pass
 
 
+def test_profile_lock_file_handles_missing_optional_open_flags(tmp_path, monkeypatch):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    for name in ("O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
+        monkeypatch.delattr(browser_module.os, name, raising=False)
+
+    with browser_module._profile_lock_file(tmp_path / "lock", profile):
+        pass
+
+
+def test_profile_lock_file_maps_busy_lock(tmp_path, monkeypatch):
+    lock_path = tmp_path / "lock"
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    original_flock = fcntl.flock
+
+    def fail_lock(fd, operation):
+        if operation == fcntl.LOCK_EX | fcntl.LOCK_NB:
+            raise BlockingIOError("lock busy")
+        return original_flock(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", fail_lock)
+
+    with pytest.raises(RuntimeError, match="profile is already in use"):
+        with browser_module._profile_lock_file(lock_path, profile):
+            pass
+
+
 def test_profile_lock_file_closes_fd_when_fdopen_fails(tmp_path, monkeypatch):
     lock_path = tmp_path / "lock"
     profile = tmp_path / "profile"
@@ -766,6 +812,7 @@ def test_save_probe_payloads_rolls_back_when_commit_fails(tmp_path, monkeypatch)
 
     def fail_body_commit(source, target):
         if source.parent.name == "stage" and target.name == "privat-body.txt":
+            (save_dir / "privat-01.json").unlink()
             raise OSError("simulated probe commit failure")
         return original_replace(source, target)
 
@@ -981,6 +1028,24 @@ def test_prepare_profile_rejects_symlink_browser_marker_without_overwriting_targ
         _prepare_profile(account)
 
     assert target.read_text(encoding="utf-8") == "keep"
+
+
+def test_prepare_profile_creates_missing_markers(tmp_path):
+    profile_root = tmp_path / "profile"
+    account = Account(id="privat", label="Privat", profile_dir=str(profile_root))
+
+    profile_dir = _prepare_profile(account)
+
+    assert profile_dir == profile_root / "firefox"
+    assert (profile_root / ".codex-usage-profile").is_file()
+    assert (profile_root / ".codex-usage-profile").read_text(encoding="utf-8")
+    assert (profile_dir / ".codex-usage-browser-profile").read_text(encoding="utf-8") == (
+        "firefox\n"
+    )
+
+
+def test_profile_lock_root_uses_oauth_parent(tmp_path):
+    assert browser_module._profile_lock_root(tmp_path / "oauth" / "profile") == tmp_path
 
 
 def test_profile_lock_rejects_symlink_lock_without_overwriting_target(tmp_path):
@@ -1509,6 +1574,15 @@ def test_diagnose_uses_configured_account_auth_json_by_default(
         assert result["codex_auth"]["path"] == str(auth_path)
     assert captured["path"] == auth_path
 
+    override_path = tmp_path / "override-auth.json"
+    override_result = diagnose_account(
+        account,
+        AppConfig(accounts=(account,)),
+        auth_json_path=override_path,
+    )
+    assert captured["path"] == override_path
+    assert override_result["codex_auth"]["path"] == str(override_path)
+
 
 def test_fetch_rejects_ambiguous_browser_identity_from_configured_auth(tmp_path, monkeypatch):
     account = Account(
@@ -1663,11 +1737,13 @@ def test_fetch_rejects_shared_user_id_account_alias(tmp_path, monkeypatch):
         lambda _account: ("user-test", "account-uuid"),
     )
     monkeypatch.setattr("codex_usage.browser.auth_plan_type_for_account", lambda _account: None)
+    monkeypatch.setattr("codex_usage.browser._redact_url", lambda _url: "")
 
     usage = fetch_account_usage(account, AppConfig(accounts=(account,)))
 
     assert usage.status.value == "error"
     assert usage.error == "backend response has ambiguous account identity"
+    assert usage.source_urls == ()
 
 
 def test_fetch_rejects_limit_values_without_backend_account_id(tmp_path, monkeypatch):

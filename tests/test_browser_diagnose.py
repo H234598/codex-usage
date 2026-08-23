@@ -291,6 +291,18 @@ def test_diagnose_auth_json_reports_non_object_payload(tmp_path):
     assert "top_level_keys" not in result
 
 
+def test_diagnose_auth_json_omits_token_presence_for_non_object_tokens(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(json.dumps({"tokens": "not-an-object"}), encoding="utf-8")
+    auth_path.chmod(0o600)
+
+    result = _diagnose_auth_json(auth_path)
+
+    assert result["readable"] is True
+    assert result["token_fields"] == []
+    assert "token_presence" not in result
+
+
 def test_diagnostic_value_preserves_safe_scalars():
     assert browser_module._diagnostic_value(None) is None
     assert browser_module._diagnostic_value(True) is True
@@ -390,6 +402,7 @@ def test_close_context_ignores_close_error():
         def close(self):
             raise RuntimeError("close failed")
 
+    browser_module._close_context(None)
     browser_module._close_context(BrokenContext())
 
 
