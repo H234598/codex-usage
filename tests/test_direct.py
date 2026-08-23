@@ -136,6 +136,15 @@ def test_direct_response_final_url_rejects_getter_hooks():
     assert direct_module._response_final_url(Response(), "https://chatgpt.com/") == ""
 
 
+def test_direct_trusted_response_url_rejects_string_subclasses():
+    class BrokenStr(str):
+        pass
+
+    assert not direct_module._is_trusted_wham_response_url(
+        BrokenStr("https://chatgpt.com/backend-api/wham/usage")
+    )
+
+
 @pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
 def test_direct_fetch_rejects_non_account_input(account):
     with pytest.raises(ValueError, match="account is invalid"):

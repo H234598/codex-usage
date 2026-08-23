@@ -10321,3 +10321,17 @@ fehlerhaften `headers`-Hook.
 
 Verifikation: **191 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 859: Vertrauenswürdige Response-URLs auf Built-in-Strings begrenzen
+
+`direct._is_trusted_wham_response_url()` akzeptierte URL-`str`-Subklassen als
+vertrauenswürdige Response-Ziele. Damit konnten benutzerdefinierte String-
+Objekte die Trust-Grenze passieren, obwohl sie nicht aus dem normalen JSON-
+oder urllib-Pfad stammen.
+
+Die Trustprüfung akzeptiert jetzt ausschließlich Built-in-`str` vor
+`urlsplit()` und Host-/Portprüfung. Regression stellt sicher, dass eine gültige
+URL-Subklasse nicht als vertrauenswürdig gilt.
+
+Verifikation: **192 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

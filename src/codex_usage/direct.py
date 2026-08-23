@@ -976,7 +976,7 @@ def _response_final_url(response: Any, fallback: str) -> str:
 
 
 def _is_trusted_wham_response_url(value: str) -> bool:
-    if not isinstance(value, str):
+    if type(value) is not str:
         return False
     try:
         parts = urlsplit(value)
