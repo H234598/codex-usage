@@ -11617,3 +11617,13 @@ be verified`, auch wenn Backend User- und Account-ID liefert.
 Verifikation: **302 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **92 %**, Missing-Zeilen 84; keine Settings-Fenster
 gestartet.
+
+## Runde 966: Nicht-finite Direct-Deadline direkt abgewiesen
+
+`direct._direct_deadline()` hatte den Schutz gegen eine nicht-finite
+`time.monotonic()`-Deadline noch nicht direkt belegt. Der neue Test bestätigt
+die sichere `DirectFetchError`-Ablehnung bei `inf`.
+
+Verifikation: **303 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **92 %**, Missing-Zeilen 83; keine Settings-Fenster
+gestartet.

@@ -212,6 +212,13 @@ def test_direct_deadline_returns_monotonic_deadline(monkeypatch):
     assert direct_module._direct_deadline(2) == 102.0
 
 
+def test_direct_deadline_rejects_non_finite_monotonic_result(monkeypatch):
+    monkeypatch.setattr(direct_module.time, "monotonic", lambda: float("inf"))
+
+    with pytest.raises(DirectFetchError, match="positive finite"):
+        direct_module._direct_deadline(1)
+
+
 def test_remaining_direct_timeout_returns_positive_remainder(monkeypatch):
     monkeypatch.setattr(direct_module.time, "monotonic", lambda: 100.0)
 
