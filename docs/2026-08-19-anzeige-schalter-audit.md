@@ -9931,3 +9931,19 @@ Service-/CLI-/Integration-Aufrufer ab.
 Verifikation: **70 fokussierte Service-Tests**, **301 Service-, CLI-,
 Integration-Entrypoint- und Profile-Job-Tests**, Ruff und Diff-Check bestanden;
 keine Settings-Fenster gestartet.
+
+## Runde 831: Device-Login-Prozessgrenzen strikt prüfen
+
+`profile_login.py` akzeptierte beim Device-Login-Timeout und beim Beenden
+gebundener Prozesse noch Integer-Subklassen. Fremde Vergleichsoperatoren
+konnten Validierung und Prozessgruppen-Kill mit rohen Exceptions oder falscher
+Signalweitergabe abbrechen.
+
+Timeout und PID akzeptieren jetzt ausschließlich Built-in-`int`; Boolean- und
+Subklassenwerte werden kontrolliert verworfen, danach bleibt der normale
+Prozess-Killpfad aktiv. Regression deckt Login-, Cleanup-, CLI- und Job-Aufrufer
+ab.
+
+Verifikation: **48 fokussierte Profile-Login-Tests**, **138 Profile-Login-,
+Profile-CLI- und Profile-Job-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

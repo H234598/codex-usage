@@ -155,11 +155,7 @@ def run_device_login(
     _validate_codex_command(codex_bin)
     if not isinstance(config_path, Path) or not config_path.is_absolute():
         raise DeviceLoginError("config path must be absolute")
-    if (
-        isinstance(timeout_seconds, bool)
-        or not isinstance(timeout_seconds, int)
-        or not 1 <= timeout_seconds <= 3600
-    ):
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 3600:
         raise DeviceLoginError("device login timeout is invalid")
     if expected_backend_account_id is not None and (
         not isinstance(expected_backend_account_id, str)
@@ -434,8 +430,7 @@ def _terminate_bounded_process(
     signaled_group = False
     if (
         start_new_session
-        and isinstance(pid, int)
-        and not isinstance(pid, bool)
+        and type(pid) is int
         and pid > 0
     ):
         try:

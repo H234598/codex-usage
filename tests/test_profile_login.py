@@ -22,8 +22,25 @@ from codex_usage.profile_login import (
 )
 
 
+class _BrokenInt(int):
+    def __ge__(self, _other):
+        raise RuntimeError("synthetic profile-login integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic profile-login integer comparison marker")
+
+
 def _account(profile: Path) -> Account:
     return Account(id="alpha", label="Alpha", profile_dir=str(profile))
+
+
+def test_device_login_rejects_numeric_subclass_timeout(tmp_path):
+    with pytest.raises(DeviceLoginError, match="timeout is invalid"):
+        run_device_login(
+            _account(tmp_path / "profile"),
+            tmp_path / "config.toml",
+            timeout_seconds=_BrokenInt(60),
+        )
 
 
 def test_device_events_parse_current_ansi_codex_prompt():
@@ -713,6 +730,28 @@ def test_bounded_process_cleanup_rejects_boolean_pid(monkeypatch):
 
     class FakeProcess:
         pid = True
+
+        def kill(self):
+            signals.append("kill")
+
+        def wait(self, timeout=None):
+            signals.append(("wait", timeout))
+
+    monkeypatch.setattr(
+        "codex_usage.profile_login.os.killpg",
+        lambda pid, signum: signals.append((pid, signum)),
+    )
+
+    _terminate_bounded_process(FakeProcess())
+
+    assert signals == ["kill", ("wait", 1)]
+
+
+def test_bounded_process_cleanup_rejects_numeric_subclass_pid(monkeypatch):
+    signals = []
+
+    class FakeProcess:
+        pid = _BrokenInt(1234)
 
         def kill(self):
             signals.append("kill")
