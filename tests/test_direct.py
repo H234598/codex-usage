@@ -881,6 +881,22 @@ def test_fetch_wham_usage_maps_http_401_to_auth_error(monkeypatch):
         _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_wham_usage_maps_http_500_to_fetch_error(monkeypatch):
+    def fail_urlopen(_request, *, timeout):
+        raise HTTPError(
+            direct_module.WHAM_USAGE_URL,
+            500,
+            "Server Error",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setattr(direct_module, "urlopen", fail_urlopen)
+
+    with pytest.raises(DirectFetchError, match=r"direct fetch failed: HTTP 500"):
+        _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 def test_direct_credentials_are_not_forwarded_to_redirect_target(monkeypatch):
     class FakeResponse:
         status = 200

@@ -11455,3 +11455,13 @@ und bestätigt die kontrollierte `DirectAuthError`-Meldung ohne Secret-Leak.
 Verifikation: **286 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **89 %**, Missing-Zeilen 102; keine Settings-Fenster
 gestartet.
+
+## Runde 950: HTTP-500 im Direct-Fetch direkt abgebildet
+
+`direct._fetch_wham_usage()` hatte den allgemeinen `HTTPError`-Zweig nur
+indirekt. Der neue Test injiziert HTTP 500 und bestätigt die getrennte
+`DirectFetchError`-Meldung statt einer Authentifizierungs-Reaktion.
+
+Verifikation: **287 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 101; keine Settings-Fenster
+gestartet.
