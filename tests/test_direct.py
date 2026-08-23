@@ -1036,6 +1036,26 @@ def test_fetch_wham_usage_rejects_invalid_json_body(monkeypatch):
         _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+def test_fetch_wham_usage_rejects_oversized_response_body(monkeypatch):
+    class FakeResponse:
+        status = 200
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return b"x" * (direct_module.MAX_RESPONSE_BYTES + 1)
+
+    monkeypatch.setattr(direct_module, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    with pytest.raises(DirectFetchError, match="response too large"):
+        _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 def test_jwt_expiry_ignores_non_object_payloads():
     for claims in ([], None, "not-an-object"):
         payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=")

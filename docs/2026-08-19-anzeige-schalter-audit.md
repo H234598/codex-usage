@@ -11495,3 +11495,13 @@ bestätigt die redigierte `direct response is not valid JSON`-Ablehnung.
 Verifikation: **290 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 99; keine Settings-Fenster
 gestartet.
+
+## Runde 954: Oversize-Direct-Response direkt abgewiesen
+
+`direct._fetch_wham_usage()` hatte den Körpergrößen-Guard bisher nicht direkt
+belegt. Der neue Test liefert exakt ein Byte über `MAX_RESPONSE_BYTES` und
+bestätigt die Ablehnung vor JSON-Parsing.
+
+Verifikation: **291 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 98; keine Settings-Fenster
+gestartet.
