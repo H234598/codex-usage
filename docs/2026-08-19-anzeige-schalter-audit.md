@@ -10293,3 +10293,17 @@ Hook; normale kanonische Identitätsaufrufe bleiben unverändert.
 
 Verifikation: **189 Direct-Tests**, **38 abhängige Browser-/Bridge-Tests**,
 Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 857: Response-URL-Getter fail-closed normalisieren
+
+`direct._response_final_url()` las `response.geturl` außerhalb des
+Fehlerfangs. Ein Response-Objekt mit fehlerhaftem Property-Hook konnte damit
+den URL-Trustpfad mit einer rohen Exception abbrechen.
+
+Getter- und Fallback-URL-Zugriff liegen jetzt gemeinsam in einer
+Exception-Grenze; fehlerhafte Response-Objekte liefern eine leere URL und
+werden anschließend als untrusted abgewiesen. Regression simuliert den
+fehlerhaften `geturl`-Hook.
+
+Verifikation: **190 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

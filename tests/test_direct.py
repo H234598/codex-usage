@@ -118,6 +118,15 @@ def test_direct_response_content_type_falls_back_for_malformed_headers():
     assert _response_content_type(LegacyResponse()) == "application/json"
 
 
+def test_direct_response_final_url_rejects_getter_hooks():
+    class Response:
+        @property
+        def geturl(self):
+            raise RuntimeError("synthetic response URL getter marker")
+
+    assert direct_module._response_final_url(Response(), "https://chatgpt.com/") == ""
+
+
 @pytest.mark.parametrize("account", [None, [], "invalid", 1, True, object()])
 def test_direct_fetch_rejects_non_account_input(account):
     with pytest.raises(ValueError, match="account is invalid"):

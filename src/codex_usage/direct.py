@@ -964,14 +964,14 @@ def _fetch_wham_usage(
 
 
 def _response_final_url(response: Any, fallback: str) -> str:
-    geturl = getattr(response, "geturl", None)
-    if callable(geturl):
-        try:
+    try:
+        geturl = getattr(response, "geturl", None)
+        if callable(geturl):
             value = geturl()
-        except (OSError, TypeError, ValueError):
-            return ""
-        return value if isinstance(value, str) else ""
-    value = getattr(response, "url", fallback)
+            return value if isinstance(value, str) else ""
+        value = getattr(response, "url", fallback)
+    except Exception:
+        return ""
     return value if isinstance(value, str) else ""
 
 
