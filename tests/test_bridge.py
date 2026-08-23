@@ -1569,6 +1569,34 @@ def test_latest_rejects_cache_when_auth_identity_changes_during_read(tmp_path, m
     assert invalidated[0].weekly is None
 
 
+def test_latest_identity_change_with_no_cached_rows_takes_empty_path(tmp_path, monkeypatch):
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(tmp_path / "auth.json"),
+    )
+    config = AppConfig(accounts=(account,))
+    identities = iter((("old-user", "old-account"), ("new-user", "new-account")))
+    monkeypatch.setattr(
+        bridge_module,
+        "load_usage_snapshot",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "load_current_usage",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        bridge_module,
+        "auth_identity_for_account",
+        lambda _account: next(identities),
+    )
+
+    assert bridge_module._load_latest_usages_unlocked(config, tmp_path / "snapshots") == []
+
+
 @pytest.mark.parametrize(
     ("snapshot_age", "expected_backend", "expected_remaining"),
     [
@@ -7283,6 +7311,9 @@ def test_bridge_identity_and_debug_sanitizer_reject_invalid_shapes(tmp_path, mon
 def test_bridge_payload_candidates_and_context_guards():
     assert bridge_module._safe_context_value("   ", 10) == "-"
     assert bridge_module._bridge_response_source_priority(1) == 0
+    assert bridge_module._truncated_payload_fields(
+        {"truncatedFields": {"bodyText": False}}
+    ) == set()
     assert _json_candidates_from_payload(
         {"apiResponses": [None, {"url": 1}, {"source": "content-probe", "url": "not-url"}]}
     ) == []
@@ -7429,6 +7460,18 @@ def test_bridge_candidate_parser_covers_newer_duplicates_empty_bodies_and_source
     assert len(candidates) == 1 and candidates[0].payload["account_id"] == "b"
     assert _json_candidates_from_payload({"apiResponses": [{**base}]}) == []
 
+    same_sequence = {
+        "apiResponses": [
+            {**base, "requestSequence": 1, "bodyText": '{"account_id":"a"}'},
+            {**base, "requestSequence": 1, "bodyText": '{"account_id":"a"}'},
+        ]
+    }
+    same_candidates = _json_candidates_from_payload(same_sequence)
+    assert len(same_candidates) == 1 and same_candidates[0].payload["account_id"] == "a"
+    assert _json_candidates_from_payload(
+        {"apiResponses": [{**base, "bodyText": "not json"}]}
+    ) == []
+
     class UrlSwitch(dict):
         url_calls = 0
 
@@ -7480,6 +7523,31 @@ def test_bridge_extension_rollback_reports_cleanup_errors(tmp_path, monkeypatch)
     monkeypatch.setattr(Path, "replace", replace)
     monkeypatch.setattr(Path, "is_symlink", is_symlink)
     with pytest.raises(ExceptionGroup, match="rollback failed"):
+        write_bridge_extension(
+            "alpha",
+            output_dir,
+            endpoint="http://127.0.0.1:8765/ingest",
+            interval_seconds=300,
+            token="A" * 32,
+        )
+
+
+def test_bridge_extension_rollback_accepts_missing_committed_output(tmp_path, monkeypatch):
+    output_dir = tmp_path / "extension"
+    output_dir.mkdir()
+    for filename in ("manifest.json", "background.js", "content.js", "page-hook.js"):
+        (output_dir / filename).write_text("old", encoding="utf-8")
+    original_replace = Path.replace
+
+    def replace(source, target):
+        if source.parent.name == "stage" and target.name == "page-hook.js":
+            (output_dir / "content.js").unlink()
+            raise OSError("primary commit failure")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+
+    with pytest.raises(OSError, match="primary commit failure"):
         write_bridge_extension(
             "alpha",
             output_dir,
@@ -7552,6 +7620,26 @@ def test_bridge_server_connection_cleanup_and_plain_request_paths(tmp_path, monk
     assert server._connection_slots.acquire(blocking=False)
     server._connection_slots.release()
     server.server_close()
+
+
+def test_bridge_server_plain_request_thread_skips_tls_handshake(tmp_path, monkeypatch):
+    handler = _make_handler(AppConfig(accounts=()), tmp_path / "snapshots", {})
+    raw_socket = object()
+    calls = []
+    server = _BoundedThreadingHTTPServer(("127.0.0.1", 0), handler)
+    monkeypatch.setattr(
+        ThreadingHTTPServer,
+        "process_request_thread",
+        lambda _server, request, address: calls.append((request, address)),
+    )
+    assert server._connection_slots.acquire(blocking=False)
+
+    try:
+        server.process_request_thread(raw_socket, ("127.0.0.1", 1))
+    finally:
+        server.server_close()
+
+    assert calls == [(raw_socket, ("127.0.0.1", 1))]
 
 
 def test_bridge_server_runs_and_closes_on_shutdown(tmp_path, monkeypatch, capsys):
@@ -7939,6 +8027,22 @@ def test_bridge_browser_identity_helpers_cover_mismatch_and_ambiguity(tmp_path, 
     )
     with pytest.raises(ValueError, match="ambiguous backend account identity"):
         bridge_module._reject_ambiguous_browser_identity(config, account, {})
+
+    no_account_id = replace(other, id="gamma")
+    monkeypatch.setattr(
+        bridge_module,
+        "auth_identity_for_account",
+        lambda item: (
+            ("user", None)
+            if item.id == no_account_id.id
+            else ("user", "account-alpha")
+        ),
+    )
+    bridge_module._reject_ambiguous_browser_identity(
+        AppConfig(accounts=(account, no_account_id)),
+        account,
+        {},
+    )
 
     monkeypatch.setattr(
         bridge_module,

@@ -13392,3 +13392,36 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1110: Kleine Supportmodule vollständig geprüft
+
+Die unveränderten Module `terminal.py`, `spark_health.py`, `usage_resets.py`
+und `json_utils.py` wurden mit ihren fokussierten Regressionen geprüft; alle
+Branches sind bereits abgedeckt. Produktionslogik blieb unverändert.
+
+Verifikation: **35 `tests/test_terminal.py`-Tests**, `terminal.py` **88/88
+Statements und 38/38 Branches**; **35 `tests/test_spark_health.py`-Tests**,
+`spark_health.py` **125/125 und 46/46**; **23 `tests/test_usage_resets.py`-
+Tests**, `usage_resets.py` **104/104 und 64/64**; **13
+`tests/test_json_utils.py`-Tests**, `json_utils.py` **49/49 und 26/26** —
+jeweils 100 % Coverage. Mypy, Ruff und Diff-Check bestanden. Keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
+Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
+Installations- und Reload-Schritte ab.
+
+## Runde 1111: Bridge-Parser-, Extension- und Identity-Guards vollständig geprüft
+
+`bridge.py` hatte noch acht echte Kanten ohne Regression: nicht gesetzte
+Truncation-Flags, identische Sequenz-Duplikate, unparsebare gültige API-
+Antworten, fehlende bereits committed Extension-Datei beim Rollback, Plain-
+HTTP-Worker ohne TLS-Handshake, Kandidaten ohne Backend-Account-ID sowie
+Identity-Wechsel ohne Snapshot-/Current-Werte. Gezielte Regressionen decken
+alle Zustände ab. Produktionslogik blieb unverändert.
+
+Verifikation: **289 `tests/test_bridge.py`-Tests**, `bridge.py` **1148/1148
+Statements und 506/506 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.
