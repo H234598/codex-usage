@@ -11945,3 +11945,13 @@ sichere `None`-Rückgabe bei `exp=inf`.
 Verifikation: **354 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **99 %**, Missing-Zeilen 3; keine Settings-Fenster
 gestartet.
+
+## Runde 998: Current-JWT-Expiry vollständig fail-closed
+
+`direct._current_jwt_claims()` hatte die letzten beiden offenen
+Expiry-Zweige: native `inf`-Werte und `float()`-Overflow bei riesigen Integern.
+Zwei Tests bestätigen jeweils `None`.
+
+Verifikation: **356 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **100 %**, keine Missing-Zeilen; keine Settings-Fenster
+gestartet.

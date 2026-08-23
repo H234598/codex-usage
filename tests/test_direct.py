@@ -1539,6 +1539,26 @@ def test_current_jwt_claims_rejects_dict_subclass_results(monkeypatch):
     assert _current_jwt_claims("token") is None
 
 
+def test_current_jwt_claims_rejects_non_finite_expiry(monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_jwt_claims",
+        lambda _token: {"exp": float("inf")},
+    )
+
+    assert _current_jwt_claims("token") is None
+
+
+def test_current_jwt_claims_rejects_overflowing_expiry(monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_jwt_claims",
+        lambda _token: {"exp": 10**10_000},
+    )
+
+    assert _current_jwt_claims("token") is None
+
+
 def test_jwt_expiry_rejects_dict_subclass_results(monkeypatch):
     class BrokenClaims(dict):
         pass
