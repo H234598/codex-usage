@@ -25,6 +25,12 @@ class _TrustedMalformedWindow(LimitWindow):
         return True
 
 
+class _TrustedUsageWindow(LimitWindow):
+    @property
+    def has_invalid_usage_value(self):
+        return False
+
+
 @pytest.mark.parametrize("duration", [True, 1.0, "1", 0, -1, None])
 def test_window_for_duration_rejects_invalid_duration_types(duration):
     pool = UsagePool(
@@ -181,6 +187,20 @@ def test_limit_window_invalid_usage_values_fail_closed(window):
     ],
 )
 def test_limit_window_remaining_percent_uses_valid_sources(window, expected):
+    assert window.remaining_percent == expected
+
+
+@pytest.mark.parametrize(
+    ("window", "expected"),
+    [
+        (_TrustedUsageWindow(name="weekly", used=float("nan")), None),
+        (_TrustedUsageWindow(name="weekly", used=10, limit=0), None),
+        (_TrustedUsageWindow(name="weekly", used=100, limit=100), 0.0),
+        (_TrustedUsageWindow(name="weekly", remaining=120, limit=100), None),
+        (_TrustedUsageWindow(name="weekly"), None),
+    ],
+)
+def test_limit_window_remaining_percent_defensive_guards(window, expected):
     assert window.remaining_percent == expected
 
 

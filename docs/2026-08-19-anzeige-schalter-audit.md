@@ -12097,3 +12097,16 @@ Verifikation: **47 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **92 %**, verbleibende Missing-Zeilen liegen
 in defensiven Exception-/Pool-/Serialisierungszweigen; keine Settings-Fenster
 gestartet.
+
+## Runde 1011: Defensive Remaining-Percent-Guards direkt ausgeführt
+
+Die internen `LimitWindow.remaining_percent`-Guards für nichtfinite Werte,
+Null-Limit, ausgeschöpftes Limit, ungültige Restmenge und vollständig leere
+Werte waren nur durch den vorgelagerten Validierungsvertrag geschützt. Ein
+kontrolliertes Testdouble bestätigt diese fail-closed Rückgaben direkt, ohne
+Produktionslogik zu ändern.
+
+Verifikation: **52 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **94 %**, verbleibende Missing-Zeilen liegen
+in Identity-, Pool- und Serialisierungs-Exceptionpfaden; keine Settings-Fenster
+gestartet.
