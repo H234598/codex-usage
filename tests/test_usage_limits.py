@@ -36,6 +36,12 @@ class _BrokenInt(int):
         raise AssertionError("numeric subclass conversion must not run")
 
 
+class _TrustedWindow(LimitWindow):
+    @property
+    def has_known_identity(self):
+        return True
+
+
 @pytest.mark.parametrize("payload", [None, [], "invalid", 42, True])
 def test_usage_pool_parsers_fail_closed_for_non_object_payload(payload):
     assert parse_wham_usage_pools(
@@ -410,6 +416,11 @@ def test_usage_pool_rejects_name_and_duration_alias_collision():
 
     assert _window_identities_are_unique(pool.windows) is False
     assert pool.has_valid_usage is False
+
+
+@pytest.mark.parametrize("name", [42, "garbage"])
+def test_window_identity_helper_rejects_unmapped_trusted_window(name):
+    assert _window_identities_are_unique((_TrustedWindow(name=name),)) is False
 
 
 def test_wham_marks_missing_window_duration_unavailable():

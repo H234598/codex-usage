@@ -12029,3 +12029,15 @@ Verifikation: **134 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `usage_limits.py`: **98 %**, verbleibende Missing-Zeilen
 liegen ausschließlich in Fensteridentitäts-, Zeit- und Prozentkonversionen
 (512, 526, 538–539, 571–572); keine Settings-Fenster gestartet.
+
+## Runde 1005: Unbekannte Fensteridentitäten fail-closed abgesichert
+
+`_window_identities_are_unique()` hatte die defensiven Pfade für nichtstringige
+und nicht abbildbare Namen hinter einem bereits als vertrauenswürdig markierten
+Fensterobjekt noch offen. Parametrisierte Regressionen bestätigen, dass beide
+Fälle abgewiesen werden; normale Modellobjekte bleiben unverändert.
+
+Verifikation: **136 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `usage_limits.py`: **99 %**, verbleibende Missing-Zeilen
+liegen ausschließlich in absoluter Reset-Zeit- und Prozentkonversion
+(538–539, 571–572); keine Settings-Fenster gestartet.
