@@ -13623,3 +13623,20 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1123: Applet-Pooldetaildarstellung vollständig ausgeführt
+
+Die Regression für `_poolDetailParts` deckt fehlende, nicht verfügbare,
+nicht freigegebene und erschöpfte Pools, Standard-/Override-Bezeichnungen,
+ungültige und unbekannte Fenster, leere Ausschlussmengen, vollständig
+ausgeschlossene Fenster sowie vollständige und leere Percent-/Reset-Darstellung
+ab. Damit sind alle V8-Blockranges der Funktion erreicht. Produktionslogik
+blieb unverändert.
+
+Verifikation: **521 `tests/applet_runtime.js`-Tests**, **521 bestanden**;
+V8-Raw-Coverage: `_poolDetailParts` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

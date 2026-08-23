@@ -8170,6 +8170,49 @@ test("unknown pool windows never appear as numeric details", () => {
   assert.equal(mixed.plain, "Spark nicht verfügbar · Limit unbekannt");
 });
 
+test("pool detail parts cover availability, exclusion and rendered window paths", () => {
+  const applet = makeApplet();
+
+  assert.equal(applet._poolDetailParts(null, "alpha", "click", "Spark", []), null);
+  assert.equal(applet._poolDetailParts({available: false}, "alpha", "click", "Spark", []).plain,
+    "Spark nicht verfügbar");
+  assert.equal(applet._poolDetailParts({available: false}, "alpha", "click", "", [], "Custom").plain,
+    "Custom nicht verfügbar");
+  assert.equal(applet._poolDetailParts({available: false}, "alpha", "click", "", []).plain,
+    "Limit nicht verfügbar");
+  assert.equal(applet._poolDetailParts({available: true, allowed: false}, "alpha", "click", "Spark", []).plain,
+    "Spark nicht freigegeben");
+  assert.equal(applet._poolDetailParts({available: true, exhausted: true}, "alpha", "click", "Spark", []).plain,
+    "Spark erschöpft");
+  assert.equal(applet._poolDetailParts({available: true, windows: []}, "alpha", "click", "Spark", []).plain,
+    "Spark nicht verfügbar · Limit unbekannt");
+  assert.equal(applet._poolDetailParts({available: true, windows: "bad"}, "alpha", "click", "", []).plain,
+    "Limit nicht verfügbar · Limit unbekannt");
+  assert.equal(applet._poolDetailParts({available: true, windows: [{name: "unknown", remaining: 80}]},
+    "alpha", "click", "", []).plain, "Limit nicht verfügbar · Limit unbekannt");
+  assert.equal(applet._poolDetailParts({available: true, windows: []}, "alpha", "click", "", []).plain,
+    "Limit nicht verfügbar · Limit unbekannt");
+  assert.equal(applet._poolDetailParts({available: true, windows: [{name: "weekly", remaining: 80}]},
+    "alpha", "click", "Spark", [604800]), null);
+
+  applet._percentParts = () => ({plain: "80%", markup: "80%"});
+  applet._windowResetParts = () => ({plain: "Rest 1h", markup: "Rest 1h"});
+  const rendered = applet._poolDetailParts({
+    available: true,
+    windows: [{name: "weekly", remaining: 80}],
+  }, "alpha", "click", "Spark", undefined, "Woche");
+  assert.equal(rendered.plain, "Spark Woche 80% (Rest 1h)");
+  assert.equal(rendered.markup, "Spark Woche 80% (Rest 1h)");
+  applet._percentParts = () => ({plain: "", markup: ""});
+  applet._windowResetParts = () => ({plain: "", markup: ""});
+  const bare = applet._poolDetailParts({
+    available: true,
+    windows: [{name: "weekly", remaining: 80}],
+  }, "alpha", "click", "", []);
+  assert.equal(bare.plain, "Woche");
+  assert.equal(bare.markup, "Woche");
+});
+
 test("cache invalidation clears dynamic usage pools", () => {
   const applet = makeApplet();
   const invalidated = applet._clearInvalidatedUsage({
