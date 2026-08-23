@@ -370,6 +370,16 @@ def auth_identity_changed(
     after_account_id: str | None,
 ) -> bool:
     """Treat account IDs as primary while rejecting two known user IDs that differ."""
+    if any(
+        value is not None and type(value) is not str
+        for value in (
+            before_user_id,
+            before_account_id,
+            after_user_id,
+            after_account_id,
+        )
+    ):
+        return True
     if before_account_id or after_account_id:
         if before_account_id != after_account_id:
             return True

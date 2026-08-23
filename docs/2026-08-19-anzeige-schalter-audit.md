@@ -10457,3 +10457,17 @@ jedem Pfadaufruf ab; native Pfade und bestehende Typfehler bleiben unverändert.
 
 Verifikation: **201 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 869: Identitätsvergleich auf Built-in-Strings begrenzen
+
+`direct.auth_identity_changed()` verwendete Account- und User-IDs direkt in
+Bool- und Vergleichsoperationen. Eine String-Subclass konnte dadurch bereits
+im primären Account-ID-Test einen rohen Hook-Fehler auslösen.
+
+Der Vergleich weist jetzt jeden nichtleeren Nicht-Built-in-String als
+Identitätswechsel zurück, bevor Bool- oder Gleichheitsoperatoren laufen.
+Regression deckt den Bool-Hook ab; normale gleiche und geänderte IDs bleiben
+unverändert.
+
+Verifikation: **202 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

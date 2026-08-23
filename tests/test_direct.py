@@ -723,6 +723,19 @@ def test_auth_identity_rejects_changed_user_with_same_account():
     ) is True
 
 
+def test_auth_identity_changed_rejects_string_subclass_hooks():
+    class BrokenStr(str):
+        def __bool__(self):
+            raise RuntimeError("synthetic identity marker")
+
+    assert auth_identity_changed(
+        before_user_id=None,
+        before_account_id=BrokenStr("shared-account"),
+        after_user_id=None,
+        after_account_id=None,
+    ) is True
+
+
 def test_canonical_backend_identity_rejects_foreign_account_without_auth_account_id():
     with pytest.raises(ValueError, match="backend response belongs to a different account"):
         canonical_backend_identity(
