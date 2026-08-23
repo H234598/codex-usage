@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import codex_usage.integration_snapshot as snapshot_module
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.private_io import write_private_text
 from codex_usage.usage_resets import UsageResetState
@@ -20,6 +21,25 @@ RESET = datetime(2026, 8, 15, 15, 0, tzinfo=UTC)
 class _RaisingTimezone(tzinfo):
     def utcoffset(self, _value):
         raise RuntimeError("synthetic timezone marker")
+
+
+class _BrokenInt(int):
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic snapshot integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic snapshot integer comparison marker")
+
+    def __gt__(self, _other):
+        raise RuntimeError("synthetic snapshot integer comparison marker")
+
+    def __float__(self):
+        raise RuntimeError("synthetic snapshot integer conversion marker")
+
+
+class _BrokenFloat(float):
+    def __float__(self):
+        raise RuntimeError("synthetic snapshot float conversion marker")
 
 
 def test_cost_window_contract_matches_history_limit_and_producer_coverages():
@@ -138,6 +158,71 @@ def _pool(key: str, windows: tuple[LimitWindow, ...]) -> UsagePool:
         windows=windows,
         availability_sources=("usage",),
     )
+
+
+def test_schema1_numeric_boundaries_reject_subclasses_before_operations():
+    broken_int = _BrokenInt(1)
+    broken_float = _BrokenFloat(50.0)
+
+    for helper, value in (
+        (snapshot_module._canonical_percent, broken_float),
+        (snapshot_module._canonical_cost, broken_float),
+    ):
+        with pytest.raises(snapshot_module.IntegrationInvalidSource):
+            helper(value)
+    with pytest.raises(snapshot_module.IntegrationInvalidSource):
+        snapshot_module._canonical_int(broken_int, maximum=100)
+
+    class BrokenLimitWindow(LimitWindow):
+        @property
+        def remaining_percent(self):
+            return broken_float
+
+    assert snapshot_module._pool_windows(
+        _pool("main", (BrokenLimitWindow(name="5h", duration_seconds=18_000),))
+    ) == []
+
+    cost_window = {
+        "lookback_seconds": 3600,
+        "pool": "main",
+        "limit_window_seconds": 18_000,
+        "consumed_percentage_points": 12.5,
+        "coverage": "complete",
+        "sample_count": broken_int,
+    }
+    with pytest.raises(snapshot_module.IntegrationInvalidSource):
+        snapshot_module._canonical_cost_window(cost_window)
+
+    with pytest.raises(snapshot_module.IntegrationInvalidSource):
+        snapshot_module._canonical_document(
+            {
+                "schema_version": broken_int,
+                "generated_at": "2026-08-15T10:05:00Z",
+                "accounts": [],
+            }
+        )
+    with pytest.raises(snapshot_module.IntegrationInvalidSource):
+        snapshot_module._canonical_document(
+            {
+                "schema_version": 1,
+                "generated_at": "2026-08-15T10:05:00Z",
+                "accounts": [
+                    {
+                        "account_id": "alpha",
+                        "status": "ok",
+                        "freshness": {
+                            "captured_at": "2026-08-15T10:00:00Z",
+                            "stale": False,
+                        },
+                        "usage_resets": {
+                            "available": broken_int,
+                            "known": True,
+                            "redeem_capability": False,
+                        },
+                    }
+                ],
+            }
+        )
 
 
 def _usage_with_pools(pools: tuple[UsagePool, ...]) -> AccountUsage:

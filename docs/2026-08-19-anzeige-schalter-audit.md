@@ -9823,3 +9823,19 @@ Aufrufer ab.
 
 Verifikation: **178 fokussierte Browser-Tests**, **516 Browser-, Scheduler- und
 CLI-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 824: Integration-Snapshot-Numerik strikt kanonisieren
+
+`integration_snapshot.py` akzeptierte bei Fensterdauer, Restprozent, Kosten,
+Sample-/Forecast-Werten, Schema-Version und Reset-Anzahl noch numerische
+Subklassen. Fremde Vergleichs- oder `float()`-Operatoren konnten dadurch die
+Snapshot-Kanonisierung und den Export mit rohen Exceptions abbrechen.
+
+Alle Snapshot-Numerikgrenzen akzeptieren jetzt ausschließlich Built-in-`int`
+und `float`; ungültige Werte werden als `IntegrationInvalidSource` verworfen.
+Regression deckt Projektion, Kanonisierung und die Integration-Entrypoint-/
+Installer-Aufrufer ab.
+
+Verifikation: **54 fokussierte Snapshot-Tests**, **233 Snapshot-, Entrypoint-
+und Installer-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.

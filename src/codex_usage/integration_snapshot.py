@@ -251,17 +251,12 @@ def _pool_windows(pool: UsagePool) -> list[dict[str, object]]:
         duration = window.duration_seconds
         if duration is None:
             duration = _WINDOW_NAME_SECONDS.get(window.name.strip().casefold())
-        if (
-            isinstance(duration, bool)
-            or not isinstance(duration, int)
-            or not 0 < duration <= MAX_HISTORY_WINDOW_SECONDS
-        ):
+        if type(duration) is not int or not 0 < duration <= MAX_HISTORY_WINDOW_SECONDS:
             continue
         remaining = window.remaining_percent
         if (
             remaining is None
-            or isinstance(remaining, bool)
-            or not isinstance(remaining, (int, float))
+            or type(remaining) not in (int, float)
         ):
             continue
         try:
@@ -446,7 +441,7 @@ def _scan_secrets(value: object, *, depth: int = 0) -> None:
         ):
             _invalid()
         return
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or type(value) in (bool, int, float):
         return
     _invalid()
 
@@ -472,7 +467,7 @@ def _canonical_token(value: object, *, maximum: int) -> str:
 
 
 def _canonical_percent(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         _invalid()
     try:
         result = float(value)
@@ -484,7 +479,7 @@ def _canonical_percent(value: object) -> float:
 
 
 def _canonical_cost(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if type(value) not in (int, float):
         _invalid()
     try:
         result = float(value)
@@ -496,7 +491,7 @@ def _canonical_cost(value: object) -> float:
 
 
 def _canonical_int(value: object, *, maximum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= maximum:
+    if type(value) is not int or not 0 < value <= maximum:
         _invalid()
     return value
 
@@ -540,16 +535,11 @@ def _canonical_cost_window(value: object) -> dict[str, object]:
     }:
         _invalid()
     sample_count = value["sample_count"]
-    if (
-        isinstance(sample_count, bool)
-        or not isinstance(sample_count, int)
-        or not 0 <= sample_count <= MAX_HISTORY_SAMPLES
-    ):
+    if type(sample_count) is not int or not 0 <= sample_count <= MAX_HISTORY_SAMPLES:
         _invalid()
     estimate = value.get("estimated_seconds_to_exhaustion")
     if estimate is not None and (
-        isinstance(estimate, bool)
-        or not isinstance(estimate, int)
+        type(estimate) is not int
         or not 0 <= estimate <= MAX_FORECAST_SECONDS
     ):
         _invalid()
@@ -580,8 +570,7 @@ def _canonical_document(document: object) -> dict[str, object]:
     _scan_secrets(document)
     schema_version = document.get("schema_version")
     if (
-        isinstance(schema_version, bool)
-        or not isinstance(schema_version, int)
+        type(schema_version) is not int
         or schema_version != 1
         or "generated_at" not in document
     ):
@@ -656,11 +645,7 @@ def _canonical_document(document: object) -> dict[str, object]:
             ):
                 _invalid()
             if resets["known"]:
-                if (
-                    isinstance(available, bool)
-                    or not isinstance(available, int)
-                    or not 0 <= available <= 10_000
-                ):
+                if type(available) is not int or not 0 <= available <= 10_000:
                     _invalid()
             elif available is not None:
                 _invalid()
