@@ -199,7 +199,7 @@ def write_private_text(
     mode: int = 0o600,
     replace_existing: bool = True,
 ) -> None:
-    if not isinstance(text, str):
+    if type(text) is not str:
         raise ValueError(f"{label} text is invalid")
     path = _require_path(path, label=label)
     if (

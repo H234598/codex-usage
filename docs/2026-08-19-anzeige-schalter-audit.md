@@ -10170,3 +10170,17 @@ vor Nesting-Scan und `json.loads`. Regression deckt String- und Bytes-Hooks ab.
 
 Verifikation: **9 JSON-Utility-Tests**, **272 State-Tests**, Ruff und Diff-Check
 bestanden; keine Settings-Fenster gestartet.
+
+## Runde 848: Private-Text-Payload auf Built-in-Strings begrenzen
+
+`private_io.write_private_text()` akzeptierte `str`-Subklassen und rief deren
+`encode()` direkt auf. Ein manipuliertes Textobjekt konnte damit rohe
+Exceptions vor dem atomaren Schreibpfad auslösen.
+
+Der Writer akzeptiert jetzt ausschließlich Built-in-`str` vor Pfad-/Encode-/I/O-
+Arbeit. Regression deckt den fehlerhaften Encode-Hook ab; bestehende private
+Schreib- und Rollbackpfade bleiben unverändert.
+
+Verifikation: **52 Private-IO-Tests**, **296 abhängige Config-/History-/Snapshot-
+und Entrypoint-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.

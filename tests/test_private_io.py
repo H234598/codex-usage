@@ -310,6 +310,19 @@ def test_write_private_text_rejects_non_private_mode(tmp_path, mode):
     assert not path.exists()
 
 
+def test_write_private_text_rejects_string_subclass_before_encode(tmp_path):
+    class BrokenStr(str):
+        def encode(self, *_args, **_kwargs):
+            raise RuntimeError("synthetic private text marker")
+
+    with pytest.raises(ValueError, match="text is invalid"):
+        write_private_text(
+            tmp_path / "value.json",
+            BrokenStr("secret"),
+            label="value",
+        )
+
+
 def test_write_private_text_can_create_without_replacing_existing_file(tmp_path):
     path = tmp_path / "value.json"
     path.write_text("old", encoding="utf-8")
