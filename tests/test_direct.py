@@ -518,6 +518,12 @@ def test_reset_regression_detects_usage_drop_with_same_absolute_reset():
     ) is True
 
 
+def test_signature_reset_identity_uses_absolute_reset_bucket():
+    assert direct_module._signature_reset_identity(
+        {"limit_window_seconds": 18_000, "reset_at": 1_000}
+    ) == ("at", 200)
+
+
 def test_signature_flag_rejects_string_hooks():
     class BrokenFlag:
         def __str__(self):

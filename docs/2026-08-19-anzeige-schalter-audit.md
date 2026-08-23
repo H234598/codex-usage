@@ -11390,3 +11390,12 @@ Helper muss diesen Rücksprung als Regression markieren.
 
 Verifikation: **279 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 943: Reset-Identität direkt gebucketet
+
+`direct._signature_reset_identity()` hatte bisher keinen direkten Test. Der
+neue Test bestätigt die absolute Reset-Identität und ihr Fünf-Sekunden-Bucket
+für ein gültiges natives Fenster.
+
+Verifikation: **280 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
