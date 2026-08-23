@@ -13783,3 +13783,18 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1133: Applet-Tooltipdarstellung vollständig ausgeführt
+
+Die Regression für `_tooltipContent` deckt leere Identitätszeilen,
+Reset-/Restzeit-Fallbacks für beide Fenster sowie Tokenverbrauch, Credits,
+Creditverbrauch und Resets im Tooltip ab. Damit sind alle V8-Blockranges der
+Funktion erreicht. Produktionslogik blieb unverändert.
+
+Verifikation: **531 `tests/applet_runtime.test.js`-Tests**, **531 bestanden**;
+V8-Raw-Coverage: `_tooltipContent` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

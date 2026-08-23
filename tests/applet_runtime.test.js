@@ -3591,6 +3591,51 @@ test("hover tooltip puts reset duration on its own line", () => {
   assert.equal(durationIndex, resetIndex + 1);
 });
 
+test("tooltip content renders optional metric lines and reset fallbacks", () => {
+  const applet = makeApplet();
+  applet._accountDisplayText = () => "";
+  applet._consumptionParts = () => ({plain: "Tokenverbrauch", markup: "<token>"});
+  applet._creditParts = () => ({plain: "Credits", markup: "<credits>"});
+  applet._creditConsumptionParts = () => ({plain: "Creditverbrauch", markup: "<credit-consumption>"});
+  applet._usageResetParts = () => ({plain: "Resets", markup: "<resets>"});
+
+  let phase = 0;
+  applet._windowResetParts = (_window, _account, _surface, _includeUnselected, part) => {
+    if (part === "date-time") {
+      return phase === 0
+        ? (_window === applet._usages[0].five_hour
+          ? {plain: "", markup: ""}
+          : {plain: "W", markup: "wm"})
+        : (_window === applet._usages[0].five_hour
+          ? {plain: "F", markup: "fm"}
+          : {plain: "", markup: ""});
+    }
+    if (part === "duration") {
+      return phase === 0
+        ? (_window === applet._usages[0].five_hour
+          ? {plain: "", markup: ""}
+          : {plain: "DW", markup: "dwm"})
+        : (_window === applet._usages[0].five_hour
+          ? {plain: "DF", markup: "dfm"}
+          : {plain: "", markup: ""});
+    }
+    return {plain: "", markup: ""};
+  };
+
+  const first = applet._tooltipContent();
+  assert.match(first.plain, /Reset 5h –, Woche W/);
+  assert.match(first.plain, /Restzeit 5h –, Woche DW/);
+  assert.match(first.plain, /Tokenverbrauch/);
+  assert.match(first.plain, /Credits/);
+  assert.match(first.plain, /Creditverbrauch/);
+  assert.match(first.plain, /Resets/);
+
+  phase = 1;
+  const second = applet._tooltipContent();
+  assert.match(second.plain, /Reset 5h F, Woche –/);
+  assert.match(second.plain, /Restzeit 5h DF, Woche –/);
+});
+
 test("click separator is inserted before marked account", () => {
   const applet = makeApplet();
   applet.menu = {
