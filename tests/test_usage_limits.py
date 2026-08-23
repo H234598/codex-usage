@@ -993,6 +993,20 @@ def test_app_server_main_slots_infer_missing_window_durations():
     assert main.has_valid_usage is True
 
 
+def test_app_server_ignores_missing_main_duration_when_other_duration_is_invalid():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 2},
+                "secondary": {"usedPercent": 51, "windowDurationMins": "bad"},
+            }
+        },
+        captured_at=NOW,
+    )
+
+    assert main is None
+
+
 def test_app_server_keeps_explicit_weekly_only_bucket_without_duplicate_inference():
     main, _ = parse_app_server_usage_pools(
         {

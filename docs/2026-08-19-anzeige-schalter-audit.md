@@ -12005,3 +12005,15 @@ Verifikation: **132 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `usage_limits.py`: **97 %**, verbleibende Missing-Zeilen
 liegen ausschließlich in Fallback-/Identitäts-/Konversionspfaden (366, 436,
 465, 512, 526, 538–539, 571–572); keine Settings-Fenster gestartet.
+
+## Runde 1003: Ungültige App-Server-Fallback-Dauer fail-closed behandelt
+
+`usage_limits._app_server_pool()` hatte den Guard für ein fehlendes Main-
+Window mit nichtnumerischer Gegenfenster-Dauer noch offen. Der neue Test
+bestätigt, dass daraus kein erfundenes Fenster entsteht und der Main-Pool
+`None` bleibt.
+
+Verifikation: **133 Usage-Limits-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `usage_limits.py`: **97 %**, verbleibende Missing-Zeilen
+liegen ausschließlich in Fenster-/Identitäts-/Zeit- und Prozentkonversionen
+(436, 465, 512, 526, 538–539, 571–572); keine Settings-Fenster gestartet.
