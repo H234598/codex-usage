@@ -13606,3 +13606,20 @@ Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
 Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
 Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
 ab.
+
+## Runde 1122: Applet-dynamische Delta-Schwelle vollständig ausgeführt
+
+Die Regression für `_panelDeltaIsDynamic` deckt jetzt ungültige Usage- und
+Kandidatenwerte, negative/ungültige Raten, unzulässige Abdeckungen und Pools,
+fehlende Credits-, Spark- und Hauptfenster, benannte Sonderdauern, ungültige
+Dauern, ungültige Horizons sowie überlaufende Projektionen ab. Gültige Spark-
+und Hauptpoolpfade bleiben ebenfalls geprüft. Produktionslogik blieb
+unverändert.
+
+Verifikation: **520 `tests/applet_runtime.test.js`-Tests**, **520 bestanden**;
+V8-Raw-Coverage: `_panelDeltaIsDynamic` ohne ungezählte Blockranges;
+`git diff --check` bestanden. Keine Settings-Fenster gestartet. Die
+Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt.
+Für diese Runde sind keine fachlichen Freigaben offen; die bestehende
+Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und Reload-Schritte
+ab.

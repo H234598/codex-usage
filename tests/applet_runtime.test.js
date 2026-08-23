@@ -10193,6 +10193,78 @@ test("Tokendelta supports dynamic threshold against the next reset", () => {
   assert.match(applet._panelDeltaPart(usage, 32, "panel").markup, /<span /);
 });
 
+test("dynamic delta guard matrix fails closed for invalid candidates and windows", () => {
+  const applet = makeApplet();
+  const usage = applet._usages[0];
+  const candidate = {
+    pool: "main",
+    limit_window_seconds: 18000,
+    lookback_seconds: 600,
+    consumed_percentage_points: 10,
+    coverage: "complete",
+  };
+
+  assert.equal(applet._panelDeltaIsDynamic(null, candidate), false);
+  assert.equal(applet._panelDeltaIsDynamic(usage, null), false);
+  assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
+    lookback_seconds: 0,
+  })), false);
+  assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
+    consumed_percentage_points: -1,
+  })), false);
+  assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
+    pool: "credits",
+  })), false);
+  assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
+    pool: "gpt-5.3-codex-spark",
+  })), false);
+
+  usage.models = {
+    "gpt-5.3-codex-spark": {
+      available: true,
+      allowed: true,
+      limit_reached: false,
+      exhausted: false,
+      windows: [{name: "5h", duration_seconds: 18000, remaining: 80}],
+    },
+  };
+  assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
+    pool: "gpt-5.3-codex-spark",
+    consumed_percentage_points: 1,
+  })), false);
+
+  usage.main = {
+    available: true,
+    allowed: true,
+    limit_reached: false,
+    exhausted: false,
+    windows: [{name: "1d", duration_seconds: 86400, remaining: 80}],
+  };
+  assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
+    limit_window_seconds: 86400,
+    consumed_percentage_points: 1,
+  })), true);
+
+  const missingWeekly = Object.assign({}, candidate, {
+    limit_window_seconds: 604800,
+  });
+  const savedWeekly = usage.weekly;
+  usage.weekly = null;
+  assert.equal(applet._panelDeltaIsDynamic(usage, missingWeekly), false);
+  usage.weekly = Object.assign({}, savedWeekly, {duration_seconds: "bad"});
+  assert.equal(applet._panelDeltaIsDynamic(usage, missingWeekly), false);
+  usage.weekly = savedWeekly;
+
+  const originalDateMillis = applet._dateMillis;
+  applet._dateMillis = () => NaN;
+  assert.equal(applet._panelDeltaIsDynamic(usage, candidate), false);
+  applet._dateMillis = originalDateMillis;
+  usage.five_hour.reset_at = null;
+  assert.equal(applet._panelDeltaIsDynamic(usage, Object.assign({}, candidate, {
+    consumed_percentage_points: Number.MAX_VALUE,
+  })), false);
+});
+
 test("token consumption delta uses consumed-value threshold and own styles", () => {
   const applet = makeApplet();
   applet._deltaStyles = {
