@@ -149,6 +149,21 @@ def test_reset_parser_handles_nested_legacy_and_malformed_canonical_values():
     ) == UsageResetState(2, True, False)
 
 
+def test_reset_parser_accepts_equal_complete_legacy_duplicate():
+    assert parse_usage_resets(
+        {
+            "available": 2,
+            "known": True,
+            "redeem_capability": False,
+            "usage_resets": {
+                "available": 2,
+                "known": True,
+                "redeem_capability": False,
+            },
+        }
+    ) == UsageResetState(2, True, False)
+
+
 @pytest.mark.parametrize(
     "nested",
     [

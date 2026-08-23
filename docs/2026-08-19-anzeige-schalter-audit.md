@@ -11955,3 +11955,14 @@ Zwei Tests bestätigen jeweils `None`.
 Verifikation: **356 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **100 %**, keine Missing-Zeilen; keine Settings-Fenster
 gestartet.
+
+## Runde 999: Gleichlautende Usage-Reset-Quelle direkt akzeptiert
+
+`usage_resets._parse_usage_resets_mapping()` hatte den konfliktfreien
+Duplicate-`continue`-Zweig für vollständige Canonical-/Legacy-Daten noch nicht
+direkt belegt. Der neue Test bestätigt die konsistente `UsageResetState`-
+Rückgabe.
+
+Verifikation: **23 Usage-Reset-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `usage_resets.py`: **100 %**, keine Missing-Zeilen; keine
+Settings-Fenster gestartet.
