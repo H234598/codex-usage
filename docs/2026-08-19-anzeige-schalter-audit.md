@@ -11555,3 +11555,12 @@ indirekt. Der neue Test bestätigt eine Restmenge von 50 bei Limit 100 ohne
 
 Verifikation: **296 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 960: Credit-Prozent-only direkt akzeptiert
+
+`direct._credit_window()` hatte den alleinigen Prozentwert bisher nur
+indirekt. Der neue Test bestätigt eine gültige `percent=75`-Balance ohne
+Restmenge.
+
+Verifikation: **297 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

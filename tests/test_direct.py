@@ -820,6 +820,17 @@ def test_credit_window_derives_percent_from_remaining_and_limit():
     assert window.percent == 50
 
 
+def test_credit_window_accepts_percent_only_balance():
+    window = _credit_window(
+        {"credits": {"percent": 75}},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    )
+
+    assert window is not None
+    assert window.remaining is None
+    assert window.percent == 75
+
+
 def test_credit_window_rejects_credit_dict_subclass_hooks():
     class BrokenCredits(dict):
         def get(self, _key, _default=None):
