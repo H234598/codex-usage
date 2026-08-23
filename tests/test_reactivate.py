@@ -4,6 +4,7 @@ import base64
 import json
 import signal
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -956,6 +957,68 @@ def test_oauth_browser_launches_vivaldi_with_isolated_profile(tmp_path, monkeypa
     assert "CODEX_HOME" not in captured["env"]
 
 
+def test_oauth_browser_requires_exactly_one_login_url(capsys):
+    assert oauth_browser.main([]) == 2
+    assert "exactly one login URL" in capsys.readouterr().err
+
+
+def test_oauth_browser_rejects_overlong_login_url():
+    with pytest.raises(ValueError, match="URL is too long"):
+        oauth_browser._validate_login_url("https://auth.openai.com/" + "x" * 8192)
+
+
+def test_oauth_browser_rejects_invalid_configuration(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_KIND", "unsupported")
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_EXECUTABLE", str(tmp_path / "missing"))
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_PROFILE", str(tmp_path / "profile"))
+
+    with pytest.raises(ValueError, match="browser kind"):
+        oauth_browser._browser_configuration()
+
+
+def test_oauth_browser_rejects_missing_and_non_executable_binary(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_KIND", "vivaldi")
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_PROFILE", str(tmp_path / "profile"))
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_EXECUTABLE", str(tmp_path / "missing"))
+    with pytest.raises(ValueError, match="browser executable"):
+        oauth_browser._browser_configuration()
+
+    executable = tmp_path / "browser"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o600)
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_EXECUTABLE", str(executable))
+    with pytest.raises(ValueError, match="not executable"):
+        oauth_browser._browser_configuration()
+
+
+def test_oauth_browser_rejects_relative_profile(tmp_path, monkeypatch):
+    executable = Path(_executable(tmp_path / "vivaldi-stable"))
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_KIND", "vivaldi")
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_EXECUTABLE", str(executable))
+    monkeypatch.setenv("CODEX_USAGE_BROWSER_PROFILE", "relative-profile")
+
+    with pytest.raises(ValueError, match="browser profile"):
+        oauth_browser._browser_configuration()
+
+
+def test_oauth_browser_builds_firefox_command(tmp_path):
+    command = oauth_browser._browser_command(
+        "/usr/bin/firefox",
+        "firefox",
+        tmp_path / "profile",
+        "https://auth.openai.com/login",
+    )
+
+    assert command == [
+        "/usr/bin/firefox",
+        "-no-remote",
+        "-profile",
+        str(tmp_path / "profile"),
+        "-new-window",
+        "https://auth.openai.com/login",
+    ]
+
+
 def test_oauth_browser_rejects_non_private_profile(tmp_path, monkeypatch):
     executable = Path(_executable(tmp_path / "vivaldi-stable"))
     profile = tmp_path / "oauth-profile"
@@ -1111,6 +1174,17 @@ def test_oauth_browser_rejects_nonstandard_or_invalid_port(url, tmp_path, monkey
     )
 
     assert oauth_browser.main([url]) == 1
+
+
+def test_oauth_browser_module_main_guard_executes(monkeypatch):
+    import runpy
+
+    monkeypatch.setattr(sys, "argv", ["oauth-browser"])
+
+    with pytest.raises(SystemExit) as error:
+        runpy.run_module("codex_usage.oauth_browser", run_name="__main__")
+
+    assert error.value.code == 2
 
 
 def test_reactivate_rejects_symlink_in_profile_path(tmp_path):

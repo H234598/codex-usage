@@ -12733,3 +12733,13 @@ schließen diese Prozess- und Fehlergrenzen.
 Verifikation: **36 Integration-Entrypoint-Tests**, Ruff und Diff-Check
 bestanden; Coverage-Auszug für `integration_entrypoint.py`: **100 %**; keine
 Settings-Fenster gestartet.
+
+## Runde 1068: OAuth-Browser URL-/Konfigurations-Guards geschlossen
+
+Exakt-eine-URL, überlange URLs, Browser-Kind/-Executable, nicht ausführbare
+Binärdateien, relative Profile, Firefox-Argumente und der Modul-`__main__`-
+Guard waren noch offen. Sieben Regressionen schließen diese Startgrenzen.
+
+Verifikation: **77 Reactivation/OAuth-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `oauth_browser.py`: **100 %**; keine Settings-Fenster
+gestartet.
