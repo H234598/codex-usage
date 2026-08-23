@@ -13253,3 +13253,18 @@ gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
 nicht ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
 bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
 Reload-Schritte ab.
+
+## Runde 1101: Integration-Cost-Window-Guard vollständig geprüft
+
+`integration_entrypoint.py` hatte noch den Credit-Cost-Pfad mit bereits
+gesetztem `limit_window_seconds` ohne Regression. Eine gezielte Prüfung stellt
+sicher, dass ein vorhandenes Credit-Limit nicht durch den Fallback überschrieben
+wird. Produktionslogik blieb unverändert.
+
+Verifikation: **37 `tests/test_integration_entrypoint.py`-Tests**, eine
+erwartbare `runpy`-Warnung beim Module-Main-Guard, `integration_entrypoint.py`
+**130/130 Statements und 26/26 Branches, 100 % Coverage**, Mypy, Ruff und
+Diff-Check bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde
+wegen des bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde
+sind keine fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt
+Test-, Commit-, Push-, Installations- und Reload-Schritte ab.

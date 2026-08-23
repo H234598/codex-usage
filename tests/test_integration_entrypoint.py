@@ -620,6 +620,42 @@ def test_cost_window_loader_includes_credit_history(tmp_path):
     assert any(item.pool == "credits" for item in costs["alpha"])
 
 
+def test_cost_window_loader_preserves_credit_limit_window(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from codex_usage import integration_entrypoint
+    from codex_usage.consumption import ConsumptionWindow
+    from codex_usage.history import HistoryStore
+
+    history_path = tmp_path / "usage-history.sqlite3"
+    with HistoryStore(history_path):
+        pass
+
+    monkeypatch.setattr(
+        integration_entrypoint,
+        "calculate_consumption",
+        lambda *_args, **_kwargs: ConsumptionWindow(
+            lookback_seconds=3_600,
+            pool="credits",
+            limit_window_seconds=123,
+            consumed_percentage_points=1,
+            coverage="full",
+            sample_count=2,
+        ),
+    )
+    usage = SimpleNamespace(
+        account_id="alpha",
+        credits=SimpleNamespace(duration_seconds=604_800),
+    )
+
+    costs = integration_entrypoint._load_cost_windows(history_path, (usage,), NOW)
+
+    assert any(
+        item.pool == "credits" and item.limit_window_seconds == 123
+        for item in costs["alpha"]
+    )
+
+
 def test_execute_does_not_publish_when_post_verifier_detects_drift(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
 
