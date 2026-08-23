@@ -11354,3 +11354,12 @@ Primärfenster und bewegt beide relativen Countdowns in eine frische Laufzeit.
 
 Verifikation: **275 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 939: Absoluten Reset-Zeitstempel direkt geprüft
+
+`direct._latest_response_is_absolute_reset()` hatte bisher keinen direkten
+Test. Der neue Test hält Identität und Fensterdauer stabil, senkt die Nutzung
+und verschiebt nur den primären absoluten `reset_at`-Zeitstempel nach vorn.
+
+Verifikation: **276 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

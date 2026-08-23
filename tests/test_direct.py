@@ -443,6 +443,45 @@ def test_latest_response_detects_relative_reset_transition():
     ) is True
 
 
+def test_latest_response_detects_absolute_reset_timestamp_advance():
+    previous = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": {
+            "primary_window": {
+                "limit_window_seconds": 18_000,
+                "used_percent": 10,
+                "reset_at": 1_000,
+            },
+            "secondary_window": {
+                "limit_window_seconds": 604_800,
+                "used_percent": 20,
+                "reset_at": 2_000,
+            },
+        },
+    }
+    latest = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": {
+            "primary_window": {
+                "limit_window_seconds": 18_000,
+                "used_percent": 0,
+                "reset_at": 1_010,
+            },
+            "secondary_window": {
+                "limit_window_seconds": 604_800,
+                "used_percent": 20,
+                "reset_at": 2_000,
+            },
+        },
+    }
+
+    assert direct_module._latest_response_is_absolute_reset(
+        [previous, latest], [(0, previous)]
+    ) is True
+
+
 def test_signature_flag_rejects_string_hooks():
     class BrokenFlag:
         def __str__(self):
