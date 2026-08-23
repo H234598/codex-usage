@@ -9152,6 +9152,54 @@ test("routing status validation keeps bounded decisions", () => {
   assert.equal(applet._routingDecisionParts({ account: "alpha" }).plain, "Routing Spark · Regel global");
 });
 
+test("routing status loader covers guards, failures and successful synchronization", () => {
+  const applet = makeApplet();
+  const calls = [];
+  let callback = null;
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._spawnAuxJson = (argv, next) => {
+    calls.push(argv);
+    callback = next;
+  };
+  applet._clearRoutingState = () => { calls.push("clear"); };
+  applet._syncRoutingSettings = (policy) => { calls.push(["sync", policy]); };
+  applet._refreshFormattedSurfaces = () => { calls.push("refresh"); };
+
+  for (const flag of ["_removed", "_safeMode", "_routingPolicyApplying"]) {
+    applet[flag] = true;
+    applet._loadRoutingState();
+    assert.equal(callback, null);
+    applet[flag] = false;
+  }
+
+  applet._baseCommandArgv = () => { throw new Error("argv unavailable"); };
+  applet._loadRoutingState();
+  applet._baseCommandArgv = () => ["codex-usage"];
+  applet._loadRoutingState();
+  assert.deepEqual(calls[0], [
+    "codex-usage", "policy", "status", "--role", "arbeitsbiene", "--format", "json",
+  ]);
+
+  callback(null, "routing unavailable");
+  assert.equal(calls.includes("clear"), true);
+
+  applet._clearRoutingState = () => { calls.push("invalid-clear"); };
+  applet._validateRoutingState = () => { throw new Error("invalid routing"); };
+  applet._loadRoutingState();
+  callback({}, null);
+  assert.equal(calls.includes("invalid-clear"), true);
+
+  const state = {policy: {schema_version: 1}, decisions: {alpha: {decision: "spark"}}};
+  applet._validateRoutingState = () => state;
+  applet._loadRoutingState();
+  callback({}, null);
+  assert.equal(applet._routingPolicy, state.policy);
+  assert.equal(applet._routingDecisions, state.decisions);
+  assert.equal(applet._routingSettingsReady, true);
+  assert.equal(calls.some((entry) => Array.isArray(entry) && entry[0] === "sync"), true);
+  assert.equal(calls.includes("refresh"), true);
+});
+
 test("routing status rejects inconsistent credit decisions", () => {
   const applet = makeApplet();
   assert.throws(() => applet._validateRoutingState({
