@@ -11802,3 +11802,13 @@ konkretem Pfad statt einer rohen `UnicodeDecodeError`-Weitergabe.
 Verifikation: **333 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **97 %**, Missing-Zeilen 38; keine Settings-Fenster
 gestartet.
+
+## Runde 984: Validate-Fstat-Fehler direkt gemappt
+
+`direct.validate_auth_json_file()` hatte den `os.fstat`-Fehlerpfad noch nicht
+direkt belegt. Der neue Test bestätigt kontrollierte Fehlerweitergabe und
+verlässliches Schließen des Dateideskriptors.
+
+Verifikation: **334 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **97 %**, Missing-Zeilen 36; keine Settings-Fenster
+gestartet.
