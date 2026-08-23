@@ -3348,6 +3348,22 @@ def test_auth_account_helpers_reject_non_account(account):
             helper(account)  # type: ignore[arg-type]
 
 
+def test_auth_account_helpers_reject_auth_path_string_subclass_hooks():
+    class BrokenStr(str):
+        def __bool__(self):
+            raise RuntimeError("synthetic account auth path marker")
+
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir="/tmp/work",
+        auth_json_path=BrokenStr("/tmp/auth.json"),
+    )
+    for helper in (auth_identity_for_account, auth_plan_type_for_account):
+        with pytest.raises(DirectAuthError, match=r"auth\.json path is invalid"):
+            helper(account)
+
+
 def test_auth_json_helpers_reject_hard_linked_file(tmp_path):
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(

@@ -10429,3 +10429,18 @@ Werte werden leer und damit fail-closed zurückgegeben. Regression deckt
 
 Verifikation: **199 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 867: Account-Authpfade auf Built-in-Strings begrenzen
+
+`direct.auth_identity_for_account()` und
+`direct.auth_plan_type_for_account()` prüften `auth_json_path` zunächst mit
+`if not` und akzeptierten danach String-Subklassen. Ein manipulierter
+Bool-Hook konnte beide Account-Helfer mit einer rohen Exception abbrechen.
+
+Beide Helfer behandeln `None` separat, verlangen danach exakt Built-in-`str`
+und prüfen erst anschließend den leeren Pfad. Regression deckt beide Helfer
+mit demselben fehlerhaften Bool-Hook ab; gültige und leere Pfade bleiben
+unverändert.
+
+Verifikation: **200 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

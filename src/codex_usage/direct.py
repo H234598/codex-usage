@@ -478,11 +478,14 @@ def auth_identity_from_file(path: Path) -> tuple[str | None, str | None]:
 def auth_identity_for_account(account: Account) -> tuple[str | None, str | None]:
     if not isinstance(account, Account):
         raise DirectAuthError("account is invalid")
-    if not account.auth_json_path:
+    auth_json_path = account.auth_json_path
+    if auth_json_path is None:
         return None, None
-    if not isinstance(account.auth_json_path, str):
+    if type(auth_json_path) is not str:
         raise DirectAuthError("auth.json path is invalid")
-    return auth_identity_from_file(Path(account.auth_json_path))
+    if not auth_json_path:
+        return None, None
+    return auth_identity_from_file(Path(auth_json_path))
 
 
 def auth_email_from_payload(
@@ -567,11 +570,14 @@ def auth_plan_type_from_file(path: Path) -> str | None:
 def auth_plan_type_for_account(account: Account) -> str | None:
     if not isinstance(account, Account):
         raise DirectAuthError("account is invalid")
-    if not account.auth_json_path:
+    auth_json_path = account.auth_json_path
+    if auth_json_path is None:
         return None
-    if not isinstance(account.auth_json_path, str):
+    if type(auth_json_path) is not str:
         raise DirectAuthError("auth.json path is invalid")
-    return auth_plan_type_from_file(Path(account.auth_json_path))
+    if not auth_json_path:
+        return None
+    return auth_plan_type_from_file(Path(auth_json_path))
 
 
 def _auth_account_id_from_payload(
