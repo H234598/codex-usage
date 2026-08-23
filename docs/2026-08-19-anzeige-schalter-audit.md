@@ -10266,3 +10266,16 @@ Hook; gültige Auth-Plan-Typen bleiben unverändert.
 
 Verifikation: **187 Direct-Tests**, **38 abhängige Browser-/Bridge-Tests**,
 Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 855: Top-Level-Auth-Account-IDs auf Built-in-Strings begrenzen
+
+`direct._auth_account_id_from_payload()` akzeptierte `str`-Subklassen und rief
+deren Längenoperator vor der Account-ID-Prüfung auf. Ein manipulierter
+String-Hook konnte den Auth-Payloadpfad mit einer rohen Exception abbrechen.
+
+Der Top-Level-Account-ID-Guard akzeptiert jetzt ausschließlich Built-in-`str`
+vor Länge und Zeichenprüfung. Regression prüft den öffentlichen
+`auth_identity_from_payload()`-Pfad; gültige Account-IDs bleiben unverändert.
+
+Verifikation: **188 Direct-Tests**, **38 abhängige Browser-/Bridge-Tests**,
+Ruff und Diff-Check bestanden; keine Settings-Fenster gestartet.

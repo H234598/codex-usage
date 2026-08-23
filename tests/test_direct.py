@@ -509,6 +509,18 @@ def test_safe_auth_plan_type_rejects_string_subclass_hooks():
     assert direct_module._safe_auth_plan_type(BrokenStr("plus")) is None
 
 
+def test_auth_identity_rejects_account_id_string_subclass_hooks(tmp_path):
+    class BrokenStr(str):
+        def __len__(self):
+            raise RuntimeError("synthetic auth account marker")
+
+    with pytest.raises(DirectAuthError, match=r"auth\.json account_id is invalid"):
+        auth_identity_from_payload(
+            {"tokens": {"account_id": BrokenStr("account")}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_auth_identity_ignores_expired_id_token_when_access_token_is_current(tmp_path):
     path = tmp_path / "auth.json"
     payload = {
