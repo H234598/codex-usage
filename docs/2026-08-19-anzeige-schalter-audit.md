@@ -10817,3 +10817,17 @@ Mapping-Hooks ab; normale Plan-/Fensterdiagnosen bleiben unverändert.
 
 Verifikation: **227 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 895: Auth-Account-ID nur aus nativen Token-Dicts lesen
+
+`direct._auth_account_id_from_payload()` akzeptierte den `tokens`-Block als
+Dict-Subclass per `isinstance` und rief dessen `.get()` auf. Ein manipuliertes
+Auth-Mapping konnte die Account-ID-Prüfung dadurch mit einer rohen Exception
+abbrechen.
+
+Der Helper verarbeitet jetzt nur native `dict`-Tokenblöcke; Subklassen werden
+ohne Hook-Aufruf als nicht vorhanden behandelt. Regression deckt den
+Account-ID-`.get()`-Hook ab; normale Auth-JSON-Strukturen bleiben unverändert.
+
+Verifikation: **228 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

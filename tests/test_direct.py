@@ -810,6 +810,17 @@ def test_auth_payload_helpers_ignore_non_object_payloads(tmp_path, payload):
     }
 
 
+def test_auth_account_id_rejects_tokens_dict_subclass_hooks(tmp_path):
+    class BrokenTokens(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic auth account mapping marker")
+
+    assert direct_module._auth_account_id_from_payload(
+        {"tokens": BrokenTokens()},
+        path=tmp_path / "auth.json",
+    ) is None
+
+
 @pytest.mark.parametrize(
     "claims",
     [

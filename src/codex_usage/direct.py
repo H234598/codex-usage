@@ -603,7 +603,7 @@ def _auth_account_id_from_payload(
     path: Path,
 ) -> str | None:
     tokens = payload.get("tokens")
-    if not isinstance(tokens, dict):
+    if type(tokens) is not dict:
         return None
     value = tokens.get("account_id")
     if value is None:
