@@ -10349,3 +10349,16 @@ Spark-Identifier-Hook; normale Spark-/Nicht-Spark-Werte bleiben unverändert.
 
 Verifikation: **193 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 861: ISO-Zeitwerte auf Built-in-Strings begrenzen
+
+`direct._parse_iso_datetime()` akzeptierte `str`-Subklassen und rief deren
+`strip()` vor der ISO-Prüfung auf. Ein manipulierter Zeitwert-Hook konnte die
+Auth-Metadatenverarbeitung mit einer rohen Exception abbrechen.
+
+Der Zeitparser verlangt jetzt Built-in-`str` vor Trim-, Ersetzungs- und
+`datetime.fromisoformat()`-Aufrufen. Regression simuliert den fehlerhaften
+`strip()`-Hook; gültige ISO-Zeitwerte bleiben unverändert.
+
+Verifikation: **194 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

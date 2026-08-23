@@ -1586,7 +1586,7 @@ def _redact_url(url: str) -> str:
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
+    if type(value) is not str or not value.strip():
         return None
     text = value.strip().replace("Z", "+00:00")
     try:
