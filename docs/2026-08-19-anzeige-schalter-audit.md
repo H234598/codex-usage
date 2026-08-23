@@ -11546,3 +11546,12 @@ berechnete Prozentangabe für eine explizite Credit-Struktur.
 Verifikation: **295 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 91; keine Settings-Fenster
 gestartet.
+
+## Runde 959: Credit-Prozent aus Restmenge direkt projiziert
+
+`direct._credit_window()` hatte den `remaining`-/`limit`-Pfad bisher nur
+indirekt. Der neue Test bestätigt eine Restmenge von 50 bei Limit 100 ohne
+`used`-Feld und die daraus abgeleitete Prozentangabe.
+
+Verifikation: **296 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
