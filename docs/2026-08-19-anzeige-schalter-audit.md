@@ -10009,3 +10009,17 @@ Gruppen-Cleanup und Wheel-Reader ab.
 Verifikation: **155 fokussierte Integration-Installer-Tests**, **28 abhängige
 Integration-Entrypoint-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 836: CLI-Numerik an Argumentgrenzen strikt validieren
+
+`cli.py` akzeptierte bei History-`days`, Watch-/Bridge-Intervallen und Ports
+noch Integer-Subklassen. Fremde Vergleichsoperatoren konnten CLI-Validierung,
+Bridge-Endpoint-Erzeugung oder History-Prune mit rohen Exceptions abbrechen.
+
+History-Tage, Watch-Intervalle, Bridge-Ports und Endpoint-Port akzeptieren jetzt
+ausschließlich Built-in-`int`; alle Pfade nutzen kontrollierte Validatoren vor
+Arithmetik oder String-Erzeugung. Regression deckt direkte Helper sowie
+History-/Watch-/Bridge-CLI-Aufrufer ab.
+
+Verifikation: **118 fokussierte CLI-Tests**, **7 History-CLI-Tests**, Ruff und
+Diff-Check bestanden; keine Settings-Fenster gestartet.

@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,6 +30,55 @@ from codex_usage.config import AppConfig, add_or_update_account, load_config, sa
 from codex_usage.models import Account, AccountStatus, AccountUsage, LimitWindow, UsagePool
 from codex_usage.spark_health import set_spark_health
 from codex_usage.state import load_current_usage, save_current_usage, save_usage_snapshot
+
+
+class _BrokenInt(int):
+    def __ge__(self, _other):
+        raise RuntimeError("synthetic CLI integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic CLI integer comparison marker")
+
+    def __lt__(self, _other):
+        raise RuntimeError("synthetic CLI integer comparison marker")
+
+
+def test_cli_numeric_boundaries_reject_subclasses(tmp_path, monkeypatch):
+    broken = _BrokenInt(300)
+
+    with pytest.raises(ValueError, match="port"):
+        cli_module._validate_port(broken)
+    with pytest.raises(ValueError, match="interval"):
+        cli_module._validate_min_interval(broken)
+    with pytest.raises(ValueError, match="port"):
+        cli_module._bridge_endpoint(None, broken)
+
+    history_args = SimpleNamespace(
+        dry_run=True,
+        apply=False,
+        days=broken,
+        before=None,
+        path=tmp_path / "history.sqlite3",
+        format="json",
+    )
+    with pytest.raises(ValueError, match="days"):
+        cli_module._cmd_history_prune(history_args)
+
+    monkeypatch.setattr(cli_module, "load_config", lambda _path: object())
+    monkeypatch.setattr(cli_module, "_select_accounts", lambda *_args: ())
+    monkeypatch.setattr(cli_module, "_validate_fetch_mode_flags", lambda _args: None)
+    watch_args = SimpleNamespace(
+        config=None,
+        account_ids=(),
+        interval=broken,
+        direct=False,
+        auth_json=None,
+        backend=None,
+        headed=False,
+        format="table",
+    )
+    with pytest.raises(ValueError, match="interval"):
+        cli_module._cmd_watch(watch_args)
 
 
 def test_sync_managed_service_does_not_rebind_another_config(tmp_path, monkeypatch):

@@ -1153,7 +1153,7 @@ def _cmd_history_query(args: argparse.Namespace) -> int:
 def _cmd_history_prune(args: argparse.Namespace) -> int:
     if args.dry_run == args.apply:
         raise ValueError("exactly one of --dry-run or --apply is required")
-    if isinstance(args.days, bool) or not isinstance(args.days, int) or not 1 <= args.days <= 3650:
+    if type(args.days) is not int or not 1 <= args.days <= 3650:
         raise ValueError("days must be between 1 and 3650")
     before = (
         _parse_history_datetime(args.before, "before")
@@ -1531,8 +1531,8 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     accounts = _select_accounts(config, args.account_ids)
     _validate_fetch_mode_flags(args)
-    if args.interval is not None and args.interval < 60:
-        raise ValueError("--interval must be at least 60 seconds")
+    if args.interval is not None:
+        _validate_min_interval(args.interval)
     backend_override = _backend_override(args)
     direct = bool(args.direct or args.auth_json or backend_override == "direct")
     if direct:
@@ -2109,6 +2109,7 @@ def _validate_bridge_host(host: str, *, allow_remote: bool) -> None:
 
 
 def _bridge_endpoint(endpoint: str | None, port: int) -> str:
+    _validate_port(port)
     if endpoint is None:
         return f"http://127.0.0.1:{port}/ingest"
     try:
@@ -2133,20 +2134,12 @@ def _bridge_endpoint(endpoint: str | None, port: int) -> str:
 
 
 def _validate_port(port: int) -> None:
-    if (
-        isinstance(port, bool)
-        or not isinstance(port, int)
-        or not 1 <= port <= 65535
-    ):
+    if type(port) is not int or not 1 <= port <= 65535:
         raise ValueError("--port must be between 1 and 65535")
 
 
 def _validate_min_interval(interval_seconds: int) -> None:
-    if (
-        isinstance(interval_seconds, bool)
-        or not isinstance(interval_seconds, int)
-        or interval_seconds < 60
-    ):
+    if type(interval_seconds) is not int or interval_seconds < 60:
         raise ValueError("--interval must be at least 60 seconds")
 
 
