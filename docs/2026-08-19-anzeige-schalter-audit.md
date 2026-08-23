@@ -11895,3 +11895,13 @@ Header-`.get()` noch nicht direkt belegt. Der neue Test bestätigt Fallback auf
 Verifikation: **349 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **99 %**, Missing-Zeilen 13; keine Settings-Fenster
 gestartet.
+
+## Runde 993: Hostlose URL direkt verworfen
+
+`direct._redact_url()` hatte den Hostname-Guard noch nicht direkt belegt. Der
+neue Test bestätigt leere Ausgabe für `https:///path` und verhindert damit
+eine scheinbar vertrauenswürdige Zieladresse.
+
+Verifikation: **350 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **99 %**, Missing-Zeilen 12; keine Settings-Fenster
+gestartet.

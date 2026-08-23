@@ -120,6 +120,10 @@ def test_direct_redact_url_rejects_invalid_port():
     assert _redact_url("https://user:secret@chatgpt.com:invalid/path") == ""
 
 
+def test_direct_redact_url_rejects_missing_hostname():
+    assert _redact_url("https:///path") == ""
+
+
 def test_direct_response_content_type_falls_back_for_malformed_headers():
     class Response:
         headers: ClassVar[list[object]] = []
