@@ -11399,3 +11399,12 @@ für ein gültiges natives Fenster.
 
 Verifikation: **280 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 944: Relative Reset-Phase direkt klassifiziert
+
+`direct._signature_relative_reset_phase()` hatte bisher keinen direkten Test.
+Der neue Test prüft, dass ein Countdown auf voller Fensterdauer die Phase
+`fresh` erhält.
+
+Verifikation: **281 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

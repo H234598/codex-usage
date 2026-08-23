@@ -524,6 +524,12 @@ def test_signature_reset_identity_uses_absolute_reset_bucket():
     ) == ("at", 200)
 
 
+def test_signature_relative_reset_phase_marks_full_countdown_fresh():
+    assert direct_module._signature_relative_reset_phase(
+        {"limit_window_seconds": 18_000, "reset_after_seconds": 18_000}
+    ) == "fresh"
+
+
 def test_signature_flag_rejects_string_hooks():
     class BrokenFlag:
         def __str__(self):
