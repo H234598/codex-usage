@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import stat
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 from zoneinfo import ZoneInfo
 
@@ -403,6 +406,76 @@ def test_capture_json_response_keeps_known_small_body() -> None:
 
 
 @pytest.mark.parametrize(
+    "mode",
+    [
+        "non_json",
+        "finished",
+        "text",
+        "unicode",
+        "too_large",
+        "malformed",
+        "max_count",
+        "payload",
+        "existing",
+    ],
+)
+def test_capture_json_response_rejects_capture_failures(mode, monkeypatch):
+    url = (
+        "https://chatgpt.com/analytics"
+        if mode == "non_json"
+        else "https://chatgpt.com/backend-api/wham/usage"
+    )
+    candidates = (
+        [
+            JsonCandidate(
+                url="https://chatgpt.com/backend-api/old",
+                payload={"bad": float("nan")},
+            )
+        ]
+        if mode == "existing"
+        else [JsonCandidate(url=url, payload={}) for _ in range(50)]
+        if mode == "max_count"
+        else []
+    )
+
+    class FakeResponse:
+        headers: ClassVar[dict[str, str]] = {
+            "content-type": "text/html" if mode == "non_json" else "application/json"
+        }
+
+        @property
+        def url(self):
+            return url
+
+        def finished(self):
+            if mode == "finished":
+                raise RuntimeError("finished failed")
+
+        def text(self):
+            if mode == "text":
+                raise RuntimeError("text failed")
+            if mode == "unicode":
+                return "\ud800"
+            if mode == "too_large":
+                return "x" * (browser_module.JSON_MAX_BYTES + 1)
+            if mode == "malformed":
+                return "{"
+            return "{}"
+
+    if mode == "payload":
+        monkeypatch.setattr(
+            browser_module,
+            "loads_strict",
+            lambda _text: {"bad": float("nan")},
+        )
+
+    original_count = len(candidates)
+    _capture_json_response(FakeResponse(), candidates)
+
+    assert len(candidates) == original_count
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "https://evilchatgpt.com/backend-api/wham/usage",
@@ -507,6 +580,76 @@ def test_capture_json_response_updates_external_candidate_byte_budget() -> None:
     _capture_json_response(FakeResponse(), candidates, candidate_bytes)
 
     assert candidate_bytes == [len(json.dumps({"value": "x" * 100}).encode("utf-8"))]
+
+
+def test_profile_lock_file_maps_open_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        browser_module.os,
+        "open",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("open failed")),
+    )
+
+    with pytest.raises(ValueError, match="profile lock path must be a regular file"):
+        with browser_module._profile_lock_file(tmp_path / "lock", tmp_path / "profile"):
+            pass
+
+
+@pytest.mark.parametrize(
+    "file_stat",
+    [
+        SimpleNamespace(st_mode=stat.S_IFDIR, st_nlink=1),
+        SimpleNamespace(st_mode=stat.S_IFREG | 0o600, st_nlink=2),
+    ],
+)
+def test_profile_lock_file_rejects_untrusted_stat(tmp_path, monkeypatch, file_stat):
+    monkeypatch.setattr(browser_module.os, "open", lambda *_args, **_kwargs: 99)
+    monkeypatch.setattr(browser_module.os, "fstat", lambda _fd: file_stat)
+    monkeypatch.setattr(browser_module.os, "close", lambda _fd: None)
+
+    with pytest.raises(ValueError, match="profile lock path"):
+        with browser_module._profile_lock_file(tmp_path / "lock", tmp_path / "profile"):
+            pass
+
+
+def test_profile_lock_file_maps_unlock_error(tmp_path, monkeypatch):
+    lock_path = tmp_path / "lock"
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    original_flock = fcntl.flock
+
+    def fail_unlock(fd, operation):
+        if operation == fcntl.LOCK_UN:
+            raise OSError("unlock failed")
+        return original_flock(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", fail_unlock)
+
+    with browser_module._profile_lock_file(lock_path, profile):
+        pass
+
+
+def test_profile_lock_file_closes_fd_when_fdopen_fails(tmp_path, monkeypatch):
+    lock_path = tmp_path / "lock"
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    closed = []
+    original_close = browser_module.os.close
+
+    monkeypatch.setattr(
+        browser_module.os,
+        "fdopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("fdopen failed")),
+    )
+    monkeypatch.setattr(
+        browser_module.os,
+        "close",
+        lambda fd: (closed.append(fd), original_close(fd))[1],
+    )
+
+    with pytest.raises(OSError, match="fdopen failed"):
+        with browser_module._profile_lock_file(lock_path, profile):
+            pass
+    assert closed
 
 
 def test_save_probe_payloads_stages_on_save_directory_filesystem(tmp_path, monkeypatch):
@@ -636,6 +779,82 @@ def test_save_probe_payloads_rolls_back_when_commit_fails(tmp_path, monkeypatch)
 
     for filename, content in old_files.items():
         assert (save_dir / filename).read_text(encoding="utf-8") == content
+
+
+def test_save_probe_payloads_reports_symlink_rollback_failure(tmp_path, monkeypatch):
+    save_dir = tmp_path / "probe"
+    save_dir.mkdir()
+    (save_dir / "privat-01.json").write_text("old", encoding="utf-8")
+    (save_dir / "privat-body.txt").write_text("old", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.write_text("keep", encoding="utf-8")
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    original_replace = Path.replace
+
+    def replace(source, target):
+        if source.parent.name == "stage" and target.name == "privat-01.json":
+            result = original_replace(source, target)
+            target.unlink()
+            target.symlink_to(outside)
+            return result
+        if source.parent.name == "stage" and target.name == "privat-body.txt":
+            raise OSError("primary commit failed")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+
+    with pytest.raises(ExceptionGroup, match="probe output commit rollback failed"):
+        _save_probe_payloads(
+            save_dir,
+            account,
+            [JsonCandidate(url="https://chatgpt.com/one", payload={"value": 1})],
+            "new body",
+        )
+
+
+def test_save_probe_payloads_reports_backup_restore_failure(tmp_path, monkeypatch):
+    save_dir = tmp_path / "probe"
+    save_dir.mkdir()
+    (save_dir / "privat-01.json").write_text("old", encoding="utf-8")
+    (save_dir / "privat-body.txt").write_text("old", encoding="utf-8")
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    original_replace = Path.replace
+
+    def replace(source, target):
+        if source.parent.name == "stage" and target.name == "privat-body.txt":
+            raise OSError("primary commit failed")
+        if source.parent.name == "backup":
+            raise OSError("backup restore failed")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", replace)
+
+    with pytest.raises(ExceptionGroup, match="probe output commit rollback failed"):
+        _save_probe_payloads(
+            save_dir,
+            account,
+            [JsonCandidate(url="https://chatgpt.com/one", payload={"value": 1})],
+            "new body",
+        )
+
+
+def test_write_bounded_private_text_rejects_oversized_body(tmp_path):
+    with pytest.raises(ValueError, match="too large"):
+        browser_module._write_bounded_private_text(
+            tmp_path / "output.txt",
+            "x" * (browser_module.PROBE_OUTPUT_MAX_BYTES + 1),
+            label="probe output",
+        )
+
+
+def test_validate_private_output_path_rejects_hardlink(tmp_path):
+    path = tmp_path / "output.txt"
+    path.write_text("keep", encoding="utf-8")
+    alias = tmp_path / "alias.txt"
+    alias.hardlink_to(path)
+
+    with pytest.raises(ValueError, match="must not be hard-linked"):
+        browser_module._validate_private_output_path(path, label="probe output path")
 
 
 def test_capture_diagnostic_response_bounds_response_count() -> None:
@@ -1141,7 +1360,11 @@ def test_structured_identity_match_rejects_canonical_mismatch(monkeypatch):
     )
 
 
-def test_probe_account_collects_without_saving(tmp_path, monkeypatch):
+@pytest.mark.parametrize("wait_error", [None, PlaywrightTimeoutError("network idle")])
+@pytest.mark.parametrize("save_probe", [False, True])
+def test_probe_account_collects_and_optionally_saves(
+    tmp_path, monkeypatch, wait_error, save_probe
+):
     account = Account(id="privat", label="Privat", profile_dir=str(tmp_path / "profile"))
 
     class FakePage:
@@ -1152,6 +1375,8 @@ def test_probe_account_collects_without_saving(tmp_path, monkeypatch):
             return None
 
         def wait_for_load_state(self, *_args, **_kwargs):
+            if wait_error is not None:
+                raise wait_error
             return None
 
     class FakeContext:
@@ -1178,18 +1403,29 @@ def test_probe_account_collects_without_saving(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(browser_module, "_safe_page_text_sources", lambda _page: ("", ()))
     monkeypatch.setattr(browser_module, "extract_windows", lambda **_kwargs: (None, None))
+    monkeypatch.setattr(
+        browser_module,
+        "_save_probe_payloads",
+        lambda *_args, **_kwargs: ["saved"],
+    )
 
-    result = probe_account(account, AppConfig(accounts=(account,)), headed=False)
+    result = probe_account(
+        account,
+        AppConfig(accounts=(account,)),
+        headed=False,
+        save_dir=tmp_path / "saved" if save_probe else None,
+    )
 
     assert result["account"] == "privat"
     assert result["browser"] == "firefox"
     assert result["json_candidates"] == []
-    assert result["saved"] == []
+    assert result["saved"] == (["saved"] if save_probe else [])
 
 
 @pytest.mark.parametrize("wait_error", [None, PlaywrightTimeoutError("network idle")])
+@pytest.mark.parametrize("navigation_error", [None, PlaywrightError("navigation failed")])
 def test_diagnose_uses_configured_account_auth_json_by_default(
-    tmp_path, monkeypatch, wait_error
+    tmp_path, monkeypatch, wait_error, navigation_error
 ):
     auth_path = tmp_path / "accounts" / "privat" / "auth.json"
     account = Account(
@@ -1221,6 +1457,8 @@ def test_diagnose_uses_configured_account_auth_json_by_default(
             return None
 
         def goto(self, *_args, **_kwargs):
+            if navigation_error is not None:
+                raise navigation_error
             return type("Response", (), {"status": 200})()
 
         def wait_for_load_state(self, *_args, **_kwargs):
@@ -1264,7 +1502,11 @@ def test_diagnose_uses_configured_account_auth_json_by_default(
 
     result = diagnose_account(account, AppConfig(accounts=(account,)))
 
-    assert result["codex_auth"]["path"] == str(auth_path)
+    if navigation_error is not None:
+        assert result["detected"] == "browser_error"
+        assert result["error"] == "navigation failed"
+    else:
+        assert result["codex_auth"]["path"] == str(auth_path)
     assert captured["path"] == auth_path
 
 

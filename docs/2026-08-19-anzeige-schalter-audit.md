@@ -12803,3 +12803,19 @@ Verifikation: **453 Browser-/CLI-/Entrypoint-/Reactivation-Tests**, Mypy für
 **90 %**. Die bestehenden `runpy`-Warnungen bleiben erwartbar; keine
 Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
 GTK/Cinnamon-Abbruchs nicht ausgeführt.
+
+## Runde 1074: Browser-Response-, Diagnose- und Profil-Helper vollständig geprüft
+
+Response-Capture mit ungültigem Content-Type, bereits beendeten oder fehlerhaften
+Responses, Unicode-/Größen-/JSON-/NaN-/Count-Grenzen sowie Diagnose-JSON,
+URL-/Page-State-, Screenshot-, Engine- und Context-Cleanup-Guards waren noch
+offen. Zusätzlich fehlten direkte Regressionen für private Profil-Locks,
+reguläre Datei-/Hardlink-Prüfung, FD-Cleanup, Probe-Output-Größen und
+transaktionale Rollback-Fehler. Dreiundzwanzig fokussierte Regressionen decken
+alle verbleibenden Helper-Zweige ab; Produktionscode blieb unverändert.
+
+Verifikation: **490 Browser-/CLI-/Entrypoint-/Reactivation-Tests**, Mypy für
+`browser.py`, Ruff und Diff-Check bestanden; Coverage-Auszug für `browser.py`:
+**100 %**. Die zwei bestehenden `runpy`-Warnungen bleiben erwartbar; keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt.

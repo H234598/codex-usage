@@ -258,6 +258,141 @@ def test_diagnose_auth_json_rejects_oversized_auth_file(tmp_path):
     assert "auth.json too large" in result["error"]
 
 
+@pytest.mark.parametrize("error", [OSError("read failed"), ValueError("parse failed")])
+def test_diagnose_auth_json_maps_unexpected_read_errors(tmp_path, monkeypatch, error):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text("{}", encoding="utf-8")
+    auth_path.chmod(0o600)
+    monkeypatch.setattr(
+        browser_module,
+        "read_auth_json_file",
+        lambda _path: (_ for _ in ()).throw(error),
+    )
+
+    result = _diagnose_auth_json(auth_path)
+
+    assert result == {
+        "path": str(auth_path),
+        "exists": True,
+        "readable": False,
+        "error": type(error).__name__,
+    }
+
+
+def test_diagnose_auth_json_reports_non_object_payload(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text("[]", encoding="utf-8")
+    auth_path.chmod(0o600)
+
+    result = _diagnose_auth_json(auth_path)
+
+    assert result["readable"] is True
+    assert result["type"] == "list"
+    assert "top_level_keys" not in result
+
+
+def test_diagnostic_value_preserves_safe_scalars():
+    assert browser_module._diagnostic_value(None) is None
+    assert browser_module._diagnostic_value(True) is True
+    assert browser_module._diagnostic_value(5) == 5
+    assert browser_module._diagnostic_value(5.5) == 5.5
+
+
+def test_safe_html_text_maps_missing_evaluator():
+    assert _safe_body_text(object()) == ""
+    assert _safe_html_text(object()) == ""
+
+
+def test_browser_url_and_excerpt_helpers_fail_closed():
+    assert browser_module._is_trusted_browser_url(None) is False
+    assert browser_module._is_trusted_browser_url("https://[::1") is False
+    assert browser_module._safe_excerpt(" \n\t") == ""
+    assert browser_module._safe_excerpt("visible text") == "visible text"
+
+
+def test_detect_page_state_prioritizes_status_and_challenge_signals():
+    analytics_url = "https://chatgpt.com/codex/cloud/settings/analytics"
+    assert _detect_page_state(analytics_url, "Analytics", "", main_status=403) == "cloudflare"
+    assert _detect_page_state(analytics_url, "Analytics", "turnstile") == "cloudflare"
+    assert _detect_page_state(
+        analytics_url,
+        "Analytics",
+        "",
+        [{"url": "https://chatgpt.com/cdn-cgi/challenge-platform/token"}],
+    ) == "cloudflare"
+
+
+def test_save_diagnostic_screenshot_writes_private_file(tmp_path):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile")
+    screenshot_dir = tmp_path / "screens"
+
+    assert _save_diagnostic_screenshot(FakeScreenshotPage(), account, None) is None
+    path = _save_diagnostic_screenshot(FakeScreenshotPage(), account, screenshot_dir)
+
+    assert path == str(screenshot_dir / "privat-diagnose.png")
+    assert (screenshot_dir / "privat-diagnose.png").stat().st_mode & 0o777 == 0o600
+
+
+def test_candidate_summary_and_top_level_key_shapes():
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/usage",
+        payload={"z": 1, "a": 2},
+    )
+    assert browser_module._summarize_candidate(candidate) == {
+        "url": "https://chatgpt.com/backend-api/usage",
+        "top_level_keys": ["a", "z"],
+    }
+    assert _top_level_keys([1, 2, 3]) == ["list[3]"]
+    assert _top_level_keys("text") == ["str"]
+
+
+def test_private_helpers_map_chmod_and_redaction_edges(tmp_path):
+    class BrokenPath:
+        def chmod(self, _mode):
+            raise OSError("chmod failed")
+
+    with pytest.raises(ValueError, match="could not secure private path"):
+        browser_module._chmod_private(BrokenPath())
+    assert _redact_url("https:///missing-host") == ""
+
+
+@pytest.mark.parametrize("browser", ["firefox", "chromium"])
+def test_launch_persistent_context_selects_configured_engine(browser):
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile", browser=browser)
+    calls = []
+
+    class Engine:
+        def launch_persistent_context(self, **kwargs):
+            calls.append(kwargs)
+            return "context"
+
+    class Playwright:
+        firefox = Engine()
+        chromium = Engine()
+
+    assert browser_module._launch_persistent_context(
+        Playwright(), account, Path("/tmp/profile"), headless=True
+    ) == "context"
+    assert calls == [{"user_data_dir": "/tmp/profile", "headless": True}]
+
+
+def test_launch_persistent_context_rejects_unknown_engine():
+    account = Account(id="privat", label="Privat", profile_dir="/tmp/profile", browser="vivaldi")
+
+    with pytest.raises(RuntimeError, match="unsupported browser"):
+        browser_module._launch_persistent_context(
+            object(), account, Path("/tmp/profile"), headless=False
+        )
+
+
+def test_close_context_ignores_close_error():
+    class BrokenContext:
+        def close(self):
+            raise RuntimeError("close failed")
+
+    browser_module._close_context(BrokenContext())
+
+
 def test_safe_html_text_does_not_clone_unbounded_dom():
     with sync_playwright() as playwright:
         try:
