@@ -20,8 +20,7 @@ class UsageResetState:
                 raise ValueError("unknown reset state must not have available value")
             return
         if (
-            isinstance(self.available, bool)
-            or not isinstance(self.available, int)
+            type(self.available) is not int
             or not 0 <= self.available <= 10_000
         ):
             raise ValueError("known reset state requires bounded available value")
@@ -86,7 +85,7 @@ def parse_usage_resets(payload: object) -> UsageResetState:
                 continue
             if isinstance(value, Mapping):
                 value = value.get("available")
-            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10_000:
+            if type(value) is not int or not 0 <= value <= 10_000:
                 return UsageResetState(None, False, False)
             candidates.append(value)
         if candidates and (
@@ -102,7 +101,7 @@ def parse_usage_resets(payload: object) -> UsageResetState:
         value = payload[key]
         if isinstance(value, Mapping):
             value = value.get("available")
-        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 10_000:
+        if type(value) is not int or not 0 <= value <= 10_000:
             return UsageResetState(None, False, False)
         legacy_candidates.append(value)
     if not legacy_candidates:

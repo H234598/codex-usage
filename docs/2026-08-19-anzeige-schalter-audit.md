@@ -9611,3 +9611,19 @@ Pfade mit demselben fehlerhaften Usage-Iterator ab.
 Verifikation: **221 fokussierte Scheduler-Tests**, **601 Scheduler-, Bridge-
 und CLI-Tests**, Ruff, Python-Compile und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 811: Reset-Anzahl gegen Integer-Subklassen absichern
+
+`UsageResetState` und die Legacy-Zweige von `parse_usage_resets()` akzeptierten
+`int`-Subklassen. Ein manipuliertes Vergleichsverhalten konnte die
+Bereichsprüfung für Reset-Anzahlen mit einem rohen Fremd-Exception abbrechen,
+statt den Zustand als unbekannt zu verwerfen.
+
+Alle Reset-Anzahl-Grenzen akzeptieren jetzt ausschließlich den exakten
+Built-in-Typ `int`; Boolean- und sonstige Integer-Subklassen bleiben ungültig.
+Regression prüft Konstruktor und Legacy-Parser mit überschriebenem
+Vergleichsoperator.
+
+Verifikation: **21 fokussierte Usage-Reset-Tests**, **451 Reset-, Model-,
+Usage-Limit- und State-Tests**, Ruff, Python-Compile und Diff-Check bestanden;
+keine Settings-Fenster gestartet.

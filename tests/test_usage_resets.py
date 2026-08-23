@@ -8,6 +8,11 @@ from codex_usage.usage_resets import (
 )
 
 
+class _BrokenResetCount(int):
+    def __ge__(self, _other):
+        raise RuntimeError("synthetic reset count marker")
+
+
 def test_reset_parser_distinguishes_unknown_zero_and_positive():
     assert parse_usage_resets({"resets": 0}).known is True
     assert parse_usage_resets({"resets": 0}).available == 0
@@ -74,6 +79,14 @@ def test_reset_state_rejects_malformed_fields(
 ):
     with pytest.raises(ValueError, match=message):
         UsageResetState(available, known, redeem_capability)
+
+
+def test_reset_state_rejects_integer_subclass_count():
+    count = _BrokenResetCount(1)
+
+    with pytest.raises(ValueError, match="bounded"):
+        UsageResetState(count, True)
+    assert parse_usage_resets({"resets": count}) == UsageResetState(None, False, False)
 
 
 def test_reset_state_serializes_canonical_fields():
