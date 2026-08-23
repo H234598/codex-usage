@@ -100,7 +100,7 @@ def test_account_usage_model_pool_requires_one_exact_key_match():
         account_id="account",
         label="Account",
         captured_at=datetime.now(UTC),
-        models=(pool,),
+        models=(UsagePool(key="other", display_name="Other"), pool),
     )
 
     assert usage.model_pool("spark") is pool

@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
 from .usage_resets import UsageResetState
 
@@ -512,7 +512,7 @@ def _safe_int(value: object) -> int | None:
 def _safe_number(value: object) -> int | float | None:
     if type(value) not in (int, float):
         return None
-    return value if _finite_number(value) is not None else None
+    return cast(int | float, value) if _finite_number(value) is not None else None
 
 
 def _finite_number(value: Any) -> float | None:

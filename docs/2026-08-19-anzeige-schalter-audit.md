@@ -13103,3 +13103,20 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1092: Model- und Usage-Pool-Guard vollständig geprüft
+
+`models.py` hatte noch eine unbelegte Schleifenkante in `AccountUsage.model_pool`:
+ein vorheriger Nichttreffer muss übersprungen und ein späterer exakter Schlüssel
+gefunden werden. Der bestehende Test deckt jetzt genau diese Katalogreihenfolge
+ab. Beim fokussierten Mypy-Lauf wurde zusätzlich ein echter Typfehler in
+`_safe_number` sichtbar: Der bereits strikt geprüfte numerische Wert wurde als
+`object` zurückgegeben. Eine minimale `cast(int | float, value)`-Grenze behebt
+dies ohne Laufzeitänderung.
+
+Verifikation: **66 `tests/test_models.py`-Tests**, `models.py` **283/283
+Statements und 102/102 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.
