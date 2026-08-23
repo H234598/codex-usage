@@ -13072,3 +13072,19 @@ bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
 bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
 fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
 Commit-, Push-, Installations- und Reload-Schritte ab.
+
+## Runde 1090: Backend-Identitäts- und Kandidatenprioritäts-Guards vollständig geprüft
+
+`identity.py` hatte noch zwei unbelegte Auswahlkanten: Kandidaten ohne
+`plan_type` müssen bei der Suche übersprungen werden, und bei mehreren
+Identitätsgruppen muss ein Account-ID-Alias, der über die authentifizierte
+User-ID passt, auch ohne exakte konfigurierte Account-ID eindeutig gewählt
+werden. Die Regressionen prüfen beide Fälle mit echten konkurrierenden
+Kandidaten. Produktionslogik blieb unverändert.
+
+Verifikation: **45 `tests/test_identity.py`-Tests**, `identity.py` **157/157
+Statements und 94/94 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.

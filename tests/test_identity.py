@@ -158,6 +158,21 @@ def test_identity_helpers_skip_candidates_with_malformed_urls():
     ) == [valid]
 
 
+def test_backend_plan_type_skips_candidate_without_plan_type():
+    candidates = [
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/usage",
+            payload={"user_id": "valid-user"},
+        ),
+        JsonCandidate(
+            url="https://chatgpt.com/backend-api/wham/settings",
+            payload={"plan_type": "plus"},
+        ),
+    ]
+
+    assert backend_plan_type_from_candidates(candidates) == "plus"
+
+
 def test_identity_selection_merges_compatible_duplicate_groups():
     candidates = [
         JsonCandidate(
@@ -252,6 +267,23 @@ def test_identity_selection_rejects_auth_without_matching_group():
             auth_user_id="user-c",
             auth_account_id="account-c",
         )
+
+
+def test_identity_selection_accepts_user_id_account_alias_without_exact_id():
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={"account_id": "user-token"},
+    )
+    foreign = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={"account_id": "foreign-account"},
+    )
+
+    assert select_identity_consistent_candidates(
+        [candidate, foreign],
+        auth_user_id="user-token",
+        auth_account_id="configured-account",
+    ) == [candidate]
 
 
 def test_identity_selection_rejects_two_exact_account_groups():
