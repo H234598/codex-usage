@@ -13481,3 +13481,22 @@ gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
 nicht ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
 bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
 Reload-Schritte ab.
+
+## Runde 1115: Applet-Einstellungs- und Darstellungs-Callbacks geprüft
+
+Die bisher nicht ausgeführten Applet-Kanten für Credit-, Credit-Verbrauchs- und
+Reset-Einstellungen wurden mit gültigen, unvollständigen, ungültigen,
+doppelten und unbekannten Account-Zeilen geprüft. Zusätzlich decken die
+Regressionen Datum-, Zeit-, Dauer- und Delta-Stil-Callbacks, Anzeigezeilen,
+Removed-/Safe-Mode-/Synchronisations-Guards sowie normale und sichere
+Panel-Oberflächen-Aktualisierung ab. `_rebuildMenu`, `_setPanelMarkup` und
+`_clearPanelClasses` behandeln nun auch fehlende Widgets und UI-Fehlerpfade im
+Runtime-Test. Produktionslogik blieb unverändert.
+
+Verifikation: **503 `tests/applet_runtime.test.js`-Tests**, **503 bestanden**;
+die V8-Raw-Coverage zeigt die geprüften Callback- und Oberflächenfunktionen im
+ausgeführten Nicht-Strict-Lauf; `git diff --check` bestanden. Keine
+Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des bekannten
+GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine fachlichen
+Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-,
+Installations- und Reload-Schritte ab.

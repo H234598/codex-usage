@@ -3987,6 +3987,133 @@ test("credit delta style setting rows validate and map independently", () => {
   assert.equal(refreshes, 1);
 });
 
+test("credit and reset setting callbacks normalize rows and reject stale writes", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._syncingAccountSettings = false;
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  let reloads = 0;
+  let refreshes = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._refreshFormattedSurfaces = () => { refreshes += 1; };
+
+  applet.accountCreditSettings = [applet._defaultCreditRow("alpha")];
+  applet.accountCreditConsumptionSettings = [applet._defaultCreditConsumptionRow("alpha")];
+  applet._onCreditSettingsChanged();
+  assert.equal(applet._creditSettings.alpha.account, "alpha");
+  assert.equal(applet.accountCreditSettings[0].account, "alpha");
+
+  applet._onCreditConsumptionSettingsChanged();
+  assert.equal(applet._creditSettings.alpha.account, "alpha");
+  assert.equal(applet.accountCreditConsumptionSettings[0].account, "alpha");
+
+  applet.accountResetDisplaySettings = [applet._defaultResetRow("alpha")];
+  applet._onResetDisplaySettingsChanged();
+  assert.equal(applet._resetSettings.alpha.account, "alpha");
+  assert.equal(refreshes, 3);
+
+  applet.accountCreditSettings = [];
+  applet._onCreditSettingsChanged();
+  assert.equal(reloads, 1);
+  applet.accountCreditSettings = [null];
+  applet._onCreditSettingsChanged();
+  assert.equal(reloads, 2);
+
+  applet._backendAccounts = {alpha: {account: "alpha"}, beta: {account: "beta"}};
+  applet.accountCreditSettings = [
+    applet._defaultCreditRow("alpha"), applet._defaultCreditRow("alpha"),
+  ];
+  applet._onCreditSettingsChanged();
+  assert.equal(reloads, 3);
+  applet.accountCreditSettings = [applet._defaultCreditRow("missing"), applet._defaultCreditRow("beta")];
+  applet._onCreditSettingsChanged();
+  assert.equal(reloads, 4);
+
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  applet.accountResetDisplaySettings = [];
+  applet._onResetDisplaySettingsChanged();
+  assert.equal(reloads, 5);
+  applet.accountResetDisplaySettings = [null];
+  applet._onResetDisplaySettingsChanged();
+  assert.equal(reloads, 6);
+
+  const guarded = [
+    "_onCreditSettingsChanged",
+    "_onCreditConsumptionSettingsChanged",
+    "_onResetDisplaySettingsChanged",
+  ];
+  for (const method of guarded) {
+    applet._backendRowsReady = false;
+    applet[method]();
+    applet._backendRowsReady = true;
+    applet._syncingAccountSettings = true;
+    applet[method]();
+    applet._syncingAccountSettings = false;
+    applet._removed = true;
+    applet[method]();
+    applet._removed = false;
+    applet._safeMode = true;
+    applet[method]();
+    applet._safeMode = false;
+  }
+  assert.equal(reloads, 6);
+  assert.equal(refreshes, 3);
+});
+
+test("style and display callbacks update maps and surface refresh paths", () => {
+  const applet = makeApplet();
+  applet._backendRowsReady = true;
+  applet._syncingStyleRows = false;
+  applet._backendAccounts = {alpha: {account: "alpha"}};
+  applet.accountPercentStyles = [applet._defaultStyleRow("alpha", "percent", 0)];
+  applet.accountDateStyles = [applet._defaultStyleRow("alpha", "date", 1)];
+  applet.accountTimeStyles = [applet._defaultStyleRow("alpha", "time", 2)];
+  applet.accountDurationStyles = [applet._defaultStyleRow("alpha", "duration", 3)];
+  applet.accountDeltaStyles = [applet._defaultStyleRow("alpha", "delta", 13)];
+  applet.accountDisplaySettings = [applet._defaultDisplayRow("alpha")];
+  let reloads = 0;
+  let refreshes = 0;
+  applet._loadAccountBackends = () => { reloads += 1; };
+  applet._refreshFormattedSurfaces = () => { refreshes += 1; };
+
+  applet._onDateStylesChanged();
+  applet._onTimeStylesChanged();
+  applet._onDurationStylesChanged();
+  applet._onDeltaStylesChanged();
+  applet._onDisplaySettingsChanged();
+  assert.equal(applet._dateStyles.alpha.account, "alpha");
+  assert.equal(applet._timeStyles.alpha.account, "alpha");
+  assert.equal(applet._durationStyles.alpha.account, "alpha");
+  assert.equal(applet._deltaStyles.alpha.account, "alpha");
+  assert.equal(applet._displaySettings.alpha.account, "alpha");
+  assert.equal(refreshes, 5);
+
+  applet.accountDisplaySettings = [];
+  applet._onDisplaySettingsChanged();
+  assert.equal(reloads, 1);
+
+  applet.accountDisplaySettings = [null];
+  applet._onDisplaySettingsChanged();
+  assert.equal(reloads, 2);
+
+  let usageMenus = 0;
+  let safeMenus = 0;
+  let panels = 0;
+  applet._buildUsageMenu = () => { usageMenus += 1; };
+  applet._buildSafeMenu = () => { safeMenus += 1; };
+  applet._updatePanel = () => { panels += 1; };
+  applet._refreshFormattedSurfaces = Object.getPrototypeOf(applet)._refreshFormattedSurfaces;
+  applet._safeMode = false;
+  applet._refreshFormattedSurfaces();
+  assert.equal(usageMenus, 1);
+  assert.equal(panels, 1);
+  applet._safeMode = true;
+  applet._refreshFormattedSurfaces();
+  assert.equal(safeMenus, 1);
+  assert.equal(usageMenus, 1);
+  assert.equal(panels, 1);
+});
+
 test("long-limit exhaustion masks 5h on panel, click and hover only when enabled", () => {
   const applet = makeApplet();
   const usage = applet._usages[0];
@@ -9085,6 +9212,38 @@ test("unchanged panel surfaces are not rewritten on every display tick", () => {
   assert.equal(labels, 1);
   assert.equal(markups, 1);
   assert.equal(tooltips, 1);
+});
+
+test("panel presentation helpers handle markup, style cleanup and menu rebuild", () => {
+  const applet = makeApplet();
+  const prototype = Object.getPrototypeOf(applet);
+  applet._setPanelMarkup = prototype._setPanelMarkup;
+  applet._clearPanelClasses = prototype._clearPanelClasses;
+
+  const markups = [];
+  applet._applet_label = {clutter_text: {set_markup: (value) => markups.push(value)}};
+  applet._setPanelMarkup("<b>ok</b>");
+  assert.deepEqual(markups, ["<b>ok</b>"]);
+  applet._applet_label = null;
+  assert.doesNotThrow(() => applet._setPanelMarkup("ignored"));
+  applet._applet_label = {clutter_text: {set_markup: () => { throw new Error("markup"); }}};
+  assert.doesNotThrow(() => applet._setPanelMarkup("broken"));
+
+  const removed = [];
+  applet.actor = {remove_style_class_name: (name) => removed.push(name)};
+  applet._clearPanelClasses();
+  assert.deepEqual(removed, [
+    "codex-usage-panel-warning",
+    "codex-usage-panel-critical",
+    "codex-usage-panel-error",
+  ]);
+  applet.actor = {remove_style_class_name: () => { throw new Error("style"); }};
+  assert.doesNotThrow(() => applet._clearPanelClasses());
+
+  let menuBuilds = 0;
+  applet._buildUsageMenu = () => { menuBuilds += 1; };
+  applet._rebuildMenu();
+  assert.equal(menuBuilds, 1);
 });
 
 test("partial usage marks the panel and account row as incomplete", () => {
