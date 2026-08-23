@@ -1062,7 +1062,7 @@ def _sanitized_build_environment() -> dict[str, str]:
 
 def _terminate_preflight_process(process: subprocess.Popen[bytes]) -> None:
     pid = getattr(process, "pid", None)
-    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+    if type(pid) is int and pid > 0:
         try:
             os.killpg(pid, signal.SIGKILL)
         except (OSError, ValueError):
@@ -1078,11 +1078,7 @@ def _terminate_preflight_process(process: subprocess.Popen[bytes]) -> None:
 
 
 def _kill_process_group(process_group_id: int) -> None:
-    if (
-        not isinstance(process_group_id, int)
-        or isinstance(process_group_id, bool)
-        or process_group_id <= 0
-    ):
+    if type(process_group_id) is not int or process_group_id <= 0:
         return
     try:
         os.killpg(process_group_id, signal.SIGKILL)
@@ -1316,7 +1312,7 @@ def _run_builder_bounded(
             start_new_session=True,
         )
         pid = getattr(process, "pid", None)
-        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+        if type(pid) is int and pid > 0:
             try:
                 process_group_id = os.getpgid(pid)
             except OSError:
@@ -1414,7 +1410,7 @@ def _record_hash_matches(payload: bytes, digest: str) -> bool:
 
 
 def _read_bounded_wheel_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes:
-    if not isinstance(info.file_size, int) or info.file_size < 0:
+    if type(info.file_size) is not int or info.file_size < 0:
         _fail()
     if info.file_size > MAX_INSTALL_FILE_BYTES:
         _fail()

@@ -9993,3 +9993,19 @@ Aufrufer ab.
 Verifikation: **110 fokussierte App-Server-Tests**, **762 App-Server-,
 Integration-Entrypoint-, Scheduler-, State- und Usage-Limit-Tests**, Ruff und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 835: Integration-Installer-Prozess- und Größenwerte strikt prüfen
+
+`integration_installer.py` akzeptierte bei Preflight-/Builder-PIDs,
+Prozessgruppen-IDs und Wheel-Mitgliedsgrößen noch Integer-Subklassen. Fremde
+Vergleichsoperatoren konnten Cleanup, Nachfahren-Signalisierung oder
+Archivprüfung mit rohen Exceptions abbrechen.
+
+Alle betroffenen Grenzen akzeptieren jetzt ausschließlich Built-in-`int`;
+ungültige Werte fallen auf Einzelprozess-Cleanup oder kontrollierte
+`IntegrationInstallError`-Pfade zurück. Regression deckt Preflight, Builder,
+Gruppen-Cleanup und Wheel-Reader ab.
+
+Verifikation: **155 fokussierte Integration-Installer-Tests**, **28 abhängige
+Integration-Entrypoint-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
