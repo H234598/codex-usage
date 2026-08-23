@@ -12407,3 +12407,15 @@ Verifikation: **163 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **92 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1038: Cleanup-Identität gegen Inode-Wechsel geprüft
+
+`_assert_created_directory_identity()` und
+`_assert_created_file_identity()` hatten den Inode-Wechsel noch nicht direkt
+ausgeführt. Zwei Regressionen bestätigen fail-closed Ablehnung veränderter
+Cleanup-Ziele.
+
+Verifikation: **165 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **92 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.

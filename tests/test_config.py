@@ -961,6 +961,30 @@ def test_profile_cleanup_rejects_created_ancestor_symlink(tmp_path):
         )
 
 
+def test_created_profile_directory_identity_rejects_changed_inode(tmp_path):
+    path = tmp_path / "profile"
+    path.mkdir()
+    item = path.lstat()
+
+    with pytest.raises(ValueError, match="created profile directory changed"):
+        config_module._assert_created_directory_identity(
+            path,
+            (path, item.st_dev, item.st_ino + 1),
+        )
+
+
+def test_created_file_identity_rejects_changed_inode(tmp_path):
+    path = tmp_path / "auth.json"
+    path.write_text("{}", encoding="utf-8")
+    item = path.lstat()
+
+    with pytest.raises(ValueError, match="created test CODEX_HOME file changed"):
+        config_module._assert_created_file_identity(
+            path,
+            (path, item.st_dev, item.st_ino + 1),
+        )
+
+
 def test_profile_rollback_does_not_delete_new_content(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     old_profile = tmp_path / "old-profile"
