@@ -13297,3 +13297,20 @@ gestartet. Die Gesamtsuite wurde wegen des bekannten GTK/Cinnamon-Abbruchs
 nicht ausgeführt. Für diese Runde sind keine fachlichen Freigaben offen; die
 bestehende Arbeitsfreigabe deckt Test-, Commit-, Push-, Installations- und
 Reload-Schritte ab.
+
+## Runde 1104: Reaktivierungsbrowser- und Executable-Guards vollständig geprüft
+
+`reactivate.py` hatte noch zwei echte Branches: kompatibles Account-Profil
+ohne gültigen Marker muss auf das isolierte OAuth-Profil ausweichen, und die
+Default-Executable muss bei erfolgreicher `which`-Auflösung akzeptiert werden.
+Gezielte Regressionen decken beide Zustände; `oauth_browser.py` blieb dabei
+vollständig abgedeckt.
+
+Verifikation: **111 `tests/test_reactivate.py`-Tests**, eine erwartbare
+`runpy`-Warnung beim OAuth-Module-Main-Guard, `reactivate.py` **314/314
+Statements und 104/104 Branches, 100 % Coverage**, `oauth_browser.py` **83/83
+Statements und 22/22 Branches, 100 % Coverage**, Mypy, Ruff und Diff-Check
+bestanden. Keine Settings-Fenster gestartet. Die Gesamtsuite wurde wegen des
+bekannten GTK/Cinnamon-Abbruchs nicht ausgeführt. Für diese Runde sind keine
+fachlichen Freigaben offen; die bestehende Arbeitsfreigabe deckt Test-,
+Commit-, Push-, Installations- und Reload-Schritte ab.

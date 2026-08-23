@@ -128,6 +128,13 @@ def test_resolve_reactivation_executable_rejects_unknown_home():
         )
 
 
+def test_resolve_reactivation_executable_accepts_default(tmp_path, monkeypatch):
+    fallback = _executable(tmp_path / "codex")
+    monkeypatch.setattr(reactivate_module.shutil, "which", lambda _name: fallback)
+
+    assert _resolve_executable(None, "codex", label="codex command") == fallback
+
+
 def test_reactivate_uses_account_browser_when_override_is_missing(monkeypatch, tmp_path):
     account = Account(
         id="work",
@@ -1128,6 +1135,25 @@ def test_manage_browser_profile_reuses_compatible_existing_profile(tmp_path):
     )
 
     assert reactivate_module._manage_browser_profile(account, "firefox") == browser_dir
+
+
+def test_manage_browser_profile_falls_back_without_profile_marker(tmp_path, monkeypatch):
+    root = tmp_path / "profiles" / "work"
+    (root / "firefox").mkdir(parents=True)
+    fallback = tmp_path / "oauth" / "firefox"
+    monkeypatch.setattr(
+        reactivate_module,
+        "_prepare_oauth_profile",
+        lambda _account, _browser: fallback,
+    )
+    account = Account(
+        id="work",
+        label="Work",
+        profile_dir=str(root),
+        browser="firefox",
+    )
+
+    assert reactivate_module._manage_browser_profile(account, "firefox") == fallback
 
 
 @pytest.mark.parametrize("error", [OSError("mkdir failed"), ValueError("unsafe")])
