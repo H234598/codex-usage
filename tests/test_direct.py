@@ -382,6 +382,28 @@ def test_usage_response_progresses_with_small_monotonic_delta():
     ) is True
 
 
+def test_latest_response_progresses_beyond_stable_group():
+    def response(used: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "rate_limit": {
+                "primary_window": {
+                    "limit_window_seconds": 18_000,
+                    "used_percent": used,
+                    "reset_at": 1_000,
+                }
+            },
+        }
+
+    stable = response(1)
+    latest = response(2)
+
+    assert direct_module._latest_response_progresses_beyond_group(
+        [stable, latest], [(0, stable)]
+    ) is True
+
+
 def test_signature_flag_rejects_string_hooks():
     class BrokenFlag:
         def __str__(self):

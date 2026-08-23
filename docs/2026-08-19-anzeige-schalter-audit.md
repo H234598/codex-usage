@@ -11336,3 +11336,12 @@ korrekt rot; konstantes `reset_at` vervollständigt den spezifizierten Vertrag.
 
 Verifikation: **273 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 937: Fortschritt gegenüber stabilem Quorum direkt geprüft
+
+`direct._latest_response_progresses_beyond_group()` hatte bisher keinen
+direkten Test. Der neue Test vergleicht ein stabiles Ein-Sample-Quorum mit
+einem neueren Payload derselben Reset-Identität und bestätigt den Fortschritt.
+
+Verifikation: **274 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
