@@ -352,6 +352,8 @@ def _missing_usage_limits_error(
 
 
 def _is_retryable_direct_auth_error(error: DirectAuthError) -> bool:
+    if type(error) is not DirectAuthError:
+        return False
     match = _DIRECT_AUTH_ERROR_CODE_RE.match(str(error))
     if match is None:
         return False

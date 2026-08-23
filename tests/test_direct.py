@@ -900,6 +900,14 @@ def test_identity_attribution_errors_invalidate_cached_values(error):
     assert _is_identity_attribution_error(error) is True
 
 
+def test_retryable_auth_error_rejects_exception_subclass_hooks():
+    class BrokenAuthError(DirectAuthError):
+        def __str__(self):
+            raise RuntimeError("synthetic auth error marker")
+
+    assert direct_module._is_retryable_direct_auth_error(BrokenAuthError("401")) is False
+
+
 @pytest.mark.parametrize(
     "error",
     (

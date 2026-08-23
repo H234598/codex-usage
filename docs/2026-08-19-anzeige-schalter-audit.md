@@ -10511,3 +10511,17 @@ werden als leerer Planwert zurückgegeben. Regression deckt den fehlerhaften
 
 Verifikation: **205 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 873: Retry-Klassifikation auf direkte Auth-Fehler begrenzen
+
+`direct._is_retryable_direct_auth_error()` wandelte Fehlerobjekte vor der
+HTTP-Codeprüfung per `str(error)` um. Ein `DirectAuthError`-Subclass konnte
+damit einen rohen `__str__()`-Hook auslösen.
+
+Die Klassifikation akzeptiert jetzt ausschließlich den direkten
+`DirectAuthError`-Typ; Subklassen werden sicher als nicht retrybar behandelt.
+Regression deckt den fehlerhaften String-Hook ab; normale 401-/403-Retrypfade
+bleiben unverändert.
+
+Verifikation: **206 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
