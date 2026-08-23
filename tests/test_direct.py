@@ -3989,6 +3989,28 @@ def test_auth_identity_from_file_rejects_payload_dict_subclass(
         auth_identity_from_file(path)
 
 
+def test_load_auth_token_and_metadata_rejects_payload_dict_subclass(
+    tmp_path, monkeypatch
+):
+    class BrokenPayload(dict):
+        pass
+
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(
+        direct_module,
+        "read_auth_json_file",
+        lambda _path: ("{}", None),
+    )
+    monkeypatch.setattr(
+        direct_module,
+        "loads_strict",
+        lambda _raw: BrokenPayload(),
+    )
+
+    with pytest.raises(DirectAuthError, match=r"invalid auth\.json structure"):
+        direct_module._load_auth_token_and_metadata(path)
+
+
 @pytest.mark.parametrize("path", [None, [], "invalid", 1, False, object()])
 def test_auth_file_helpers_reject_non_path(path):
     for helper in (
