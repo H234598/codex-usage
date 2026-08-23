@@ -10803,3 +10803,17 @@ verschachtelten Eingangsformen ab; normale Credit-Quellen bleiben unverändert.
 
 Verifikation: **226 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 894: Fehlende-Limits-Diagnose auf native Dicts begrenzen
+
+`direct._missing_usage_limits_error()` akzeptierte Rate-Limit- und Fenster-
+Dict-Subklassen per `isinstance` und rief deren `.get()` auf. Manipulierte
+Mappings konnten die eigentlich bounded Fehlerdiagnose dadurch mit einer rohen
+Exception abbrechen.
+
+Die Diagnose verarbeitet jetzt nur native `dict`-Objekte auf beiden Ebenen;
+Subklassen werden ohne Hook-Aufruf ignoriert. Regression deckt beide
+Mapping-Hooks ab; normale Plan-/Fensterdiagnosen bleiben unverändert.
+
+Verifikation: **227 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

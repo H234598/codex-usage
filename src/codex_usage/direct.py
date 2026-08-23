@@ -308,10 +308,10 @@ def _missing_usage_limits_error(
     rate_limit = payload.get("rate_limit")
     unsupported: list[int] = []
     available: set[int] = set()
-    if isinstance(rate_limit, dict):
+    if type(rate_limit) is dict:
         for key in ("primary_window", "secondary_window"):
             window = rate_limit.get(key)
-            if not isinstance(window, dict):
+            if type(window) is not dict:
                 continue
             raw_seconds = window.get("limit_window_seconds")
             if type(raw_seconds) not in (int, float):

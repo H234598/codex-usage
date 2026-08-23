@@ -448,6 +448,28 @@ def test_missing_usage_limits_error_rejects_plan_type_string_subclass_hooks():
     assert "(plan unknown; available window 5h)" in error
 
 
+def test_missing_usage_limits_error_rejects_mapping_subclass_hooks():
+    class BrokenDict(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic missing limits mapping marker")
+
+    expected = "usage limits not found in direct response"
+    assert (
+        direct_module._missing_usage_limits_error(
+            {"rate_limit": BrokenDict()},
+            None,
+        )
+        == expected
+    )
+    assert (
+        direct_module._missing_usage_limits_error(
+            {"rate_limit": {"primary_window": BrokenDict()}},
+            None,
+        )
+        == expected
+    )
+
+
 def test_credit_window_extracts_nested_absolute_balance():
     window = _credit_window(
         {
