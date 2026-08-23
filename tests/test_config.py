@@ -1203,6 +1203,22 @@ def test_account_from_data_rejects_non_string_optional_fields(
         config_module._account_from_data(data)
 
 
+def test_account_from_data_normalizes_valid_optional_fields(tmp_path):
+    account = config_module._account_from_data(
+        {
+            "id": "optional-fields",
+            "profile_dir": str(tmp_path / "profile"),
+            "tag": "tag",
+            "reactivation_browser": "firefox",
+            "series": "alpha",
+        }
+    )
+
+    assert account.tag == "tag"
+    assert account.reactivation_browser == "firefox"
+    assert account.series == "ALPHA"
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (

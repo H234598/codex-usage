@@ -12291,3 +12291,14 @@ Verifikation: **138 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **88 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1028: Gültige optionale Account-Felder normalisiert
+
+`_account_from_data()` hatte den positiven Pfad für Tag,
+`reactivation_browser` und Serie noch nicht direkt belegt. Ein Test bestätigt
+gültige Werte sowie die beabsichtigte Großschreibung der Serie.
+
+Verifikation: **139 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **88 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
