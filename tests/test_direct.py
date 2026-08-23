@@ -784,6 +784,17 @@ def test_credit_window_extracts_nested_absolute_balance():
     assert window.source == "json:credits"
 
 
+def test_credit_window_extracts_explicit_scalar_balance():
+    window = _credit_window(
+        {"credits": "123.5"},
+        datetime(2026, 7, 16, 4, 0, tzinfo=UTC),
+    )
+
+    assert window is not None
+    assert window.remaining == 123.5
+    assert window.name == "credits"
+
+
 def test_credit_window_rejects_credit_dict_subclass_hooks():
     class BrokenCredits(dict):
         def get(self, _key, _default=None):

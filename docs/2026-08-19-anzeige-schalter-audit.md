@@ -11525,3 +11525,14 @@ UTC-bezogenen `datetime`-Wert.
 Verifikation: **293 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **90 %**, Missing-Zeilen 93; keine Settings-Fenster
 gestartet.
+
+## Runde 957: Explizite Credit-Skalare direkt extrahiert
+
+`direct._credit_window()` hatte bisher nur verschachtelte Balance- und
+Reject-Fälle direkt belegt. Der neue Test akzeptiert einen expliziten nativen
+String-Skalar, wandelt ihn sicher in `remaining=123.5` um und kennzeichnet das
+Fenster als `credits`.
+
+Verifikation: **294 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **90 %**, Missing-Zeilen 92; keine Settings-Fenster
+gestartet.
