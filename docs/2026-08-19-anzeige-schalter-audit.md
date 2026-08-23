@@ -11637,3 +11637,13 @@ ohne HTTP-Status und hält Retry auf bekannte 401/403-Signaturen begrenzt.
 Verifikation: **304 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **93 %**, Missing-Zeilen 82; keine Settings-Fenster
 gestartet.
+
+## Runde 968: Ungültiges Auth-JSON direkt abgewiesen
+
+`direct._load_auth_token_and_metadata()` hatte den Parsefehler-Zweig nach
+`read_auth_json_file()` noch nicht direkt belegt. Der neue Test bestätigt den
+Pfad-gebundenen `invalid auth.json`-Fehlertext bei ungültigem JSON.
+
+Verifikation: **305 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **93 %**, Missing-Zeilen 80; keine Settings-Fenster
+gestartet.

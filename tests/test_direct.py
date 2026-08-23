@@ -4699,6 +4699,18 @@ def test_auth_identity_from_file_rejects_payload_dict_subclass(
         auth_identity_from_file(path)
 
 
+def test_load_auth_token_and_metadata_rejects_invalid_json(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    monkeypatch.setattr(
+        direct_module,
+        "read_auth_json_file",
+        lambda _path: ("not-json", None),
+    )
+
+    with pytest.raises(DirectAuthError, match=rf"invalid auth\.json: {path}"):
+        direct_module._load_auth_token_and_metadata(path)
+
+
 def test_load_auth_token_and_metadata_rejects_payload_dict_subclass(
     tmp_path, monkeypatch
 ):
