@@ -1728,6 +1728,21 @@ def test_resolve_account_accepts_id_or_unique_label(tmp_path):
     assert resolve_account(config, "BW_Privat").id == "privat"
 
 
+def test_resolve_account_reports_available_accounts_for_unknown_ref():
+    config = AppConfig(
+        accounts=(
+            Account(id="privat", label="Privat", profile_dir="/tmp/privat"),
+            Account(id="arbeit", label="Arbeit", profile_dir="/tmp/arbeit"),
+        )
+    )
+
+    with pytest.raises(
+        KeyError,
+        match=r"available accounts: privat \(Privat\), arbeit \(Arbeit\)",
+    ):
+        resolve_account(config, "missing")
+
+
 @pytest.mark.parametrize("config", [None, [], "invalid", 1, True, object()])
 def test_account_resolvers_reject_non_config_input(config):
     with pytest.raises(ValueError, match="config must be an AppConfig"):

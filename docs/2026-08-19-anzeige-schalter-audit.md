@@ -12372,3 +12372,14 @@ Verifikation: **156 Config-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `config.py`: **91 %**, verbleibende Missing-Zeilen liegen
 in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1035: Unbekannte Account-Referenz erklärt verfügbare Accounts
+
+`resolve_account()` hatte den Fehlerzweig mit vorhandener Account-Liste noch
+nicht direkt ausgeführt. Eine Regression bestätigt, dass unbekannte IDs oder
+Labels die verfügbaren IDs und Labels im Fehler nennen.
+
+Verifikation: **157 Config-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `config.py`: **91 %**, verbleibende Missing-Zeilen liegen
+in weiteren Test-Home-/Rollback-/Pfad- und Serialisierungspfaden; keine
+Settings-Fenster gestartet.
