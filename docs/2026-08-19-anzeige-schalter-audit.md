@@ -11147,3 +11147,17 @@ Payload-Subclass in den Parser; normale Auth-Dateien bleiben unverändert.
 
 Verifikation: **251 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 918: Auth-Plantyp-Datei akzeptiert nur native JSON-Objekte
+
+`direct.auth_plan_type_from_file()` akzeptierte ein von `loads_strict()`
+geliefertes Dict-Subclass per `isinstance` und reichte es an den Payload-Helper
+weiter. Eine manipulierte Parser-Rückgabe konnte dadurch als fehlender Plantyp
+durchlaufen.
+
+Der Datei-Wrapper verlangt jetzt ein natives JSON-`dict` und meldet fremde
+Mappings kontrolliert als ungültige Struktur. Regression injiziert ein
+Payload-Subclass in den Parser; normale Auth-Dateien bleiben unverändert.
+
+Verifikation: **252 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.
