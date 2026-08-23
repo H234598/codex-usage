@@ -10703,3 +10703,17 @@ normale Spark-Rate-Limit-Signaturen bleiben unverändert.
 
 Verifikation: **219 Direct-Tests**, Ruff und Diff-Check bestanden; keine
 Settings-Fenster gestartet.
+
+## Runde 887: Main-Limit-Malformed-Guard auf native Dicts begrenzen
+
+`direct._has_malformed_main_limit_structure()` akzeptierte `rate_limit`-
+Dict-Subklassen per `isinstance`. Die nachgelagerte Signaturbildung behandelte
+solche Werte dagegen bereits als ungültig und konnte bei einem manipulierten
+`.get()` mit einer rohen Exception abbrechen.
+
+Der Malformed-Guard akzeptiert jetzt ausschließlich ein natives `dict`; eine
+Subklasse wird vor jeder Signaturbildung als malformed abgewiesen. Regression
+deckt den `.get()`-Hook ab; normale Main-Limit-Antworten bleiben unverändert.
+
+Verifikation: **220 Direct-Tests**, Ruff und Diff-Check bestanden; keine
+Settings-Fenster gestartet.

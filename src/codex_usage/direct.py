@@ -1181,7 +1181,7 @@ def _has_conflicting_main_limit_flags(payloads: list[dict[str, Any]]) -> bool:
 
 def _has_malformed_main_limit_structure(payloads: list[dict[str, Any]]) -> bool:
     return any(
-        "rate_limit" in payload and not isinstance(payload["rate_limit"], dict)
+        "rate_limit" in payload and type(payload["rate_limit"]) is not dict
         for payload in payloads
     )
 

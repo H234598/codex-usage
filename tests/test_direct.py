@@ -1310,6 +1310,21 @@ def test_select_stable_wham_usage_rejects_malformed_main_limit_structure(value):
         _select_stable_wham_usage([response, response, response])
 
 
+def test_select_stable_wham_usage_rejects_main_limit_dict_subclass():
+    class BrokenRateLimit(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic main malformed marker")
+
+    response = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "rate_limit": BrokenRateLimit(),
+    }
+
+    with pytest.raises(DirectFetchError, match="main limits were malformed"):
+        _select_stable_wham_usage([response, response, response])
+
+
 def test_select_stable_wham_usage_rejects_conflicting_partial_windows():
     def response(duration: int, used: int) -> dict:
         return {
