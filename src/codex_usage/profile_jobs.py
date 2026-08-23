@@ -145,7 +145,7 @@ def create_profile_job(
     except Exception:
         pid = getattr(process, "pid", None)
         signaled_group = False
-        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+        if type(pid) is int and pid > 0:
             try:
                 os.killpg(pid, signal.SIGTERM)
                 signaled_group = True
@@ -181,7 +181,7 @@ def _reap_untracked_worker(process: subprocess.Popen[bytes]) -> None:
         pass
     pid = getattr(process, "pid", None)
     killed_group = False
-    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+    if type(pid) is int and pid > 0:
         try:
             os.killpg(pid, signal.SIGKILL)
             killed_group = True
@@ -219,7 +219,7 @@ def profile_job_status(job_id: str) -> dict[str, object]:
         pid = job["worker_pid"]
         valid_pid = (
             pid
-            if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
+            if type(pid) is int and pid > 0
             else None
         )
         if job["status"] == "cancel_requested" and valid_pid is None:
@@ -295,8 +295,7 @@ def cancel_profile_job(job_id: str) -> dict[str, object]:
     )
     pid = updated.get("worker_pid")
     if (
-        isinstance(pid, int)
-        and not isinstance(pid, bool)
+        type(pid) is int
         and pid > 0
         and _worker_matches(pid, job_id)
     ):
@@ -836,7 +835,7 @@ def _validate_manifest(value: dict[str, Any]) -> dict[str, object]:
         if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
             raise ValueError("profile job timestamp is invalid")
     pid = value["worker_pid"]
-    if pid is not None and (not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0):
+    if pid is not None and (type(pid) is not int or pid <= 0):
         raise ValueError("profile job worker pid is invalid")
     if value["error"] is not None and (
         not isinstance(value["error"], str) or len(value["error"]) > 256

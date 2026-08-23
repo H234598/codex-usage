@@ -17,6 +17,14 @@ from codex_usage.profile_login import DeviceLoginEvent, DeviceLoginResult
 from codex_usage.scheduler import fetch_all
 
 
+class _BrokenInt(int):
+    def __gt__(self, _other):
+        raise RuntimeError("synthetic profile-job integer comparison marker")
+
+    def __le__(self, _other):
+        raise RuntimeError("synthetic profile-job integer comparison marker")
+
+
 def test_profile_create_cli_emits_only_job_reference(tmp_path, monkeypatch, capsys):
     config = tmp_path / "config.toml"
     observed = {}
@@ -351,7 +359,11 @@ def test_profile_job_creation_reclaims_terminal_manifest_capacity(tmp_path, monk
 
 @pytest.mark.parametrize(
     ("process_pid", "expected_signal"),
-    [(4321, (4321, profile_jobs.signal.SIGTERM)), (True, None)],
+    [
+        (4321, (4321, profile_jobs.signal.SIGTERM)),
+        (True, None),
+        (_BrokenInt(4321), None),
+    ],
 )
 def test_profile_job_start_failure_cleans_up_untracked_worker(
     tmp_path, monkeypatch, process_pid, expected_signal
@@ -582,6 +594,31 @@ def test_profile_job_untracked_worker_reap_rejects_boolean_pid(monkeypatch):
     assert calls == [("wait", 1), ("kill",), ("wait", 1)]
 
 
+def test_profile_job_untracked_worker_reap_rejects_numeric_subclass_pid(monkeypatch):
+    calls = []
+
+    class FakeProcess:
+        pid = _BrokenInt(4321)
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            if len([item for item in calls if item[0] == "wait"]) == 1:
+                raise subprocess.TimeoutExpired(["worker"], timeout)
+
+        def kill(self):
+            calls.append(("kill",))
+
+    monkeypatch.setattr(
+        profile_jobs.os,
+        "killpg",
+        lambda pid, signum: calls.append(("killpg", pid, signum)),
+    )
+
+    profile_jobs._reap_untracked_worker(FakeProcess())
+
+    assert calls == [("wait", 1), ("kill",), ("wait", 1)]
+
+
 def test_profile_job_untracked_worker_reap_kills_process_group_after_timeout(
     monkeypatch,
 ):
@@ -644,7 +681,10 @@ def test_profile_job_cancel_signals_only_owned_worker(tmp_path, monkeypatch):
     assert signals == [(4321, profile_jobs.signal.SIGTERM)]
 
 
-def test_profile_job_cancel_rejects_boolean_worker_pid(tmp_path, monkeypatch):
+@pytest.mark.parametrize("worker_pid", [True, _BrokenInt(4321)])
+def test_profile_job_cancel_rejects_invalid_worker_pid(
+    tmp_path, monkeypatch, worker_pid
+):
     state = tmp_path / "state"
     monkeypatch.setattr(profile_jobs, "default_state_dir", lambda: state)
 
@@ -669,7 +709,7 @@ def test_profile_job_cancel_rejects_boolean_worker_pid(tmp_path, monkeypatch):
     def return_boolean_worker_pid(job_id, **changes):
         result = original_update(job_id, **changes)
         if changes.get("status") == "cancel_requested":
-            return {**result, "worker_pid": True}
+            return {**result, "worker_pid": worker_pid}
         return result
 
     monkeypatch.setattr(profile_jobs, "_update_job", return_boolean_worker_pid)
@@ -1555,6 +1595,9 @@ def test_profile_job_manifest_validation_does_not_require_profile_path(tmp_path)
     validated = profile_jobs._validate_manifest(manifest)
 
     assert validated["profile_dir"] == manifest["profile_dir"]
+    manifest["worker_pid"] = _BrokenInt(4321)
+    with pytest.raises(ValueError, match="worker pid is invalid"):
+        profile_jobs._validate_manifest(manifest)
 
 
 @pytest.mark.parametrize("schema_version", [True, 1.0, "1"])

@@ -9962,3 +9962,19 @@ und den vollständigen Reaktivierungspfad ab.
 
 Verifikation: **70 fokussierte Reaktivierungs-Tests**, Ruff und Diff-Check
 bestanden; keine Settings-Fenster gestartet.
+
+## Runde 833: Profile-Job-PIDs strikt kanonisieren
+
+`profile_jobs.py` akzeptierte an Worker-Erzeugung, Reaping, Status-/Cancel-
+Prüfung und Manifestgrenze noch Integer-Subklassen. Fremde Vergleichsoperatoren
+konnten Cleanup, Worker-Signalisierung oder Manifestvalidierung mit rohen
+Exceptions abbrechen.
+
+Alle Worker-PID-Grenzen akzeptieren jetzt ausschließlich Built-in-`int`;
+ungültige PIDs fallen auf normalen Einzelprozess-Cleanup beziehungsweise
+kontrollierte Manifestfehler zurück. Regression deckt Startfehler, Reaping,
+Cancel und Manifestvalidierung ab.
+
+Verifikation: **89 fokussierte Profile-Job-Tests**, **93 Profile-Job- und
+Profile-CLI-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.
