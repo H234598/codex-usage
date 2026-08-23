@@ -134,6 +134,19 @@ def test_identity_helpers_skip_candidates_with_malformed_urls():
     ) == [valid]
 
 
+def test_identity_helpers_skip_url_string_subclass_hooks():
+    class BrokenStr(str):
+        def strip(self):
+            raise RuntimeError("synthetic identity URL marker")
+
+    candidate = JsonCandidate(
+        url=BrokenStr("https://chatgpt.com/backend-api/wham/usage"),
+        payload={"user_id": "wrong-user"},
+    )
+
+    assert backend_identity_from_candidates([candidate]) == (None, None)
+
+
 @pytest.mark.parametrize(
     "candidates", [None, 1, True, object(), _ValueErrorIterator()]
 )

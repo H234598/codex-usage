@@ -237,7 +237,7 @@ def _candidate_priority(candidate: JsonCandidate) -> int:
 def _candidate_is_usable(candidate: Any) -> bool:
     if (
         not isinstance(candidate, JsonCandidate)
-        or not isinstance(candidate.url, str)
+        or type(candidate.url) is not str
         or not candidate.url.strip()
     ):
         return False

@@ -10197,3 +10197,17 @@ Plattform-`Path`-Typ vor jeder Methode. Regression simuliert einen fehlerhaften
 
 Verifikation: **53 Private-IO-Tests**, **296 abhängige Tests**, Ruff und
 Diff-Check bestanden; keine Settings-Fenster gestartet.
+
+## Runde 850: Identity-Kandidaten auf kanonische URL-Strings begrenzen
+
+`identity._candidate_is_usable()` akzeptierte URL-`str`-Subklassen und rief
+deren `strip()` vor URL-Prüfung auf. Ein manipuliertes URL-Objekt konnte damit
+die Kandidatenauswahl mit einer rohen Exception abbrechen.
+
+Kandidaten werden jetzt nur bei Built-in-`str` als URL geprüft; andere Werte
+werden wie unbrauchbare Kandidaten übersprungen. Regression simuliert den
+fehlerhaften URL-Hook.
+
+Verifikation: **30 Identity-Tests**, **60 abhängige Identity-/Extractor-/Direct-
+und Scheduler-Tests**, Ruff und Diff-Check bestanden; keine Settings-Fenster
+gestartet.
