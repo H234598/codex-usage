@@ -12167,3 +12167,14 @@ Verifikation: **64 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **99 %**, verbleibende Missing-Zeilen liegen
 im inkonsistenten Reset-Guard und Float-Overflow-Fallback; keine
 Settings-Fenster gestartet.
+
+## Runde 1017: Float-Overflow im Modell-Helper fail-closed
+
+`models._finite_number()` hatte den `OverflowError` bei einem extrem großen
+Built-in-Integer noch nicht direkt getestet. Ein Regressionstest bestätigt
+sichere `None`-Rückgabe; der Helper lässt keine nicht darstellbare Zahl in
+Usage-/JSON-Pfade gelangen.
+
+Verifikation: **65 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **99 %**, einzige Missing-Zeile bleibt der
+redundante inkonsistente-Reset-Guard (186); keine Settings-Fenster gestartet.

@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+import codex_usage.models as models_module
 from codex_usage.models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 
 
@@ -330,6 +331,10 @@ def test_account_usage_as_dict_fails_closed_for_pool_exhaustion_error():
     payload = usage.as_dict()
 
     assert payload["models"]["boom"]["exhausted"] is True
+
+
+def test_finite_number_drops_overflowing_builtin_integer():
+    assert models_module._finite_number(10**1000) is None
 
 
 def test_account_usage_as_dict_skips_ambiguous_model_pool_keys():
