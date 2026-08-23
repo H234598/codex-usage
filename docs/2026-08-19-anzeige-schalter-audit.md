@@ -11812,3 +11812,13 @@ verlässliches Schließen des Dateideskriptors.
 Verifikation: **334 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
 Auszug für `direct.py`: **97 %**, Missing-Zeilen 36; keine Settings-Fenster
 gestartet.
+
+## Runde 985: Stable-Selector-ValueError direkt gemappt
+
+`direct._fetch_stable_wham_usage()` hatte den unerwarteten `ValueError` des
+Stabilitätsselectors noch nicht direkt belegt. Der neue Test bestätigt die
+Umwandlung in `DirectFetchError` ohne Retry- oder Iterator-Leak.
+
+Verifikation: **335 Direct-Tests**, Ruff und Diff-Check bestanden; Coverage-
+Auszug für `direct.py`: **97 %**, Missing-Zeilen 35; keine Settings-Fenster
+gestartet.

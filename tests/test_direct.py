@@ -3052,6 +3052,22 @@ def test_fetch_stable_wham_usage_uses_one_aggregate_deadline(monkeypatch):
     assert request_timeouts == pytest.approx([10.0, 6.0, 2.0])
 
 
+def test_fetch_stable_wham_usage_maps_selector_value_error(monkeypatch):
+    monkeypatch.setattr(
+        direct_module,
+        "_fetch_wham_usage",
+        lambda *_args, **_kwargs: {},
+    )
+
+    def reject(_payloads):
+        raise ValueError("synthetic selector failure")
+
+    monkeypatch.setattr(direct_module, "_select_stable_wham_usage", reject)
+
+    with pytest.raises(DirectFetchError, match="synthetic selector failure"):
+        _fetch_stable_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 @pytest.mark.parametrize(
     "timeout_seconds",
     (
