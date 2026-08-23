@@ -12145,3 +12145,14 @@ Verifikation: **63 Model-Tests**, Ruff und Diff-Check bestanden;
 Coverage-Auszug für `models.py`: **98 %**, verbleibende Missing-Zeilen liegen
 in einem inkonsistenten Reset-Guard und Serialisierungs-Exceptionpfaden; keine
 Settings-Fenster gestartet.
+
+## Runde 1015: Wiederholte ambige Modellschlüssel nicht serialisiert
+
+`AccountUsage.as_dict()` hatte den `ambiguous_model_keys`-Skip bei einem
+dritten Eintrag desselben normalisierten Schlüssels noch nicht direkt
+belegt. Der Regressionstest bestätigt, dass ambige Pools vollständig aus der
+serialisierten Modellkarte fernbleiben.
+
+Verifikation: **63 Model-Tests**, Ruff und Diff-Check bestanden;
+Coverage-Auszug für `models.py`: **98 %**, verbleibende Missing-Zeilen liegen
+in Reset-/Pool- und Float-Exceptionpfaden; keine Settings-Fenster gestartet.

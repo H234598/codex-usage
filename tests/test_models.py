@@ -322,6 +322,7 @@ def test_account_usage_as_dict_skips_ambiguous_model_pool_keys():
         models=(
             UsagePool(key="spark", display_name="Spark"),
             UsagePool(key="SPARK", display_name="Duplicate Spark"),
+            UsagePool(key="spark", display_name="Third Spark"),
             UsagePool(key="valid", display_name="Valid"),
         ),
     )
