@@ -939,6 +939,174 @@ def test_source_drift_before_active_swap_keeps_prior_active_release(tmp_path, mo
     )
 
 
+def test_final_install_attestation_failure_restores_active_and_preserves_previous(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+    second_root = tmp_path / "post-swap-install"
+    second_root.mkdir(mode=0o700)
+    second_source = _temporary_source_copy(second_root)
+    second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+    second_entrypoint.write_bytes(second_entrypoint.read_bytes() + b"\n# second release\n")
+    second_temporary = second_root / "temporary"
+    second_temporary.mkdir(mode=0o700)
+    original_verify = integration_installer._verify_manifest
+    active_verifications = 0
+
+    def fail_final_active_attestation(*args, **kwargs):
+        nonlocal active_verifications
+        if kwargs["manifest_path"] == active_path:
+            active_verifications += 1
+            if active_verifications == 2:
+                raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=second_source,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=second_temporary,
+        )
+
+    assert active_verifications == 2
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+    assert original_verify(
+        manifest_path=active_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+    ) == release
+
+
+def test_final_rollback_attestation_failure_restores_active_and_preserves_previous(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+    original_verify = integration_installer._verify_manifest
+
+    def fail_final_active_attestation(*args, **kwargs):
+        if kwargs["manifest_path"] == active_path:
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+    assert original_verify(
+        manifest_path=active_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+    ) == release
+
+
+def test_failed_active_restore_raises_cleanup_error_and_keeps_failure_evidence(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+    original_verify = integration_installer._verify_manifest
+    original_write = integration_installer.write_private_text
+    active_writes = 0
+
+    def fail_final_active_attestation(*args, **kwargs):
+        if kwargs["manifest_path"] == active_path:
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    def fail_active_restore(path, text, **kwargs):
+        nonlocal active_writes
+        if path == active_path:
+            active_writes += 1
+            if active_writes == 2:
+                raise OSError("synthetic restore failure")
+        return original_write(path, text, **kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "write_private_text",
+        fail_active_restore,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError) as error:
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+
+    assert isinstance(error.value.__cause__, OSError)
+    assert active_writes == 2
+    assert active_path.read_bytes() == previous_before
+    assert active_path.read_bytes() != active_before
+    assert previous_path.read_bytes() == previous_before
+
+
 def test_install_cutover_accepts_only_attested_schema1_as_nonreactivatable_previous(
     tmp_path,
 ):

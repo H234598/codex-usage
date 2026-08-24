@@ -797,6 +797,36 @@ def _revalidate_bootstrap(
             _fail()
 
 
+def _restore_active_manifest(
+    *,
+    active_path: Path,
+    active_text: str,
+    state_home: Path,
+    app_identity: _DirectoryIdentity,
+    integration_identity: _DirectoryIdentity,
+) -> None:
+    _revalidate_bootstrap(state_home, app_identity, integration_identity)
+    write_private_text(
+        active_path,
+        active_text,
+        label="active integration manifest",
+        mode=0o600,
+    )
+    _revalidate_bootstrap(state_home, app_identity, integration_identity)
+    restored_text, restored_stat = read_private_text(
+        active_path,
+        regular_label="active manifest",
+        read_label="active manifest",
+        max_bytes=128 * 1024,
+    )
+    if (
+        restored_text != active_text
+        or restored_stat.st_nlink != 1
+        or stat.S_IMODE(restored_stat.st_mode) != 0o600
+    ):
+        _fail()
+
+
 def _copy_regular(
     source: Path,
     target: Path,
@@ -2577,6 +2607,7 @@ def _install_release(
                 expected_entrypoint_path=final_entrypoint_path,
             )
             active_path = integration / ACTIVE_NAME
+            active_text: str | None = None
             if active_path.exists() or active_path.is_symlink():
                 active_text, active_stat = read_private_text(
                     active_path,
@@ -2600,13 +2631,6 @@ def _install_release(
                         state_home=state_home,
                         data_home=data_home,
                     )
-                _revalidate_bootstrap(state_home, app_identity, integration_identity)
-                write_private_text(
-                    integration / PREVIOUS_NAME,
-                    active_text,
-                    label="previous integration manifest",
-                    mode=0o600,
-                )
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             write_private_text(
                 active_path,
@@ -2614,13 +2638,52 @@ def _install_release(
                 label="active integration manifest",
                 mode=0o600,
             )
-            _revalidate_bootstrap(state_home, app_identity, integration_identity)
-            _verify_manifest(
-                manifest_path=active_path,
-                state_home=state_home,
-                data_home=data_home,
-                expected_entrypoint_path=None,
-            )
+            published_identity = _file_identity(active_path)
+            try:
+                _revalidate_bootstrap(state_home, app_identity, integration_identity)
+                _verify_manifest(
+                    manifest_path=active_path,
+                    state_home=state_home,
+                    data_home=data_home,
+                    expected_entrypoint_path=None,
+                )
+                if active_text is not None:
+                    _revalidate_bootstrap(
+                        state_home,
+                        app_identity,
+                        integration_identity,
+                    )
+                    write_private_text(
+                        integration / PREVIOUS_NAME,
+                        active_text,
+                        label="previous integration manifest",
+                        mode=0o600,
+                    )
+            except Exception as publish_error:
+                try:
+                    if active_text is None:
+                        _revalidate_bootstrap(
+                            state_home,
+                            app_identity,
+                            integration_identity,
+                        )
+                        if not _cleanup_owned_file(
+                            active_path,
+                            published_identity,
+                            integration_identity,
+                        ):
+                            _fail()
+                    else:
+                        _restore_active_manifest(
+                            active_path=active_path,
+                            active_text=active_text,
+                            state_home=state_home,
+                            app_identity=app_identity,
+                            integration_identity=integration_identity,
+                        )
+                except Exception as restore_error:
+                    raise IntegrationCleanupError() from restore_error
+                raise publish_error
             return verified
     except IntegrationInstallError:
         raise
@@ -2713,6 +2776,20 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
         ):
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             previous = integration / PREVIOUS_NAME
+            active = integration / ACTIVE_NAME
+            active_text: str | None = None
+            if active.exists() or active.is_symlink():
+                active_text, active_stat = read_private_text(
+                    active,
+                    regular_label="active manifest",
+                    read_label="active manifest",
+                    max_bytes=128 * 1024,
+                )
+                if (
+                    active_stat.st_nlink != 1
+                    or stat.S_IMODE(active_stat.st_mode) != 0o600
+                ):
+                    _fail()
             previous_text, previous_stat = read_private_text(
                 previous,
                 regular_label="previous integration manifest",
@@ -2730,18 +2807,45 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
             )
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             write_private_text(
-                integration / ACTIVE_NAME,
+                active,
                 previous_text,
                 label="active integration manifest",
                 mode=0o600,
             )
-            _revalidate_bootstrap(state_home, app_identity, integration_identity)
-            _verify_manifest(
-                manifest_path=integration / ACTIVE_NAME,
-                state_home=state_home,
-                data_home=data_home,
-                expected_entrypoint_path=None,
-            )
+            published_identity = _file_identity(active)
+            try:
+                _revalidate_bootstrap(state_home, app_identity, integration_identity)
+                _verify_manifest(
+                    manifest_path=active,
+                    state_home=state_home,
+                    data_home=data_home,
+                    expected_entrypoint_path=None,
+                )
+            except Exception as publish_error:
+                try:
+                    if active_text is None:
+                        _revalidate_bootstrap(
+                            state_home,
+                            app_identity,
+                            integration_identity,
+                        )
+                        if not _cleanup_owned_file(
+                            active,
+                            published_identity,
+                            integration_identity,
+                        ):
+                            _fail()
+                    else:
+                        _restore_active_manifest(
+                            active_path=active,
+                            active_text=active_text,
+                            state_home=state_home,
+                            app_identity=app_identity,
+                            integration_identity=integration_identity,
+                        )
+                except Exception as restore_error:
+                    raise IntegrationCleanupError() from restore_error
+                raise publish_error
             return release
     except IntegrationInstallError:
         raise
