@@ -1269,11 +1269,25 @@ def test_private_path_lock_keeps_waiter_before_acquire_on_persistent_inode(tmp_p
 
 
 def test_private_path_lock_namespace_is_stable_across_home_environment_changes(
-    tmp_path,
+    tmp_path, pytestconfig
 ):
     target = tmp_path / "shared" / "config.toml"
     target.parent.mkdir()
     source_root = Path(__file__).resolve().parents[1] / "src"
+    lock_root = private_io._private_lock_root()
+    production_lock_root = pytestconfig._private_lock_production_root
+    isolation_prefix = [
+        "/usr/bin/bwrap",
+        "--bind",
+        "/",
+        "/",
+        "--dir",
+        str(production_lock_root),
+        "--bind",
+        str(lock_root),
+        str(production_lock_root),
+        "--",
+    ]
     holder_code = "\n".join(
         (
             "from pathlib import Path",
@@ -1305,7 +1319,7 @@ def test_private_path_lock_namespace_is_stable_across_home_environment_changes(
     (tmp_path / "home-a").mkdir()
     (tmp_path / "home-b").mkdir()
     holder = subprocess.Popen(
-        [sys.executable, "-c", holder_code, str(target)],
+        [*isolation_prefix, sys.executable, "-c", holder_code, str(target)],
         env=env_a,
         stdout=subprocess.PIPE,
         text=True,
@@ -1314,7 +1328,7 @@ def test_private_path_lock_namespace_is_stable_across_home_environment_changes(
         assert holder.stdout is not None
         assert holder.stdout.readline().strip() == "held"
         contender = subprocess.run(
-            [sys.executable, "-c", contender_code, str(target)],
+            [*isolation_prefix, sys.executable, "-c", contender_code, str(target)],
             env=env_b,
             capture_output=True,
             text=True,
