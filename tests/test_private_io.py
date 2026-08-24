@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -665,8 +666,9 @@ def test_write_private_text_keeps_live_target_single_linked_before_replace(
     def observe_replace(source, target):
         if Path(target) == path and ".tmp-" in Path(source).name:
             observed_link_counts.append(path.stat().st_nlink)
-            rollback = tmp_path / ".value.json.rollback"
-            observed_rollback_modes.append(rollback.stat().st_mode & 0o777)
+            rollbacks = list(tmp_path.glob(".value.json.rollback-*"))
+            assert len(rollbacks) == 1
+            observed_rollback_modes.append(rollbacks[0].stat().st_mode & 0o777)
         return original_replace(source, target)
 
     monkeypatch.setattr(private_io.os, "replace", observe_replace)
@@ -720,6 +722,160 @@ def test_write_private_text_rejects_insecure_stale_rollback_artifact(tmp_path):
     assert rollback.read_text(encoding="utf-8") == "older"
 
 
+def test_write_private_text_rejects_hardlinked_rollback_without_restoring_it(tmp_path):
+    path = tmp_path / "value.json"
+    rollback = tmp_path / ".value.json.rollback-crash"
+    rollback.write_text("old", encoding="utf-8")
+    rollback.chmod(0o600)
+    alias = tmp_path / "rollback-alias"
+    alias.hardlink_to(rollback)
+
+    with pytest.raises(ValueError):
+        write_private_text(path, "new", label="value")
+
+    assert not path.exists()
+    assert rollback.read_text(encoding="utf-8") == "old"
+    assert alias.read_text(encoding="utf-8") == "old"
+    assert rollback.stat().st_nlink == 2
+
+
+@pytest.mark.parametrize("failure_stage", ["read", "write", "fsync"])
+def test_write_private_text_cleans_owned_partial_rollback_on_copy_failure(
+    tmp_path,
+    monkeypatch,
+    failure_stage,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+    original_open = private_io.os.open
+    original_read = private_io.os.read
+    original_write = private_io.os.write
+    original_fsync = private_io.os.fsync
+    source_fds: set[int] = set()
+    rollback_fds: set[int] = set()
+    first_source_read = True
+
+    def track_open(file, flags, mode=0o777):
+        fd = original_open(file, flags, mode)
+        opened_path = Path(file)
+        if opened_path == path:
+            source_fds.add(fd)
+        if opened_path.name.startswith(".value.json.rollback-"):
+            rollback_fds.add(fd)
+        return fd
+
+    def fail_read(fd, size):
+        nonlocal first_source_read
+        if failure_stage == "read" and fd in source_fds:
+            if not first_source_read:
+                raise OSError("synthetic rollback read failure")
+            first_source_read = False
+            return original_read(fd, min(size, 1))
+        return original_read(fd, size)
+
+    def fail_write(fd, value):
+        if failure_stage == "write" and fd in rollback_fds:
+            original_write(fd, value[:1])
+            raise OSError("synthetic rollback write failure")
+        return original_write(fd, value)
+
+    def fail_fsync(fd):
+        if failure_stage == "fsync" and fd in rollback_fds:
+            raise OSError("synthetic rollback fsync failure")
+        return original_fsync(fd)
+
+    monkeypatch.setattr(private_io.os, "open", track_open)
+    monkeypatch.setattr(private_io.os, "read", fail_read)
+    monkeypatch.setattr(private_io.os, "write", fail_write)
+    monkeypatch.setattr(private_io.os, "fsync", fail_fsync)
+
+    with pytest.raises(OSError, match=f"rollback {failure_stage} failure"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "old"
+    assert path.stat().st_nlink == 1
+    assert list(tmp_path.glob(".value.json.rollback*")) == []
+
+
+def test_write_private_text_rejects_oversized_rollback_source_before_copy(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old-too-large", encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setattr(private_io, "_MAX_PRIVATE_ROLLBACK_BYTES", 3, raising=False)
+
+    with pytest.raises(ValueError, match="too large for rollback"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "old-too-large"
+    assert list(tmp_path.glob(".value.json.rollback*")) == []
+
+
+def test_overlapping_write_private_text_transactions_preserve_each_other(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+    original_copy = private_io._copy_private_file
+    first_owns_rollback = Event()
+    release_first = Event()
+    second_started = Event()
+    second_finished = Event()
+    copy_calls = 0
+
+    def overlap_copy(*args, **kwargs):
+        nonlocal copy_calls
+        original_copy(*args, **kwargs)
+        copy_calls += 1
+        if copy_calls == 1:
+            first_owns_rollback.set()
+            if not release_first.wait(5):
+                raise TimeoutError("test did not release first writer")
+
+    def second_write():
+        second_started.set()
+        try:
+            write_private_text(path, "second", label="value")
+        finally:
+            second_finished.set()
+
+    monkeypatch.setattr(private_io, "_copy_private_file", overlap_copy)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(write_private_text, path, "first", label="value")
+        assert first_owns_rollback.wait(5)
+        second = executor.submit(second_write)
+        assert second_started.wait(5)
+        second_blocked = not second_finished.wait(0.2)
+        release_first.set()
+        first.result(timeout=5)
+        second.result(timeout=5)
+
+    assert second_blocked
+    assert path.read_text(encoding="utf-8") == "second"
+    assert path.stat().st_nlink == 1
+    assert list(tmp_path.glob(".value.json.rollback*")) == []
+
+
+def test_write_private_text_reuses_same_thread_private_path_lock(tmp_path):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+
+    with private_path_lock(path, timeout_seconds=0, label="outer lock"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "new"
+    assert sorted(item.name for item in tmp_path.iterdir()) == [
+        "value.json",
+        "value.json.lock",
+    ]
+
+
 @pytest.mark.parametrize("mode", [0o640, True, "600", -1])
 def test_write_private_text_rejects_non_private_mode(tmp_path, mode):
     path = tmp_path / "value.json"
@@ -748,15 +904,21 @@ def test_write_private_text_rejects_non_directory_parent(tmp_path):
 
 def test_write_private_text_rejects_invalid_temporary_descriptor(tmp_path, monkeypatch):
     path = tmp_path / "value"
-    monkeypatch.setattr(
-        private_io.os,
-        "fstat",
-        lambda _fd: SimpleNamespace(
+    original_fstat = private_io.os.fstat
+    fstat_calls = 0
+
+    def reject_temporary(fd):
+        nonlocal fstat_calls
+        fstat_calls += 1
+        if fstat_calls == 1:
+            return original_fstat(fd)
+        return SimpleNamespace(
             st_mode=0,
             st_nlink=1,
             st_uid=private_io.os.getuid(),
-        ),
-    )
+        )
+
+    monkeypatch.setattr(private_io.os, "fstat", reject_temporary)
 
     with pytest.raises(ValueError, match="temporary value is not a private regular file"):
         write_private_text(path, "secret", label="value")

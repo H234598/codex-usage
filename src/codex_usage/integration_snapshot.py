@@ -926,7 +926,11 @@ def publish_schema2_cache(payload: bytes, *, cache_path: Path) -> None:
             label="integration cache lock",
         ):
             _require_integration_directory(cache_path)
-            _recover_stale_rollback(cache_path, label="integration cache")
+            _recover_stale_rollback(
+                cache_path,
+                label="integration cache",
+                required_target_mode=0o600,
+            )
             _validate_existing_cache(cache_path)
             write_private_text(
                 cache_path,

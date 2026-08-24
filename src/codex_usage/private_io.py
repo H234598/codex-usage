@@ -7,6 +7,7 @@ import math
 import os
 import secrets
 import stat
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -16,6 +17,8 @@ from pathlib import Path
 PRIVATE_LOCK_TIMEOUT_SECONDS = 30
 _PATH_TYPE = type(Path())
 _MAX_STALE_ROLLBACKS = 1
+_MAX_PRIVATE_ROLLBACK_BYTES = 64 * 1024 * 1024
+_PRIVATE_LOCK_STATE = threading.local()
 
 
 def _lock_deadline(timeout_seconds: int | float) -> float:
@@ -199,7 +202,12 @@ def _rollback_path(path: Path) -> Path:
     return path.with_name(f".{path.name}.rollback")
 
 
-def _recover_stale_rollback(path: Path, *, label: str) -> None:
+def _recover_stale_rollback(
+    path: Path,
+    *,
+    label: str,
+    required_target_mode: int | None = None,
+) -> Path | None:
     rollback = _rollback_path(path)
     legacy_pattern = f".{glob.escape(path.name)}.rollback-*"
     stale = []
@@ -213,7 +221,7 @@ def _recover_stale_rollback(path: Path, *, label: str) -> None:
     if len(stale) > _MAX_STALE_ROLLBACKS:
         raise ValueError(f"too many stale {label} rollback files")
     if not stale:
-        return
+        return None
 
     candidate = stale[0]
     candidate_stat = candidate.lstat()
@@ -226,9 +234,11 @@ def _recover_stale_rollback(path: Path, *, label: str) -> None:
     try:
         target_stat = path.lstat()
     except FileNotFoundError:
+        if candidate_stat.st_nlink != 1:
+            raise ValueError(f"stale {label} rollback identity is invalid") from None
         os.replace(candidate, path)
         _fsync_directory(path.parent)
-        return
+        return None
     if not stat.S_ISREG(target_stat.st_mode) or target_stat.st_uid != os.getuid():
         raise ValueError(f"{label} must be a private user-owned file: {path}")
     same_inode = (
@@ -238,10 +248,16 @@ def _recover_stale_rollback(path: Path, *, label: str) -> None:
     if same_inode:
         if target_stat.st_nlink != 2 or candidate_stat.st_nlink != 2:
             raise ValueError(f"stale {label} rollback identity is invalid")
-    elif target_stat.st_nlink != 1 or candidate_stat.st_nlink != 1:
+        candidate.unlink()
+        _fsync_directory(path.parent)
+        return None
+    if target_stat.st_nlink != 1 or candidate_stat.st_nlink != 1:
         raise ValueError(f"stale {label} rollback identity is invalid")
-    candidate.unlink()
-    _fsync_directory(path.parent)
+    if required_target_mode is not None and (
+        stat.S_IMODE(target_stat.st_mode) != required_target_mode
+    ):
+        return candidate
+    return candidate
 
 
 def _copy_private_file(
@@ -252,6 +268,8 @@ def _copy_private_file(
     label: str,
     mode: int,
 ) -> None:
+    if source_stat.st_size > _MAX_PRIVATE_ROLLBACK_BYTES:
+        raise ValueError(f"{label} is too large for rollback")
     read_flags = os.O_RDONLY
     write_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     for flag_name in ("O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
@@ -286,10 +304,17 @@ def _copy_private_file(
             or stat.S_IMODE(rollback_stat.st_mode) != mode
         ):
             raise ValueError(f"rollback {label} is not a private regular file")
+        total = 0
         while True:
-            chunk = os.read(source_fd, 65_536)
+            chunk = os.read(
+                source_fd,
+                min(65_536, _MAX_PRIVATE_ROLLBACK_BYTES - total + 1),
+            )
             if not chunk:
                 break
+            total += len(chunk)
+            if total > _MAX_PRIVATE_ROLLBACK_BYTES:
+                raise ValueError(f"{label} is too large for rollback")
             offset = 0
             while offset < len(chunk):
                 written = os.write(destination_fd, chunk[offset:])
@@ -318,7 +343,7 @@ def _copy_private_file(
             os.close(source_fd)
 
 
-def write_private_text(
+def _write_private_text_locked(
     path: Path,
     text: str,
     *,
@@ -339,8 +364,9 @@ def write_private_text(
     parent = path.parent
     if parent.is_symlink() or not parent.is_dir():
         raise ValueError(f"{label} parent must be a real directory: {parent}")
-    if replace_existing:
-        _recover_stale_rollback(path, label=label)
+    stale_rollback = (
+        _recover_stale_rollback(path, label=label) if replace_existing else None
+    )
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
     target_stat = None
@@ -348,11 +374,16 @@ def write_private_text(
         target_stat = path.lstat()
         if target_stat.st_nlink != 1 or target_stat.st_uid != os.getuid():
             raise ValueError(f"{label} must be a private user-owned file: {path}")
+    if stale_rollback is not None:
+        stale_rollback.unlink()
+        _fsync_directory(parent)
     encoded = text.encode("utf-8")
     temporary = parent / (
         "." + path.name + ".tmp-" + str(os.getpid()) + "-" + secrets.token_hex(8)
     )
-    rollback = _rollback_path(path)
+    rollback = parent / (
+        "." + path.name + ".rollback-" + str(os.getpid()) + "-" + secrets.token_hex(8)
+    )
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -385,6 +416,7 @@ def write_private_text(
         fd = -1
         if replace_existing:
             if target_stat is not None:
+                rollback_exists = True
                 _copy_private_file(
                     path,
                     rollback,
@@ -392,7 +424,6 @@ def write_private_text(
                     label=label,
                     mode=mode,
                 )
-                rollback_exists = True
             _fsync_directory(parent)
             os.replace(temporary, path)
             replaced = True
@@ -453,6 +484,33 @@ def write_private_text(
                 pass
 
 
+def write_private_text(
+    path: Path,
+    text: str,
+    *,
+    label: str,
+    mode: int = 0o600,
+    replace_existing: bool = True,
+) -> None:
+    if type(text) is not str:
+        raise ValueError(f"{label} text is invalid")
+    path = _require_path(path, label=label)
+    if type(mode) is not int or mode < 0 or mode & ~0o700:
+        raise ValueError(f"{label} mode must be private")
+    assert_no_symlink_ancestors(path, label=label)
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise ValueError(f"{label} parent must be a real directory: {parent}")
+    with private_path_lock(path, label=f"{label} write lock"):
+        _write_private_text_locked(
+            path,
+            text,
+            label=label,
+            mode=mode,
+            replace_existing=replace_existing,
+        )
+
+
 def _fsync_directory(path: Path) -> None:
     flags = os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
@@ -487,6 +545,14 @@ def private_path_lock(
     lock_path = parent / (path.name + ".lock")
     if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
         raise ValueError(f"{label} must be a regular file: {lock_path}")
+    lock_key = Path(os.path.abspath(lock_path))
+    held_lock_paths = getattr(_PRIVATE_LOCK_STATE, "paths", None)
+    if held_lock_paths is None:
+        held_lock_paths = set()
+        _PRIVATE_LOCK_STATE.paths = held_lock_paths
+    if lock_key in held_lock_paths:
+        yield
+        return
     flags = os.O_RDWR | os.O_CREAT
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -515,9 +581,11 @@ def private_path_lock(
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"{label} is already in use") from exc
                 time.sleep(0.05)
+        held_lock_paths.add(lock_key)
         try:
             yield
         finally:
+            held_lock_paths.remove(lock_key)
             try:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             except OSError:

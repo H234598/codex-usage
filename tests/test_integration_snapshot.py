@@ -712,7 +712,8 @@ def test_current_reader_accepts_exact_directory_entry_cap(tmp_path, monkeypatch)
     current = tmp_path / "data" / "codex-usage" / "current"
     _write_current_fixture(current, _usage("alpha"))
     _write_current_fixture(current, _usage("beta"))
-    monkeypatch.setattr(snapshot_module, "_MAX_DIRECTORY_ENTRIES", 2)
+    assert len(tuple(current.iterdir())) == 4
+    monkeypatch.setattr(snapshot_module, "_MAX_DIRECTORY_ENTRIES", 4)
 
     assert [item.account_id for item in read_current_usage_records(current)] == [
         "alpha",
@@ -940,6 +941,24 @@ def test_publish_schema2_cache_recovers_stale_hardlink_rollback(tmp_path):
     assert cache.read_bytes() == payload
     assert cache.stat().st_nlink == 1
     assert not rollback.exists()
+
+
+def test_publish_schema2_cache_retains_rollback_when_live_mode_is_invalid(tmp_path):
+    from codex_usage.integration_snapshot import IntegrationSecureIOError, publish_schema2_cache
+
+    cache = _cache_path(tmp_path)
+    cache.write_bytes(b'{"newer":"invalid-mode"}')
+    cache.chmod(0o640)
+    rollback = cache.with_name(f".{cache.name}.rollback")
+    rollback.write_bytes(b'{"old":"safe"}')
+    rollback.chmod(0o600)
+    payload = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}'
+
+    with pytest.raises(IntegrationSecureIOError):
+        publish_schema2_cache(payload, cache_path=cache)
+
+    assert cache.read_bytes() == b'{"newer":"invalid-mode"}'
+    assert rollback.read_bytes() == b'{"old":"safe"}'
 
 
 def test_publish_schema2_cache_rejects_bytes_subclass_before_decode(tmp_path):

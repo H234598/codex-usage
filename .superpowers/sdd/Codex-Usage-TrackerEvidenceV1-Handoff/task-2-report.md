@@ -617,6 +617,168 @@ $ git diff --check
 
 No full or unrelated suite ran.
 
+## Review round 3/5 fixes
+
+### Implementation
+
+- Stale rollback recovery now refuses multi-linked candidates before restoring a
+  missing target. Different-inode rollback files remain intact until the live
+  target passes caller-required validation; schema-2 publication supplies its
+  strict `0o600` target-mode requirement.
+- Each transaction owns a collision-proof
+  `.<name>.rollback-<pid>-<token>` artifact. Cleanup ownership begins before
+  copy creation, so injected read, write, or fsync failure removes only that
+  transaction's partial artifact and leaves the live target unchanged.
+- Rollback copies have a 64 MiB source-size and streamed-byte ceiling. Oversize
+  input fails before replacement without removing or altering the live target.
+- `write_private_text()` serializes all writers on the existing per-target
+  `private_path_lock()`. Same-thread lock ownership is reentrant, preserving
+  existing callers that already lock the target; different threads and
+  processes remain serialized by `flock`. No extra writer-lock artifact or
+  transient live-target hard link is introduced.
+- Current-record boundary fixture counts the persistent per-record `.json.lock`
+  files created by the now-universal writer lock.
+
+Files changed in this round:
+
+- `src/codex_usage/private_io.py`
+- `src/codex_usage/integration_snapshot.py`
+- `tests/test_private_io.py`
+- `tests/test_integration_snapshot.py`
+- `.superpowers/sdd/Codex-Usage-TrackerEvidenceV1-Handoff/task-2-report.md`
+
+### Behavioral RED/GREEN evidence
+
+Hardlinked stale rollback was incorrectly moved into the missing live path.
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_rejects_hardlinked_rollback_without_restoring_it
+assert not path.exists() failed
+1 failed in 0.13s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_rejects_hardlinked_rollback_without_restoring_it
+1 passed in 0.11s
+```
+
+Strict publisher validation happened after valid rollback destruction.
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_publish_schema2_cache_retains_rollback_when_live_mode_is_invalid
+FileNotFoundError reading .integration-v2.json.rollback
+1 failed in 0.21s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_publish_schema2_cache_retains_rollback_when_live_mode_is_invalid
+1 passed in 0.16s
+```
+
+Rollback-copy cleanup ownership was established after copy completion. Each
+injected failure left its partial artifact behind. The final test version
+injects through the actual `os.read`, `os.write`, and rollback-fd `os.fsync`
+operations.
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_cleans_owned_partial_rollback_on_copy_failure
+3 failed in 0.17s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_cleans_owned_partial_rollback_on_copy_failure
+3 passed in 0.09s
+```
+
+Existing live targets had no rollback-copy byte bound.
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_rejects_oversized_rollback_source_before_copy
+Failed: DID NOT RAISE ValueError
+1 failed in 0.14s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_rejects_oversized_rollback_source_before_copy
+1 passed in 0.11s
+```
+
+Overlapping generic writers shared and deleted the deterministic rollback;
+first writer then reported an unpreserved post-replacement failure.
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_overlapping_write_private_text_transactions_preserve_each_other
+OSError: [Errno 5] could not roll back value
+1 failed in 0.19s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_overlapping_write_private_text_transactions_preserve_each_other
+1 passed in 0.32s
+```
+
+Initial serialization used a second `.write.lock`, leaving a new persistent
+artifact even when caller already held the canonical target lock.
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_reuses_same_thread_private_path_lock
+AssertionError: '.value.json.write.lock' != 'value.json'
+1 failed in 0.14s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_reuses_same_thread_private_path_lock tests/test_private_io.py::test_overlapping_write_private_text_transactions_preserve_each_other tests/test_integration_snapshot.py::test_current_reader_ignores_private_lock_and_temporary_files
+3 passed in 0.39s
+```
+
+Focused suite regressions exposed two fixtures that assumed write operations
+created no lock file or that the first `fstat()` always inspected the temporary
+payload. Fixtures were corrected to include canonical lock entries and preserve
+lock-fd validation.
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py
+2 failed, 99 passed in 0.54s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py
+101 passed in 0.46s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py
+1 failed, 127 passed in 0.37s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_current_reader_accepts_exact_directory_entry_cap
+1 passed in 0.12s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py
+128 passed in 0.29s
+```
+
+### Review round 3 final verification
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py
+102 passed in 0.51s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py
+128 passed in 0.37s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_consumption.py
+83 passed in 0.15s
+
+$ ruff check src/codex_usage/integration_snapshot.py src/codex_usage/private_io.py tests/test_integration_snapshot.py tests/test_private_io.py src/codex_usage/consumption.py tests/test_consumption.py
+All checks passed!
+
+$ git diff --check
+(exit 0; no output)
+```
+
+An initial Ruff gate reported B904 at stale missing-target recovery. Adding
+explicit `from None` preserved intended public error context; final Ruff gate
+above is clean. No full or unrelated suite ran.
+
+### Round 3 self-review and concerns
+
+- Live targets stay single-linked. Rollbacks are private copies, bounded before
+  and during streaming, and uniquely owned by one transaction.
+- Recovery checks regular-file type, owner, private mode, link count, and exact
+  legacy hard-link identity before mutation. Publisher-specific target mode is
+  checked before stale rollback deletion.
+- Reentrancy is thread-local and keyed by normalized absolute lock path. It
+  bypasses only a lock already acquired by the same thread; other writers still
+  reach kernel `flock` serialization.
+- 64 MiB is a deliberate universal preservation ceiling for current
+  `write_private_text()` call sites. A larger existing file now fails closed
+  before replacement rather than risking unbounded copy amplification.
+- No unresolved correctness or security concern identified within round scope.
+
 ## Review round 2/5 fixes
 
 Date: 2026-08-24
