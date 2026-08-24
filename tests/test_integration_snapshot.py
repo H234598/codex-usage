@@ -279,10 +279,41 @@ def test_schema2_builder_rejects_availability_source_over_cap(monkeypatch):
         build_schema2_document((_usage_with_pools((pool,)),), generated_at=GENERATED)
 
 
+def test_schema2_builder_accepts_exact_availability_source_cap(monkeypatch):
+    from codex_usage.integration_snapshot import build_schema2_document
+
+    monkeypatch.setattr(snapshot_module, "_MAX_AVAILABILITY_SOURCES_PER_POOL", 2)
+    pool = replace(
+        _pool("main", (LimitWindow(name="5h", remaining=75),)),
+        availability_sources=("one", "two"),
+    )
+
+    account = build_schema2_document(
+        (_usage_with_pools((pool,)),),
+        generated_at=GENERATED,
+    )["accounts"][0]
+
+    assert len(account["limits"]) == 1
+
+
 def test_schema2_builder_rejects_invalid_explicit_values_capture():
     from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
 
     usage = replace(_usage("alpha"), values_captured_at=[])
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document((usage,), generated_at=GENERATED)
+
+
+@pytest.mark.parametrize("capture_field", ["captured_at", "values_captured_at"])
+def test_schema2_builder_rejects_capture_after_generation(capture_field):
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
+
+    usage = _usage("alpha")
+    if capture_field == "values_captured_at":
+        usage = replace(usage, values_captured_at=GENERATED + timedelta(seconds=1))
+    else:
+        usage = replace(usage, captured_at=GENERATED + timedelta(seconds=1))
 
     with pytest.raises(IntegrationInvalidSource):
         build_schema2_document((usage,), generated_at=GENERATED)
@@ -298,9 +329,10 @@ def test_schema2_numeric_boundaries_reject_subclasses_before_operations():
         def remaining_percent(self):
             return broken_float
 
-    assert snapshot_module._pool_windows(
-        _pool("main", (BrokenLimitWindow(name="5h", duration_seconds=18_000),))
-    ) == []
+    with pytest.raises(snapshot_module.IntegrationInvalidSource):
+        snapshot_module._pool_windows(
+            _pool("main", (BrokenLimitWindow(name="5h", duration_seconds=18_000),))
+        )
 
 
 
@@ -353,8 +385,8 @@ def test_schema2_projection_is_sorted_allowlisted_and_deterministic(tmp_path):
         pytest.param(10**10_000, id="huge-int"),
     ],
 )
-def test_schema2_projection_skips_unusable_remaining_values(remaining):
-    from codex_usage.integration_snapshot import build_schema2_document
+def test_schema2_projection_rejects_unusable_remaining_values(remaining):
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
 
     class BrokenLimitWindow(LimitWindow):
         @property
@@ -369,12 +401,12 @@ def test_schema2_projection_skips_unusable_remaining_values(remaining):
             ),
         )
     )
-    document = build_schema2_document((usage,), generated_at=GENERATED)
-    assert document["accounts"][0]["limits"] == []
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document((usage,), generated_at=GENERATED)
 
 
-def test_schema2_projection_omits_nonallowlisted_limit_windows():
-    from codex_usage.integration_snapshot import build_schema2_document
+def test_schema2_projection_rejects_nonallowlisted_limit_windows():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
 
     usage = _usage_with_pools(
         (
@@ -385,9 +417,23 @@ def test_schema2_projection_omits_nonallowlisted_limit_windows():
         )
     )
 
-    document = build_schema2_document((usage,), generated_at=GENERATED)
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document((usage,), generated_at=GENERATED)
 
-    assert document["accounts"][0]["limits"] == []
+
+@pytest.mark.parametrize(
+    "reset_at",
+    ["invalid", datetime(2026, 8, 15, 10)],
+)
+def test_schema2_projection_rejects_malformed_limit_reset(reset_at):
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
+
+    usage = _usage_with_pools(
+        (_pool("main", (LimitWindow(name="5h", remaining=75, reset_at=reset_at),)),)
+    )
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document((usage,), generated_at=GENERATED)
 
 
 def test_schema2_projection_includes_credit_limit_without_tracker_evidence():
@@ -421,6 +467,26 @@ def test_schema2_projection_includes_credit_limit_without_tracker_evidence():
         },
     ]
     assert account["tracker_evidence"] == []
+
+
+def test_schema2_projection_preserves_valid_partial_limits_and_evidence():
+    from codex_usage.integration_snapshot import build_schema2_document, serialize_schema2_document
+
+    usage = replace(_usage_with_tracker_limit(), status=AccountStatus.PARTIAL)
+    document = build_schema2_document(
+        (usage,),
+        generated_at=GENERATED,
+        tracker_samples={
+            ("alpha", "main", 18_000): (
+                _tracker_sample(CAPTURED_ALPHA, 25.0),
+            )
+        },
+    )
+
+    account = json.loads(serialize_schema2_document(document))["accounts"][0]
+    assert account["status"] == "partial"
+    assert account["limits"][0]["pool"] == "main"
+    assert account["tracker_evidence"][0]["coverage"] == "insufficient"
 
 
 def test_schema2_projection_rejects_unhashable_pool_key_without_raising():
@@ -563,6 +629,23 @@ def test_schema2_serializer_rejects_fractional_sample_time_reversal():
         serialize_schema2_document(document)
 
 
+def test_schema2_serializer_rejects_capture_after_generation():
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        serialize_schema2_document,
+    )
+
+    document = _valid_schema2_document()
+    document["accounts"][0]["freshness"] = {
+        "captured_at": "2026-08-15T10:06:00Z",
+        "fresh_until": "2026-08-15T10:21:00Z",
+        "stale": False,
+    }
+
+    with pytest.raises(IntegrationInvalidSource):
+        serialize_schema2_document(document)
+
+
 def test_current_reader_ignores_private_lock_and_temporary_files(tmp_path):
     from codex_usage.integration_snapshot import read_current_usage_records
 
@@ -571,6 +654,7 @@ def test_current_reader_ignores_private_lock_and_temporary_files(tmp_path):
     for path in (
         current / "alpha.json.lock",
         current / ".alpha.json.tmp-123-secret",
+        current / ".alpha.json.rollback-123-secret",
     ):
         path.write_text("transient", encoding="utf-8")
         path.chmod(0o600)
@@ -619,6 +703,20 @@ def test_current_reader_bounds_transient_directory_entries(tmp_path, monkeypatch
     monkeypatch.setattr(Path, "iterdir", bounded_entries)
     with pytest.raises(IntegrationInvalidSource):
         read_current_usage_records(current)
+
+
+def test_current_reader_accepts_exact_directory_entry_cap(tmp_path, monkeypatch):
+    from codex_usage.integration_snapshot import read_current_usage_records
+
+    current = tmp_path / "data" / "codex-usage" / "current"
+    _write_current_fixture(current, _usage("alpha"))
+    _write_current_fixture(current, _usage("beta"))
+    monkeypatch.setattr(snapshot_module, "_MAX_DIRECTORY_ENTRIES", 2)
+
+    assert [item.account_id for item in read_current_usage_records(current)] == [
+        "alpha",
+        "beta",
+    ]
 
 
 def test_secret_scan_does_not_classify_short_dotted_account_id_as_jwt():
@@ -794,6 +892,30 @@ def test_publish_schema2_cache_keeps_old_bytes_when_replace_fails(tmp_path, monk
             cache_path=cache,
         )
     assert len(calls) == 1
+    assert cache.read_bytes() == b'{"old":"safe"}'
+
+
+def test_publish_schema2_cache_restores_old_bytes_when_directory_fsync_fails(
+    tmp_path,
+    monkeypatch,
+):
+    from codex_usage import integration_snapshot, private_io
+
+    cache = _cache_path(tmp_path)
+    cache.write_bytes(b'{"old":"safe"}')
+    cache.chmod(0o600)
+    monkeypatch.setattr(
+        private_io,
+        "_fsync_directory",
+        lambda _path: (_ for _ in ()).throw(OSError("synthetic directory fsync")),
+    )
+
+    with pytest.raises(integration_snapshot.IntegrationSecureIOError):
+        integration_snapshot.publish_schema2_cache(
+            b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}',
+            cache_path=cache,
+        )
+
     assert cache.read_bytes() == b'{"old":"safe"}'
 
 
@@ -1151,7 +1273,8 @@ def test_snapshot_pool_projection_covers_invalid_pool_and_window_shapes():
             "remaining_percent": 50.0,
         }
     ]
-    assert _pool_windows(_pool("main", (LimitWindow(name="unknown", remaining=50),))) == []
+    with pytest.raises(IntegrationInvalidSource):
+        _pool_windows(_pool("main", (LimitWindow(name="unknown", remaining=50),)))
 
     class InvalidDurationWindow(LimitWindow):
         @property
@@ -1172,15 +1295,21 @@ def test_snapshot_pool_projection_covers_invalid_pool_and_window_shapes():
                 ),
             )
         )
-    assert _pool_windows(
-        _pool("main", (InvalidDurationWindow(name="5h", remaining=75, duration_seconds=0),))
-    ) == []
-    assert _pool_windows(
-        _pool("main", (LimitWindow(name="5h", remaining=75, reset_at="invalid"),))
-    ) == []
-    assert _pool_windows(
-        _pool("main", (LimitWindow(name="5h", remaining=75, reset_at=datetime(2026, 8, 15, 10)),))
-    ) == []
+    with pytest.raises(IntegrationInvalidSource):
+        _pool_windows(
+            _pool("main", (InvalidDurationWindow(name="5h", remaining=75, duration_seconds=0),))
+        )
+    with pytest.raises(IntegrationInvalidSource):
+        _pool_windows(
+            _pool("main", (LimitWindow(name="5h", remaining=75, reset_at="invalid"),))
+        )
+    with pytest.raises(IntegrationInvalidSource):
+        _pool_windows(
+            _pool(
+                "main",
+                (LimitWindow(name="5h", remaining=75, reset_at=datetime(2026, 8, 15, 10)),),
+            )
+        )
 
     class RaisingWindow(LimitWindow):
         @property
@@ -1368,6 +1497,27 @@ def test_schema2_serializer_rejects_absolute_local_path_tokens():
         serialize_schema2_document(document)
 
 
+@pytest.mark.parametrize(
+    "token",
+    ["file:///home/synthetic/private", "reset:/home/synthetic/private"],
+)
+def test_schema2_serializer_rejects_prefixed_absolute_local_path_tokens(token):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        serialize_schema2_document,
+    )
+
+    document = _valid_schema2_document(with_evidence=True)
+    document["accounts"][0]["tracker_evidence"][0]["reset_generation"] = token
+
+    with pytest.raises(IntegrationInvalidSource):
+        serialize_schema2_document(document)
+
+    valid = _valid_schema2_document(with_evidence=True)
+    valid["accounts"][0]["tracker_evidence"][0]["reset_generation"] = "reset:main/5h"
+    assert serialize_schema2_document(valid)
+
+
 def test_schema2_account_iterable_accepts_max_and_stops_at_max_plus_one(monkeypatch):
     from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
 
@@ -1422,6 +1572,59 @@ def test_schema2_history_iterable_accepts_max_and_stops_at_max_plus_one(monkeypa
             generated_at=GENERATED,
             tracker_samples={
                 ("alpha", "main", 18_000): repeat(exact[0]),
+            },
+        )
+
+
+def test_schema2_tracker_series_mapping_accepts_max_and_rejects_max_plus_one(monkeypatch):
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
+
+    monkeypatch.setattr(snapshot_module, "_MAX_TRACKER_SERIES", 2)
+    spark_reset = RESET + timedelta(days=1)
+    usage = replace(
+        _usage_with_tracker_limit(),
+        models=(
+            _pool(
+                "gpt-5.3-codex-spark",
+                (
+                    LimitWindow(
+                        name="weekly",
+                        percent=60.0,
+                        duration_seconds=604_800,
+                        reset_at=spark_reset,
+                    ),
+                ),
+            ),
+        ),
+    )
+    exact = {
+        ("alpha", "main", 18_000): (_tracker_sample(CAPTURED_ALPHA, 25.0),),
+        ("alpha", "gpt-5.3-codex-spark", 604_800): (
+            _tracker_sample(
+                CAPTURED_ALPHA,
+                40.0,
+                pool="gpt-5.3-codex-spark",
+                window_seconds=604_800,
+                reset_at=spark_reset,
+                reset_generation="reset-spark",
+            ),
+        ),
+    }
+
+    account = build_schema2_document(
+        (usage,),
+        generated_at=GENERATED,
+        tracker_samples=exact,
+    )["accounts"][0]
+    assert len(account["tracker_evidence"]) == 2
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document(
+            (usage,),
+            generated_at=GENERATED,
+            tracker_samples={
+                **exact,
+                ("alpha", "main", 604_800): (),
             },
         )
 
@@ -1488,6 +1691,26 @@ def test_schema2_serializer_rejects_duplicate_tracker_identity():
         serialize_schema2_document(document)
 
 
+@pytest.mark.parametrize(
+    "reset_at",
+    [
+        "2026-08-15T10:00:00Z",
+        "2026-08-15T10:04:00Z",
+    ],
+)
+def test_schema2_serializer_rejects_tracker_reset_not_after_generation(reset_at):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        serialize_schema2_document,
+    )
+
+    document = _valid_schema2_document(with_evidence=True)
+    document["accounts"][0]["limits"][0]["reset_at"] = reset_at
+
+    with pytest.raises(IntegrationInvalidSource):
+        serialize_schema2_document(document)
+
+
 def test_schema2_builder_rejects_tracker_reset_mismatch():
     from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
 
@@ -1503,6 +1726,26 @@ def test_schema2_builder_rejects_tracker_reset_mismatch():
                         25.0,
                         reset_at=mismatched_reset,
                     ),
+                )
+            },
+        )
+
+
+def test_schema2_builder_rejects_tracker_samples_from_another_account():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema2_document
+
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema2_document(
+            (_usage_with_tracker_limit(),),
+            generated_at=GENERATED,
+            tracker_samples={
+                ("alpha", "main", 18_000): (
+                    _tracker_sample(
+                        CAPTURED_ALPHA - timedelta(minutes=10),
+                        15.0,
+                        account_id="beta",
+                    ),
+                    _tracker_sample(CAPTURED_ALPHA, 25.0, account_id="beta"),
                 )
             },
         )

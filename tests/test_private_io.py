@@ -868,6 +868,25 @@ def test_write_private_text_keeps_old_value_when_fsync_fails(tmp_path, monkeypat
     assert list(tmp_path.glob(".value.json.tmp-*")) == []
 
 
+def test_write_private_text_restores_old_value_when_directory_fsync_fails(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    monkeypatch.setattr(
+        private_io,
+        "_fsync_directory",
+        lambda _path: (_ for _ in ()).throw(OSError("simulated directory fsync failure")),
+    )
+
+    with pytest.raises(OSError, match="directory fsync failure"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "old"
+    assert list(tmp_path.glob(".value.json.*-*")) == []
+
+
 @pytest.mark.parametrize("error_number", [private_io.errno.EINVAL, private_io.errno.EACCES])
 def test_fsync_directory_maps_open_errors(tmp_path, monkeypatch, error_number):
     def fail_open(*_args, **_kwargs):

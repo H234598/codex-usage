@@ -90,7 +90,7 @@ _JWT_RE = re.compile(
     r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}$"
 )
 _PEM_PRIVATE_KEY_RE = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
-_LOCAL_PATH_RE = re.compile(r"^(?:/|~/|[A-Za-z]:[\\/]|\\\\)")
+_LOCAL_PATH_RE = re.compile(r"(?:^|[:=])(?:/+|~/|[A-Za-z]:[\\/]|\\\\)")
 
 
 class IntegrationSnapshotError(Exception):
@@ -235,14 +235,17 @@ def read_current_usage_records(current_dir: Path) -> tuple[AccountUsage, ...]:
 
 def _is_transient_current_path(path: Path) -> bool:
     name = path.name
-    return name.endswith(".json.lock") or (name.startswith(".") and ".json.tmp-" in name)
+    return name.endswith(".json.lock") or (
+        name.startswith(".")
+        and (".json.tmp-" in name or ".json.rollback-" in name)
+    )
 
 
 def _pool_windows(pool: UsagePool) -> list[dict[str, object]]:
     if (
         type(pool.key) is not str
         or not _ASCII_TOKEN_RE.fullmatch(pool.key[:64])
-        or _LOCAL_PATH_RE.match(pool.key)
+        or _LOCAL_PATH_RE.search(pool.key)
     ):
         _invalid()
     if (
@@ -273,7 +276,7 @@ def _pool_windows(pool: UsagePool) -> list[dict[str, object]]:
             _invalid()
         try:
             if not window.has_known_identity:
-                continue
+                _invalid()
             duration = window.duration_seconds
             if duration is None:
                 duration = _WINDOW_NAME_SECONDS.get(window.name.strip().casefold())
@@ -281,26 +284,26 @@ def _pool_windows(pool: UsagePool) -> list[dict[str, object]]:
         except Exception:
             _invalid()
         if type(duration) is not int or duration not in TRACKER_EVIDENCE_WINDOW_SECONDS:
-            continue
+            _invalid()
         if (
             remaining is None
             or type(remaining) not in (int, float)
         ):
-            continue
+            _invalid()
         try:
             remaining = float(remaining)
         except (OverflowError, TypeError, ValueError):
-            continue
+            _invalid()
         if not math.isfinite(remaining) or not 0 <= remaining <= 100:
-            continue
+            _invalid()
         reset_at = None
         if window.reset_at is not None:
             if not isinstance(window.reset_at, datetime):
-                continue
+                _invalid()
             try:
                 reset_at = _utc_text(window.reset_at)
             except IntegrationInvalidSource:
-                continue
+                _invalid()
         limits.append(
             {
                 "pool": pool.key,
@@ -458,11 +461,13 @@ def build_schema2_document(
         )
         captured_text = _utc_text(capture)
         captured_utc = datetime.fromisoformat(captured_text.replace("Z", "+00:00"))
+        if captured_utc > generated_utc:
+            _invalid()
         try:
             fresh_until_utc = captured_utc + timedelta(seconds=_FRESHNESS_SECONDS)
         except (OverflowError, ValueError):
             _invalid()
-        limits = _source_limits(usage) if status_text == "ok" else []
+        limits = _source_limits(usage) if status_text in {"ok", "partial"} else []
         limit_by_identity = {
             (cast(str, limit["pool"]), cast(int, limit["window_seconds"])): limit
             for limit in limits
@@ -480,7 +485,14 @@ def build_schema2_document(
             if evidence is None:
                 continue
             limit = limit_by_identity[(pool, window_seconds)]
-            if evidence.pool != pool or evidence.limit_window_seconds != window_seconds:
+            if (
+                any(
+                    getattr(sample, "account_id", None) != usage.account_id
+                    for sample in bounded_samples
+                )
+                or evidence.pool != pool
+                or evidence.limit_window_seconds != window_seconds
+            ):
                 _invalid()
             reset_at = limit.get("reset_at")
             latest = bounded_samples[-1] if bounded_samples else None
@@ -539,7 +551,7 @@ def _scan_secrets(value: object, *, depth: int = 0) -> None:
             value.startswith("Bearer ")
             or _JWT_RE.fullmatch(value)
             or _PEM_PRIVATE_KEY_RE.search(value)
-            or _LOCAL_PATH_RE.match(value)
+            or _LOCAL_PATH_RE.search(value)
         ):
             _invalid()
         return
@@ -566,7 +578,7 @@ def _canonical_token(value: object, *, maximum: int) -> str:
     if (
         not value.isascii()
         or not _ASCII_TOKEN_RE.fullmatch(value)
-        or _LOCAL_PATH_RE.match(value)
+        or _LOCAL_PATH_RE.search(value)
     ):
         _invalid()
     return value
@@ -749,7 +761,11 @@ def _canonical_document_v2(document: object) -> dict[str, object]:
         captured_time = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
         fresh_until_time = datetime.fromisoformat(fresh_until.replace("Z", "+00:00"))
         generated_time = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
-        if fresh_until_time != captured_time + timedelta(seconds=_FRESHNESS_SECONDS):
+        if (
+            captured_time > generated_time
+            or fresh_until_time
+            != captured_time + timedelta(seconds=_FRESHNESS_SECONDS)
+        ):
             _invalid()
         if generated_time > fresh_until_time and freshness["stale"] is not True:
             _invalid()
@@ -779,19 +795,26 @@ def _canonical_document_v2(document: object) -> dict[str, object]:
         if len(evidence_identities) != len(evidence):
             _invalid()
         limits_with_reset = {
-            (item["pool"], item["window_seconds"])
+            (item["pool"], item["window_seconds"]): datetime.fromisoformat(
+                cast(str, item["reset_at"]).replace("Z", "+00:00")
+            )
             for item in limits
             if "reset_at" in item
         }
-        if not evidence_identities.issubset(limits_with_reset):
+        if not evidence_identities.issubset(limits_with_reset.keys()):
             _invalid()
-        if status != "ok" and (limits or evidence):
+        if status not in {"ok", "partial"} and (limits or evidence):
             _invalid()
         for item in evidence:
             last_sample_at = datetime.fromisoformat(
                 cast(str, item["last_sample_at"]).replace("Z", "+00:00")
             )
-            if last_sample_at > captured_time:
+            identity = (item["pool"], item["limit_window_seconds"])
+            if (
+                last_sample_at > captured_time
+                or limits_with_reset[identity] <= last_sample_at
+                or limits_with_reset[identity] <= generated_time
+            ):
                 _invalid()
         account_ids.add(account_id)
         accounts.append(

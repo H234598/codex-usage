@@ -353,3 +353,266 @@ No full suite or unrelated suite ran, per task instruction.
   is 100 percentage-points/second; both are explicit finite producer bounds.
 - Broader entrypoint/CLI/installer/attestation verification is intentionally
   deferred to Tasks 3–4. No full suite ran.
+
+## Review round 1/5 fixes
+
+Date: 2026-08-24
+
+Round changed four focused files:
+
+- `src/codex_usage/integration_snapshot.py`
+- `src/codex_usage/private_io.py`
+- `tests/test_integration_snapshot.py`
+- `tests/test_private_io.py`
+
+### Implementation
+
+- Tracker evidence now verifies every calculator-accepted sample belongs to the
+  outer account before evidence can be attached.
+- Canonical evidence requires its matching limit reset to be strictly after
+  both last sample and document generation. Reset generation remains an opaque
+  bounded identity, per schema contract.
+- Builder and serializer reject source capture timestamps after generation.
+- Available pools reject unknown/unsupported windows, malformed resets,
+  invalid types, overflow, NaN/Inf and percentages outside `[0,100]` instead of
+  silently omitting those limits.
+- `partial` accounts preserve valid limits and tracker evidence. Error,
+  login-required and unknown accounts remain data-empty and fail closed during
+  canonicalization.
+- Absolute-path scanning now detects path forms after opaque prefixes such as
+  `file:///home/...` and `reset:/home/...`, while valid bounded tokens such as
+  `reset:main/5h` remain accepted.
+- `write_private_text()` now creates and identity-checks a private hard-link
+  rollback generation before replacement. Directory-fsync or rollback-cleanup
+  failure atomically restores the previous inode; a failed first-generation
+  publish restores absence. Existing ownership, link-count, regular-file,
+  symlink and atomic-replace checks remain active.
+- Current-state reader treats bounded `.json.rollback-*` artifacts as transient,
+  matching existing private temp/lock handling.
+- Added tracker-series mapping MAX/MAX+1, directory-entry exact-MAX and
+  availability-source exact-MAX tests. Existing guards already passed these
+  characterization boundaries; no product defect was fabricated to force RED.
+
+### Review TDD evidence
+
+Commands ran in
+`/home/teladi/.codex-worktrees/codex-usage-v2-producer-handoff`.
+
+#### Same-account authority
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_builder_rejects_tracker_samples_from_another_account
+Failed: DID NOT RAISE IntegrationInvalidSource
+1 failed in 0.16s
+```
+
+GREEN: same command.
+
+```text
+1 passed in 0.10s
+```
+
+#### Reset chronology
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_serializer_rejects_tracker_reset_not_after_generation
+Failed: DID NOT RAISE IntegrationInvalidSource
+2 failed in 0.17s
+```
+
+GREEN: same command.
+
+```text
+2 passed in 0.10s
+```
+
+#### Future capture rejection
+
+Builder RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_builder_rejects_capture_after_generation
+Failed: DID NOT RAISE IntegrationInvalidSource
+2 failed in 0.18s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_builder_rejects_capture_after_generation
+2 passed in 0.12s
+```
+
+Serializer RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_serializer_rejects_capture_after_generation
+Failed: DID NOT RAISE IntegrationInvalidSource
+1 failed in 0.15s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_serializer_rejects_capture_after_generation
+1 passed in 0.10s
+```
+
+#### Strict source-limit rejection
+
+Invalid remaining values RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_projection_rejects_unusable_remaining_values
+Failed: DID NOT RAISE IntegrationInvalidSource
+5 failed in 0.24s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_projection_rejects_unusable_remaining_values
+5 passed in 0.11s
+```
+
+Unsupported window RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_projection_rejects_nonallowlisted_limit_windows
+Failed: DID NOT RAISE IntegrationInvalidSource
+1 failed in 0.15s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_projection_rejects_nonallowlisted_limit_windows
+1 passed in 0.10s
+```
+
+Malformed reset RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_projection_rejects_malformed_limit_reset
+Failed: DID NOT RAISE IntegrationInvalidSource
+2 failed in 0.17s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_projection_rejects_malformed_limit_reset
+2 passed in 0.11s
+```
+
+Unknown-window guard RED, then focused group GREEN after aligning prior omission
+assertions with strict rejection:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_snapshot_pool_projection_covers_invalid_pool_and_window_shapes
+Failed: DID NOT RAISE IntegrationInvalidSource
+1 failed in 0.16s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_snapshot_pool_projection_covers_invalid_pool_and_window_shapes tests/test_integration_snapshot.py::test_schema2_numeric_boundaries_reject_subclasses_before_operations tests/test_integration_snapshot.py::test_schema2_projection_rejects_unusable_remaining_values tests/test_integration_snapshot.py::test_schema2_projection_rejects_nonallowlisted_limit_windows tests/test_integration_snapshot.py::test_schema2_projection_rejects_malformed_limit_reset
+10 passed in 0.11s
+```
+
+#### Partial account data
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_projection_preserves_valid_partial_limits_and_evidence
+IntegrationInvalidSource
+1 failed in 0.18s
+```
+
+GREEN: same command.
+
+```text
+1 passed in 0.10s
+```
+
+#### Prefixed local paths
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_serializer_rejects_prefixed_absolute_local_path_tokens
+Failed: DID NOT RAISE IntegrationInvalidSource
+2 failed in 0.18s
+```
+
+GREEN: same command.
+
+```text
+2 passed in 0.11s
+```
+
+#### Transactional directory-fsync rollback
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_publish_schema2_cache_restores_old_bytes_when_directory_fsync_fails
+assert schema-v2 bytes == previous bytes
+1 failed in 0.19s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_restores_old_value_when_directory_fsync_fails
+AssertionError: assert 'new' == 'old'
+1 failed in 0.12s
+```
+
+GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_publish_schema2_cache_restores_old_bytes_when_directory_fsync_fails tests/test_private_io.py::test_write_private_text_restores_old_value_when_directory_fsync_fails
+2 passed in 0.17s
+```
+
+Rollback-artifact reader RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_current_reader_ignores_private_lock_and_temporary_files
+IntegrationInvalidSource
+1 failed in 0.17s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_current_reader_ignores_private_lock_and_temporary_files
+1 passed in 0.11s
+```
+
+#### Missing boundary coverage
+
+These tests were GREEN on first execution because corresponding guards were
+already correct; this finding concerned absent regression coverage, not broken
+runtime behavior:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_builder_accepts_exact_availability_source_cap tests/test_integration_snapshot.py::test_schema2_tracker_series_mapping_accepts_max_and_rejects_max_plus_one tests/test_integration_snapshot.py::test_current_reader_accepts_exact_directory_entry_cap
+3 passed in 0.12s
+```
+
+### Round self-review
+
+- Same-account check happens only after Task 1 accepts a series, preserving the
+  binding rule that calculator-invalid series returning `None` are omitted.
+- Reset chronology is enforced at canonical/publish boundary, not trusted only
+  because builder produced the document.
+- Hard-link rollback records exact previous inode and validates device, inode,
+  regular-file shape, link count and owner before replacement. Link/replace/
+  fsync/unlink errors occur under existing private path lock in publisher.
+- Successful commit has directory durability before rollback link removal. No
+  error is reported after prior generation becomes unavailable.
+- No schema-1 API, parallel ledger, raw history or compatibility alias was
+  reintroduced.
+
+### Review round final verification
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py
+........................................................................ [ 59%]
+..................................................                       [100%]
+122 passed in 0.34s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_consumption.py
+........................................................................ [ 86%]
+...........                                                              [100%]
+83 passed in 0.16s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py
+........................................................................ [ 79%]
+...................                                                      [100%]
+91 passed in 0.24s
+
+$ ruff check src/codex_usage/integration_snapshot.py src/codex_usage/private_io.py tests/test_integration_snapshot.py tests/test_private_io.py src/codex_usage/consumption.py tests/test_consumption.py
+All checks passed!
+
+$ git diff --check
+(exit 0; no output)
+```
+
+No full or unrelated suite ran.

@@ -212,6 +212,7 @@ def write_private_text(
     assert_no_symlink_ancestors(path, label=label)
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
+    target_stat = None
     if path.exists():
         target_stat = path.stat()
         if target_stat.st_nlink != 1 or target_stat.st_uid != os.getuid():
@@ -224,6 +225,9 @@ def write_private_text(
     temporary = parent / (
         "." + path.name + ".tmp-" + str(os.getpid()) + "-" + secrets.token_hex(8)
     )
+    rollback = parent / (
+        "." + path.name + ".rollback-" + str(os.getpid()) + "-" + secrets.token_hex(8)
+    )
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -234,6 +238,7 @@ def write_private_text(
 
     fd = -1
     replaced = False
+    rollback_exists = False
     try:
         fd = os.open(temporary, flags, mode)
         file_stat = os.fstat(fd)
@@ -254,8 +259,40 @@ def write_private_text(
         os.close(fd)
         fd = -1
         if replace_existing:
+            if target_stat is not None:
+                os.link(path, rollback, follow_symlinks=False)
+                rollback_exists = True
+                current_stat = path.lstat()
+                rollback_stat = rollback.lstat()
+                if (
+                    not stat.S_ISREG(current_stat.st_mode)
+                    or current_stat.st_dev != target_stat.st_dev
+                    or current_stat.st_ino != target_stat.st_ino
+                    or rollback_stat.st_dev != target_stat.st_dev
+                    or rollback_stat.st_ino != target_stat.st_ino
+                    or current_stat.st_nlink != 2
+                    or rollback_stat.st_nlink != 2
+                    or current_stat.st_uid != os.getuid()
+                    or rollback_stat.st_uid != os.getuid()
+                ):
+                    raise ValueError(f"{label} changed before replacement")
             os.replace(temporary, path)
             replaced = True
+            try:
+                _fsync_directory(parent)
+                if rollback_exists:
+                    rollback.unlink()
+                    rollback_exists = False
+            except OSError as publish_error:
+                try:
+                    if rollback_exists:
+                        os.replace(rollback, path)
+                        rollback_exists = False
+                    else:
+                        path.unlink()
+                except OSError as rollback_error:
+                    raise OSError(errno.EIO, f"could not roll back {label}") from rollback_error
+                raise publish_error
         else:
             try:
                 os.link(temporary, path)
@@ -274,7 +311,7 @@ def write_private_text(
                     ) from None
                 replaced = False
                 raise
-        _fsync_directory(parent)
+            _fsync_directory(parent)
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
             raise ValueError(f"{label} must be a regular file: {path}") from exc
@@ -285,6 +322,11 @@ def write_private_text(
         if not replaced:
             try:
                 temporary.unlink()
+            except OSError:
+                pass
+        if rollback_exists:
+            try:
+                rollback.unlink()
             except OSError:
                 pass
 
