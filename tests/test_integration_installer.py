@@ -1025,6 +1025,26 @@ def _write_bound_stale_transaction_artifact(
     return artifact
 
 
+def _write_forged_bound_transaction_artifact(
+    *,
+    integration: Path,
+    active_path: Path,
+    transaction_kind: str,
+    payload: bytes,
+) -> tuple[Path, tuple[int, int]]:
+    source = integration / "foreign-artifact-source"
+    _write_active_transaction_artifact(source, payload)
+    forged = source.stat()
+    active = active_path.stat()
+    artifact = integration / (
+        f".active.json.publish-{transaction_kind}-6000-fedcba9876543210-"
+        f"c{forged.st_dev:x}-{forged.st_ino:x}-"
+        f"p{active.st_dev:x}-{active.st_ino:x}"
+    )
+    source.rename(artifact)
+    return artifact, (forged.st_dev, forged.st_ino)
+
+
 def test_final_install_attestation_failure_restores_active_and_preserves_previous(
     tmp_path, monkeypatch
 ):
@@ -1762,10 +1782,10 @@ def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
     assert len(evidence) == 1
 
 
-def test_next_operation_recovers_post_exchange_install_crash(tmp_path):
+def test_next_operation_fails_closed_on_unproven_post_exchange_artifact(tmp_path):
     from codex_usage import integration_installer
 
-    release, data_home, state_home = _install(tmp_path)
+    _, data_home, state_home = _install(tmp_path)
     integration = state_home / "codex-usage" / "integration"
     active_path = integration / "active.json"
     previous_path = integration / "previous.json"
@@ -1778,29 +1798,38 @@ def test_next_operation_recovers_post_exchange_install_crash(tmp_path):
         prior_identity=integration_installer._provisional_from_stat(active_stat),
         integration_identity=integration_identity,
     )
-    assert active_path.read_bytes() != active_before
+    active_after_publish = active_path.read_bytes()
+    artifacts = [
+        path
+        for path in integration.iterdir()
+        if path.name.startswith(".active.json.publish-")
+    ]
+    assert active_after_publish != active_before
     assert not previous_path.exists()
+    assert len(artifacts) == 1
+    artifact = artifacts[0]
+    artifact_before = artifact.read_bytes()
+    artifact_stat = artifact.stat()
 
-    try:
-        recovered = integration_installer.rollback_active_release(
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.rollback_active_release(
             state_home=state_home,
             data_home=data_home,
         )
-    except integration_installer.IntegrationInstallError:
-        recovered = None
 
-    assert recovered == release
-    assert active_path.read_bytes() == active_before
-    assert previous_path.read_bytes() == active_before
-    assert not any(
-        path.name.startswith(
-            (".active.json.publish-", ".active.json.prior-", ".active.json.failed-")
-        )
-        for path in integration.iterdir()
+    assert active_path.read_bytes() == active_after_publish
+    assert not previous_path.exists()
+    assert artifact.read_bytes() == artifact_before
+    current_artifact = artifact.stat()
+    assert (current_artifact.st_dev, current_artifact.st_ino) == (
+        artifact_stat.st_dev,
+        artifact_stat.st_ino,
     )
 
 
-def test_startup_recovery_accepts_eight_stale_publish_artifacts(tmp_path):
+def test_startup_recovery_rejects_eight_unproven_publish_artifacts(tmp_path):
+    from codex_usage import integration_installer
+
     prepared = _prepared_active_transaction(tmp_path, "rollback")
     artifacts = []
     for index in range(8):
@@ -1811,10 +1840,55 @@ def test_startup_recovery_accepts_eight_stale_publish_artifacts(tmp_path):
         )
         artifacts.append(artifact)
 
-    result = prepared.run()
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
 
-    assert result.version == "0.6.533"
-    assert all(not artifact.exists() for artifact in artifacts)
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert all(artifact.read_bytes() == b"stale" for artifact in artifacts)
+
+
+@pytest.mark.parametrize("transaction_kind", ["install", "rollback"])
+@pytest.mark.parametrize("payload_kind", ["foreign", "copied-valid-manifest"])
+def test_startup_recovery_preserves_same_owner_forged_bound_artifact(
+    tmp_path,
+    transaction_kind,
+    payload_kind,
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    payload = (
+        b"foreign transaction evidence"
+        if payload_kind == "foreign"
+        else prepared.active_before
+    )
+    artifact, artifact_identity = _write_forged_bound_transaction_artifact(
+        integration=prepared.integration,
+        active_path=prepared.active_path,
+        transaction_kind=transaction_kind,
+        payload=payload,
+    )
+    forged_stat = artifact.stat()
+    assert stat.S_ISREG(forged_stat.st_mode)
+    assert stat.S_IMODE(forged_stat.st_mode) == 0o600
+    assert forged_stat.st_uid == os.getuid()
+    assert forged_stat.st_nlink == 1
+    assert (forged_stat.st_dev, forged_stat.st_ino) == artifact_identity
+    bounded_error = None
+
+    try:
+        prepared.run()
+    except integration_installer.IntegrationInstallError as error:
+        bounded_error = error
+
+    assert artifact.exists(), "same-owner forged bound artifact was deleted"
+    current_artifact = artifact.stat()
+    assert (current_artifact.st_dev, current_artifact.st_ino) == artifact_identity
+    assert artifact.read_bytes() == payload
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert bounded_error is not None
 
 
 def test_startup_recovery_rejects_ninth_artifact_without_deleting_evidence(
@@ -1892,7 +1966,7 @@ def test_startup_recovery_preserves_ambiguous_or_foreign_artifact(
     assert artifact.exists() or artifact.is_symlink()
 
 
-def test_startup_cleanup_never_unlinks_raced_foreign_inode(tmp_path, monkeypatch):
+def test_startup_recovery_preserves_bound_artifact_identity(tmp_path):
     from codex_usage import integration_installer
 
     prepared = _prepared_active_transaction(tmp_path, "rollback")
@@ -1902,37 +1976,17 @@ def test_startup_cleanup_never_unlinks_raced_foreign_inode(tmp_path, monkeypatch
         index=200,
         payload=b"owned",
     )
-    displaced = prepared.integration / "owned-publish-evidence"
-    original_cleanup = integration_installer._cleanup_provisional
-    raced_inode: tuple[int, int] | None = None
+    artifact_stat = artifact.stat()
 
-    def race_before_cleanup(path, identity, parent_identity, *, directory):
-        nonlocal raced_inode
-        if path == artifact and raced_inode is None:
-            artifact.rename(displaced)
-            _write_active_transaction_artifact(artifact, b"foreign")
-            item = artifact.stat()
-            raced_inode = (item.st_dev, item.st_ino)
-        return original_cleanup(
-            path,
-            identity,
-            parent_identity,
-            directory=directory,
-        )
-
-    monkeypatch.setattr(
-        integration_installer,
-        "_cleanup_provisional",
-        race_before_cleanup,
-    )
-    with pytest.raises(integration_installer.IntegrationCleanupError):
+    with pytest.raises(integration_installer.IntegrationInstallError):
         prepared.run()
 
-    assert raced_inode is not None
     current = artifact.stat()
-    assert (current.st_dev, current.st_ino) == raced_inode
-    assert artifact.read_bytes() == b"foreign"
-    assert displaced.read_bytes() == b"owned"
+    assert (current.st_dev, current.st_ino) == (
+        artifact_stat.st_dev,
+        artifact_stat.st_ino,
+    )
+    assert artifact.read_bytes() == b"owned"
     assert prepared.active_path.read_bytes() == prepared.active_before
     assert prepared.previous_path.read_bytes() == prepared.previous_before
 

@@ -12,7 +12,10 @@ Identity wird vor dem Publish gebunden; Restore verschiebt das aktuelle Target
 parent-fd-gebunden aus dem Active-Namen und entscheidet erst an der atomar
 verschobenen Inode. Der nach Round 1 vorgeschriebene erneute Installerlauf traf erwartbar
 den unveränderlichen, bereits aktiven identischen Runtime-Release; Details und
-Unverändertheitsnachweis stehen unten.
+Unverändertheitsnachweis stehen unten. Round 4 ersetzte den zweistufigen
+Active-Austausch durch `RENAME_EXCHANGE`. Round 5 widerlegt dessen
+filename-basierte Startup-Provenienzannahme und lässt jedes rekonstruierte
+Transaktionsartefakt bounded, mutationsfrei und Fail-Closed blockieren.
 
 - Branch: `codex-usage-v2-producer-handoff`
 - Basiscommit: `62e6f992911a7c9e7c8fa9f9cc7fee33ef2727ab`
@@ -22,8 +25,10 @@ Unverändertheitsnachweis stehen unten.
 - Round-2-Fix: Identity-Capture-/Replacement-Race-Härtung in diesem
   Folgecommit `83d27b21a80ea3f5c6b07fc59d92553cfbefc91d`
 - Round-3-Fix: bedingte parent-fd-gebundene Active-Publish-/Rollback-
-  Transaktion in diesem Folgecommit; dessen SHA wird mit dem Agentenstatus
-  zurückgegeben
+  Transaktion in `6f91c6f6`
+- Round-4-Fix: atomarer Exchange und bounded Artefaktscan in `ed72d151`
+- Round-5-Fix: Fail-Closed ohne Startup-Artefaktmutation in diesem
+  Folgecommit; dessen SHA wird mit dem Agentenstatus zurückgegeben
 - Projekt-/Producer-/Applet-Version: `0.6.533`
 - aktives Dokument-/Manifest-Schema: exakter Integer `2`
 - Finaler Vault-Handoffbericht: absichtlich noch nicht erzeugt. Finaler Commit,
@@ -514,7 +519,10 @@ umgeschrieben.
 
 ## Offene Bedenken
 
-Keine funktionalen Task-4-Blocker. Concern: Host-Installerfix ist bewusst nicht
+Keine funktionalen Task-4-Blocker. Bewusster Fail-Closed-Trade-off: Jedes
+rekonstruierte Transaktionsartefakt blockiert die nächste Operation bis zur
+expliziten Untersuchung; ohne unabhängigen authentifizierten
+Transaktionsnachweis ist automatische Bereinigung unsicher. Host-Installerfix ist bewusst nicht
 Teil der verpackten Runtime-Closure; aktiver Runtime-Release blieb deshalb
 unverändert und der verpflichtende erneute kanonische Installationsversuch
 endete an der erwarteten Immutable-Release-ID-Kollision mit Exit 69. Aktiver
@@ -542,15 +550,17 @@ fehlgeschlagene Validierung entfernt dann nicht den einzigen publizierten
 Active-Inode, weil es keine vorherige Generation gibt, zu der atomar
 zurückgetauscht werden könnte.
 
-Der Transaktionsname bindet Operation, Kandidaten-Device/Inode und – falls
-vorhanden – Prior-Device/Inode. Startup beziehungsweise die nächste Install-
+Der Transaktionsname kodiert Operation, Kandidaten-Device/Inode und – falls
+vorhanden – Prior-Device/Inode, authentifiziert diese Werte aber nicht. Startup
+beziehungsweise die nächste Install-
 oder Rollbackoperation scannt unter dem gebundenen Integrations-FD höchstens
 64 Verzeichniseinträge und höchstens acht einschlägige Artefakte. Vor jeder
 Entscheidung werden exakter Name, Owner, Modus `0600`, regulärer Typ,
 Linkanzahl `1`, Parent-Device, Inode-Stabilität und Größe bis 128 KiB über
 nofollow-Stat plus geöffneten FD geprüft.
 
-Deterministische Zustände sind:
+Round 4 behandelte folgende Zustände als deterministisch; Round 5 widerlegt
+diese Annahme für die ersten beiden Fälle:
 
 - Bound-Artefakt enthält Kandidaten-Inode und Active enthält gebundenen Prior:
   Pre-Swap-Crash; Kandidat darf identity-konditional bereinigt werden.
@@ -563,12 +573,26 @@ Deterministische Zustände sind:
   fremde, ersetzte oder sonst mehrdeutige Artefakte: bounded Fehler; keine
   Löschung und kein Überschreiben der Evidenz.
 
+**Round-5-Korrektur:** Diese Round-4-Klassifikation war für beide als
+„deterministisch“ bezeichneten bound-Zustände falsch. Device/Inode im
+Artefaktnamen sind selbstbehauptete, same-owner beschreibbare Metadaten und
+kein unabhängig authentifizierter Transaktionsnachweis. Ein fremdes reguläres
+`0600`-Single-Link-Artefakt kann seine eigene Identity als Kandidat und die
+aktuelle Active-Identity als Prior in den Namen schreiben. Round 4 akzeptierte
+das als `stale`, löschte die Fremdevidenz und setzte die Operation fort. Auch
+inhaltliche Gleichheit mit einem gültigen Manifest authentifiziert keine
+Ownership. Daher sind automatische Startup-Bereinigung und automatische
+Post-Swap-Finalisierung aus rekonstruierten Namen unzulässig. Der tatsächlich
+gültige Vertrag steht im nachfolgenden Fix-Round-5-Abschnitt: bounded Scan,
+danach Fail-Closed ohne Mutation jedes gefundenen Startup-Artefakts.
+
 `MAX_ACTIVE_TRANSACTION_ARTIFACTS` ist exakt `8`; das neunte Artefakt stoppt
 vor jeder Bereinigung. Ein Cleanup-only-Fehler nach vollständig validiertem
 und durablem Active-/Previous-Commit ändert den erfolgreichen öffentlichen
 Operationsstatus nicht. Das eine gebundene Artefakt bleibt als bounded
-Evidenz; der nächste Eintritt löst es deterministisch oder stoppt sicher. Die
-bestehenden öffentlichen Ergebnis-Tokens wurden nicht erweitert.
+Evidenz; der nächste Eintritt stoppt seit Round 5 immer Fail-Closed und erhält
+es unverändert. Die bestehenden öffentlichen Ergebnis-Tokens wurden nicht
+erweitert.
 
 ### TDD – beobachtetes RED
 
@@ -692,11 +716,179 @@ oder ausgegeben.
   mehrdeutigen Fehlerpfade lassen es bytegenau unverändert.
 - Linux `renameat2` war bereits für `RENAME_NOREPLACE` bindende
   Plattformvoraussetzung; Round 4 fügt keine neue Plattformfamilie hinzu.
-- Absichtlich verbleibende Concern: Ein ungebundenes, altes oder sonst
-  mehrdeutiges Artefakt wird nicht automatisch entfernt. Nächste Operation
-  stoppt bounded und erhält Evidenz für explizite Untersuchung. Automatisches
-  Löschen wäre bei same-owner Race nicht identity-sicher.
+- **Round-5-Korrektur:** Diese Concern war zu eng formuliert. Nicht nur
+  ungebundene, alte oder sichtbar mehrdeutige Artefakte, sondern auch
+  syntaktisch und identity-konsistent gebundene Startup-Artefakte sind ohne
+  unabhängig authentifizierten dauerhaften Transaktionszustand mehrdeutig.
+  Round 5 lässt deshalb jede rekonstruierte Form bounded und unverändert
+  blockieren.
 - Kein unabhängiger Reviewer vorgetäuscht: Round 4 lief unter explizitem
   Subagentverbot. Finaler Commit-SHA wird mit Agentenstatus zurückgegeben;
   Controller ergänzt unabhängigen Review- und Patch-SHA-256 wie geplant im
   finalen Vault-Handoff.
+
+## Fix-Round 5 – Fail-Closed für rekonstruierte Transaktionsartefakte
+
+### Reviewerbeweis und Root Cause
+
+Ausgangs-HEAD war `ed72d151`. Der Round-4-Classifier verwendete einen
+syntaktisch gebundenen Namen als Provenienznachweis. Ein same-owner
+Fremdprozess konnte jedoch ein reguläres `0600`-Single-Link-Artefakt erzeugen,
+dessen eigene Device/Inode als `c...` und dessen beobachtete aktuelle
+Active-Device/Inode als `p...` in den Dateinamen schreiben. Die
+Metadatenprüfung bestätigte dann nur die selbstbehauptete Beschreibung der
+Fremdinode. `_recover_active_transactions` klassifizierte den Zustand als
+`stale`, rief `_cleanup_provisional` auf und setzte anschließend den Rollback
+fort. Mode, Owner, Linkanzahl, stabile Device/Inode, aktuelle Active-Identity
+und sogar gültige kopierte Manifestbytes änderten an der fehlenden
+Authentifizierung nichts.
+
+Die vier Regressionen decken `install|rollback` im selbstbehaupteten Namen
+jeweils mit beliebigen Fremdbytes und bytegenau kopierten gültigen
+Active-Manifestbytes ab. Alle Namen binden selbstkonsistent die tatsächliche
+Artefakt-Identity und die tatsächliche aktuelle Active-Identity.
+
+### TDD – beobachtetes RED
+
+Der neue Test entstand vor der Produktänderung. Der erwartete
+Produktionsbruch lautet: Eine wieder eingeführte Startup-Klassifikation aus
+Dateiname und beobachtbaren Metadaten löscht fremde Evidenz oder setzt die
+Operation ohne bounded Fehler fort.
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'startup_recovery_preserves_same_owner_forged_bound_artifact'
+```
+
+Beobachtetes RED: `4 failed, 263 deselected in 8.11s`. Jeder Fall scheiterte
+mit `AssertionError: same-owner forged bound artifact was deleted`; der
+konkrete Reviewerzustand war damit reproduziert.
+
+### Minimaler korrigierter Vertrag
+
+Startup beziehungsweise der nächste Install-/Rollbackeintritt scannt weiter
+unter dem gebundenen Integrations-FD höchstens 64 Verzeichniseinträge und
+höchstens acht einschlägige Namen; `MAX+1` stoppt unverändert bounded. Gibt es
+kein Artefakt, läuft die Operation weiter. Gibt es mindestens ein
+rekonstruiertes `.publish/.prior/.failed`-Artefakt, endet der Eintritt jetzt
+immer mit dem bestehenden bounded Fehler, ohne Artefakt, `active.json` oder
+`previous.json` zu löschen, umzubenennen oder zu überschreiben.
+
+Es wurde kein Secret, kein same-owner beschreibbares Ownership-Metadokument
+und kein neuer persistenter Transaktionszustand erfunden. Automatische
+Startup-Recovery entfällt vollständig. Cleanup bleibt ausschließlich im
+laufenden Prozess erlaubt, wo `_ActiveManifestPublish`, die bereits erfassten
+Identities und der gebundene Parent-FD beziehungsweise dessen erneute
+Identity-Bindung aus der aktuellen Live-Transaktion vorhanden sind.
+
+Entsprechend wurden zwei falsche Round-4-Erwartungen korrigiert:
+
+- Ein verlassener Post-Exchange-Zustand wird beim nächsten Prozess nicht mehr
+  automatisch finalisiert; Eintritt stoppt und erhält Active, Previous und
+  Artefakt byte-/identity-genau.
+- Auch exakt acht syntaktisch gültige bound-Artefakte werden nicht mehr
+  entfernt. Sie stoppen bounded und bleiben erhalten. Das neunte Artefakt
+  stoppt weiterhin vor jeder Artefaktbehandlung.
+
+### GREEN und finale Gates
+
+Unmittelbarer Regression-GREEN:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'startup_recovery_preserves_same_owner_forged_bound_artifact'
+```
+
+Erster GREEN: `4 passed, 263 deselected in 7.15s`. Nach expliziten
+Fixture-Preconditions für regulären Typ, Owner, Modus `0600`, Linkanzahl `1`
+und tatsächliche Device/Inode erneut: `4 passed, 263 deselected in 6.98s`.
+
+Post-Exchange-, `MAX`-, `MAX+1`- und Identity-Erhaltung:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'next_operation_fails_closed_on_unproven_post_exchange_artifact or startup_recovery_rejects_eight_unproven_publish_artifacts or startup_recovery_rejects_ninth_artifact or startup_recovery_preserves_bound_artifact_identity'
+```
+
+Ergebnis: `4 passed, 263 deselected in 7.30s`.
+
+Bestehende raw/mode/hardlink/oversize/symlink/directory/legacy-Erhaltung:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'startup_recovery_preserves_ambiguous_or_foreign_artifact'
+```
+
+Ergebnis: `9 passed, 258 deselected in 15.38s`.
+
+Vollständiger Installer-Gate:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py
+```
+
+Erster Lauf: `267 passed in 214.33s`. Finaler frischer Rerun nach den
+expliziten Forgery-Fixture-Preconditions: `267 passed in 195.25s`.
+
+Erforderlicher kombinierter Task-4-Gate:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py tests/test_integration_entrypoint.py tests/test_integration_snapshot.py tests/test_consumption.py tests/test_private_io.py
+```
+
+Erster Lauf: `612 passed, 1 warning in 296.69s`. Finaler frischer Rerun:
+`612 passed, 1 warning in 212.30s`. Warnung bleibt ausschließlich der bereits
+dokumentierte vorbestehende `runpy`-Hinweis aus
+`test_module_main_guard_executes`.
+
+```text
+python3 -m ruff check pyproject.toml src/codex_usage/__init__.py src/codex_usage/integration_installer.py src/codex_usage/integration_attestation.py src/codex_usage/integration_entrypoint.py src/codex_usage/integration_snapshot.py src/codex_usage/consumption.py src/codex_usage/private_io.py scripts/install_integration_producer.py tests/test_integration_installer.py tests/test_integration_entrypoint.py tests/test_integration_snapshot.py tests/test_consumption.py tests/test_private_io.py
+```
+
+Ergebnis: `All checks passed!`.
+
+`python3 -m compileall -q src scripts tests` lief mit einem validierten
+privaten `mktemp`-Verzeichnis als `PYTHONPYCACHEPREFIX`: Exit `0`, keine
+Ausgabe. `git diff --check`: Exit `0`, keine Ausgabe.
+
+### Round-5-Read-only-Aktivnachweis
+
+Round 5 ändert ausschließlich Host-Installer, Installer-Tests und diesen
+Report. `integration_installer.py` bleibt außerhalb des Runtime-Source-
+Manifests. Deshalb kein Live-Reinstall und keine Mutation der installierten
+Runtime. Frische bounded no-follow Attestierung und unabhängige Hash-
+Neuberechnung ergaben:
+
+```text
+attestation=verified
+schema_version=2
+version=0.6.533
+release_id=0.6.533-d929d7fcf4976ac7
+active_manifest_sha256=a0f659660573a1b159fa448a89f78fd5e99203f06e23ade09b855a25cec006d5
+release_tree_sha256=4557d5c7bc096d146fd5446ef654284a29a6e27d511eef7b6ed688ffc6d1e855
+previous=absent
+installer_in_runtime_source_manifest=false
+checkout_source_manifest_sha256=d929d7fcf4976ac79fa067384090711a2444165f1082da840e8612c953b52f3a
+active_source_manifest_sha256=d929d7fcf4976ac79fa067384090711a2444165f1082da840e8612c953b52f3a
+source_digests_equal=true
+```
+
+Active-Bytehash, Releasebaum, Runtime-Quelldigest, Release-ID und
+Previous-Abwesenheit sind gegenüber Round 4 bytegenau unverändert. Es wurden
+keine Auth-, Token-, Account-, History-, Provider-, Prompt- oder
+Rohmanifestdaten ausgegeben.
+
+### Round-5-Self-Review und verbleibende Bedenken
+
+- Kein Startup-Pfad ruft weiterhin `_cleanup_provisional`, schreibt
+  `previous.json` oder attestiert ein rekonstruiertes Artefakt als Ownership-
+  Ersatz. Der bounded Scan ist die einzige Arbeit vor dem Fehler.
+- Die neue Forgery-Matrix prüft reale Dateien und reale Install-/Rollback-
+  Seiteneffekte. Eine Rückmutation zu Round-4-Cleanup verliert das Artefakt;
+  bloßes Ignorieren verliert den erwarteten bounded Fehler beziehungsweise
+  verändert Active.
+- Live-Publish-, Rollback- und Commit-Cleanup bleiben durch bestehende
+  Exchange-, Fsync-, Identity-Replacement- und Cleanup-Fault-Tests abgedeckt.
+- Bewusster betrieblicher Trade-off: Ein nach Crash verbliebenes Artefakt
+  blockiert weitere Install-/Rollbackoperationen bis zur expliziten
+  Untersuchung. Das ist der bindend bevorzugte Fail-Closed-Zustand; ohne
+  unabhängig authentifizierten dauerhaften Transaktionsnachweis wäre
+  automatische Löschung unsicher.
+- Keine Runtime-Closure-Änderung, kein Reinstall, kein neues persistentes
+  Format und kein neues öffentliches Ergebnis-Token.
