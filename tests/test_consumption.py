@@ -908,6 +908,49 @@ def test_tracker_evidence_rejects_multiple_limit_windows():
     assert result is None
 
 
+def test_tracker_evidence_rejects_unsupported_limit_window():
+    reset_at = BASE + timedelta(hours=6)
+
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(
+                0,
+                10,
+                window_seconds=1,
+                generation="reset-1",
+                reset_at=reset_at,
+            ),
+            _sample(
+                30,
+                20,
+                window_seconds=1,
+                generation="reset-1",
+                reset_at=reset_at,
+            ),
+        ],
+        now=BASE + timedelta(minutes=30),
+    )
+
+    assert result is None
+
+
+def test_tracker_evidence_rejects_unsupported_insufficient_window():
+    result = consumption_module.calculate_tracker_evidence(
+        [
+            _sample(
+                0,
+                10,
+                window_seconds=1,
+                generation="reset-1",
+                reset_at=BASE + timedelta(hours=6),
+            ),
+        ],
+        now=BASE,
+    )
+
+    assert result is None
+
+
 def test_tracker_evidence_rejects_reset_target_change_within_generation():
     result = consumption_module.calculate_tracker_evidence(
         [

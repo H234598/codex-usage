@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 from itertools import islice, pairwise
 from typing import TypeGuard
 
-from .history import MAX_HISTORY_SAMPLES, UsageSample
-from .usage_limits import MAIN_POOL_KEY, SPARK_MODEL
+from .history import CREDIT_HISTORY_WINDOW_SECONDS, MAX_HISTORY_SAMPLES, UsageSample
+from .usage_limits import FIVE_HOUR_SECONDS, MAIN_POOL_KEY, SPARK_MODEL, WEEKLY_SECONDS
 
 _UNIT_SECONDS = {"minutes": 60, "hours": 3_600, "days": 86_400, "weeks": 604_800}
 _UNIT_LIMITS = {"minutes": 1_440, "hours": 720, "days": 365, "weeks": 365}
@@ -16,6 +16,9 @@ MAX_CONSUMPTION_SAMPLES = MAX_HISTORY_SAMPLES
 MAX_FORECAST_SECONDS = 31_536_000
 EMA60_TIME_CONSTANT_SECONDS = 3_600
 TRACKER_EVIDENCE_POOLS = frozenset((MAIN_POOL_KEY, SPARK_MODEL))
+TRACKER_EVIDENCE_WINDOW_SECONDS = frozenset(
+    (FIVE_HOUR_SECONDS, WEEKLY_SECONDS, CREDIT_HISTORY_WINDOW_SECONDS)
+)
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,7 @@ def calculate_tracker_evidence(
         if (
             sample.reset_at is None
             or sample.pool not in TRACKER_EVIDENCE_POOLS
+            or sample.window_seconds not in TRACKER_EVIDENCE_WINDOW_SECONDS
             or sample.reset_at <= sample.captured_at
         ):
             return None
@@ -119,6 +123,8 @@ def calculate_tracker_evidence(
     if first.pool not in TRACKER_EVIDENCE_POOLS:
         return None
     if any(sample.window_seconds != first.window_seconds for sample in observations):
+        return None
+    if first.window_seconds not in TRACKER_EVIDENCE_WINDOW_SECONDS:
         return None
     if any(
         (current.captured_at - previous.captured_at).total_seconds()
