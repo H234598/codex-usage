@@ -34,6 +34,7 @@ from .integration_attestation import (
     _release_tree_sha256,
     _require_manifest_fields,
     _verify_legacy_manifest_for_upgrade,
+    _verify_legacy_schema2_manifest_for_upgrade,
     _verify_manifest,
     _verify_previous_schema2_manifest_for_upgrade,
 )
@@ -45,7 +46,7 @@ from .private_io import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RELEASE_VERSION = "0.6.534"
+RELEASE_VERSION = "0.6.535"
 PRODUCER_DISTRIBUTION = "codex_usage_integration_producer"
 SOURCE_MODULES = (
     "__init__.py",
@@ -71,9 +72,9 @@ SOURCE_MANIFEST_FILES = (
 ACTIVE_NAME = "active.json"
 PREVIOUS_NAME = "previous.json"
 RELEASE_LOCK_STEM = "producer-install"
-DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.534.dist-info"
+DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.535.dist-info"
 DIST_INFO_FILES = frozenset({"METADATA", "WHEEL", "RECORD", "top_level.txt"})
-EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.534-py3-none-any.whl"
+EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.535-py3-none-any.whl"
 BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
 BUILDER_WHEEL_TIMEOUT_SECONDS = 120
@@ -113,7 +114,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-usage-integration-producer"
-version = "0.6.534"
+version = "0.6.535"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -2906,7 +2907,7 @@ def _install_release(
     temporary_identity = _require_private_dir(temporary_root, None, False)
     pyproject = _read_nofollow(source_root / "pyproject.toml").decode("utf-8")
     init_text = _read_nofollow(source_root / "src/codex_usage/__init__.py").decode("utf-8")
-    if 'version = "0.6.534"' not in pyproject or '__version__ = "0.6.534"' not in init_text:
+    if 'version = "0.6.535"' not in pyproject or '__version__ = "0.6.535"' not in init_text:
         _fail()
     source_manifest = _rehash_source_manifest(source_root)
     source_manifest_digest = _source_digest(source_manifest)
@@ -3164,11 +3165,18 @@ def _install_release(
                             data_home=data_home,
                         )
                     except IntegrationAttestationUnavailable:
-                        _verify_legacy_manifest_for_upgrade(
-                            manifest_path=active_path,
-                            state_home=state_home,
-                            data_home=data_home,
-                        )
+                        try:
+                            _verify_legacy_schema2_manifest_for_upgrade(
+                                manifest_path=active_path,
+                                state_home=state_home,
+                                data_home=data_home,
+                            )
+                        except IntegrationAttestationUnavailable:
+                            _verify_legacy_manifest_for_upgrade(
+                                manifest_path=active_path,
+                                state_home=state_home,
+                                data_home=data_home,
+                            )
             published_text = _manifest_text(candidate)
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             publish = _begin_active_publish(

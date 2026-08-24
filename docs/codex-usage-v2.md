@@ -213,10 +213,10 @@ Rohfehlerausgaben. Tokens enden mit genau einem Newline. Exceptions,
 Terminalausgaben, Providerantworten, Credentials und lokale Pfade werden nicht
 ausgegeben.
 
-## Release 0.6.534 und Attestierung
+## Release 0.6.535 und Attestierung
 
 Projekt, Producer-Wheel, Dist-Info, Manifest und aktive Attestierung tragen
-gemeinsam Version `0.6.534`. Das aktive Manifest hat exakt Integer-Schema `2`.
+gemeinsam Version `0.6.535`. Das aktive Manifest hat exakt Integer-Schema `2`.
 Es bindet Release-ID und Source-Manifest-SHA-256 sowie die SHA-256-Werte von
 Entry Point, Wheel, RECORD, Launcher und gesamtem Releasebaum.
 
@@ -240,21 +240,22 @@ Kanonische Pfade innerhalb des privaten Releasebaums sind fest:
 producer.whl
 venv/bin/codex-usage
 venv/lib/python*/site-packages/codex_usage/integration_entrypoint.py
-venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.534.dist-info/RECORD
+venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.535.dist-info/RECORD
 ```
 
 Launcher, Wheel oder Dist-Info unter alternativen Pfaden werden auch bei
 passenden Einzelhashes abgelehnt. RECORD bindet jedes Wheelmitglied; Metadata
-bindet Distribution `codex-usage-integration-producer` und Version `0.6.534`.
+bindet Distribution `codex-usage-integration-producer` und Version `0.6.535`.
 Der Releasebaumhash umfasst sortiert jeden no-follow Verzeichnis-/Dateieintrag
 mit Typ, relativem Pfad, Modus, Dateigröße und Datei-SHA-256. Symlinks,
 Hardlinks, fremde Owner, falsche Modi, Sonderdateien, Device-/Inodewechsel,
 Races, zusätzliche oder fehlende Einträge schlagen fehl.
 
-Runtimeattestierung und Rollback akzeptieren nur `0.6.534`/Schema 2.
-Ausschließlich der Installer darf beim atomaren Cutover exakt eine vollständig
-hash-/RECORD-/Baum-attestierte `0.6.533`/Schema-2- oder
-`0.6.532`/Schema-1-Generation als enumerierte Upgradequelle lesen. Beide
+Runtimeattestierung und Rollback akzeptieren nur `0.6.535`/Schema 2.
+Ausschließlich der Installer darf beim atomaren Cutover vollständig
+hash-/RECORD-/Baum-attestierte `0.6.534`/Schema-2-,
+`0.6.533`/Schema-2- oder `0.6.532`/Schema-1-Generationen als enumerierte
+Upgradequellen lesen. Diese älteren Generationen
 werden als `previous.json` erhalten, sind aber weder runtime-verifizierbar noch
 durch Rollback reaktivierbar. Es gibt keinen generischen Altversionsfallback.
 Fehler vor dem finalen atomaren Swap lassen `active.json` bytegenau
@@ -279,7 +280,7 @@ attestiert ihn erneut und ersetzt erst dann atomar `active.json`. Manuelles
 Kopieren eines Releasebaums oder Editieren von `active.json` ist verboten.
 
 Verifizierter Nachweis liest anschließend `active.json` nur bounded/no-follow
-und prüft: Schema `2`, Version `0.6.534`, Release-ID, kanonische vier Pfade,
+und prüft: Schema `2`, Version `0.6.535`, Release-ID, kanonische vier Pfade,
 Manifest-/Launcher-/Wheel-/RECORD-/Entry-Point-/Releasebaumhashes, Owner, Modi,
 Linkcount sowie Device/Inode-Identität. Berichtsfähig sind nur Version, Schema,
 Release-ID und Digests; absolute lokale Pfade bleiben ausschließlich im lokalen

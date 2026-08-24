@@ -712,8 +712,8 @@ def test_current_reader_accepts_exact_directory_entry_cap(tmp_path, monkeypatch)
     current = tmp_path / "data" / "codex-usage" / "current"
     _write_current_fixture(current, _usage("alpha"))
     _write_current_fixture(current, _usage("beta"))
-    assert len(tuple(current.iterdir())) == 4
-    monkeypatch.setattr(snapshot_module, "_MAX_DIRECTORY_ENTRIES", 4)
+    assert len(tuple(current.iterdir())) == 2
+    monkeypatch.setattr(snapshot_module, "_MAX_DIRECTORY_ENTRIES", 2)
 
     assert [item.account_id for item in read_current_usage_records(current)] == [
         "alpha",

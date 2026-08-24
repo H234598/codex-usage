@@ -18,11 +18,13 @@ _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_TREE_ENTRIES = 4096
 MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
-_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.534.dist-info"
-_EXPECTED_VERSION = "0.6.534"
+_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.535.dist-info"
+_EXPECTED_VERSION = "0.6.535"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
-_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.533.dist-info"
-_PREVIOUS_SCHEMA2_VERSION = "0.6.533"
+_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.534.dist-info"
+_PREVIOUS_SCHEMA2_VERSION = "0.6.534"
+_LEGACY_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.533.dist-info"
+_LEGACY_SCHEMA2_VERSION = "0.6.533"
 _LEGACY_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.532.dist-info"
 _LEGACY_VERSION = "0.6.532"
 _CURRENT_SCHEMA2_MANIFEST_FIELDS = frozenset(
@@ -729,6 +731,24 @@ def _verify_legacy_manifest_for_upgrade(
         expected_version=_LEGACY_VERSION,
         expected_dist_info_prefix=_LEGACY_DIST_INFO_PREFIX,
         expected_fields=_LEGACY_SCHEMA1_MANIFEST_FIELDS,
+    )
+
+
+def _verify_legacy_schema2_manifest_for_upgrade(
+    *,
+    manifest_path: Path,
+    state_home: Path,
+    data_home: Path,
+) -> ActiveRelease:
+    return _verify_manifest_contract(
+        manifest_path=manifest_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=None,
+        expected_schema_version=2,
+        expected_version=_LEGACY_SCHEMA2_VERSION,
+        expected_dist_info_prefix=_LEGACY_SCHEMA2_DIST_INFO_PREFIX,
+        expected_fields=_PREVIOUS_SCHEMA2_MANIFEST_FIELDS,
     )
 
 

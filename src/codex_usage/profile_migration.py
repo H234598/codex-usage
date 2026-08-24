@@ -365,6 +365,9 @@ def _cleanup_created_migration_files(
 ) -> list[str]:
     errors: list[str] = []
     for target, device, inode in reversed(files):
+        # Persistent lock inodes must never be unlinked during rollback.
+        if target.suffix == ".lock":
+            continue
         try:
             assert_no_symlink_ancestors(target, label="migration cleanup target")
             target_stat = target.lstat()

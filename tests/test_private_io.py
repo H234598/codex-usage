@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -7,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import codex_usage.config as config_module
 import codex_usage.private_io as private_io
 from codex_usage.private_io import (
     assert_no_symlink_ancestors,
@@ -870,10 +874,7 @@ def test_write_private_text_reuses_same_thread_private_path_lock(tmp_path):
         write_private_text(path, "new", label="value")
 
     assert path.read_text(encoding="utf-8") == "new"
-    assert sorted(item.name for item in tmp_path.iterdir()) == [
-        "value.json",
-        "value.json.lock",
-    ]
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["value.json"]
 
 
 @pytest.mark.parametrize("mode", [0o640, True, "600", -1])
@@ -910,7 +911,7 @@ def test_write_private_text_rejects_invalid_temporary_descriptor(tmp_path, monke
     def reject_temporary(fd):
         nonlocal fstat_calls
         fstat_calls += 1
-        if fstat_calls == 1:
+        if fstat_calls <= 2:
             return original_fstat(fd)
         return SimpleNamespace(
             st_mode=0,
@@ -1148,7 +1149,7 @@ def test_private_path_lock_rejects_non_directory_parent(tmp_path):
 @pytest.mark.parametrize("kind", ["symlink", "directory"])
 def test_private_path_lock_rejects_invalid_lock_path(tmp_path, kind):
     path = tmp_path / "config"
-    lock_path = path.with_name(path.name + ".lock")
+    lock_path = private_io._private_lock_path(path)
     if kind == "symlink":
         target = tmp_path / "target"
         target.write_text("target", encoding="utf-8")
@@ -1167,6 +1168,11 @@ def test_private_path_lock_maps_open_errors(tmp_path, monkeypatch, error_number)
         raise OSError(error_number, "synthetic lock open failure")
 
     monkeypatch.setattr(private_io.os, "open", fail_open)
+    monkeypatch.setattr(
+        private_io,
+        "_private_lock_path",
+        lambda path: path.with_name(path.name + ".lock"),
+    )
 
     if error_number == private_io.errno.ELOOP:
         with pytest.raises(ValueError, match="must be a regular file"):
@@ -1214,7 +1220,7 @@ def test_private_path_lock_records_only_lock_file_created_by_transaction(tmp_pat
     ):
         pass
 
-    lock_path = tmp_path / "config.lock"
+    lock_path = created_lock_files[0][0]
     lock_stat = lock_path.lstat()
     assert created_lock_files == [
         (lock_path, lock_stat.st_dev, lock_stat.st_ino)
@@ -1229,6 +1235,132 @@ def test_private_path_lock_records_only_lock_file_created_by_transaction(tmp_pat
         pass
 
     assert preexisting_lock_files == []
+
+
+def test_private_path_lock_keeps_waiter_before_acquire_on_persistent_inode(tmp_path):
+    path = tmp_path / "profile" / "profile.json"
+    path.parent.mkdir()
+    created_lock_files = []
+    waiter_started = Event()
+
+    def contend_for_lock():
+        waiter_started.set()
+        with private_path_lock(path, timeout_seconds=0, label="profile lock"):
+            pass
+
+    with private_path_lock(
+        path,
+        label="profile lock",
+        created_lock_files=created_lock_files,
+    ):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(contend_for_lock)
+            assert waiter_started.wait(1)
+            with pytest.raises(TimeoutError, match="already in use"):
+                future.result()
+            config_module._cleanup_created_private_files(
+                created_lock_files,
+                label="created profile lock file",
+            )
+
+    lock_path = created_lock_files[0][0]
+    assert lock_path.parent != path.parent
+    assert lock_path.exists()
+
+
+def test_private_path_lock_namespace_is_stable_across_home_environment_changes(
+    tmp_path,
+):
+    target = tmp_path / "shared" / "config.toml"
+    target.parent.mkdir()
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    holder_code = "\n".join(
+        (
+            "from pathlib import Path",
+            "import sys, time",
+            "from codex_usage.private_io import private_path_lock",
+            "with private_path_lock(Path(sys.argv[1]), timeout_seconds=5):",
+            "    print('held', flush=True)",
+            "    time.sleep(2)",
+        )
+    )
+    contender_code = "\n".join(
+        (
+            "from pathlib import Path",
+            "import sys",
+            "from codex_usage.private_io import private_path_lock",
+            "try:",
+            "    with private_path_lock(Path(sys.argv[1]), timeout_seconds=0.2):",
+            "        print('acquired', flush=True)",
+            "except TimeoutError:",
+            "    print('timeout', flush=True)",
+        )
+    )
+    env_a = os.environ.copy()
+    env_b = os.environ.copy()
+    env_a["HOME"] = str(tmp_path / "home-a")
+    env_b["HOME"] = str(tmp_path / "home-b")
+    env_a["PYTHONPATH"] = str(source_root)
+    env_b["PYTHONPATH"] = str(source_root)
+    (tmp_path / "home-a").mkdir()
+    (tmp_path / "home-b").mkdir()
+    holder = subprocess.Popen(
+        [sys.executable, "-c", holder_code, str(target)],
+        env=env_a,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "held"
+        contender = subprocess.run(
+            [sys.executable, "-c", contender_code, str(target)],
+            env=env_b,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert contender.stdout.strip() == "timeout"
+    finally:
+        holder.terminate()
+        holder.wait(timeout=5)
+
+
+def test_created_lock_cleanup_does_not_unlink_post_unlock_waiter_inode(tmp_path):
+    path = tmp_path / "profile" / "profile.json"
+    path.parent.mkdir()
+    created_lock_files = []
+    waiter_started = Event()
+    waiter_entered = Event()
+    release_waiter = Event()
+
+    def wait_for_lock():
+        waiter_started.set()
+        with private_path_lock(path, timeout_seconds=2, label="profile lock"):
+            waiter_entered.set()
+            assert release_waiter.wait(2)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with private_path_lock(
+            path,
+            label="profile lock",
+            created_lock_files=created_lock_files,
+        ):
+            future = executor.submit(wait_for_lock)
+            assert waiter_started.wait(1)
+            assert not waiter_entered.wait(0.1)
+        assert waiter_entered.wait(1)
+
+        config_module._cleanup_created_private_files(
+            created_lock_files,
+            label="created profile lock file",
+        )
+        assert created_lock_files[0][0].exists()
+        with pytest.raises(TimeoutError, match="already in use"):
+            with private_path_lock(path, timeout_seconds=0, label="profile lock"):
+                pass
+        release_waiter.set()
+        future.result()
 
 
 def test_private_path_lock_ignores_unlock_error(tmp_path, monkeypatch):

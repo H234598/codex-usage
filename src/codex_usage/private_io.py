@@ -3,8 +3,10 @@ from __future__ import annotations
 import errno
 import fcntl
 import glob
+import hashlib
 import math
 import os
+import pwd
 import secrets
 import stat
 import threading
@@ -19,6 +21,24 @@ _PATH_TYPE = type(Path())
 _MAX_STALE_ROLLBACKS = 1
 _MAX_PRIVATE_ROLLBACK_BYTES = 64 * 1024 * 1024
 _PRIVATE_LOCK_STATE = threading.local()
+
+
+def _private_lock_root() -> Path:
+    try:
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise ValueError("cannot determine private lock home") from exc
+    if not home.is_absolute():
+        raise ValueError("private lock home must be absolute")
+    return home / ".local" / "state" / "codex-usage" / "locks"
+
+
+def _private_lock_path(path: Path) -> Path:
+    absolute = os.path.abspath(path)
+    digest = hashlib.sha256(os.fsencode(absolute)).hexdigest()
+    root = _private_lock_root()
+    ensure_private_directory(root, label="private lock directory")
+    return root / f"{digest}.lock"
 
 
 def _lock_deadline(timeout_seconds: int | float) -> float:
@@ -550,7 +570,7 @@ def private_path_lock(
     assert_no_symlink_ancestors(parent, label=label)
     if parent.is_symlink() or not parent.is_dir():
         raise ValueError(f"{label} parent must be a real directory: {parent}")
-    lock_path = parent / (path.name + ".lock")
+    lock_path = _private_lock_path(path)
     if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
         raise ValueError(f"{label} must be a regular file: {lock_path}")
     lock_key = Path(os.path.abspath(lock_path))

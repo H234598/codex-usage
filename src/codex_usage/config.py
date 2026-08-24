@@ -873,6 +873,10 @@ def _cleanup_created_private_files(
     label: str,
 ) -> None:
     for path, device, inode in reversed(files):
+        # Persistent lock inodes outlive transactions. Unlinking one can split
+        # flock serialization for a waiter that still has the old inode open.
+        if path.suffix == ".lock":
+            continue
         if not path.exists():
             if path.is_symlink():
                 raise ValueError(f"{label} became a symlink: {path}")

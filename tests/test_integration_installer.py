@@ -798,18 +798,18 @@ def test_release_version_is_06534_across_project_surfaces():
         )
     )
 
-    assert project["project"]["version"] == "0.6.534"
-    assert __version__ == "0.6.534"
-    assert applet["version"] == "0.6.534"
-    assert applet["comments"] == "Version: 0.6.534"
+    assert project["project"]["version"] == "0.6.535"
+    assert __version__ == "0.6.535"
+    assert applet["version"] == "0.6.535"
+    assert applet["comments"] == "Version: 0.6.535"
 
 
 def test_install_creates_attested_private_active_release(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     from codex_usage.integration_attestation import verify_active_release
 
-    assert release.version == "0.6.534"
-    assert release.release_dir.name.startswith("0.6.534-")
+    assert release.version == "0.6.535"
+    assert release.release_dir.name.startswith("0.6.535-")
     assert release.launcher_path.name == "codex-usage"
     assert stat.S_IMODE(release.launcher_path.lstat().st_mode) == 0o700
     verified = verify_active_release(
@@ -824,10 +824,10 @@ def test_install_creates_attested_private_active_release(tmp_path):
         )
     )
     assert active["schema_version"] == 2
-    assert active["version"] == "0.6.534"
+    assert active["version"] == "0.6.535"
     assert active["release_id"] == release.release_dir.name
     assert Path(active["record_path"]).parent.name == (
-        "codex_usage_integration_producer-0.6.534.dist-info"
+        "codex_usage_integration_producer-0.6.535.dist-info"
     )
     assert active["launcher_sha256"] == release.launcher_sha256
     assert active["release_tree_sha256"] == release.release_tree_sha256
@@ -1839,7 +1839,7 @@ def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
     )
     result = prepared.run()
 
-    assert result.version == "0.6.534"
+    assert result.version == "0.6.535"
     assert cleanup_failed
     assert prepared.active_path.is_file()
     if operation == "install":
@@ -2136,7 +2136,7 @@ def test_failed_publish_to_initially_absent_active_keeps_active_present(
         state_home=state_home,
         data_home=data_home,
         expected_entrypoint_path=None,
-    ).version == "0.6.534"
+    ).version == "0.6.535"
     if operation == "install":
         assert not previous_path.exists()
 
@@ -2181,7 +2181,7 @@ def test_install_cutover_accepts_only_attested_schema1_as_nonreactivatable_previ
     active_after = active_path.read_bytes()
     active = json.loads(active_after)
     assert active["schema_version"] == 2
-    assert active["version"] == "0.6.534"
+    assert active["version"] == "0.6.535"
     assert (integration / "previous.json").read_bytes() == schema1_active
     assert (
         verify_active_release(
@@ -2219,7 +2219,7 @@ def test_install_cutover_accepts_attested_schema2_06533_only_as_upgrade_source(
     active_path = integration / "active.json"
     old_active = active_path.read_bytes()
     with monkeypatch.context() as current_release_context:
-        _patch_release_identity(current_release_context, "0.6.534")
+        _patch_release_identity(current_release_context, "0.6.535")
         with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
             integration_attestation.verify_active_release(
                 state_home=state_home,
@@ -2234,7 +2234,7 @@ def test_install_cutover_accepts_attested_schema2_06533_only_as_upgrade_source(
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-        assert current_release.version == "0.6.534"
+        assert current_release.version == "0.6.535"
         assert (integration / "previous.json").read_bytes() == old_active
         active_after = active_path.read_bytes()
 
@@ -5745,7 +5745,7 @@ def test_record_must_bind_nonempty_entrypoint_row(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("release_id", "0.6.534-ffffffffffffffff"),
+        ("release_id", "0.6.535-ffffffffffffffff"),
         ("source_manifest_sha256", "f" * 64),
     ],
 )
@@ -5824,7 +5824,7 @@ def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monke
     monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
 
     def fake_builder(command, *, env, cwd):
-        (wheel_dir / "wrong-name-0.6.534-py3-none-any.whl").write_bytes(b"wheel")
+        (wheel_dir / "wrong-name-0.6.535-py3-none-any.whl").write_bytes(b"wheel")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(integration_installer, "_run_builder_bounded", fake_builder)
@@ -8562,7 +8562,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
     pyproject = bad_source_root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.534"',
+            'version = "0.6.535"',
             'version = "0.0.0"',
         ),
         encoding="utf-8",
