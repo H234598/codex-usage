@@ -75,6 +75,27 @@ BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
 BUILDER_WHEEL_TIMEOUT_SECONDS = 120
 MAX_INSTALL_FILE_BYTES = MAX_ATTESTATION_FILE_BYTES
+MAX_ACTIVE_TRANSACTION_ARTIFACTS = 8
+MAX_INTEGRATION_DIRECTORY_ENTRIES = 64
+_ACTIVE_TRANSACTION_RAW_RE = re.compile(
+    r"\A\.active\.json\.publish-new-[1-9][0-9]{0,19}-[0-9a-f]{16}\Z"
+)
+_ACTIVE_TRANSACTION_BOUND_RE = re.compile(
+    r"\A\.active\.json\.publish-"
+    r"(?P<kind>install|rollback)-"
+    r"[1-9][0-9]{0,19}-[0-9a-f]{16}-"
+    r"c(?P<cdev>[0-9a-f]{1,16})-(?P<cino>[0-9a-f]{1,16})-"
+    r"p(?:(?P<none>none)|(?P<pdev>[0-9a-f]{1,16})-(?P<pino>[0-9a-f]{1,16}))\Z"
+)
+_ACTIVE_TRANSACTION_LEGACY_RE = re.compile(
+    r"\A\.active\.json\.(?:publish|prior|failed)-"
+    r"[1-9][0-9]{0,19}-[0-9a-f]{16}\Z"
+)
+_ACTIVE_TRANSACTION_PREFIXES = (
+    ".active.json.publish-",
+    ".active.json.prior-",
+    ".active.json.failed-",
+)
 _BUILDER_PREFLIGHT_CODE = (
     "import json, setuptools\n"
     "from setuptools.command.bdist_wheel import bdist_wheel\n"
@@ -146,8 +167,18 @@ class _ProvisionalIdentity:
 class _ActiveManifestPublish:
     active_path: Path
     published_identity: _ProvisionalIdentity
-    prior_path: Path | None
+    artifact_path: Path
     prior_identity: _ProvisionalIdentity | None
+    transaction_kind: str
+
+
+@dataclass(frozen=True)
+class _ActiveTransactionArtifact:
+    path: Path
+    current_identity: _ProvisionalIdentity
+    candidate_identity: _ProvisionalIdentity | None
+    prior_identity: _ProvisionalIdentity | None
+    transaction_kind: str | None
 
 
 class _WheelMemberValidationError(IntegrationInstallError):
@@ -432,7 +463,12 @@ def _remove_owned_entry(
             os.close(parent_fd)
 
 
-def _rename_noreplace(source_name: str, target_name: str, parent_fd: int) -> None:
+def _renameat2(
+    source_name: str,
+    target_name: str,
+    parent_fd: int,
+    flags: int,
+) -> None:
     if sys.platform != "linux":
         _fail()
     try:
@@ -453,12 +489,20 @@ def _rename_noreplace(source_name: str, target_name: str, parent_fd: int) -> Non
             os.fsencode(source_name),
             parent_fd,
             os.fsencode(target_name),
-            1,
+            flags,
         )
         != 0
     ):
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error))
+
+
+def _rename_noreplace(source_name: str, target_name: str, parent_fd: int) -> None:
+    _renameat2(source_name, target_name, parent_fd, 1)
+
+
+def _rename_exchange(source_name: str, target_name: str, parent_fd: int) -> None:
+    _renameat2(source_name, target_name, parent_fd, 2)
 
 
 def _rename_owned_directory(
@@ -866,10 +910,301 @@ def _entry_matches_at(
     )
 
 
-def _transaction_path(active_path: Path, label: str) -> Path:
+def _transaction_path(active_path: Path) -> Path:
     return active_path.with_name(
-        f".{active_path.name}.{label}-{os.getpid()}-{secrets.token_hex(8)}"
+        f".{active_path.name}.publish-new-{os.getpid()}-{secrets.token_hex(8)}"
     )
+
+
+def _bound_transaction_path(
+    active_path: Path,
+    transaction_kind: str,
+    candidate_identity: _ProvisionalIdentity,
+    prior_identity: _ProvisionalIdentity | None,
+) -> Path:
+    if transaction_kind not in {"install", "rollback"}:
+        _fail()
+    prior_marker = (
+        "none"
+        if prior_identity is None
+        else f"{prior_identity.device:x}-{prior_identity.inode:x}"
+    )
+    return active_path.with_name(
+        f".{active_path.name}.publish-{transaction_kind}-{os.getpid()}-"
+        f"{secrets.token_hex(8)}-"
+        f"c{candidate_identity.device:x}-{candidate_identity.inode:x}-"
+        f"p{prior_marker}"
+    )
+
+
+def _transaction_identity(device_text: str, inode_text: str) -> _ProvisionalIdentity:
+    device = int(device_text, 16)
+    inode = int(inode_text, 16)
+    if device < 0 or inode <= 0:
+        _fail()
+    return _ProvisionalIdentity(
+        device,
+        inode,
+        os.getuid(),
+        stat.S_IFREG,
+        0o600,
+    )
+
+
+def _strict_transaction_identity_at(
+    parent_fd: int,
+    name: str,
+    integration_identity: _DirectoryIdentity,
+) -> _ProvisionalIdentity:
+    fd = -1
+    try:
+        listed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(listed.st_mode)
+            or listed.st_nlink != 1
+            or listed.st_uid != os.getuid()
+            or stat.S_IMODE(listed.st_mode) != 0o600
+            or listed.st_dev != integration_identity.device
+            or listed.st_ino <= 0
+            or listed.st_size < 0
+            or listed.st_size > 128 * 1024
+        ):
+            _fail()
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        fd = os.open(name, flags, dir_fd=parent_fd)
+        opened = os.fstat(fd)
+        if (
+            _provisional_from_stat(opened) != _provisional_from_stat(listed)
+            or opened.st_nlink != listed.st_nlink
+            or opened.st_size != listed.st_size
+        ):
+            _fail()
+        return _provisional_from_stat(opened)
+    except (OSError, ValueError):
+        _fail()
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _active_transaction_artifacts(
+    *,
+    integration: Path,
+    integration_identity: _DirectoryIdentity,
+    parent_fd: int,
+) -> list[_ActiveTransactionArtifact]:
+    names: list[str] = []
+    try:
+        with os.scandir(parent_fd) as entries:
+            for entry_count, entry in enumerate(entries, start=1):
+                if entry_count > MAX_INTEGRATION_DIRECTORY_ENTRIES:
+                    _fail()
+                if entry.name.startswith(_ACTIVE_TRANSACTION_PREFIXES):
+                    names.append(entry.name)
+                    if len(names) > MAX_ACTIVE_TRANSACTION_ARTIFACTS:
+                        _fail()
+    except OSError:
+        _fail()
+
+    artifacts: list[_ActiveTransactionArtifact] = []
+    seen_identities: set[tuple[int, int]] = set()
+    ambiguous = False
+    for name in sorted(names):
+        current_identity = _strict_transaction_identity_at(
+            parent_fd,
+            name,
+            integration_identity,
+        )
+        key = (current_identity.device, current_identity.inode)
+        if key in seen_identities:
+            _fail()
+        seen_identities.add(key)
+        raw_match = _ACTIVE_TRANSACTION_RAW_RE.fullmatch(name)
+        bound_match = _ACTIVE_TRANSACTION_BOUND_RE.fullmatch(name)
+        if raw_match is not None:
+            ambiguous = True
+            artifacts.append(
+                _ActiveTransactionArtifact(
+                    path=integration / name,
+                    current_identity=current_identity,
+                    candidate_identity=None,
+                    prior_identity=None,
+                    transaction_kind=None,
+                )
+            )
+            continue
+        if bound_match is None:
+            if _ACTIVE_TRANSACTION_LEGACY_RE.fullmatch(name) is None:
+                ambiguous = True
+            else:
+                ambiguous = True
+            artifacts.append(
+                _ActiveTransactionArtifact(
+                    path=integration / name,
+                    current_identity=current_identity,
+                    candidate_identity=None,
+                    prior_identity=None,
+                    transaction_kind=None,
+                )
+            )
+            continue
+        candidate_identity = _transaction_identity(
+            bound_match.group("cdev"),
+            bound_match.group("cino"),
+        )
+        if bound_match.group("none") is not None:
+            prior_identity = None
+        else:
+            prior_identity = _transaction_identity(
+                bound_match.group("pdev"),
+                bound_match.group("pino"),
+            )
+        if (
+            candidate_identity.device != integration_identity.device
+            or (
+                prior_identity is not None
+                and (
+                    prior_identity.device != integration_identity.device
+                    or prior_identity == candidate_identity
+                )
+            )
+        ):
+            _fail()
+        artifacts.append(
+            _ActiveTransactionArtifact(
+                path=integration / name,
+                current_identity=current_identity,
+                candidate_identity=candidate_identity,
+                prior_identity=prior_identity,
+                transaction_kind=bound_match.group("kind"),
+            )
+        )
+    if ambiguous:
+        _fail()
+    return artifacts
+
+
+def _recover_active_transactions(
+    *,
+    integration: Path,
+    integration_identity: _DirectoryIdentity,
+    state_home: Path,
+    data_home: Path,
+) -> None:
+    parent_fd = -1
+    try:
+        parent_fd = _open_bound_parent_fd(integration, integration_identity)
+        artifacts = _active_transaction_artifacts(
+            integration=integration,
+            integration_identity=integration_identity,
+            parent_fd=parent_fd,
+        )
+        if not artifacts:
+            return
+        try:
+            active_identity = _strict_transaction_identity_at(
+                parent_fd,
+                ACTIVE_NAME,
+                integration_identity,
+            )
+        except IntegrationInstallError:
+            try:
+                os.stat(ACTIVE_NAME, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                active_identity = None
+            else:
+                raise
+
+        actions: list[tuple[_ActiveTransactionArtifact, str]] = []
+        exchanged_count = 0
+        for artifact in artifacts:
+            candidate_identity = artifact.candidate_identity
+            if candidate_identity is None:
+                _fail()
+            if artifact.current_identity == candidate_identity:
+                if active_identity != artifact.prior_identity:
+                    _fail()
+                actions.append((artifact, "stale"))
+            elif (
+                artifact.prior_identity is not None
+                and artifact.current_identity == artifact.prior_identity
+                and active_identity == candidate_identity
+            ):
+                exchanged_count += 1
+                actions.append((artifact, "exchanged"))
+            else:
+                _fail()
+        if exchanged_count > 1:
+            _fail()
+
+        active_path = integration / ACTIVE_NAME
+        for artifact, action in actions:
+            if action != "exchanged":
+                continue
+            candidate_identity = artifact.candidate_identity
+            if candidate_identity is None or not _entry_matches_at(
+                parent_fd,
+                ACTIVE_NAME,
+                candidate_identity,
+            ):
+                _fail()
+            try:
+                _verify_manifest(
+                    manifest_path=active_path,
+                    state_home=state_home,
+                    data_home=data_home,
+                    expected_entrypoint_path=None,
+                )
+            except IntegrationAttestationUnavailable:
+                _fail()
+            if artifact.transaction_kind == "install":
+                prior_text, prior_stat = read_private_text(
+                    artifact.path,
+                    regular_label="prior active transaction manifest",
+                    read_label="prior active transaction manifest",
+                    max_bytes=128 * 1024,
+                )
+                if _provisional_from_stat(prior_stat) != artifact.current_identity:
+                    _fail()
+                try:
+                    _verify_manifest(
+                        manifest_path=artifact.path,
+                        state_home=state_home,
+                        data_home=data_home,
+                        expected_entrypoint_path=None,
+                    )
+                except IntegrationAttestationUnavailable:
+                    _verify_legacy_manifest_for_upgrade(
+                        manifest_path=artifact.path,
+                        state_home=state_home,
+                        data_home=data_home,
+                    )
+                write_private_text(
+                    integration / PREVIOUS_NAME,
+                    prior_text,
+                    label="previous integration manifest",
+                    mode=0o600,
+                )
+
+        for artifact, _ in actions:
+            if not _cleanup_provisional(
+                artifact.path,
+                artifact.current_identity,
+                integration_identity,
+                directory=False,
+            ):
+                raise IntegrationCleanupError()
+        try:
+            os.fsync(parent_fd)
+        except OSError as error:
+            raise IntegrationCleanupError() from error
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
 
 
 def _rollback_active_publish_at(
@@ -878,7 +1213,8 @@ def _rollback_active_publish_at(
     parent_fd: int,
 ) -> bool:
     active_path = publish.active_path
-    evidence_path = _transaction_path(active_path, "failed")
+    if publish.prior_identity is None:
+        return False
     if not _provisional_matches(
         active_path,
         publish.published_identity,
@@ -887,31 +1223,45 @@ def _rollback_active_publish_at(
     ):
         return False
     try:
-        _rename_noreplace(active_path.name, evidence_path.name, parent_fd)
-        if not _entry_matches_at(
+        _rename_exchange(
+            active_path.name,
+            publish.artifact_path.name,
             parent_fd,
-            evidence_path.name,
+        )
+        active_is_prior = _entry_matches_at(
+            parent_fd,
+            active_path.name,
+            publish.prior_identity,
+        )
+        artifact_is_published = _entry_matches_at(
+            parent_fd,
+            publish.artifact_path.name,
             publish.published_identity,
-        ):
-            _rename_noreplace(evidence_path.name, active_path.name, parent_fd)
-            os.fsync(parent_fd)
+        )
+        if not active_is_prior or not artifact_is_published:
+            if active_is_prior and not artifact_is_published:
+                try:
+                    _rename_exchange(
+                        active_path.name,
+                        publish.artifact_path.name,
+                        parent_fd,
+                    )
+                    os.fsync(parent_fd)
+                except (IntegrationInstallError, OSError, ValueError):
+                    pass
             return False
-        if publish.prior_path is not None:
-            if publish.prior_identity is None:
-                return False
-            _rename_noreplace(
-                publish.prior_path.name,
-                active_path.name,
-                parent_fd,
-            )
-            if not _entry_matches_at(
-                parent_fd,
-                active_path.name,
-                publish.prior_identity,
-            ):
-                return False
-        os.unlink(evidence_path.name, dir_fd=parent_fd)
         os.fsync(parent_fd)
+        cleaned = _cleanup_provisional(
+            publish.artifact_path,
+            publish.published_identity,
+            integration_identity,
+            directory=False,
+        )
+        if cleaned:
+            try:
+                os.fsync(parent_fd)
+            except OSError:
+                pass
         return True
     except (IntegrationInstallError, OSError, ValueError):
         return False
@@ -945,13 +1295,11 @@ def _begin_active_publish(
     published_text: str,
     prior_identity: _ProvisionalIdentity | None,
     integration_identity: _DirectoryIdentity,
+    transaction_kind: str = "install",
 ) -> _ActiveManifestPublish:
-    candidate_path = _transaction_path(active_path, "publish")
-    prior_path = (
-        _transaction_path(active_path, "prior")
-        if prior_identity is not None
-        else None
-    )
+    if transaction_kind not in {"install", "rollback"}:
+        _fail()
+    candidate_path = _transaction_path(active_path)
     candidate_file_identity = _write_exclusive(
         candidate_path,
         published_text.encode("utf-8"),
@@ -959,18 +1307,30 @@ def _begin_active_publish(
         parent_identity=integration_identity,
     )
     published_identity = _provisional_from_file_identity(candidate_file_identity)
+    artifact_path = _bound_transaction_path(
+        active_path,
+        transaction_kind,
+        published_identity,
+        prior_identity,
+    )
     parent_fd = -1
-    prior_moved = False
     published = False
+    candidate_location = candidate_path
     publish_record = _ActiveManifestPublish(
         active_path=active_path,
         published_identity=published_identity,
-        prior_path=prior_path,
+        artifact_path=artifact_path,
         prior_identity=prior_identity,
+        transaction_kind=transaction_kind,
     )
     try:
         parent_fd = _open_bound_parent_fd(active_path.parent, integration_identity)
-        if prior_path is not None:
+        _rename_noreplace(candidate_path.name, artifact_path.name, parent_fd)
+        candidate_location = artifact_path
+        if not _entry_matches_at(parent_fd, artifact_path.name, published_identity):
+            _fail()
+        os.fsync(parent_fd)
+        if prior_identity is not None:
             if not _provisional_matches(
                 active_path,
                 prior_identity,
@@ -978,11 +1338,13 @@ def _begin_active_publish(
                 directory=False,
             ):
                 _fail()
-            _rename_noreplace(active_path.name, prior_path.name, parent_fd)
-            prior_moved = True
-            if not _entry_matches_at(parent_fd, prior_path.name, prior_identity):
-                _rename_noreplace(prior_path.name, active_path.name, parent_fd)
-                prior_moved = False
+            _rename_exchange(active_path.name, artifact_path.name, parent_fd)
+            published = True
+            if not _entry_matches_at(
+                parent_fd,
+                artifact_path.name,
+                prior_identity,
+            ):
                 _fail()
         else:
             try:
@@ -991,8 +1353,8 @@ def _begin_active_publish(
                 pass
             else:
                 _fail()
-        _rename_noreplace(candidate_path.name, active_path.name, parent_fd)
-        published = True
+            _rename_noreplace(artifact_path.name, active_path.name, parent_fd)
+            published = True
         if not _entry_matches_at(parent_fd, active_path.name, published_identity):
             _fail()
         os.fsync(parent_fd)
@@ -1005,19 +1367,8 @@ def _begin_active_publish(
                 integration_identity,
                 parent_fd,
             )
-        elif prior_moved and prior_path is not None:
-            try:
-                _rename_noreplace(prior_path.name, active_path.name, parent_fd)
-                recovery_ok = _entry_matches_at(
-                    parent_fd,
-                    active_path.name,
-                    prior_identity,
-                )
-                os.fsync(parent_fd)
-            except (IntegrationInstallError, OSError, ValueError):
-                recovery_ok = False
         if not published and not _cleanup_provisional(
-            candidate_path,
+            candidate_location,
             published_identity,
             integration_identity,
             directory=False,
@@ -1064,17 +1415,30 @@ def _validate_active_publish(
 def _commit_active_publish(
     publish: _ActiveManifestPublish,
     integration_identity: _DirectoryIdentity,
-) -> None:
-    if publish.prior_path is not None and (
-        publish.prior_identity is None
-        or not _cleanup_provisional(
-            publish.prior_path,
-            publish.prior_identity,
+) -> bool:
+    if publish.prior_identity is None:
+        return False
+    retained_evidence = not _cleanup_provisional(
+        publish.artifact_path,
+        publish.prior_identity,
+        integration_identity,
+        directory=False,
+    )
+    if retained_evidence:
+        return True
+    parent_fd = -1
+    try:
+        parent_fd = _open_bound_parent_fd(
+            publish.active_path.parent,
             integration_identity,
-            directory=False,
         )
-    ):
-        raise IntegrationCleanupError()
+        os.fsync(parent_fd)
+    except (IntegrationInstallError, OSError, ValueError):
+        return True
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+    return False
 
 
 def _copy_regular(
@@ -2666,6 +3030,12 @@ def _install_release(
             label="integration producer lock",
         ):
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
+            _recover_active_transactions(
+                integration=integration,
+                integration_identity=integration_identity,
+                state_home=state_home,
+                data_home=data_home,
+            )
             _require_private_dir(temporary_root, temporary_identity, False)
             releases = integration / "releases"
             releases_identity = _require_private_dir(
@@ -2890,6 +3260,7 @@ def _install_release(
                 published_text=published_text,
                 prior_identity=active_identity,
                 integration_identity=integration_identity,
+                transaction_kind="install",
             )
             try:
                 _validate_active_publish(
@@ -3019,6 +3390,12 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
             label="integration producer lock",
         ):
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
+            _recover_active_transactions(
+                integration=integration,
+                integration_identity=integration_identity,
+                state_home=state_home,
+                data_home=data_home,
+            )
             previous = integration / PREVIOUS_NAME
             active = integration / ACTIVE_NAME
             active_identity: _ProvisionalIdentity | None = None
@@ -3056,6 +3433,7 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
                 published_text=previous_text,
                 prior_identity=active_identity,
                 integration_identity=integration_identity,
+                transaction_kind="rollback",
             )
             try:
                 _validate_active_publish(

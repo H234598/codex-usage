@@ -939,6 +939,92 @@ def test_source_drift_before_active_swap_keeps_prior_active_release(tmp_path, mo
     )
 
 
+def _prepared_active_transaction(tmp_path: Path, operation: str) -> SimpleNamespace:
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+
+    if operation == "install":
+        second_root = tmp_path / "atomic-install"
+        second_root.mkdir(mode=0o700)
+        second_source = _temporary_source_copy(second_root)
+        second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+        second_entrypoint.write_bytes(
+            second_entrypoint.read_bytes() + b"\n# atomic release\n"
+        )
+        second_temporary = second_root / "temporary"
+        second_temporary.mkdir(mode=0o700)
+
+        def run():
+            return integration_installer.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    elif operation == "rollback":
+
+        def run():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    else:
+        raise AssertionError("invalid transaction operation")
+
+    return SimpleNamespace(
+        release=release,
+        data_home=data_home,
+        state_home=state_home,
+        integration=integration,
+        active_path=active_path,
+        previous_path=previous_path,
+        active_before=active_before,
+        previous_before=previous_before,
+        run=run,
+    )
+
+
+def _write_active_transaction_artifact(path: Path, payload: bytes = b"stale") -> None:
+    path.write_bytes(payload)
+    path.chmod(0o600)
+
+
+def _write_bound_stale_transaction_artifact(
+    *,
+    integration: Path,
+    active_path: Path,
+    index: int,
+    payload: bytes = b"stale",
+) -> Path:
+    source = integration / f"candidate-source-{index}"
+    _write_active_transaction_artifact(source, payload)
+    candidate = source.stat()
+    prior = active_path.stat()
+    artifact = integration / (
+        f".active.json.publish-install-{5000 + index}-{index:016x}-"
+        f"c{candidate.st_dev:x}-{candidate.st_ino:x}-"
+        f"p{prior.st_dev:x}-{prior.st_ino:x}"
+    )
+    source.rename(artifact)
+    return artifact
+
+
 def test_final_install_attestation_failure_restores_active_and_preserves_previous(
     tmp_path, monkeypatch
 ):
@@ -1493,6 +1579,438 @@ def test_capture_failure_never_adopts_byte_identical_replacement(
     assert replacement_text is not None
     assert active_path.read_text(encoding="utf-8") == replacement_text
     assert previous_path.read_bytes() == previous_before
+
+
+def test_rename_exchange_swaps_existing_entries(tmp_path):
+    from codex_usage import integration_installer
+
+    parent = tmp_path / "integration"
+    parent.mkdir(mode=0o700)
+    left = parent / "left"
+    right = parent / "right"
+    _write_active_transaction_artifact(left, b"left")
+    _write_active_transaction_artifact(right, b"right")
+    exchange = getattr(integration_installer, "_rename_exchange", None)
+    assert exchange is not None
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        exchange(left.name, right.name, parent_fd)
+    finally:
+        os.close(parent_fd)
+
+    assert left.read_bytes() == b"right"
+    assert right.read_bytes() == b"left"
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_second_exchange_failure_keeps_active_and_prior_evidence(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    original_verify = integration_installer._verify_manifest
+    attestation_failed = False
+
+    def fail_final_active_attestation(*args, **kwargs):
+        nonlocal attestation_failed
+        if (
+            kwargs["manifest_path"] == prepared.active_path
+            and prepared.active_path.read_bytes() != prepared.active_before
+            and not attestation_failed
+        ):
+            attestation_failed = True
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    original_exchange = getattr(integration_installer, "_rename_exchange", None)
+    exchange_calls = 0
+
+    def fail_second_exchange(source_name, target_name, parent_fd):
+        nonlocal exchange_calls
+        exchange_calls += 1
+        if exchange_calls == 2:
+            raise OSError(errno.EIO, "synthetic second exchange failure")
+        assert original_exchange is not None
+        return original_exchange(source_name, target_name, parent_fd)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_rename_exchange",
+        fail_second_exchange,
+        raising=False,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        prepared.run()
+
+    assert attestation_failed
+    assert exchange_calls == 2
+    assert prepared.active_path.is_file() and not prepared.active_path.is_symlink()
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    evidence = [
+        path
+        for path in prepared.integration.iterdir()
+        if path.name.startswith(".active.json.publish-")
+    ]
+    assert len(evidence) == 1
+    assert evidence[0].read_bytes() == prepared.active_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_publish_exchange_fsync_failure_atomically_restores_active(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    integration_stat = prepared.integration.stat()
+    original_exchange = getattr(integration_installer, "_rename_exchange", None)
+    original_fsync = integration_installer.os.fsync
+    exchange_calls = 0
+    fsync_failed = False
+
+    def count_exchange(source_name, target_name, parent_fd):
+        nonlocal exchange_calls
+        exchange_calls += 1
+        assert original_exchange is not None
+        return original_exchange(source_name, target_name, parent_fd)
+
+    def fail_first_post_exchange_fsync(fd):
+        nonlocal fsync_failed
+        item = os.fstat(fd)
+        if (
+            exchange_calls == 1
+            and not fsync_failed
+            and stat.S_ISDIR(item.st_mode)
+            and (item.st_dev, item.st_ino)
+            == (integration_stat.st_dev, integration_stat.st_ino)
+        ):
+            fsync_failed = True
+            raise OSError(errno.EIO, "synthetic publish fsync failure")
+        return original_fsync(fd)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_rename_exchange",
+        count_exchange,
+        raising=False,
+    )
+    monkeypatch.setattr(integration_installer.os, "fsync", fail_first_post_exchange_fsync)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
+
+    assert fsync_failed
+    assert exchange_calls == 2
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, operation)
+    original_cleanup = integration_installer._cleanup_provisional
+    cleanup_failed = False
+
+    def retain_transaction_evidence(path, identity, parent_identity, *, directory):
+        nonlocal cleanup_failed
+        if (
+            path.parent == prepared.integration
+            and path.name.startswith(
+                (".active.json.publish-", ".active.json.prior-")
+            )
+        ):
+            cleanup_failed = True
+            return False
+        return original_cleanup(
+            path,
+            identity,
+            parent_identity,
+            directory=directory,
+        )
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_cleanup_provisional",
+        retain_transaction_evidence,
+    )
+    result = prepared.run()
+
+    assert result.version == "0.6.533"
+    assert cleanup_failed
+    assert prepared.active_path.is_file()
+    if operation == "install":
+        assert prepared.previous_path.read_bytes() == prepared.active_before
+    else:
+        assert prepared.previous_path.read_bytes() == prepared.previous_before
+    evidence = [
+        path
+        for path in prepared.integration.iterdir()
+        if path.name.startswith(
+            (".active.json.publish-", ".active.json.prior-")
+        )
+    ]
+    assert len(evidence) == 1
+
+
+def test_next_operation_recovers_post_exchange_install_crash(tmp_path):
+    from codex_usage import integration_installer
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    active_stat = active_path.stat()
+    integration_identity = integration_installer._directory_identity(integration)
+    integration_installer._begin_active_publish(
+        active_path=active_path,
+        published_text=active_before.decode("utf-8") + "\n",
+        prior_identity=integration_installer._provisional_from_stat(active_stat),
+        integration_identity=integration_identity,
+    )
+    assert active_path.read_bytes() != active_before
+    assert not previous_path.exists()
+
+    try:
+        recovered = integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+    except integration_installer.IntegrationInstallError:
+        recovered = None
+
+    assert recovered == release
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == active_before
+    assert not any(
+        path.name.startswith(
+            (".active.json.publish-", ".active.json.prior-", ".active.json.failed-")
+        )
+        for path in integration.iterdir()
+    )
+
+
+def test_startup_recovery_accepts_eight_stale_publish_artifacts(tmp_path):
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    artifacts = []
+    for index in range(8):
+        artifact = _write_bound_stale_transaction_artifact(
+            integration=prepared.integration,
+            active_path=prepared.active_path,
+            index=index,
+        )
+        artifacts.append(artifact)
+
+    result = prepared.run()
+
+    assert result.version == "0.6.533"
+    assert all(not artifact.exists() for artifact in artifacts)
+
+
+def test_startup_recovery_rejects_ninth_artifact_without_deleting_evidence(
+    tmp_path,
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    artifacts = []
+    for index in range(9):
+        artifact = _write_bound_stale_transaction_artifact(
+            integration=prepared.integration,
+            active_path=prepared.active_path,
+            index=100 + index,
+        )
+        artifacts.append(artifact)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
+
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert all(artifact.read_bytes() == b"stale" for artifact in artifacts)
+
+
+@pytest.mark.parametrize(
+    "artifact_shape",
+    [
+        "raw-valid",
+        "mode",
+        "hardlink",
+        "oversize",
+        "symlink",
+        "directory",
+        "legacy-publish",
+        "legacy-prior",
+        "legacy-failed",
+    ],
+)
+def test_startup_recovery_preserves_ambiguous_or_foreign_artifact(
+    tmp_path, artifact_shape
+):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    if artifact_shape.startswith("legacy-"):
+        label = artifact_shape.removeprefix("legacy-")
+        artifact = prepared.integration / (
+            f".active.json.{label}-3000-0123456789abcdef"
+        )
+        _write_active_transaction_artifact(artifact, prepared.active_before)
+    else:
+        artifact = prepared.integration / (
+            ".active.json.publish-new-3000-0123456789abcdef"
+        )
+        if artifact_shape == "directory":
+            artifact.mkdir(mode=0o700)
+        elif artifact_shape == "symlink":
+            foreign = prepared.integration / "foreign-artifact-target"
+            _write_active_transaction_artifact(foreign, b"foreign")
+            artifact.symlink_to(foreign.name)
+        else:
+            payload = b"x" * (128 * 1024 + 1) if artifact_shape == "oversize" else b"stale"
+            _write_active_transaction_artifact(artifact, payload)
+            if artifact_shape == "mode":
+                artifact.chmod(0o640)
+            elif artifact_shape == "hardlink":
+                os.link(artifact, prepared.integration / "foreign-hardlink")
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        prepared.run()
+
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+    assert artifact.exists() or artifact.is_symlink()
+
+
+def test_startup_cleanup_never_unlinks_raced_foreign_inode(tmp_path, monkeypatch):
+    from codex_usage import integration_installer
+
+    prepared = _prepared_active_transaction(tmp_path, "rollback")
+    artifact = _write_bound_stale_transaction_artifact(
+        integration=prepared.integration,
+        active_path=prepared.active_path,
+        index=200,
+        payload=b"owned",
+    )
+    displaced = prepared.integration / "owned-publish-evidence"
+    original_cleanup = integration_installer._cleanup_provisional
+    raced_inode: tuple[int, int] | None = None
+
+    def race_before_cleanup(path, identity, parent_identity, *, directory):
+        nonlocal raced_inode
+        if path == artifact and raced_inode is None:
+            artifact.rename(displaced)
+            _write_active_transaction_artifact(artifact, b"foreign")
+            item = artifact.stat()
+            raced_inode = (item.st_dev, item.st_ino)
+        return original_cleanup(
+            path,
+            identity,
+            parent_identity,
+            directory=directory,
+        )
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_cleanup_provisional",
+        race_before_cleanup,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        prepared.run()
+
+    assert raced_inode is not None
+    current = artifact.stat()
+    assert (current.st_dev, current.st_ino) == raced_inode
+    assert artifact.read_bytes() == b"foreign"
+    assert displaced.read_bytes() == b"owned"
+    assert prepared.active_path.read_bytes() == prepared.active_before
+    assert prepared.previous_path.read_bytes() == prepared.previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_failed_publish_to_initially_absent_active_keeps_active_present(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    if operation == "install":
+        data_home, state_home, temporary_root = _roots(tmp_path)
+        initial_root = tmp_path / "initial-install"
+        initial_root.mkdir(mode=0o700)
+        source = _temporary_source_copy(initial_root)
+        active_path = state_home / "codex-usage/integration/active.json"
+        previous_path = state_home / "codex-usage/integration/previous.json"
+
+        def run():
+            return integration_installer.install_release(
+                source_root=source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=temporary_root,
+            )
+
+    else:
+        _, data_home, state_home = _install(tmp_path)
+        integration = state_home / "codex-usage/integration"
+        active_path = integration / "active.json"
+        previous_path = integration / "previous.json"
+        active_text = active_path.read_text(encoding="utf-8")
+        write_private_text(
+            previous_path,
+            active_text + "\n",
+            label="test previous manifest",
+            mode=0o600,
+        )
+        active_path.unlink()
+
+        def run():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    assert not active_path.exists()
+    original_verify = integration_installer._verify_manifest
+    final_attestation_failed = False
+
+    def fail_final_attestation(*args, **kwargs):
+        nonlocal final_attestation_failed
+        if kwargs["manifest_path"] == active_path:
+            final_attestation_failed = True
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_attestation,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        run()
+
+    assert final_attestation_failed
+    assert active_path.is_file() and not active_path.is_symlink()
+    assert original_verify(
+        manifest_path=active_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=None,
+    ).version == "0.6.533"
+    if operation == "install":
+        assert not previous_path.exists()
 
 
 def test_install_cutover_accepts_only_attested_schema1_as_nonreactivatable_previous(

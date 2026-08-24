@@ -522,3 +522,181 @@ Runtime-Release attestiert weiterhin vollständig. Weiterer Hinweis ist die
 oben genannte vorbestehende `runpy`-Warnung. Controller muss wie geplant
 unabhängige Review, finalen Commitbezug und Patch-/Review-SHA-256 im späteren
 Vault-Handoff ergänzen.
+
+## Fix-Round 4 – atomarer Active-Austausch und bounded Artefakt-Recovery
+
+### Reviewursache und korrigierter Vertrag
+
+Round 3 hatte die Inode-Entscheidung korrekt an parent-FDs gebunden, aber der
+Zustandswechsel selbst blieb zweistufig. Sowohl Publish als auch Restore
+verschoben zuerst `active.json` unter einen versteckten Namen und bewegten erst
+danach Kandidat beziehungsweise Prior nach `active.json`. Ein Fehler des
+zweiten Rename ließ deshalb einen beobachtbaren und im Fehlerfall dauerhaften
+fehlenden Active-Namen zurück.
+
+Round 4 ersetzt diesen bestehenden-Target-Pfad durch genau einen
+parent-fd-gebundenen Linux-`renameat2(RENAME_EXCHANGE)`. Alter und neuer Inode
+tauschen atomar ihre Namen; zu keinem Zeitpunkt fehlt `active.json`. Bei einem
+anfangs fehlenden Target bleibt `RENAME_NOREPLACE` korrekt. Eine spätere
+fehlgeschlagene Validierung entfernt dann nicht den einzigen publizierten
+Active-Inode, weil es keine vorherige Generation gibt, zu der atomar
+zurückgetauscht werden könnte.
+
+Der Transaktionsname bindet Operation, Kandidaten-Device/Inode und – falls
+vorhanden – Prior-Device/Inode. Startup beziehungsweise die nächste Install-
+oder Rollbackoperation scannt unter dem gebundenen Integrations-FD höchstens
+64 Verzeichniseinträge und höchstens acht einschlägige Artefakte. Vor jeder
+Entscheidung werden exakter Name, Owner, Modus `0600`, regulärer Typ,
+Linkanzahl `1`, Parent-Device, Inode-Stabilität und Größe bis 128 KiB über
+nofollow-Stat plus geöffneten FD geprüft.
+
+Deterministische Zustände sind:
+
+- Bound-Artefakt enthält Kandidaten-Inode und Active enthält gebundenen Prior:
+  Pre-Swap-Crash; Kandidat darf identity-konditional bereinigt werden.
+- Bound-Artefakt enthält Prior-Inode und Active enthält Kandidaten-Inode:
+  Post-Swap-Crash oder retained Commit-Evidence. Active wird erneut vollständig
+  attestiert; bei Install wird `previous.json` aus dem erneut attestierten
+  Prior finalisiert, bei Rollback bleibt `previous.json` unverändert; erst
+  danach folgt identity-konditionale Bereinigung.
+- Ungebundene `publish-new`-, alte `publish|prior|failed`-, malformed,
+  fremde, ersetzte oder sonst mehrdeutige Artefakte: bounded Fehler; keine
+  Löschung und kein Überschreiben der Evidenz.
+
+`MAX_ACTIVE_TRANSACTION_ARTIFACTS` ist exakt `8`; das neunte Artefakt stoppt
+vor jeder Bereinigung. Ein Cleanup-only-Fehler nach vollständig validiertem
+und durablem Active-/Previous-Commit ändert den erfolgreichen öffentlichen
+Operationsstatus nicht. Das eine gebundene Artefakt bleibt als bounded
+Evidenz; der nächste Eintritt löst es deterministisch oder stoppt sicher. Die
+bestehenden öffentlichen Ergebnis-Tokens wurden nicht erweitert.
+
+### TDD – beobachtetes RED
+
+Erster vollständiger neuer Fault-/Recovery-Gate vor Produktänderung:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'rename_exchange_swaps or second_exchange_failure or publish_exchange_fsync_failure or commit_cleanup_failure_returns_success or next_operation_recovers_post_exchange or startup_recovery_accepts_eight or startup_recovery_rejects_ninth or startup_recovery_preserves_ambiguous or startup_cleanup_never_unlinks or failed_publish_to_initially_absent'
+```
+
+Ergebnis: `21 failed, 241 deselected in 39.96s`.
+
+Die Fehler belegten die fehlende Exchange-Primitive, erfolgreiche statt
+injizierter Exchange-/Fsync-Fehler, `IntegrationCleanupError` nach bereits
+committetem Zustand, ignorierte Crashartefakte, fehlende MAX-Grenze, gelöschte
+beziehungsweise ignorierte Fremdevidenz und erneut entfernten Active-Namen bei
+anfangs fehlendem Target. Ein anfänglicher Testfixture-Pfadfehler im
+Install-Fall wurde vor Produktcode korrigiert; der danach erneut ausgeführte
+Initial-Target-Gate zeigte den erwarteten Vertragsfehler:
+`2 failed, 260 deselected in 4.75s`.
+
+Self-Review ergänzte vor Abschluss einen weiteren Test: Ein formal gültiges,
+aber noch nicht Device/Inode-gebundenes `publish-new` kann nach Prozessabbruch
+nicht von einer gleich-ownerigen Fremdinode unterschieden werden und darf
+nicht automatisch gelöscht werden.
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'startup_recovery_preserves_ambiguous_or_foreign_artifact and raw'
+```
+
+Beobachtetes RED: `1 failed, 262 deselected in 2.46s` – die erste Recovery-
+Fassung löschte dieses ungebundene Artefakt und setzte Rollback fort.
+
+### GREEN und finale Gates
+
+Der ursprüngliche neue 21-Fall-Gate lief nach dem ersten Produktinkrement mit
+`21 passed, 241 deselected in 36.24s`. Nach dem zusätzlichen ungebundenen-
+Artefakt-RED wurden die MAX-Fälle auf echte identity-gebundene Pre-Swap-
+Artefakte umgestellt. Enger Recovery-GREEN:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'startup_recovery_accepts_eight or startup_recovery_rejects_ninth or startup_recovery_preserves_ambiguous_or_foreign_artifact and raw or startup_cleanup_never_unlinks'
+```
+
+Ergebnis: `4 passed, 259 deselected in 7.21s`.
+
+Round-1–3 plus Round-4-Transaktionsgate:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'final_install_attestation_failure or final_rollback_attestation_failure or failed_active_restore or post_swap_identity_capture or post_swap_active_inode_replacement or restore_boundary_inode_replacement or capture_failure_never_adopts or rename_exchange_swaps or second_exchange_failure or publish_exchange_fsync_failure or commit_cleanup_failure_returns_success or next_operation_recovers_post_exchange or startup_recovery or startup_cleanup_never_unlinks or failed_publish_to_initially_absent'
+```
+
+Ergebnis: `35 passed, 228 deselected in 81.22s`.
+
+Vollständiger Installer-Gate:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py
+```
+
+Ergebnis: `263 passed in 189.72s`.
+
+Erforderlicher kombinierter Task-4-Gate:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py tests/test_integration_entrypoint.py tests/test_integration_snapshot.py tests/test_consumption.py tests/test_private_io.py
+```
+
+Ergebnis: `608 passed, 1 warning in 182.43s`. Warnung bleibt der bereits oben
+dokumentierte vorbestehende `runpy`-Hinweis.
+
+```text
+python3 -m ruff check pyproject.toml src/codex_usage/__init__.py src/codex_usage/integration_installer.py src/codex_usage/integration_attestation.py src/codex_usage/integration_entrypoint.py src/codex_usage/integration_snapshot.py src/codex_usage/consumption.py src/codex_usage/private_io.py scripts/install_integration_producer.py tests/test_integration_installer.py tests/test_integration_entrypoint.py tests/test_integration_snapshot.py tests/test_consumption.py tests/test_private_io.py
+```
+
+Ergebnis: `All checks passed!`.
+
+`python3 -m compileall -q src scripts tests` mit privatem temporärem
+`PYTHONPYCACHEPREFIX`: Exit `0`, keine Ausgabe. `git diff --check`: Exit `0`,
+keine Ausgabe.
+
+### Round-4-Read-only-Aktivnachweis
+
+Round 4 ändert ausschließlich Host-Installer, Installer-Tests und diesen
+Report. `integration_installer.py` bleibt außerhalb des Runtime-Source-
+Manifests. Entsprechend bindender Runtime-Closure-Vorgabe erfolgte kein
+Live-Reinstall. Frische bounded read-only Attestierung nach allen Gates:
+
+```text
+attestation=verified
+schema_version=2
+version=0.6.533
+release_id=0.6.533-d929d7fcf4976ac7
+active_manifest_sha256=a0f659660573a1b159fa448a89f78fd5e99203f06e23ade09b855a25cec006d5
+release_tree_sha256=4557d5c7bc096d146fd5446ef654284a29a6e27d511eef7b6ed688ffc6d1e855
+previous=absent
+installer_in_runtime_source_manifest=false
+checkout_source_manifest_sha256=d929d7fcf4976ac79fa067384090711a2444165f1082da840e8612c953b52f3a
+active_source_manifest_sha256=d929d7fcf4976ac79fa067384090711a2444165f1082da840e8612c953b52f3a
+source_digests_equal=true
+```
+
+Active-Bytehash, Releasebaum, Runtime-Quelldigest, Release-ID und
+Previous-Abwesenheit sind gegenüber Round 3 bytegenau unverändert. Keine
+Auth-, Token-, Account-, History-, Provider- oder Promptdaten wurden gelesen
+oder ausgegeben.
+
+### Round-4-Self-Review und verbleibende Bedenken
+
+- Bestehendes Active wechselt nur noch über `RENAME_EXCHANGE`; anfangs
+  fehlendes Active nur über `RENAME_NOREPLACE`. Kein Publish-/Restorepfad
+  besitzt weiterhin die alte Active-zu-hidden-/hidden-zu-Active-Sequenz.
+- Zweiter Exchange-, post-Exchange-Fsync- und Cleanupfehler sind für Install
+  und Rollback deterministisch injiziert. Jeder Fehler lässt einen regulären
+  Active-Namen oder stoppt vor der Transition; Prior/Kandidat/Fremdinode bleibt
+  unter genau einem Namen erhalten.
+- MAX/MAX+1, Pre-/Post-Swap-Crash, ungebundene und alte Artefakte,
+  Mode/Link/Size/Symlink/Directory sowie Replacement direkt vor Cleanup sind
+  real abgedeckt. Assertions prüfen Bytes und Device/Inode, nicht Mockaufrufe.
+- `previous.json` wird nur beim erfolgreichen Install-Commit beziehungsweise
+  dessen eindeutigem Post-Swap-Recovery finalisiert. Rollback und alle
+  mehrdeutigen Fehlerpfade lassen es bytegenau unverändert.
+- Linux `renameat2` war bereits für `RENAME_NOREPLACE` bindende
+  Plattformvoraussetzung; Round 4 fügt keine neue Plattformfamilie hinzu.
+- Absichtlich verbleibende Concern: Ein ungebundenes, altes oder sonst
+  mehrdeutiges Artefakt wird nicht automatisch entfernt. Nächste Operation
+  stoppt bounded und erhält Evidenz für explizite Untersuchung. Automatisches
+  Löschen wäre bei same-owner Race nicht identity-sicher.
+- Kein unabhängiger Reviewer vorgetäuscht: Round 4 lief unter explizitem
+  Subagentverbot. Finaler Commit-SHA wird mit Agentenstatus zurückgegeben;
+  Controller ergänzt unabhängigen Review- und Patch-SHA-256 wie geplant im
+  finalen Vault-Handoff.
