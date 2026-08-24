@@ -801,11 +801,19 @@ def _restore_active_manifest(
     *,
     active_path: Path,
     active_text: str,
+    expected_published_identity: _ProvisionalIdentity,
     state_home: Path,
     app_identity: _DirectoryIdentity,
     integration_identity: _DirectoryIdentity,
 ) -> None:
     _revalidate_bootstrap(state_home, app_identity, integration_identity)
+    if not _provisional_matches(
+        active_path,
+        expected_published_identity,
+        integration_identity,
+        directory=False,
+    ):
+        _fail()
     write_private_text(
         active_path,
         active_text,
@@ -825,6 +833,62 @@ def _restore_active_manifest(
         or stat.S_IMODE(restored_stat.st_mode) != 0o600
     ):
         _fail()
+
+
+def _published_active_identity(
+    *,
+    active_path: Path,
+    published_text: str,
+    integration_identity: _DirectoryIdentity,
+) -> _ProvisionalIdentity:
+    strict_identity = _file_identity(active_path)
+    current_text, current_stat = read_private_text(
+        active_path,
+        regular_label="active manifest",
+        read_label="active manifest",
+        max_bytes=128 * 1024,
+    )
+    identity = _provisional_from_stat(current_stat)
+    if (
+        current_text != published_text
+        or identity.device != strict_identity.device
+        or identity.inode != strict_identity.inode
+        or identity.permissions != strict_identity.permissions
+        or not _provisional_matches(
+            active_path,
+            identity,
+            integration_identity,
+            directory=False,
+        )
+    ):
+        _fail()
+    return identity
+
+
+def _recover_uncaptured_active_identity(
+    *,
+    active_path: Path,
+    published_text: str,
+    state_home: Path,
+    app_identity: _DirectoryIdentity,
+    integration_identity: _DirectoryIdentity,
+) -> _ProvisionalIdentity:
+    _revalidate_bootstrap(state_home, app_identity, integration_identity)
+    current_text, current_stat = read_private_text(
+        active_path,
+        regular_label="active manifest",
+        read_label="active manifest",
+        max_bytes=128 * 1024,
+    )
+    identity = _provisional_from_stat(current_stat)
+    if current_text != published_text or not _provisional_matches(
+        active_path,
+        identity,
+        integration_identity,
+        directory=False,
+    ):
+        _fail()
+    return identity
 
 
 def _copy_regular(
@@ -2631,15 +2695,21 @@ def _install_release(
                         state_home=state_home,
                         data_home=data_home,
                     )
+            published_text = _manifest_text(candidate)
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             write_private_text(
                 active_path,
-                _manifest_text(candidate),
+                published_text,
                 label="active integration manifest",
                 mode=0o600,
             )
-            published_identity = _file_identity(active_path)
+            published_identity: _ProvisionalIdentity | None = None
             try:
+                published_identity = _published_active_identity(
+                    active_path=active_path,
+                    published_text=published_text,
+                    integration_identity=integration_identity,
+                )
                 _revalidate_bootstrap(state_home, app_identity, integration_identity)
                 _verify_manifest(
                     manifest_path=active_path,
@@ -2661,22 +2731,32 @@ def _install_release(
                     )
             except Exception as publish_error:
                 try:
+                    if published_identity is None:
+                        published_identity = _recover_uncaptured_active_identity(
+                            active_path=active_path,
+                            published_text=published_text,
+                            state_home=state_home,
+                            app_identity=app_identity,
+                            integration_identity=integration_identity,
+                        )
                     if active_text is None:
                         _revalidate_bootstrap(
                             state_home,
                             app_identity,
                             integration_identity,
                         )
-                        if not _cleanup_owned_file(
+                        if not _cleanup_provisional(
                             active_path,
                             published_identity,
                             integration_identity,
+                            directory=False,
                         ):
                             _fail()
                     else:
                         _restore_active_manifest(
                             active_path=active_path,
                             active_text=active_text,
+                            expected_published_identity=published_identity,
                             state_home=state_home,
                             app_identity=app_identity,
                             integration_identity=integration_identity,
@@ -2812,8 +2892,13 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
                 label="active integration manifest",
                 mode=0o600,
             )
-            published_identity = _file_identity(active)
+            published_identity: _ProvisionalIdentity | None = None
             try:
+                published_identity = _published_active_identity(
+                    active_path=active,
+                    published_text=previous_text,
+                    integration_identity=integration_identity,
+                )
                 _revalidate_bootstrap(state_home, app_identity, integration_identity)
                 _verify_manifest(
                     manifest_path=active,
@@ -2823,22 +2908,32 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
                 )
             except Exception as publish_error:
                 try:
+                    if published_identity is None:
+                        published_identity = _recover_uncaptured_active_identity(
+                            active_path=active,
+                            published_text=previous_text,
+                            state_home=state_home,
+                            app_identity=app_identity,
+                            integration_identity=integration_identity,
+                        )
                     if active_text is None:
                         _revalidate_bootstrap(
                             state_home,
                             app_identity,
                             integration_identity,
                         )
-                        if not _cleanup_owned_file(
+                        if not _cleanup_provisional(
                             active,
                             published_identity,
                             integration_identity,
+                            directory=False,
                         ):
                             _fail()
                     else:
                         _restore_active_manifest(
                             active_path=active,
                             active_text=active_text,
+                            expected_published_identity=published_identity,
                             state_home=state_home,
                             app_identity=app_identity,
                             integration_identity=integration_identity,
