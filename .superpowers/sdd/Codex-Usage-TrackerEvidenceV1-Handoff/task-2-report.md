@@ -616,3 +616,218 @@ $ git diff --check
 ```
 
 No full or unrelated suite ran.
+
+## Review round 2/5 fixes
+
+Date: 2026-08-24
+
+### Implementation
+
+- Embedded local-path detection now treats any non-identifier punctuation as a
+  possible absolute-path prefix. It rejects `reset-/home/...`,
+  `reset;/home/...`, `reset./home/...`, URI-style and assignment-style paths,
+  while retaining benign bounded identifiers such as `provider/model`,
+  `team/name/v2` and `reset:main/5h`.
+- Replaced live-target hard-link rollback with a private copied rollback file.
+  Source is opened with no-follow/close-on-exec/nonblocking protections, copied
+  through bounded chunks, fsynced, then revalidated against original and live
+  device/inode/type/link/owner/mode/size/mtime before replacement.
+- Rollback copy uses requested private mode (`0600` for integration cache), is
+  directory-fsynced before replacement and never changes live target link
+  count. Post-replace directory-fsync or cleanup failure restores copied old
+  bytes atomically; absent prior state is restored to absence.
+- Stale deterministic copied rollback files and legacy Round-1 hard-link
+  rollback files are bounded to one, validated for regular-file type, private
+  mode, owner, inode/link relationship, then recovered or removed safely.
+- Integration publisher performs stale recovery inside existing private lock,
+  then re-runs strict cache mode/type/link/owner validation before writing.
+- Current-state reader ignores both legacy `.json.rollback-*` and deterministic
+  `.json.rollback` transaction artifacts.
+
+### Review TDD evidence
+
+Commands ran in
+`/home/teladi/.codex-worktrees/codex-usage-v2-producer-handoff`.
+
+#### Embedded punctuation-prefixed paths
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_serializer_rejects_prefixed_absolute_local_path_tokens
+3 failed, 2 passed in 0.24s
+```
+
+GREEN: same command.
+
+```text
+5 passed in 0.13s
+```
+
+#### Live target remains single-linked
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_keeps_live_target_single_linked_before_replace
+AssertionError: assert [2] == [1]
+1 failed in 0.13s
+```
+
+GREEN after copied rollback redesign: same command.
+
+```text
+1 passed in 0.09s
+```
+
+Private rollback mode follow-up RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_keeps_live_target_single_linked_before_replace
+AssertionError: assert [420] == [384]
+1 failed in 0.12s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_keeps_live_target_single_linked_before_replace
+1 passed in 0.08s
+```
+
+#### Stale rollback recovery
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_recovers_stale_rollback_artifact
+ValueError: live target had st_nlink == 2
+AssertionError: copied rollback artifact remained
+2 failed in 0.15s
+```
+
+GREEN: same command.
+
+```text
+2 passed in 0.09s
+```
+
+Insecure stale artifact RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_rejects_insecure_stale_rollback_artifact
+Failed: DID NOT RAISE ValueError
+1 failed in 0.13s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_rejects_insecure_stale_rollback_artifact
+1 passed in 0.09s
+```
+
+Publisher-level legacy crash recovery RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_publish_schema2_cache_recovers_stale_hardlink_rollback
+IntegrationSecureIOError
+1 failed in 0.19s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_publish_schema2_cache_recovers_stale_hardlink_rollback
+1 passed in 0.12s
+```
+
+Deterministic rollback reader RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_current_reader_ignores_private_lock_and_temporary_files
+IntegrationInvalidSource
+1 failed in 0.18s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_current_reader_ignores_private_lock_and_temporary_files
+1 passed in 0.11s
+```
+
+#### True post-replace directory-fsync failure
+
+Tests were tightened so first directory fsync persists rollback and second,
+post-replace fsync fails.
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_restores_old_value_when_directory_fsync_fails tests/test_integration_snapshot.py::test_publish_schema2_cache_restores_old_bytes_when_directory_fsync_fails
+Failed: DID NOT RAISE OSError
+Failed: DID NOT RAISE IntegrationSecureIOError
+2 failed in 0.25s
+```
+
+GREEN: same command.
+
+```text
+2 passed in 0.20s
+```
+
+#### Parent validation regression caught during focused suite
+
+RED:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py
+NotADirectoryError from stale recovery before parent validation
+1 failed, 93 passed in 0.27s
+```
+
+GREEN after restoring validation order:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py::test_write_private_text_rejects_non_directory_parent
+1 passed in 0.08s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py
+94 passed in 0.20s
+```
+
+### Round self-review
+
+- Live cache inode remains single-linked throughout backup preparation and
+  until atomic replacement; concurrent strict readers no longer reject it.
+- Crash before replacement leaves complete old target plus separately fsynced,
+  private rollback copy. Next locked publish removes stale copy before strict
+  revalidation and creates a fresh transaction.
+- Legacy hard-link crash artifact is repaired only when exact target/candidate
+  device and inode match with link count two. Arbitrary multi-link or foreign,
+  nonregular, nonprivate artifacts fail closed.
+- No public schema fields, cache location, caller API or unrelated IO behavior
+  changed.
+
+Final embedded-path mutation RED/GREEN:
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_serializer_rejects_prefixed_absolute_local_path_tokens
+Failed: DID NOT RAISE IntegrationInvalidSource for reset_/home/synthetic/private
+1 failed, 5 passed in 0.17s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py::test_schema2_serializer_rejects_prefixed_absolute_local_path_tokens
+6 passed in 0.12s
+```
+
+### Review round 2 final verification
+
+```text
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_integration_snapshot.py
+........................................................................ [ 56%]
+.......................................................                  [100%]
+127 passed in 0.34s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_private_io.py
+........................................................................ [ 75%]
+.......................                                                  [100%]
+95 passed in 0.23s
+
+$ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src pytest -q -p no:cacheprovider tests/test_consumption.py
+........................................................................ [ 86%]
+...........                                                              [100%]
+83 passed in 0.13s
+
+$ ruff check src/codex_usage/integration_snapshot.py src/codex_usage/private_io.py tests/test_integration_snapshot.py tests/test_private_io.py src/codex_usage/consumption.py tests/test_consumption.py
+All checks passed!
+
+$ git diff --check
+(exit 0; no output)
+```
+
+No full or unrelated suite ran.

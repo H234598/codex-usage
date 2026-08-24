@@ -652,6 +652,74 @@ def test_write_private_text_replaces_atomically_and_keeps_mode(tmp_path):
     assert list(tmp_path.glob(".value.json.tmp-*")) == []
 
 
+def test_write_private_text_keeps_live_target_single_linked_before_replace(
+    tmp_path,
+    monkeypatch,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    original_replace = private_io.os.replace
+    observed_link_counts: list[int] = []
+    observed_rollback_modes: list[int] = []
+
+    def observe_replace(source, target):
+        if Path(target) == path and ".tmp-" in Path(source).name:
+            observed_link_counts.append(path.stat().st_nlink)
+            rollback = tmp_path / ".value.json.rollback"
+            observed_rollback_modes.append(rollback.stat().st_mode & 0o777)
+        return original_replace(source, target)
+
+    monkeypatch.setattr(private_io.os, "replace", observe_replace)
+
+    write_private_text(path, "new", label="value")
+
+    assert observed_link_counts == [1]
+    assert observed_rollback_modes == [0o600]
+    assert path.read_text(encoding="utf-8") == "new"
+
+
+@pytest.mark.parametrize("artifact_kind", ["hardlink", "copy"])
+def test_write_private_text_recovers_stale_rollback_artifact(
+    tmp_path,
+    artifact_kind,
+):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+    rollback = tmp_path / (
+        ".value.json.rollback-crash"
+        if artifact_kind == "hardlink"
+        else ".value.json.rollback"
+    )
+    if artifact_kind == "hardlink":
+        rollback.hardlink_to(path)
+    else:
+        rollback.write_text("older", encoding="utf-8")
+        rollback.chmod(0o600)
+
+    write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "new"
+    assert path.stat().st_nlink == 1
+    assert not rollback.exists()
+
+
+def test_write_private_text_rejects_insecure_stale_rollback_artifact(tmp_path):
+    path = tmp_path / "value.json"
+    path.write_text("old", encoding="utf-8")
+    path.chmod(0o600)
+    rollback = tmp_path / ".value.json.rollback-crash"
+    rollback.write_text("older", encoding="utf-8")
+    rollback.chmod(0o640)
+
+    with pytest.raises(ValueError, match="private user-owned"):
+        write_private_text(path, "new", label="value")
+
+    assert path.read_text(encoding="utf-8") == "old"
+    assert path.stat().st_nlink == 1
+    assert rollback.read_text(encoding="utf-8") == "older"
+
+
 @pytest.mark.parametrize("mode", [0o640, True, "600", -1])
 def test_write_private_text_rejects_non_private_mode(tmp_path, mode):
     path = tmp_path / "value.json"
@@ -874,16 +942,21 @@ def test_write_private_text_restores_old_value_when_directory_fsync_fails(
 ):
     path = tmp_path / "value.json"
     path.write_text("old", encoding="utf-8")
-    monkeypatch.setattr(
-        private_io,
-        "_fsync_directory",
-        lambda _path: (_ for _ in ()).throw(OSError("simulated directory fsync failure")),
-    )
+    fsync_calls = 0
+
+    def fail_post_replace_fsync(_path):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 2:
+            raise OSError("simulated directory fsync failure")
+
+    monkeypatch.setattr(private_io, "_fsync_directory", fail_post_replace_fsync)
 
     with pytest.raises(OSError, match="directory fsync failure"):
         write_private_text(path, "new", label="value")
 
     assert path.read_text(encoding="utf-8") == "old"
+    assert fsync_calls >= 2
     assert list(tmp_path.glob(".value.json.*-*")) == []
 
 

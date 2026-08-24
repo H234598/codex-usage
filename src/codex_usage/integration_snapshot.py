@@ -21,6 +21,7 @@ from .history import CREDIT_HISTORY_WINDOW_SECONDS, MAX_HISTORY_SAMPLES
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
 from .private_io import (
+    _recover_stale_rollback,
     assert_no_symlink_ancestors,
     private_path_lock,
     write_private_text,
@@ -90,7 +91,9 @@ _JWT_RE = re.compile(
     r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}$"
 )
 _PEM_PRIVATE_KEY_RE = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
-_LOCAL_PATH_RE = re.compile(r"(?:^|[:=])(?:/+|~/|[A-Za-z]:[\\/]|\\\\)")
+_LOCAL_PATH_RE = re.compile(
+    r"(?:^|[^A-Za-z0-9/])(?:/+|~/|[A-Za-z]:[\\/]|\\\\)"
+)
 
 
 class IntegrationSnapshotError(Exception):
@@ -237,7 +240,11 @@ def _is_transient_current_path(path: Path) -> bool:
     name = path.name
     return name.endswith(".json.lock") or (
         name.startswith(".")
-        and (".json.tmp-" in name or ".json.rollback-" in name)
+        and (
+            ".json.tmp-" in name
+            or ".json.rollback-" in name
+            or name.endswith(".json.rollback")
+        )
     )
 
 
@@ -912,7 +919,6 @@ def publish_schema2_cache(payload: bytes, *, cache_path: Path) -> None:
     if canonical != payload:
         raise IntegrationInvalidSource()
     _require_integration_directory(cache_path)
-    _validate_existing_cache(cache_path)
     try:
         with private_path_lock(
             cache_path,
@@ -920,6 +926,7 @@ def publish_schema2_cache(payload: bytes, *, cache_path: Path) -> None:
             label="integration cache lock",
         ):
             _require_integration_directory(cache_path)
+            _recover_stale_rollback(cache_path, label="integration cache")
             _validate_existing_cache(cache_path)
             write_private_text(
                 cache_path,

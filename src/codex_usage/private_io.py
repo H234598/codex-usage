@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import glob
 import math
 import os
 import secrets
@@ -9,10 +10,12 @@ import stat
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from itertools import islice
 from pathlib import Path
 
 PRIVATE_LOCK_TIMEOUT_SECONDS = 30
 _PATH_TYPE = type(Path())
+_MAX_STALE_ROLLBACKS = 1
 
 
 def _lock_deadline(timeout_seconds: int | float) -> float:
@@ -192,6 +195,129 @@ def read_private_text(
         ) from exc
 
 
+def _rollback_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.rollback")
+
+
+def _recover_stale_rollback(path: Path, *, label: str) -> None:
+    rollback = _rollback_path(path)
+    legacy_pattern = f".{glob.escape(path.name)}.rollback-*"
+    stale = []
+    try:
+        rollback.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        stale.append(rollback)
+    stale.extend(islice(path.parent.glob(legacy_pattern), _MAX_STALE_ROLLBACKS + 1))
+    if len(stale) > _MAX_STALE_ROLLBACKS:
+        raise ValueError(f"too many stale {label} rollback files")
+    if not stale:
+        return
+
+    candidate = stale[0]
+    candidate_stat = candidate.lstat()
+    if (
+        not stat.S_ISREG(candidate_stat.st_mode)
+        or candidate_stat.st_uid != os.getuid()
+        or stat.S_IMODE(candidate_stat.st_mode) & ~0o700
+    ):
+        raise ValueError(f"stale {label} rollback must be a private user-owned file")
+    try:
+        target_stat = path.lstat()
+    except FileNotFoundError:
+        os.replace(candidate, path)
+        _fsync_directory(path.parent)
+        return
+    if not stat.S_ISREG(target_stat.st_mode) or target_stat.st_uid != os.getuid():
+        raise ValueError(f"{label} must be a private user-owned file: {path}")
+    same_inode = (
+        target_stat.st_dev == candidate_stat.st_dev
+        and target_stat.st_ino == candidate_stat.st_ino
+    )
+    if same_inode:
+        if target_stat.st_nlink != 2 or candidate_stat.st_nlink != 2:
+            raise ValueError(f"stale {label} rollback identity is invalid")
+    elif target_stat.st_nlink != 1 or candidate_stat.st_nlink != 1:
+        raise ValueError(f"stale {label} rollback identity is invalid")
+    candidate.unlink()
+    _fsync_directory(path.parent)
+
+
+def _copy_private_file(
+    source: Path,
+    destination: Path,
+    *,
+    source_stat: os.stat_result,
+    label: str,
+    mode: int,
+) -> None:
+    read_flags = os.O_RDONLY
+    write_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    for flag_name in ("O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK"):
+        flag = getattr(os, flag_name, 0)
+        read_flags |= flag
+        write_flags |= flag
+    source_fd = -1
+    destination_fd = -1
+    try:
+        source_fd = os.open(source, read_flags)
+        opened_stat = os.fstat(source_fd)
+        if (
+            not stat.S_ISREG(opened_stat.st_mode)
+            or opened_stat.st_dev != source_stat.st_dev
+            or opened_stat.st_ino != source_stat.st_ino
+            or opened_stat.st_nlink != 1
+            or opened_stat.st_uid != os.getuid()
+            or opened_stat.st_mode != source_stat.st_mode
+        ):
+            raise ValueError(f"{label} changed before rollback copy")
+        destination_fd = os.open(
+            destination,
+            write_flags,
+            mode,
+        )
+        os.fchmod(destination_fd, mode)
+        rollback_stat = os.fstat(destination_fd)
+        if (
+            not stat.S_ISREG(rollback_stat.st_mode)
+            or rollback_stat.st_nlink != 1
+            or rollback_stat.st_uid != os.getuid()
+            or stat.S_IMODE(rollback_stat.st_mode) != mode
+        ):
+            raise ValueError(f"rollback {label} is not a private regular file")
+        while True:
+            chunk = os.read(source_fd, 65_536)
+            if not chunk:
+                break
+            offset = 0
+            while offset < len(chunk):
+                written = os.write(destination_fd, chunk[offset:])
+                if written <= 0:
+                    raise OSError(errno.EIO, f"short rollback write for {label}")
+                offset += written
+        os.fsync(destination_fd)
+        final_stat = os.fstat(source_fd)
+        current_stat = source.lstat()
+        for item in (final_stat, current_stat):
+            if (
+                not stat.S_ISREG(item.st_mode)
+                or item.st_dev != source_stat.st_dev
+                or item.st_ino != source_stat.st_ino
+                or item.st_nlink != 1
+                or item.st_uid != os.getuid()
+                or item.st_mode != source_stat.st_mode
+                or item.st_size != source_stat.st_size
+                or item.st_mtime_ns != source_stat.st_mtime_ns
+            ):
+                raise ValueError(f"{label} changed during rollback copy")
+    finally:
+        if destination_fd >= 0:
+            os.close(destination_fd)
+        if source_fd >= 0:
+            os.close(source_fd)
+
+
 def write_private_text(
     path: Path,
     text: str,
@@ -210,24 +336,23 @@ def write_private_text(
     ):
         raise ValueError(f"{label} mode must be private")
     assert_no_symlink_ancestors(path, label=label)
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise ValueError(f"{label} parent must be a real directory: {parent}")
+    if replace_existing:
+        _recover_stale_rollback(path, label=label)
     if path.is_symlink() or (path.exists() and not path.is_file()):
         raise ValueError(f"{label} must be a regular file: {path}")
     target_stat = None
     if path.exists():
-        target_stat = path.stat()
+        target_stat = path.lstat()
         if target_stat.st_nlink != 1 or target_stat.st_uid != os.getuid():
             raise ValueError(f"{label} must be a private user-owned file: {path}")
-    parent = path.parent
-    if parent.is_symlink() or not parent.is_dir():
-        raise ValueError(f"{label} parent must be a real directory: {parent}")
-
     encoded = text.encode("utf-8")
     temporary = parent / (
         "." + path.name + ".tmp-" + str(os.getpid()) + "-" + secrets.token_hex(8)
     )
-    rollback = parent / (
-        "." + path.name + ".rollback-" + str(os.getpid()) + "-" + secrets.token_hex(8)
-    )
+    rollback = _rollback_path(path)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -260,22 +385,15 @@ def write_private_text(
         fd = -1
         if replace_existing:
             if target_stat is not None:
-                os.link(path, rollback, follow_symlinks=False)
+                _copy_private_file(
+                    path,
+                    rollback,
+                    source_stat=target_stat,
+                    label=label,
+                    mode=mode,
+                )
                 rollback_exists = True
-                current_stat = path.lstat()
-                rollback_stat = rollback.lstat()
-                if (
-                    not stat.S_ISREG(current_stat.st_mode)
-                    or current_stat.st_dev != target_stat.st_dev
-                    or current_stat.st_ino != target_stat.st_ino
-                    or rollback_stat.st_dev != target_stat.st_dev
-                    or rollback_stat.st_ino != target_stat.st_ino
-                    or current_stat.st_nlink != 2
-                    or rollback_stat.st_nlink != 2
-                    or current_stat.st_uid != os.getuid()
-                    or rollback_stat.st_uid != os.getuid()
-                ):
-                    raise ValueError(f"{label} changed before replacement")
+            _fsync_directory(parent)
             os.replace(temporary, path)
             replaced = True
             try:
@@ -292,6 +410,10 @@ def write_private_text(
                         path.unlink()
                 except OSError as rollback_error:
                     raise OSError(errno.EIO, f"could not roll back {label}") from rollback_error
+                try:
+                    _fsync_directory(parent)
+                except OSError:
+                    pass
                 raise publish_error
         else:
             try:

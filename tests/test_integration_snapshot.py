@@ -655,6 +655,7 @@ def test_current_reader_ignores_private_lock_and_temporary_files(tmp_path):
         current / "alpha.json.lock",
         current / ".alpha.json.tmp-123-secret",
         current / ".alpha.json.rollback-123-secret",
+        current / ".alpha.json.rollback",
     ):
         path.write_text("transient", encoding="utf-8")
         path.chmod(0o600)
@@ -904,11 +905,15 @@ def test_publish_schema2_cache_restores_old_bytes_when_directory_fsync_fails(
     cache = _cache_path(tmp_path)
     cache.write_bytes(b'{"old":"safe"}')
     cache.chmod(0o600)
-    monkeypatch.setattr(
-        private_io,
-        "_fsync_directory",
-        lambda _path: (_ for _ in ()).throw(OSError("synthetic directory fsync")),
-    )
+    fsync_calls = 0
+
+    def fail_post_replace_fsync(_path):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 2:
+            raise OSError("synthetic directory fsync")
+
+    monkeypatch.setattr(private_io, "_fsync_directory", fail_post_replace_fsync)
 
     with pytest.raises(integration_snapshot.IntegrationSecureIOError):
         integration_snapshot.publish_schema2_cache(
@@ -917,6 +922,24 @@ def test_publish_schema2_cache_restores_old_bytes_when_directory_fsync_fails(
         )
 
     assert cache.read_bytes() == b'{"old":"safe"}'
+    assert fsync_calls >= 2
+
+
+def test_publish_schema2_cache_recovers_stale_hardlink_rollback(tmp_path):
+    from codex_usage.integration_snapshot import publish_schema2_cache
+
+    cache = _cache_path(tmp_path)
+    cache.write_bytes(b'{"old":"safe"}')
+    cache.chmod(0o600)
+    rollback = cache.with_name(f".{cache.name}.rollback-crash")
+    rollback.hardlink_to(cache)
+    payload = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}'
+
+    publish_schema2_cache(payload, cache_path=cache)
+
+    assert cache.read_bytes() == payload
+    assert cache.stat().st_nlink == 1
+    assert not rollback.exists()
 
 
 def test_publish_schema2_cache_rejects_bytes_subclass_before_decode(tmp_path):
@@ -1499,7 +1522,14 @@ def test_schema2_serializer_rejects_absolute_local_path_tokens():
 
 @pytest.mark.parametrize(
     "token",
-    ["file:///home/synthetic/private", "reset:/home/synthetic/private"],
+    [
+        "file:///home/synthetic/private",
+        "reset:/home/synthetic/private",
+        "reset-/home/synthetic/private",
+        "reset_/home/synthetic/private",
+        "reset;/home/synthetic/private",
+        "reset./home/synthetic/private",
+    ],
 )
 def test_schema2_serializer_rejects_prefixed_absolute_local_path_tokens(token):
     from codex_usage.integration_snapshot import (
@@ -1513,9 +1543,10 @@ def test_schema2_serializer_rejects_prefixed_absolute_local_path_tokens(token):
     with pytest.raises(IntegrationInvalidSource):
         serialize_schema2_document(document)
 
-    valid = _valid_schema2_document(with_evidence=True)
-    valid["accounts"][0]["tracker_evidence"][0]["reset_generation"] = "reset:main/5h"
-    assert serialize_schema2_document(valid)
+    for benign in ("reset:main/5h", "provider/model", "team/name/v2"):
+        valid = _valid_schema2_document(with_evidence=True)
+        valid["accounts"][0]["tracker_evidence"][0]["reset_generation"] = benign
+        assert serialize_schema2_document(valid)
 
 
 def test_schema2_account_iterable_accepts_max_and_stops_at_max_plus_one(monkeypatch):
