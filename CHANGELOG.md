@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.534 - 2026-08-24
+
+### Changed
+
+- Integration-Snapshot-Publish ist ausschließlich über den festen,
+  attestierten Release-Launcher erreichbar; allgemeiner CLI-Parser und
+  caller-gesteuerte Producerpfade wurden entfernt.
+- Kanonisierung und Publish binden `complete|partial|stale` exakt an das
+  900-Sekunden-Alter des letzten Samples; Prozentkomplemente verwenden nur
+  absolute Toleranz `1e-9`.
+- Aktuelle, Candidate-, Previous- und installer-only Upgrade-Manifeste
+  verlangen ihre exakte 16-Feld-Allowlist. Runtime und Rollback akzeptieren
+  nur 0.6.534/Schema 2; der Installer akzeptiert zusätzlich eng enumeriert
+  0.6.533/Schema 2 und 0.6.532/Schema 1 ausschließlich als Cutoverquelle.
+- Fehlgeschlagene Profil- und Auth-Transaktionen entfernen nur die von ihnen
+  selbst erzeugten, inode-gebundenen privaten Lockdateien, bevor neu erzeugte
+  Verzeichnisbäume zurückgerollt werden.
+
 ## 0.6.533 - 2026-08-24
 
 ### Changed

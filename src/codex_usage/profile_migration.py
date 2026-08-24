@@ -100,6 +100,7 @@ def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[s
     records: list[dict[str, object]] = []
     prepared: list[tuple[AuthMigrationItem, str]] = []
     created_files: list[tuple[Path, int, int]] = []
+    created_lock_files: list[tuple[Path, int, int]] = []
     created_directories: list[tuple[Path, int, int]] = []
     with private_path_lock(manifest_path, label="migration lock"):
         try:
@@ -150,6 +151,7 @@ def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[s
                     ),
                     created_directories=created_directories,
                     created_files=created_files,
+                    created_lock_files=created_lock_files,
                     preserve_existing_metadata=True,
                 )
                 write_private_text(
@@ -157,6 +159,7 @@ def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[s
                     text,
                     label="canonical auth.json",
                     replace_existing=False,
+                    created_lock_files=created_lock_files,
                 )
                 target_stat = item.target.lstat()
                 if not stat.S_ISREG(target_stat.st_mode) or target_stat.st_nlink != 1:
@@ -181,6 +184,9 @@ def apply_auth_migration(plan: AuthMigrationPlan, manifest_path: Path) -> dict[s
             )
         except Exception as exc:
             cleanup_errors = _cleanup_created_migration_files(created_files)
+            cleanup_errors.extend(
+                _cleanup_created_migration_files(created_lock_files)
+            )
             cleanup_errors.extend(
                 _cleanup_created_migration_directories(created_directories)
             )

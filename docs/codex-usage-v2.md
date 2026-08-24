@@ -73,8 +73,9 @@ Feld-Allowlist:
   ausschließlich für `main` und `gpt-5.3-codex-spark` erzeugt. `credits` darf
   als Limit-Pool vorkommen, nie als Trackertrend.
 - Prozentwerte und Projektionen sind endlich und in `[0,100]`.
-  `used_percent + remaining_percent` muss bis `1e-9` genau `100` sein. Die
-  Rate ist endlich und in `[0,100]` Prozentpunkten pro Sekunde.
+  `used_percent + remaining_percent` muss mit ausschließlich absoluter
+  Toleranz `1e-9` und relativer Toleranz `0` genau `100` sein. Die Rate ist
+  endlich und in `[0,100]` Prozentpunkten pro Sekunde.
 - Account-IDs sind maximal 64 Zeichen, Pool-Keys maximal 64 Zeichen,
   Resetgenerationen maximal 128 Zeichen und kanonische UTC-Zeitstrings maximal
   64 Zeichen.
@@ -174,11 +175,14 @@ Projektion werden erst nach Endlichkeits- und Bereichsprüfung veröffentlicht.
 - Ein einzelnes valides Sample kann nur `coverage=insufficient`, Rate `0` und
   die aktuelle Nutzung als Projektion liefern. Mindestens zwei valide Samples
   sind für einen positiven Trend erforderlich.
-- `coverage=complete` bedeutet mindestens zwei vollständig valide Samples und
-  ein letztes Sample, das höchstens 900 Sekunden alt ist. Älter als 900
-  Sekunden ergibt `stale`. `partial` gehört zur strikten V2-Allowlist, wird
-  vom aktuellen Producer für automatische Trends aber nicht erzeugt.
-  Automatische Consumeraktionen sind ausschließlich bei `complete` zulässig.
+- `coverage=complete|partial` verlangt mindestens zwei valide Samples und ein
+  letztes Sample, das höchstens exakt 900 Sekunden alt ist. Bei mehr als 900
+  Sekunden ist ausschließlich `stale` zulässig; bei höchstens 900 Sekunden
+  wird `stale` abgelehnt. Diese Beziehung wird beim kanonischen Serialisieren
+  und erneut vor dem Publish geprüft. Ein einzelnes `insufficient`-Sample
+  behält seine eigene Semantik unabhängig vom Alter. Der aktuelle Producer
+  erzeugt `partial` für automatische Trends nicht. Automatische
+  Consumeraktionen sind ausschließlich bei `complete` zulässig.
 - `captured_at` stammt aus `values_captured_at`, sofern vorhanden, sonst aus
   dem echten Usage-Capture. `fresh_until = captured_at + 900 Sekunden`.
   `stale` ist wahr, wenn die Quelle stale meldet oder `generated_at` nach
@@ -209,12 +213,26 @@ Rohfehlerausgaben. Tokens enden mit genau einem Newline. Exceptions,
 Terminalausgaben, Providerantworten, Credentials und lokale Pfade werden nicht
 ausgegeben.
 
-## Release 0.6.533 und Attestierung
+## Release 0.6.534 und Attestierung
 
 Projekt, Producer-Wheel, Dist-Info, Manifest und aktive Attestierung tragen
-gemeinsam Version `0.6.533`. Das aktive Manifest hat exakt Integer-Schema `2`.
+gemeinsam Version `0.6.534`. Das aktive Manifest hat exakt Integer-Schema `2`.
 Es bindet Release-ID und Source-Manifest-SHA-256 sowie die SHA-256-Werte von
 Entry Point, Wheel, RECORD, Launcher und gesamtem Releasebaum.
+
+Jedes aktuelle, vorherige und nur für Upgrade lesbare Manifest erlaubt exakt
+die folgenden 16 Felder und keine weiteren, auch keine secretähnlichen
+Erweiterungen:
+
+```text
+schema_version, version, release_id, source_manifest_sha256,
+state_home, data_home, release_dir, launcher_path, entrypoint_path,
+wheel_path, record_path, entrypoint_sha256, wheel_sha256, record_sha256,
+launcher_sha256, release_tree_sha256
+```
+
+Fehlende oder unbekannte Felder werden unmittelbar nach dem bounded/no-follow
+Lesen abgelehnt, bevor Versions-, Pfad- oder Hashwerte ausgewertet werden.
 
 Kanonische Pfade innerhalb des privaten Releasebaums sind fest:
 
@@ -222,23 +240,25 @@ Kanonische Pfade innerhalb des privaten Releasebaums sind fest:
 producer.whl
 venv/bin/codex-usage
 venv/lib/python*/site-packages/codex_usage/integration_entrypoint.py
-venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.533.dist-info/RECORD
+venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.534.dist-info/RECORD
 ```
 
 Launcher, Wheel oder Dist-Info unter alternativen Pfaden werden auch bei
 passenden Einzelhashes abgelehnt. RECORD bindet jedes Wheelmitglied; Metadata
-bindet Distribution `codex-usage-integration-producer` und Version `0.6.533`.
+bindet Distribution `codex-usage-integration-producer` und Version `0.6.534`.
 Der Releasebaumhash umfasst sortiert jeden no-follow Verzeichnis-/Dateieintrag
 mit Typ, relativem Pfad, Modus, Dateigröße und Datei-SHA-256. Symlinks,
 Hardlinks, fremde Owner, falsche Modi, Sonderdateien, Device-/Inodewechsel,
 Races, zusätzliche oder fehlende Einträge schlagen fehl.
 
-Runtimeattestierung und Rollback akzeptieren nur `0.6.533`/Schema 2. Beim
-einmaligen Cutover darf ausschließlich der Installer eine vorhandene,
-vollständig hash-/RECORD-/Baum-attestierte `0.6.532`/Schema-1-Generation als
-Upgradequelle lesen. Sie wird als `previous.json` erhalten, kann durch den
-V2-Rollback aber nie wieder aktiv werden. Fehler vor dem finalen atomaren Swap
-lassen `active.json` bytegenau unverändert.
+Runtimeattestierung und Rollback akzeptieren nur `0.6.534`/Schema 2.
+Ausschließlich der Installer darf beim atomaren Cutover exakt eine vollständig
+hash-/RECORD-/Baum-attestierte `0.6.533`/Schema-2- oder
+`0.6.532`/Schema-1-Generation als enumerierte Upgradequelle lesen. Beide
+werden als `previous.json` erhalten, sind aber weder runtime-verifizierbar noch
+durch Rollback reaktivierbar. Es gibt keinen generischen Altversionsfallback.
+Fehler vor dem finalen atomaren Swap lassen `active.json` bytegenau
+unverändert.
 
 ## Kanonisches verifiziertes Installationsverfahren
 
@@ -259,7 +279,7 @@ attestiert ihn erneut und ersetzt erst dann atomar `active.json`. Manuelles
 Kopieren eines Releasebaums oder Editieren von `active.json` ist verboten.
 
 Verifizierter Nachweis liest anschließend `active.json` nur bounded/no-follow
-und prüft: Schema `2`, Version `0.6.533`, Release-ID, kanonische vier Pfade,
+und prüft: Schema `2`, Version `0.6.534`, Release-ID, kanonische vier Pfade,
 Manifest-/Launcher-/Wheel-/RECORD-/Entry-Point-/Releasebaumhashes, Owner, Modi,
 Linkcount sowie Device/Inode-Identität. Berichtsfähig sind nur Version, Schema,
 Release-ID und Digests; absolute lokale Pfade bleiben ausschließlich im lokalen

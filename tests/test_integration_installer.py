@@ -213,6 +213,22 @@ def _write_synthetic_schema1_active(*, state_home: Path, data_home: Path) -> byt
     return active_text.encode("utf-8")
 
 
+def _mutate_manifest_fields(
+    manifest: dict[str, object],
+    mutation: str,
+) -> dict[str, object]:
+    mutated = dict(manifest)
+    if mutation == "unknown":
+        mutated["future_extension"] = "bounded"
+    elif mutation == "secret-like":
+        mutated["access_token"] = "synthetic-only"
+    elif mutation == "missing":
+        mutated.pop("launcher_sha256")
+    else:  # pragma: no cover - parametrization is closed
+        raise AssertionError(mutation)
+    return mutated
+
+
 def test_no_symlink_ancestors_scans_after_missing_segment(tmp_path):
     from codex_usage import integration_installer
 
@@ -386,6 +402,38 @@ def _install(tmp_path: Path):
         ),
         data_home,
         state_home,
+    )
+
+
+def _patch_release_identity(monkeypatch, version: str) -> None:
+    from codex_usage import integration_attestation, integration_installer
+
+    current_version = integration_installer.RELEASE_VERSION
+    generated_pyproject = integration_installer._GENERATED_PYPROJECT.replace(
+        f'version = "{current_version}"',
+        f'version = "{version}"',
+    )
+    monkeypatch.setattr(integration_installer, "RELEASE_VERSION", version)
+    monkeypatch.setattr(
+        integration_installer,
+        "DIST_INFO_PREFIX",
+        f"codex_usage_integration_producer-{version}.dist-info",
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "EXPECTED_WHEEL_NAME",
+        f"codex_usage_integration_producer-{version}-py3-none-any.whl",
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_GENERATED_PYPROJECT",
+        generated_pyproject,
+    )
+    monkeypatch.setattr(integration_attestation, "_EXPECTED_VERSION", version)
+    monkeypatch.setattr(
+        integration_attestation,
+        "_DIST_INFO_PREFIX",
+        f"codex_usage_integration_producer-{version}.dist-info",
     )
 
 
@@ -740,7 +788,7 @@ def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path
     assert _foreign_tree_digest(root=root) != linked_first
 
 
-def test_release_version_is_06533_across_project_surfaces():
+def test_release_version_is_06534_across_project_surfaces():
     from codex_usage import __version__
 
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -750,18 +798,18 @@ def test_release_version_is_06533_across_project_surfaces():
         )
     )
 
-    assert project["project"]["version"] == "0.6.533"
-    assert __version__ == "0.6.533"
-    assert applet["version"] == "0.6.533"
-    assert applet["comments"] == "Version: 0.6.533"
+    assert project["project"]["version"] == "0.6.534"
+    assert __version__ == "0.6.534"
+    assert applet["version"] == "0.6.534"
+    assert applet["comments"] == "Version: 0.6.534"
 
 
 def test_install_creates_attested_private_active_release(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     from codex_usage.integration_attestation import verify_active_release
 
-    assert release.version == "0.6.533"
-    assert release.release_dir.name.startswith("0.6.533-")
+    assert release.version == "0.6.534"
+    assert release.release_dir.name.startswith("0.6.534-")
     assert release.launcher_path.name == "codex-usage"
     assert stat.S_IMODE(release.launcher_path.lstat().st_mode) == 0o700
     verified = verify_active_release(
@@ -776,10 +824,10 @@ def test_install_creates_attested_private_active_release(tmp_path):
         )
     )
     assert active["schema_version"] == 2
-    assert active["version"] == "0.6.533"
+    assert active["version"] == "0.6.534"
     assert active["release_id"] == release.release_dir.name
     assert Path(active["record_path"]).parent.name == (
-        "codex_usage_integration_producer-0.6.533.dist-info"
+        "codex_usage_integration_producer-0.6.534.dist-info"
     )
     assert active["launcher_sha256"] == release.launcher_sha256
     assert active["release_tree_sha256"] == release.release_tree_sha256
@@ -878,6 +926,32 @@ def test_attestation_requires_exact_integer_schema_version(tmp_path, schema_vers
         encoding="utf-8",
     )
     before = active_path.read_bytes()
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+    assert active_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
+def test_active_manifest_requires_exact_canonical_fields(tmp_path, mutation):
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+
+    release, data_home, state_home = _install(tmp_path)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    mutated = _mutate_manifest_fields(manifest, mutation)
+    active_path.write_text(
+        json.dumps(mutated, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    before = active_path.read_bytes()
+
     with pytest.raises(IntegrationAttestationUnavailable):
         verify_active_release(
             state_home=state_home,
@@ -1765,7 +1839,7 @@ def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
     )
     result = prepared.run()
 
-    assert result.version == "0.6.533"
+    assert result.version == "0.6.534"
     assert cleanup_failed
     assert prepared.active_path.is_file()
     if operation == "install":
@@ -2062,7 +2136,7 @@ def test_failed_publish_to_initially_absent_active_keeps_active_present(
         state_home=state_home,
         data_home=data_home,
         expected_entrypoint_path=None,
-    ).version == "0.6.533"
+    ).version == "0.6.534"
     if operation == "install":
         assert not previous_path.exists()
 
@@ -2107,7 +2181,7 @@ def test_install_cutover_accepts_only_attested_schema1_as_nonreactivatable_previ
     active_after = active_path.read_bytes()
     active = json.loads(active_after)
     assert active["schema_version"] == 2
-    assert active["version"] == "0.6.533"
+    assert active["version"] == "0.6.534"
     assert (integration / "previous.json").read_bytes() == schema1_active
     assert (
         verify_active_release(
@@ -2121,6 +2195,84 @@ def test_install_cutover_accepts_only_attested_schema1_as_nonreactivatable_previ
     with pytest.raises(IntegrationInstallError):
         rollback_active_release(state_home=state_home, data_home=data_home)
     assert active_path.read_bytes() == active_after
+
+
+def test_install_cutover_accepts_attested_schema2_06533_only_as_upgrade_source(
+    tmp_path,
+    monkeypatch,
+):
+    from codex_usage import integration_attestation, integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with monkeypatch.context() as old_release_context:
+        _patch_release_identity(old_release_context, "0.6.533")
+        old_release = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    old_active = active_path.read_bytes()
+    with monkeypatch.context() as current_release_context:
+        _patch_release_identity(current_release_context, "0.6.534")
+        with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+            integration_attestation.verify_active_release(
+                state_home=state_home,
+                data_home=data_home,
+                expected_entrypoint_path=old_release.entrypoint_path,
+            )
+
+        current_release = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+        assert current_release.version == "0.6.534"
+        assert (integration / "previous.json").read_bytes() == old_active
+        active_after = active_path.read_bytes()
+
+        with pytest.raises(integration_installer.IntegrationInstallError):
+            integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+        assert active_path.read_bytes() == active_after
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
+def test_legacy_upgrade_manifest_requires_exact_canonical_fields(
+    tmp_path,
+    mutation,
+):
+    from codex_usage.integration_installer import IntegrationInstallError, install_release
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    _write_synthetic_schema1_active(state_home=state_home, data_home=data_home)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    mutated = _mutate_manifest_fields(manifest, mutation)
+    active_path.write_text(
+        json.dumps(mutated, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    before = active_path.read_bytes()
+
+    with pytest.raises(IntegrationInstallError):
+        install_release(
+            source_root=_temporary_source_copy(tmp_path),
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert active_path.read_bytes() == before
 
 
 def test_rollback_revalidates_prior_manifest_and_swaps_only_active_json(tmp_path):
@@ -2189,6 +2341,35 @@ def test_rollback_rejects_schema1_previous_without_changing_schema2_active(tmp_p
         )
         == release
     )
+
+
+@pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
+def test_rollback_previous_manifest_requires_exact_canonical_fields(
+    tmp_path,
+    mutation,
+):
+    from codex_usage.integration_installer import (
+        IntegrationInstallError,
+        rollback_active_release,
+    )
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    mutated = _mutate_manifest_fields(manifest, mutation)
+    write_private_text(
+        integration / "previous.json",
+        json.dumps(mutated, sort_keys=True, separators=(",", ":")) + "\n",
+        label="mutated previous manifest",
+        mode=0o600,
+    )
+    active_before = active_path.read_bytes()
+
+    with pytest.raises(IntegrationInstallError):
+        rollback_active_release(state_home=state_home, data_home=data_home)
+    assert active_path.read_bytes() == active_before
 
 
 def test_generated_wheel_has_no_general_cli_or_forbidden_modules(tmp_path):
@@ -4334,6 +4515,33 @@ def test_candidate_manifest_is_single_final_only_write_with_real_treehash(tmp_pa
     assert candidate["release_tree_sha256"] == release.release_tree_sha256
 
 
+@pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
+def test_candidate_manifest_requires_exact_canonical_fields(
+    tmp_path,
+    monkeypatch,
+    mutation,
+):
+    from codex_usage import integration_installer
+
+    original_manifest = integration_installer._manifest
+    original_rename = integration_installer._rename_noreplace
+    staging_renames = []
+
+    def mutated_manifest(**kwargs):
+        return _mutate_manifest_fields(original_manifest(**kwargs), mutation)
+
+    def capture_rename(source_name, target_name, parent_fd):
+        if ".staging-" in source_name:
+            staging_renames.append((source_name, target_name))
+        return original_rename(source_name, target_name, parent_fd)
+
+    monkeypatch.setattr(integration_installer, "_manifest", mutated_manifest)
+    monkeypatch.setattr(integration_installer, "_rename_noreplace", capture_rename)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        _install(tmp_path)
+    assert staging_renames == []
+
+
 def test_preexisting_candidate_is_exclusive_and_untouched(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 
@@ -5537,7 +5745,7 @@ def test_record_must_bind_nonempty_entrypoint_row(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("release_id", "0.6.533-ffffffffffffffff"),
+        ("release_id", "0.6.534-ffffffffffffffff"),
         ("source_manifest_sha256", "f" * 64),
     ],
 )
@@ -5616,7 +5824,7 @@ def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monke
     monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
 
     def fake_builder(command, *, env, cwd):
-        (wheel_dir / "wrong-name-0.6.533-py3-none-any.whl").write_bytes(b"wheel")
+        (wheel_dir / "wrong-name-0.6.534-py3-none-any.whl").write_bytes(b"wheel")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(integration_installer, "_run_builder_bounded", fake_builder)
@@ -8354,7 +8562,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
     pyproject = bad_source_root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.533"',
+            'version = "0.6.534"',
             'version = "0.0.0"',
         ),
         encoding="utf-8",

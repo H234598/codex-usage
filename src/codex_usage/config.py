@@ -311,12 +311,16 @@ def add_or_update_account(
         )
         _validate_account(account)
         _validate_config(updated)
-        profile_path, profile_created, profile_created_directories = _prepare_profile_dir(
-            account.profile_dir
-        )
+        (
+            profile_path,
+            profile_created,
+            profile_created_directories,
+            profile_created_lock_files,
+        ) = _prepare_profile_dir(account.profile_dir)
         moved_auth_json: tuple[Path, Path, int, int] | None = None
         created_test_home_directories: list[tuple[Path, int, int]] = []
         created_test_home_files: list[tuple[Path, int, int]] = []
+        created_test_home_lock_files: list[tuple[Path, int, int]] = []
         state_changed = existing is None or existing != account
         try:
             if test_home:
@@ -324,6 +328,7 @@ def add_or_update_account(
                     Path(account.profile_dir) / "codex-home",
                     created_directories=created_test_home_directories,
                     created_files=created_test_home_files,
+                    created_lock_files=created_test_home_lock_files,
                 )
             if source_auth_json is not None:
                 if account.auth_json_path is None:
@@ -344,6 +349,7 @@ def add_or_update_account(
                 _cleanup_created_test_home(
                     created_test_home_directories,
                     created_test_home_files,
+                    created_test_home_lock_files,
                 )
             except Exception as exc:
                 rollback_errors.append(exc)
@@ -352,6 +358,7 @@ def add_or_update_account(
                     _cleanup_created_profile_directories(
                         profile_path,
                         profile_created_directories,
+                        profile_created_lock_files,
                     )
                 except Exception as exc:
                     rollback_errors.append(exc)
@@ -386,6 +393,7 @@ def add_or_update_account(
                 _cleanup_created_test_home(
                     created_test_home_directories,
                     created_test_home_files,
+                    created_test_home_lock_files,
                 )
             except Exception as exc:
                 state_rollback_errors.append(("test home rollback", exc))
@@ -399,6 +407,7 @@ def add_or_update_account(
                     _cleanup_created_profile_directories(
                         profile_path,
                         profile_created_directories,
+                        profile_created_lock_files,
                     )
                 except Exception as exc:
                     state_rollback_errors.append(("profile rollback", exc))
@@ -658,6 +667,7 @@ def _prepare_test_codex_home(
     *,
     created_directories: list[tuple[Path, int, int]] | None = None,
     created_files: list[tuple[Path, int, int]] | None = None,
+    created_lock_files: list[tuple[Path, int, int]] | None = None,
 ) -> None:
     ensure_private_directory(
         codex_home,
@@ -672,6 +682,7 @@ def _prepare_test_codex_home(
             config_path,
             'cli_auth_credentials_store = "file"\n',
             label="test CODEX_HOME config",
+            created_lock_files=created_lock_files,
         )
         if created_files is not None:
             file_stat = config_path.lstat()
@@ -742,14 +753,12 @@ def _restore_moved_test_home_auth(
 def _cleanup_created_test_home(
     created_directories: list[tuple[Path, int, int]],
     created_files: list[tuple[Path, int, int]],
+    created_lock_files: list[tuple[Path, int, int]] | None = None,
 ) -> None:
-    for path, device, inode in reversed(created_files):
-        if not path.exists():
-            if path.is_symlink():
-                raise ValueError(f"created test CODEX_HOME file became a symlink: {path}")
-            continue
-        _assert_created_file_identity(path, (path, device, inode))
-        path.unlink()
+    _cleanup_created_private_files(
+        [*created_files, *(created_lock_files or [])],
+        label="created test CODEX_HOME file",
+    )
     for path, device, inode in reversed(created_directories):
         if not path.exists():
             if path.is_symlink():
@@ -804,7 +813,12 @@ def _remove_created_profile_dir(path: Path) -> None:
 def _cleanup_created_profile_directories(
     profile_path: Path,
     created_directories: list[tuple[Path, int, int]],
+    created_lock_files: list[tuple[Path, int, int]] | None = None,
 ) -> None:
+    _cleanup_created_private_files(
+        created_lock_files or [],
+        label="created profile lock file",
+    )
     final_created = next(
         (item for item in created_directories if item[0] == profile_path),
         None,
@@ -840,6 +854,8 @@ def _assert_created_directory_identity(
 def _assert_created_file_identity(
     path: Path,
     expected: tuple[Path, int, int],
+    *,
+    label: str = "created test CODEX_HOME file",
 ) -> None:
     item = path.lstat()
     if (
@@ -848,18 +864,42 @@ def _assert_created_file_identity(
         or stat.S_ISLNK(item.st_mode)
         or not stat.S_ISREG(item.st_mode)
     ):
-        raise ValueError(f"created test CODEX_HOME file changed: {path}")
+        raise ValueError(f"{label} changed: {path}")
+
+
+def _cleanup_created_private_files(
+    files: list[tuple[Path, int, int]],
+    *,
+    label: str,
+) -> None:
+    for path, device, inode in reversed(files):
+        if not path.exists():
+            if path.is_symlink():
+                raise ValueError(f"{label} became a symlink: {path}")
+            continue
+        _assert_created_file_identity(
+            path,
+            (path, device, inode),
+            label=label,
+        )
+        path.unlink()
 
 
 def _prepare_profile_dir(
     profile_dir: str,
-) -> tuple[Path, bool, list[tuple[Path, int, int]]]:
+) -> tuple[
+    Path,
+    bool,
+    list[tuple[Path, int, int]],
+    list[tuple[Path, int, int]],
+]:
     path = _validate_profile_path(profile_dir)
     assert_no_symlink_ancestors(path, label="profile dir")
     if path.is_symlink():
         raise ValueError(f"profile dir must not be a symlink: {path}")
     created = False
     created_directories: list[tuple[Path, int, int]] = []
+    created_lock_files: list[tuple[Path, int, int]] = []
     try:
         if not path.exists():
             ensure_private_directory(
@@ -884,13 +924,18 @@ def _prepare_profile_dir(
                 marker,
                 "codex-usage persistent browser profile\n",
                 label="profile marker",
+                created_lock_files=created_lock_files,
             )
-        return path, created, created_directories
+        return path, created, created_directories, created_lock_files
     except Exception as primary_error:
         if not created_directories:
             raise
         try:
-            _cleanup_created_profile_directories(path, created_directories)
+            _cleanup_created_profile_directories(
+                path,
+                created_directories,
+                created_lock_files,
+            )
         except Exception as cleanup_error:
             raise ExceptionGroup(
                 "profile directory setup rollback failed",

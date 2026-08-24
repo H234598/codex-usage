@@ -57,17 +57,10 @@ from .direct import (
 )
 from .health import clear_health, load_health, record_health_event
 from .history import HistoryStore
-from .integration_snapshot import (
-    build_schema2_document,
-    publish_schema2_cache,
-    read_current_usage_records,
-    serialize_schema2_document,
-)
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
 from .private_io import (
     assert_no_symlink_ancestors,
-    ensure_private_directory,
     read_private_text,
 )
 from .profile_jobs import (
@@ -206,9 +199,6 @@ Historie und Limitverbrauch:
                            ema-80|ema-160|ema-320|ema-640]
                           [--pool POOL] [--limit-window short|weekly|monthly|spark|all]
                           [--path PATH] [--now ISO] [--format table|json] [--json]
-  codex-usage integration-snapshot --schema 2 --format json
-                                   [--current-dir DIR] [--cache-path PATH]
-
 Profile und Auth-Migration:
   codex-usage profile layout --account ACCOUNT [--format json]
   codex-usage profile migrate-auth (--dry-run|--apply [--search-root DIR])
@@ -282,7 +272,6 @@ KNOWN_COMMANDS = {
     "values",
     "history",
     "consumption",
-    "integration-snapshot",
     "profile",
     "health",
     "bridge-snippet",
@@ -674,15 +663,6 @@ def _build_parser() -> argparse.ArgumentParser:
     consumption.add_argument("--format", choices=("table", "json"), default="table")
     consumption.add_argument("--json", dest="format", action="store_const", const="json")
     consumption.set_defaults(func=_cmd_consumption)
-
-    snapshot = sub.add_parser(
-        "integration-snapshot", help="Sanitisiertes account-usage-v2 erzeugen"
-    )
-    snapshot.add_argument("--schema", type=int, choices=(2,), default=2)
-    snapshot.add_argument("--format", choices=("json",), default="json")
-    snapshot.add_argument("--current-dir", type=Path)
-    snapshot.add_argument("--cache-path", type=Path)
-    snapshot.set_defaults(func=_cmd_integration_snapshot)
 
     profile = sub.add_parser("profile", help="Kanonische Accountprofile verwalten")
     profile_sub = profile.add_subparsers(dest="profile_command", required=True)
@@ -1245,18 +1225,6 @@ def _cmd_consumption(args: argparse.Namespace) -> int:
                 f"{window.pool}/{window.limit_window_seconds}s: "
                 f"{window.consumed_percentage_points:.3f} %-Pkt. ({window.coverage})"
             )
-    return 0
-
-
-def _cmd_integration_snapshot(args: argparse.Namespace) -> int:
-    current_dir = args.current_dir or (default_state_dir() / "current")
-    cache_path = args.cache_path or (default_state_dir() / "integration" / "account-usage-v1.json")
-    ensure_private_directory(cache_path.parent, label="integration cache directory")
-    usages = read_current_usage_records(current_dir)
-    document = build_schema2_document(usages, generated_at=datetime.now(UTC))
-    payload = serialize_schema2_document(document)
-    publish_schema2_cache(payload, cache_path=cache_path)
-    sys.stdout.buffer.write(payload + b"\n")
     return 0
 
 

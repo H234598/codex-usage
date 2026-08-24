@@ -1451,6 +1451,139 @@ def _valid_schema2_document(*, with_evidence: bool = False) -> dict[str, object]
     )
 
 
+def _schema2_document_with_coverage(
+    coverage: str,
+    *,
+    first_sample_at: str = "2026-08-15T09:40:00Z",
+    last_sample_at: str,
+) -> dict[str, object]:
+    document = _valid_schema2_document(with_evidence=True)
+    evidence = document["accounts"][0]["tracker_evidence"][0]
+    evidence.update(
+        {
+            "coverage": coverage,
+            "first_sample_at": first_sample_at,
+            "last_sample_at": last_sample_at,
+            "sample_count": 2,
+        }
+    )
+    return document
+
+
+@pytest.mark.parametrize("coverage", ["complete", "partial"])
+def test_schema2_serializer_accepts_fresh_coverage_at_exact_900_second_boundary(coverage):
+    from codex_usage.integration_snapshot import serialize_schema2_document
+
+    document = _schema2_document_with_coverage(
+        coverage,
+        last_sample_at="2026-08-15T09:50:00Z",
+    )
+
+    assert json.loads(serialize_schema2_document(document))["accounts"][0][
+        "tracker_evidence"
+    ][0]["coverage"] == coverage
+
+
+@pytest.mark.parametrize(
+    ("coverage", "last_sample_at"),
+    [
+        pytest.param("complete", "2026-08-15T09:49:59.999999Z", id="old-complete"),
+        pytest.param("partial", "2026-08-15T09:49:59.999999Z", id="old-partial"),
+        pytest.param("stale", "2026-08-15T09:50:00Z", id="fresh-stale-boundary"),
+        pytest.param("complete", "2026-08-15T10:05:00.000001Z", id="future-sample"),
+    ],
+)
+def test_schema2_serializer_rejects_coverage_inconsistent_with_sample_age(
+    coverage,
+    last_sample_at,
+):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        serialize_schema2_document,
+    )
+
+    document = _schema2_document_with_coverage(
+        coverage,
+        last_sample_at=last_sample_at,
+    )
+
+    with pytest.raises(IntegrationInvalidSource):
+        serialize_schema2_document(document)
+
+
+def test_schema2_serializer_retains_old_single_sample_insufficient_semantics():
+    from codex_usage.integration_snapshot import serialize_schema2_document
+
+    document = _valid_schema2_document(with_evidence=True)
+    evidence = document["accounts"][0]["tracker_evidence"][0]
+    evidence["first_sample_at"] = evidence["last_sample_at"] = "2026-08-15T09:00:00Z"
+
+    assert json.loads(serialize_schema2_document(document))["accounts"][0][
+        "tracker_evidence"
+    ][0]["coverage"] == "insufficient"
+
+
+@pytest.mark.parametrize(
+    ("coverage", "last_sample_at", "accepted"),
+    [
+        pytest.param("complete", "2026-08-15T09:50:00Z", True, id="boundary-complete"),
+        pytest.param(
+            "complete",
+            "2026-08-15T09:49:59.999999Z",
+            False,
+            id="old-complete",
+        ),
+        pytest.param("stale", "2026-08-15T09:50:00Z", False, id="boundary-stale"),
+        pytest.param(
+            "stale",
+            "2026-08-15T09:49:59.999999Z",
+            True,
+            id="old-stale",
+        ),
+        pytest.param(
+            "complete",
+            "2026-08-15T10:05:00.000001Z",
+            False,
+            id="future-sample",
+        ),
+    ],
+)
+def test_schema2_publisher_enforces_coverage_age_before_cache_mutation(
+    tmp_path,
+    coverage,
+    last_sample_at,
+    accepted,
+):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        publish_schema2_cache,
+    )
+
+    document = _schema2_document_with_coverage(
+        coverage,
+        last_sample_at=last_sample_at,
+    )
+    payload = json.dumps(
+        document,
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    cache = _cache_path(tmp_path)
+    previous = b'{"previous":"safe"}'
+    cache.write_bytes(previous)
+    cache.chmod(0o600)
+
+    if accepted:
+        publish_schema2_cache(payload, cache_path=cache)
+        assert cache.read_bytes() == payload
+    else:
+        with pytest.raises(IntegrationInvalidSource):
+            publish_schema2_cache(payload, cache_path=cache)
+        assert cache.read_bytes() == previous
+
+
 @pytest.mark.parametrize("location", ["root", "account", "freshness", "limit", "evidence"])
 def test_schema2_serializer_rejects_unknown_and_secret_like_fields(location):
     from codex_usage.integration_snapshot import (
@@ -1725,6 +1858,34 @@ def test_schema2_serializer_rejects_invalid_limit_values(field, value):
 
     with pytest.raises(IntegrationInvalidSource):
         serialize_schema2_document(document)
+
+
+@pytest.mark.parametrize(
+    ("complement_delta", "accepted"),
+    [
+        pytest.param(0.5e-9, True, id="positive-inside"),
+        pytest.param(-0.5e-9, True, id="negative-inside"),
+        pytest.param(2e-9, False, id="positive-outside"),
+        pytest.param(-2e-9, False, id="negative-outside"),
+    ],
+)
+def test_schema2_limit_complement_uses_only_absolute_tolerance(
+    complement_delta,
+    accepted,
+):
+    from codex_usage.integration_snapshot import (
+        IntegrationInvalidSource,
+        serialize_schema2_document,
+    )
+
+    document = _valid_schema2_document(with_evidence=True)
+    document["accounts"][0]["limits"][0]["remaining_percent"] = 75.0 + complement_delta
+
+    if accepted:
+        serialize_schema2_document(document)
+    else:
+        with pytest.raises(IntegrationInvalidSource):
+            serialize_schema2_document(document)
 
 
 def test_schema2_serializer_rejects_duplicate_tracker_identity():

@@ -63,12 +63,15 @@ def ensure_profile_layout(
     *,
     created_directories: list[tuple[Path, int, int]] | None = None,
     created_files: list[tuple[Path, int, int]] | None = None,
+    created_lock_files: list[tuple[Path, int, int]] | None = None,
     preserve_existing_metadata: bool = False,
 ) -> ProfileLayout:
     if created_directories is not None and not isinstance(created_directories, list):
         raise ValueError("created_directories is invalid")
     if created_files is not None and not isinstance(created_files, list):
         raise ValueError("created_files is invalid")
+    if created_lock_files is not None and not isinstance(created_lock_files, list):
+        raise ValueError("created_lock_files is invalid")
     if not isinstance(preserve_existing_metadata, bool):
         raise ValueError("preserve_existing_metadata is invalid")
     layout = layout_for_account(account)
@@ -120,6 +123,7 @@ def ensure_profile_layout(
                 + "\n",
                 label="profile metadata",
                 replace_existing=not metadata_missing,
+                created_lock_files=created_lock_files,
             )
         except Exception:
             if metadata_missing:

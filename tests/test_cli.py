@@ -104,40 +104,6 @@ def test_sync_managed_service_does_not_rebind_another_config(tmp_path, monkeypat
     assert calls == []
 
 
-def test_integration_snapshot_rejects_symlinked_cache_parent_before_chmod(
-    tmp_path, monkeypatch
-):
-    target = tmp_path / "target"
-    target.mkdir()
-    target.chmod(0o755)
-    integration = tmp_path / "integration"
-    integration.symlink_to(target, target_is_directory=True)
-    cache_path = integration / "account-usage-v1.json"
-
-    monkeypatch.setattr(cli_module, "read_current_usage_records", lambda _path: ())
-    monkeypatch.setattr(
-        cli_module,
-        "build_schema2_document",
-        lambda *_args, **_kwargs: {},
-    )
-    monkeypatch.setattr(cli_module, "serialize_schema2_document", lambda _document: b"{}")
-    monkeypatch.setattr(
-        cli_module,
-        "publish_schema2_cache",
-        lambda *_args, **_kwargs: pytest.fail("publish must not run"),
-    )
-
-    args = type(
-        "IntegrationSnapshotArgs",
-        (),
-        {"current_dir": tmp_path / "current", "cache_path": cache_path},
-    )()
-    with pytest.raises(ValueError, match="integration cache"):
-        cli_module._cmd_integration_snapshot(args)
-
-    assert target.stat().st_mode & 0o777 == 0o755
-
-
 def test_root_help_lists_all_commands(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["--help"])
@@ -200,7 +166,7 @@ def test_root_help_lists_all_commands(capsys):
     assert "history query --account ACCOUNT --pool POOL --window-seconds SECONDS" in output
     assert "[--since ISO] [--until ISO] [--path PATH]" in output
     assert "history prune [--before ISO|--days N] (--dry-run|--apply)" in output
-    assert "[--current-dir DIR] [--cache-path PATH]" in output
+    assert "integration-snapshot" not in output
     assert "profile create" in output
     assert output.count("[--tag TAG]") >= 2
     assert output.count("[--series SERIES]") >= 2
@@ -4940,44 +4906,11 @@ def test_profile_migrate_dry_run_and_apply(monkeypatch, capsys, tmp_path):
     assert capsys.readouterr().out.strip() == "applied"
 
 
-def test_integration_snapshot_publishes_serialized_bytes(monkeypatch, tmp_path):
-    class Stdout:
-        def __init__(self):
-            self.buffer = BytesIO()
-
-    output = Stdout()
-    monkeypatch.setattr(cli_module.sys, "stdout", output)
-    monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path / "state")
-    monkeypatch.setattr(cli_module, "ensure_private_directory", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli_module, "read_current_usage_records", lambda _path: ("usage",))
-    monkeypatch.setattr(
-        cli_module,
-        "build_schema2_document",
-        lambda usages, generated_at: (usages, generated_at),
-    )
-    monkeypatch.setattr(cli_module, "serialize_schema2_document", lambda _doc: b'{"ok":true}')
-    published = []
-    monkeypatch.setattr(
-        cli_module,
-        "publish_schema2_cache",
-        lambda payload, *, cache_path: published.append((payload, cache_path)),
-    )
-
-    assert cli_module._cmd_integration_snapshot(
-        SimpleNamespace(current_dir=None, cache_path=None)
-    ) == 0
-    assert output.buffer.getvalue() == b'{"ok":true}\n'
-    assert published == [(b'{"ok":true}', tmp_path / "state" / "integration" / "account-usage-v1.json")]
-
-
-def test_integration_snapshot_parser_accepts_only_schema_2():
+def test_general_cli_does_not_expose_integration_snapshot():
     parser = cli_module._build_parser()
 
-    args = parser.parse_args(["integration-snapshot", "--schema", "2", "--format", "json"])
-
-    assert args.schema == 2
     with pytest.raises(SystemExit) as error:
-        parser.parse_args(["integration-snapshot", "--schema", "1", "--format", "json"])
+        parser.parse_args(["integration-snapshot", "--schema", "2", "--format", "json"])
     assert error.value.code == 2
 
 

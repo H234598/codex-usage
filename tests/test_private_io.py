@@ -1203,6 +1203,34 @@ def test_private_path_lock_retries_after_transient_contention(tmp_path, monkeypa
     assert flock_calls[-1] == private_io.fcntl.LOCK_UN
 
 
+def test_private_path_lock_records_only_lock_file_created_by_transaction(tmp_path):
+    path = tmp_path / "config"
+    created_lock_files = []
+
+    with private_path_lock(
+        path,
+        label="config lock",
+        created_lock_files=created_lock_files,
+    ):
+        pass
+
+    lock_path = tmp_path / "config.lock"
+    lock_stat = lock_path.lstat()
+    assert created_lock_files == [
+        (lock_path, lock_stat.st_dev, lock_stat.st_ino)
+    ]
+
+    preexisting_lock_files = []
+    with private_path_lock(
+        path,
+        label="config lock",
+        created_lock_files=preexisting_lock_files,
+    ):
+        pass
+
+    assert preexisting_lock_files == []
+
+
 def test_private_path_lock_ignores_unlock_error(tmp_path, monkeypatch):
     def fail_unlock(_fd, operation):
         if operation == private_io.fcntl.LOCK_UN:

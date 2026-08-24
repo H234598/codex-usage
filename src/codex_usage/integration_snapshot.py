@@ -651,7 +651,12 @@ def _canonical_limit_v2(value: object) -> dict[str, object]:
         _invalid()
     used_percent = _canonical_percent(mapping["used_percent"])
     remaining_percent = _canonical_percent(mapping["remaining_percent"])
-    if not math.isclose(used_percent + remaining_percent, 100.0, abs_tol=1e-9):
+    if not math.isclose(
+        used_percent + remaining_percent,
+        100.0,
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
         _invalid()
     result: dict[str, object] = {
         "pool": _canonical_token(mapping["pool"], maximum=64),
@@ -817,10 +822,19 @@ def _canonical_document_v2(document: object) -> dict[str, object]:
                 cast(str, item["last_sample_at"]).replace("Z", "+00:00")
             )
             identity = (item["pool"], item["limit_window_seconds"])
+            sample_age = generated_time - last_sample_at
             if (
                 last_sample_at > captured_time
                 or limits_with_reset[identity] <= last_sample_at
                 or limits_with_reset[identity] <= generated_time
+                or (
+                    item["coverage"] in {"complete", "partial"}
+                    and sample_age > timedelta(seconds=_FRESHNESS_SECONDS)
+                )
+                or (
+                    item["coverage"] == "stale"
+                    and sample_age <= timedelta(seconds=_FRESHNESS_SECONDS)
+                )
             ):
                 _invalid()
         account_ids.add(account_id)

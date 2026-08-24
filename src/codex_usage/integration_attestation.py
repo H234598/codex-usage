@@ -18,11 +18,73 @@ _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_TREE_ENTRIES = 4096
 MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
-_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.533.dist-info"
-_EXPECTED_VERSION = "0.6.533"
+_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.534.dist-info"
+_EXPECTED_VERSION = "0.6.534"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
+_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.533.dist-info"
+_PREVIOUS_SCHEMA2_VERSION = "0.6.533"
 _LEGACY_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.532.dist-info"
 _LEGACY_VERSION = "0.6.532"
+_CURRENT_SCHEMA2_MANIFEST_FIELDS = frozenset(
+    {
+        "data_home",
+        "entrypoint_path",
+        "entrypoint_sha256",
+        "launcher_path",
+        "launcher_sha256",
+        "record_path",
+        "record_sha256",
+        "release_dir",
+        "release_id",
+        "release_tree_sha256",
+        "schema_version",
+        "source_manifest_sha256",
+        "state_home",
+        "version",
+        "wheel_path",
+        "wheel_sha256",
+    }
+)
+_PREVIOUS_SCHEMA2_MANIFEST_FIELDS = frozenset(
+    {
+        "data_home",
+        "entrypoint_path",
+        "entrypoint_sha256",
+        "launcher_path",
+        "launcher_sha256",
+        "record_path",
+        "record_sha256",
+        "release_dir",
+        "release_id",
+        "release_tree_sha256",
+        "schema_version",
+        "source_manifest_sha256",
+        "state_home",
+        "version",
+        "wheel_path",
+        "wheel_sha256",
+    }
+)
+_LEGACY_SCHEMA1_MANIFEST_FIELDS = frozenset(
+    {
+        "data_home",
+        "entrypoint_path",
+        "entrypoint_sha256",
+        "launcher_path",
+        "launcher_sha256",
+        "record_path",
+        "record_sha256",
+        "release_dir",
+        "release_id",
+        "release_tree_sha256",
+        "schema_version",
+        "source_manifest_sha256",
+        "state_home",
+        "version",
+        "wheel_path",
+        "wheel_sha256",
+    }
+)
 
 
 class IntegrationAttestationUnavailable(Exception):
@@ -392,6 +454,16 @@ def _read_manifest(path: Path) -> dict[str, object]:
     return value
 
 
+def _require_manifest_fields(
+    manifest: dict[str, object],
+    *,
+    expected_fields: frozenset[str],
+) -> dict[str, object]:
+    if set(manifest) != expected_fields:
+        raise _unavailable()
+    return manifest
+
+
 def _manifest_string(manifest: Mapping[str, object], key: str) -> str:
     value = manifest.get(key)
     if not isinstance(value, str) or not value:
@@ -482,8 +554,12 @@ def _verify_manifest_contract(
     expected_schema_version: int,
     expected_version: str,
     expected_dist_info_prefix: str,
+    expected_fields: frozenset[str],
 ) -> ActiveRelease:
-    manifest = _read_manifest(manifest_path)
+    manifest = _require_manifest_fields(
+        _read_manifest(manifest_path),
+        expected_fields=expected_fields,
+    )
     schema_version = manifest.get("schema_version")
     if type(schema_version) is not int or schema_version != expected_schema_version:
         raise _unavailable()
@@ -616,6 +692,25 @@ def _verify_manifest(
         expected_schema_version=2,
         expected_version=_EXPECTED_VERSION,
         expected_dist_info_prefix=_DIST_INFO_PREFIX,
+        expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
+    )
+
+
+def _verify_previous_schema2_manifest_for_upgrade(
+    *,
+    manifest_path: Path,
+    state_home: Path,
+    data_home: Path,
+) -> ActiveRelease:
+    return _verify_manifest_contract(
+        manifest_path=manifest_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=None,
+        expected_schema_version=2,
+        expected_version=_PREVIOUS_SCHEMA2_VERSION,
+        expected_dist_info_prefix=_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX,
+        expected_fields=_PREVIOUS_SCHEMA2_MANIFEST_FIELDS,
     )
 
 
@@ -633,6 +728,7 @@ def _verify_legacy_manifest_for_upgrade(
         expected_schema_version=1,
         expected_version=_LEGACY_VERSION,
         expected_dist_info_prefix=_LEGACY_DIST_INFO_PREFIX,
+        expected_fields=_LEGACY_SCHEMA1_MANIFEST_FIELDS,
     )
 
 

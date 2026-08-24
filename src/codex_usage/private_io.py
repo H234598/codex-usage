@@ -491,6 +491,7 @@ def write_private_text(
     label: str,
     mode: int = 0o600,
     replace_existing: bool = True,
+    created_lock_files: list[tuple[Path, int, int]] | None = None,
 ) -> None:
     if type(text) is not str:
         raise ValueError(f"{label} text is invalid")
@@ -501,7 +502,11 @@ def write_private_text(
     parent = path.parent
     if parent.is_symlink() or not parent.is_dir():
         raise ValueError(f"{label} parent must be a real directory: {parent}")
-    with private_path_lock(path, label=f"{label} write lock"):
+    with private_path_lock(
+        path,
+        label=f"{label} write lock",
+        created_lock_files=created_lock_files,
+    ):
         _write_private_text_locked(
             path,
             text,
@@ -535,8 +540,11 @@ def private_path_lock(
     *,
     timeout_seconds: int | float = PRIVATE_LOCK_TIMEOUT_SECONDS,
     label: str = "private lock",
+    created_lock_files: list[tuple[Path, int, int]] | None = None,
 ) -> Iterator[None]:
     path = _require_path(path, label=label)
+    if created_lock_files is not None and not isinstance(created_lock_files, list):
+        raise ValueError("created_lock_files is invalid")
     deadline = _lock_deadline(timeout_seconds)
     parent = path.parent
     assert_no_symlink_ancestors(parent, label=label)
@@ -553,13 +561,21 @@ def private_path_lock(
     if lock_key in held_lock_paths:
         yield
         return
-    flags = os.O_RDWR | os.O_CREAT
+    flags = os.O_RDWR
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
+    lock_created = False
     try:
-        fd = os.open(lock_path, flags, 0o600)
+        if created_lock_files is None:
+            fd = os.open(lock_path, flags | os.O_CREAT, 0o600)
+        else:
+            try:
+                fd = os.open(lock_path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+                lock_created = True
+            except FileExistsError:
+                fd = os.open(lock_path, flags)
     except OSError as exc:
         if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
             raise ValueError(f"{label} must be a regular file: {lock_path}") from exc
@@ -573,6 +589,8 @@ def private_path_lock(
         ):
             raise ValueError(f"{label} must be a private regular file: {lock_path}")
         os.fchmod(fd, 0o600)
+        if lock_created:
+            created_lock_files.append((lock_path, file_stat.st_dev, file_stat.st_ino))
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
