@@ -18,9 +18,11 @@ _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_TREE_ENTRIES = 4096
 MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
-_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.532.dist-info"
-_EXPECTED_VERSION = "0.6.532"
+_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.533.dist-info"
+_EXPECTED_VERSION = "0.6.533"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
+_LEGACY_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.532.dist-info"
+_LEGACY_VERSION = "0.6.532"
 
 
 class IntegrationAttestationUnavailable(Exception):
@@ -471,18 +473,21 @@ def _record_rows(record_path: Path, release_dir: Path) -> dict[str, tuple[str, i
     return validated
 
 
-def _verify_manifest(
+def _verify_manifest_contract(
     *,
     manifest_path: Path,
     state_home: Path,
     data_home: Path,
     expected_entrypoint_path: Path | None,
+    expected_schema_version: int,
+    expected_version: str,
+    expected_dist_info_prefix: str,
 ) -> ActiveRelease:
     manifest = _read_manifest(manifest_path)
     schema_version = manifest.get("schema_version")
-    if type(schema_version) is not int or schema_version != 1:
+    if type(schema_version) is not int or schema_version != expected_schema_version:
         raise _unavailable()
-    if manifest.get("version") != _EXPECTED_VERSION:
+    if manifest.get("version") != expected_version:
         raise _unavailable()
     source_manifest_digest = _valid_hash(manifest.get("source_manifest_sha256"))
     manifest_state = _absolute_path(manifest.get("state_home"))
@@ -500,7 +505,7 @@ def _verify_manifest(
     _private_directory(releases_dir)
     _contained(release_dir, releases_dir)
     _private_directory(release_dir)
-    release_id = f"{_EXPECTED_VERSION}-{source_manifest_digest[:16]}"
+    release_id = f"{expected_version}-{source_manifest_digest[:16]}"
     if (
         release_dir.parent != releases_dir
         or release_dir.name != release_id
@@ -514,6 +519,26 @@ def _verify_manifest(
     record_path = _absolute_path(manifest.get("record_path"))
     for path in (launcher_path, entrypoint_path, wheel_path, record_path):
         _contained(path, release_dir)
+    site_packages = record_path.parent.parent
+    try:
+        site_packages_parts = site_packages.relative_to(release_dir).parts
+    except ValueError:
+        raise _unavailable() from None
+    python_directory = site_packages_parts[2] if len(site_packages_parts) == 4 else ""
+    if (
+        len(site_packages_parts) != 4
+        or site_packages_parts[:2] != ("venv", "lib")
+        or site_packages_parts[3] != "site-packages"
+        or not python_directory.startswith("python3.")
+        or not python_directory.removeprefix("python3.").isdecimal()
+        or launcher_path != release_dir / "venv" / "bin" / "codex-usage"
+        or wheel_path != release_dir / "producer.whl"
+        or record_path
+        != site_packages / expected_dist_info_prefix / "RECORD"
+        or entrypoint_path
+        != site_packages / "codex_usage" / "integration_entrypoint.py"
+    ):
+        raise _unavailable()
     if expected_entrypoint_path is not None:
         if not isinstance(expected_entrypoint_path, Path):
             raise _unavailable()
@@ -557,14 +582,14 @@ def _verify_manifest(
     except (UnicodeDecodeError, IntegrationAttestationUnavailable):
         raise _unavailable() from None
     if (
-        f"Version: {_EXPECTED_VERSION}\n" not in metadata
+        f"Version: {expected_version}\n" not in metadata
         or f"Name: {_EXPECTED_DISTRIBUTION}\n" not in metadata
     ):
         raise _unavailable()
     if _release_tree_sha256(release_dir=release_dir) != tree_hash:
         raise _unavailable()
     return ActiveRelease(
-        version=_EXPECTED_VERSION,
+        version=expected_version,
         release_dir=release_dir,
         launcher_path=launcher_path,
         entrypoint_path=entrypoint_path,
@@ -573,6 +598,41 @@ def _verify_manifest(
         record_sha256=record_hash,
         launcher_sha256=launcher_hash,
         release_tree_sha256=tree_hash,
+    )
+
+
+def _verify_manifest(
+    *,
+    manifest_path: Path,
+    state_home: Path,
+    data_home: Path,
+    expected_entrypoint_path: Path | None,
+) -> ActiveRelease:
+    return _verify_manifest_contract(
+        manifest_path=manifest_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=expected_entrypoint_path,
+        expected_schema_version=2,
+        expected_version=_EXPECTED_VERSION,
+        expected_dist_info_prefix=_DIST_INFO_PREFIX,
+    )
+
+
+def _verify_legacy_manifest_for_upgrade(
+    *,
+    manifest_path: Path,
+    state_home: Path,
+    data_home: Path,
+) -> ActiveRelease:
+    return _verify_manifest_contract(
+        manifest_path=manifest_path,
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=None,
+        expected_schema_version=1,
+        expected_version=_LEGACY_VERSION,
+        expected_dist_info_prefix=_LEGACY_DIST_INFO_PREFIX,
     )
 
 

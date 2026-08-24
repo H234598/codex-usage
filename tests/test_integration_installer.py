@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import time
+import tomllib
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -115,6 +116,101 @@ def _roots(tmp_path: Path) -> tuple[Path, Path, Path]:
         path.mkdir(mode=0o700)
         path.chmod(0o700)
     return data_home, state_home, temporary_root
+
+
+def _write_synthetic_schema1_active(*, state_home: Path, data_home: Path) -> bytes:
+    from codex_usage.integration_attestation import _release_tree_sha256
+    from codex_usage.private_io import write_private_text
+
+    integration = state_home / "codex-usage" / "integration"
+    releases = integration / "releases"
+    source_digest = "1" * 64
+    release_id = f"0.6.532-{source_digest[:16]}"
+    release_dir = releases / release_id
+    site_packages = release_dir / "venv/lib/python3.11/site-packages"
+    dist_info = site_packages / "codex_usage_integration_producer-0.6.532.dist-info"
+    package = site_packages / "codex_usage"
+    launcher_path = release_dir / "venv/bin/codex-usage"
+    entrypoint_path = package / "integration_entrypoint.py"
+    wheel_path = release_dir / "producer.whl"
+    record_path = dist_info / "RECORD"
+    metadata_path = dist_info / "METADATA"
+    for directory in (
+        state_home / "codex-usage",
+        integration,
+        releases,
+        release_dir,
+        release_dir / "venv",
+        release_dir / "venv/bin",
+        release_dir / "venv/lib",
+        release_dir / "venv/lib/python3.11",
+        site_packages,
+        package,
+        dist_info,
+    ):
+        directory.mkdir(mode=0o700, exist_ok=True)
+        directory.chmod(0o700)
+
+    entrypoint_payload = b"# synthetic schema-1 entrypoint\n"
+    wheel_payload = b"synthetic schema-1 wheel\n"
+    launcher_payload = (
+        b"#!/bin/sh\nexec /nonexistent/python -B -I -m "
+        b"codex_usage.integration_entrypoint \"$@\"\n"
+    )
+    metadata_payload = (
+        b"Metadata-Version: 2.4\n"
+        b"Name: codex-usage-integration-producer\n"
+        b"Version: 0.6.532\n"
+    )
+
+    def record_digest(payload: bytes) -> str:
+        digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest())
+        return "sha256=" + digest.decode("ascii").rstrip("=")
+
+    metadata_relative = metadata_path.relative_to(site_packages).as_posix()
+    entrypoint_relative = entrypoint_path.relative_to(site_packages).as_posix()
+    record_relative = record_path.relative_to(site_packages).as_posix()
+    record_payload = (
+        f"{entrypoint_relative},{record_digest(entrypoint_payload)},{len(entrypoint_payload)}\n"
+        f"{metadata_relative},{record_digest(metadata_payload)},{len(metadata_payload)}\n"
+        f"{record_relative},,\n"
+    ).encode()
+    for path, payload, mode in (
+        (entrypoint_path, entrypoint_payload, 0o600),
+        (wheel_path, wheel_payload, 0o600),
+        (launcher_path, launcher_payload, 0o700),
+        (metadata_path, metadata_payload, 0o600),
+        (record_path, record_payload, 0o600),
+    ):
+        path.write_bytes(payload)
+        path.chmod(mode)
+
+    manifest = {
+        "schema_version": 1,
+        "version": "0.6.532",
+        "release_id": release_id,
+        "source_manifest_sha256": source_digest,
+        "state_home": str(state_home),
+        "data_home": str(data_home),
+        "release_dir": str(release_dir),
+        "launcher_path": str(launcher_path),
+        "entrypoint_path": str(entrypoint_path),
+        "wheel_path": str(wheel_path),
+        "record_path": str(record_path),
+        "entrypoint_sha256": hashlib.sha256(entrypoint_payload).hexdigest(),
+        "wheel_sha256": hashlib.sha256(wheel_payload).hexdigest(),
+        "record_sha256": hashlib.sha256(record_payload).hexdigest(),
+        "launcher_sha256": hashlib.sha256(launcher_payload).hexdigest(),
+        "release_tree_sha256": _release_tree_sha256(release_dir=release_dir),
+    }
+    active_text = json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
+    write_private_text(
+        integration / "active.json",
+        active_text,
+        label="synthetic schema-1 active manifest",
+        mode=0o600,
+    )
+    return active_text.encode("utf-8")
 
 
 def test_no_symlink_ancestors_scans_after_missing_segment(tmp_path):
@@ -644,20 +740,28 @@ def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path
     assert _foreign_tree_digest(root=root) != linked_first
 
 
-def test_release_version_is_06532_in_project_and_package():
-    assert 'version = "0.6.532"' in (PROJECT_ROOT / "pyproject.toml").read_text(
-        encoding="utf-8"
+def test_release_version_is_06533_across_project_surfaces():
+    from codex_usage import __version__
+
+    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    applet = json.loads(
+        (PROJECT_ROOT / "files/codex-usage@H234598/metadata.json").read_text(
+            encoding="utf-8"
+        )
     )
-    assert '__version__ = "0.6.532"' in (
-        PROJECT_ROOT / "src" / "codex_usage" / "__init__.py"
-    ).read_text(encoding="utf-8")
+
+    assert project["project"]["version"] == "0.6.533"
+    assert __version__ == "0.6.533"
+    assert applet["version"] == "0.6.533"
+    assert applet["comments"] == "Version: 0.6.533"
 
 
 def test_install_creates_attested_private_active_release(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     from codex_usage.integration_attestation import verify_active_release
 
-    assert release.version == "0.6.532"
+    assert release.version == "0.6.533"
+    assert release.release_dir.name.startswith("0.6.533-")
     assert release.launcher_path.name == "codex-usage"
     assert stat.S_IMODE(release.launcher_path.lstat().st_mode) == 0o700
     verified = verify_active_release(
@@ -671,7 +775,12 @@ def test_install_creates_attested_private_active_release(tmp_path):
             encoding="utf-8"
         )
     )
-    assert active["version"] == "0.6.532"
+    assert active["schema_version"] == 2
+    assert active["version"] == "0.6.533"
+    assert active["release_id"] == release.release_dir.name
+    assert Path(active["record_path"]).parent.name == (
+        "codex_usage_integration_producer-0.6.533.dist-info"
+    )
     assert active["launcher_sha256"] == release.launcher_sha256
     assert active["release_tree_sha256"] == release.release_tree_sha256
     integration = state_home / "codex-usage" / "integration"
@@ -744,7 +853,8 @@ def test_find_site_packages_rejects_python_directory_swap_before_open(
     assert (old_python / "site-packages").is_dir()
 
 
-def test_attestation_requires_exact_integer_schema_version(tmp_path):
+@pytest.mark.parametrize("schema_version", [1, True, 2.0, "2"])
+def test_attestation_requires_exact_integer_schema_version(tmp_path, schema_version):
     from codex_usage.integration_attestation import (
         IntegrationAttestationUnavailable,
         verify_active_release,
@@ -761,7 +871,8 @@ def test_attestation_requires_exact_integer_schema_version(tmp_path):
         == release
     )
     manifest = json.loads(active_path.read_text(encoding="utf-8"))
-    manifest["schema_version"] = True
+    assert manifest["schema_version"] == 2
+    manifest["schema_version"] = schema_version
     active_path.write_text(
         json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
         encoding="utf-8",
@@ -828,6 +939,62 @@ def test_source_drift_before_active_swap_keeps_prior_active_release(tmp_path, mo
     )
 
 
+def test_install_cutover_accepts_only_attested_schema1_as_nonreactivatable_previous(
+    tmp_path,
+):
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+    from codex_usage.integration_installer import (
+        IntegrationInstallError,
+        install_release,
+        rollback_active_release,
+    )
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    schema1_active = _write_synthetic_schema1_active(
+        state_home=state_home,
+        data_home=data_home,
+    )
+    schema1_entrypoint = Path(
+        json.loads(schema1_active)["entrypoint_path"]
+    )
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=schema1_entrypoint,
+        )
+
+    release = install_release(
+        source_root=_temporary_source_copy(tmp_path),
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    active_after = active_path.read_bytes()
+    active = json.loads(active_after)
+    assert active["schema_version"] == 2
+    assert active["version"] == "0.6.533"
+    assert (integration / "previous.json").read_bytes() == schema1_active
+    assert (
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+        == release
+    )
+
+    with pytest.raises(IntegrationInstallError):
+        rollback_active_release(state_home=state_home, data_home=data_home)
+    assert active_path.read_bytes() == active_after
+
+
 def test_rollback_revalidates_prior_manifest_and_swaps_only_active_json(tmp_path):
     from codex_usage.integration_attestation import verify_active_release
     from codex_usage.integration_installer import rollback_active_release
@@ -860,6 +1027,42 @@ def test_rollback_revalidates_prior_manifest_and_swaps_only_active_json(tmp_path
     )
 
 
+def test_rollback_rejects_schema1_previous_without_changing_schema2_active(tmp_path):
+    from codex_usage.integration_attestation import verify_active_release
+    from codex_usage.integration_installer import (
+        IntegrationInstallError,
+        rollback_active_release,
+    )
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    active_before = active_path.read_bytes()
+    previous = json.loads(active_before)
+    assert previous["schema_version"] == 2
+    previous["schema_version"] = 1
+    write_private_text(
+        integration / "previous.json",
+        json.dumps(previous, sort_keys=True, separators=(",", ":")) + "\n",
+        label="synthetic schema-1 previous manifest",
+        mode=0o600,
+    )
+
+    with pytest.raises(IntegrationInstallError):
+        rollback_active_release(state_home=state_home, data_home=data_home)
+
+    assert active_path.read_bytes() == active_before
+    assert (
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+        == release
+    )
+
+
 def test_generated_wheel_has_no_general_cli_or_forbidden_modules(tmp_path):
     release, _, _ = _install(tmp_path)
     with zipfile.ZipFile(release.release_dir / "producer.whl") as wheel:
@@ -882,6 +1085,46 @@ def test_launcher_uses_isolated_python_and_fixed_environment(tmp_path):
     assert launcher.splitlines()[0] == "#!/bin/sh"
 
 
+def test_launcher_rejects_schema1_active_manifest_without_repair(tmp_path):
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    _write_launcher_state(data_home)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    manifest["schema_version"] = 1
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="synthetic schema-1 active manifest",
+        mode=0o600,
+    )
+    before = active_path.read_bytes()
+
+    completed = subprocess.run(
+        [
+            str(release.launcher_path),
+            "integration-snapshot",
+            "--schema",
+            "2",
+            "--format",
+            "json",
+        ],
+        env={"PATH": "/usr/bin:/bin"},
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_snapshot_unavailable\n"
+    assert active_path.read_bytes() == before
+
+
 def test_verify_rejects_record_or_launcher_drift_without_active_repair(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     active_path = state_home / "codex-usage" / "integration" / "active.json"
@@ -899,6 +1142,95 @@ def test_verify_rejects_record_or_launcher_drift_without_active_repair(tmp_path)
             expected_entrypoint_path=release.entrypoint_path,
         )
     assert active_path.read_bytes() == old
+
+
+@pytest.mark.parametrize(
+    ("field", "relative", "mode"),
+    [
+        ("launcher_path", Path("venv/bin/alternate-launcher"), 0o700),
+        ("wheel_path", Path("alternate-producer.whl"), 0o600),
+    ],
+)
+def test_attestation_rejects_manifest_path_drift_even_when_hashes_match(
+    tmp_path,
+    field,
+    relative,
+    mode,
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    original_path = Path(manifest[field])
+    alternate = release.release_dir / relative
+    alternate.write_bytes(original_path.read_bytes())
+    alternate.chmod(mode)
+    manifest[field] = str(alternate)
+    manifest["release_tree_sha256"] = integration_attestation._release_tree_sha256(
+        release_dir=release.release_dir
+    )
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="mutated active path manifest",
+        mode=0o600,
+    )
+    before = active_path.read_bytes()
+
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
+    assert active_path.read_bytes() == before
+
+
+def test_attestation_rejects_entrypoint_and_dist_info_outside_canonical_site_packages(
+    tmp_path,
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        verify_active_release,
+    )
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    original_record = Path(manifest["record_path"])
+    original_site_packages = original_record.parent.parent
+    alternate_site_packages = release.release_dir / "venv/alternate/site-packages"
+    shutil.copytree(original_site_packages, alternate_site_packages)
+    alternate_entrypoint = alternate_site_packages / "codex_usage/integration_entrypoint.py"
+    alternate_record = alternate_site_packages / original_record.parent.name / "RECORD"
+    manifest["entrypoint_path"] = str(alternate_entrypoint)
+    manifest["record_path"] = str(alternate_record)
+    manifest["release_tree_sha256"] = integration_attestation._release_tree_sha256(
+        release_dir=release.release_dir
+    )
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="mutated entrypoint and dist-info manifest",
+        mode=0o600,
+    )
+    before = active_path.read_bytes()
+
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=alternate_entrypoint,
+        )
+    assert active_path.read_bytes() == before
 
 
 def test_installer_build_subprocess_is_no_index_and_sanitized(tmp_path, monkeypatch):
@@ -4077,7 +4409,7 @@ def test_record_must_bind_nonempty_entrypoint_row(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("release_id", "0.6.532-ffffffffffffffff"),
+        ("release_id", "0.6.533-ffffffffffffffff"),
         ("source_manifest_sha256", "f" * 64),
     ],
 )
@@ -4156,7 +4488,7 @@ def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monke
     monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
 
     def fake_builder(command, *, env, cwd):
-        (wheel_dir / "wrong-name-0.6.532-py3-none-any.whl").write_bytes(b"wheel")
+        (wheel_dir / "wrong-name-0.6.533-py3-none-any.whl").write_bytes(b"wheel")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(integration_installer, "_run_builder_bounded", fake_builder)
@@ -4907,7 +5239,7 @@ def test_attestation_manifest_rejects_version_and_home_mismatch(tmp_path, monkey
     monkeypatch.setattr(
         module,
         "_read_manifest",
-        lambda _path: {"schema_version": 1, "version": "wrong"},
+        lambda _path: {"schema_version": 2, "version": "wrong"},
     )
     with pytest.raises(module.IntegrationAttestationUnavailable):
         module._verify_manifest(
@@ -4921,7 +5253,7 @@ def test_attestation_manifest_rejects_version_and_home_mismatch(tmp_path, monkey
         module,
         "_read_manifest",
         lambda _path: {
-            "schema_version": 1,
+            "schema_version": 2,
             "version": module._EXPECTED_VERSION,
             "source_manifest_sha256": "a" * 64,
             "state_home": str(tmp_path / "other-state"),
@@ -6894,7 +7226,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
     pyproject = bad_source_root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.532"',
+            'version = "0.6.533"',
             'version = "0.0.0"',
         ),
         encoding="utf-8",

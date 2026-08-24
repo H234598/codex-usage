@@ -31,6 +31,7 @@ from .integration_attestation import (
     IntegrationAttestationUnavailable,
     _read_manifest,
     _release_tree_sha256,
+    _verify_legacy_manifest_for_upgrade,
     _verify_manifest,
 )
 from .private_io import (
@@ -41,7 +42,7 @@ from .private_io import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RELEASE_VERSION = "0.6.532"
+RELEASE_VERSION = "0.6.533"
 PRODUCER_DISTRIBUTION = "codex_usage_integration_producer"
 SOURCE_MODULES = (
     "__init__.py",
@@ -67,9 +68,9 @@ SOURCE_MANIFEST_FILES = (
 ACTIVE_NAME = "active.json"
 PREVIOUS_NAME = "previous.json"
 RELEASE_LOCK_STEM = "producer-install"
-DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.532.dist-info"
+DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.533.dist-info"
 DIST_INFO_FILES = frozenset({"METADATA", "WHEEL", "RECORD", "top_level.txt"})
-EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.532-py3-none-any.whl"
+EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.533-py3-none-any.whl"
 BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
 BUILDER_WHEEL_TIMEOUT_SECONDS = 120
@@ -88,7 +89,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-usage-integration-producer"
-version = "0.6.532"
+version = "0.6.533"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -2285,7 +2286,7 @@ def _manifest(
     release_tree_sha256: str,
 ) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "version": RELEASE_VERSION,
         "release_id": release_dir.name,
         "source_manifest_sha256": source_digest,
@@ -2355,7 +2356,7 @@ def _install_release(
     temporary_identity = _require_private_dir(temporary_root, None, False)
     pyproject = _read_nofollow(source_root / "pyproject.toml").decode("utf-8")
     init_text = _read_nofollow(source_root / "src/codex_usage/__init__.py").decode("utf-8")
-    if 'version = "0.6.532"' not in pyproject or '__version__ = "0.6.532"' not in init_text:
+    if 'version = "0.6.533"' not in pyproject or '__version__ = "0.6.533"' not in init_text:
         _fail()
     source_manifest = _rehash_source_manifest(source_root)
     source_manifest_digest = _source_digest(source_manifest)
@@ -2586,12 +2587,19 @@ def _install_release(
                 if active_stat.st_nlink != 1 or stat.S_IMODE(active_stat.st_mode) != 0o600:
                     _fail()
                 _revalidate_bootstrap(state_home, app_identity, integration_identity)
-                _verify_manifest(
-                    manifest_path=active_path,
-                    state_home=state_home,
-                    data_home=data_home,
-                    expected_entrypoint_path=None,
-                )
+                try:
+                    _verify_manifest(
+                        manifest_path=active_path,
+                        state_home=state_home,
+                        data_home=data_home,
+                        expected_entrypoint_path=None,
+                    )
+                except IntegrationAttestationUnavailable:
+                    _verify_legacy_manifest_for_upgrade(
+                        manifest_path=active_path,
+                        state_home=state_home,
+                        data_home=data_home,
+                    )
                 _revalidate_bootstrap(state_home, app_identity, integration_identity)
                 write_private_text(
                     integration / PREVIOUS_NAME,

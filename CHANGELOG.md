@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.533 - 2026-08-24
+
+### Changed
+
+- Attestierter Integration-Producer atomar auf Dokument- und Manifestschema 2
+  umgestellt; Projekt, Wheel, Dist-Info, Launcher und Releasebaum tragen
+  gemeinsam Version 0.6.533.
+- Runtime und Rollback akzeptieren nur Schema 2. Ein vollständig attestierter
+  0.6.532-/Schema-1-Release darf einmalig als nicht reaktivierbare
+  Upgradequelle erhalten bleiben.
+- V2-Dokumentvertrag, EMA60-, Reset-, Coverage-, Freshness-, Pool-, Fehlercode-
+  und verifiziertes Releaseverfahren vollständig dokumentiert.
+
 ## 0.6.532 - 2026-08-16
 ### Added
 - Die Warnungstabelle aktualisiert `Spark %` nach jedem Usage-Refresh; sicher
