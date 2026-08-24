@@ -1328,7 +1328,7 @@ def _write_launcher_state(data_home: Path) -> None:
     )
 
 
-def test_temporary_launcher_emits_schema1_from_temporary_state(tmp_path):
+def test_temporary_launcher_emits_schema2_from_temporary_state(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     _write_launcher_state(data_home)
     completed = subprocess.run(
@@ -1336,7 +1336,7 @@ def test_temporary_launcher_emits_schema1_from_temporary_state(tmp_path):
             str(release.launcher_path),
             "integration-snapshot",
             "--schema",
-            "1",
+            "2",
             "--format",
             "json",
         ],
@@ -1349,7 +1349,7 @@ def test_temporary_launcher_emits_schema1_from_temporary_state(tmp_path):
     )
     assert completed.returncode == 0
     payload = json.loads(completed.stdout)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert "never-exported-label" not in completed.stdout
     assert "backend" not in completed.stdout
     assert completed.stderr == ""
@@ -1414,7 +1414,7 @@ def test_temporary_launcher_keeps_final_release_tree_and_attestation_unchanged(t
             str(release.launcher_path),
             "integration-snapshot",
             "--schema",
-            "1",
+            "2",
             "--format",
             "json",
         ],
@@ -4224,7 +4224,7 @@ def test_launcher_drops_marker_environment_before_runtime(tmp_path):
             str(release.launcher_path),
             "integration-snapshot",
             "--schema",
-            "1",
+            "2",
             "--format",
             "json",
         ],
@@ -4242,7 +4242,7 @@ def test_launcher_drops_marker_environment_before_runtime(tmp_path):
         timeout=5,
     )
     assert completed.returncode == 0
-    assert json.loads(completed.stdout)["schema_version"] == 1
+    assert json.loads(completed.stdout)["schema_version"] == 2
     assert completed.stderr == ""
 
 
