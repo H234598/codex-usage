@@ -3,27 +3,22 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-from .consumption import ConsumptionWindow, calculate_consumption
-from .history import (
-    CREDIT_HISTORY_WINDOW_SECONDS,
-    MAX_CONSUMPTION_WINDOWS,
-    HistoryStore,
-)
+from .history import HistoryStore, usage_samples_from_usage
 from .integration_snapshot import (
     IntegrationSnapshotError,
     IntegrationUnavailable,
-    build_schema1_document,
-    publish_schema1_cache,
+    build_schema2_document,
+    publish_schema2_cache,
     read_current_usage_records,
-    serialize_schema1_document,
+    serialize_schema2_document,
 )
 from .private_io import private_path_lock
 
-_EXPECTED_ARGV = ("integration-snapshot", "--schema", "1", "--format", "json")
+_EXPECTED_ARGV = ("integration-snapshot", "--schema", "2", "--format", "json")
 _ERROR_TOKENS = {
     64: b"integration_snapshot_invalid_arguments\n",
     65: b"integration_snapshot_invalid_source\n",
@@ -150,15 +145,15 @@ def execute(
             verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
             generated_at = _require_aware_utc(clock())
             usages = read_current_usage_records(paths.current_dir)
-            costs = _load_cost_windows(paths.history_path, usages, generated_at)
-            document = build_schema1_document(
+            tracker_samples = _load_tracker_samples(paths.history_path, usages, generated_at)
+            document = build_schema2_document(
                 usages,
                 generated_at=generated_at,
-                cost_windows_by_account=costs or None,
+                tracker_samples=tracker_samples or None,
             )
-            payload = serialize_schema1_document(document)
+            payload = serialize_schema2_document(document)
             verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
-            publish_schema1_cache(payload, cache_path=paths.cache_path)
+            publish_schema2_cache(payload, cache_path=paths.cache_path)
         return CommandResult(0, payload, b"")
     except IntegrationSnapshotError as exc:
         return _error_result(exc.exit_code)
@@ -170,74 +165,28 @@ def execute(
         return _error_result(69)
 
 
-def _load_cost_windows(
+def _load_tracker_samples(
     history_path: Path,
     usages: tuple,
     now: datetime,
-) -> dict[str, tuple[ConsumptionWindow, ...]]:
+) -> dict[tuple[str, str, int], tuple]:
     if not history_path.is_file():
         return {}
-    try:
-        lookback_start = now - timedelta(hours=1)
-    except (OverflowError, TypeError, ValueError) as exc:
-        raise ValueError("now is out of range") from exc
-    result: dict[str, tuple[ConsumptionWindow, ...]] = {}
+    result: dict[tuple[str, str, int], tuple] = {}
     with HistoryStore(history_path) as store:
         for usage in usages:
-            windows: list[ConsumptionWindow] = []
-            stored_durations = store.consumption_window_seconds(
-                usage.account_id,
-                pool="main",
-                start=lookback_start,
-                end=now,
-            )
-            durations = tuple(
-                dict.fromkeys(
-                    (
-                        18_000,
-                        604_800,
-                        CREDIT_HISTORY_WINDOW_SECONDS,
-                        *stored_durations,
-                    )
-                )
-            )[:MAX_CONSUMPTION_WINDOWS]
-            for duration in durations:
-                samples = store.samples_for_consumption(
-                    usage.account_id,
-                    pool="main",
-                    window_seconds=duration,
-                    start=lookback_start,
+            for sample in usage_samples_from_usage(usage):
+                key = (sample.account_id, sample.pool, sample.window_seconds)
+                if key in result:
+                    continue
+                samples = store.samples(
+                    sample.account_id,
+                    pool=sample.pool,
+                    window_seconds=sample.window_seconds,
                     end=now,
                 )
-                cost = calculate_consumption(
-                    samples,
-                    amount=1,
-                    unit="hours",
-                    now=now,
-                )
-                if cost.limit_window_seconds == 0:
-                    cost = replace(cost, limit_window_seconds=duration)
-                windows.append(cost)
-            credit = getattr(usage, "credits", None)
-            if credit is not None:
-                duration = credit.duration_seconds or CREDIT_HISTORY_WINDOW_SECONDS
-                samples = store.samples_for_consumption(
-                    usage.account_id,
-                    pool="credits",
-                    window_seconds=duration,
-                    start=lookback_start,
-                    end=now,
-                )
-                cost = calculate_consumption(
-                    samples,
-                    amount=1,
-                    unit="hours",
-                    now=now,
-                )
-                if cost.limit_window_seconds == 0:
-                    cost = replace(cost, pool="credits", limit_window_seconds=duration)
-                windows.append(cost)
-            result[usage.account_id] = tuple(windows)
+                if samples:
+                    result[key] = samples
     return result
 
 

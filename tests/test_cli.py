@@ -117,13 +117,13 @@ def test_integration_snapshot_rejects_symlinked_cache_parent_before_chmod(
     monkeypatch.setattr(cli_module, "read_current_usage_records", lambda _path: ())
     monkeypatch.setattr(
         cli_module,
-        "build_schema1_document",
+        "build_schema2_document",
         lambda *_args, **_kwargs: {},
     )
-    monkeypatch.setattr(cli_module, "serialize_schema1_document", lambda _document: b"{}")
+    monkeypatch.setattr(cli_module, "serialize_schema2_document", lambda _document: b"{}")
     monkeypatch.setattr(
         cli_module,
-        "publish_schema1_cache",
+        "publish_schema2_cache",
         lambda *_args, **_kwargs: pytest.fail("publish must not run"),
     )
 
@@ -4555,11 +4555,10 @@ def test_profile_delete_transaction_commit_and_rollback_edges(monkeypatch, tmp_p
 def test_cli_remaining_small_branches(monkeypatch, capsys, tmp_path):
     # Allow one polling sleep before job reaches terminal state.
     statuses = iter(("running", "completed"))
-    clock = iter((0.0, 0.0, 0.0))
     monkeypatch.setattr(cli_module, "list_profile_jobs", lambda _account: [{"job_id": "job", "status": "running"}])
     monkeypatch.setattr(cli_module, "cancel_profile_job", lambda _job: None)
     monkeypatch.setattr(cli_module, "profile_job_status", lambda _job: {"status": next(statuses)})
-    monkeypatch.setattr(cli_module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(cli_module.time, "monotonic", lambda: 0.0)
     monkeypatch.setattr(cli_module.time, "sleep", lambda _seconds: None)
     cli_module._cancel_account_profile_jobs("alpha")
 
@@ -4951,12 +4950,16 @@ def test_integration_snapshot_publishes_serialized_bytes(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_module, "default_state_dir", lambda: tmp_path / "state")
     monkeypatch.setattr(cli_module, "ensure_private_directory", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_module, "read_current_usage_records", lambda _path: ("usage",))
-    monkeypatch.setattr(cli_module, "build_schema1_document", lambda usages, generated_at: (usages, generated_at))
-    monkeypatch.setattr(cli_module, "serialize_schema1_document", lambda _doc: b'{"ok":true}')
+    monkeypatch.setattr(
+        cli_module,
+        "build_schema2_document",
+        lambda usages, generated_at: (usages, generated_at),
+    )
+    monkeypatch.setattr(cli_module, "serialize_schema2_document", lambda _doc: b'{"ok":true}')
     published = []
     monkeypatch.setattr(
         cli_module,
-        "publish_schema1_cache",
+        "publish_schema2_cache",
         lambda payload, *, cache_path: published.append((payload, cache_path)),
     )
 
@@ -4965,6 +4968,17 @@ def test_integration_snapshot_publishes_serialized_bytes(monkeypatch, tmp_path):
     ) == 0
     assert output.buffer.getvalue() == b'{"ok":true}\n'
     assert published == [(b'{"ok":true}', tmp_path / "state" / "integration" / "account-usage-v1.json")]
+
+
+def test_integration_snapshot_parser_accepts_only_schema_2():
+    parser = cli_module._build_parser()
+
+    args = parser.parse_args(["integration-snapshot", "--schema", "2", "--format", "json"])
+
+    assert args.schema == 2
+    with pytest.raises(SystemExit) as error:
+        parser.parse_args(["integration-snapshot", "--schema", "1", "--format", "json"])
+    assert error.value.code == 2
 
 
 def test_policy_and_spark_health_commands_cover_validation_and_outputs(monkeypatch, capsys):

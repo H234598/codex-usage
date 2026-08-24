@@ -8,7 +8,6 @@ import sys
 import types
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -20,7 +19,7 @@ from codex_usage.integration_snapshot import (
 )
 
 NOW = datetime(2026, 8, 15, 10, 5, tzinfo=UTC)
-ARGV = ("integration-snapshot", "--schema", "1", "--format", "json")
+ARGV = ("integration-snapshot", "--schema", "2", "--format", "json")
 
 
 @pytest.mark.parametrize("code", [True, 69.0, "69"])
@@ -58,7 +57,7 @@ def _clock_counter():
 
 
 def _payload() -> bytes:
-    return b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":1}'
+    return b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}'
 
 
 def _expected_entrypoint(tmp_path: Path) -> Path:
@@ -74,7 +73,7 @@ def test_execute_rejects_every_nonexact_argv_before_verifier_or_source(tmp_path)
 
     calls: list[str] = []
     result = execute(
-        ("integration-snapshot", "--schema", "2", "--format", "json"),
+        ("integration-snapshot", "--schema", "1", "--format", "json"),
         environ=_environment(tmp_path),
         clock=lambda: NOW,
         expected_entrypoint_path=_expected_entrypoint(tmp_path),
@@ -111,7 +110,7 @@ def test_execute_rejects_string_subclass_argv_before_comparison(tmp_path):
     argv = (
         BrokenStr("integration-snapshot"),
         "--schema",
-        "1",
+        "2",
         "--format",
         "json",
     )
@@ -173,18 +172,18 @@ def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeyp
     )
     monkeypatch.setattr(
         integration_entrypoint,
-        "build_schema1_document",
+        "build_schema2_document",
         lambda *args, **kwargs: events.append("build")
-        or {"schema_version": 1, "generated_at": "2026-08-15T10:05:00Z", "accounts": []},
+        or {"schema_version": 2, "generated_at": "2026-08-15T10:05:00Z", "accounts": []},
     )
     monkeypatch.setattr(
         integration_entrypoint,
-        "serialize_schema1_document",
+        "serialize_schema2_document",
         lambda _: events.append("serialize") or _payload(),
     )
     monkeypatch.setattr(
         integration_entrypoint,
-        "publish_schema1_cache",
+        "publish_schema2_cache",
         lambda payload, *, cache_path: events.append("publish"),
     )
 
@@ -396,27 +395,19 @@ def test_execute_rejects_clock_with_failing_tzinfo_before_source_read(tmp_path, 
     )
 
 
-def test_execute_normalizes_clock_before_dst_cost_lookback(tmp_path, monkeypatch):
+def test_execute_exports_tracker_evidence_from_bounded_history_series(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
     from codex_usage.history import HistoryStore, UsageSample
-    from codex_usage.models import AccountUsage
+    from codex_usage.models import AccountUsage, LimitWindow
 
     environ = _environment(tmp_path)
     paths = integration_entrypoint._runtime_paths(environ)
-    now = datetime(
-        2026,
-        10,
-        25,
-        2,
-        30,
-        tzinfo=ZoneInfo("Europe/Berlin"),
-        fold=1,
-    )
+    now = NOW
+    reset_at = now + timedelta(hours=2)
     points = (
-        (datetime(2026, 10, 24, 23, 30, tzinfo=UTC), 0),
-        (datetime(2026, 10, 25, 0, 30, tzinfo=UTC), 20),
-        (datetime(2026, 10, 25, 1, 0, tzinfo=UTC), 40),
-        (datetime(2026, 10, 25, 1, 30, tzinfo=UTC), 50),
+        (now - timedelta(minutes=30), 10),
+        (now - timedelta(minutes=15), 20),
+        (now, 30),
     )
     with HistoryStore(paths.history_path) as store:
         store.record_many(
@@ -427,6 +418,8 @@ def test_execute_normalizes_clock_before_dst_cost_lookback(tmp_path, monkeypatch
                     window_seconds=18_000,
                     captured_at=captured_at,
                     used_percent=used_percent,
+                    reset_at=reset_at,
+                    reset_generation=reset_at.isoformat(),
                     source="test",
                 )
                 for captured_at, used_percent in points
@@ -435,7 +428,10 @@ def test_execute_normalizes_clock_before_dst_cost_lookback(tmp_path, monkeypatch
     usage = AccountUsage(
         account_id="alpha",
         label="Alpha",
-        captured_at=now.astimezone(UTC),
+        captured_at=now,
+        five_hour=LimitWindow(
+            name="5h", remaining=70, reset_at=reset_at, duration_seconds=18_000
+        ),
     )
     monkeypatch.setattr(
         integration_entrypoint,
@@ -453,13 +449,11 @@ def test_execute_normalizes_clock_before_dst_cost_lookback(tmp_path, monkeypatch
 
     assert result.exit_code == 0
     document = json.loads(result.stdout)
-    short = next(
-        item
-        for item in document["accounts"][0]["cost_windows"]
-        if item["limit_window_seconds"] == 18_000
-    )
-    assert short["consumed_percentage_points"] == 30.0
-    assert short["sample_count"] == 3
+    evidence = document["accounts"][0]["tracker_evidence"]
+    assert evidence[0]["pool"] == "main"
+    assert evidence[0]["limit_window_seconds"] == 18_000
+    assert evidence[0]["sample_count"] == 3
+    assert evidence[0]["coverage"] == "complete"
 
 
 def test_execute_rejects_missing_or_relative_xdg_roots_before_lock(tmp_path):
@@ -498,181 +492,23 @@ def test_runtime_paths_use_only_the_two_absolute_xdg_roots(tmp_path):
     )
 
 
-def test_cost_window_loader_reads_history_from_data_root(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
-    from codex_usage.history import HistoryStore, UsageSample
-    from codex_usage.integration_entrypoint import _load_cost_windows, _runtime_paths
-
-    environ = _environment(tmp_path)
-    paths = _runtime_paths(environ)
-    data_history_path = Path(environ["XDG_DATA_HOME"]) / "codex-usage" / "usage-history.sqlite3"
-    captured_before = NOW - timedelta(minutes=30)
-    with HistoryStore(data_history_path) as store:
-        store.record(
-            UsageSample(
-                account_id="alpha",
-                pool="main",
-                window_seconds=18_000,
-                captured_at=captured_before,
-                used_percent=10,
-                source="test",
-            )
-        )
-        store.record(
-            UsageSample(
-                account_id="alpha",
-                pool="main",
-                window_seconds=18_000,
-                captured_at=NOW,
-                used_percent=20,
-                source="test",
-            )
-            )
-
-    def unexpected_samples(*args, **kwargs):
-        raise AssertionError("integration must use bounded history query")
-
-    monkeypatch.setattr(HistoryStore, "samples", unexpected_samples)
-    costs = _load_cost_windows(
-        paths.history_path,
-        (SimpleNamespace(account_id="alpha"),),
-        NOW,
-    )
-    assert costs["alpha"][0].consumed_percentage_points == 10
-    assert costs["alpha"][0].sample_count == 2
-
-
-def test_cost_window_loader_includes_monthly_and_stored_custom_windows(tmp_path):
-    from types import SimpleNamespace
-
-    from codex_usage.history import HistoryStore, UsageSample
-    from codex_usage.integration_entrypoint import _load_cost_windows
-
-    history_path = tmp_path / "usage-history.sqlite3"
-    with HistoryStore(history_path) as store:
-        store.record_many(
-            tuple(
-                UsageSample(
-                    account_id="alpha",
-                    pool="main",
-                    window_seconds=duration,
-                    captured_at=captured_at,
-                    used_percent=used_percent,
-                    source="test",
-                )
-                for duration in (2_592_000, 123_456)
-                for captured_at, used_percent in (
-                    (NOW - timedelta(minutes=30), 10),
-                    (NOW, 20),
-                )
-            )
-        )
-
-    costs = _load_cost_windows(
-        history_path,
-        (SimpleNamespace(account_id="alpha"),),
-        NOW,
-    )
-    by_duration = {
-        item.limit_window_seconds: item for item in costs["alpha"]
-    }
-    assert {18_000, 604_800, 2_592_000, 123_456} <= set(by_duration)
-    assert by_duration[2_592_000].consumed_percentage_points == 10
-    assert by_duration[123_456].consumed_percentage_points == 10
-
-
-def test_cost_window_loader_rejects_out_of_range_lookback(tmp_path):
-    from types import SimpleNamespace
-
-    from codex_usage.history import HistoryStore
-    from codex_usage.integration_entrypoint import _load_cost_windows
-
-    history_path = tmp_path / "usage-history.sqlite3"
-    with HistoryStore(history_path):
-        pass
-
-    with pytest.raises(ValueError, match="now is out of range"):
-        _load_cost_windows(
-            history_path,
-            (SimpleNamespace(account_id="alpha"),),
-            datetime.min.replace(tzinfo=UTC) + timedelta(seconds=3_599),
-        )
-
-
-def test_cost_window_loader_includes_credit_history(tmp_path):
-    from types import SimpleNamespace
-
-    from codex_usage.history import HistoryStore
-    from codex_usage.integration_entrypoint import _load_cost_windows
-
-    history_path = tmp_path / "usage-history.sqlite3"
-    with HistoryStore(history_path):
-        pass
-
-    usage = SimpleNamespace(
-        account_id="alpha",
-        credits=SimpleNamespace(duration_seconds=None),
-    )
-    costs = _load_cost_windows(history_path, (usage,), NOW)
-
-    assert "alpha" in costs
-    assert any(item.pool == "credits" for item in costs["alpha"])
-
-
-def test_cost_window_loader_preserves_credit_limit_window(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
-    from codex_usage import integration_entrypoint
-    from codex_usage.consumption import ConsumptionWindow
-    from codex_usage.history import HistoryStore
-
-    history_path = tmp_path / "usage-history.sqlite3"
-    with HistoryStore(history_path):
-        pass
-
-    monkeypatch.setattr(
-        integration_entrypoint,
-        "calculate_consumption",
-        lambda *_args, **_kwargs: ConsumptionWindow(
-            lookback_seconds=3_600,
-            pool="credits",
-            limit_window_seconds=123,
-            consumed_percentage_points=1,
-            coverage="full",
-            sample_count=2,
-        ),
-    )
-    usage = SimpleNamespace(
-        account_id="alpha",
-        credits=SimpleNamespace(duration_seconds=604_800),
-    )
-
-    costs = integration_entrypoint._load_cost_windows(history_path, (usage,), NOW)
-
-    assert any(
-        item.pool == "credits" and item.limit_window_seconds == 123
-        for item in costs["alpha"]
-    )
-
-
 def test_execute_does_not_publish_when_post_verifier_detects_drift(tmp_path, monkeypatch):
     from codex_usage import integration_entrypoint
 
     monkeypatch.setattr(integration_entrypoint, "read_current_usage_records", lambda _: ())
     monkeypatch.setattr(
         integration_entrypoint,
-        "build_schema1_document",
+        "build_schema2_document",
         lambda *args, **kwargs: {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at": "2026-08-15T10:05:00Z",
             "accounts": [],
         },
     )
-    monkeypatch.setattr(integration_entrypoint, "serialize_schema1_document", lambda _: _payload())
+    monkeypatch.setattr(integration_entrypoint, "serialize_schema2_document", lambda _: _payload())
     monkeypatch.setattr(
         integration_entrypoint,
-        "publish_schema1_cache",
+        "publish_schema2_cache",
         lambda *args, **kwargs: pytest.fail("cache publish"),
     )
     calls = 0

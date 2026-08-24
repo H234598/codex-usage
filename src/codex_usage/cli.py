@@ -58,10 +58,10 @@ from .direct import (
 from .health import clear_health, load_health, record_health_event
 from .history import HistoryStore
 from .integration_snapshot import (
-    build_schema1_document,
-    publish_schema1_cache,
+    build_schema2_document,
+    publish_schema2_cache,
     read_current_usage_records,
-    serialize_schema1_document,
+    serialize_schema2_document,
 )
 from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage
@@ -206,7 +206,7 @@ Historie und Limitverbrauch:
                            ema-80|ema-160|ema-320|ema-640]
                           [--pool POOL] [--limit-window short|weekly|monthly|spark|all]
                           [--path PATH] [--now ISO] [--format table|json] [--json]
-  codex-usage integration-snapshot --schema 1 --format json
+  codex-usage integration-snapshot --schema 2 --format json
                                    [--current-dir DIR] [--cache-path PATH]
 
 Profile und Auth-Migration:
@@ -676,9 +676,9 @@ def _build_parser() -> argparse.ArgumentParser:
     consumption.set_defaults(func=_cmd_consumption)
 
     snapshot = sub.add_parser(
-        "integration-snapshot", help="Sanitisiertes account-usage-v1 erzeugen"
+        "integration-snapshot", help="Sanitisiertes account-usage-v2 erzeugen"
     )
-    snapshot.add_argument("--schema", type=int, choices=(1,), default=1)
+    snapshot.add_argument("--schema", type=int, choices=(2,), default=2)
     snapshot.add_argument("--format", choices=("json",), default="json")
     snapshot.add_argument("--current-dir", type=Path)
     snapshot.add_argument("--cache-path", type=Path)
@@ -1253,9 +1253,9 @@ def _cmd_integration_snapshot(args: argparse.Namespace) -> int:
     cache_path = args.cache_path or (default_state_dir() / "integration" / "account-usage-v1.json")
     ensure_private_directory(cache_path.parent, label="integration cache directory")
     usages = read_current_usage_records(current_dir)
-    document = build_schema1_document(usages, generated_at=datetime.now(UTC))
-    payload = serialize_schema1_document(document)
-    publish_schema1_cache(payload, cache_path=cache_path)
+    document = build_schema2_document(usages, generated_at=datetime.now(UTC))
+    payload = serialize_schema2_document(document)
+    publish_schema2_cache(payload, cache_path=cache_path)
     sys.stdout.buffer.write(payload + b"\n")
     return 0
 
