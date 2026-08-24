@@ -1068,21 +1068,14 @@ def test_failed_active_restore_raises_cleanup_error_and_keeps_failure_evidence(
     )
     previous_before = previous_path.read_bytes()
     original_verify = integration_installer._verify_manifest
-    original_write = integration_installer.write_private_text
-    active_writes = 0
 
     def fail_final_active_attestation(*args, **kwargs):
         if kwargs["manifest_path"] == active_path:
             raise IntegrationAttestationUnavailable()
         return original_verify(*args, **kwargs)
 
-    def fail_active_restore(path, text, **kwargs):
-        nonlocal active_writes
-        if path == active_path:
-            active_writes += 1
-            if active_writes == 2:
-                raise OSError("synthetic restore failure")
-        return original_write(path, text, **kwargs)
+    def fail_active_restore(*_args, **_kwargs):
+        raise OSError("synthetic restore failure")
 
     monkeypatch.setattr(
         integration_installer,
@@ -1091,7 +1084,7 @@ def test_failed_active_restore_raises_cleanup_error_and_keeps_failure_evidence(
     )
     monkeypatch.setattr(
         integration_installer,
-        "write_private_text",
+        "_rollback_active_publish",
         fail_active_restore,
     )
     with pytest.raises(integration_installer.IntegrationCleanupError) as error:
@@ -1101,7 +1094,6 @@ def test_failed_active_restore_raises_cleanup_error_and_keeps_failure_evidence(
         )
 
     assert isinstance(error.value.__cause__, OSError)
-    assert active_writes == 2
     assert active_path.read_bytes() == previous_before
     assert active_path.read_bytes() != active_before
     assert previous_path.read_bytes() == previous_before
@@ -1178,18 +1170,27 @@ def test_post_swap_identity_capture_failure_restores_active_and_preserves_previo
         "_file_identity",
         fail_published_identity_capture,
     )
-    with pytest.raises(integration_installer.IntegrationInstallError):
+    expected_error = (
+        integration_installer.IntegrationInstallError
+        if capture_fault == "oserror"
+        else integration_installer.IntegrationCleanupError
+    )
+    with pytest.raises(expected_error):
         run_operation()
 
     assert fault_injected
-    assert active_path.read_bytes() == active_before
-    assert stat.S_IMODE(active_path.stat().st_mode) == 0o600
     assert previous_path.read_bytes() == previous_before
-    assert verify_active_release(
-        state_home=state_home,
-        data_home=data_home,
-        expected_entrypoint_path=release.entrypoint_path,
-    ) == release
+    if capture_fault == "oserror":
+        assert active_path.read_bytes() == active_before
+        assert stat.S_IMODE(active_path.stat().st_mode) == 0o600
+        assert verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        ) == release
+    else:
+        assert active_path.read_bytes() != active_before
+        assert stat.S_IMODE(active_path.stat().st_mode) == 0o644
 
 
 @pytest.mark.parametrize("operation", ["install", "rollback"])
@@ -1285,6 +1286,212 @@ def test_post_swap_active_inode_replacement_is_preserved_as_cleanup_evidence(
     assert (final_stat.st_dev, final_stat.st_ino) == replacement_inode
     assert raced_active is not None
     assert active_path.read_text(encoding="utf-8") == raced_active
+    assert previous_path.read_bytes() == previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_restore_boundary_inode_replacement_is_never_overwritten(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+
+    if operation == "install":
+        second_root = tmp_path / "restore-boundary-install"
+        second_root.mkdir(mode=0o700)
+        second_source = _temporary_source_copy(second_root)
+        second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+        second_entrypoint.write_bytes(
+            second_entrypoint.read_bytes() + b"\n# restore boundary release\n"
+        )
+        second_temporary = second_root / "temporary"
+        second_temporary.mkdir(mode=0o700)
+
+        def run_operation():
+            return integration_installer.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    else:
+
+        def run_operation():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    original_verify = integration_installer._verify_manifest
+    original_matches = integration_installer._provisional_matches
+    raced_active = '{"synthetic_restore_boundary_race":true}\n'
+    replacement_inode: tuple[int, int] | None = None
+    attestation_failed = False
+    replacement_injected = False
+
+    def fail_final_active_attestation(*args, **kwargs):
+        nonlocal attestation_failed
+        if (
+            kwargs["manifest_path"] == active_path
+            and active_path.read_bytes() != active_before
+            and not attestation_failed
+        ):
+            attestation_failed = True
+            raise IntegrationAttestationUnavailable()
+        return original_verify(*args, **kwargs)
+
+    def replace_immediately_after_restore_predicate(
+        path, identity, parent_identity, *, directory
+    ):
+        nonlocal replacement_injected, replacement_inode
+        result = original_matches(
+            path,
+            identity,
+            parent_identity,
+            directory=directory,
+        )
+        if (
+            path == active_path
+            and result
+            and attestation_failed
+            and not replacement_injected
+        ):
+            replacement_injected = True
+            write_private_text(
+                active_path,
+                raced_active,
+                label="synthetic restore-boundary active manifest",
+                mode=0o600,
+            )
+            replacement_stat = active_path.stat()
+            replacement_inode = (replacement_stat.st_dev, replacement_stat.st_ino)
+        return result
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_verify_manifest",
+        fail_final_active_attestation,
+    )
+    monkeypatch.setattr(
+        integration_installer,
+        "_provisional_matches",
+        replace_immediately_after_restore_predicate,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        run_operation()
+
+    assert attestation_failed
+    assert replacement_injected
+    assert replacement_inode is not None
+    final_stat = active_path.stat()
+    assert (final_stat.st_dev, final_stat.st_ino) == replacement_inode
+    assert active_path.read_text(encoding="utf-8") == raced_active
+    assert previous_path.read_bytes() == previous_before
+
+
+@pytest.mark.parametrize("operation", ["install", "rollback"])
+def test_capture_failure_never_adopts_byte_identical_replacement(
+    tmp_path, monkeypatch, operation
+):
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8") + "\n",
+        label="test previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+
+    if operation == "install":
+        second_root = tmp_path / "identical-capture-race-install"
+        second_root.mkdir(mode=0o700)
+        second_source = _temporary_source_copy(second_root)
+        second_entrypoint = second_source / "src/codex_usage/integration_snapshot.py"
+        second_entrypoint.write_bytes(
+            second_entrypoint.read_bytes() + b"\n# identical capture race release\n"
+        )
+        second_temporary = second_root / "temporary"
+        second_temporary.mkdir(mode=0o700)
+
+        def run_operation():
+            return integration_installer.install_release(
+                source_root=second_source,
+                state_home=state_home,
+                data_home=data_home,
+                python_executable=Path(sys.executable),
+                temporary_root=second_temporary,
+            )
+
+    else:
+
+        def run_operation():
+            return integration_installer.rollback_active_release(
+                state_home=state_home,
+                data_home=data_home,
+            )
+
+    original_file_identity = integration_installer._file_identity
+    replacement_inode: tuple[int, int] | None = None
+    replacement_text: str | None = None
+    replacement_injected = False
+
+    def replace_with_identical_bytes_during_capture(path):
+        nonlocal replacement_injected, replacement_inode, replacement_text
+        if (
+            path == active_path
+            and active_path.read_bytes() != active_before
+            and not replacement_injected
+        ):
+            replacement_injected = True
+            replacement_text = active_path.read_text(encoding="utf-8")
+            write_private_text(
+                active_path,
+                replacement_text,
+                label="synthetic byte-identical active replacement",
+                mode=0o600,
+            )
+            replacement_stat = active_path.stat()
+            replacement_inode = (replacement_stat.st_dev, replacement_stat.st_ino)
+            raise OSError("synthetic capture failure after identical replacement")
+        return original_file_identity(path)
+
+    monkeypatch.setattr(
+        integration_installer,
+        "_file_identity",
+        replace_with_identical_bytes_during_capture,
+    )
+    with pytest.raises(integration_installer.IntegrationCleanupError):
+        run_operation()
+
+    assert replacement_injected
+    assert replacement_inode is not None
+    final_stat = active_path.stat()
+    assert (final_stat.st_dev, final_stat.st_ino) == replacement_inode
+    assert replacement_text is not None
+    assert active_path.read_text(encoding="utf-8") == replacement_text
     assert previous_path.read_bytes() == previous_before
 
 

@@ -7,7 +7,10 @@ Repository-Installer extern aktiviert. Round-1-Finding zur fehlenden
 Post-Swap-Rücksicherung ist mit echten Install-/Rollback-Regressionen
 korrigiert. Round 2 bindet diese Rücksicherung zusätzlich an die tatsächlich
 publizierte Device-/Inode-Identity und schließt Capture-Fehler in den Guard
-ein. Der nach Round 1 vorgeschriebene erneute Installerlauf traf erwartbar
+ein. Round 3 beseitigt den verbleibenden Check-then-Act-Spalt: Published-
+Identity wird vor dem Publish gebunden; Restore verschiebt das aktuelle Target
+parent-fd-gebunden aus dem Active-Namen und entscheidet erst an der atomar
+verschobenen Inode. Der nach Round 1 vorgeschriebene erneute Installerlauf traf erwartbar
 den unveränderlichen, bereits aktiven identischen Runtime-Release; Details und
 Unverändertheitsnachweis stehen unten.
 
@@ -17,7 +20,10 @@ Unverändertheitsnachweis stehen unten.
 - Round-1-Fix: caller-seitige Active-Manifest-Transaktion in diesem
   Folgecommit `10d92033dd1f4f7ee2296e2e3d5c66bd5870dc64`
 - Round-2-Fix: Identity-Capture-/Replacement-Race-Härtung in diesem
-  Folgecommit; dessen SHA wird mit dem Agentenstatus zurückgegeben
+  Folgecommit `83d27b21a80ea3f5c6b07fc59d92553cfbefc91d`
+- Round-3-Fix: bedingte parent-fd-gebundene Active-Publish-/Rollback-
+  Transaktion in diesem Folgecommit; dessen SHA wird mit dem Agentenstatus
+  zurückgegeben
 - Projekt-/Producer-/Applet-Version: `0.6.533`
 - aktives Dokument-/Manifest-Schema: exakter Integer `2`
 - Finaler Vault-Handoffbericht: absichtlich noch nicht erzeugt. Finaler Commit,
@@ -53,19 +59,31 @@ Site-Packages-/Entry-Point-/Dist-Info-Bäume werden abgelehnt. Bestehende
 Owner-/Mode-/Link-/Device-/Inode-/Race-, RECORD-, Source-Drift-,
 Releasebaum- und atomare Publishprüfungen bleiben aktiv. Fehler vor dem
 Active-Swap erhalten die vorherige Generation. Der exakt getestete
-Post-Swap-Vertrag ist enger: Nach erfolgreich gebundener Published-Identity
-stellen Fehler vor Abschluss von finaler Attestierung und
-`previous.json`-Fortschreibung nur dann die vorherigen Active-Bytes wieder her,
-wenn der aktuelle Pfad noch dieselbe Device-/Inode-/Owner-/Type-/Mode-Identity
-hat. Bei Capture-`OSError` oder Capture-Modedrift wird die Rücksicherung nur
-fortgesetzt, wenn ein stabiler privater regulärer Pfad weiterhin bytegenau den
-publizierten Manifesttext enthält. Der wiederhergestellte Text wird bytegenau
-nachgelesen; `previous.json` bleibt unverändert. Weicht die Inode nach
-erfolgreicher Capture ab oder kann die unsichere Capture nicht sicher auf den
-publizierten Text zurückgebunden werden, wird nichts überschrieben: raced
-Replacement bleibt als Evidenz liegen und der Installer liefert bounded
-`IntegrationCleanupError`. Gleiches gilt, wenn die Rücksicherung selbst
-scheitert. Kein stärkerer Workaround folgt.
+Post-Swap-Vertrag ist exakt: Kandidatenbytes werden zuerst als private
+exklusive Datei erzeugt; ihre Device-/Inode-/Owner-/Type-/Mode-Identity ist
+damit vor dem Active-Publish bekannt. Vorhandenes Active wird unter gebundenem
+Parent-FD per `RENAME_NOREPLACE` in einen eindeutigen Prior-Namen verschoben und
+dort gegen die zuvor gelesene Identity geprüft. Erst danach wird die bekannte
+Kandidateninode per `RENAME_NOREPLACE` als Active veröffentlicht.
+
+Bei Fehler vor Abschluss von finaler Attestierung und
+`previous.json`-Fortschreibung ist ein vorheriges positives Pfadprädikat nur
+Preflight, nicht Autorität. Rollback verschiebt das aktuelle Active atomar per
+Parent-FD/`RENAME_NOREPLACE` in einen eindeutigen Evidence-Namen und prüft erst
+diese verschobene Inode gegen die vorab gebundene Published-Identity. Nur bei
+exaktem Device-/Inode-/Owner-/Type-/Mode-Match wird Prior zurück an den nun
+freien Active-Namen bewegt. Bei Mismatch wird die verschobene Fremdinode per
+`RENAME_NOREPLACE` zurückbewegt; sie wird nie per Path-Write überschrieben und
+bounded `IntegrationCleanupError` folgt. Dies gilt auch für byteidentische
+Fremdbytes und für Replacement exakt zwischen Preflight und finalem Rename.
+
+Ein reiner Capture-`OSError` bei unveränderter Published-Inode stellt Prior
+wieder her. Modedrift ist dagegen eine Identity-Abweichung und bleibt als
+Cleanup-Evidenz aktiv; sie wird nicht mehr still korrigiert. `previous.json`
+bleibt in allen getesteten Fehlerpfaden unverändert. Scheitert die
+Rücktransaktion selbst, bleiben die sicher benannten Inodes als Evidenz liegen
+und bounded Cleanup folgt. Kein advisory Lock wird als CAS-Ersatz behandelt;
+kein stärkerer Workaround folgt.
 
 ## Dokumentvertrag
 
@@ -190,6 +208,30 @@ obwohl die Operation einen Fehler meldete. In beiden Replacement-Fällen
 überschrieb die Round-1-Rücksicherung die raced Fremdinode; statt bounded
 Cleanup kam nur der ursprüngliche Installationsfehler zurück.
 
+### Round 3: finaler Restore-Boundary-Race
+
+Vier echte Abläufe decken Install und Rollback ab:
+
+- Fremdinode mit anderen Bytes wird exakt nach positivem Restore-Preflight und
+  damit an der finalen Replacement-Grenze eingesetzt.
+- Fremdinode mit byteidentischen publizierten Bytes wird während
+  `_file_identity`-Capture eingesetzt; unmittelbar danach schlägt Capture fehl.
+
+Published-/Replacement-Device/Inode werden getrennt festgehalten. Erwartung:
+bounded Cleanup, Replacement-Inode und -Bytes bleiben aktiv,
+`previous.json` bleibt bytegenau unverändert.
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py -k 'restore_boundary_inode_replacement or capture_failure_never_adopts_byte_identical_replacement'
+```
+
+Beobachtetes RED vor Produktfix:
+`4 failed, 237 deselected in 11.58s`.
+
+Die Boundary-Fälle überschrieben die Fremdinode nach dem positiven Prädikat.
+Die Capture-Fälle adoptierten die byteidentische Fremdinode als vermeintlich
+publizierte Identity und überschrieben sie beim anschließenden Restore.
+
 ## GREEN und Verifikation
 
 ### Enge GREEN-Zyklen
@@ -249,6 +291,21 @@ Revalidation: `11 passed, 226 deselected in 24.96s`.
 
 Finales Ergebnis nach Round-2-Fix:
 `582 passed, 1 warning in 124.87s`.
+
+Round-3 enger Transaktionsgate, einschließlich normaler Round-1-Rücksicherung,
+Round-2-Capture-/Replacement-Fälle und neuer Boundary-/byteidentischer Races:
+`15 passed, 226 deselected in 40.28s`.
+
+Round-3-Installer-Gate:
+
+```text
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -p no:cacheprovider -q tests/test_integration_installer.py
+```
+
+Ergebnis: `241 passed in 138.62s`.
+
+Finales kombiniertes Ergebnis nach Round-3-Fix:
+`586 passed, 1 warning in 137.73s`.
 
 Warnung: bestehender `runpy`-Hinweis in
 `tests/test_integration_entrypoint.py::test_module_main_guard_executes`, weil
@@ -393,6 +450,25 @@ Active-Bytehash, Runtime-Quelldigest, Release-ID und Previous-Abwesenheit sind
 gegenüber Round 1 unverändert. Keine Auth-/Token-/Account-/Historydaten wurden
 ausgegeben.
 
+### Round-3-Read-only-Aktivnachweis
+
+Round 3 ändert weiterhin nur Host-Installer, Installer-Tests und Report;
+Runtime-Source-Manifest bleibt unverändert. Kein Live-Reinstall. Bounded
+read-only Nachprüfung nach allen Round-3-Gates ergab erneut exakt:
+
+```text
+attestation=verified
+schema_version=2
+version=0.6.533
+release_id=0.6.533-d929d7fcf4976ac7
+active_manifest_sha256=a0f659660573a1b159fa448a89f78fd5e99203f06e23ade09b855a25cec006d5
+previous=absent
+installer_in_runtime_source_manifest=false
+checkout_source_manifest_sha256=d929d7fcf4976ac79fa067384090711a2444165f1082da840e8612c953b52f3a
+active_source_manifest_sha256=d929d7fcf4976ac79fa067384090711a2444165f1082da840e8612c953b52f3a
+source_digests_equal=true
+```
+
 ## Geänderte Repositorydateien
 
 - `CHANGELOG.md`
@@ -425,14 +501,14 @@ umgeschrieben.
   Assertionstest.
 - Pfaddrifttests recomputen bewusst Einzel-/Baumhashes. Sie beweisen den
   Pfadvertrag statt bloß Konstantentext zu prüfen.
-- Echte Post-Swap-Install- und Rollbackfehler stellen `active.json` bytegenau
-  nur unter der oben dokumentierten Identity-/Textbindung wieder her und
-  ändern `previous.json` nicht. Capture-`OSError` und Modedrift werden innerhalb
-  des Guards sicher auf den noch vorhandenen publizierten Text zurückgebunden.
-  Replacement nach erfolgreicher Capture wird anhand Device/Inode erkannt,
-  nicht überschrieben und als Cleanup-Evidenz erhalten. Scheitert die atomare
-  Active-Rücksicherung selbst, folgt ebenfalls bounded Cleanup; Previous bleibt
-  unberührt. Existierende Race-/Mode-/Owner-/Link-Tests blieben grün.
+- Echte Post-Swap-Install- und Rollbackfehler stellen Prior nur wieder her,
+  wenn die atomar aus dem Active-Namen verschobene Inode exakt der vor Publish
+  gebundenen Kandidatenidentity entspricht. Reiner Capture-`OSError` stellt
+  wieder her; Modedrift, post-Capture-Replacement, byteidentisches Replacement
+  während Capture und Replacement nach positivem Preflight werden nicht
+  überschrieben und führen zu bounded Cleanup. `previous.json` bleibt
+  unberührt. Normaler Post-Attestierungsfehler stellt weiterhin bytegenau die
+  alte Generation her. Existierende Race-/Mode-/Owner-/Link-Tests blieben grün.
 - Dokumentgoldenwert ist handabgeleitet, nicht mit Produkthelpern erzeugt.
 - Kein Final-Vault-Handoffreport erstellt. Keine unabhängige Review vorgetäuscht.
 

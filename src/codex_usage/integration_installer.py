@@ -142,6 +142,14 @@ class _ProvisionalIdentity:
     permissions: int
 
 
+@dataclass(frozen=True)
+class _ActiveManifestPublish:
+    active_path: Path
+    published_identity: _ProvisionalIdentity
+    prior_path: Path | None
+    prior_identity: _ProvisionalIdentity | None
+
+
 class _WheelMemberValidationError(IntegrationInstallError):
     def __init__(self, reason: str):
         if reason not in {
@@ -797,98 +805,276 @@ def _revalidate_bootstrap(
             _fail()
 
 
-def _restore_active_manifest(
-    *,
-    active_path: Path,
-    active_text: str,
-    expected_published_identity: _ProvisionalIdentity,
-    state_home: Path,
-    app_identity: _DirectoryIdentity,
+def _open_bound_parent_fd(
+    path: Path,
+    parent_identity: _DirectoryIdentity,
+) -> int:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    fd = -1
+    try:
+        _no_symlink_ancestors(path)
+        fd = os.open(path, flags)
+        item = os.fstat(fd)
+        if (
+            not stat.S_ISDIR(item.st_mode)
+            or item.st_uid != os.getuid()
+            or _DirectoryIdentity(
+                item.st_dev,
+                item.st_ino,
+                stat.S_IMODE(item.st_mode),
+            )
+            != parent_identity
+        ):
+            _fail()
+        return fd
+    except Exception:
+        if fd >= 0:
+            os.close(fd)
+        raise
+
+
+def _provisional_from_file_identity(identity: _FileIdentity) -> _ProvisionalIdentity:
+    return _ProvisionalIdentity(
+        identity.device,
+        identity.inode,
+        os.getuid(),
+        stat.S_IFREG,
+        identity.permissions,
+    )
+
+
+def _entry_matches_at(
+    parent_fd: int,
+    name: str,
+    expected: _ProvisionalIdentity,
+) -> bool:
+    try:
+        item = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(item.st_mode)
+        and item.st_nlink == 1
+        and item.st_uid == os.getuid()
+        and _provisional_from_stat(item) == expected
+    )
+
+
+def _transaction_path(active_path: Path, label: str) -> Path:
+    return active_path.with_name(
+        f".{active_path.name}.{label}-{os.getpid()}-{secrets.token_hex(8)}"
+    )
+
+
+def _rollback_active_publish_at(
+    publish: _ActiveManifestPublish,
     integration_identity: _DirectoryIdentity,
-) -> None:
-    _revalidate_bootstrap(state_home, app_identity, integration_identity)
+    parent_fd: int,
+) -> bool:
+    active_path = publish.active_path
+    evidence_path = _transaction_path(active_path, "failed")
     if not _provisional_matches(
         active_path,
-        expected_published_identity,
+        publish.published_identity,
         integration_identity,
         directory=False,
     ):
-        _fail()
-    write_private_text(
-        active_path,
-        active_text,
-        label="active integration manifest",
-        mode=0o600,
-    )
-    _revalidate_bootstrap(state_home, app_identity, integration_identity)
-    restored_text, restored_stat = read_private_text(
-        active_path,
-        regular_label="active manifest",
-        read_label="active manifest",
-        max_bytes=128 * 1024,
-    )
-    if (
-        restored_text != active_text
-        or restored_stat.st_nlink != 1
-        or stat.S_IMODE(restored_stat.st_mode) != 0o600
-    ):
-        _fail()
+        return False
+    try:
+        _rename_noreplace(active_path.name, evidence_path.name, parent_fd)
+        if not _entry_matches_at(
+            parent_fd,
+            evidence_path.name,
+            publish.published_identity,
+        ):
+            _rename_noreplace(evidence_path.name, active_path.name, parent_fd)
+            os.fsync(parent_fd)
+            return False
+        if publish.prior_path is not None:
+            if publish.prior_identity is None:
+                return False
+            _rename_noreplace(
+                publish.prior_path.name,
+                active_path.name,
+                parent_fd,
+            )
+            if not _entry_matches_at(
+                parent_fd,
+                active_path.name,
+                publish.prior_identity,
+            ):
+                return False
+        os.unlink(evidence_path.name, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        return True
+    except (IntegrationInstallError, OSError, ValueError):
+        return False
 
 
-def _published_active_identity(
+def _rollback_active_publish(
+    publish: _ActiveManifestPublish,
+    integration_identity: _DirectoryIdentity,
+) -> bool:
+    parent_fd = -1
+    try:
+        parent_fd = _open_bound_parent_fd(
+            publish.active_path.parent,
+            integration_identity,
+        )
+        return _rollback_active_publish_at(
+            publish,
+            integration_identity,
+            parent_fd,
+        )
+    except (IntegrationInstallError, OSError, ValueError):
+        return False
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def _begin_active_publish(
     *,
     active_path: Path,
     published_text: str,
+    prior_identity: _ProvisionalIdentity | None,
     integration_identity: _DirectoryIdentity,
-) -> _ProvisionalIdentity:
-    strict_identity = _file_identity(active_path)
+) -> _ActiveManifestPublish:
+    candidate_path = _transaction_path(active_path, "publish")
+    prior_path = (
+        _transaction_path(active_path, "prior")
+        if prior_identity is not None
+        else None
+    )
+    candidate_file_identity = _write_exclusive(
+        candidate_path,
+        published_text.encode("utf-8"),
+        mode=0o600,
+        parent_identity=integration_identity,
+    )
+    published_identity = _provisional_from_file_identity(candidate_file_identity)
+    parent_fd = -1
+    prior_moved = False
+    published = False
+    publish_record = _ActiveManifestPublish(
+        active_path=active_path,
+        published_identity=published_identity,
+        prior_path=prior_path,
+        prior_identity=prior_identity,
+    )
+    try:
+        parent_fd = _open_bound_parent_fd(active_path.parent, integration_identity)
+        if prior_path is not None:
+            if not _provisional_matches(
+                active_path,
+                prior_identity,
+                integration_identity,
+                directory=False,
+            ):
+                _fail()
+            _rename_noreplace(active_path.name, prior_path.name, parent_fd)
+            prior_moved = True
+            if not _entry_matches_at(parent_fd, prior_path.name, prior_identity):
+                _rename_noreplace(prior_path.name, active_path.name, parent_fd)
+                prior_moved = False
+                _fail()
+        else:
+            try:
+                os.stat(active_path.name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                _fail()
+        _rename_noreplace(candidate_path.name, active_path.name, parent_fd)
+        published = True
+        if not _entry_matches_at(parent_fd, active_path.name, published_identity):
+            _fail()
+        os.fsync(parent_fd)
+        return publish_record
+    except Exception as publish_error:
+        recovery_ok = True
+        if published:
+            recovery_ok = _rollback_active_publish_at(
+                publish_record,
+                integration_identity,
+                parent_fd,
+            )
+        elif prior_moved and prior_path is not None:
+            try:
+                _rename_noreplace(prior_path.name, active_path.name, parent_fd)
+                recovery_ok = _entry_matches_at(
+                    parent_fd,
+                    active_path.name,
+                    prior_identity,
+                )
+                os.fsync(parent_fd)
+            except (IntegrationInstallError, OSError, ValueError):
+                recovery_ok = False
+        if not published and not _cleanup_provisional(
+            candidate_path,
+            published_identity,
+            integration_identity,
+            directory=False,
+        ):
+            recovery_ok = False
+        if not recovery_ok:
+            raise IntegrationCleanupError() from publish_error
+        raise
+    finally:
+        if parent_fd >= 0:
+            os.close(parent_fd)
+
+
+def _validate_active_publish(
+    *,
+    publish: _ActiveManifestPublish,
+    published_text: str,
+    integration_identity: _DirectoryIdentity,
+) -> None:
+    strict_identity = _file_identity(publish.active_path)
     current_text, current_stat = read_private_text(
-        active_path,
+        publish.active_path,
         regular_label="active manifest",
         read_label="active manifest",
         max_bytes=128 * 1024,
     )
-    identity = _provisional_from_stat(current_stat)
+    current_identity = _provisional_from_stat(current_stat)
     if (
         current_text != published_text
-        or identity.device != strict_identity.device
-        or identity.inode != strict_identity.inode
-        or identity.permissions != strict_identity.permissions
+        or current_identity != publish.published_identity
+        or strict_identity.device != publish.published_identity.device
+        or strict_identity.inode != publish.published_identity.inode
+        or strict_identity.permissions != publish.published_identity.permissions
         or not _provisional_matches(
-            active_path,
-            identity,
+            publish.active_path,
+            publish.published_identity,
             integration_identity,
             directory=False,
         )
     ):
         _fail()
-    return identity
 
 
-def _recover_uncaptured_active_identity(
-    *,
-    active_path: Path,
-    published_text: str,
-    state_home: Path,
-    app_identity: _DirectoryIdentity,
+def _commit_active_publish(
+    publish: _ActiveManifestPublish,
     integration_identity: _DirectoryIdentity,
-) -> _ProvisionalIdentity:
-    _revalidate_bootstrap(state_home, app_identity, integration_identity)
-    current_text, current_stat = read_private_text(
-        active_path,
-        regular_label="active manifest",
-        read_label="active manifest",
-        max_bytes=128 * 1024,
-    )
-    identity = _provisional_from_stat(current_stat)
-    if current_text != published_text or not _provisional_matches(
-        active_path,
-        identity,
-        integration_identity,
-        directory=False,
+) -> None:
+    if publish.prior_path is not None and (
+        publish.prior_identity is None
+        or not _cleanup_provisional(
+            publish.prior_path,
+            publish.prior_identity,
+            integration_identity,
+            directory=False,
+        )
     ):
-        _fail()
-    return identity
+        raise IntegrationCleanupError()
 
 
 def _copy_regular(
@@ -2672,6 +2858,7 @@ def _install_release(
             )
             active_path = integration / ACTIVE_NAME
             active_text: str | None = None
+            active_identity: _ProvisionalIdentity | None = None
             if active_path.exists() or active_path.is_symlink():
                 active_text, active_stat = read_private_text(
                     active_path,
@@ -2681,6 +2868,7 @@ def _install_release(
                 )
                 if active_stat.st_nlink != 1 or stat.S_IMODE(active_stat.st_mode) != 0o600:
                     _fail()
+                active_identity = _provisional_from_stat(active_stat)
                 _revalidate_bootstrap(state_home, app_identity, integration_identity)
                 try:
                     _verify_manifest(
@@ -2697,16 +2885,15 @@ def _install_release(
                     )
             published_text = _manifest_text(candidate)
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
-            write_private_text(
-                active_path,
-                published_text,
-                label="active integration manifest",
-                mode=0o600,
+            publish = _begin_active_publish(
+                active_path=active_path,
+                published_text=published_text,
+                prior_identity=active_identity,
+                integration_identity=integration_identity,
             )
-            published_identity: _ProvisionalIdentity | None = None
             try:
-                published_identity = _published_active_identity(
-                    active_path=active_path,
+                _validate_active_publish(
+                    publish=publish,
                     published_text=published_text,
                     integration_identity=integration_identity,
                 )
@@ -2731,39 +2918,16 @@ def _install_release(
                     )
             except Exception as publish_error:
                 try:
-                    if published_identity is None:
-                        published_identity = _recover_uncaptured_active_identity(
-                            active_path=active_path,
-                            published_text=published_text,
-                            state_home=state_home,
-                            app_identity=app_identity,
-                            integration_identity=integration_identity,
-                        )
-                    if active_text is None:
-                        _revalidate_bootstrap(
-                            state_home,
-                            app_identity,
-                            integration_identity,
-                        )
-                        if not _cleanup_provisional(
-                            active_path,
-                            published_identity,
-                            integration_identity,
-                            directory=False,
-                        ):
-                            _fail()
-                    else:
-                        _restore_active_manifest(
-                            active_path=active_path,
-                            active_text=active_text,
-                            expected_published_identity=published_identity,
-                            state_home=state_home,
-                            app_identity=app_identity,
-                            integration_identity=integration_identity,
-                        )
+                    restored = _rollback_active_publish(
+                        publish,
+                        integration_identity,
+                    )
                 except Exception as restore_error:
                     raise IntegrationCleanupError() from restore_error
+                if not restored:
+                    raise IntegrationCleanupError() from publish_error
                 raise publish_error
+            _commit_active_publish(publish, integration_identity)
             return verified
     except IntegrationInstallError:
         raise
@@ -2857,9 +3021,9 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             previous = integration / PREVIOUS_NAME
             active = integration / ACTIVE_NAME
-            active_text: str | None = None
+            active_identity: _ProvisionalIdentity | None = None
             if active.exists() or active.is_symlink():
-                active_text, active_stat = read_private_text(
+                _, active_stat = read_private_text(
                     active,
                     regular_label="active manifest",
                     read_label="active manifest",
@@ -2870,6 +3034,7 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
                     or stat.S_IMODE(active_stat.st_mode) != 0o600
                 ):
                     _fail()
+                active_identity = _provisional_from_stat(active_stat)
             previous_text, previous_stat = read_private_text(
                 previous,
                 regular_label="previous integration manifest",
@@ -2886,16 +3051,15 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
                 expected_entrypoint_path=None,
             )
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
-            write_private_text(
-                active,
-                previous_text,
-                label="active integration manifest",
-                mode=0o600,
+            publish = _begin_active_publish(
+                active_path=active,
+                published_text=previous_text,
+                prior_identity=active_identity,
+                integration_identity=integration_identity,
             )
-            published_identity: _ProvisionalIdentity | None = None
             try:
-                published_identity = _published_active_identity(
-                    active_path=active,
+                _validate_active_publish(
+                    publish=publish,
                     published_text=previous_text,
                     integration_identity=integration_identity,
                 )
@@ -2908,39 +3072,16 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
                 )
             except Exception as publish_error:
                 try:
-                    if published_identity is None:
-                        published_identity = _recover_uncaptured_active_identity(
-                            active_path=active,
-                            published_text=previous_text,
-                            state_home=state_home,
-                            app_identity=app_identity,
-                            integration_identity=integration_identity,
-                        )
-                    if active_text is None:
-                        _revalidate_bootstrap(
-                            state_home,
-                            app_identity,
-                            integration_identity,
-                        )
-                        if not _cleanup_provisional(
-                            active,
-                            published_identity,
-                            integration_identity,
-                            directory=False,
-                        ):
-                            _fail()
-                    else:
-                        _restore_active_manifest(
-                            active_path=active,
-                            active_text=active_text,
-                            expected_published_identity=published_identity,
-                            state_home=state_home,
-                            app_identity=app_identity,
-                            integration_identity=integration_identity,
-                        )
+                    restored = _rollback_active_publish(
+                        publish,
+                        integration_identity,
+                    )
                 except Exception as restore_error:
                     raise IntegrationCleanupError() from restore_error
+                if not restored:
+                    raise IntegrationCleanupError() from publish_error
                 raise publish_error
+            _commit_active_publish(publish, integration_identity)
             return release
     except IntegrationInstallError:
         raise
