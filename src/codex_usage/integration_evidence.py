@@ -111,6 +111,11 @@ class _HeldEvidenceLocks:
     depth: int = 1
 
 
+@dataclass
+class _PublicationCommitState:
+    committed: bool = False
+
+
 class IntegrationBusy(IntegrationEvidenceError):
     pass
 
@@ -388,6 +393,15 @@ def _validate_directory(item: os.stat_result) -> None:
         raise IntegrationEvidenceInvalid()
 
 
+def _close_fds(*fds: int) -> None:
+    for fd in fds:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def _open_lock_root(*, create: bool) -> int:
     lock_root = private_io._private_lock_root()
     if create:
@@ -432,8 +446,7 @@ def _open_lock_root(*, create: bool) -> int:
             raise IntegrationEvidenceInvalid() from exc
         raise IntegrationEvidenceUnavailable() from exc
     finally:
-        if fd >= 0:
-            os.close(fd)
+        _close_fds(fd)
 
 
 def _open_lock_file(lock_root_fd: int, name: str, *, create: bool) -> int:
@@ -472,11 +485,11 @@ def _open_lock_file(lock_root_fd: int, name: str, *, create: bool) -> int:
         return fd
     except IntegrationEvidenceError:
         if "fd" in locals():
-            os.close(fd)
+            _close_fds(fd)
         raise
     except OSError as exc:
         if "fd" in locals():
-            os.close(fd)
+            _close_fds(fd)
         if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
             raise IntegrationEvidenceInvalid() from exc
         raise IntegrationEvidenceUnavailable() from exc
@@ -530,8 +543,7 @@ def _verify_held_lock_entry(lock_root_fd: int, name: str, held_fd: int) -> None:
         ):
             raise IntegrationEvidenceInvalid()
     finally:
-        if named_fd >= 0:
-            os.close(named_fd)
+        _close_fds(named_fd)
 
 
 def _verify_held_lock_namespace(
@@ -557,8 +569,7 @@ def _verify_held_lock_namespace(
         _verify_held_lock_entry(fresh_root_fd, release_name, release_fd)
         _verify_held_lock_entry(fresh_root_fd, current_name, current_fd)
     finally:
-        if fresh_root_fd >= 0:
-            os.close(fresh_root_fd)
+        _close_fds(fresh_root_fd)
 
 
 def _release_lock(fd: int) -> None:
@@ -566,7 +577,7 @@ def _release_lock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
     except OSError:
         pass
-    os.close(fd)
+    _close_fds(fd)
 
 
 def _fd_identity(fd: int) -> FileIdentity:
@@ -591,12 +602,7 @@ def _verify_lock_target_parent(state_home: Path) -> tuple[FileIdentity, FileIden
     except ValueError as exc:
         raise IntegrationEvidenceInvalid() from exc
     finally:
-        if integration_fd >= 0:
-            os.close(integration_fd)
-        if app_fd >= 0:
-            os.close(app_fd)
-        if state_fd >= 0:
-            os.close(state_fd)
+        _close_fds(integration_fd, app_fd, state_fd)
     return state_identity, integration_identity
 
 
@@ -618,11 +624,7 @@ def _matches_held_lock_set(
         current_fd = _open_lock_file(root_fd, current_name, create=False)
         return _fd_identity(current_fd) == held_set.current_identity
     finally:
-        if current_fd >= 0:
-            os.close(current_fd)
-        if release_fd >= 0:
-            os.close(release_fd)
-        os.close(root_fd)
+        _close_fds(current_fd, release_fd, root_fd)
 
 
 @contextmanager
@@ -710,7 +712,7 @@ def evidence_lock_set(
                 _acquire_lock(fd, mode=mode, deadline=deadline)
                 _verify_held_lock_entry(root_fd, lock_name, fd)
             except Exception:
-                os.close(fd)
+                _close_fds(fd)
                 raise
             acquired.append((logical_name, fd))
             acquired_identities[logical_name] = _fd_identity(fd)
@@ -744,7 +746,7 @@ def evidence_lock_set(
             held_sets.remove(held_set)
         for _, fd in reversed(acquired):
             _release_lock(fd)
-        os.close(root_fd)
+        _close_fds(root_fd)
 
 
 def _require_verified_manifest(value: object) -> VerifiedActiveManifest:
@@ -787,15 +789,27 @@ def _open_evidence_parents(state_home: Path) -> tuple[int, int, int, int]:
     except OSError as exc:
         raise IntegrationEvidenceUnavailable() from exc
     finally:
-        for fd in (generations_fd, integration_fd, app_fd, state_fd):
-            if fd >= 0:
-                os.close(fd)
+        _close_fds(generations_fd, integration_fd, app_fd, state_fd)
 
 
-def _close_fds(*fds: int) -> None:
-    for fd in fds:
-        if fd >= 0:
-            os.close(fd)
+@contextmanager
+def _publication_lock_set(
+    *,
+    state_home: Path,
+    commit_state: _PublicationCommitState,
+) -> Iterator[None]:
+    try:
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="exclusive",
+            current_mode="exclusive",
+            timeout_seconds=0,
+            create=False,
+        ):
+            yield
+    except Exception:
+        if not commit_state.committed:
+            raise
 
 
 def _named_identity(parent_fd: int, name: str, *, directory: bool) -> FileIdentity:
@@ -814,8 +828,7 @@ def _named_identity(parent_fd: int, name: str, *, directory: bool) -> FileIdenti
             )
         return _fd_identity(fd)
     finally:
-        if fd >= 0:
-            os.close(fd)
+        _close_fds(fd)
 
 
 def _verify_named_file(
@@ -872,8 +885,7 @@ def _verify_named_file(
     except OSError as exc:
         raise IntegrationEvidenceUnavailable() from exc
     finally:
-        if fd >= 0:
-            os.close(fd)
+        _close_fds(fd)
 
 
 def _safe_unlink_owned_file(parent_fd: int, name: str, identity: FileIdentity) -> None:
@@ -975,8 +987,7 @@ def _validate_existing_current(
     except OSError as exc:
         raise IntegrationEvidenceUnavailable() from exc
     finally:
-        if generation_fd >= 0:
-            os.close(generation_fd)
+        _close_fds(generation_fd)
 
 
 def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
@@ -1024,8 +1035,7 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
     except OSError as exc:
         raise IntegrationEvidenceUnavailable() from exc
     finally:
-        if staging_fd >= 0:
-            os.close(staging_fd)
+        _close_fds(staging_fd)
 
 
 def recover_evidence_staging(*, generations_fd: int) -> None:
@@ -1130,13 +1140,11 @@ def publish_evidence_generation(
     published_at = cast(str, document["generated_at"])
     payload_digest = hashlib.sha256(payload).hexdigest()
     pointer: EvidencePointer | None = None
+    commit_state = _PublicationCommitState()
 
-    with evidence_lock_set(
+    with _publication_lock_set(
         state_home=state_home,
-        release_mode="exclusive",
-        current_mode="exclusive",
-        timeout_seconds=0,
-        create=False,
+        commit_state=commit_state,
     ):
         state_fd = app_fd = integration_fd = generations_fd = generation_fd = -1
         try:
@@ -1257,6 +1265,7 @@ def publish_evidence_generation(
             ):
                 raise IntegrationEvidenceInvalid()
             _atomic_replace_current(integration_fd, pointer_bytes)
+            commit_state.committed = True
         except IntegrationEvidenceError:
             raise
         except ValueError as exc:

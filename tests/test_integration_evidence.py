@@ -550,6 +550,63 @@ def test_publish_gc_failure_after_commit_returns_committed_pointer(
     assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
 
 
+def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_cleanup(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if one teardown failure stopped cleanup or masked commit."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    current = state_home / "codex-usage/integration/current.json"
+    real_close = integration_evidence.os.close
+    real_flock = integration_evidence.fcntl.flock
+    close_attempts: list[int] = []
+    unlock_attempts: list[int] = []
+    failed_close_fd: int | None = None
+    failed_unlock = False
+
+    def fail_first_postcommit_close(fd):
+        nonlocal failed_close_fd
+        if current.read_bytes() != old_current:
+            close_attempts.append(fd)
+            if failed_close_fd is None:
+                failed_close_fd = fd
+                raise OSError("synthetic post-commit close failure")
+        return real_close(fd)
+
+    def fail_first_postcommit_unlock(fd, operation):
+        nonlocal failed_unlock
+        if current.read_bytes() != old_current and operation == integration_evidence.fcntl.LOCK_UN:
+            unlock_attempts.append(fd)
+            if not failed_unlock:
+                failed_unlock = True
+                raise OSError("synthetic post-commit unlock failure")
+        return real_flock(fd, operation)
+
+    monkeypatch.setattr(integration_evidence.os, "close", fail_first_postcommit_close)
+    monkeypatch.setattr(integration_evidence.fcntl, "flock", fail_first_postcommit_unlock)
+    try:
+        pointer = integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+    finally:
+        if failed_close_fd is not None:
+            try:
+                real_close(failed_close_fd)
+            except OSError:
+                pass
+    assert current.read_bytes() != old_current
+    assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
+    assert len(close_attempts) >= 8
+    assert len(unlock_attempts) == 2
+
+
 def test_fd_private_io_round_trip_and_identity(tmp_path):
     from codex_usage.private_io import (
         open_private_dir_at,
