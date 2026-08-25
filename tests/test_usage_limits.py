@@ -36,10 +36,46 @@ class _BrokenInt(int):
         raise AssertionError("numeric subclass conversion must not run")
 
 
+class _ExplodingSources:
+    def __iter__(self):
+        raise RuntimeError("availability source iterator failed")
+
+
 class _TrustedWindow(LimitWindow):
     @property
     def has_known_identity(self):
         return True
+
+
+class _BrokenSource(str):
+    def casefold(self):
+        raise RuntimeError("synthetic source marker")
+
+
+class _SpoofedIdentifier(str):
+    def casefold(self):
+        return SPARK_MODEL
+
+
+class _SpoofedFeature(str):
+    def casefold(self):
+        return SPARK_METERED_FEATURE
+
+
+class _SpoofedReachedType(str):
+    def __hash__(self):
+        return hash("rate_limit_reached")
+
+    def __eq__(self, other):
+        return other == "rate_limit_reached"
+
+
+class _SpoofedPoolKey(str):
+    def __hash__(self):
+        return hash(SPARK_MODEL)
+
+    def __eq__(self, other):
+        return other == SPARK_MODEL
 
 
 @pytest.mark.parametrize("payload", [None, [], "invalid", 42, True])
@@ -53,6 +89,56 @@ def test_usage_pool_parsers_fail_closed_for_non_object_payload(payload):
         payload,
         captured_at=NOW,
     ) == (None, ())
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        None,
+        0,
+        True,
+        [],
+        {},
+        object(),
+        b"usage",
+        bytearray(b"usage"),
+        "",
+        "bad\nsource",
+    ],
+)
+def test_usage_pool_parsers_fail_closed_for_invalid_source(source):
+    wham_payload = {
+        "rate_limit": {
+            "primary_window": {"limit_window_seconds": 18_000, "used_percent": 1},
+        }
+    }
+    app_server_payload = {
+        "rateLimits": {"primary": {"windowDurationMins": 300, "usedPercent": 1}},
+    }
+
+    assert parse_wham_usage_pools(
+        wham_payload,
+        captured_at=NOW,
+        source=source,
+    ) == (None, ())  # type: ignore[arg-type]
+    assert parse_app_server_usage_pools(
+        app_server_payload,
+        captured_at=NOW,
+        source=source,
+    ) == (None, ())  # type: ignore[arg-type]
+
+
+def test_usage_pool_parsers_reject_source_subclasses_before_storage():
+    payload = {
+        "rate_limit": {
+            "primary_window": {"limit_window_seconds": 18_000, "used_percent": 1},
+        }
+    }
+
+    assert parse_wham_usage_pools(payload, captured_at=NOW, source=_BrokenSource("usage")) == (
+        None,
+        (),
+    )
 
 
 @pytest.mark.parametrize("captured_at", [None, [], "invalid", 42, True, object()])
@@ -81,8 +167,51 @@ def test_usage_pool_parsers_fail_closed_for_invalid_capture_time(captured_at):
     ) == (None, ())  # type: ignore[arg-type]
 
 
+def test_usage_pool_parsers_reject_naive_capture_time():
+    naive = datetime(2026, 7, 16, 4, 0)
+    wham_payload = {
+        "rate_limit": {
+            "primary_window": {
+                "limit_window_seconds": 18_000,
+                "reset_after_seconds": 60,
+            }
+        }
+    }
+    app_server_payload = {
+        "rateLimitsByLimitId": {
+            "codex": {
+                "primary": {
+                    "windowDurationMins": 300,
+                    "resetsAt": 1_784_186_400,
+                }
+            }
+        }
+    }
+
+    assert parse_wham_usage_pools(
+        wham_payload,
+        captured_at=naive,
+        source="test",
+    ) == (None, ())
+    assert parse_app_server_usage_pools(
+        app_server_payload,
+        captured_at=naive,
+    ) == (None, ())
+
+
 def test_legacy_windows_returns_empty_slots_without_main_pool():
     assert legacy_windows(None) == (None, None)
+
+
+def test_legacy_windows_fails_closed_for_broken_pool_hook():
+    class BrokenPool(UsagePool):
+        def window_for_duration(self, _duration_seconds):
+            raise RuntimeError("synthetic legacy window marker")
+
+    assert legacy_windows(BrokenPool(key="main", display_name="Codex")) == (
+        None,
+        None,
+    )
 
 
 def test_usage_limit_private_helpers_cover_window_and_identity_contracts():
@@ -234,6 +363,40 @@ def test_app_server_parser_rejects_integer_subclass_window_duration():
 @pytest.mark.parametrize("pools", [None, 1, True, object()])
 def test_merge_model_catalog_fails_closed_for_non_iterable_pools(pools):
     assert merge_model_catalog(pools, ()) == ()  # type: ignore[arg-type]
+
+
+def test_merge_model_catalog_fails_closed_for_iterator_errors():
+    def exploding_pools():
+        yield UsagePool(key="main", display_name="Codex")
+        raise RuntimeError("pool iterator failed")
+
+    def exploding_model_ids():
+        yield SPARK_MODEL
+        raise RuntimeError("catalog iterator failed")
+
+    assert merge_model_catalog(exploding_pools(), ()) == ()
+    assert merge_model_catalog((), exploding_model_ids()) == ()
+
+
+def test_merge_model_catalog_fails_closed_for_broken_availability_sources():
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        availability_sources=_ExplodingSources(),  # type: ignore[arg-type]
+    )
+
+    assert merge_model_catalog((pool,), (SPARK_MODEL,)) == ()
+
+
+@pytest.mark.parametrize("sources", [([],), (["usage"],), ({"usage"},)])
+def test_merge_model_catalog_fails_closed_for_unhashable_availability_sources(sources):
+    pool = UsagePool(
+        key=SPARK_MODEL,
+        display_name="Spark",
+        availability_sources=sources,  # type: ignore[arg-type]
+    )
+
+    assert merge_model_catalog((pool,), (SPARK_MODEL,)) == ()
 
 
 @pytest.mark.parametrize(
@@ -429,6 +592,189 @@ def test_usage_pool_rejects_name_and_duration_alias_collision():
 @pytest.mark.parametrize("name", [42, "garbage"])
 def test_window_identity_helper_rejects_unmapped_trusted_window(name):
     assert _window_identities_are_unique((_TrustedWindow(name=name),)) is False
+
+
+class _BrokenPayloadGet(dict):
+    def get(self, *_args, **_kwargs):
+        raise RuntimeError("synthetic payload get marker")
+
+
+class _BrokenPayloadItems(dict):
+    def items(self):
+        raise RuntimeError("synthetic payload items marker")
+
+
+def test_wham_parser_fails_closed_for_payload_get_hook():
+    assert parse_wham_usage_pools(
+        _BrokenPayloadGet(),
+        captured_at=NOW,
+        source="test",
+    ) == (None, ())
+
+
+def test_wham_parser_fails_closed_for_nested_rate_limit_get_hook():
+    assert parse_wham_usage_pools(
+        {"rate_limit": _BrokenPayloadGet()},
+        captured_at=NOW,
+        source="test",
+    ) == (None, ())
+
+
+def test_app_server_parser_fails_closed_for_payload_get_hook():
+    assert parse_app_server_usage_pools(
+        _BrokenPayloadGet(),
+        captured_at=NOW,
+    ) == (None, ())
+
+
+def test_app_server_parser_fails_closed_for_limit_map_get_hook():
+    assert parse_app_server_usage_pools(
+        {"rateLimitsByLimitId": _BrokenPayloadGet()},
+        captured_at=NOW,
+    ) == (None, ())
+
+
+def test_app_server_parser_fails_closed_for_nested_main_items_hook():
+    assert parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {"codex": _BrokenPayloadItems()},
+            "rateLimits": {"primary": {"windowDurationMins": 300}},
+        },
+        captured_at=NOW,
+    ) == (None, ())
+
+
+def test_app_server_parser_fails_closed_for_spark_get_hook():
+    assert parse_app_server_usage_pools(
+        {
+            "rateLimitsByLimitId": {
+                SPARK_METERED_FEATURE: _BrokenPayloadGet(),
+            }
+        },
+        captured_at=NOW,
+    ) == (None, ())
+
+
+def test_merge_model_catalog_fails_closed_for_pool_key_hook():
+    class BrokenPool(UsagePool):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "key" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic pool key marker")
+            return super().__getattribute__(name)
+
+    pool = BrokenPool(key=SPARK_MODEL, display_name="Spark")
+    object.__setattr__(pool, "ready", True)
+
+    assert merge_model_catalog((pool,), (SPARK_MODEL,)) == ()
+
+
+def test_window_identity_helper_fails_closed_for_duration_hook():
+    class BrokenWindow(LimitWindow):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "duration_seconds" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic duration marker")
+            return super().__getattribute__(name)
+
+    window = BrokenWindow(name="weekly", remaining=90)
+    object.__setattr__(window, "ready", True)
+
+    assert _window_identities_are_unique((window,)) is False
+
+
+def test_normalized_fails_closed_for_casefold_hook():
+    class BrokenText(str):
+        def casefold(self):
+            raise RuntimeError("synthetic casefold marker")
+
+    assert usage_limits_module._normalized(BrokenText("spark")) == ""
+
+
+def test_normalized_rejects_string_subclass_that_spoofs_spark_identity():
+    assert usage_limits_module._normalized(_SpoofedIdentifier("unrelated")) == ""
+
+
+@pytest.mark.parametrize("field", ["limit_name", "metered_feature"])
+def test_wham_ignores_string_subclass_that_spoofs_spark_identity(field):
+    item = {
+        "limit_name": "unrelated",
+        "metered_feature": "unrelated",
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 10,
+                "limit_window_seconds": 604800,
+            }
+        },
+    }
+    item[field] = _SpoofedIdentifier("unrelated")
+
+    _, models = parse_wham_usage_pools(
+        {"additional_rate_limits": [item]},
+        captured_at=NOW,
+        source="wham",
+    )
+
+    assert models == ()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("limitName", _SpoofedIdentifier("unrelated")), ("limitId", _SpoofedFeature("unrelated"))],
+)
+def test_app_server_ignores_string_subclass_that_spoofs_spark_identity(field, value):
+    bucket = {
+        field: value,
+        "primary": {"usedPercent": 10, "windowDurationMins": 10080},
+    }
+
+    _, models = parse_app_server_usage_pools(
+        {"rateLimitsByLimitId": {"spark-alias": bucket}},
+        captured_at=NOW,
+    )
+
+    assert models == ()
+
+
+def test_app_server_rejects_string_subclass_that_spoofs_reached_type():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 10, "windowDurationMins": 300}
+            },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {"usedPercent": 10, "windowDurationMins": 300},
+                    "rateLimitReachedType": _SpoofedReachedType("unknown"),
+                }
+            },
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.available is False
+    assert main.limit_reached is None
+
+
+def test_merge_model_catalog_rejects_string_subclass_model_id():
+    assert merge_model_catalog((), (_SpoofedIdentifier("unrelated"),)) == ()
+
+
+def test_merge_model_catalog_rejects_string_subclass_pool_key():
+    pool = UsagePool(key=_SpoofedPoolKey("unrelated"), display_name="Other")
+
+    assert merge_model_catalog((pool,), (SPARK_MODEL,)) == ()
+
+
+def test_unique_fails_closed_for_iterator_hook():
+    class BrokenValues:
+        def __iter__(self):
+            raise RuntimeError("synthetic unique iterator marker")
+
+    assert usage_limits_module._unique(BrokenValues()) == ()
 
 
 def test_wham_marks_missing_window_duration_unavailable():
@@ -1182,6 +1528,109 @@ def test_app_server_retains_top_level_windows_when_nested_codex_primary_is_malfo
     assert [window.remaining for window in main.windows] == [91, 60]
     assert main.available is False
     assert main.has_valid_usage is False
+    assert main.exhausted is True
+
+
+@pytest.mark.parametrize(
+    "nested_primary",
+    [
+        {"usedPercent": "bad"},
+        {"resetsAt": "bad"},
+        {"usedPercent": 1, "resetsAt": "bad"},
+        {"usedPercent": 1, "windowDurationMins": 300, "resetsAt": "bad"},
+        {"usedPercent": 1, "windowDurationMins": "bad"},
+    ],
+)
+def test_app_server_does_not_let_invalid_nested_fields_erase_top_level_window(
+    nested_primary,
+):
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 9,
+                    "windowDurationMins": 300,
+                    "resetsAt": 1784185662,
+                },
+                "secondary": {"usedPercent": 40, "windowDurationMins": 10080},
+            },
+            "rateLimitsByLimitId": {"codex": {"primary": nested_primary}},
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    primary, weekly = main.windows
+    assert (primary.used, primary.reset_at) == (
+        9,
+        datetime.fromtimestamp(1784185662, tz=LOCAL_TZ),
+    )
+    assert weekly.used == 40
+    assert main.available is False
+
+
+def test_app_server_merges_partial_nested_window_fields_without_dropping_reset():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {
+                    "usedPercent": 9,
+                    "windowDurationMins": 300,
+                    "resetsAt": 1784185662,
+                },
+                "secondary": {"usedPercent": 40, "windowDurationMins": 10080},
+            },
+            "rateLimitsByLimitId": {
+                "codex": {"primary": {"usedPercent": 1}},
+            },
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    primary = main.windows[0]
+    assert primary.used == 1
+    assert primary.reset_at == datetime.fromtimestamp(1784185662, tz=LOCAL_TZ)
+    assert main.available is True
+
+
+def test_app_server_merges_nested_limit_reached_type_with_top_level_windows():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 9, "windowDurationMins": 300},
+            },
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "primary": {"usedPercent": 1},
+                    "rateLimitReachedType": "rate_limit_reached",
+                },
+            },
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.limit_reached is True
+    assert main.exhausted is True
+
+
+def test_app_server_preserves_top_level_limit_reached_when_nested_value_is_null():
+    main, _ = parse_app_server_usage_pools(
+        {
+            "rateLimits": {
+                "primary": {"usedPercent": 9, "windowDurationMins": 300},
+                "rateLimitReachedType": "rate_limit_reached",
+            },
+            "rateLimitsByLimitId": {
+                "codex": {"rateLimitReachedType": None},
+            },
+        },
+        captured_at=NOW,
+    )
+
+    assert main is not None
+    assert main.limit_reached is True
     assert main.exhausted is True
 
 

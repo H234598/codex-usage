@@ -36,7 +36,27 @@ def parse_wham_usage_pools(
     captured_at: datetime,
     source: str,
 ) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
-    if not isinstance(payload, dict) or not isinstance(captured_at, datetime):
+    try:
+        return _parse_wham_usage_pools(
+            payload,
+            captured_at=captured_at,
+            source=source,
+        )
+    except Exception:
+        return None, ()
+
+
+def _parse_wham_usage_pools(
+    payload: dict[str, Any],
+    *,
+    captured_at: datetime,
+    source: str,
+) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
+    if (
+        not isinstance(payload, dict)
+        or not _capture_time_is_usable(captured_at)
+        or not _source_is_usable(source)
+    ):
         return None, ()
     main = _wham_pool(
         key=MAIN_POOL_KEY,
@@ -96,7 +116,29 @@ def parse_app_server_usage_pools(
     model_ids: Iterable[str] = (),
     source: str = "app-server",
 ) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
-    if not isinstance(payload, dict) or not isinstance(captured_at, datetime):
+    try:
+        return _parse_app_server_usage_pools(
+            payload,
+            captured_at=captured_at,
+            model_ids=model_ids,
+            source=source,
+        )
+    except Exception:
+        return None, ()
+
+
+def _parse_app_server_usage_pools(
+    payload: dict[str, Any],
+    *,
+    captured_at: datetime,
+    model_ids: Iterable[str] = (),
+    source: str = "app-server",
+) -> tuple[UsagePool | None, tuple[UsagePool, ...]]:
+    if (
+        not isinstance(payload, dict)
+        or not _capture_time_is_usable(captured_at)
+        or not _source_is_usable(source)
+    ):
         return None, ()
     raw_by_id = payload.get("rateLimitsByLimitId")
     malformed_by_id = raw_by_id is not None and not isinstance(raw_by_id, dict)
@@ -132,12 +174,24 @@ def parse_app_server_usage_pools(
                             # A duration-less nested bucket cannot reclassify
                             # an explicit unsupported top-level window.
                             continue
-                    if not isinstance(value, dict) or _app_server_window(
-                        value, captured_at=captured_at, source=source
-                    ) is None:
+                    if not _app_server_window_fields_are_valid(
+                        value, captured_at=captured_at
+                    ):
                         malformed_main_window = True
                         continue
-                merged_payload[key] = value
+                    top_level_window = top_level_payload.get(key)
+                    if isinstance(top_level_window, dict):
+                        merged_window = dict(top_level_window)
+                        for field in ("windowDurationMins", "usedPercent", "resetsAt"):
+                            nested_value = value.get(field)
+                            if nested_value is not None:
+                                merged_window[field] = nested_value
+                        merged_payload[key] = merged_window
+                    else:
+                        merged_payload[key] = value
+                else:
+                    if value is not None:
+                        merged_payload[key] = value
             main_payload = merged_payload
     if not isinstance(main_payload, dict):
         main_payload = payload.get("rateLimits")
@@ -226,7 +280,7 @@ def merge_model_catalog(
 ) -> tuple[UsagePool, ...]:
     try:
         pool_values = tuple(islice(pools, MAX_MODEL_CATALOG_IDS + 1))
-    except (TypeError, ValueError):
+    except Exception:
         return ()
     if len(pool_values) > MAX_MODEL_CATALOG_IDS or any(
         not isinstance(pool, UsagePool) for pool in pool_values
@@ -238,48 +292,62 @@ def merge_model_catalog(
     else:
         try:
             model_id_values = tuple(islice(model_ids, MAX_MODEL_CATALOG_IDS + 1))
-        except (TypeError, ValueError):
+        except Exception:
             model_id_values = ()
         if len(model_id_values) > MAX_MODEL_CATALOG_IDS:
             model_id_values = ()
-    if any(not isinstance(value, str) for value in model_id_values):
+    if any(type(value) is not str for value in model_id_values):
         model_id_values = ()
-    spark_in_catalog = SPARK_MODEL in model_id_values
-    spark_index = next(
-        (index for index, pool in enumerate(result) if pool.key == SPARK_MODEL),
-        None,
-    )
-    if spark_in_catalog and spark_index is None:
-        result.append(
-            UsagePool(
-                key=SPARK_MODEL,
-                display_name="GPT-5.3-Codex-Spark",
-                # Catalog entitlement alone is not usage evidence.
-                available=False,
-                metered_feature=SPARK_METERED_FEATURE,
-                availability_sources=("model_catalog",),
+    try:
+        if any(
+            type(pool.key) is not str
+            or type(pool.availability_sources) is not tuple
+            or any(type(source) is not str for source in pool.availability_sources)
+            for pool in result
+        ):
+            return ()
+        spark_in_catalog = SPARK_MODEL in model_id_values
+        spark_index = next(
+            (index for index, pool in enumerate(result) if pool.key == SPARK_MODEL),
+            None,
+        )
+        if spark_in_catalog and spark_index is None:
+            result.append(
+                UsagePool(
+                    key=SPARK_MODEL,
+                    display_name="GPT-5.3-Codex-Spark",
+                    # Catalog entitlement alone is not usage evidence.
+                    available=False,
+                    metered_feature=SPARK_METERED_FEATURE,
+                    availability_sources=("model_catalog",),
+                )
             )
-        )
-    elif spark_in_catalog and spark_index is not None:
-        pool = result[spark_index]
-        result[spark_index] = replace(
-            pool,
-            availability_sources=_unique(
-                (*pool.availability_sources, "model_catalog")
-            ),
-        )
-    return tuple(result)
+        elif spark_in_catalog and spark_index is not None:
+            pool = result[spark_index]
+            sources = _unique((*pool.availability_sources, "model_catalog"))
+            if not sources:
+                return ()
+            result[spark_index] = replace(
+                pool,
+                availability_sources=sources,
+            )
+        return tuple(result)
+    except Exception:
+        return ()
 
 
 def legacy_windows(
     main: UsagePool | None,
 ) -> tuple[LimitWindow | None, LimitWindow | None]:
-    if main is None:
+    if not isinstance(main, UsagePool):
         return None, None
-    return (
-        main.window_for_duration(FIVE_HOUR_SECONDS),
-        main.window_for_duration(WEEKLY_SECONDS),
-    )
+    try:
+        return (
+            main.window_for_duration(FIVE_HOUR_SECONDS),
+            main.window_for_duration(WEEKLY_SECONDS),
+        )
+    except Exception:
+        return None, None
 
 
 def _wham_pool(
@@ -399,7 +467,7 @@ def _app_server_pool(
     if isinstance(raw_limit_reached, bool):
         limit_reached = raw_limit_reached
         control_flag_valid = True
-    elif isinstance(raw_limit_reached, str):
+    elif type(raw_limit_reached) is str:
         control_flag_valid = raw_limit_reached in APP_SERVER_LIMIT_REACHED_TYPES
         limit_reached = True if control_flag_valid else None
     else:
@@ -466,6 +534,30 @@ def _app_server_window(
     return _window(duration, used, reset_at, source=source)
 
 
+def _app_server_window_fields_are_valid(
+    value: Any, *, captured_at: datetime
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    raw_duration_minutes = value.get("windowDurationMins")
+    duration_minutes = _strict_int(raw_duration_minutes)
+    if raw_duration_minutes is not None and (
+        duration_minutes is None
+        or duration_minutes <= 0
+        or duration_minutes * 60 > MAX_WINDOW_SECONDS
+    ):
+        return False
+    raw_used = value.get("usedPercent")
+    if raw_used is not None and _percent(raw_used) is None:
+        return False
+    raw_reset = value.get("resetsAt")
+    if raw_reset is not None and _reset_at(
+        raw_reset, None, captured_at=captured_at
+    ) is None:
+        return False
+    return True
+
+
 def _window(
     duration: int | None,
     used: float | None,
@@ -501,31 +593,34 @@ def _window_name(duration: int | None) -> str:
 
 
 def _window_identities_are_unique(windows: tuple[LimitWindow, ...]) -> bool:
-    identities: list[int] = []
-    for window in windows:
-        if not isinstance(window, LimitWindow) or not window.has_known_identity:
-            return False
-        if window.duration_seconds is not None:
-            identities.append(window.duration_seconds)
-            continue
-        if not isinstance(window.name, str):
-            return False
-        duration = {
-            "5h": FIVE_HOUR_SECONDS,
-            "5_hour": FIVE_HOUR_SECONDS,
-            "five_hour": FIVE_HOUR_SECONDS,
-            "w": WEEKLY_SECONDS,
-            "week": WEEKLY_SECONDS,
-            "weekly": WEEKLY_SECONDS,
-            "30d": 2_592_000,
-            "30_day": 2_592_000,
-            "month": 2_592_000,
-            "monthly": 2_592_000,
-        }.get(window.name.strip().casefold())
-        if duration is None:
-            return False
-        identities.append(duration)
-    return len(identities) == len(set(identities))
+    try:
+        identities: list[int] = []
+        for window in windows:
+            if not isinstance(window, LimitWindow) or not window.has_known_identity:
+                return False
+            if window.duration_seconds is not None:
+                identities.append(window.duration_seconds)
+                continue
+            if not isinstance(window.name, str):
+                return False
+            duration = {
+                "5h": FIVE_HOUR_SECONDS,
+                "5_hour": FIVE_HOUR_SECONDS,
+                "five_hour": FIVE_HOUR_SECONDS,
+                "w": WEEKLY_SECONDS,
+                "week": WEEKLY_SECONDS,
+                "weekly": WEEKLY_SECONDS,
+                "30d": 2_592_000,
+                "30_day": 2_592_000,
+                "month": 2_592_000,
+                "monthly": 2_592_000,
+            }.get(window.name.strip().casefold())
+            if duration is None:
+                return False
+            identities.append(duration)
+        return len(identities) == len(set(identities))
+    except Exception:
+        return False
 
 
 def _reset_at(
@@ -553,14 +648,17 @@ def _is_spark_limit(name: Any, metered_feature: Any) -> bool:
 
 
 def _normalized(value: Any) -> str:
-    if not isinstance(value, str) or not value:
+    if type(value) is not str or not value:
         return ""
-    if any(
-        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
-        for char in value
-    ):
+    try:
+        if any(
+            char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+            for char in value
+        ):
+            return ""
+        return value.casefold()
+    except Exception:
         return ""
-    return value.casefold()
 
 
 def _percent(value: Any) -> float | None:
@@ -594,4 +692,35 @@ def _optional_bool(value: Any) -> bool | None:
 
 
 def _unique(values: Iterable[str]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(values))
+    try:
+        return tuple(dict.fromkeys(values))
+    except Exception:
+        return ()
+
+
+def _capture_time_is_usable(value: Any) -> bool:
+    if not isinstance(value, datetime):
+        return False
+    try:
+        if value.tzinfo is None:
+            return False
+    except Exception:
+        return False
+    try:
+        return value.utcoffset() is not None
+    except Exception:
+        # A broken provider timezone is handled by _reset_at; keep other
+        # usage fields usable while dropping only the reset timestamp.
+        return True
+
+
+def _source_is_usable(value: Any) -> bool:
+    if type(value) is not str or not value or len(value) > 64:
+        return False
+    try:
+        return not any(
+            ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
+            for char in value
+        )
+    except Exception:
+        return False

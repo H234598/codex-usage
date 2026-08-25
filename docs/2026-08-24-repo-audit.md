@@ -4597,3 +4597,19 @@ metadatenlose Resetgrenze.
 Verifikation: **93 `tests/test_consumption.py`-Tests**, **312 gekoppelte
 History-/CLI-/Integration-Tests**, 100%-Statement- und Branch-Coverage im
 Consumption-Modul, Mypy, Ruff, Python-Compile und `git diff --check` grün.
+
+## Runde 228: Verschachtelte App-Server-Metadaten
+
+Fokus: `src/codex_usage/usage_limits.py`, Merge von Top-Level- und
+`rateLimitsByLimitId.codex`-Daten.
+
+Ein reproduzierbarer Fehler: Ein verschachteltes `rateLimitReachedType: null`
+überschrieb den gültigen Top-Level-Status. Dadurch wurde ein erschöpftes
+Limit als nicht erreicht dargestellt, obwohl die Fensterdaten korrekt waren.
+
+Fix: Nicht-null Metadaten aus dem verschachtelten Bucket überschreiben die
+Top-Level-Angabe; `null` lässt den bereits vorhandenen Wert unverändert.
+Fensterfelder behalten weiterhin ihr partielles Merge- und Fail-Closed-Verhalten.
+
+Verifikation: **185 `tests/test_usage_limits.py`-Tests**, 98%-Branch-Coverage
+im Usage-Limits-Modul, Mypy, Ruff, Python-Compile und `git diff --check` grün.
