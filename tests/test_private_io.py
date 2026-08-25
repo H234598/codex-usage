@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import pwd
 import stat
 import subprocess
 import sys
@@ -100,6 +101,32 @@ def _create_evidence_lock_inodes(state_home):
         lock_path = lock_root / integration_evidence._evidence_lock_name(target)
         fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.close(fd)
+
+
+def test_private_lock_root_uses_passwd_home_for_effective_uid(
+    tmp_path, monkeypatch
+):
+    """Would fail if HOME, XDG, or the real UID selected the lock namespace."""
+    effective_uid = 12345
+    real_uid = 54321
+    passwd_home = tmp_path / "passwd-effective-home"
+    looked_up: list[int] = []
+
+    monkeypatch.setenv("HOME", str(tmp_path / "environment-home"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "environment-state"))
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: effective_uid)
+    monkeypatch.setattr(private_io.os, "getuid", lambda: real_uid)
+
+    def passwd_entry(uid: int):
+        looked_up.append(uid)
+        return type("PasswdEntry", (), {"pw_dir": str(passwd_home)})()
+
+    monkeypatch.setattr(pwd, "getpwuid", passwd_entry)
+
+    assert private_io._private_lock_root_from_passwd() == (
+        passwd_home / ".local/state/codex-usage/locks"
+    )
+    assert looked_up == [effective_uid]
 
 
 def child_lock_attempt(tmp_path, *, held, requested):
@@ -717,7 +744,7 @@ def test_ensure_private_directory_rejects_foreign_owner(tmp_path, monkeypatch):
     target = tmp_path / "private"
     target.mkdir(mode=0o700)
     target.chmod(0o700)
-    monkeypatch.setattr(private_io.os, "getuid", lambda: 2**31 - 1)
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: 2**31 - 1)
 
     with pytest.raises(ValueError):
         ensure_private_directory(target, label="private directory")
@@ -727,7 +754,7 @@ def test_read_private_text_rejects_foreign_owner(tmp_path, monkeypatch):
     path = tmp_path / "value.json"
     path.write_text("secret", encoding="utf-8")
     path.chmod(0o600)
-    monkeypatch.setattr(private_io.os, "getuid", lambda: 2**31 - 1)
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: 2**31 - 1)
 
     with pytest.raises(ValueError):
         private_io.read_private_text(
@@ -742,7 +769,7 @@ def test_write_private_text_rejects_foreign_existing_owner(tmp_path, monkeypatch
     path = tmp_path / "value.json"
     path.write_text("old", encoding="utf-8")
     path.chmod(0o600)
-    monkeypatch.setattr(private_io.os, "getuid", lambda: 2**31 - 1)
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: 2**31 - 1)
 
     with pytest.raises(ValueError):
         write_private_text(path, "new", label="value")
@@ -753,7 +780,7 @@ def test_private_path_lock_rejects_foreign_owner(tmp_path, monkeypatch):
     lock_path = path.with_name(path.name + ".lock")
     lock_path.write_text("", encoding="utf-8")
     lock_path.chmod(0o600)
-    monkeypatch.setattr(private_io.os, "getuid", lambda: 2**31 - 1)
+    monkeypatch.setattr(private_io.os, "geteuid", lambda: 2**31 - 1)
 
     with pytest.raises(ValueError):
         with private_path_lock(path, label="config lock"):

@@ -45,8 +45,12 @@ class IntegrationEvidenceUnavailable(IntegrationEvidenceError):
 
 
 def _private_lock_root() -> Path:
+    return _private_lock_root_from_passwd()
+
+
+def _private_lock_root_from_passwd() -> Path:
     try:
-        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        home = Path(pwd.getpwuid(os.geteuid()).pw_dir)
     except (KeyError, OSError, TypeError, ValueError) as exc:
         raise ValueError("cannot determine private lock home") from exc
     if not home.is_absolute():
@@ -90,7 +94,7 @@ def _require_private_directory(path: Path, *, label: str) -> None:
     if (
         not stat.S_ISDIR(item.st_mode)
         or stat.S_ISLNK(item.st_mode)
-        or item.st_uid != os.getuid()
+        or item.st_uid != os.geteuid()
     ):
         raise ValueError(f"{label} must be a private user-owned directory: {path}")
 
@@ -107,7 +111,7 @@ def _chmod_private_directory(path: Path, *, label: str) -> None:
     try:
         fd = os.open(path, flags)
         item = os.fstat(fd)
-        if not stat.S_ISDIR(item.st_mode) or item.st_uid != os.getuid():
+        if not stat.S_ISDIR(item.st_mode) or item.st_uid != os.geteuid():
             raise ValueError(f"{label} must be a private user-owned directory: {path}")
         os.fchmod(fd, 0o700)
     finally:
@@ -408,7 +412,7 @@ def _require_private_file_stat(
 ) -> FileIdentity:
     if (
         not stat.S_ISREG(item.st_mode)
-        or item.st_uid != os.getuid()
+        or item.st_uid != os.geteuid()
         or item.st_nlink != 1
         or stat.S_IMODE(item.st_mode) != mode
         or item.st_size > maximum
@@ -508,7 +512,7 @@ def write_private_bytes_at(
                 )
                 if (
                     stat.S_ISREG(candidate.st_mode)
-                    and candidate.st_uid == os.getuid()
+                    and candidate.st_uid == os.geteuid()
                     and candidate.st_nlink == 1
                     and (candidate.st_dev, candidate.st_ino) == created_identity
                 ):
@@ -551,7 +555,7 @@ def read_private_text(
 
     try:
         file_stat = os.fstat(fd)
-        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != os.getuid():
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != os.geteuid():
             raise ValueError(f"{regular_label} must be a regular file: {path}")
         if file_stat.st_size > max_bytes:
             raise ValueError(
@@ -607,7 +611,7 @@ def _recover_stale_rollback(
     candidate_stat = candidate.lstat()
     if (
         not stat.S_ISREG(candidate_stat.st_mode)
-        or candidate_stat.st_uid != os.getuid()
+        or candidate_stat.st_uid != os.geteuid()
         or stat.S_IMODE(candidate_stat.st_mode) & ~0o700
     ):
         raise ValueError(f"stale {label} rollback must be a private user-owned file")
@@ -619,7 +623,7 @@ def _recover_stale_rollback(
         os.replace(candidate, path)
         _fsync_directory(path.parent)
         return None
-    if not stat.S_ISREG(target_stat.st_mode) or target_stat.st_uid != os.getuid():
+    if not stat.S_ISREG(target_stat.st_mode) or target_stat.st_uid != os.geteuid():
         raise ValueError(f"{label} must be a private user-owned file: {path}")
     same_inode = (
         target_stat.st_dev == candidate_stat.st_dev
@@ -666,7 +670,7 @@ def _copy_private_file(
             or opened_stat.st_dev != source_stat.st_dev
             or opened_stat.st_ino != source_stat.st_ino
             or opened_stat.st_nlink != 1
-            or opened_stat.st_uid != os.getuid()
+            or opened_stat.st_uid != os.geteuid()
             or opened_stat.st_mode != source_stat.st_mode
         ):
             raise ValueError(f"{label} changed before rollback copy")
@@ -680,7 +684,7 @@ def _copy_private_file(
         if (
             not stat.S_ISREG(rollback_stat.st_mode)
             or rollback_stat.st_nlink != 1
-            or rollback_stat.st_uid != os.getuid()
+            or rollback_stat.st_uid != os.geteuid()
             or stat.S_IMODE(rollback_stat.st_mode) != mode
         ):
             raise ValueError(f"rollback {label} is not a private regular file")
@@ -710,7 +714,7 @@ def _copy_private_file(
                 or item.st_dev != source_stat.st_dev
                 or item.st_ino != source_stat.st_ino
                 or item.st_nlink != 1
-                or item.st_uid != os.getuid()
+                or item.st_uid != os.geteuid()
                 or item.st_mode != source_stat.st_mode
                 or item.st_size != source_stat.st_size
                 or item.st_mtime_ns != source_stat.st_mtime_ns
@@ -752,7 +756,7 @@ def _write_private_text_locked(
     target_stat = None
     if path.exists():
         target_stat = path.lstat()
-        if target_stat.st_nlink != 1 or target_stat.st_uid != os.getuid():
+        if target_stat.st_nlink != 1 or target_stat.st_uid != os.geteuid():
             raise ValueError(f"{label} must be a private user-owned file: {path}")
     if stale_rollback is not None:
         stale_rollback.unlink()
@@ -781,7 +785,7 @@ def _write_private_text_locked(
         if (
             not stat.S_ISREG(file_stat.st_mode)
             or file_stat.st_nlink != 1
-            or file_stat.st_uid != os.getuid()
+            or file_stat.st_uid != os.geteuid()
         ):
             raise ValueError(f"temporary {label} is not a private regular file")
         os.fchmod(fd, mode)
@@ -994,7 +998,7 @@ def private_path_lock(
             if (
                 not stat.S_ISREG(file_stat.st_mode)
                 or file_stat.st_nlink != 1
-                or file_stat.st_uid != os.getuid()
+                or file_stat.st_uid != os.geteuid()
             ):
                 raise ValueError(
                     f"{label} must be a private regular file: {lock_path}"

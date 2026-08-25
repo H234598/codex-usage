@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import sys
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -290,6 +291,22 @@ def create_seventeen_staging_directories(evidence_layout) -> int:
     return generations_fd
 
 
+def _try_shared_evidence_lock(state_home_text: str, result) -> None:
+    from codex_usage.integration_evidence import IntegrationBusy, evidence_lock_set
+
+    try:
+        with evidence_lock_set(
+            state_home=Path(state_home_text),
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            result.put("acquired")
+    except IntegrationBusy:
+        result.put("busy")
+
+
 def _rewrite_complete_generation(
     state_home: Path,
     generation_id: str,
@@ -399,6 +416,108 @@ def test_gc_scans_257_complete_generations_then_retains_256(
     assert not (generations / f"{0:032x}").exists()
     assert (generations / pointer.current_generation_id).is_dir()
     assert (generations / pointer.previous_generation_id).is_dir()
+
+
+def test_publish_from_256_prunes_before_commit_and_stays_at_256(
+    staged_evidence_layout,
+):
+    """Would fail if successful publish exposed a post-commit 257th generation."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    old_pointer = _create_complete_generations(
+        state_home,
+        data_home,
+        verified,
+        256,
+    )
+
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+
+    assert count_complete_generation_directories(state_home) == 256
+    assert pointer.current_generation_id != old_pointer.current_generation_id
+    assert pointer.previous_generation_id == old_pointer.current_generation_id
+
+
+def test_publish_from_257_prunes_before_pointer_and_never_commits_258(
+    staged_evidence_layout, monkeypatch
+):
+    """Would fail if a publish could cross the explicit 258 invalid boundary."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    _create_complete_generations(state_home, data_home, verified, 257)
+    real_replace = integration_evidence._atomic_replace_current
+    counts_at_commit: list[int] = []
+
+    def replace_current(integration_fd: int, pointer_bytes: bytes, **kwargs) -> None:
+        counts_at_commit.append(count_complete_generation_directories(state_home))
+        assert counts_at_commit[-1] == 256
+        real_replace(integration_fd, pointer_bytes, **kwargs)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_atomic_replace_current",
+        replace_current,
+    )
+
+    integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+
+    assert counts_at_commit == [256]
+    assert count_complete_generation_directories(state_home) == 256
+
+
+def test_publish_retention_holds_exclusive_locks_through_commit(
+    staged_evidence_layout, monkeypatch
+):
+    """Would fail if a cooperative reader could interleave after retention."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    _create_complete_generations(state_home, data_home, verified, 256)
+    context = multiprocessing.get_context("spawn")
+    observed: list[str] = []
+
+    def probe_lock() -> None:
+        result = context.Queue()
+        process = context.Process(
+            target=_try_shared_evidence_lock,
+            args=(str(state_home), result),
+        )
+        process.start()
+        try:
+            observed.append(result.get(timeout=10))
+        finally:
+            process.join(timeout=10)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=10)
+        assert process.exitcode == 0
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_retention_reclaim",
+        probe_lock,
+    )
+
+    integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+
+    assert observed == ["busy"]
 
 
 def test_gc_orders_fractional_timestamps_by_utc_instant_then_generation_id(
@@ -579,17 +698,17 @@ def test_gc_rejects_temporary_victim_name_collision_before_rename(
     state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
     pointer = create_257_complete_generations(state_home, data_home, verified)
     victim_id = f"{0:032x}"
-    real_scan = integration_evidence._scan_complete_generations
+    real_inspect = integration_evidence._inspect_complete_generation_names
 
-    def scan_then_collide(*, generations_fd):
-        generations = real_scan(generations_fd=generations_fd)
+    def inspect_then_collide(*, generations_fd, names):
+        generations = real_inspect(generations_fd=generations_fd, names=names)
         os.mkdir(f".tmp-{victim_id}", mode=0o700, dir_fd=generations_fd)
         return generations
 
     monkeypatch.setattr(
         integration_evidence,
-        "_scan_complete_generations",
-        scan_then_collide,
+        "_inspect_complete_generation_names",
+        inspect_then_collide,
     )
     with pytest.raises(IntegrationEvidenceInvalid):
         integration_evidence.gc_evidence_generations(
@@ -709,6 +828,68 @@ def test_recovery_rejects_seventeenth_or_unsafe_staging_directory(
         os.close(generations_fd)
 
 
+def test_namespace_scan_stops_at_258th_complete_entry(tmp_path, monkeypatch):
+    """Would fail if namespace classification consumed an unbounded iterator."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    namespace = tmp_path / "generations"
+    namespace.mkdir(mode=0o700)
+    namespace_fd = os.open(
+        namespace,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    consumed = 0
+
+    class Entry:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class Entries:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def __iter__(self):
+            nonlocal consumed
+            for index in range(100_000):
+                consumed += 1
+                yield Entry(f"{index:032x}")
+
+    monkeypatch.setattr(integration_evidence.os, "scandir", lambda _fd: Entries())
+    try:
+        with pytest.raises(IntegrationEvidenceInvalid):
+            integration_evidence._scan_generation_namespace(namespace_fd)
+    finally:
+        os.close(namespace_fd)
+
+    assert consumed == 258
+
+
+def test_foreign_generation_namespace_entry_blocks_publish(
+    staged_evidence_layout,
+):
+    """Would fail if publisher ignored a foreign namespace entry before commit."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
+    generations = state_home / "codex-usage/integration/generations"
+    (generations / "foreign").mkdir(mode=0o700)
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert not (state_home / "codex-usage/integration/current.json").exists()
+
+
 def test_recovery_rechecks_each_name_before_unlink(
     staged_evidence_layout,
     monkeypatch,
@@ -822,7 +1003,8 @@ def _publish_until_crash(
         if (
             scenario == "staging_fsync"
             and name.startswith(".tmp-")
-            and sys._getframe(1).f_code.co_name == "publish_evidence_generation"
+            and sys._getframe(1).f_code.co_name
+            == "_publish_evidence_generation_locked"
         ):
             wait_then_exit_after(lambda: real_fsync(fd))
         if scenario == "generations_fsync" and name == "generations":
@@ -1097,6 +1279,83 @@ def test_publish_rejects_current_pointer_parent_swap(
     assert (integration / "current.json").read_bytes() == current_bytes
 
 
+def test_publish_rejects_generations_parent_swap_before_current_commit(
+    published_evidence_layout, monkeypatch
+):
+    """Would fail if Current could bind a generation in a detached parent FD."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified, current_bytes = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    generations = integration / "generations"
+
+    def swap_generations(_state_home, _integration_fd):
+        os.rename(generations, integration / "generations-old")
+        generations.mkdir(mode=0o700)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_publish_pointer_parent_recheck",
+        swap_generations,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert (integration / "current.json").read_bytes() == current_bytes
+    assert list(generations.iterdir()) == []
+
+
+def test_publish_rebinds_generations_after_pointer_temp_validation(
+    published_evidence_layout, monkeypatch
+):
+    """Would fail if generations could rebind between pointer check and rename."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified, current_bytes = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+    generations = integration / "generations"
+    real_verify = integration_evidence._verify_named_file
+    swapped = False
+
+    def verify_then_swap(parent_fd, name, expected, **kwargs):
+        nonlocal swapped
+        result = real_verify(parent_fd, name, expected, **kwargs)
+        if not swapped and name.startswith(".tmp-current.json-"):
+            swapped = True
+            os.rename(generations, integration / "generations-old")
+            generations.mkdir(mode=0o700)
+        return result
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_verify_named_file",
+        verify_then_swap,
+    )
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    assert swapped
+    assert (integration / "current.json").read_bytes() == current_bytes
+
+
 def test_publish_rejects_generation_directory_swap(
     published_evidence_layout, monkeypatch
 ):
@@ -1192,13 +1451,20 @@ def test_publish_runs_recovery_before_staging(staged_evidence_layout, monkeypatc
 
     state_home, data_home, _entrypoint, payload, verified = staged_evidence_layout
     events: list[str] = []
-    real_recover = integration_evidence.recover_evidence_staging
+    real_recover = integration_evidence._recover_evidence_staging_from_namespace
 
-    def recover(*, generations_fd):
+    def recover(*, generations_fd, namespace):
         events.append("recover")
-        return real_recover(generations_fd=generations_fd)
+        return real_recover(
+            generations_fd=generations_fd,
+            namespace=namespace,
+        )
 
-    monkeypatch.setattr(integration_evidence, "recover_evidence_staging", recover)
+    monkeypatch.setattr(
+        integration_evidence,
+        "_recover_evidence_staging_from_namespace",
+        recover,
+    )
     monkeypatch.setattr(
         integration_evidence,
         "_before_publish_staging",
@@ -1275,78 +1541,73 @@ def test_publish_pointer_parent_fsync_failure_returns_committed_pointer(
     assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
 
 
-def test_publish_active_rotation_after_commit_skips_gc_and_returns_pointer(
+def test_older_concurrent_invocation_cannot_replace_newer_current(
     published_evidence_layout,
-    monkeypatch,
 ):
-    """Would fail if post-commit release rotation looked like an uncommitted publish."""
+    """Would fail if an older invocation could publish after a newer one."""
     from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
 
-    state_home, data_home, _entrypoint, payload, verified, old_current = (
+    state_home, data_home, _entrypoint, _payload, verified, _old_current = (
         published_evidence_layout
     )
-    current = state_home / "codex-usage/integration/current.json"
-    real_reverify = integration_evidence._verify_active_manifest_for_publish
-    calls = 0
-    gc_calls: list[None] = []
+    newer_payload = integration_evidence.serialize_schema2_document(
+        {
+            "accounts": [],
+            "generated_at": "2026-08-25T10:02:00Z",
+            "schema_version": 2,
+        }
+    )
+    older_payload = integration_evidence.serialize_schema2_document(
+        {
+            "accounts": [],
+            "generated_at": "2026-08-25T10:01:00Z",
+            "schema_version": 2,
+        }
+    )
+    older_started = threading.Event()
+    release_older = threading.Event()
+    older_errors: list[type[BaseException]] = []
 
-    def rotate_before_postcommit_reverify(**kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            replace_active_json_inode_after_payload_build(
-                state_home,
-                data_home,
-                verified,
+    def older_invocation() -> None:
+        older_started.set()
+        release_older.wait(timeout=10)
+        try:
+            integration_evidence.publish_evidence_generation(
+                older_payload,
+                state_home=state_home,
+                data_home=data_home,
+                verified_active_manifest=verified,
             )
-        return real_reverify(**kwargs)
+        except BaseException as exc:
+            older_errors.append(type(exc))
 
-    monkeypatch.setattr(
-        integration_evidence,
-        "_verify_active_manifest_for_publish",
-        rotate_before_postcommit_reverify,
-    )
-    monkeypatch.setattr(
-        integration_evidence,
-        "gc_evidence_generations",
-        lambda **kwargs: gc_calls.append(None),
-    )
-    pointer = integration_evidence.publish_evidence_generation(
-        payload,
+    thread = threading.Thread(target=older_invocation)
+    thread.start()
+    assert older_started.wait(timeout=10)
+    newer_pointer = integration_evidence.publish_evidence_generation(
+        newer_payload,
         state_home=state_home,
         data_home=data_home,
         verified_active_manifest=verified,
     )
-    assert current.read_bytes() != old_current
-    assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
-    assert gc_calls == []
+    release_older.set()
+    thread.join(timeout=10)
 
-
-def test_publish_gc_failure_after_commit_returns_committed_pointer(
-    published_evidence_layout,
-    monkeypatch,
-):
-    """Would fail if deferred retention failure invited duplicate publication retry."""
-    from codex_usage import integration_evidence
-    from codex_usage.private_io import IntegrationEvidenceUnavailable
-
-    state_home, data_home, _entrypoint, payload, verified, old_current = (
-        published_evidence_layout
+    assert not thread.is_alive()
+    assert older_errors == [IntegrationEvidenceInvalid]
+    current = integration_evidence.parse_pointer(
+        (state_home / "codex-usage/integration/current.json").read_bytes()
     )
-    current = state_home / "codex-usage/integration/current.json"
-    monkeypatch.setattr(
-        integration_evidence,
-        "gc_evidence_generations",
-        lambda **kwargs: (_ for _ in ()).throw(IntegrationEvidenceUnavailable()),
+    assert current == newer_pointer
+    generation = (
+        state_home
+        / "codex-usage/integration/generations"
+        / current.current_generation_id
     )
-    pointer = integration_evidence.publish_evidence_generation(
-        payload,
-        state_home=state_home,
-        data_home=data_home,
-        verified_active_manifest=verified,
-    )
-    assert current.read_bytes() != old_current
-    assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
+    assert json.loads((generation / "account-usage-v2.json").read_bytes())[
+        "generated_at"
+    ] == "2026-08-25T10:02:00Z"
 
 
 def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_cleanup(
@@ -1403,7 +1664,7 @@ def test_publish_teardown_failures_return_committed_pointer_and_attempt_all_clea
     assert current.read_bytes() != old_current
     assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
     assert len(close_attempts) >= 8
-    assert len(unlock_attempts) == 4
+    assert len(unlock_attempts) == 2
 
 
 def test_fd_private_io_round_trip_and_identity(tmp_path):

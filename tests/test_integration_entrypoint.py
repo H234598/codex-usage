@@ -27,6 +27,20 @@ NOW = datetime(2026, 8, 15, 10, 5, tzinfo=UTC)
 ARGV = ("integration-snapshot", "--schema", "2", "--format", "json")
 
 
+@pytest.fixture(autouse=True)
+def _stub_entrypoint_evidence_locks(monkeypatch):
+    from codex_usage import integration_entrypoint
+
+    real_lock_set = integration_entrypoint.evidence_lock_set
+
+    @contextmanager
+    def unlocked(**_kwargs):
+        yield
+
+    monkeypatch.setattr(integration_entrypoint, "evidence_lock_set", unlocked)
+    return real_lock_set
+
+
 @pytest.mark.parametrize("code", [True, 69.0, "69"])
 def test_error_result_rejects_non_integer_error_codes(code):
     from codex_usage.integration_entrypoint import _error_result
@@ -195,6 +209,16 @@ def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeyp
     verifier_args: list[tuple[Path, Path, Path]] = []
     expected_entrypoint = _expected_entrypoint(tmp_path)
 
+    @contextmanager
+    def locked(**_kwargs):
+        events.append("lock-enter")
+        try:
+            yield
+        finally:
+            events.append("lock-exit")
+
+    monkeypatch.setattr(integration_entrypoint, "evidence_lock_set", locked)
+
     monkeypatch.setattr(
         integration_entrypoint,
         "read_current_usage_records",
@@ -213,7 +237,7 @@ def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeyp
     )
     monkeypatch.setattr(
         integration_entrypoint,
-        "publish_evidence_generation",
+        "_publish_evidence_generation_locked",
         lambda payload, **kwargs: events.append("publish"),
     )
 
@@ -234,14 +258,25 @@ def test_execute_verifies_before_and_after_then_publishes_once(tmp_path, monkeyp
         verifier=verifier,
     )
     assert result == integration_entrypoint.CommandResult(0, _payload(), b"")
-    assert events == ["verify", "read", "build", "serialize", "verify", "publish"]
+    assert events == [
+        "lock-enter",
+        "verify",
+        "read",
+        "build",
+        "serialize",
+        "verify",
+        "publish",
+        "lock-exit",
+    ]
     assert len(clock_calls) == 1
     assert len(verifier_args) == 2
     assert verifier_args[0][2] is expected_entrypoint
     assert verifier_args[1][2] is expected_entrypoint
 
 
-def test_entrypoint_uses_release_then_current_exclusive_lock_set(tmp_path, monkeypatch):
+def test_entrypoint_uses_release_then_current_exclusive_lock_set(
+    tmp_path, monkeypatch, _stub_entrypoint_evidence_locks
+):
     """Would fail if entrypoint publication bypassed ordered two-lock transaction."""
     from codex_usage import integration_entrypoint, integration_evidence, private_io
     from codex_usage.private_io import FileIdentity
@@ -297,17 +332,15 @@ def test_entrypoint_uses_release_then_current_exclusive_lock_set(tmp_path, monke
         "_verify_active_manifest_for_publish",
         lambda **kwargs: staged,
     )
-    monkeypatch.setattr(integration_evidence, "gc_evidence_generations", lambda **kwargs: None)
-    real_lock_set = integration_evidence.evidence_lock_set
     lock_calls: list[dict[str, object]] = []
 
     @contextmanager
     def observed_lock_set(**kwargs):
         lock_calls.append(kwargs)
-        with real_lock_set(**kwargs):
+        with _stub_entrypoint_evidence_locks(**kwargs):
             yield
 
-    monkeypatch.setattr(integration_evidence, "evidence_lock_set", observed_lock_set)
+    monkeypatch.setattr(integration_entrypoint, "evidence_lock_set", observed_lock_set)
     result = integration_entrypoint.execute(
         ARGV,
         environ=environ,
@@ -394,8 +427,10 @@ def test_execute_maps_busy_lock_to_retryable_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         integration_entrypoint,
-        "publish_evidence_generation",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(EvidenceBusy()),
+        "evidence_lock_set",
+        contextmanager(
+            lambda **_kwargs: (_ for _ in ()).throw(EvidenceBusy())
+        ),
     )
 
     result = integration_entrypoint.execute(
@@ -561,7 +596,7 @@ def test_execute_exports_tracker_evidence_from_bounded_history_series(tmp_path, 
     )
     monkeypatch.setattr(
         integration_entrypoint,
-        "publish_evidence_generation",
+        "_publish_evidence_generation_locked",
         lambda *args, **kwargs: None,
     )
 
@@ -632,7 +667,7 @@ def test_execute_does_not_publish_when_post_verifier_detects_drift(tmp_path, mon
     monkeypatch.setattr(integration_entrypoint, "serialize_schema2_document", lambda _: _payload())
     monkeypatch.setattr(
         integration_entrypoint,
-        "publish_evidence_generation",
+        "_publish_evidence_generation_locked",
         lambda *args, **kwargs: pytest.fail("evidence publish"),
     )
     calls = 0

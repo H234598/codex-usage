@@ -14,7 +14,8 @@ from .integration_evidence import (
     IntegrationBusy as EvidenceBusy,
 )
 from .integration_evidence import (
-    publish_evidence_generation,
+    _publish_evidence_generation_locked,
+    evidence_lock_set,
 )
 from .integration_snapshot import (
     IntegrationSnapshotError,
@@ -134,24 +135,43 @@ def execute(
         return _error_result(64)
     try:
         paths = _runtime_paths(environ)
-        first = verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
-        generated_at = _require_aware_utc(clock())
-        usages = read_current_usage_records(paths.current_dir)
-        tracker_samples = _load_tracker_samples(paths.history_path, usages, generated_at)
-        document = build_schema2_document(
-            usages,
-            generated_at=generated_at,
-            tracker_samples=tracker_samples or None,
-        )
-        payload = serialize_schema2_document(document)
-        second = verifier(paths.state_home, paths.data_home, expected_entrypoint_path)
-        _require_matching_verified_manifests(first, second)
-        publish_evidence_generation(
-            payload,
+        with evidence_lock_set(
             state_home=paths.state_home,
-            data_home=paths.data_home,
-            verified_active_manifest=second,
-        )
+            release_mode="exclusive",
+            current_mode="exclusive",
+            timeout_seconds=0,
+            create=False,
+        ):
+            first = verifier(
+                paths.state_home,
+                paths.data_home,
+                expected_entrypoint_path,
+            )
+            generated_at = _require_aware_utc(clock())
+            usages = read_current_usage_records(paths.current_dir)
+            tracker_samples = _load_tracker_samples(
+                paths.history_path,
+                usages,
+                generated_at,
+            )
+            document = build_schema2_document(
+                usages,
+                generated_at=generated_at,
+                tracker_samples=tracker_samples or None,
+            )
+            payload = serialize_schema2_document(document)
+            second = verifier(
+                paths.state_home,
+                paths.data_home,
+                expected_entrypoint_path,
+            )
+            _require_matching_verified_manifests(first, second)
+            _publish_evidence_generation_locked(
+                payload,
+                state_home=paths.state_home,
+                data_home=paths.data_home,
+                verified_active_manifest=second,
+            )
         return CommandResult(0, payload, b"")
     except EvidenceBusy:
         return _error_result(75)
