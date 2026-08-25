@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -29,6 +30,93 @@ INVALID_LOCK_TIMEOUTS = (
     "1",
     10**10_000,
 )
+
+
+def _evidence_lock_child(
+    state_home_text,
+    release_mode,
+    current_mode,
+    ready,
+    release,
+    result,
+):
+    from codex_usage.integration_evidence import IntegrationBusy, evidence_lock_set
+
+    ready.set()
+    try:
+        with evidence_lock_set(
+            state_home=Path(state_home_text),
+            release_mode=release_mode,
+            current_mode=current_mode,
+            timeout_seconds=0,
+            create=False,
+        ):
+            result.put("acquired")
+    except IntegrationBusy:
+        result.put("busy")
+    finally:
+        release.wait(10)
+
+
+def _create_evidence_lock_inodes(state_home):
+    from codex_usage import integration_evidence
+
+    integration = state_home / "codex-usage" / "integration"
+    integration.mkdir(mode=0o700, parents=True)
+    integration.parent.chmod(0o700)
+    lock_root = private_io._private_lock_root()
+    ensure_private_directory(lock_root, label="test evidence lock root")
+    targets = (
+        state_home / "codex-usage" / "integration" / "producer-install",
+        state_home / "codex-usage" / "integration" / "current.json",
+    )
+    for target in targets:
+        lock_path = lock_root / integration_evidence._evidence_lock_name(target)
+        fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+
+
+def child_lock_attempt(tmp_path, *, held, requested):
+    from codex_usage.integration_evidence import evidence_lock_set
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    result = context.Queue()
+    process = context.Process(
+        target=_evidence_lock_child,
+        args=(
+            str(state_home),
+            requested[0],
+            requested[1],
+            ready,
+            release,
+            result,
+        ),
+    )
+    try:
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode=held[0],
+            current_mode=held[1],
+            timeout_seconds=0,
+            create=False,
+        ):
+            process.start()
+            assert ready.wait(10)
+            child_result = result.get(timeout=10)
+        release.set()
+        process.join(10)
+        assert process.exitcode == 0
+        return child_result
+    finally:
+        release.set()
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
 
 
 def test_lock_deadline_rejects_non_finite_monotonic_result(monkeypatch):
@@ -1450,3 +1538,172 @@ def test_private_path_lock_serializes_same_path(tmp_path):
     with private_path_lock(path, label="config lock"):
         entered.append("after")
     assert entered == ["after"]
+
+
+def test_release_shared_lock_blocks_child_release_exclusive(tmp_path):
+    assert child_lock_attempt(
+        tmp_path,
+        held=("shared", "shared"),
+        requested=("exclusive", "shared"),
+    ) == "busy"
+
+
+def test_current_shared_lock_blocks_child_current_exclusive(tmp_path):
+    assert child_lock_attempt(
+        tmp_path,
+        held=("shared", "shared"),
+        requested=("shared", "exclusive"),
+    ) == "busy"
+
+
+def test_same_target_lock_upgrade_and_downgrade_are_rejected(tmp_path):
+    from codex_usage.integration_evidence import IntegrationBusy, evidence_lock_set
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    with evidence_lock_set(
+        state_home=state_home,
+        release_mode="shared",
+        current_mode="shared",
+        timeout_seconds=0,
+        create=False,
+    ):
+        with pytest.raises(IntegrationBusy):
+            with evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="shared",
+                timeout_seconds=0,
+                create=False,
+            ):
+                pass
+    with evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        with pytest.raises(IntegrationBusy):
+            with evidence_lock_set(
+                state_home=state_home,
+                release_mode="shared",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=False,
+            ):
+                pass
+
+
+def test_evidence_lock_set_rejects_current_before_release(tmp_path):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    integration_evidence._EVIDENCE_LOCK_STATE.held = {
+        "current": ("shared", 1),
+    }
+    try:
+        with pytest.raises(integration_evidence.IntegrationBusy):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="shared",
+                current_mode="shared",
+                timeout_seconds=0,
+                create=False,
+            ):
+                pass
+    finally:
+        integration_evidence._EVIDENCE_LOCK_STATE.held = {}
+
+
+def test_runtime_missing_lock_inode_is_unavailable(tmp_path):
+    from codex_usage.integration_evidence import (
+        IntegrationEvidenceUnavailable,
+        evidence_lock_set,
+    )
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    integration = state_home / "codex-usage" / "integration"
+    integration.mkdir(mode=0o700, parents=True)
+    integration.parent.chmod(0o700)
+    ensure_private_directory(
+        private_io._private_lock_root(),
+        label="test evidence lock root",
+    )
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            pass
+
+
+def test_evidence_lock_set_rejects_missing_integration_parent(tmp_path):
+    from codex_usage.integration_evidence import (
+        IntegrationEvidenceUnavailable,
+        evidence_lock_set,
+    )
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            pass
+
+
+def test_partial_evidence_lock_failure_does_not_poison_thread_state(tmp_path):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    lock_root = private_io._private_lock_root()
+    ensure_private_directory(lock_root, label="test evidence lock root")
+    integration = state_home / "codex-usage" / "integration"
+    for path in (integration.parent, integration):
+        path.mkdir(mode=0o700)
+    release_target = integration / "producer-install"
+    release_lock = lock_root / integration_evidence._evidence_lock_name(release_target)
+    release_fd = os.open(
+        release_lock,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    os.close(release_fd)
+    with pytest.raises(integration_evidence.IntegrationEvidenceUnavailable):
+        with integration_evidence.evidence_lock_set(
+            state_home=state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            pass
+    current_target = integration / "current.json"
+    current_lock = lock_root / integration_evidence._evidence_lock_name(current_target)
+    current_fd = os.open(
+        current_lock,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    os.close(current_fd)
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="shared",
+        current_mode="shared",
+        timeout_seconds=0,
+        create=False,
+    ):
+        pass

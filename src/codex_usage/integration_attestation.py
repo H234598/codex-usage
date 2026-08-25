@@ -5,6 +5,7 @@ import binascii
 import csv
 import hashlib
 import io
+import json
 import os
 import stat
 from collections.abc import Mapping
@@ -12,7 +13,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .json_utils import loads_strict
-from .private_io import read_private_text
+from .private_io import (
+    FileIdentity,
+    IntegrationEvidenceInvalid,
+    IntegrationEvidenceUnavailable,
+    open_private_dir_at,
+    open_verified_state_home,
+    read_private_bytes_at,
+    read_private_text,
+)
 
 _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
@@ -104,6 +113,18 @@ class ActiveRelease:
     record_sha256: str
     launcher_sha256: str
     release_tree_sha256: str
+
+
+@dataclass(frozen=True)
+class VerifiedActiveManifest:
+    active_release: ActiveRelease
+    release_id: str
+    source_manifest_sha256: str
+    active_manifest_bytes: bytes
+    active_manifest_sha256: str
+    state_home_identity: FileIdentity
+    integration_parent_identity: FileIdentity
+    active_file_identity: FileIdentity
 
 
 def _unavailable() -> IntegrationAttestationUnavailable:
@@ -456,6 +477,23 @@ def _read_manifest(path: Path) -> dict[str, object]:
     return value
 
 
+def _manifest_from_canonical_bytes(payload: bytes) -> dict[str, object]:
+    try:
+        text = payload.decode("utf-8")
+        value = loads_strict(text)
+    except (UnicodeDecodeError, ValueError):
+        raise _unavailable() from None
+    if not isinstance(value, dict):
+        raise _unavailable()
+    canonical = (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    if canonical != payload:
+        raise _unavailable()
+    return value
+
+
 def _require_manifest_fields(
     manifest: dict[str, object],
     *,
@@ -557,9 +595,14 @@ def _verify_manifest_contract(
     expected_version: str,
     expected_dist_info_prefix: str,
     expected_fields: frozenset[str],
+    manifest_payload: bytes | None = None,
 ) -> ActiveRelease:
     manifest = _require_manifest_fields(
-        _read_manifest(manifest_path),
+        (
+            _read_manifest(manifest_path)
+            if manifest_payload is None
+            else _manifest_from_canonical_bytes(manifest_payload)
+        ),
         expected_fields=expected_fields,
     )
     schema_version = manifest.get("schema_version")
@@ -769,3 +812,133 @@ def verify_active_release(
         raise
     except Exception:
         raise _unavailable() from None
+
+
+def _before_active_identity_recheck(_integration_fd: int) -> None:
+    return None
+
+
+def _fd_identity(fd: int) -> FileIdentity:
+    item = os.fstat(fd)
+    return FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+
+
+def verify_active_manifest_at(
+    *,
+    state_home: Path,
+    data_home: Path,
+    expected_entrypoint_path: Path,
+) -> VerifiedActiveManifest:
+    state_fd = -1
+    app_fd = -1
+    integration_fd = -1
+    try:
+        try:
+            state_fd = open_verified_state_home(state_home)
+            state_identity = _fd_identity(state_fd)
+            app_fd = open_private_dir_at(state_fd, "codex-usage")
+            integration_fd = open_private_dir_at(app_fd, "integration")
+            integration_identity = _fd_identity(integration_fd)
+            active_payload, active_identity = read_private_bytes_at(
+                integration_fd,
+                "active.json",
+                maximum=_MANIFEST_MAX_BYTES,
+                mode=0o600,
+            )
+        except FileNotFoundError as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        except OSError as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        except ValueError as exc:
+            raise IntegrationEvidenceInvalid() from exc
+
+        try:
+            active_release = _verify_manifest_contract(
+                manifest_path=(
+                    state_home / "codex-usage" / "integration" / "active.json"
+                ),
+                state_home=state_home,
+                data_home=data_home,
+                expected_entrypoint_path=expected_entrypoint_path,
+                expected_schema_version=2,
+                expected_version=_EXPECTED_VERSION,
+                expected_dist_info_prefix=_DIST_INFO_PREFIX,
+                expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
+                manifest_payload=active_payload,
+            )
+            manifest = _manifest_from_canonical_bytes(active_payload)
+            release_id = _manifest_string(manifest, "release_id")
+            source_manifest_sha256 = _valid_hash(
+                manifest.get("source_manifest_sha256")
+            )
+        except IntegrationAttestationUnavailable as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        except Exception as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+
+        try:
+            _before_active_identity_recheck(integration_fd)
+            repeated_payload, repeated_identity = read_private_bytes_at(
+                integration_fd,
+                "active.json",
+                maximum=_MANIFEST_MAX_BYTES,
+                mode=0o600,
+            )
+            if (
+                _fd_identity(state_fd) != state_identity
+                or _fd_identity(integration_fd) != integration_identity
+                or repeated_identity != active_identity
+                or repeated_payload != active_payload
+            ):
+                raise IntegrationEvidenceInvalid()
+
+            fresh_state_fd = open_verified_state_home(state_home)
+            fresh_app_fd = -1
+            fresh_integration_fd = -1
+            try:
+                fresh_app_fd = open_private_dir_at(fresh_state_fd, "codex-usage")
+                fresh_integration_fd = open_private_dir_at(
+                    fresh_app_fd,
+                    "integration",
+                )
+                fresh_payload, fresh_active_identity = read_private_bytes_at(
+                    fresh_integration_fd,
+                    "active.json",
+                    maximum=_MANIFEST_MAX_BYTES,
+                    mode=0o600,
+                )
+                if (
+                    _fd_identity(fresh_state_fd) != state_identity
+                    or _fd_identity(fresh_integration_fd) != integration_identity
+                    or fresh_active_identity != active_identity
+                    or fresh_payload != active_payload
+                ):
+                    raise IntegrationEvidenceInvalid()
+            finally:
+                if fresh_integration_fd >= 0:
+                    os.close(fresh_integration_fd)
+                if fresh_app_fd >= 0:
+                    os.close(fresh_app_fd)
+                os.close(fresh_state_fd)
+        except IntegrationEvidenceInvalid:
+            raise
+        except Exception as exc:
+            raise IntegrationEvidenceInvalid() from exc
+
+        return VerifiedActiveManifest(
+            active_release=active_release,
+            release_id=release_id,
+            source_manifest_sha256=source_manifest_sha256,
+            active_manifest_bytes=active_payload,
+            active_manifest_sha256=_sha256_bytes(active_payload),
+            state_home_identity=state_identity,
+            integration_parent_identity=integration_identity,
+            active_file_identity=active_identity,
+        )
+    finally:
+        if integration_fd >= 0:
+            os.close(integration_fd)
+        if app_fd >= 0:
+            os.close(app_fd)
+        if state_fd >= 0:
+            os.close(state_fd)

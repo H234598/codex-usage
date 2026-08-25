@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
 
@@ -21,6 +22,25 @@ _PATH_TYPE = type(Path())
 _MAX_STALE_ROLLBACKS = 1
 _MAX_PRIVATE_ROLLBACK_BYTES = 64 * 1024 * 1024
 _PRIVATE_LOCK_STATE = threading.local()
+
+
+@dataclass(frozen=True)
+class FileIdentity:
+    device: int
+    inode: int
+    mode: int
+
+
+class IntegrationEvidenceError(Exception):
+    pass
+
+
+class IntegrationEvidenceInvalid(IntegrationEvidenceError):
+    pass
+
+
+class IntegrationEvidenceUnavailable(IntegrationEvidenceError):
+    pass
 
 
 def _private_lock_root() -> Path:
@@ -34,11 +54,15 @@ def _private_lock_root() -> Path:
 
 
 def _private_lock_path(path: Path) -> Path:
-    absolute = os.path.abspath(path)
-    digest = hashlib.sha256(os.fsencode(absolute)).hexdigest()
     root = _private_lock_root()
     ensure_private_directory(root, label="private lock directory")
-    return root / f"{digest}.lock"
+    return root / _private_lock_name(path)
+
+
+def _private_lock_name(path: Path) -> str:
+    absolute = os.path.abspath(path)
+    digest = hashlib.sha256(os.fsencode(absolute)).hexdigest()
+    return f"{digest}.lock"
 
 
 def _lock_deadline(timeout_seconds: int | float) -> float:
@@ -156,6 +180,221 @@ def ensure_private_directory(
     _require_private_directory(raw_path, label=label)
     _chmod_private_directory(raw_path, label=label)
     return raw_path
+
+
+def _directory_open_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+
+
+def _regular_open_flags(*, writable: bool = False) -> int:
+    flags = os.O_WRONLY if writable else os.O_RDONLY
+    return (
+        flags
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+
+
+def _safe_component(name: object) -> str:
+    if (
+        type(name) is not str
+        or not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+    ):
+        raise ValueError("private path component is invalid")
+    return name
+
+
+def _directory_identity(item: os.stat_result) -> FileIdentity:
+    return FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+
+
+def _require_private_directory_fd(fd: int) -> FileIdentity:
+    try:
+        item = os.fstat(fd)
+    except OSError as exc:
+        raise ValueError("private directory descriptor is invalid") from exc
+    if (
+        not stat.S_ISDIR(item.st_mode)
+        or item.st_uid != os.getuid()
+        or stat.S_IMODE(item.st_mode) != 0o700
+    ):
+        raise ValueError("private directory descriptor is invalid")
+    return _directory_identity(item)
+
+
+def open_verified_state_home(state_home: Path) -> int:
+    state_home = _require_path(state_home, label="state home")
+    if (
+        not state_home.is_absolute()
+        or any(part in {"", ".", ".."} for part in state_home.parts[1:])
+    ):
+        raise ValueError("state home must be an absolute normalized path")
+    flags = _directory_open_flags()
+    current_fd = os.open(state_home.anchor, flags)
+    try:
+        for component in state_home.parts[1:]:
+            try:
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise ValueError("state home contains an unsafe component") from exc
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+        _require_private_directory_fd(current_fd)
+        result = current_fd
+        current_fd = -1
+        return result
+    finally:
+        if current_fd >= 0:
+            os.close(current_fd)
+
+
+def open_private_dir_at(parent_fd: int, name: str) -> int:
+    _require_private_directory_fd(parent_fd)
+    component = _safe_component(name)
+    try:
+        fd = os.open(component, _directory_open_flags(), dir_fd=parent_fd)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise ValueError("private directory is unsafe") from exc
+        raise
+    try:
+        _require_private_directory_fd(fd)
+        result = fd
+        fd = -1
+        return result
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _require_private_file_stat(
+    item: os.stat_result,
+    *,
+    maximum: int,
+    mode: int,
+) -> FileIdentity:
+    if (
+        not stat.S_ISREG(item.st_mode)
+        or item.st_uid != os.getuid()
+        or item.st_nlink != 1
+        or stat.S_IMODE(item.st_mode) != mode
+        or item.st_size > maximum
+    ):
+        raise ValueError("private file descriptor is invalid")
+    return FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+
+
+def read_private_bytes_at(
+    parent_fd: int,
+    name: str,
+    *,
+    maximum: int,
+    mode: int,
+) -> tuple[bytes, FileIdentity]:
+    _require_private_directory_fd(parent_fd)
+    component = _safe_component(name)
+    if type(maximum) is not int or maximum < 0:
+        raise ValueError("private byte budget is invalid")
+    if type(mode) is not int or mode < 0 or mode & ~0o700:
+        raise ValueError("private file mode is invalid")
+    fd = os.open(component, _regular_open_flags(), dir_fd=parent_fd)
+    try:
+        initial = os.fstat(fd)
+        identity = _require_private_file_stat(initial, maximum=maximum, mode=mode)
+        payload = bytearray()
+        while len(payload) <= maximum:
+            chunk = os.read(fd, min(65_536, maximum + 1 - len(payload)))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        if len(payload) > maximum:
+            raise ValueError("private file exceeds byte budget")
+        final = os.fstat(fd)
+        if (
+            _require_private_file_stat(final, maximum=maximum, mode=mode) != identity
+            or final.st_size != initial.st_size
+            or final.st_mtime_ns != initial.st_mtime_ns
+            or final.st_ctime_ns != initial.st_ctime_ns
+        ):
+            raise ValueError("private file changed during read")
+        return bytes(payload), identity
+    finally:
+        os.close(fd)
+
+
+def write_private_bytes_at(
+    parent_fd: int,
+    name: str,
+    payload: bytes,
+    *,
+    mode: int,
+) -> FileIdentity:
+    _require_private_directory_fd(parent_fd)
+    component = _safe_component(name)
+    if type(payload) is not bytes:
+        raise ValueError("private payload is invalid")
+    if type(mode) is not int or mode < 0 or mode & ~0o700:
+        raise ValueError("private file mode is invalid")
+    flags = _regular_open_flags(writable=True) | os.O_CREAT | os.O_EXCL
+    fd = -1
+    created = False
+    created_identity: tuple[int, int] | None = None
+    try:
+        fd = os.open(component, flags, mode, dir_fd=parent_fd)
+        created = True
+        opened = os.fstat(fd)
+        created_identity = (opened.st_dev, opened.st_ino)
+        os.fchmod(fd, mode)
+        offset = 0
+        while offset < len(payload):
+            written = os.write(fd, payload[offset:])
+            if written <= 0:
+                raise OSError(errno.EIO, "short private write")
+            offset += written
+        os.fsync(fd)
+        item = os.fstat(fd)
+        identity = _require_private_file_stat(
+            item,
+            maximum=len(payload),
+            mode=mode,
+        )
+        if item.st_size != len(payload):
+            raise ValueError("private file size is invalid")
+        os.fsync(parent_fd)
+        created = False
+        return identity
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        if created:
+            try:
+                candidate = os.stat(
+                    component,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+                if (
+                    stat.S_ISREG(candidate.st_mode)
+                    and candidate.st_uid == os.getuid()
+                    and candidate.st_nlink == 1
+                    and (candidate.st_dev, candidate.st_ino) == created_identity
+                ):
+                    os.unlink(component, dir_fd=parent_fd)
+                    os.fsync(parent_fd)
+            except OSError:
+                pass
 
 
 def read_private_text(
