@@ -447,6 +447,109 @@ def test_publish_never_creates_v1_cache(staged_evidence_layout):
     assert not (state_home / "codex-usage/integration/account-usage-v1.json").exists()
 
 
+def test_publish_pointer_parent_fsync_failure_returns_committed_pointer(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if post-rename durability error made committed Current retryable."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    current = state_home / "codex-usage/integration/current.json"
+    real_fsync = integration_evidence.os.fsync
+
+    def fail_only_after_pointer_commit(fd):
+        if current.read_bytes() != old_current:
+            raise OSError("synthetic post-commit pointer parent fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(integration_evidence.os, "fsync", fail_only_after_pointer_commit)
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+    assert current.read_bytes() != old_current
+    assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
+
+
+def test_publish_active_rotation_after_commit_skips_gc_and_returns_pointer(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if post-commit release rotation looked like an uncommitted publish."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    current = state_home / "codex-usage/integration/current.json"
+    real_reverify = integration_evidence._verify_active_manifest_for_publish
+    calls = 0
+    gc_calls: list[None] = []
+
+    def rotate_before_postcommit_reverify(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            replace_active_json_inode_after_payload_build(
+                state_home,
+                data_home,
+                verified,
+            )
+        return real_reverify(**kwargs)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_verify_active_manifest_for_publish",
+        rotate_before_postcommit_reverify,
+    )
+    monkeypatch.setattr(
+        integration_evidence,
+        "gc_evidence_generations",
+        lambda **kwargs: gc_calls.append(None),
+    )
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+    assert current.read_bytes() != old_current
+    assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
+    assert gc_calls == []
+
+
+def test_publish_gc_failure_after_commit_returns_committed_pointer(
+    published_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if deferred retention failure invited duplicate publication retry."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceUnavailable
+
+    state_home, data_home, _entrypoint, payload, verified, old_current = (
+        published_evidence_layout
+    )
+    current = state_home / "codex-usage/integration/current.json"
+    monkeypatch.setattr(
+        integration_evidence,
+        "gc_evidence_generations",
+        lambda **kwargs: (_ for _ in ()).throw(IntegrationEvidenceUnavailable()),
+    )
+    pointer = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified,
+    )
+    assert current.read_bytes() != old_current
+    assert integration_evidence.parse_pointer(current.read_bytes()) == pointer
+
+
 def test_fd_private_io_round_trip_and_identity(tmp_path):
     from codex_usage.private_io import (
         open_private_dir_at,

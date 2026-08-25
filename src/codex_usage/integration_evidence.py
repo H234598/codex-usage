@@ -1080,8 +1080,12 @@ def _atomic_replace_current(integration_fd: int, pointer_bytes: bytes) -> None:
             src_dir_fd=integration_fd,
             dst_dir_fd=integration_fd,
         )
+        # Current namespace commit point; later work is durability/maintenance only.
         renamed = True
-        os.fsync(integration_fd)
+        try:
+            os.fsync(integration_fd)
+        except Exception:
+            pass
     except IntegrationEvidenceError:
         raise
     except ValueError as exc:
@@ -1263,16 +1267,19 @@ def publish_evidence_generation(
             _close_fds(generation_fd, generations_fd, integration_fd, app_fd, state_fd)
 
     assert pointer is not None
-    fresh = _verify_active_manifest_for_publish(
-        state_home=state_home,
-        data_home=data_home,
-        expected_entrypoint_path=verified.active_release.entrypoint_path,
-    )
-    _require_same_verified_manifest(verified, fresh)
-    gc_evidence_generations(
-        state_home=state_home,
-        data_home=data_home,
-        pointer=pointer,
-        verified_active_manifest=fresh,
-    )
+    try:
+        fresh = _verify_active_manifest_for_publish(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=verified.active_release.entrypoint_path,
+        )
+        _require_same_verified_manifest(verified, fresh)
+        gc_evidence_generations(
+            state_home=state_home,
+            data_home=data_home,
+            pointer=pointer,
+            verified_active_manifest=fresh,
+        )
+    except Exception:
+        pass
     return pointer
