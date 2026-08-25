@@ -746,7 +746,10 @@ def canonical_backend_identity(
             type(value) is not str
             or not value
             or len(value) > maximum
-            or any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value)
+            or any(
+                char.isspace() or ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
+                for char in value
+            )
         ):
             raise ValueError(f"{field} is invalid")
     if require_backend_identity and not (backend_user_id or backend_account_id):
@@ -823,7 +826,7 @@ def _extract_auth_details(
     if len(access_token) > MAX_ACCESS_TOKEN_CHARS:
         raise DirectAuthError("auth.json access_token too large")
     if any(
-        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        char.isspace() or ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
         for char in access_token
     ):
         raise DirectAuthError("auth.json access_token contains invalid characters")

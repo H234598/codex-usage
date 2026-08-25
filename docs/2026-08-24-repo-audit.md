@@ -4670,3 +4670,23 @@ Verifikation: **110 `tests/test_integration_snapshot.py`-Tests**, **38
 Integration-Entrypoint-Tests**, **238 Integration-Installer-Tests**, 99%-
 Branch-Coverage im Snapshot-Modul, Mypy, Ruff, Python-Compile und
 `git diff --check` grün.
+
+## Runde 232: C1-Steuerzeichen in Direct-Auth-Grenzen
+
+Fokus: `src/codex_usage/direct.py`, Backend-Identitäten und Access-Token-
+Validierung.
+
+Vierzehn reproduzierbare Eingaben mit `U+0080` bzw. `U+009F` passierten zwei
+Grenzen: `canonical_backend_identity` akzeptierte sie in allen sechs
+Identitäts-/Planfeldern, und `_extract_auth_details` gab opaque Access-Tokens
+mit diesen Zeichen weiter. Andere Auth-Helfer sperrten den Bereich bereits;
+dadurch waren dieselben Datenpfade inkonsistent.
+
+Fix: Beide Grenzen weisen jetzt `0x7F…0x9F` zusätzlich zu Whitespace und C0
+zurück. Token- und Identitätslängen sowie bestehende Vergleichsregeln bleiben
+unverändert.
+
+Verifikation: **387 `tests/test_direct.py`-Tests**, **1139 gekoppelte
+Direct-/Bridge-/App-Server-/Extractor-Tests**, 100%-Statement- und
+Branch-Coverage im Direct-Modul, Mypy, Ruff, Python-Compile und
+`git diff --check` grün.

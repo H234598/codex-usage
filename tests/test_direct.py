@@ -1537,6 +1537,15 @@ def test_auth_details_rejects_oversized_access_token(tmp_path):
         )
 
 
+@pytest.mark.parametrize("control", ["\x80", "\x9f"])
+def test_auth_details_rejects_c1_access_token_controls(tmp_path, control):
+    with pytest.raises(DirectAuthError, match="access_token contains invalid characters"):
+        _extract_auth_details(
+            {"tokens": {"access_token": f"opaque-token{control}"}},
+            path=tmp_path / "auth.json",
+        )
+
+
 def test_validate_access_token_expiry_rejects_string_subclass_hooks(tmp_path):
     class BrokenStr(str):
         def split(self, _separator):
@@ -2321,6 +2330,32 @@ def test_canonical_backend_identity_rejects_malformed_fields(field, value):
         "auth_account_id": None,
     }
     arguments[field] = value
+    with pytest.raises(ValueError, match=f"{field} is invalid"):
+        canonical_backend_identity(**arguments)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "backend_user_id",
+        "backend_account_id",
+        "auth_user_id",
+        "auth_account_id",
+        "auth_plan_type",
+        "backend_plan_type",
+    ],
+)
+@pytest.mark.parametrize("control", ["\x80", "\x9f"])
+def test_canonical_backend_identity_rejects_c1_controls(field, control):
+    arguments = {
+        "backend_user_id": None,
+        "backend_account_id": None,
+        "auth_user_id": None,
+        "auth_account_id": None,
+        "auth_plan_type": None,
+        "backend_plan_type": None,
+    }
+    arguments[field] = f"value{control}"
     with pytest.raises(ValueError, match=f"{field} is invalid"):
         canonical_backend_identity(**arguments)
 
