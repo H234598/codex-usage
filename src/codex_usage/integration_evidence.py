@@ -127,7 +127,7 @@ class _ValidatedEvidenceGeneration:
 @dataclass(frozen=True)
 class _CompleteEvidenceGeneration:
     generation_id: str
-    published_at: str
+    published_at: datetime
     generation_identity: FileIdentity
     binding_identity: FileIdentity
     payload_identity: FileIdentity
@@ -1414,6 +1414,64 @@ def _validate_existing_current(
         _close_fds(generation_fd)
 
 
+def _private_file_snapshot_at(
+    parent_fd: int,
+    name: str,
+    *,
+    maximum: int,
+) -> os.stat_result:
+    fd = -1
+    try:
+        fd = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=parent_fd,
+        )
+        item = os.fstat(fd)
+        private_io._require_private_file_stat(
+            item,
+            maximum=maximum,
+            mode=0o600,
+        )
+        return item
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
+            raise IntegrationEvidenceInvalid() from exc
+        raise
+    finally:
+        _close_fds(fd)
+
+
+def _same_private_file_snapshot(
+    expected: os.stat_result,
+    actual: os.stat_result,
+) -> bool:
+    return (
+        expected.st_dev,
+        expected.st_ino,
+        expected.st_mode,
+        expected.st_uid,
+        expected.st_gid,
+        expected.st_nlink,
+        expected.st_size,
+        expected.st_mtime_ns,
+        expected.st_ctime_ns,
+    ) == (
+        actual.st_dev,
+        actual.st_ino,
+        actual.st_mode,
+        actual.st_uid,
+        actual.st_gid,
+        actual.st_nlink,
+        actual.st_size,
+        actual.st_mtime_ns,
+        actual.st_ctime_ns,
+    )
+
+
 def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
     staging_fd = -1
     try:
@@ -1425,7 +1483,7 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
                 entries.append(entry)
                 if len(entries) > 4:
                     raise IntegrationEvidenceInvalid()
-        identities: list[tuple[str, FileIdentity]] = []
+        snapshots: list[tuple[str, os.stat_result, int]] = []
         for entry in entries:
             if entry.name not in {
                 "account-usage-v2.json",
@@ -1436,16 +1494,20 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
             maximum = (
                 _BINDING_MAX_BYTES if "binding" in entry.name else _PAYLOAD_MAX_BYTES
             )
-            identity = private_io._require_private_file_stat(
+            private_io._require_private_file_stat(
                 item,
                 maximum=maximum,
                 mode=0o600,
             )
-            identities.append((entry.name, identity))
-        for entry_name, identity in identities:
-            if _named_identity(staging_fd, entry_name, directory=False) != identity:
+            snapshots.append((entry.name, item, maximum))
+        for entry_name, snapshot, maximum in snapshots:
+            current = _private_file_snapshot_at(
+                staging_fd,
+                entry_name,
+                maximum=maximum,
+            )
+            if not _same_private_file_snapshot(snapshot, current):
                 raise IntegrationEvidenceInvalid()
-        for entry_name, _identity in identities:
             os.unlink(entry_name, dir_fd=staging_fd)
         os.fsync(staging_fd)
         if (
@@ -1614,7 +1676,6 @@ def gc_evidence_generations(
 
             generations = _scan_complete_generations(
                 generations_fd=generations_fd,
-                verified=verified,
             )
             if len(generations) <= 256:
                 return
@@ -1664,7 +1725,6 @@ def gc_evidence_generations(
 def _scan_complete_generations(
     *,
     generations_fd: int,
-    verified: VerifiedActiveManifest,
 ) -> list[_CompleteEvidenceGeneration]:
     complete: list[_CompleteEvidenceGeneration] = []
     try:
@@ -1683,7 +1743,6 @@ def _scan_complete_generations(
                     _inspect_complete_generation(
                         generations_fd=generations_fd,
                         generation_id=entry.name,
-                        verified=verified,
                     )
                 )
         return complete
@@ -1701,7 +1760,6 @@ def _inspect_complete_generation(
     *,
     generations_fd: int,
     generation_id: str,
-    verified: VerifiedActiveManifest,
 ) -> _CompleteEvidenceGeneration:
     generation_fd = -1
     try:
@@ -1737,9 +1795,6 @@ def _inspect_complete_generation(
             or len(payload) != binding.payload_size_bytes
             or hashlib.sha256(payload).hexdigest() != binding.payload_sha256
             or binding.published_at != document["generated_at"]
-            or binding.active_manifest_sha256 != verified.active_manifest_sha256
-            or binding.release_id != verified.release_id
-            or binding.source_manifest_sha256 != verified.source_manifest_sha256
             or _fd_identity(generation_fd) != generation_identity
             or _named_identity(generations_fd, generation_id, directory=True)
             != generation_identity
@@ -1747,7 +1802,9 @@ def _inspect_complete_generation(
             raise IntegrationEvidenceInvalid()
         return _CompleteEvidenceGeneration(
             generation_id=generation_id,
-            published_at=binding.published_at,
+            published_at=datetime.fromisoformat(
+                binding.published_at.replace("Z", "+00:00")
+            ).astimezone(UTC),
             generation_identity=generation_identity,
             binding_identity=binding_identity,
             payload_identity=payload_identity,

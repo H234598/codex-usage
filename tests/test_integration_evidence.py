@@ -371,6 +371,47 @@ def create_seventeen_staging_directories(evidence_layout) -> int:
     return generations_fd
 
 
+def _rewrite_complete_generation(
+    state_home: Path,
+    generation_id: str,
+    *,
+    published_at: str | None = None,
+    historical_trust: bool = False,
+) -> None:
+    from codex_usage import integration_evidence
+
+    generation = (
+        state_home / "codex-usage/integration/generations" / generation_id
+    )
+    payload_path = generation / "account-usage-v2.json"
+    payload = payload_path.read_bytes()
+    binding_path = generation / "account-usage-v2.binding.json"
+    binding = integration_evidence.parse_binding(binding_path.read_bytes())
+    if published_at is not None:
+        document = json.loads(payload)
+        document["generated_at"] = published_at
+        payload = integration_evidence.serialize_schema2_document(document)
+        _rewrite_reader_file(generation, "account-usage-v2.json", payload)
+        binding = replace(
+            binding,
+            payload_sha256=hashlib.sha256(payload).hexdigest(),
+            payload_size_bytes=len(payload),
+            published_at=published_at,
+        )
+    if historical_trust:
+        binding = replace(
+            binding,
+            active_manifest_sha256="c" * 64,
+            release_id="0.6.536-" + "d" * 16,
+            source_manifest_sha256="e" * 64,
+        )
+    _rewrite_reader_file(
+        generation,
+        "account-usage-v2.binding.json",
+        integration_evidence.serialize_binding(binding),
+    )
+
+
 def test_rollback_swaps_current_and_previous_in_one_pointer_rename(
     staged_evidence_layout, monkeypatch
 ):
@@ -439,6 +480,67 @@ def test_gc_scans_257_complete_generations_then_retains_256(
     assert not (generations / f"{0:032x}").exists()
     assert (generations / pointer.current_generation_id).is_dir()
     assert (generations / pointer.previous_generation_id).is_dir()
+
+
+def test_gc_orders_fractional_timestamps_by_utc_instant_then_generation_id(
+    staged_evidence_layout,
+):
+    """Would fail if canonical timestamps were sorted as text instead of instants."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    pointer = create_257_complete_generations(state_home, data_home, verified)
+    fractional_later = f"{0:032x}"
+    whole_second_older = f"{1:032x}"
+    _rewrite_complete_generation(
+        state_home,
+        fractional_later,
+        published_at="2026-08-25T10:00:00.9Z",
+    )
+    _rewrite_complete_generation(
+        state_home,
+        whole_second_older,
+        published_at="2026-08-25T10:00:00Z",
+    )
+
+    integration_evidence.gc_evidence_generations(
+        state_home=state_home,
+        data_home=data_home,
+        pointer=pointer,
+        verified_active_manifest=verified,
+    )
+
+    generations = state_home / "codex-usage/integration/generations"
+    assert (generations / fractional_later).is_dir()
+    assert not (generations / whole_second_older).exists()
+
+
+def test_gc_reclaims_valid_history_from_prior_active_manifest(
+    staged_evidence_layout,
+):
+    """Would fail if GC required historical evidence to match current Active."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    pointer = create_257_complete_generations(state_home, data_home, verified)
+    historical = f"{0:032x}"
+    _rewrite_complete_generation(
+        state_home,
+        historical,
+        historical_trust=True,
+    )
+
+    integration_evidence.gc_evidence_generations(
+        state_home=state_home,
+        data_home=data_home,
+        pointer=pointer,
+        verified_active_manifest=verified,
+    )
+
+    assert count_complete_generation_directories(state_home) == 256
+    assert not (
+        state_home / "codex-usage/integration/generations" / historical
+    ).exists()
 
 
 def test_rollback_rejects_invalid_previous_without_pointer_change(
@@ -545,6 +647,62 @@ def test_recovery_rejects_seventeenth_or_unsafe_staging_directory(
         os.close(generations_fd)
 
 
+def test_recovery_rechecks_each_name_before_unlink(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if recovery unlinked a replacement installed after prior unlink."""
+    from codex_usage import integration_evidence, private_io
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, _data_home, _entrypoint, _payload, _verified = staged_evidence_layout
+    generations = state_home / "codex-usage/integration/generations"
+    generations_fd = os.open(
+        generations,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    staging_name = f".tmp-{0:032x}"
+    os.mkdir(staging_name, mode=0o700, dir_fd=generations_fd)
+    staging_fd = private_io.open_private_dir_at(generations_fd, staging_name)
+    contents = {
+        "account-usage-v2.json": b"payload",
+        "account-usage-v2.binding.json": b"binding",
+    }
+    try:
+        for name, payload in contents.items():
+            private_io.write_private_bytes_at(staging_fd, name, payload, mode=0o600)
+    finally:
+        os.close(staging_fd)
+
+    real_unlink = os.unlink
+    replacement_name: list[str] = []
+
+    def replace_other_after_first_unlink(name, *args, dir_fd=None, **kwargs):
+        result = real_unlink(name, *args, dir_fd=dir_fd, **kwargs)
+        if not replacement_name:
+            other = next(candidate for candidate in contents if candidate != name)
+            _replace_named_file(dir_fd, other, contents[other])
+            replacement_name.append(other)
+        return result
+
+    monkeypatch.setattr(
+        integration_evidence.os,
+        "unlink",
+        replace_other_after_first_unlink,
+    )
+    try:
+        with pytest.raises(IntegrationEvidenceInvalid):
+            integration_evidence.recover_evidence_staging(
+                generations_fd=generations_fd
+            )
+        assert replacement_name
+        assert (generations / staging_name / replacement_name[0]).exists()
+    finally:
+        os.close(generations_fd)
+
+
 def _crash_fd_name(fd: int) -> str:
     try:
         return Path(os.readlink(f"/proc/self/fd/{fd}")).name
@@ -568,7 +726,6 @@ def _publish_until_crash(
     real_fsync = os.fsync
     real_rename = os.rename
     real_replace = os.replace
-    staging_fsyncs = 0
 
     def wait_then_exit_after(operation):
         ready.set()
@@ -592,7 +749,6 @@ def _publish_until_crash(
         return real_write(fd, data)
 
     def fsync(fd):
-        nonlocal staging_fsyncs
         name = _crash_fd_name(fd)
         file_marker = {
             "payload_fsync": ".tmp-account-usage-v2.json-",
@@ -601,10 +757,12 @@ def _publish_until_crash(
         }.get(scenario)
         if file_marker is not None and name.startswith(file_marker):
             wait_then_exit_after(lambda: real_fsync(fd))
-        if name.startswith(".tmp-"):
-            staging_fsyncs += 1
-            if scenario == "staging_fsync" and staging_fsyncs == 5:
-                wait_then_exit_after(lambda: real_fsync(fd))
+        if (
+            scenario == "staging_fsync"
+            and name.startswith(".tmp-")
+            and sys._getframe(1).f_code.co_name == "publish_evidence_generation"
+        ):
+            wait_then_exit_after(lambda: real_fsync(fd))
         if scenario == "generations_fsync" and name == "generations":
             wait_then_exit_after(lambda: real_fsync(fd))
         if scenario == "integration_fsync" and name == "integration":
@@ -684,6 +842,19 @@ def _recover_and_read_after_crash(
     assert child.exitcode == (0 if scenario.endswith("write_before_fsync") else 77)
 
     generations = state_home / "codex-usage/integration/generations"
+    if scenario == "staging_fsync":
+        debris = [
+            entry
+            for entry in os.scandir(generations)
+            if entry.name.startswith(".tmp-")
+        ]
+        assert len(debris) == 1
+        assert {
+            entry.name for entry in os.scandir(generations / debris[0].name)
+        } == {
+            "account-usage-v2.json",
+            "account-usage-v2.binding.json",
+        }
     generations_fd = os.open(
         generations,
         os.O_RDONLY
@@ -703,6 +874,10 @@ def _recover_and_read_after_crash(
             )
     finally:
         os.close(generations_fd)
+    if scenario == "staging_fsync":
+        assert not any(
+            entry.name.startswith(".tmp-") for entry in os.scandir(generations)
+        )
 
     document, status = integration_evidence.read_current_evidence(
         state_home=state_home,
