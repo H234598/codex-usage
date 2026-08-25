@@ -13,6 +13,9 @@
 - Build und Launcher unterdrücken Bytecode mit
   `PYTHONDONTWRITEBYTECODE=1` plus `python -B`; Releasebäume mit
   `__pycache__` oder `*.pyc` werden verworfen.
+- Vollständiger Consumer-Handoff dokumentiert kanonischen Payloadpfad,
+  Binding-/Pointerkette, SH/EX-Locks, FD-gebundene Vor-/Nachprüfungen,
+  Größen-/Dateigrenzen, exakte Fenster-Allowlist und bounded GC.
 
 ## 0.6.534 - 2026-08-24
 

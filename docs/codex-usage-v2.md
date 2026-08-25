@@ -213,10 +213,10 @@ Rohfehlerausgaben. Tokens enden mit genau einem Newline. Exceptions,
 Terminalausgaben, Providerantworten, Credentials und lokale Pfade werden nicht
 ausgegeben.
 
-## Release 0.6.535 und Attestierung
+## Release 0.6.536 und Attestierung
 
-Projekt, Producer-Wheel, Dist-Info, Manifest und aktive Attestierung tragen
-gemeinsam Version `0.6.535`. Das aktive Manifest hat exakt Integer-Schema `2`.
+Projekt, Producer-Wheel, Dist-Info, Manifest und Runtime-Attestierung tragen
+gemeinsam Version `0.6.536`. Das aktive Manifest hat exakt Integer-Schema `2`.
 Es bindet Release-ID und Source-Manifest-SHA-256 sowie die SHA-256-Werte von
 Entry Point, Wheel, RECORD, Launcher und gesamtem Releasebaum.
 
@@ -240,26 +240,139 @@ Kanonische Pfade innerhalb des privaten Releasebaums sind fest:
 producer.whl
 venv/bin/codex-usage
 venv/lib/python*/site-packages/codex_usage/integration_entrypoint.py
-venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.535.dist-info/RECORD
+venv/lib/python*/site-packages/codex_usage_integration_producer-0.6.536.dist-info/RECORD
 ```
 
 Launcher, Wheel oder Dist-Info unter alternativen Pfaden werden auch bei
 passenden Einzelhashes abgelehnt. RECORD bindet jedes Wheelmitglied; Metadata
-bindet Distribution `codex-usage-integration-producer` und Version `0.6.535`.
+bindet Distribution `codex-usage-integration-producer` und Version `0.6.536`.
 Der Releasebaumhash umfasst sortiert jeden no-follow Verzeichnis-/Dateieintrag
 mit Typ, relativem Pfad, Modus, Dateigröße und Datei-SHA-256. Symlinks,
 Hardlinks, fremde Owner, falsche Modi, Sonderdateien, Device-/Inodewechsel,
 Races, zusätzliche oder fehlende Einträge schlagen fehl.
 
-Runtimeattestierung und Rollback akzeptieren nur `0.6.535`/Schema 2.
+Runtimeattestierung und Rollback akzeptieren nur `0.6.536`/Schema 2.
 Ausschließlich der Installer darf beim atomaren Cutover vollständig
-hash-/RECORD-/Baum-attestierte `0.6.534`/Schema-2-,
-`0.6.533`/Schema-2- oder `0.6.532`/Schema-1-Generationen als enumerierte
-Upgradequellen lesen. Diese älteren Generationen
+hash-/RECORD-/Baum-attestierte `0.6.534`/Schema-2-Generationen als enumerierte
+Upgradequelle lesen. Der bei Bytecode-Drift verworfene Release `0.6.535` bleibt
+inert und wird weder repariert noch reaktiviert. Ältere Generationen
 werden als `previous.json` erhalten, sind aber weder runtime-verifizierbar noch
 durch Rollback reaktivierbar. Es gibt keinen generischen Altversionsfallback.
 Fehler vor dem finalen atomaren Swap lassen `active.json` bytegenau
 unverändert.
+
+Falls `active.json` den bekannten bytecode-korrumpierten `0.6.535`-Marker
+trägt, prüft Installer trotzdem dessen vollständige Manifestform, kanonische
+Pfadtopologie und alle Digestformate. Erst dann liest er separat FD-gebunden
+und vollständig attestiert `previous.json` als exakt `0.6.534`/Schema 2. Der
+0.6.535-Releaseinhalt wird nie als Herkunft vertraut; ungültiger Active- oder
+Previous-Marker lässt beide Dateien unverändert und bricht ab.
+
+## V2-Evidence-Consumervertrag
+
+Dieser Abschnitt ist maschinenbindender Producer-Handoff für Masterjet. Es gibt
+keine Payload unter `data_home` und keine Legacy-Datei als Consumerquelle. Der
+einzige relative Payloadpfad unter `state_home` lautet:
+
+```text
+codex-usage/integration/generations/<generation_id>/account-usage-v2.json
+```
+
+`<generation_id>` ist exakt 32 Kleinbuchstaben-HEX-Zeichen. Derselbe immutable
+Generationsordner enthält exakt diese zwei regulären Dateien:
+
+```text
+account-usage-v2.json
+account-usage-v2.binding.json
+```
+
+Der atomare Pointer liegt ausschließlich unter
+`state_home/codex-usage/integration/current.json`; `generations/` liegt im
+selben `integration/`-Verzeichnis. Jeder Generationordner bleibt unveränderlich
+nach dem Publish. Rollback tauscht nur Pointer-current/previous; Audit und
+Recovery behalten die referenzierten Ordner.
+
+### Maschinenprüfbare Kette
+
+1. Reader attestiert zuerst `active.json` vollständig gegen erwarteten
+   Entry-Point: Schema 2, Version `0.6.536`, Release-ID, Source-Manifest,
+   kanonische Pfade, Entry-Point, Wheel, RECORD, Launcher und Releasebaum.
+   Das Ergebnis ist `VerifiedActiveManifest`, einschließlich
+   `active_manifest_sha256`.
+2. `current.json` ist kanonisches JSON, höchstens 4096 Byte, mit exakt fünf
+   Feldern: `pointer_schema_version=1`, `current_generation_id`,
+   `current_binding_sha256`, `previous_generation_id`,
+   `previous_binding_sha256`. Beide vorherigen Felder sind gemeinsam `null`
+   oder gemeinsam 32-HEX/64-HEX.
+3. Der aktuelle Ordnername muss `current_generation_id` entsprechen.
+   SHA-256 der kanonischen Binding-Bytes muss `current_binding_sha256`
+   entsprechen.
+4. Binding ist kanonisches JSON, höchstens 32_768 Byte, mit exakt zehn
+   Feldern: `binding_schema_version=1`, `active_manifest_sha256`,
+   `generation_id`, `payload_filename`, `payload_sha256`,
+   `payload_size_bytes`, `published_at`, `producer_version`, `release_id`,
+   `source_manifest_sha256`. `payload_filename` ist exakt
+   `account-usage-v2.json`; `producer_version` ist `0.6.536`.
+5. Binding-`generation_id`, `active_manifest_sha256`, `release_id` und
+   `source_manifest_sha256` müssen exakt zu Ordner und
+   `VerifiedActiveManifest` passen. Payloadgröße und SHA-256 müssen dem
+   Binding entsprechen; danach wird das strikte Schema-2-Dokument erneut
+   kanonisch validiert. Der optional referenzierte previous Binding wird
+   mindestens mit Pointer/Generation/Binding-Digest validiert; Rollback und
+   GC validieren ihn vollständig.
+
+Jede fehlende, zusätzliche, nichtkanonische oder abweichende Bindung ist
+`invalid`, niemals Fallback.
+
+### Synchronisation und sichere I/O
+
+Reader nehmen beide persistenten `flock`-Inodes in dieser festen Reihenfolge:
+erst Releaseziel `state_home/codex-usage/integration/producer-install`, dann
+Pointerziel `state_home/codex-usage/integration/current.json`. Reader nehmen
+beide `LOCK_SH`, Publish, Rollback, Staging-Recovery und GC beide `LOCK_EX`.
+Nicht sofort verfügbare Locks ergeben `busy`; Runtime erzeugt fehlende Lockdateien
+nie. Nur Installer-Bootstrap darf sie einmal anlegen.
+
+Die Lockdateien liegen unter
+`$HOME/.local/state/codex-usage/locks/<sha256(abs-ziel)>.lock`; sie sind
+UID-eigene reguläre `0600`-Dateien mit Linkcount 1 und höchstens 4096 Byte.
+Die Lockroot und ihre kontrollierten Eltern sind reale UID-eigene `0700`-
+Verzeichnisse. Vertrauensgrenze: Prozesse unter derselben UID kooperieren; ein
+bösartiger Prozess derselben UID ist nicht abgewehrt.
+
+Nach `openat`/`dir_fd`-Traversal mit `O_NOFOLLOW` prüft Reader vor und nach
+jeder Lektüre Device, Inode, Modus, UID, Linkcount, Größe, mtime und ctime,
+sowie den gebundenen Namen erneut. Er liest und vergleicht `active.json` und
+`current.json` vor/nach der Generation erneut, inklusive Parents und
+`generations/`-Identität. Ein Rename-, Hash- oder Identitätswechsel führt zu
+`invalid`; niemals zu gemischter Generation. Der atomare `rename` von
+`current.json` ist Commitpunkt, ersetzt aber weder Lock noch Vor-/Nachprüfung.
+
+`state_home`, `codex-usage`, `integration`, `generations` und jeder
+Generationordner müssen reale UID-eigene `0700`-Verzeichnisse sein. Pointer,
+Binding und Payload müssen reguläre, nicht verlinkte UID-eigene `0600`-Dateien
+mit Linkcount 1 sein. Pointer ist 1..4096 Byte, Binding 1..32_768 Byte,
+Payload 1..2_097_152 Byte. Symlinks, Sonderdateien, falscher Owner/Modus,
+Hardlinks, Größenüberschreitungen oder Namespace-/Identitätsdrift sind
+fail-closed. Keine Home-, Profil- oder Vaultdaten werden kopiert oder
+gesnapshottet; Payload ist nur begrenztes sanitisiertes JSON.
+
+### Datenqualität, Retention und Status
+
+`window_seconds` und `limit_window_seconds` erlauben nur exakt `18000`,
+`604800` oder `2592000`. Es gibt keine weitere Sonderfenster-Allowlist.
+`complete`, `stale` und `partial` sind Datenqualitätsresultate des gültigen
+Payloads. Reader gibt ausschließlich `complete`, `stale`, `partial`, `busy`,
+`unavailable` oder `invalid` zurück: fehlender/temporär nicht lesbarer Pointer
+ist `unavailable`; Lockkonflikt `busy`; jede Vertrauens-, Format- oder
+Raceverletzung `invalid`.
+
+GC läuft nur unter beiden EX-Locks, räumt zuerst höchstens 16 gültige
+`.tmp-<generation_id>`-Stagings auf und hält höchstens 256 vollständige
+Generationen. Current und previous bleiben geschützt; älteste ungeschützte
+Generation wird erst nach erneuter Pointer-/Identitätsprüfung umbenannt und
+FD-gebunden entfernt. Mehr als 257 vollständige Generationen oder 258 beim
+bounded Scan sind `invalid`.
 
 ## Kanonisches verifiziertes Installationsverfahren
 
@@ -280,7 +393,7 @@ attestiert ihn erneut und ersetzt erst dann atomar `active.json`. Manuelles
 Kopieren eines Releasebaums oder Editieren von `active.json` ist verboten.
 
 Verifizierter Nachweis liest anschließend `active.json` nur bounded/no-follow
-und prüft: Schema `2`, Version `0.6.535`, Release-ID, kanonische vier Pfade,
+und prüft: Schema `2`, Version `0.6.536`, Release-ID, kanonische vier Pfade,
 Manifest-/Launcher-/Wheel-/RECORD-/Entry-Point-/Releasebaumhashes, Owner, Modi,
 Linkcount sowie Device/Inode-Identität. Berichtsfähig sind nur Version, Schema,
 Release-ID und Digests; absolute lokale Pfade bleiben ausschließlich im lokalen
