@@ -21,6 +21,7 @@ _SOURCE_FILES = (
     "src/codex_usage/consumption.py",
     "src/codex_usage/extractor.py",
     "src/codex_usage/integration_attestation.py",
+    "src/codex_usage/integration_evidence.py",
     "src/codex_usage/integration_entrypoint.py",
     "src/codex_usage/integration_snapshot.py",
     "src/codex_usage/json_utils.py",
@@ -54,63 +55,6 @@ def _source_copy(tmp_path: Path) -> Path:
     return source_root
 
 
-def _bootstrap_test_lock_inodes(state_home: Path) -> None:
-    from codex_usage import integration_evidence, private_io
-
-    lock_root = private_io._private_lock_root()
-    private_io.ensure_private_directory(lock_root, label="test evidence lock root")
-    for target in (
-        state_home / "codex-usage" / "integration" / "producer-install",
-        state_home / "codex-usage" / "integration" / "current.json",
-    ):
-        lock_path = lock_root / integration_evidence._evidence_lock_name(target)
-        try:
-            fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            item = lock_path.lstat()
-            assert stat.S_ISREG(item.st_mode)
-            assert item.st_uid == os.getuid()
-            assert stat.S_IMODE(item.st_mode) == 0o600
-            assert item.st_nlink == 1
-            assert item.st_size == 0
-            continue
-        os.close(fd)
-
-
-def _staged_06536_manifest(verified, active_path: Path):
-    """Task-3-only adapter; Task 6 replaces this with real 0.6.536 install."""
-    from codex_usage.integration_attestation import VerifiedActiveManifest
-    from codex_usage.private_io import FileIdentity
-
-    active = json.loads(active_path.read_bytes())
-    active["version"] = "0.6.536"
-    active["release_id"] = "0.6.536-" + active["release_id"].split("-", 1)[1]
-    active_bytes = (
-        json.dumps(active, sort_keys=True, separators=(",", ":")) + "\n"
-    ).encode()
-    active_item = active_path.lstat()
-    state_item = active_path.parents[2].lstat()
-    integration_item = active_path.parent.lstat()
-    return VerifiedActiveManifest(
-        active_release=replace(verified.active_release, version="0.6.536"),
-        release_id=active["release_id"],
-        source_manifest_sha256=active["source_manifest_sha256"],
-        active_manifest_bytes=active_bytes,
-        active_manifest_sha256=hashlib.sha256(active_bytes).hexdigest(),
-        state_home_identity=FileIdentity(
-            state_item.st_dev, state_item.st_ino, stat.S_IMODE(state_item.st_mode)
-        ),
-        integration_parent_identity=FileIdentity(
-            integration_item.st_dev,
-            integration_item.st_ino,
-            stat.S_IMODE(integration_item.st_mode),
-        ),
-        active_file_identity=FileIdentity(
-            active_item.st_dev, active_item.st_ino, stat.S_IMODE(active_item.st_mode)
-        ),
-    )
-
-
 @pytest.fixture
 def evidence_layout(tmp_path):
     from codex_usage.integration_attestation import verify_active_manifest_at
@@ -135,7 +79,6 @@ def evidence_layout(tmp_path):
         data_home=data_home,
         expected_entrypoint_path=release.entrypoint_path,
     )
-    _bootstrap_test_lock_inodes(state_home)
     payload = serialize_schema2_document(
         {
             "accounts": [],
@@ -147,32 +90,8 @@ def evidence_layout(tmp_path):
 
 
 @pytest.fixture
-def staged_evidence_layout(evidence_layout, monkeypatch):
-    from codex_usage import integration_evidence
-
-    state_home, data_home, entrypoint, payload, verified = evidence_layout
-    integration = state_home / "codex-usage" / "integration"
-    (integration / "generations").mkdir(mode=0o700)
-    active_path = integration / "active.json"
-    staged = _staged_06536_manifest(verified, active_path)
-
-    def staged_reverify(*, state_home, data_home, expected_entrypoint_path):
-        assert expected_entrypoint_path == entrypoint
-        return _staged_06536_manifest(verified, state_home / "codex-usage/integration/active.json")
-
-    monkeypatch.setattr(
-        integration_evidence,
-        "_verify_active_manifest_for_publish",
-        staged_reverify,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        integration_evidence,
-        "_verify_active_manifest_for_reader",
-        staged_reverify,
-        raising=False,
-    )
-    return state_home, data_home, entrypoint, payload, staged
+def staged_evidence_layout(evidence_layout):
+    return evidence_layout
 
 
 @pytest.fixture

@@ -27,15 +27,11 @@ _MANIFEST_MAX_BYTES = 128 * 1024
 MAX_ATTESTATION_FILE_BYTES = 4 * 1024 * 1024
 MAX_RELEASE_TREE_ENTRIES = 4096
 MAX_RELEASE_TREE_BYTES = 128 * 1024 * 1024
-_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.535.dist-info"
-_EXPECTED_VERSION = "0.6.535"
+_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.536.dist-info"
+_EXPECTED_VERSION = "0.6.536"
 _EXPECTED_DISTRIBUTION = "codex-usage-integration-producer"
 _PREVIOUS_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.534.dist-info"
 _PREVIOUS_SCHEMA2_VERSION = "0.6.534"
-_LEGACY_SCHEMA2_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.533.dist-info"
-_LEGACY_SCHEMA2_VERSION = "0.6.533"
-_LEGACY_DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.532.dist-info"
-_LEGACY_VERSION = "0.6.532"
 _CURRENT_SCHEMA2_MANIFEST_FIELDS = frozenset(
     {
         "data_home",
@@ -76,28 +72,6 @@ _PREVIOUS_SCHEMA2_MANIFEST_FIELDS = frozenset(
         "wheel_sha256",
     }
 )
-_LEGACY_SCHEMA1_MANIFEST_FIELDS = frozenset(
-    {
-        "data_home",
-        "entrypoint_path",
-        "entrypoint_sha256",
-        "launcher_path",
-        "launcher_sha256",
-        "record_path",
-        "record_sha256",
-        "release_dir",
-        "release_id",
-        "release_tree_sha256",
-        "schema_version",
-        "source_manifest_sha256",
-        "state_home",
-        "version",
-        "wheel_path",
-        "wheel_sha256",
-    }
-)
-
-
 class IntegrationAttestationUnavailable(Exception):
     pass
 
@@ -309,9 +283,21 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
                                     raise _unavailable()
                                 entries_seen += 1
                                 name = entry.name
-                                if not name or name in {".", ".."} or "\\" in name:
-                                    raise _unavailable()
                                 child_item = entry.stat(follow_symlinks=False)
+                                if (
+                                    not name
+                                    or name in {".", ".."}
+                                    or "\\" in name
+                                    or (
+                                        stat.S_ISDIR(child_item.st_mode)
+                                        and name == "__pycache__"
+                                    )
+                                    or (
+                                        stat.S_ISREG(child_item.st_mode)
+                                        and name.endswith(".pyc")
+                                    )
+                                ):
+                                    raise _unavailable()
                                 if stat.S_ISLNK(child_item.st_mode) or not (
                                     stat.S_ISDIR(child_item.st_mode)
                                     or stat.S_ISREG(child_item.st_mode)
@@ -440,15 +426,23 @@ def _scan_release_tree_at(
                                     raise _unavailable()
                                 entries_seen += 1
                                 name = entry.name
+                                child_initial = entry.stat(follow_symlinks=False)
                                 if (
                                     not name
                                     or name in {".", ".."}
                                     or "/" in name
                                     or "\\" in name
                                     or "\x00" in name
+                                    or (
+                                        stat.S_ISDIR(child_initial.st_mode)
+                                        and name == "__pycache__"
+                                    )
+                                    or (
+                                        stat.S_ISREG(child_initial.st_mode)
+                                        and name.endswith(".pyc")
+                                    )
                                 ):
                                     raise _unavailable()
-                                child_initial = entry.stat(follow_symlinks=False)
                                 if stat.S_ISDIR(child_initial.st_mode):
                                     child_flags = directory_flags
                                 elif stat.S_ISREG(child_initial.st_mode):
@@ -956,6 +950,7 @@ def _verify_manifest_contract(
     expected_version: str,
     expected_dist_info_prefix: str,
     expected_fields: frozenset[str],
+    require_bytecode_environment: bool = True,
     manifest_payload: bytes | None = None,
 ) -> ActiveRelease:
     manifest = _require_manifest_fields(
@@ -1046,7 +1041,13 @@ def _verify_manifest_contract(
         or _sha256_bytes(launcher_payload) != launcher_hash
     ):
         raise _unavailable()
-    if b" -B -I -m codex_usage.integration_entrypoint" not in launcher_payload:
+    if (
+        b" -B -I -m codex_usage.integration_entrypoint" not in launcher_payload
+        or (
+            require_bytecode_environment
+            and b" PYTHONDONTWRITEBYTECODE=1 XDG_DATA_HOME=" not in launcher_payload
+        )
+    ):
         raise _unavailable()
     record_rows = _record_rows(record_path, release_dir)
     entrypoint_relative = entrypoint_path.relative_to(record_path.parent.parent).as_posix()
@@ -1117,42 +1118,7 @@ def _verify_previous_schema2_manifest_for_upgrade(
         expected_version=_PREVIOUS_SCHEMA2_VERSION,
         expected_dist_info_prefix=_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX,
         expected_fields=_PREVIOUS_SCHEMA2_MANIFEST_FIELDS,
-    )
-
-
-def _verify_legacy_manifest_for_upgrade(
-    *,
-    manifest_path: Path,
-    state_home: Path,
-    data_home: Path,
-) -> ActiveRelease:
-    return _verify_manifest_contract(
-        manifest_path=manifest_path,
-        state_home=state_home,
-        data_home=data_home,
-        expected_entrypoint_path=None,
-        expected_schema_version=1,
-        expected_version=_LEGACY_VERSION,
-        expected_dist_info_prefix=_LEGACY_DIST_INFO_PREFIX,
-        expected_fields=_LEGACY_SCHEMA1_MANIFEST_FIELDS,
-    )
-
-
-def _verify_legacy_schema2_manifest_for_upgrade(
-    *,
-    manifest_path: Path,
-    state_home: Path,
-    data_home: Path,
-) -> ActiveRelease:
-    return _verify_manifest_contract(
-        manifest_path=manifest_path,
-        state_home=state_home,
-        data_home=data_home,
-        expected_entrypoint_path=None,
-        expected_schema_version=2,
-        expected_version=_LEGACY_SCHEMA2_VERSION,
-        expected_dist_info_prefix=_LEGACY_SCHEMA2_DIST_INFO_PREFIX,
-        expected_fields=_PREVIOUS_SCHEMA2_MANIFEST_FIELDS,
+        require_bytecode_environment=False,
     )
 
 

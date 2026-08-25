@@ -32,6 +32,7 @@ TEST_SOURCE_MANIFEST_FILES = (
     "src/codex_usage/consumption.py",
     "src/codex_usage/extractor.py",
     "src/codex_usage/integration_attestation.py",
+    "src/codex_usage/integration_evidence.py",
     "src/codex_usage/integration_entrypoint.py",
     "src/codex_usage/integration_snapshot.py",
     "src/codex_usage/json_utils.py",
@@ -437,6 +438,133 @@ def _patch_release_identity(monkeypatch, version: str) -> None:
     )
 
 
+def captured_builder_environment() -> dict[str, str]:
+    from codex_usage.integration_installer import _sanitized_build_environment
+
+    return _sanitized_build_environment()
+
+
+def captured_python_argv(tmp_path: Path) -> tuple[str, ...]:
+    from codex_usage import integration_installer
+
+    capture = tmp_path / "captured-python-argv"
+    executable = tmp_path / "capture-python"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$@\" > \"$CAPTURE_PATH\"\n"
+        "printf '%s\\n' "
+        "'{\"backend\":\"setuptools.command.bdist_wheel.bdist_wheel\","
+        "\"setuptools\":\"77.0\"}'\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    environment = integration_installer._sanitized_build_environment()
+    environment["CAPTURE_PATH"] = str(capture)
+    result = integration_installer._run_builder_preflight(
+        python_executable=executable,
+        environment=environment,
+    )
+    assert result.returncode == 0
+    return tuple(capture.read_text(encoding="utf-8").splitlines())
+
+
+def install_verified_06534_source(tmp_path: Path):
+    from codex_usage import integration_installer
+
+    tmp_path.mkdir(mode=0o700)
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.534")
+        previous = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    assert previous.version == "0.6.534"
+    from codex_usage.integration_attestation import _release_tree_sha256
+    from codex_usage.private_io import write_private_text
+
+    previous.launcher_path.write_text(
+        previous.launcher_path.read_text(encoding="utf-8").replace(
+            " PYTHONDONTWRITEBYTECODE=1",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    previous.launcher_path.chmod(0o700)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    active = json.loads(active_path.read_text(encoding="utf-8"))
+    active["launcher_sha256"] = hashlib.sha256(
+        previous.launcher_path.read_bytes()
+    ).hexdigest()
+    active["release_tree_sha256"] = _release_tree_sha256(
+        release_dir=previous.release_dir
+    )
+    write_private_text(
+        active_path,
+        json.dumps(active, sort_keys=True, separators=(",", ":")) + "\n",
+        label="historical 0.6.534 active manifest",
+        mode=0o600,
+    )
+    return integration_installer.install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+
+
+def verify_compromised_06535_runtime(tmp_path: Path):
+    from codex_usage import integration_attestation, integration_installer
+
+    tmp_path.mkdir(mode=0o700)
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.535")
+        compromised = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    pycache = compromised.release_dir / "venv/lib/__pycache__"
+    pycache.mkdir(mode=0o700)
+    (pycache / "compromised.pyc").write_bytes(b"compromised")
+    return integration_attestation.verify_active_release(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=compromised.entrypoint_path,
+    )
+
+
+def verified_lock_targets(state_home: Path) -> set[str]:
+    from codex_usage import integration_evidence, private_io
+
+    integration = state_home / "codex-usage" / "integration"
+    lock_root = private_io._private_lock_root()
+    root_item = lock_root.lstat()
+    assert stat.S_ISDIR(root_item.st_mode)
+    assert root_item.st_uid == os.getuid()
+    assert stat.S_IMODE(root_item.st_mode) == 0o700
+    verified: set[str] = set()
+    for logical_name in ("producer-install", "current.json"):
+        lock_name = integration_evidence._evidence_lock_name(integration / logical_name)
+        item = (lock_root / lock_name).lstat()
+        assert stat.S_ISREG(item.st_mode)
+        assert item.st_uid == os.getuid()
+        assert stat.S_IMODE(item.st_mode) == 0o600
+        assert item.st_nlink == 1
+        assert 0 <= item.st_size <= 4096
+        verified.add(logical_name)
+    return verified
+
+
 def test_temporary_source_copy_has_exact_manifest_and_no_untracked_input(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 
@@ -788,8 +916,8 @@ def test_foreign_tree_digest_detects_same_size_bytes_and_symlink_target(tmp_path
     assert _foreign_tree_digest(root=root) != linked_first
 
 
-def test_release_version_is_06534_across_project_surfaces():
-    from codex_usage import __version__
+def test_release_version_is_06536_across_project_surfaces():
+    from codex_usage import __version__, integration_installer
 
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     applet = json.loads(
@@ -798,18 +926,52 @@ def test_release_version_is_06534_across_project_surfaces():
         )
     )
 
-    assert project["project"]["version"] == "0.6.535"
-    assert __version__ == "0.6.535"
-    assert applet["version"] == "0.6.535"
-    assert applet["comments"] == "Version: 0.6.535"
+    assert integration_installer.RELEASE_VERSION == "0.6.536"
+    assert project["project"]["version"] == "0.6.536"
+    assert __version__ == "0.6.536"
+    assert applet["version"] == "0.6.536"
+    assert applet["comments"] == "Version: 0.6.536"
+
+
+def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06534(
+    tmp_path,
+):
+    from codex_usage.integration_attestation import IntegrationAttestationUnavailable
+
+    assert install_verified_06534_source(tmp_path / "verified-06534").version == "0.6.536"
+    with pytest.raises(IntegrationAttestationUnavailable):
+        verify_compromised_06535_runtime(tmp_path / "compromised-06535")
+
+
+def test_release_tree_rejects_pyc_and_builder_invokes_python_with_b_and_env(tmp_path):
+    from codex_usage.integration_attestation import (
+        IntegrationAttestationUnavailable,
+        _release_tree_sha256,
+    )
+
+    release_tree = tmp_path / "release-tree"
+    pycache = release_tree / "__pycache__"
+    pycache.mkdir(mode=0o700, parents=True)
+    (pycache / "payload.pyc").write_bytes(b"bytecode")
+
+    with pytest.raises(IntegrationAttestationUnavailable):
+        _release_tree_sha256(release_dir=release_tree)
+    assert captured_builder_environment()["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert captured_python_argv(tmp_path)[:2] == ("-B", "-I")
+
+
+def test_installer_bootstraps_exact_evidence_lock_root_and_two_inodes(tmp_path):
+    _, _, state_home = _install(tmp_path)
+
+    assert verified_lock_targets(state_home) == {"producer-install", "current.json"}
 
 
 def test_install_creates_attested_private_active_release(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     from codex_usage.integration_attestation import verify_active_release
 
-    assert release.version == "0.6.535"
-    assert release.release_dir.name.startswith("0.6.535-")
+    assert release.version == "0.6.536"
+    assert release.release_dir.name.startswith("0.6.536-")
     assert release.launcher_path.name == "codex-usage"
     assert stat.S_IMODE(release.launcher_path.lstat().st_mode) == 0o700
     verified = verify_active_release(
@@ -824,10 +986,10 @@ def test_install_creates_attested_private_active_release(tmp_path):
         )
     )
     assert active["schema_version"] == 2
-    assert active["version"] == "0.6.535"
+    assert active["version"] == "0.6.536"
     assert active["release_id"] == release.release_dir.name
     assert Path(active["record_path"]).parent.name == (
-        "codex_usage_integration_producer-0.6.535.dist-info"
+        "codex_usage_integration_producer-0.6.536.dist-info"
     )
     assert active["launcher_sha256"] == release.launcher_sha256
     assert active["release_tree_sha256"] == release.release_tree_sha256
@@ -1839,7 +2001,7 @@ def test_commit_cleanup_failure_returns_success_with_bounded_evidence(
     )
     result = prepared.run()
 
-    assert result.version == "0.6.535"
+    assert result.version == "0.6.536"
     assert cleanup_failed
     assert prepared.active_path.is_file()
     if operation == "install":
@@ -2136,12 +2298,12 @@ def test_failed_publish_to_initially_absent_active_keeps_active_present(
         state_home=state_home,
         data_home=data_home,
         expected_entrypoint_path=None,
-    ).version == "0.6.535"
+    ).version == "0.6.536"
     if operation == "install":
         assert not previous_path.exists()
 
 
-def test_install_cutover_accepts_only_attested_schema1_as_nonreactivatable_previous(
+def test_install_cutover_rejects_schema1_upgrade_source(
     tmp_path,
 ):
     from codex_usage.integration_attestation import (
@@ -2169,35 +2331,24 @@ def test_install_cutover_accepts_only_attested_schema1_as_nonreactivatable_previ
             expected_entrypoint_path=schema1_entrypoint,
         )
 
-    release = install_release(
-        source_root=_temporary_source_copy(tmp_path),
-        state_home=state_home,
-        data_home=data_home,
-        python_executable=Path(sys.executable),
-        temporary_root=temporary_root,
-    )
-    integration = state_home / "codex-usage" / "integration"
-    active_path = integration / "active.json"
-    active_after = active_path.read_bytes()
-    active = json.loads(active_after)
-    assert active["schema_version"] == 2
-    assert active["version"] == "0.6.535"
-    assert (integration / "previous.json").read_bytes() == schema1_active
-    assert (
-        verify_active_release(
+    with pytest.raises(IntegrationInstallError):
+        install_release(
+            source_root=_temporary_source_copy(tmp_path),
             state_home=state_home,
             data_home=data_home,
-            expected_entrypoint_path=release.entrypoint_path,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
         )
-        == release
-    )
-
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    assert active_path.read_bytes() == schema1_active
+    assert not (integration / "previous.json").exists()
     with pytest.raises(IntegrationInstallError):
         rollback_active_release(state_home=state_home, data_home=data_home)
-    assert active_path.read_bytes() == active_after
+    assert active_path.read_bytes() == schema1_active
 
 
-def test_install_cutover_accepts_attested_schema2_06533_only_as_upgrade_source(
+def test_install_cutover_rejects_attested_schema2_06533_upgrade_source(
     tmp_path,
     monkeypatch,
 ):
@@ -2218,32 +2369,29 @@ def test_install_cutover_accepts_attested_schema2_06533_only_as_upgrade_source(
     integration = state_home / "codex-usage" / "integration"
     active_path = integration / "active.json"
     old_active = active_path.read_bytes()
-    with monkeypatch.context() as current_release_context:
-        _patch_release_identity(current_release_context, "0.6.535")
-        with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
-            integration_attestation.verify_active_release(
-                state_home=state_home,
-                data_home=data_home,
-                expected_entrypoint_path=old_release.entrypoint_path,
-            )
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=old_release.entrypoint_path,
+        )
 
-        current_release = integration_installer.install_release(
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
             source_root=source_root,
             state_home=state_home,
             data_home=data_home,
             python_executable=Path(sys.executable),
             temporary_root=temporary_root,
         )
-        assert current_release.version == "0.6.535"
-        assert (integration / "previous.json").read_bytes() == old_active
-        active_after = active_path.read_bytes()
-
-        with pytest.raises(integration_installer.IntegrationInstallError):
-            integration_installer.rollback_active_release(
-                state_home=state_home,
-                data_home=data_home,
-            )
-        assert active_path.read_bytes() == active_after
+    assert active_path.read_bytes() == old_active
+    assert not (integration / "previous.json").exists()
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+    assert active_path.read_bytes() == old_active
 
 
 @pytest.mark.parametrize("mutation", ["unknown", "secret-like", "missing"])
@@ -2387,11 +2535,47 @@ def test_launcher_uses_isolated_python_and_fixed_environment(tmp_path):
     release, data_home, state_home = _install(tmp_path)
     launcher = release.launcher_path.read_text(encoding="utf-8")
     assert " -B -I -m codex_usage.integration_entrypoint" in launcher
+    assert "PYTHONDONTWRITEBYTECODE=1" in launcher
     assert str(data_home) in launcher
     assert str(state_home) in launcher
     assert "codex_usage.cli" not in launcher
     assert "PYTHONPATH" in launcher
     assert launcher.splitlines()[0] == "#!/bin/sh"
+
+
+def test_attestation_requires_launcher_bytecode_environment(tmp_path):
+    from codex_usage import integration_attestation
+    from codex_usage.private_io import write_private_text
+
+    release, data_home, state_home = _install(tmp_path)
+    launcher = release.launcher_path
+    launcher.write_text(
+        launcher.read_text(encoding="utf-8").replace(
+            " PYTHONDONTWRITEBYTECODE=1",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    launcher.chmod(0o700)
+    active_path = state_home / "codex-usage" / "integration" / "active.json"
+    manifest = json.loads(active_path.read_text(encoding="utf-8"))
+    manifest["launcher_sha256"] = hashlib.sha256(launcher.read_bytes()).hexdigest()
+    manifest["release_tree_sha256"] = integration_attestation._release_tree_sha256(
+        release_dir=release.release_dir
+    )
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="launcher without bytecode environment",
+        mode=0o600,
+    )
+
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation.verify_active_release(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release.entrypoint_path,
+        )
 
 
 def test_launcher_rejects_schema1_active_manifest_without_repair(tmp_path):
@@ -2597,7 +2781,9 @@ def test_installer_build_subprocess_is_no_index_and_sanitized(tmp_path, monkeypa
             environment=integration_installer._sanitized_build_environment(),
         )
     assert "--no-index" in observed["argv"]
+    assert observed["argv"][:3] == (str(Path(sys.executable)), "-B", "-I")
     assert observed["env"]["PIP_NO_INDEX"] == "1"
+    assert observed["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
     assert "PYTHONPATH" not in observed["env"]
     assert observed["timeout"] == 120
     assert observed["stdout"] == subprocess.DEVNULL
@@ -2994,7 +3180,12 @@ def test_temporary_launcher_emits_schema2_from_temporary_state(tmp_path):
     assert "never-exported-label" not in completed.stdout
     assert "backend" not in completed.stdout
     assert completed.stderr == ""
-    assert (state_home / "codex-usage" / "integration" / "account-usage-v1.json").is_file()
+    integration = state_home / "codex-usage" / "integration"
+    pointer = json.loads((integration / "current.json").read_bytes())
+    generation = integration / "generations" / pointer["current_generation_id"]
+    assert (generation / "account-usage-v2.json").read_bytes() == completed.stdout.encode()
+    assert (generation / "account-usage-v2.binding.json").is_file()
+    assert not (integration / "account-usage-v1.json").exists()
 
 
 def test_installer_module_has_no_network_import():
@@ -5745,7 +5936,7 @@ def test_record_must_bind_nonempty_entrypoint_row(tmp_path):
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("release_id", "0.6.535-ffffffffffffffff"),
+        ("release_id", "0.6.536-ffffffffffffffff"),
         ("source_manifest_sha256", "f" * 64),
     ],
 )
@@ -5824,7 +6015,7 @@ def test_builder_rejects_wrong_wheel_basename_before_release_use(tmp_path, monke
     monkeypatch.setattr(integration_installer, "_require_offline_builder", lambda **_: None)
 
     def fake_builder(command, *, env, cwd):
-        (wheel_dir / "wrong-name-0.6.535-py3-none-any.whl").write_bytes(b"wheel")
+        (wheel_dir / "wrong-name-0.6.536-py3-none-any.whl").write_bytes(b"wheel")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(integration_installer, "_run_builder_bounded", fake_builder)
@@ -8562,7 +8753,7 @@ def test_installer_release_entry_guards_and_public_wrapper(tmp_path, monkeypatch
     pyproject = bad_source_root / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.535"',
+            'version = "0.6.536"',
             'version = "0.0.0"',
         ),
         encoding="utf-8",

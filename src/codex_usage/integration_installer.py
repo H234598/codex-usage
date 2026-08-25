@@ -33,11 +33,10 @@ from .integration_attestation import (
     _read_manifest,
     _release_tree_sha256,
     _require_manifest_fields,
-    _verify_legacy_manifest_for_upgrade,
-    _verify_legacy_schema2_manifest_for_upgrade,
     _verify_manifest,
     _verify_previous_schema2_manifest_for_upgrade,
 )
+from .integration_evidence import bootstrap_evidence_lock_inodes
 from .private_io import (
     ensure_private_directory,
     private_path_lock,
@@ -46,7 +45,7 @@ from .private_io import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RELEASE_VERSION = "0.6.535"
+RELEASE_VERSION = "0.6.536"
 PRODUCER_DISTRIBUTION = "codex_usage_integration_producer"
 SOURCE_MODULES = (
     "__init__.py",
@@ -55,6 +54,7 @@ SOURCE_MODULES = (
     "consumption.py",
     "extractor.py",
     "integration_attestation.py",
+    "integration_evidence.py",
     "integration_entrypoint.py",
     "integration_snapshot.py",
     "json_utils.py",
@@ -72,9 +72,9 @@ SOURCE_MANIFEST_FILES = (
 ACTIVE_NAME = "active.json"
 PREVIOUS_NAME = "previous.json"
 RELEASE_LOCK_STEM = "producer-install"
-DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.535.dist-info"
+DIST_INFO_PREFIX = "codex_usage_integration_producer-0.6.536.dist-info"
 DIST_INFO_FILES = frozenset({"METADATA", "WHEEL", "RECORD", "top_level.txt"})
-EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.535-py3-none-any.whl"
+EXPECTED_WHEEL_NAME = "codex_usage_integration_producer-0.6.536-py3-none-any.whl"
 BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
 BUILDER_WHEEL_TIMEOUT_SECONDS = 120
@@ -114,7 +114,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-usage-integration-producer"
-version = "0.6.535"
+version = "0.6.536"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -1609,6 +1609,7 @@ def _sanitized_build_environment() -> dict[str, str]:
         "PIP_NO_INPUT": "1",
         "PIP_CONFIG_FILE": "/dev/null",
         "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
 
 
@@ -1643,7 +1644,7 @@ def _run_builder_preflight(
     python_executable: Path,
     environment: Mapping[str, str],
 ) -> subprocess.CompletedProcess[str]:
-    command = [str(python_executable), "-I", "-c", _BUILDER_PREFLIGHT_CODE]
+    command = [str(python_executable), "-B", "-I", "-c", _BUILDER_PREFLIGHT_CODE]
     process = subprocess.Popen(
         command,
         env=dict(environment),
@@ -1763,6 +1764,7 @@ def _build_verified_wheel(
     )
     command = [
         str(python_executable),
+        "-B",
         "-I",
         "-m",
         "pip",
@@ -2809,7 +2811,8 @@ def _write_launcher(
         "export LANG='C.UTF-8'\n"
         "export TZ=UTC\n"
         f"exec /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 "
-        f"TZ=UTC XDG_DATA_HOME={quoted_data} XDG_STATE_HOME={quoted_state} "
+        f"TZ=UTC PYTHONDONTWRITEBYTECODE=1 XDG_DATA_HOME={quoted_data} "
+        f"XDG_STATE_HOME={quoted_state} "
         f"{quoted_interpreter} -B -I -m codex_usage.integration_entrypoint \"$@\"\n"
     ).encode()
     return _write_exclusive(
@@ -2907,13 +2910,20 @@ def _install_release(
     temporary_identity = _require_private_dir(temporary_root, None, False)
     pyproject = _read_nofollow(source_root / "pyproject.toml").decode("utf-8")
     init_text = _read_nofollow(source_root / "src/codex_usage/__init__.py").decode("utf-8")
-    if 'version = "0.6.535"' not in pyproject or '__version__ = "0.6.535"' not in init_text:
+    if 'version = "0.6.536"' not in pyproject or '__version__ = "0.6.536"' not in init_text:
         _fail()
     source_manifest = _rehash_source_manifest(source_root)
     source_manifest_digest = _source_digest(source_manifest)
     release_id = f"{RELEASE_VERSION}-{source_manifest_digest[:16]}"
 
     app_identity, integration_identity = _bootstrap_integration_dir(state_home)
+    _require_private_dir(
+        state_home / "codex-usage" / "integration" / "generations",
+        None,
+        True,
+        parent_identity=integration_identity,
+    )
+    bootstrap_evidence_lock_inodes(state_home=state_home)
     integration = state_home / "codex-usage" / "integration"
     environment = _sanitized_build_environment()
     staging: Path | None = None
@@ -3158,25 +3168,11 @@ def _install_release(
                         expected_entrypoint_path=None,
                     )
                 except IntegrationAttestationUnavailable:
-                    try:
-                        _verify_previous_schema2_manifest_for_upgrade(
-                            manifest_path=active_path,
-                            state_home=state_home,
-                            data_home=data_home,
-                        )
-                    except IntegrationAttestationUnavailable:
-                        try:
-                            _verify_legacy_schema2_manifest_for_upgrade(
-                                manifest_path=active_path,
-                                state_home=state_home,
-                                data_home=data_home,
-                            )
-                        except IntegrationAttestationUnavailable:
-                            _verify_legacy_manifest_for_upgrade(
-                                manifest_path=active_path,
-                                state_home=state_home,
-                                data_home=data_home,
-                            )
+                    _verify_previous_schema2_manifest_for_upgrade(
+                        manifest_path=active_path,
+                        state_home=state_home,
+                        data_home=data_home,
+                    )
             published_text = _manifest_text(candidate)
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             publish = _begin_active_publish(

@@ -682,6 +682,43 @@ def _verify_lock_target_parent(state_home: Path) -> tuple[FileIdentity, FileIden
     return state_identity, integration_identity
 
 
+def bootstrap_evidence_lock_inodes(*, state_home: Path) -> None:
+    if type(state_home) is not type(Path()) or not state_home.is_absolute():
+        raise IntegrationEvidenceInvalid()
+    state_identity, integration_identity = _verify_lock_target_parent(state_home)
+    integration = state_home / "codex-usage" / "integration"
+    release_name = _evidence_lock_name(integration / "producer-install")
+    current_name = _evidence_lock_name(integration / "current.json")
+    root_fd = -1
+    release_fd = -1
+    current_fd = -1
+    try:
+        root_fd = _open_lock_root(create=True)
+        lock_root_identity = _fd_identity(root_fd)
+        release_fd = _open_lock_file(root_fd, release_name, create=True)
+        current_fd = _open_lock_file(root_fd, current_name, create=True)
+        os.fsync(root_fd)
+        _verify_held_lock_namespace(
+            held_root_fd=root_fd,
+            lock_root_identity=lock_root_identity,
+            release_name=release_name,
+            release_fd=release_fd,
+            current_name=current_name,
+            current_fd=current_fd,
+        )
+        if _verify_lock_target_parent(state_home) != (
+            state_identity,
+            integration_identity,
+        ):
+            raise IntegrationEvidenceInvalid()
+    except IntegrationEvidenceError:
+        raise
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        _close_fds(current_fd, release_fd, root_fd)
+
+
 def _matches_held_lock_set(
     held_set: _HeldEvidenceLocks,
     *,

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.536 - 2026-08-25
+
+### Changed
+
+- Integration-Evidence wird als unveränderliche Generation mit atomarem
+  `current.json`-Pointer, kanonischer Binding-Sidecar und FD-gebundener
+  Lock-/Hashprüfung veröffentlicht und gelesen.
+- Installer und Runtime akzeptieren nur Release 0.6.536; ausschließlich ein
+  vollständig attestierter 0.6.534-/Schema-2-Release gilt als Upgradequelle.
+  Release 0.6.535 bleibt inert und wird nicht reaktiviert.
+- Build und Launcher unterdrücken Bytecode mit
+  `PYTHONDONTWRITEBYTECODE=1` plus `python -B`; Releasebäume mit
+  `__pycache__` oder `*.pyc` werden verworfen.
+
 ## 0.6.534 - 2026-08-24
 
 ### Changed
