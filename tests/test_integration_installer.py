@@ -5241,6 +5241,188 @@ def rollback_active_release(**kwargs):
     assert not marker.exists()
 
 
+_BOOTSTRAP_TRANSITIVE_MODULES = tuple(
+    Path(relative).name
+    for relative in TEST_SOURCE_MANIFEST_FILES
+    if relative.startswith("src/codex_usage/")
+    and relative != "src/codex_usage/__init__.py"
+)
+
+
+def _temporary_bootstrap_repo(destination_root: Path) -> Path:
+    repo_root = _temporary_source_copy(destination_root)
+    for path in repo_root.rglob("*"):
+        path.chmod(0o755 if path.is_dir() else 0o644)
+    scripts = repo_root / "scripts"
+    scripts.mkdir(mode=0o755)
+    shutil.copyfile(SCRIPT_PATH, scripts / SCRIPT_PATH.name)
+    shutil.copyfile(
+        PROJECT_ROOT / "src/codex_usage/integration_installer.py",
+        repo_root / "src/codex_usage/integration_installer.py",
+    )
+    (scripts / SCRIPT_PATH.name).chmod(0o644)
+    (repo_root / "src/codex_usage/integration_installer.py").chmod(0o644)
+    return repo_root
+
+
+def _run_bootstrap_help(
+    repo_root: Path,
+    *,
+    environment: dict[str, str] | None = None,
+    prefix: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
+    child_environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    child_environment.update(environment or {})
+    return subprocess.run(
+        [
+            *prefix,
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--help",
+        ],
+        cwd=repo_root,
+        env=child_environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+
+def test_installer_script_rejects_preloaded_foreign_installer_before_call(tmp_path):
+    marker = tmp_path / "ambient-called"
+    wrapper = """\
+import os
+from pathlib import Path
+import runpy
+import sys
+import types
+
+package = types.ModuleType("codex_usage")
+package.__file__ = "/foreign/codex_usage/__init__.py"
+package.__path__ = ["/foreign/codex_usage"]
+installer = types.ModuleType("codex_usage.integration_installer")
+installer.__file__ = "/foreign/codex_usage/integration_installer.py"
+installer.IntegrationCleanupError = type("IntegrationCleanupError", (Exception,), {})
+installer.IntegrationInstallError = type("IntegrationInstallError", (Exception,), {})
+
+def ambient_install(**_kwargs):
+    Path(os.environ["AMBIENT_CALL_MARKER"]).write_text("called")
+
+installer.install_release = ambient_install
+installer.rollback_active_release = ambient_install
+sys.modules["codex_usage"] = package
+sys.modules["codex_usage.integration_installer"] = installer
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(SCRIPT_PATH),
+            "--source-root",
+            str(tmp_path / "source"),
+            "--state-home",
+            str(tmp_path / "state"),
+            "--data-home",
+            str(tmp_path / "data"),
+            "--python",
+            sys.executable,
+            "--temporary-root",
+            str(tmp_path / "temporary"),
+        ],
+        cwd=tmp_path,
+        env={
+            "AMBIENT_CALL_MARKER": str(marker),
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("module_name", _BOOTSTRAP_TRANSITIVE_MODULES)
+def test_installer_script_rejects_symlinked_import_closure_before_execution(
+    tmp_path, module_name
+):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "symlink-executed"
+    foreign = tmp_path / f"foreign-{module_name}"
+    foreign.write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        'Path(os.environ["SYMLINK_EXECUTION_MARKER"]).write_text("executed")\n',
+        encoding="utf-8",
+    )
+    target = repo_root / "src" / "codex_usage" / module_name
+    target.unlink()
+    target.symlink_to(foreign)
+
+    completed = _run_bootstrap_help(
+        repo_root,
+        environment={"SYMLINK_EXECUTION_MARKER": str(marker)},
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+
+
+def test_installer_script_rejects_world_writable_import_closure(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    (repo_root / "src/codex_usage/private_io.py").chmod(0o666)
+
+    completed = _run_bootstrap_help(repo_root)
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+
+
+def test_installer_script_rejects_foreign_uid_import_closure(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    root_owned_source = Path("/usr/lib64/python3.14/__future__.py")
+    root_owned_stat = root_owned_source.stat()
+    assert root_owned_stat.st_uid != os.geteuid()
+    assert stat.S_IMODE(root_owned_stat.st_mode) == 0o644
+    target = repo_root / "src/codex_usage/integration_entrypoint.py"
+    completed = _run_bootstrap_help(
+        repo_root,
+        prefix=(
+            "/usr/bin/bwrap",
+            "--bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--ro-bind",
+            str(root_owned_source),
+            str(target),
+            "--",
+        ),
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+
+
 def test_candidate_manifest_is_single_final_only_write_with_real_treehash(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 
