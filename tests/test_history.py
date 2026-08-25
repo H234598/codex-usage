@@ -31,6 +31,28 @@ class _BrokenFloat(float):
         raise RuntimeError("synthetic history float marker")
 
 
+class _BrokenSample(UsageSample):
+    def __init__(self, broken_field: str):
+        object.__setattr__(self, "account_id", "alpha")
+        object.__setattr__(self, "pool", "main")
+        object.__setattr__(self, "window_seconds", 18_000)
+        object.__setattr__(
+            self,
+            "captured_at",
+            datetime(2026, 8, 16, 10, tzinfo=UTC),
+        )
+        object.__setattr__(self, "used_percent", 10.0)
+        object.__setattr__(self, "reset_at", None)
+        object.__setattr__(self, "reset_generation", "a")
+        object.__setattr__(self, "source", "test")
+        object.__setattr__(self, "_broken_field", broken_field)
+
+    def __getattribute__(self, name):
+        if name == object.__getattribute__(self, "_broken_field"):
+            raise RuntimeError("synthetic history sample field marker")
+        return super().__getattribute__(name)
+
+
 def _sample(*, captured_at: datetime, used_percent: float, account_id: str = "alpha"):
     return UsageSample(
         account_id=account_id,
@@ -48,6 +70,73 @@ def _sample(*, captured_at: datetime, used_percent: float, account_id: str = "al
 def test_history_store_rejects_invalid_path_type(path):
     with pytest.raises(ValueError, match="history path is invalid"):
         HistoryStore(path)  # type: ignore[arg-type]
+
+
+def test_history_store_rejects_path_subclass_hooks(tmp_path):
+    path_type = type(Path())
+
+    class BrokenPath(path_type):
+        def is_absolute(self):
+            raise RuntimeError("history path hook executed")
+
+    path = BrokenPath(str(tmp_path / "history.sqlite3"))
+    with pytest.raises(ValueError, match="history path is invalid"):
+        HistoryStore(path)
+    with pytest.raises(ValueError, match="history path is invalid"):
+        history_module.record_usage_samples_batch((), path=path)
+
+
+def test_usage_sample_rejects_string_subclass_hooks():
+    class BrokenString(str):
+        def __len__(self):
+            raise RuntimeError("history string hook executed")
+
+    kwargs = {
+        "window_seconds": 18_000,
+        "captured_at": datetime(2026, 8, 16, tzinfo=UTC),
+        "used_percent": 1,
+    }
+    with pytest.raises(ValueError, match="account_id is invalid"):
+        UsageSample(account_id=BrokenString("account"), pool="main", **kwargs)
+    with pytest.raises(ValueError, match="pool is invalid"):
+        UsageSample(account_id="account", pool=BrokenString("main"), **kwargs)
+    with pytest.raises(ValueError, match="reset_generation is invalid"):
+        UsageSample(
+            account_id="account",
+            pool="main",
+            reset_generation=BrokenString("generation"),
+            **kwargs,
+        )
+    with pytest.raises(ValueError, match="source is invalid"):
+        UsageSample(
+            account_id="account",
+            pool="main",
+            source=BrokenString("source"),
+            **kwargs,
+        )
+
+
+def test_history_timestamp_conversion_fails_closed_for_datetime_hooks():
+    class BrokenDatetime(datetime):
+        calls = 0
+
+        def astimezone(self, tz=None):
+            type(self).calls += 1
+            if type(self).calls > 1:
+                raise RuntimeError("history datetime hook executed")
+            return super().astimezone(tz)
+
+    captured_at = BrokenDatetime(2026, 8, 16, tzinfo=UTC)
+    sample = UsageSample(
+        account_id="account",
+        pool="main",
+        window_seconds=18_000,
+        captured_at=captured_at,
+        used_percent=1,
+    )
+
+    with pytest.raises(ValueError, match="history timestamp is invalid"):
+        history_module._to_millis(sample.captured_at)
 
 
 @pytest.mark.parametrize("path", [[], "", "history.sqlite3", 1, object()])
@@ -133,6 +222,26 @@ def test_history_store_is_private_and_idempotent(tmp_path):
     assert path.parent.stat().st_mode & 0o777 == 0o700
 
 
+def test_history_store_keeps_newer_reset_value_at_same_timestamp(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    first = _sample(captured_at=captured, used_percent=20)
+    reset = UsageSample(
+        account_id="alpha",
+        pool="main",
+        window_seconds=18_000,
+        captured_at=captured,
+        used_percent=0,
+        reset_generation="b",
+        source="test",
+    )
+
+    with HistoryStore(path) as store:
+        assert store.record(first) is True
+        assert store.record(reset) is True
+        assert store.samples("alpha", pool="main", window_seconds=18_000) == (reset,)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -169,6 +278,12 @@ class _RaisingAstimezone(datetime):
         raise RuntimeError("synthetic astimezone marker")
 
 
+class _RaisingTzinfoProperty(datetime):
+    @property
+    def tzinfo(self):
+        raise RuntimeError("synthetic tzinfo property marker")
+
+
 def test_history_rejects_timezone_callbacks_that_raise():
     with pytest.raises(ValueError, match="captured_at"):
         UsageSample(
@@ -176,6 +291,19 @@ def test_history_rejects_timezone_callbacks_that_raise():
             pool="main",
             window_seconds=18_000,
             captured_at=datetime(2026, 8, 16, 10, 0, tzinfo=_RaisingTimezone()),
+            used_percent=1,
+        )
+
+
+def test_history_rejects_datetime_tzinfo_property_hooks():
+    captured_at = _RaisingTzinfoProperty(2026, 8, 16, 10, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="captured_at"):
+        UsageSample(
+            account_id="alpha",
+            pool="main",
+            window_seconds=18_000,
+            captured_at=captured_at,
             used_percent=1,
         )
 
@@ -208,6 +336,31 @@ def test_usage_samples_skip_invalid_timezone_callbacks():
     assert len(samples) == 1
     assert samples[0].captured_at == captured
     assert samples[0].reset_at is None
+
+
+def test_usage_samples_ignore_future_values_capture_timestamp():
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        values_captured_at=captured + timedelta(hours=1),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(name="5h", percent=75, reset_at=captured + timedelta(hours=2)),
+            ),
+            availability_sources=("usage",),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    samples = usage_samples_from_usage(usage)
+
+    assert len(samples) == 1
+    assert samples[0].captured_at == captured
 
 
 @pytest.mark.parametrize("field", ["main", "credits"])
@@ -569,6 +722,104 @@ def test_usage_samples_skip_pool_with_malformed_windows():
     assert usage_samples_from_usage(usage) == ()
 
 
+def test_usage_samples_skip_window_property_failure():
+    class BrokenWindow(LimitWindow):
+        @property
+        def remaining_percent(self):
+            raise RuntimeError("history window property failure")
+
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(BrokenWindow(name="5h", remaining=90),),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_window_duration_property_failure():
+    class BrokenWindow(LimitWindow):
+        @property
+        def has_known_identity(self):
+            return True
+
+        def __getattribute__(self, name):
+            if name == "duration_seconds":
+                raise RuntimeError("history duration property failure")
+            return super().__getattribute__(name)
+
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(BrokenWindow(name="5h", remaining=90),),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_window_name_normalization_failure():
+    class BrokenName(str):
+        def strip(self):
+            raise RuntimeError("history window name failure")
+
+    class TrustedWindow(LimitWindow):
+        @property
+        def has_known_identity(self):
+            return True
+
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(TrustedWindow(name=BrokenName("5h"), remaining=90),),
+        ),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_credit_property_failure():
+    class BrokenCredit(LimitWindow):
+        def __getattribute__(self, name):
+            if name == "duration_seconds":
+                raise RuntimeError("history credit property failure")
+            return super().__getattribute__(name)
+
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        credits=BrokenCredit(name="credits", remaining=90),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
 def test_history_record_many_uses_sqlite_batch_execution(tmp_path):
     path = tmp_path / "usage-history.sqlite3"
     captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
@@ -630,6 +881,66 @@ def test_history_store_rejects_hard_linked_sqlite_sidecar(tmp_path):
 
     with pytest.raises(ValueError, match="hard-linked"):
         store._secure_related_files()
+
+
+def test_history_sidecar_rejects_foreign_owner(tmp_path, monkeypatch):
+    target = tmp_path / "history.sqlite3-wal"
+    target.write_bytes(b"sidecar")
+    target.chmod(0o600)
+    current_uid = history_module.os.getuid()
+    monkeypatch.setattr(history_module.os, "getuid", lambda: current_uid + 1)
+
+    with pytest.raises(ValueError, match="owned by current user"):
+        history_module._chmod_private_regular(target, label="history sidecar")
+
+
+def test_history_sidecar_rejects_symlink_ancestor(tmp_path):
+    outside = tmp_path / "outside"
+    target = outside / "history.sqlite3-wal"
+    outside.mkdir()
+    target.write_bytes(b"sidecar")
+    link = tmp_path / "link"
+    link.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="symlink ancestors"):
+        history_module._chmod_private_regular(
+            link / "history.sqlite3-wal",
+            label="history sidecar",
+        )
+
+
+def test_history_sidecar_requires_nofollow_for_symlink_safety(tmp_path, monkeypatch):
+    target = tmp_path / "target"
+    target.write_bytes(b"sidecar")
+    target.chmod(0o644)
+    link = tmp_path / "history.sqlite3-wal"
+    link.symlink_to(target)
+    monkeypatch.delattr(history_module.os, "O_NOFOLLOW", raising=False)
+
+    with pytest.raises(ValueError, match="must be a regular file"):
+        history_module._chmod_private_regular(link, label="history sidecar")
+
+    assert target.stat().st_mode & 0o777 == 0o644
+
+
+def test_history_sidecar_retries_interrupted_chmod(tmp_path, monkeypatch):
+    target = tmp_path / "history.sqlite3-wal"
+    target.write_bytes(b"sidecar")
+    calls = 0
+    original_fchmod = history_module.os.fchmod
+
+    def interrupted_once(fd, mode):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise InterruptedError("interrupted chmod")
+        return original_fchmod(fd, mode)
+
+    monkeypatch.setattr(history_module.os, "fchmod", interrupted_once)
+
+    history_module._chmod_private_regular(target, label="history sidecar")
+
+    assert calls == 2
 
 
 @pytest.mark.skipif(not hasattr(os, "O_NONBLOCK"), reason="O_NONBLOCK unavailable")
@@ -753,6 +1064,66 @@ def test_history_consumption_samples_keep_baseline_and_window_only(tmp_path):
     ]
 
 
+def test_history_consumption_ranges_compare_normalized_millis(tmp_path):
+    class BrokenComparison(datetime):
+        def __gt__(self, _other):
+            raise RuntimeError("history datetime comparison marker")
+
+    start = BrokenComparison(2026, 8, 16, 9, tzinfo=UTC)
+    end = BrokenComparison(2026, 8, 16, 10, tzinfo=UTC)
+    with HistoryStore(tmp_path / "history.sqlite3") as store:
+        assert store.samples_for_consumption(
+            "alpha",
+            pool="main",
+            window_seconds=18_000,
+            start=start,
+            end=end,
+        ) == ()
+        assert store.consumption_window_seconds(
+            "alpha",
+            pool="main",
+            start=start,
+            end=end,
+        ) == ()
+
+
+@pytest.mark.parametrize(
+    "window_seconds",
+    [0, history_module.MAX_HISTORY_WINDOW_SECONDS + 1, "bad"],
+)
+def test_history_consumption_windows_reject_malformed_stored_duration(
+    tmp_path, window_seconds
+):
+    path = tmp_path / "history.sqlite3"
+    base = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    with HistoryStore(path):
+        pass
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO samples("
+            "account_id, pool_key, window_seconds, captured_at_ms, used_percent, "
+            "reset_at_ms, reset_generation, source"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "alpha",
+                "main",
+                window_seconds,
+                history_module._to_millis(base),
+                10,
+                None,
+                None,
+                "test",
+            ),
+        )
+
+    with HistoryStore(path) as store:
+        with pytest.raises(ValueError, match="window_seconds"):
+            store.consumption_window_seconds(
+                "alpha",
+                pool="main",
+                start=base - timedelta(minutes=1),
+                end=base + timedelta(minutes=1),
+            )
 def test_history_lists_distinct_consumption_windows_in_time_range(tmp_path):
     path = tmp_path / "history.sqlite3"
     base = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
@@ -888,6 +1259,39 @@ def test_history_prune_is_dry_run_then_applies(tmp_path):
         assert store.samples("alpha", pool="main", window_seconds=18_000)[0].captured_at == new
 
 
+def test_history_prune_rolls_back_when_delete_fails(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    sample = _sample(
+        captured_at=datetime(2026, 8, 15, 10, 0, tzinfo=UTC),
+        used_percent=10,
+    )
+    with HistoryStore(path) as store:
+        store.record(sample)
+        connection = store._connect()
+        rollback_calls: list[bool] = []
+
+        class BrokenConnection:
+            def execute(self, statement, *args):
+                if statement.lstrip().startswith("DELETE"):
+                    raise RuntimeError("synthetic prune marker")
+                return connection.execute(statement, *args)
+
+            def rollback(self):
+                rollback_calls.append(True)
+                return connection.rollback()
+
+            def __getattr__(self, name):
+                return getattr(connection, name)
+
+        store._connection = BrokenConnection()  # type: ignore[assignment]
+        with pytest.raises(RuntimeError, match="synthetic prune marker"):
+            store.prune(sample.captured_at + timedelta(minutes=1))
+
+        store._connection = connection
+        assert rollback_calls == [True]
+        assert store.samples("alpha", pool="main", window_seconds=18_000) == (sample,)
+
+
 @pytest.mark.parametrize("dry_run", [[], "false", 1, object()])
 def test_history_prune_rejects_invalid_dry_run_type(tmp_path, dry_run):
     with HistoryStore(tmp_path / "history.sqlite3") as store:
@@ -943,6 +1347,11 @@ def test_history_rejects_numeric_subclasses_before_arithmetic():
 
 def test_history_validated_millis_accepts_representable_timestamp():
     assert history_module._validated_millis(0) == 0
+
+
+def test_history_to_millis_rejects_naive_datetime():
+    with pytest.raises(ValueError, match="history timestamp"):
+        history_module._to_millis(datetime(2026, 8, 16, 10))
 
 
 def test_history_consumption_samples_without_baseline(tmp_path):
@@ -1114,6 +1523,38 @@ def test_usage_samples_reject_overlong_model_iterator_before_consuming_all(
     assert consumed == 3
 
 
+def test_usage_samples_skip_model_iterator_errors(tmp_path):
+    captured = datetime(2026, 8, 16, 10, 0, tzinfo=UTC)
+
+    def usage():
+        def model_pools():
+            yield UsagePool(
+                key="model-0",
+                display_name="synthetic",
+                windows=(
+                    LimitWindow(name="5h", percent=75, duration_seconds=18_000),
+                ),
+                availability_sources=("usage",),
+            )
+            raise RuntimeError("synthetic model iterator marker")
+
+        return AccountUsage(
+            account_id="alpha",
+            label="Alpha",
+            captured_at=captured,
+            models=model_pools(),
+            status=AccountStatus.OK,
+            backend_used="direct",
+        )
+
+    samples = usage_samples_from_usage(usage())
+    assert len(samples) == 1
+    assert samples[0].pool == "model-0"
+    assert history_module.record_usage_samples_batch(
+        (usage(),), path=tmp_path / "history.sqlite3"
+    ) == 1
+
+
 def test_record_usage_samples_batch_rejects_combined_cap_before_next_batch(
     tmp_path, monkeypatch
 ):
@@ -1186,6 +1627,29 @@ def test_history_sample_rejects_malformed_metadata(field, value, error):
     kwargs[field] = value
 
     with pytest.raises(ValueError, match=error):
+        UsageSample(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("pool", "main\n\x1b[31m"),
+        ("reset_generation", "2026-08-16\x1b[31m"),
+        ("reset_generation", "2026-08-16\x7f"),
+        ("source", "browser\n\x1b[31m"),
+    ),
+)
+def test_history_sample_rejects_control_characters(field, value):
+    kwargs = {
+        "account_id": "alpha",
+        "pool": "main",
+        "window_seconds": 18_000,
+        "captured_at": datetime(2026, 8, 16, 10, tzinfo=UTC),
+        "used_percent": 10,
+    }
+    kwargs[field] = value
+
+    with pytest.raises(ValueError, match=field):
         UsageSample(**kwargs)
 
 
@@ -1365,6 +1829,19 @@ def test_history_prepare_path_rejects_invalid_existing_file(tmp_path, kind):
         store._prepare_path()
 
 
+def test_history_prepare_path_rejects_foreign_owner(tmp_path, monkeypatch):
+    path = tmp_path / "history.sqlite3"
+    path.write_bytes(b"history")
+    path.chmod(0o600)
+    store = HistoryStore(path)
+    monkeypatch.setattr(history_module, "ensure_private_directory", lambda *_args, **_kwargs: None)
+    current_uid = history_module.os.getuid()
+    monkeypatch.setattr(history_module.os, "getuid", lambda: current_uid + 1)
+
+    with pytest.raises(ValueError, match="owned by current user"):
+        store._prepare_path()
+
+
 def test_history_record_many_validates_shape_and_empty_batch(tmp_path):
     with HistoryStore(tmp_path / "history.sqlite3") as store:
         with pytest.raises(ValueError, match="samples are invalid"):
@@ -1372,6 +1849,62 @@ def test_history_record_many_validates_shape_and_empty_batch(tmp_path):
         with pytest.raises(ValueError, match="samples are invalid"):
             store.record_many((object(),))  # type: ignore[arg-type]
         assert store.record_many(()) == 0
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "account_id",
+        "pool",
+        "window_seconds",
+        "captured_at",
+        "used_percent",
+        "reset_at",
+        "reset_generation",
+        "source",
+    ),
+)
+def test_history_record_many_rejects_sample_field_getter_failures(tmp_path, field):
+    path = tmp_path / "history.sqlite3"
+    with HistoryStore(path) as store:
+        with pytest.raises(ValueError, match="samples are invalid"):
+            store.record_many((_BrokenSample(field),))
+        assert store.samples("alpha", pool="main", window_seconds=18_000) == ()
+
+
+def test_history_close_forgets_connection_when_close_fails(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    store = HistoryStore(path)
+    connection = store._connect()
+
+    class _BrokenConnection:
+        def close(self):
+            raise RuntimeError("synthetic history close marker")
+
+    store._connection = _BrokenConnection()  # type: ignore[assignment]
+    with pytest.raises(RuntimeError, match="synthetic history close marker"):
+        store.close()
+    assert store._connection is None
+    connection.close()
+
+
+def test_history_sample_from_row_rejects_row_getter_failure():
+    class _BrokenRow:
+        def __getitem__(self, key):
+            if key == "account_id":
+                raise RuntimeError("synthetic history row marker")
+            return {
+                "pool_key": "main",
+                "window_seconds": 18_000,
+                "captured_at_ms": 0,
+                "used_percent": 10.0,
+                "reset_at_ms": None,
+                "reset_generation": None,
+                "source": "test",
+            }[key]
+
+    with pytest.raises(ValueError, match="history sample is invalid"):
+        history_module._sample_from_row(_BrokenRow())  # type: ignore[arg-type]
 
 
 def test_history_record_many_reraises_after_rollback_failure(tmp_path):
@@ -1481,6 +2014,63 @@ def test_usage_samples_reject_invalid_usage_account_and_capture_time():
     assert usage_samples_from_usage(replace(usage, captured_at=captured.replace(tzinfo=None))) == ()
 
 
+def test_usage_samples_skip_account_id_string_subclass_hooks():
+    class BrokenString(str):
+        def __bool__(self):
+            raise RuntimeError("history account truthiness marker")
+
+    usage = AccountUsage(
+        account_id=BrokenString("alpha"),  # type: ignore[arg-type]
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, tzinfo=UTC),
+        status=AccountStatus.OK,
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+@pytest.mark.parametrize(
+    ("attribute", "fail_on"),
+    [
+        ("status", 1),
+        ("stale", 1),
+        ("cache_invalidated", 1),
+        ("account_id", 1),
+        ("account_id", 2),
+        ("values_captured_at", 1),
+        ("captured_at", 1),
+        ("backend_used", 1),
+        ("backend_used", 2),
+        ("main", 1),
+    ],
+)
+def test_usage_samples_fail_closed_on_top_level_account_property_hooks(
+    attribute, fail_on
+):
+    accesses = 0
+    active = False
+
+    class BrokenUsage(AccountUsage):
+        def __getattribute__(self, name):
+            nonlocal accesses
+            if active and name == attribute:
+                accesses += 1
+                if accesses >= fail_on:
+                    raise RuntimeError("history top-level property marker")
+            return super().__getattribute__(name)
+
+    usage = BrokenUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, tzinfo=UTC),
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+    active = True
+
+    assert usage_samples_from_usage(usage) == ()
+
+
 def test_usage_samples_skip_non_iterable_models_and_non_window_entries():
     captured = datetime(2026, 8, 16, 10, tzinfo=UTC)
     usage = AccountUsage(
@@ -1499,6 +2089,75 @@ def test_usage_samples_skip_non_iterable_models_and_non_window_entries():
     )
 
     assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_window_tuple_subclass_iterator_hooks():
+    class BrokenTuple(tuple):
+        def __iter__(self):
+            raise RuntimeError("history window iterator marker")
+
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, tzinfo=UTC),
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=BrokenTuple((LimitWindow(name="5h", percent=75),)),  # type: ignore[arg-type]
+        ),
+        status=AccountStatus.OK,
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_pool_window_property_failure():
+    class BrokenPool(UsagePool):
+        def __getattribute__(self, name):
+            if name == "windows":
+                raise RuntimeError("history pool windows marker")
+            return super().__getattribute__(name)
+
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, tzinfo=UTC),
+        main=BrokenPool(
+            key="main",
+            display_name="Codex",
+            windows=(LimitWindow(name="5h", percent=75),),
+        ),
+        status=AccountStatus.OK,
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
+def test_usage_samples_skip_runtime_error_model_iterator():
+    class BrokenModels:
+        def __iter__(self):
+            raise RuntimeError("synthetic model iterator marker")
+
+    captured = datetime(2026, 8, 16, 10, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=captured,
+        main=UsagePool(
+            key="main",
+            display_name="main",
+            windows=(LimitWindow(name="5h", percent=75),),
+            availability_sources=("usage",),
+        ),
+        models=BrokenModels(),  # type: ignore[arg-type]
+        status=AccountStatus.OK,
+        backend_used="direct",
+    )
+
+    samples = usage_samples_from_usage(usage)
+
+    assert len(samples) == 1
+    assert samples[0].pool == "main"
 
 
 def test_usage_samples_skip_window_identity_and_duration_failures():
@@ -1553,6 +2212,23 @@ def test_usage_samples_skip_credit_remaining_property_failure():
     assert usage_samples_from_usage(usage) == ()
 
 
+def test_usage_samples_skip_usage_credit_property_failure():
+    class BrokenUsage(AccountUsage):
+        def __getattribute__(self, name):
+            if name == "credits":
+                raise RuntimeError("history usage credit marker")
+            return super().__getattribute__(name)
+
+    usage = BrokenUsage(
+        account_id="alpha",
+        label="Alpha",
+        captured_at=datetime(2026, 8, 16, 10, tzinfo=UTC),
+        status=AccountStatus.OK,
+    )
+
+    assert usage_samples_from_usage(usage) == ()
+
+
 def test_record_usage_sample_wrappers_validate_batch_and_empty_results(tmp_path):
     usage = AccountUsage(
         account_id="alpha",
@@ -1566,3 +2242,19 @@ def test_record_usage_sample_wrappers_validate_batch_and_empty_results(tmp_path)
         history_module.record_usage_samples_batch([], path=path)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="usages are invalid"):
         history_module.record_usage_samples_batch((object(),), path=path)  # type: ignore[arg-type]
+
+
+def test_history_batch_entrypoints_reject_tuple_subclass_iterators(tmp_path):
+    class BrokenTuple(tuple):
+        def __iter__(self):
+            raise RuntimeError("history batch iterator marker")
+
+    with HistoryStore(tmp_path / "history.sqlite3") as store:
+        with pytest.raises(ValueError, match="samples are invalid"):
+            store.record_many(BrokenTuple())
+
+    with pytest.raises(ValueError, match="usages are invalid"):
+        history_module.record_usage_samples_batch(
+            BrokenTuple(),
+            path=tmp_path / "history-batch.sqlite3",
+        )

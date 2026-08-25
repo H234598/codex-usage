@@ -4555,3 +4555,25 @@ weiterhin als `partial` markiert.
 Verifikation: **92 `tests/test_consumption.py`-Tests** inklusive zweier
 Reset-/EMA-Regressionen bestanden; fokussierte History-/CLI-/Integration-
 Tests, Ruff, Mypy, Python-Compile und `git diff --check` folgen vor Commit.
+
+## Runde 226: History-Resetwerte und Capture-Zeit
+
+Fokus: `src/codex_usage/history.py`, Persistenz von Consumption-Samples.
+
+Zwei reproduzierbare Lücken: Die Tabelle behandelte denselben
+`captured_at_ms`-Schlüssel mit `INSERT OR IGNORE`; ein neuer Resetwert bei
+identischem Capture-Zeitpunkt wurde verworfen. Der bereits gespeicherte alte
+Zyklus blieb dadurch nach Neustart aktiv. Zusätzlich wurde ein
+`values_captured_at`, das nach `AccountUsage.captured_at` lag, unverändert als
+History-Zeitpunkt übernommen und konnte zukünftige Verbrauchsbeobachtungen
+erzeugen.
+
+Fix: Gleichschlüssel-Upserts übernehmen geänderte Nutzungs-, Reset- und
+Provenancefelder, bleiben bei identischen Samples idempotent und melden nur
+geänderte Zeilen. History verwendet `values_captured_at` nur, wenn es nicht
+nach dem äußeren Capture-Zeitpunkt liegt; sonst fällt es auf
+`captured_at` zurück.
+
+Verifikation: **174 `tests/test_history.py`-Tests** inklusive zweier
+Regressionen und **92 Consumption-Tests** bestanden; Mypy, Ruff, Python-
+Compile und `git diff --check` folgen vor Commit.

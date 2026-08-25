@@ -13,13 +13,18 @@ from typing import TypeGuard
 
 from .config import default_state_dir
 from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
-from .private_io import ensure_private_directory, private_path_lock
+from .private_io import (
+    assert_no_symlink_ancestors,
+    ensure_private_directory,
+    private_path_lock,
+)
 
 MAX_HISTORY_SAMPLES = 500_000
 MAX_HISTORY_WINDOW_SECONDS = 2_592_000
 MAX_CONSUMPTION_WINDOWS = 64
 HISTORY_SCHEMA_VERSION = "1"
 CREDIT_HISTORY_WINDOW_SECONDS = 2_592_000
+_PATH_TYPE = type(Path())
 
 
 def default_history_path() -> Path:
@@ -27,7 +32,7 @@ def default_history_path() -> Path:
 
 
 def _validated_history_path(path: Path | None) -> Path | None:
-    if path is not None and not isinstance(path, Path):
+    if path is not None and type(path) is not _PATH_TYPE:
         raise ValueError("history path is invalid")
     if path is not None and not path.is_absolute():
         raise ValueError("history path must be absolute")
@@ -41,7 +46,7 @@ def _validate_history_key(
     window_seconds: object,
 ) -> None:
     if (
-        not isinstance(account_id, str)
+        type(account_id) is not str
         or not account_id
         or len(account_id) > 64
         or any(
@@ -51,7 +56,15 @@ def _validate_history_key(
         )
     ):
         raise ValueError("account_id is invalid")
-    if not isinstance(pool, str) or not pool or len(pool) > 64:
+    if (
+        type(pool) is not str
+        or not pool
+        or len(pool) > 64
+        or any(
+            ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
+            for char in pool
+        )
+    ):
         raise ValueError("pool is invalid")
     if type(window_seconds) is not int:
         raise ValueError("window_seconds is invalid")
@@ -88,13 +101,25 @@ class UsageSample:
         if self.reset_at is not None:
             _require_aware(self.reset_at, "reset_at")
         if self.reset_generation is not None and (
-            not isinstance(self.reset_generation, str)
+            type(self.reset_generation) is not str
             or not self.reset_generation
             or len(self.reset_generation) > 128
             or not self.reset_generation.isascii()
+            or any(
+                ord(char) < 0x20 or ord(char) == 0x7F
+                for char in self.reset_generation
+            )
         ):
             raise ValueError("reset_generation is invalid")
-        if not isinstance(self.source, str) or not self.source or len(self.source) > 64:
+        if (
+            type(self.source) is not str
+            or not self.source
+            or len(self.source) > 64
+            or any(
+                ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
+                for char in self.source
+            )
+        ):
             raise ValueError("source is invalid")
 
 
@@ -108,16 +133,23 @@ def _require_aware(value: datetime, label: str) -> None:
 
 
 def _is_aware(value: object) -> TypeGuard[datetime]:
-    if not isinstance(value, datetime) or value.tzinfo is None:
+    if not isinstance(value, datetime):
         return False
     try:
+        if value.tzinfo is None:
+            return False
         return value.utcoffset() is not None
     except Exception:
         return False
 
 
 def _to_millis(value: datetime) -> int:
-    return round(value.astimezone(UTC).timestamp() * 1000)
+    if not _is_aware(value):
+        raise ValueError("history timestamp is invalid")
+    try:
+        return round(value.astimezone(UTC).timestamp() * 1000)
+    except Exception as exc:
+        raise ValueError("history timestamp is invalid") from exc
 
 
 def _from_millis(value: object) -> datetime:
@@ -150,9 +182,10 @@ class HistoryStore:
         self.close()
 
     def close(self) -> None:
-        if self._connection is not None:
-            self._connection.close()
-            self._connection = None
+        connection = self._connection
+        self._connection = None
+        if connection is not None:
+            connection.close()
 
     def _connect(self) -> sqlite3.Connection:
         if self._connection is not None:
@@ -295,6 +328,8 @@ class HistoryStore:
         if file_stat is not None:
             if not stat.S_ISREG(file_stat.st_mode):
                 raise ValueError("history path must be a regular file")
+            if file_stat.st_uid != os.getuid():
+                raise ValueError("history path must be owned by current user")
             if file_stat.st_nlink != 1:
                 raise ValueError("history path must not be hard-linked")
             if stat.S_IMODE(file_stat.st_mode) != 0o600:
@@ -311,7 +346,7 @@ class HistoryStore:
         return self.record_many((sample,)) == 1
 
     def record_many(self, samples: tuple[UsageSample, ...]) -> int:
-        if not isinstance(samples, tuple):
+        if type(samples) is not tuple:
             raise ValueError("samples are invalid")
         if len(samples) > MAX_HISTORY_SAMPLES:
             raise ValueError("too many samples")
@@ -325,24 +360,22 @@ class HistoryStore:
                 connection.execute("BEGIN")
                 cursor = connection.executemany(
                     """
-                    INSERT OR IGNORE INTO samples(
+                    INSERT INTO samples(
                         account_id, pool_key, window_seconds, captured_at_ms,
                         used_percent, reset_at_ms, reset_generation, source
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(account_id, pool_key, window_seconds, captured_at_ms)
+                    DO UPDATE SET
+                        used_percent = excluded.used_percent,
+                        reset_at_ms = excluded.reset_at_ms,
+                        reset_generation = excluded.reset_generation,
+                        source = excluded.source
+                    WHERE samples.used_percent IS NOT excluded.used_percent
+                       OR samples.reset_at_ms IS NOT excluded.reset_at_ms
+                       OR samples.reset_generation IS NOT excluded.reset_generation
+                       OR samples.source IS NOT excluded.source
                     """,
-                    (
-                        (
-                            sample.account_id,
-                            sample.pool,
-                            sample.window_seconds,
-                            _to_millis(sample.captured_at),
-                            float(sample.used_percent),
-                            _to_millis(sample.reset_at) if sample.reset_at else None,
-                            sample.reset_generation,
-                            sample.source,
-                        )
-                        for sample in samples
-                    ),
+                    (_sample_record_values(sample) for sample in samples),
                 )
                 count = cursor.rowcount
                 connection.commit()
@@ -406,9 +439,11 @@ class HistoryStore:
         )
         _require_aware(start, "start")
         _require_aware(end, "end")
-        if start > end:
+        start_ms = _to_millis(start)
+        end_ms = _to_millis(end)
+        if start_ms > end_ms:
             return ()
-        parameters = (account_id, pool, window_seconds, _to_millis(start))
+        parameters = (account_id, pool, window_seconds, start_ms)
         connection = self._connect()
         baseline_row = connection.execute(
             "SELECT * FROM samples WHERE account_id = ? AND pool_key = ? "
@@ -423,7 +458,7 @@ class HistoryStore:
             "SELECT * FROM samples WHERE account_id = ? AND pool_key = ? "
             "AND window_seconds = ? AND captured_at_ms > ? AND captured_at_ms <= ? "
             "ORDER BY captured_at_ms DESC LIMIT ?",
-            (*parameters[:3], parameters[3], _to_millis(end), observation_limit),
+            (*parameters[:3], parameters[3], end_ms, observation_limit),
         ).fetchall()
         observations.reverse()
         samples: list[UsageSample] = []
@@ -444,7 +479,9 @@ class HistoryStore:
         _validate_history_key(account_id=account_id, pool=pool, window_seconds=1)
         _require_aware(start, "start")
         _require_aware(end, "end")
-        if start > end:
+        start_ms = _to_millis(start)
+        end_ms = _to_millis(end)
+        if start_ms > end_ms:
             return ()
         rows = self._connect().execute(
             "SELECT DISTINCT window_seconds FROM samples "
@@ -454,12 +491,24 @@ class HistoryStore:
             (
                 account_id,
                 pool,
-                _to_millis(start),
-                _to_millis(end),
+                start_ms,
+                end_ms,
                 MAX_CONSUMPTION_WINDOWS,
             ),
         ).fetchall()
-        return tuple(int(row["window_seconds"]) for row in rows)
+        durations: list[int] = []
+        for row in rows:
+            duration = row["window_seconds"]
+            try:
+                _validate_history_key(
+                    account_id=account_id,
+                    pool=pool,
+                    window_seconds=duration,
+                )
+            except ValueError as exc:
+                raise ValueError("stored history window_seconds is invalid") from exc
+            durations.append(duration)
+        return tuple(durations)
 
     def prune(self, before: datetime, *, dry_run: bool = False) -> int:
         if not isinstance(dry_run, bool):
@@ -473,11 +522,18 @@ class HistoryStore:
             ).fetchone()
             return int(row["count"])
         with private_path_lock(self.path, label="history lock"):
-            count = connection.execute(
-                "DELETE FROM samples WHERE captured_at_ms < ?",
-                (_to_millis(before),),
-            ).rowcount
-            connection.commit()
+            try:
+                count = connection.execute(
+                    "DELETE FROM samples WHERE captured_at_ms < ?",
+                    (_to_millis(before),),
+                ).rowcount
+                connection.commit()
+            except Exception:
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                raise
             self._secure_related_files()
         return count
 
@@ -500,9 +556,14 @@ class HistoryStore:
 
 
 def _chmod_private_regular(path: Path, *, label: str) -> None:
+    if type(path) is not _PATH_TYPE:
+        raise ValueError(f"{label} path is invalid")
+    assert_no_symlink_ancestors(path.parent, label=label)
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    elif path.is_symlink():
+        raise ValueError(f"{label} must be a regular file")
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
     if hasattr(os, "O_NONBLOCK"):
@@ -517,24 +578,52 @@ def _chmod_private_regular(path: Path, *, label: str) -> None:
         file_stat = os.fstat(fd)
         if not stat.S_ISREG(file_stat.st_mode):
             raise ValueError(f"{label} must be a regular file")
+        if file_stat.st_uid != os.getuid():
+            raise ValueError(f"{label} must be owned by current user")
         if file_stat.st_nlink != 1:
             raise ValueError(f"{label} must not be hard-linked")
-        os.fchmod(fd, 0o600)
+        while True:
+            try:
+                os.fchmod(fd, 0o600)
+                break
+            except InterruptedError:
+                continue
     finally:
         os.close(fd)
 
 
 def _sample_from_row(row: sqlite3.Row) -> UsageSample:
-    return UsageSample(
-        account_id=row["account_id"],
-        pool=row["pool_key"],
-        window_seconds=row["window_seconds"],
-        captured_at=_from_millis(row["captured_at_ms"]),
-        used_percent=row["used_percent"],
-        reset_at=_from_millis(row["reset_at_ms"]) if row["reset_at_ms"] is not None else None,
-        reset_generation=row["reset_generation"],
-        source=row["source"],
-    )
+    try:
+        reset_at_ms = row["reset_at_ms"]
+        return UsageSample(
+            account_id=row["account_id"],
+            pool=row["pool_key"],
+            window_seconds=row["window_seconds"],
+            captured_at=_from_millis(row["captured_at_ms"]),
+            used_percent=row["used_percent"],
+            reset_at=_from_millis(reset_at_ms) if reset_at_ms is not None else None,
+            reset_generation=row["reset_generation"],
+            source=row["source"],
+        )
+    except Exception as exc:
+        raise ValueError("history sample is invalid") from exc
+
+
+def _sample_record_values(sample: UsageSample) -> tuple[object, ...]:
+    try:
+        reset_at = sample.reset_at
+        return (
+            sample.account_id,
+            sample.pool,
+            sample.window_seconds,
+            _to_millis(sample.captured_at),
+            float(sample.used_percent),
+            _to_millis(reset_at) if reset_at else None,
+            sample.reset_generation,
+            sample.source,
+        )
+    except Exception as exc:
+        raise ValueError("samples are invalid") from exc
 
 
 def usage_samples_from_usage(usage: AccountUsage) -> tuple[UsageSample, ...]:
@@ -547,66 +636,108 @@ def usage_samples_from_usage(usage: AccountUsage) -> tuple[UsageSample, ...]:
 def _iter_usage_samples(usage: AccountUsage):
     if not isinstance(usage, AccountUsage):
         raise ValueError("usage is invalid")
-    if usage.status is not AccountStatus.OK or usage.stale or usage.cache_invalidated:
+    try:
+        status = usage.status
+        stale = usage.stale
+        cache_invalidated = usage.cache_invalidated
+        account_id = usage.account_id
+        if status is not AccountStatus.OK or stale or cache_invalidated:
+            return
+        if type(account_id) is not str or not account_id:
+            return
+    except Exception:
         return
-    if not isinstance(usage.account_id, str) or not usage.account_id:
+    try:
+        values_captured_at = usage.values_captured_at
+        usage_captured_at = usage.captured_at
+    except Exception:
         return
-    values_captured_at = usage.values_captured_at
-    captured_at = (
-        values_captured_at
-        if _is_aware(values_captured_at)
-        else usage.captured_at
-    )
-    if not _is_aware(captured_at):
+    if not _is_aware(usage_captured_at):
         return
-    source = usage.backend_used if isinstance(usage.backend_used, str) else "unknown"
-    main_pools = (usage.main,) if isinstance(usage.main, UsagePool) else ()
+    captured_at = usage_captured_at
+    if _is_aware(values_captured_at):
+        try:
+            if values_captured_at <= usage_captured_at:
+                captured_at = values_captured_at
+        except Exception:
+            pass
+    try:
+        backend_used = usage.backend_used
+        main = usage.main
+    except Exception:
+        return
+    source = backend_used if isinstance(backend_used, str) else "unknown"
+    main_pools = (main,) if isinstance(main, UsagePool) else ()
     try:
         model_pools = iter(usage.models) if usage.models is not None else iter(())
-    except TypeError:
+    except Exception:
         model_pools = iter(())
-    for pool in chain(main_pools, model_pools):
-        if (
-            not isinstance(pool, UsagePool)
-            or pool.available is not True
-            or not isinstance(pool.windows, tuple)
-        ):
+
+    def safe_model_pools():
+        try:
+            yield from model_pools
+        except Exception:
+            return
+
+    for pool in chain(main_pools, safe_model_pools()):
+        if not isinstance(pool, UsagePool):
             continue
-        for window in pool.windows:
+        try:
+            available = pool.available
+            windows = pool.windows
+        except Exception:
+            continue
+        if available is not True or type(windows) is not tuple:
+            continue
+        for window in windows:
             if not isinstance(window, LimitWindow):
                 continue
             try:
                 if not window.has_known_identity or window.remaining_percent is None:
                     continue
-            except (AttributeError, TypeError, ValueError, OverflowError):
+            except Exception:
+                continue
+            try:
+                raw_duration = window.duration_seconds
+                raw_name = window.name
+            except Exception:
                 continue
             duration = (
-                window.duration_seconds
-                if type(window.duration_seconds) is int
-                and window.duration_seconds > 0
-                else None
-            ) or {
-                "5h": 18_000,
-                "5_hour": 18_000,
-                "five_hour": 18_000,
-                "w": 604_800,
-                "week": 604_800,
-                "weekly": 604_800,
-                "30d": MAX_HISTORY_WINDOW_SECONDS,
-                "30_day": MAX_HISTORY_WINDOW_SECONDS,
-                "month": MAX_HISTORY_WINDOW_SECONDS,
-                "monthly": MAX_HISTORY_WINDOW_SECONDS,
-            }.get(window.name.strip().casefold() if isinstance(window.name, str) else "")
-            if duration is None:
-                continue
-            reset_at = (
-                window.reset_at
-                if _is_aware(window.reset_at)
+                raw_duration
+                if type(raw_duration) is int and raw_duration > 0
                 else None
             )
+            if duration is None:
+                try:
+                    normalized_name = (
+                        raw_name.strip().casefold()
+                        if type(raw_name) is str
+                        else ""
+                    )
+                except Exception:
+                    normalized_name = ""
+                duration = {
+                    "5h": 18_000,
+                    "5_hour": 18_000,
+                    "five_hour": 18_000,
+                    "w": 604_800,
+                    "week": 604_800,
+                    "weekly": 604_800,
+                    "30d": MAX_HISTORY_WINDOW_SECONDS,
+                    "30_day": MAX_HISTORY_WINDOW_SECONDS,
+                    "month": MAX_HISTORY_WINDOW_SECONDS,
+                    "monthly": MAX_HISTORY_WINDOW_SECONDS,
+                }.get(normalized_name)
+            if duration is None:
+                continue
+            try:
+                raw_reset_at = window.reset_at
+                reset_at = raw_reset_at if _is_aware(raw_reset_at) else None
+            except Exception:
+                continue
             try:
                 yield UsageSample(
-                    account_id=usage.account_id,
+                    account_id=account_id,
                     pool=pool.key,
                     window_seconds=duration,
                     captured_at=captured_at,
@@ -619,27 +750,27 @@ def _iter_usage_samples(usage: AccountUsage):
                 )
             except Exception:
                 continue
-    credit = usage.credits
+    try:
+        credit = usage.credits
+    except Exception:
+        return
     if isinstance(credit, LimitWindow):
         try:
             remaining_percent = credit.remaining_percent
-        except (AttributeError, TypeError, ValueError, OverflowError):
+        except Exception:
             remaining_percent = None
         if remaining_percent is not None:
-            duration = (
-                credit.duration_seconds
-                if type(credit.duration_seconds) is int
-                and credit.duration_seconds > 0
-                else CREDIT_HISTORY_WINDOW_SECONDS
-            )
-            reset_at = (
-                credit.reset_at
-                if _is_aware(credit.reset_at)
-                else None
-            )
             try:
+                raw_duration = credit.duration_seconds
+                duration = (
+                    raw_duration
+                    if type(raw_duration) is int and raw_duration > 0
+                    else CREDIT_HISTORY_WINDOW_SECONDS
+                )
+                raw_reset_at = credit.reset_at
+                reset_at = raw_reset_at if _is_aware(raw_reset_at) else None
                 yield UsageSample(
-                    account_id=usage.account_id,
+                    account_id=account_id,
                     pool="credits",
                     window_seconds=duration,
                     captured_at=captured_at,
@@ -662,7 +793,7 @@ def record_usage_samples_batch(
     usages: tuple[AccountUsage, ...], *, path: Path | None = None
 ) -> int:
     path = _validated_history_path(path)
-    if not isinstance(usages, tuple):
+    if type(usages) is not tuple:
         raise ValueError("usages are invalid")
     if any(not isinstance(usage, AccountUsage) for usage in usages):
         raise ValueError("usages are invalid")
