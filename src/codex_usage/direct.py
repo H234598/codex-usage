@@ -170,7 +170,10 @@ def fetch_account_usage_direct(
         auth_account_id = refreshed_account_id
         auth_plan_type = refreshed_plan_type
         backend_user_id, backend_account_id = backend_identity_from_payload(payload)
-        backend_plan_type = backend_plan_type_from_payload(payload)
+        try:
+            backend_plan_type = backend_plan_type_from_payload(payload)
+        except ValueError as exc:
+            raise DirectFetchError(str(exc)) from exc
         try:
             backend_user_id, backend_account_id = canonical_backend_identity(
                 backend_user_id,
@@ -1012,6 +1015,8 @@ def _fetch_wham_usage(
     except OSError as exc:
         raise DirectFetchError("direct fetch failed: I/O error") from exc
 
+    if type(body) is not bytes:
+        raise DirectFetchError("direct response is not valid JSON")
     if len(body) > MAX_RESPONSE_BYTES:
         raise DirectFetchError("direct response too large")
     try:
@@ -1144,7 +1149,25 @@ def _select_stable_wham_usage(payloads: list[dict[str, Any]]) -> dict[str, Any]:
         raise DirectFetchError("direct response limits were inconsistent across samples")
     if _latest_response_progresses_beyond_group(payloads, best_group):
         return payloads[-1]
-    return best_group[0][1]
+    # Keep ignored, dynamic top-level metadata (credits, reset counters, etc.)
+    # fresh while preserving stable limit fields such as relative reset dates.
+    selected = dict(best_group[0][1])
+    latest = best_group[-1][1]
+    for key in (
+        "credits",
+        "credit_balance",
+        "creditBalance",
+        "remaining_credits",
+        "remainingCredits",
+        "usage_resets",
+        "resets",
+        "available",
+        "known",
+        "redeem_capability",
+    ):
+        if key in latest and latest[key] is not None:
+            selected[key] = latest[key]
+    return selected
 
 
 def _has_conflicting_partial_windows(

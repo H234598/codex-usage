@@ -1464,6 +1464,27 @@ def test_fetch_wham_usage_rejects_oversized_response_body(monkeypatch):
         _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
 
 
+@pytest.mark.parametrize("body", ["{}", memoryview(b"{}"), 42, None])
+def test_fetch_wham_usage_rejects_non_bytes_response_body(body, monkeypatch):
+    class FakeResponse:
+        status = 200
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return body
+
+    monkeypatch.setattr(direct_module, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+
+    with pytest.raises(DirectFetchError, match="response is not valid JSON"):
+        _fetch_wham_usage("token", account_id=None, timeout_seconds=1)
+
+
 def test_jwt_expiry_ignores_non_object_payloads():
     for claims in ([], None, "not-an-object"):
         payload = base64.urlsafe_b64encode(json.dumps(claims).encode("utf-8")).rstrip(b"=")
@@ -2624,6 +2645,65 @@ def test_fetch_account_usage_direct_prefers_majority_response(tmp_path, monkeypa
     assert usage.weekly.remaining == 55
 
 
+@pytest.mark.parametrize("plan_type", [1, [], {"name": "pro"}])
+def test_fetch_account_usage_direct_maps_invalid_backend_plan_type_to_error(
+    tmp_path,
+    monkeypatch,
+    plan_type,
+):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps({"tokens": {"access_token": "secret-access-token"}}),
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+    payload = {
+        "user_id": "user-test",
+        "account_id": "account-test",
+        "plan_type": plan_type,
+        "rate_limit": {
+            "primary_window": {
+                "used_percent": 3,
+                "limit_window_seconds": 18_000,
+            },
+            "secondary_window": {
+                "used_percent": 45,
+                "limit_window_seconds": 604_800,
+            },
+        },
+    }
+
+    class FakeResponse:
+        status = 200
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, _limit):
+            return json.dumps(payload).encode("utf-8")
+
+    monkeypatch.setattr(
+        "codex_usage.direct.urlopen",
+        lambda *_args, **_kwargs: FakeResponse(),
+    )
+    account = Account(
+        id="privat",
+        label="Privat",
+        profile_dir=str(tmp_path / "profile"),
+        auth_json_path=str(auth_path),
+    )
+
+    usage = fetch_account_usage_direct(account)
+
+    assert usage.status == AccountStatus.ERROR
+    assert usage.error == "backend response plan_type is invalid"
+    assert usage.cache_invalidated is True
+
+
 def test_fetch_account_usage_direct_rejects_identity_free_response(
     tmp_path,
     monkeypatch,
@@ -3313,6 +3393,35 @@ def test_select_stable_wham_usage_returns_latest_equal_usage_reset():
     )
 
     assert selected["rate_limit"]["primary_window"]["reset_at"] == 1783878000
+
+
+def test_select_stable_wham_usage_keeps_latest_dynamic_metadata_for_stable_limits():
+    def response(credits: int, resets: int) -> dict:
+        return {
+            "user_id": "user-test",
+            "account_id": "account-test",
+            "credits": credits,
+            "resets": resets,
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 50,
+                    "limit_window_seconds": 18_000,
+                    "reset_at": 1783860000,
+                },
+                "secondary_window": {
+                    "used_percent": 10,
+                    "limit_window_seconds": 604800,
+                    "reset_at": 1784415934,
+                },
+            },
+        }
+
+    selected = _select_stable_wham_usage(
+        [response(100, 1), response(90, 2), response(80, 3)]
+    )
+
+    assert selected["credits"] == 80
+    assert selected["resets"] == 3
 
 
 def test_fetch_stable_wham_usage_groups_dynamic_reset_buckets(monkeypatch):

@@ -4690,3 +4690,30 @@ Verifikation: **387 `tests/test_direct.py`-Tests**, **1139 gekoppelte
 Direct-/Bridge-/App-Server-/Extractor-Tests**, 100%-Statement- und
 Branch-Coverage im Direct-Modul, Mypy, Ruff, Python-Compile und
 `git diff --check` grün.
+
+## Runde 233: Direct-Response-Fehlergrenzen und frische Metadaten
+
+Fokus: `src/codex_usage/direct.py`, WHAM-Response-Typen, Backend-Planfelder
+und Auswahl stabiler Mehrfachantworten.
+
+Drei reproduzierbare Fehler gefunden:
+
+1. Ein nicht-stringförmiges Backend-`plan_type` verließ den Direct-Pfad als
+   roher `ValueError`; dadurch entstand kein kontrollierter
+   `AccountUsage.ERROR`-Status.
+2. Ein Response-Double mit Nicht-`bytes`-Body verließ die JSON-Grenze als
+   `AttributeError` oder `TypeError`.
+3. Wenn alle Limit-Signaturen gleich waren, übernahm der Selector den ältesten
+   stabilen Payload. Dynamische Credits- und Reset-Zähler konnten dadurch
+   veraltet bleiben.
+
+Fix: Ungültige Backend-Planfelder werden als `DirectFetchError` in einen
+   fehlerhaften AccountUsage übersetzt. Response-Bodies müssen native `bytes`
+   sein. Der Selector übernimmt bekannte dynamische Top-Level-Metadaten aus
+   dem neuesten Mitglied der stabilen Gruppe, behält aber stabile Limitfelder
+   wie relative Resetdaten aus dem gewählten Basis-Payload.
+
+Verifikation: **395 `tests/test_direct.py`-Tests**, **1147 gekoppelte
+Direct-/Bridge-/App-Server-/Extractor-Tests**, **5540 Python-Tests plus ein
+Skip**, **650 Applet-Tests**, 100%-Statement- und Branch-Coverage im Direct-
+Modul, Mypy, Ruff, `py_compile`, `make check` und `git diff --check` grün.
