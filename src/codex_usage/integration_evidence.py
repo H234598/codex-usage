@@ -1051,6 +1051,7 @@ def _validate_pointer_binding(
     binding_sha256: str,
     verified: VerifiedActiveManifest | None,
     read_payload: bool,
+    require_current_active: bool = True,
     hooks: bool = True,
 ) -> _ValidatedEvidenceGeneration:
     generation_fd = -1
@@ -1082,7 +1083,7 @@ def _validate_pointer_binding(
         document: dict[str, object] | None = None
         payload_identity: FileIdentity | None = None
         if read_payload:
-            if verified is None:
+            if require_current_active and verified is None:
                 raise IntegrationEvidenceInvalid()
             payload, payload_identity = _read_verified_evidence_file(
                 generation_fd,
@@ -1095,7 +1096,10 @@ def _validate_pointer_binding(
                 len(payload) != binding.payload_size_bytes
                 or hashlib.sha256(payload).hexdigest() != binding.payload_sha256
                 or binding.published_at != document["generated_at"]
-                or binding.active_manifest_sha256 != verified.active_manifest_sha256
+            ):
+                raise IntegrationEvidenceInvalid()
+            if require_current_active and verified is not None and (
+                binding.active_manifest_sha256 != verified.active_manifest_sha256
                 or binding.release_id != verified.release_id
                 or binding.source_manifest_sha256 != verified.source_manifest_sha256
             ):
@@ -1757,8 +1761,9 @@ def gc_evidence_generations(
                 generations_fd=generations_fd,
                 generation_id=current_pointer.current_generation_id,
                 binding_sha256=current_pointer.current_binding_sha256,
-                verified=verified,
+                verified=None,
                 read_payload=True,
+                require_current_active=False,
                 hooks=False,
             )
             if (
@@ -1769,8 +1774,9 @@ def gc_evidence_generations(
                     generations_fd=generations_fd,
                     generation_id=current_pointer.previous_generation_id,
                     binding_sha256=current_pointer.previous_binding_sha256,
-                    verified=verified,
+                    verified=None,
                     read_payload=True,
+                    require_current_active=False,
                     hooks=False,
                 )
 
@@ -2158,8 +2164,9 @@ def _publish_evidence_generation_locked(
                 generations_fd=generations_fd,
                 generation_id=old_pointer.current_generation_id,
                 binding_sha256=old_pointer.current_binding_sha256,
-                verified=verified,
+                verified=None,
                 read_payload=True,
+                require_current_active=False,
                 hooks=False,
             )
             if current_generation.document is None:
@@ -2181,8 +2188,9 @@ def _publish_evidence_generation_locked(
                     generations_fd=generations_fd,
                     generation_id=old_pointer.previous_generation_id,
                     binding_sha256=old_pointer.previous_binding_sha256,
-                    verified=verified,
+                    verified=None,
                     read_payload=True,
+                    require_current_active=False,
                     hooks=False,
                 )
 

@@ -95,6 +95,39 @@ def staged_evidence_layout(evidence_layout):
     return evidence_layout
 
 
+def _install_distinct_active_release(
+    tmp_path: Path,
+    *,
+    state_home: Path,
+    data_home: Path,
+):
+    from codex_usage.integration_attestation import verify_active_manifest_at
+    from codex_usage.integration_installer import install_release
+
+    source_parent = tmp_path / "release-b-source"
+    temporary_root = tmp_path / "release-b-temporary"
+    source_parent.mkdir(mode=0o700)
+    temporary_root.mkdir(mode=0o700)
+    source_root = _source_copy(source_parent)
+    distinct_source = source_root / "src/codex_usage/integration_snapshot.py"
+    distinct_source.write_bytes(
+        distinct_source.read_bytes() + b"\n# distinct evidence rotation release\n"
+    )
+    release = install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+    verified = verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=release.entrypoint_path,
+    )
+    return release, verified
+
+
 @pytest.fixture
 def published_evidence_layout(staged_evidence_layout):
     from codex_usage import integration_evidence
@@ -579,6 +612,218 @@ def test_gc_reclaims_valid_history_from_prior_active_manifest(
     assert not (
         state_home / "codex-usage/integration/generations" / historical
     ).exists()
+
+
+def test_active_release_rotation_keeps_publication_reader_and_gc_live(
+    staged_evidence_layout,
+    tmp_path,
+):
+    """Historical A stays integral while strict Current advances under active B."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint_a, payload_a, verified_a = (
+        staged_evidence_layout
+    )
+    pointer_a = integration_evidence.publish_evidence_generation(
+        payload_a,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified_a,
+    )
+    release_b, verified_b = _install_distinct_active_release(
+        tmp_path,
+        state_home=state_home,
+        data_home=data_home,
+    )
+    assert verified_b.release_id != verified_a.release_id
+    assert (
+        integration_evidence.read_current_evidence(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release_b.entrypoint_path,
+            now=datetime(2026, 8, 25, 10, 1, tzinfo=UTC),
+        )[1]
+        == "invalid"
+    )
+
+    integration_evidence.gc_evidence_generations(
+        state_home=state_home,
+        data_home=data_home,
+        pointer=pointer_a,
+        verified_active_manifest=verified_b,
+    )
+    payload_b1 = integration_evidence.serialize_schema2_document(
+        {
+            "accounts": [],
+            "generated_at": "2026-08-25T10:01:00Z",
+            "schema_version": 2,
+        }
+    )
+    pointer_b1 = integration_evidence.publish_evidence_generation(
+        payload_b1,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified_b,
+    )
+    assert pointer_b1.previous_generation_id == pointer_a.current_generation_id
+    assert (
+        integration_evidence.read_current_evidence(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release_b.entrypoint_path,
+            now=datetime(2026, 8, 25, 10, 1, tzinfo=UTC),
+        )[1]
+        == "complete"
+    )
+    integration_evidence.gc_evidence_generations(
+        state_home=state_home,
+        data_home=data_home,
+        pointer=pointer_b1,
+        verified_active_manifest=verified_b,
+    )
+
+    payload_b2 = integration_evidence.serialize_schema2_document(
+        {
+            "accounts": [],
+            "generated_at": "2026-08-25T10:02:00Z",
+            "schema_version": 2,
+        }
+    )
+    pointer_b2 = integration_evidence.publish_evidence_generation(
+        payload_b2,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified_b,
+    )
+    assert pointer_b2.previous_generation_id == pointer_b1.current_generation_id
+    assert (
+        integration_evidence.read_current_evidence(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=release_b.entrypoint_path,
+            now=datetime(2026, 8, 25, 10, 2, tzinfo=UTC),
+        )[1]
+        == "complete"
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload_b1,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified_b,
+        )
+    assert integration_evidence.parse_pointer(
+        (state_home / "codex-usage/integration/current.json").read_bytes()
+    ) == pointer_b2
+    assert entrypoint_a != release_b.entrypoint_path
+
+
+@pytest.mark.parametrize("mutation", ("malformed_binding", "payload_hash"))
+def test_rotated_publisher_and_gc_reject_malformed_historical_current(
+    staged_evidence_layout,
+    tmp_path,
+    mutation,
+):
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, payload, verified_a = (
+        staged_evidence_layout
+    )
+    pointer_a = integration_evidence.publish_evidence_generation(
+        payload,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified_a,
+    )
+    _release_b, verified_b = _install_distinct_active_release(
+        tmp_path,
+        state_home=state_home,
+        data_home=data_home,
+    )
+    generation = (
+        state_home
+        / "codex-usage/integration/generations"
+        / pointer_a.current_generation_id
+    )
+    if mutation == "malformed_binding":
+        _rewrite_reader_file(
+            generation,
+            "account-usage-v2.binding.json",
+            b"{}",
+        )
+    else:
+        _rewrite_reader_file(
+            generation,
+            "account-usage-v2.json",
+            payload + b"\n",
+        )
+    current = state_home / "codex-usage/integration/current.json"
+    before = current.read_bytes()
+
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.gc_evidence_generations(
+            state_home=state_home,
+            data_home=data_home,
+            pointer=pointer_a,
+            verified_active_manifest=verified_b,
+        )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified_b,
+        )
+    assert current.read_bytes() == before
+
+
+def test_rollback_rejects_previous_from_prior_active_release(
+    staged_evidence_layout,
+    tmp_path,
+):
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceUnavailable
+
+    state_home, data_home, _entrypoint, payload_a, verified_a = (
+        staged_evidence_layout
+    )
+    pointer_a = integration_evidence.publish_evidence_generation(
+        payload_a,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified_a,
+    )
+    _release_b, verified_b = _install_distinct_active_release(
+        tmp_path,
+        state_home=state_home,
+        data_home=data_home,
+    )
+    payload_b = integration_evidence.serialize_schema2_document(
+        {
+            "accounts": [],
+            "generated_at": "2026-08-25T10:01:00Z",
+            "schema_version": 2,
+        }
+    )
+    pointer_b = integration_evidence.publish_evidence_generation(
+        payload_b,
+        state_home=state_home,
+        data_home=data_home,
+        verified_active_manifest=verified_b,
+    )
+    assert pointer_b.previous_generation_id == pointer_a.current_generation_id
+    current = state_home / "codex-usage/integration/current.json"
+    before = current.read_bytes()
+
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        integration_evidence.rollback_current_evidence(
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified_b,
+        )
+    assert current.read_bytes() == before
 
 
 def test_gc_never_unlinks_inside_final_generation_namespace(
