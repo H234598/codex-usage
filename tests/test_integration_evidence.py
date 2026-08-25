@@ -543,6 +543,149 @@ def test_gc_reclaims_valid_history_from_prior_active_manifest(
     ).exists()
 
 
+def test_gc_never_unlinks_inside_final_generation_namespace(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if GC damaged an immutable final generation before rename."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    pointer = create_257_complete_generations(state_home, data_home, verified)
+    real_unlink = os.unlink
+    unlink_parents: list[str] = []
+
+    def record_unlink_parent(name, *args, dir_fd=None, **kwargs):
+        unlink_parents.append(_crash_fd_name(dir_fd))
+        return real_unlink(name, *args, dir_fd=dir_fd, **kwargs)
+
+    monkeypatch.setattr(
+        integration_evidence.os,
+        "unlink",
+        record_unlink_parent,
+    )
+    integration_evidence.gc_evidence_generations(
+        state_home=state_home,
+        data_home=data_home,
+        pointer=pointer,
+        verified_active_manifest=verified,
+    )
+
+    assert unlink_parents
+    assert all(parent.startswith(".tmp-") for parent in unlink_parents)
+
+
+@pytest.mark.parametrize("interruption", ("after_rename", "after_first_unlink"))
+def test_gc_recovery_cleans_interrupted_temporary_victim(
+    staged_evidence_layout,
+    monkeypatch,
+    interruption,
+):
+    """Would fail if interrupted GC left final damage or unrecoverable debris."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceUnavailable
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    pointer = create_257_complete_generations(state_home, data_home, verified)
+    generations = state_home / "codex-usage/integration/generations"
+    victim_id = f"{0:032x}"
+    temporary = generations / f".tmp-{victim_id}"
+    injected = False
+    real_fsync = os.fsync
+    real_unlink = os.unlink
+
+    def fail_after_victim_rename(fd):
+        nonlocal injected
+        if (
+            not injected
+            and _crash_fd_name(fd) == "generations"
+            and temporary.is_dir()
+        ):
+            injected = True
+            raise OSError("synthetic crash after victim rename")
+        return real_fsync(fd)
+
+    def fail_after_first_temporary_unlink(name, *args, dir_fd=None, **kwargs):
+        nonlocal injected
+        result = real_unlink(name, *args, dir_fd=dir_fd, **kwargs)
+        if not injected and _crash_fd_name(dir_fd).startswith(".tmp-"):
+            injected = True
+            raise OSError("synthetic crash after first temporary unlink")
+        return result
+
+    if interruption == "after_rename":
+        monkeypatch.setattr(
+            integration_evidence.os,
+            "fsync",
+            fail_after_victim_rename,
+        )
+    else:
+        monkeypatch.setattr(
+            integration_evidence.os,
+            "unlink",
+            fail_after_first_temporary_unlink,
+        )
+
+    with pytest.raises(IntegrationEvidenceUnavailable):
+        integration_evidence.gc_evidence_generations(
+            state_home=state_home,
+            data_home=data_home,
+            pointer=pointer,
+            verified_active_manifest=verified,
+        )
+
+    assert injected
+    assert temporary.is_dir()
+    assert count_complete_generation_directories(state_home) == 256
+
+    integration_evidence.gc_evidence_generations(
+        state_home=state_home,
+        data_home=data_home,
+        pointer=pointer,
+        verified_active_manifest=verified,
+    )
+
+    assert not temporary.exists()
+    assert count_complete_generation_directories(state_home) == 256
+
+
+def test_gc_rejects_temporary_victim_name_collision_before_rename(
+    staged_evidence_layout,
+    monkeypatch,
+):
+    """Would fail if GC replaced or ignored an occupied recovery namespace."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    state_home, data_home, _entrypoint, _payload, verified = staged_evidence_layout
+    pointer = create_257_complete_generations(state_home, data_home, verified)
+    victim_id = f"{0:032x}"
+    real_scan = integration_evidence._scan_complete_generations
+
+    def scan_then_collide(*, generations_fd):
+        generations = real_scan(generations_fd=generations_fd)
+        os.mkdir(f".tmp-{victim_id}", mode=0o700, dir_fd=generations_fd)
+        return generations
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_scan_complete_generations",
+        scan_then_collide,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.gc_evidence_generations(
+            state_home=state_home,
+            data_home=data_home,
+            pointer=pointer,
+            verified_active_manifest=verified,
+        )
+
+    generations = state_home / "codex-usage/integration/generations"
+    assert (generations / victim_id).is_dir()
+    assert (generations / f".tmp-{victim_id}").is_dir()
+    assert count_complete_generation_directories(state_home) == 257
+
+
 def test_rollback_rejects_invalid_previous_without_pointer_change(
     staged_evidence_layout,
 ):

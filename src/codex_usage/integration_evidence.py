@@ -1529,16 +1529,7 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
 
 def recover_evidence_staging(*, generations_fd: int) -> None:
     try:
-        private_io._require_private_directory_fd(generations_fd)
-        staging_names: list[str] = []
-        with os.scandir(generations_fd) as entries:
-            for entry in entries:
-                if entry.name.startswith(".tmp-"):
-                    if _STAGING_RE.fullmatch(entry.name) is None:
-                        raise IntegrationEvidenceInvalid()
-                    staging_names.append(entry.name)
-                    if len(staging_names) > 16:
-                        raise IntegrationEvidenceInvalid()
+        staging_names = _bounded_staging_names(generations_fd)
         for name in sorted(staging_names):
             _remove_safe_staging_directory(generations_fd, name)
     except IntegrationEvidenceError:
@@ -1547,6 +1538,21 @@ def recover_evidence_staging(*, generations_fd: int) -> None:
         raise IntegrationEvidenceInvalid() from exc
     except OSError as exc:
         raise IntegrationEvidenceUnavailable() from exc
+
+
+def _bounded_staging_names(generations_fd: int) -> list[str]:
+    private_io._require_private_directory_fd(generations_fd)
+    staging_names: list[str] = []
+    with os.scandir(generations_fd) as entries:
+        for entry in entries:
+            if not entry.name.startswith(".tmp-"):
+                continue
+            if _STAGING_RE.fullmatch(entry.name) is None:
+                raise IntegrationEvidenceInvalid()
+            staging_names.append(entry.name)
+            if len(staging_names) > 16:
+                raise IntegrationEvidenceInvalid()
+    return staging_names
 
 
 def _fresh_parent_identities(state_home: Path) -> tuple[FileIdentity, FileIdentity]:
@@ -1698,9 +1704,11 @@ def gc_evidence_generations(
             if len(candidates) < delete_count:
                 raise IntegrationEvidenceInvalid()
             for generation in candidates[:delete_count]:
-                _remove_complete_generation(
+                _stage_and_remove_complete_generation(
+                    integration_fd=integration_fd,
                     generations_fd=generations_fd,
                     generation=generation,
+                    expected_pointer=current_pointer,
                 )
             if (
                 _fd_identity(state_fd) != state_identity
@@ -1813,49 +1821,54 @@ def _inspect_complete_generation(
         _close_fds(generation_fd)
 
 
-def _remove_complete_generation(
+def _stage_and_remove_complete_generation(
     *,
+    integration_fd: int,
     generations_fd: int,
     generation: _CompleteEvidenceGeneration,
+    expected_pointer: EvidencePointer,
 ) -> None:
-    generation_fd = -1
-    try:
-        generation_fd = private_io.open_private_dir_at(
-            generations_fd,
-            generation.generation_id,
+    temporary_name = f".tmp-{generation.generation_id}"
+    staging_names = _bounded_staging_names(generations_fd)
+    if temporary_name in staging_names or len(staging_names) >= 16:
+        raise IntegrationEvidenceInvalid()
+
+    current_bytes, _current_identity = _read_verified_evidence_file(
+        integration_fd,
+        "current.json",
+        maximum=_POINTER_MAX_BYTES,
+        hook=lambda *_: None,
+    )
+    current_pointer = parse_pointer(current_bytes)
+    if (
+        current_pointer != expected_pointer
+        or generation.generation_id
+        in {
+            current_pointer.current_generation_id,
+            current_pointer.previous_generation_id,
+        }
+        or _inspect_complete_generation(
+            generations_fd=generations_fd,
+            generation_id=generation.generation_id,
         )
-        if (
-            _fd_identity(generation_fd) != generation.generation_identity
-            or _named_identity(
-                generations_fd,
-                generation.generation_id,
-                directory=True,
-            )
-            != generation.generation_identity
-        ):
-            raise IntegrationEvidenceInvalid()
-        for name, identity in (
-            ("account-usage-v2.json", generation.payload_identity),
-            ("account-usage-v2.binding.json", generation.binding_identity),
-        ):
-            if _named_identity(generation_fd, name, directory=False) != identity:
-                raise IntegrationEvidenceInvalid()
-            os.unlink(name, dir_fd=generation_fd)
-        os.fsync(generation_fd)
-        if (
-            _fd_identity(generation_fd) != generation.generation_identity
-            or _named_identity(
-                generations_fd,
-                generation.generation_id,
-                directory=True,
-            )
-            != generation.generation_identity
-        ):
-            raise IntegrationEvidenceInvalid()
-        os.rmdir(generation.generation_id, dir_fd=generations_fd)
-        os.fsync(generations_fd)
-    finally:
-        _close_fds(generation_fd)
+        != generation
+    ):
+        raise IntegrationEvidenceInvalid()
+    try:
+        os.stat(temporary_name, dir_fd=generations_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        raise IntegrationEvidenceInvalid()
+
+    os.rename(
+        generation.generation_id,
+        temporary_name,
+        src_dir_fd=generations_fd,
+        dst_dir_fd=generations_fd,
+    )
+    os.fsync(generations_fd)
+    _remove_safe_staging_directory(generations_fd, temporary_name)
 
 
 def rollback_current_evidence(
