@@ -251,3 +251,30 @@ def test_v2_contract_allows_only_three_windows():
     assert integration_evidence.ALLOWED_WINDOW_SECONDS == frozenset(
         (18_000, 604_800, 2_592_000)
     )
+
+
+def test_pointer_positional_constructor_round_trips_canonical_fields():
+    """Would fail if positional interface swapped digest and generation values."""
+    from codex_usage import integration_evidence
+    from codex_usage.integration_evidence import EvidencePointer
+
+    pointer = EvidencePointer(
+        "b" * 32,
+        "a" * 64,
+        1,
+        "c" * 32,
+        "d" * 64,
+    )
+
+    assert integration_evidence.parse_pointer(
+        integration_evidence.serialize_pointer(pointer)
+    ) == pointer
+
+
+def test_v2_contract_exposes_private_exact_window_allowlist():
+    """Would fail if implementation drifted from shared private contract constant."""
+    from codex_usage import integration_evidence
+
+    assert integration_evidence._ALLOWED_WINDOW_SECONDS == frozenset(
+        (18_000, 604_800, 2_592_000)
+    )

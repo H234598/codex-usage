@@ -59,7 +59,8 @@ _POINTER_FIELDS = frozenset(
         "previous_generation_id",
     )
 )
-ALLOWED_WINDOW_SECONDS = frozenset((18_000, 604_800, 2_592_000))
+_ALLOWED_WINDOW_SECONDS = frozenset((18_000, 604_800, 2_592_000))
+ALLOWED_WINDOW_SECONDS = _ALLOWED_WINDOW_SECONDS
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 _GENERATION_ID_RE = re.compile(r"[0-9a-f]{32}")
 _RELEASE_ID_RE = re.compile(r"0\.6\.536-[0-9a-f]{16}")
@@ -81,11 +82,11 @@ class EvidenceBinding:
 
 @dataclass(frozen=True)
 class EvidencePointer:
-    current_binding_sha256: str
     current_generation_id: str
+    current_binding_sha256: str
     pointer_schema_version: int
-    previous_binding_sha256: str | None
     previous_generation_id: str | None
+    previous_binding_sha256: str | None
 
 
 @dataclass
@@ -286,10 +287,10 @@ def validate_v2_payload_bytes(payload: bytes) -> dict[str, object]:
         raise IntegrationInvalidSource()
     for account in cast(list[dict[str, object]], document["accounts"]):
         for limit in cast(list[dict[str, object]], account["limits"]):
-            if limit["window_seconds"] not in ALLOWED_WINDOW_SECONDS:
+            if limit["window_seconds"] not in _ALLOWED_WINDOW_SECONDS:
                 raise IntegrationInvalidSource()
         for evidence in cast(list[dict[str, object]], account["tracker_evidence"]):
-            if evidence["limit_window_seconds"] not in ALLOWED_WINDOW_SECONDS:
+            if evidence["limit_window_seconds"] not in _ALLOWED_WINDOW_SECONDS:
                 raise IntegrationInvalidSource()
     return document
 
