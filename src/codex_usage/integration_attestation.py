@@ -1090,6 +1090,7 @@ def _verify_manifest(
     state_home: Path,
     data_home: Path,
     expected_entrypoint_path: Path | None,
+    manifest_payload: bytes | None = None,
 ) -> ActiveRelease:
     return _verify_manifest_contract(
         manifest_path=manifest_path,
@@ -1100,6 +1101,7 @@ def _verify_manifest(
         expected_version=_EXPECTED_VERSION,
         expected_dist_info_prefix=_DIST_INFO_PREFIX,
         expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
+        manifest_payload=manifest_payload,
     )
 
 
@@ -1108,6 +1110,7 @@ def _verify_previous_schema2_manifest_for_upgrade(
     manifest_path: Path,
     state_home: Path,
     data_home: Path,
+    manifest_payload: bytes | None = None,
 ) -> ActiveRelease:
     return _verify_manifest_contract(
         manifest_path=manifest_path,
@@ -1119,6 +1122,7 @@ def _verify_previous_schema2_manifest_for_upgrade(
         expected_dist_info_prefix=_PREVIOUS_SCHEMA2_DIST_INFO_PREFIX,
         expected_fields=_PREVIOUS_SCHEMA2_MANIFEST_FIELDS,
         require_bytecode_environment=False,
+        manifest_payload=manifest_payload,
     )
 
 

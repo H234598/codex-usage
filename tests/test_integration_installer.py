@@ -943,6 +943,223 @@ def test_runtime_rejects_compromised_06535_but_installer_upgrades_verified_06534
         verify_compromised_06535_runtime(tmp_path / "compromised-06535")
 
 
+def _compromised_06535_with_previous_06534(tmp_path: Path):
+    from codex_usage import integration_installer
+
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    source_root = _temporary_source_copy(tmp_path)
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.534")
+        previous = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    with pytest.MonkeyPatch.context() as context:
+        _patch_release_identity(context, "0.6.535")
+        compromised = integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+    pycache = compromised.release_dir / "venv/lib/__pycache__"
+    pycache.mkdir(mode=0o700)
+    (pycache / "compromised.pyc").write_bytes(b"compromised")
+    integration = state_home / "codex-usage" / "integration"
+    assert json.loads((integration / "previous.json").read_bytes())["version"] == "0.6.534"
+    return (
+        previous,
+        compromised,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    )
+
+
+def test_installer_recovers_compromised_06535_only_from_attested_previous_06534(
+    tmp_path,
+):
+    from codex_usage import integration_attestation, integration_installer
+
+    (
+        previous,
+        compromised,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    previous_path = integration / "previous.json"
+    previous_before = previous_path.read_bytes()
+    with pytest.raises(integration_attestation.IntegrationAttestationUnavailable):
+        integration_attestation._verify_manifest(
+            manifest_path=integration / "active.json",
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=None,
+        )
+
+    installed = integration_installer.install_release(
+        source_root=source_root,
+        state_home=state_home,
+        data_home=data_home,
+        python_executable=Path(sys.executable),
+        temporary_root=temporary_root,
+    )
+
+    assert installed.version == "0.6.536"
+    assert previous_path.read_bytes() == previous_before
+    assert json.loads(previous_before)["release_id"] == previous.release_dir.name
+    assert json.loads(previous_before)["release_id"] != compromised.release_dir.name
+    assert integration_attestation.verify_active_release(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=installed.entrypoint_path,
+    ) == installed
+
+
+@pytest.mark.parametrize("mutation", ["unknown-field", "forbidden-pyc"])
+def test_installer_recovery_rejects_invalid_previous_without_mutation(
+    tmp_path,
+    mutation,
+):
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    (
+        previous,
+        _,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    if mutation == "unknown-field":
+        manifest = json.loads(previous_path.read_bytes())
+        manifest["untrusted_upgrade_fallback"] = True
+        write_private_text(
+            previous_path,
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+            label="malicious previous integration manifest",
+            mode=0o600,
+        )
+    else:
+        pycache = previous.release_dir / "venv/lib/__pycache__"
+        pycache.mkdir(mode=0o700)
+        (pycache / "previous.pyc").write_bytes(b"forbidden")
+    active_before = active_path.read_bytes()
+    previous_before = previous_path.read_bytes()
+    releases_before = {
+        path.name for path in (integration / "releases").iterdir()
+    }
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+    assert {
+        path.name for path in (integration / "releases").iterdir()
+    } == releases_before
+
+
+@pytest.mark.parametrize("mutation", ["version-06533", "schema1"])
+def test_installer_recovery_never_uses_legacy_active_as_fallback(
+    tmp_path,
+    mutation,
+):
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    (
+        _,
+        _,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    manifest = json.loads(active_path.read_bytes())
+    if mutation == "version-06533":
+        manifest["version"] = "0.6.533"
+    else:
+        manifest["schema_version"] = 1
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="legacy active integration manifest",
+        mode=0o600,
+    )
+    active_before = active_path.read_bytes()
+    previous_before = previous_path.read_bytes()
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+
+
+def test_installer_recovery_build_failure_preserves_active_and_previous(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_installer
+
+    (
+        _,
+        _,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    previous_before = previous_path.read_bytes()
+
+    def fail_build(**_kwargs):
+        raise OSError("synthetic recovery build failure")
+
+    monkeypatch.setattr(integration_installer, "_build_verified_wheel", fail_build)
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+
+
 def test_release_tree_rejects_pyc_and_builder_invokes_python_with_b_and_env(tmp_path):
     from codex_usage.integration_attestation import (
         IntegrationAttestationUnavailable,

@@ -30,6 +30,7 @@ from .integration_attestation import (
     MAX_RELEASE_TREE_ENTRIES,
     ActiveRelease,
     IntegrationAttestationUnavailable,
+    _manifest_from_canonical_bytes,
     _read_manifest,
     _release_tree_sha256,
     _require_manifest_fields,
@@ -40,6 +41,7 @@ from .integration_evidence import bootstrap_evidence_lock_inodes
 from .private_io import (
     ensure_private_directory,
     private_path_lock,
+    read_private_bytes_at,
     read_private_text,
     write_private_text,
 )
@@ -79,6 +81,7 @@ BUILDER_PREFLIGHT_TIMEOUT_SECONDS = 30
 BUILDER_PREFLIGHT_MAX_OUTPUT_BYTES = 64 * 1024
 BUILDER_WHEEL_TIMEOUT_SECONDS = 120
 MAX_INSTALL_FILE_BYTES = MAX_ATTESTATION_FILE_BYTES
+MAX_INTEGRATION_MANIFEST_BYTES = 128 * 1024
 MAX_ACTIVE_TRANSACTION_ARTIFACTS = 8
 MAX_INTEGRATION_DIRECTORY_ENTRIES = 64
 _ACTIVE_TRANSACTION_RAW_RE = re.compile(
@@ -183,6 +186,14 @@ class _ActiveTransactionArtifact:
     candidate_identity: _ProvisionalIdentity | None
     prior_identity: _ProvisionalIdentity | None
     transaction_kind: str | None
+
+
+@dataclass(frozen=True)
+class _InstallProvenance:
+    active_payload: bytes | None
+    active_identity: _FileIdentity | None
+    previous_payload: bytes | None
+    previous_identity: _FileIdentity | None
 
 
 class _WheelMemberValidationError(IntegrationInstallError):
@@ -885,6 +896,140 @@ def _open_bound_parent_fd(
         if fd >= 0:
             os.close(fd)
         raise
+
+
+def _read_bound_integration_manifest(
+    *,
+    integration: Path,
+    integration_identity: _DirectoryIdentity,
+    name: str,
+) -> tuple[bytes, _FileIdentity]:
+    parent_fd = _open_bound_parent_fd(integration, integration_identity)
+    try:
+        payload, identity = read_private_bytes_at(
+            parent_fd,
+            name,
+            maximum=MAX_INTEGRATION_MANIFEST_BYTES,
+            mode=0o600,
+        )
+    finally:
+        os.close(parent_fd)
+    return payload, _FileIdentity(identity.device, identity.inode, identity.mode)
+
+
+def _require_compromised_06535_active_marker(
+    *,
+    payload: bytes,
+    state_home: Path,
+    data_home: Path,
+) -> None:
+    try:
+        manifest = _require_manifest_fields(
+            _manifest_from_canonical_bytes(payload),
+            expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
+        )
+    except IntegrationAttestationUnavailable:
+        _fail()
+    source_digest = manifest.get("source_manifest_sha256")
+    if (
+        manifest.get("schema_version") != 2
+        or manifest.get("version") != "0.6.535"
+        or manifest.get("state_home") != str(state_home)
+        or manifest.get("data_home") != str(data_home)
+        or type(source_digest) is not str
+        or len(source_digest) != 64
+        or any(character not in "0123456789abcdef" for character in source_digest)
+    ):
+        _fail()
+    release_id = f"0.6.535-{source_digest[:16]}"
+    if (
+        manifest.get("release_id") != release_id
+        or manifest.get("release_dir")
+        != str(state_home / "codex-usage" / "integration" / "releases" / release_id)
+    ):
+        _fail()
+
+
+def _verify_bound_previous_upgrade_manifest(
+    *,
+    integration: Path,
+    integration_identity: _DirectoryIdentity,
+    state_home: Path,
+    data_home: Path,
+) -> tuple[bytes, _FileIdentity]:
+    payload, identity = _read_bound_integration_manifest(
+        integration=integration,
+        integration_identity=integration_identity,
+        name=PREVIOUS_NAME,
+    )
+    _verify_previous_schema2_manifest_for_upgrade(
+        manifest_path=integration / PREVIOUS_NAME,
+        state_home=state_home,
+        data_home=data_home,
+        manifest_payload=payload,
+    )
+    repeated_payload, repeated_identity = _read_bound_integration_manifest(
+        integration=integration,
+        integration_identity=integration_identity,
+        name=PREVIOUS_NAME,
+    )
+    if repeated_payload != payload or repeated_identity != identity:
+        _fail()
+    return payload, identity
+
+
+def _prepare_install_provenance(
+    *,
+    integration: Path,
+    integration_identity: _DirectoryIdentity,
+    state_home: Path,
+    data_home: Path,
+) -> _InstallProvenance:
+    active_path = integration / ACTIVE_NAME
+    if not active_path.exists() and not active_path.is_symlink():
+        return _InstallProvenance(None, None, None, None)
+    active_payload, active_identity = _read_bound_integration_manifest(
+        integration=integration,
+        integration_identity=integration_identity,
+        name=ACTIVE_NAME,
+    )
+    try:
+        _verify_manifest(
+            manifest_path=active_path,
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=None,
+            manifest_payload=active_payload,
+        )
+    except IntegrationAttestationUnavailable:
+        try:
+            _verify_previous_schema2_manifest_for_upgrade(
+                manifest_path=active_path,
+                state_home=state_home,
+                data_home=data_home,
+                manifest_payload=active_payload,
+            )
+        except IntegrationAttestationUnavailable:
+            _require_compromised_06535_active_marker(
+                payload=active_payload,
+                state_home=state_home,
+                data_home=data_home,
+            )
+            previous_payload, previous_identity = (
+                _verify_bound_previous_upgrade_manifest(
+                    integration=integration,
+                    integration_identity=integration_identity,
+                    state_home=state_home,
+                    data_home=data_home,
+                )
+            )
+            return _InstallProvenance(
+                active_payload,
+                active_identity,
+                previous_payload,
+                previous_identity,
+            )
+    return _InstallProvenance(active_payload, active_identity, None, None)
 
 
 def _provisional_from_file_identity(identity: _FileIdentity) -> _ProvisionalIdentity:
@@ -2965,6 +3110,12 @@ def _install_release(
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             _require_private_dir(temporary_root, temporary_identity, False)
             _require_private_dir(releases, releases_identity, False)
+            provenance = _prepare_install_provenance(
+                integration=integration,
+                integration_identity=integration_identity,
+                state_home=state_home,
+                data_home=data_home,
+            )
             final_release_dir = releases / release_id
             if _rehash_source_manifest(source_root) != source_manifest:
                 _fail()
@@ -3148,32 +3299,25 @@ def _install_release(
                 expected_entrypoint_path=final_entrypoint_path,
             )
             active_path = integration / ACTIVE_NAME
-            active_text: str | None = None
-            active_identity: _ProvisionalIdentity | None = None
-            if active_path.exists() or active_path.is_symlink():
-                active_text, active_stat = read_private_text(
-                    active_path,
-                    regular_label="active manifest",
-                    read_label="active manifest",
-                    max_bytes=128 * 1024,
-                )
-                if active_stat.st_nlink != 1 or stat.S_IMODE(active_stat.st_mode) != 0o600:
-                    _fail()
-                active_identity = _provisional_from_stat(active_stat)
-                _revalidate_bootstrap(state_home, app_identity, integration_identity)
-                try:
-                    _verify_manifest(
-                        manifest_path=active_path,
-                        state_home=state_home,
-                        data_home=data_home,
-                        expected_entrypoint_path=None,
-                    )
-                except IntegrationAttestationUnavailable:
-                    _verify_previous_schema2_manifest_for_upgrade(
-                        manifest_path=active_path,
-                        state_home=state_home,
-                        data_home=data_home,
-                    )
+            repeated_provenance = _prepare_install_provenance(
+                integration=integration,
+                integration_identity=integration_identity,
+                state_home=state_home,
+                data_home=data_home,
+            )
+            if repeated_provenance != provenance:
+                _fail()
+            active_identity = (
+                None
+                if provenance.active_identity is None
+                else _provisional_from_file_identity(provenance.active_identity)
+            )
+            active_text = (
+                None
+                if provenance.active_payload is None
+                or provenance.previous_payload is not None
+                else provenance.active_payload.decode("utf-8")
+            )
             published_text = _manifest_text(candidate)
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             publish = _begin_active_publish(
