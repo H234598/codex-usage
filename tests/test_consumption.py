@@ -477,6 +477,34 @@ def test_consumption_resets_counter_when_planned_reset_target_is_unchanged():
     assert result.coverage == "complete"
 
 
+def test_consumption_resets_counter_when_reset_target_equals_previous_capture():
+    reset = BASE
+    result = calculate_consumption(
+        [
+            _sample(0, 80, reset_at=reset),
+            _sample(30, 5, reset_at=BASE + timedelta(hours=5)),
+        ],
+        amount=30,
+        unit="minutes",
+        now=BASE + timedelta(minutes=30),
+    )
+    smoothed = calculate_consumption(
+        [
+            _sample(0, 80, reset_at=reset),
+            _sample(30, 5, reset_at=BASE + timedelta(hours=5)),
+        ],
+        amount=30,
+        unit="minutes",
+        now=BASE + timedelta(minutes=30),
+        smoothing="ema-5",
+    )
+
+    assert result.consumed_percentage_points == 5.0
+    assert result.coverage == "complete"
+    assert smoothed.consumed_percentage_points == 5.0
+    assert smoothed.estimated_seconds_to_exhaustion == 34_200
+
+
 def test_consumption_resets_counter_when_limit_returns_to_full_without_metadata():
     result = calculate_consumption(
         [_sample(-30, 40), _sample(0, 50), _sample(30, 70), _sample(60, 0), _sample(90, 8)],

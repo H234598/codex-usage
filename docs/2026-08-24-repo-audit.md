@@ -4765,3 +4765,24 @@ verbleibenden Coverage-Lücken sind defensive Getter-/Timezone-Fehlerzweige.
 
 Verifikation: **185 `tests/test_usage_limits.py`-Tests** grün, 98%-Statement- /
 Branch-Coverage; 100.000 Payload-Invarianten ohne Anomalie.
+
+## Runde 237: Resetgrenze bei identischem Capture-Zeitpunkt
+
+Fokus: `src/codex_usage/consumption.py`, geplanter Reset direkt am
+vorherigen Capture-Zeitpunkt, Roh-Tokendelta und EMA.
+
+Ein reproduzierbarer Fehler: `_reset_boundary_at()` akzeptierte einen
+geplanten Reset nur, wenn `previous.reset_at > previous.captured_at` galt.
+Bei `reset_at == captured_at` wurde der erste Messpunkt danach trotz neuem
+Zyklus als negativer Delta-Abfall behandelt; Tokendelta blieb dadurch bei
+`0`/`partial`, und EMA verwarf den neuen Zyklus ebenfalls.
+
+Fix: Die Grenze gilt jetzt bei `>=`; native `datetime`-Typen bleiben eine
+Voraussetzung, damit absichtlich fehlerhafte Datetime-Subklassen weiterhin
+fail-closed bleiben. Rohverbrauch und EMA verwenden dieselbe korrigierte
+Grenze.
+
+Verifikation: **94 `tests/test_consumption.py`-Tests**, **468 gekoppelte
+Consumption-/History-/CLI-/Integration-Tests**, 100%-Statement-/Branch-
+Coverage im Consumption-Modul, Mypy, Ruff, Python-Compile und
+`git diff --check` grün.

@@ -361,8 +361,10 @@ def _reset_boundary_at(
         if current.reset_at is None:
             return current.captured_at if generation_changed else None
         if (
-            previous.reset_at is not None
-            and previous.reset_at > previous.captured_at
+            type(previous.reset_at) is datetime
+            and type(previous.captured_at) is datetime
+            and type(current.captured_at) is datetime
+            and previous.reset_at >= previous.captured_at
             and previous.reset_at <= current.captured_at
         ):
             # Providers may keep reporting the same scheduled timestamp for
