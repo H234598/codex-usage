@@ -4751,3 +4751,17 @@ das `_fetch_stable_wham_usage()` Nicht-Dictionaries zurückgab; der echte
 
 Verifikation: **396 `tests/test_direct.py`-Tests** grün; Reload zuvor mit
 `status=installed`, unverändertem Settings-Cache und `reload=ok` bestätigt.
+
+## Runde 236: Usage-Limits-Reaudit ohne neues Root-Finding
+
+Fokus: `src/codex_usage/usage_limits.py`, WHAM-/App-Server-Fenster,
+verschachtelte Partial-Merges, Spark-Duplikate und Modellkatalog.
+
+Keine neue reproduzierbare Root-Ursache gefunden. Die Parser liefern bei
+zufälligen JSON-kompatiblen Payloads nur konsistente `UsagePool`-Objekte oder
+leere/fail-closed Ergebnisse. Verfügbare Pools besitzen stets Fenster;
+verifizierte Nutzung besitzt bekannte, eindeutige Fensteridentitäten. Die
+verbleibenden Coverage-Lücken sind defensive Getter-/Timezone-Fehlerzweige.
+
+Verifikation: **185 `tests/test_usage_limits.py`-Tests** grün, 98%-Statement- /
+Branch-Coverage; 100.000 Payload-Invarianten ohne Anomalie.
