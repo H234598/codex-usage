@@ -2455,6 +2455,48 @@ def test_rollback_revalidates_prior_manifest_and_swaps_only_active_json(tmp_path
     )
 
 
+@pytest.mark.parametrize("missing", ["producer-lock", "lock-root"])
+def test_rollback_missing_lock_namespace_fails_without_recreating_or_mutating(
+    tmp_path, monkeypatch, missing
+):
+    from codex_usage import integration_evidence, integration_installer, private_io
+    from codex_usage.private_io import write_private_text
+
+    lock_root = tmp_path / "installer-lock-root"
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    _, data_home, state_home = _install(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    active_before = active_path.read_bytes()
+    write_private_text(
+        previous_path,
+        active_before.decode("utf-8"),
+        label="synthetic previous manifest",
+        mode=0o600,
+    )
+    previous_before = previous_path.read_bytes()
+    producer_lock = lock_root / integration_evidence._evidence_lock_name(
+        integration / "producer-install"
+    )
+    if missing == "producer-lock":
+        producer_lock.unlink()
+        missing_path = producer_lock
+    else:
+        missing_path = tmp_path / "missing-lock-root"
+        monkeypatch.setattr(private_io, "_private_lock_root", lambda: missing_path)
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.rollback_active_release(
+            state_home=state_home,
+            data_home=data_home,
+        )
+
+    assert not missing_path.exists()
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+
+
 def test_rollback_rejects_schema1_previous_without_changing_schema2_active(tmp_path):
     from codex_usage.integration_attestation import verify_active_release
     from codex_usage.integration_installer import (

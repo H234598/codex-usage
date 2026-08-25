@@ -800,16 +800,23 @@ def private_path_lock(
     timeout_seconds: int | float = PRIVATE_LOCK_TIMEOUT_SECONDS,
     label: str = "private lock",
     created_lock_files: list[tuple[Path, int, int]] | None = None,
+    create: bool = True,
 ) -> Iterator[None]:
     path = _require_path(path, label=label)
     if created_lock_files is not None and not isinstance(created_lock_files, list):
         raise ValueError("created_lock_files is invalid")
+    if type(create) is not bool:
+        raise ValueError("create is invalid")
     deadline = _lock_deadline(timeout_seconds)
     parent = path.parent
     assert_no_symlink_ancestors(parent, label=label)
     if parent.is_symlink() or not parent.is_dir():
         raise ValueError(f"{label} parent must be a real directory: {parent}")
-    lock_path = _private_lock_path(path)
+    lock_path = (
+        _private_lock_path(path)
+        if create
+        else _private_lock_root() / _private_lock_name(path)
+    )
     if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
         raise ValueError(f"{label} must be a regular file: {lock_path}")
     lock_key = Path(os.path.abspath(lock_path))
@@ -827,7 +834,9 @@ def private_path_lock(
         flags |= os.O_CLOEXEC
     lock_created = False
     try:
-        if created_lock_files is None:
+        if not create:
+            fd = os.open(lock_path, flags)
+        elif created_lock_files is None:
             fd = os.open(lock_path, flags | os.O_CREAT, 0o600)
         else:
             try:

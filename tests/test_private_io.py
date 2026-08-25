@@ -1350,6 +1350,30 @@ def test_private_path_lock_records_only_lock_file_created_by_transaction(tmp_pat
     assert preexisting_lock_files == []
 
 
+def test_private_path_lock_no_create_does_not_create_missing_lock_root(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "profile" / "profile.json"
+    target.parent.mkdir()
+    missing_lock_root = tmp_path / "missing-lock-root"
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: missing_lock_root)
+
+    with pytest.raises(FileNotFoundError):
+        with private_path_lock(target, label="profile lock", create=False):
+            pass
+
+    assert not missing_lock_root.exists()
+
+
+def test_private_path_lock_no_create_reuses_same_thread_lock(tmp_path):
+    target = tmp_path / "profile" / "profile.json"
+    target.parent.mkdir()
+
+    with private_path_lock(target, label="outer profile lock"):
+        with private_path_lock(target, label="nested profile lock", create=False):
+            pass
+
+
 def test_private_path_lock_keeps_waiter_before_acquire_on_persistent_inode(tmp_path):
     path = tmp_path / "profile" / "profile.json"
     path.parent.mkdir()

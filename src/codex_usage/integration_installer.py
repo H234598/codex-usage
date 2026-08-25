@@ -2945,6 +2945,7 @@ def _install_release(
             integration / RELEASE_LOCK_STEM,
             timeout_seconds=0,
             label="integration producer lock",
+            create=False,
         ):
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             _recover_active_transactions(
@@ -3308,6 +3309,7 @@ def rollback_active_release(*, state_home: Path, data_home: Path) -> ActiveRelea
             integration / RELEASE_LOCK_STEM,
             timeout_seconds=0,
             label="integration producer lock",
+            create=False,
         ):
             _revalidate_bootstrap(state_home, app_identity, integration_identity)
             _recover_active_transactions(
