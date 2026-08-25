@@ -7,9 +7,9 @@
 - Integration-Evidence wird als unveränderliche Generation mit atomarem
   `current.json`-Pointer, kanonischer Binding-Sidecar und FD-gebundener
   Lock-/Hashprüfung veröffentlicht und gelesen.
-- Installer und Runtime akzeptieren nur Release 0.6.536; ausschließlich ein
-  vollständig attestierter 0.6.534-/Schema-2-Release gilt als Upgradequelle.
-  Release 0.6.535 bleibt inert und wird nicht reaktiviert.
+- Installer und Runtime akzeptieren nur Release 0.6.536; Upgradeprovenienz ist
+  ein vollständig attestierter aktiver 0.6.536-Release oder der attestierte
+  0.6.534-/Schema-2-Recovery-Release. 0.6.535 bleibt inert.
 - Build und Launcher unterdrücken Bytecode mit
   `PYTHONDONTWRITEBYTECODE=1` plus `python -B`; Releasebäume mit
   `__pycache__` oder `*.pyc` werden verworfen.
@@ -22,6 +22,10 @@
   bei höchstens 256 Generationen.
 - Persistente Locks werden ausschließlich aus passwd-Home der effektiven UID
   abgeleitet; `HOME`, XDG und reale UID wählen keinen alternativen Lockraum.
+- Release-Rotation trennt historische Generationsintegrität von aktueller
+  Active-Trust: Publisher und GC akzeptieren kanonisch hashgebundene Historie,
+  Current-Reader und Rollback-Promotion bleiben streng ans aktive Release
+  gebunden.
 
 ## 0.6.534 - 2026-08-24
 

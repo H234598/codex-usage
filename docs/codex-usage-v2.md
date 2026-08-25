@@ -319,8 +319,19 @@ Recovery behalten die referenzierten Ordner.
    `VerifiedActiveManifest` passen. Payloadgröße und SHA-256 müssen dem
    Binding entsprechen; danach wird das strikte Schema-2-Dokument erneut
    kanonisch validiert. Der optional referenzierte previous Binding wird
-   mindestens mit Pointer/Generation/Binding-Digest validiert; Rollback und
-   GC validieren ihn vollständig.
+   beim normalen Reader mindestens mit Pointer/Generation/Binding-Digest
+   validiert. Rollback verlangt für die zu promotende Generation zusätzlich
+   vollständige Bindung an das aktuell attestierte Release.
+
+Nach einer gültigen Active-Release-Rotation bleiben ältere Generationen
+Audit- und Retentionmaterial. Publisher und GC prüfen solche Current-,
+Previous- und ungeschützten Generationen vollständig auf kanonischen Pointer,
+Binding, Payload, Größe, Hash und `published_at`, verlangen aber keine
+Übereinstimmung ihrer historischen Manifest-/Release-/Source-Digests mit dem
+neuen Active. Neu publizierte Generation und normal gelesener Current bleiben
+streng an das neue `VerifiedActiveManifest` gebunden. Rollback darf eine unter
+Release A erzeugte Previous-Generation unter aktivem Release B nicht
+promotieren.
 
 Jede fehlende, zusätzliche, nichtkanonische oder abweichende Bindung ist
 `invalid`, niemals Fallback.
@@ -348,7 +359,10 @@ EntryPoint erwirbt beide EX-Locks vor Uhrzeit-, Quellen-, History-, Build- und
 Serialisierungsschritt und hält sie durch Retention und Current-Commit. Der
 interne Publisher erwirbt sie nicht erneut. Auch direkte Publisheraufrufe
 verwerfen unter denselben Locks ein `generated_at` vor dem gültigen aktuellen
-`published_at`; eine ältere Invocation kann Current daher nicht zurücksetzen.
+`published_at`; dafür wird historischer Current vollständig inhaltlich, aber
+nicht gegen ein inzwischen rotiertes Active geprüft. Eine ältere Invocation
+kann Current daher nicht zurücksetzen, während die erste Publikation nach
+einer gültigen Release-Rotation möglich bleibt.
 
 Nach `openat`/`dir_fd`-Traversal mit `O_NOFOLLOW` prüft Reader vor und nach
 jeder Lektüre Device, Inode, Modus, UID, Linkcount, Größe, mtime und ctime,
@@ -387,6 +401,9 @@ nie mehr als 256. Current und previous bleiben geschützt. Expliziter GC kann
 einen gültigen 257-Zustand auf 256 reduzieren; ein vorhandener 258-Zustand ist
 vor jeder Löschung fail-closed. Jede Löschung prüft Pointer und Identität
 erneut, benennt den Kandidaten FD-gebunden in Staging um und fsync't Parents.
+Historische Manifest-/Release-Digests ändern diese Löschreihenfolge nicht;
+malformed Binding, Payload-Hash-/Größendrift oder ungültiges `published_at`
+bleiben auch bei ungeschützten Generationen fail-closed.
 
 ## Kanonisches verifiziertes Installationsverfahren
 
