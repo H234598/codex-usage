@@ -164,3 +164,39 @@ def test_verify_active_manifest_at_rejects_release_file_swap_after_hash(
             data_home=data_home,
             expected_entrypoint_path=entrypoint,
         )
+
+
+def test_verify_active_manifest_at_rejects_descendant_directory_rebinding(
+    evidence_layout, monkeypatch
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_evidence import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, _payload, verified = evidence_layout
+    release_parent = verified.active_release.release_dir.parent
+    package_dir = entrypoint.parent
+    replacement = release_parent / ".package-replacement"
+    old = release_parent / ".package-old"
+    shutil.copytree(package_dir, replacement, copy_function=shutil.copy2)
+    walks = 0
+
+    def swap_after_last_descendant_walk(_release_fd):
+        nonlocal walks
+        walks += 1
+        if walks == 3:
+            os.rename(package_dir, old)
+            os.rename(replacement, package_dir)
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_release_namespace_recheck",
+        swap_after_last_descendant_walk,
+        raising=False,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+        )
+    assert walks == 3

@@ -197,6 +197,29 @@ def _acquire_lock(fd: int, *, mode: str, deadline: float) -> None:
         raise IntegrationEvidenceInvalid()
 
 
+def _verify_held_lock_entry(lock_root_fd: int, name: str, held_fd: int) -> None:
+    named_fd = -1
+    try:
+        try:
+            named_fd = _open_lock_file(lock_root_fd, name, create=False)
+        except IntegrationEvidenceUnavailable as exc:
+            raise IntegrationEvidenceInvalid() from exc
+        held = os.fstat(held_fd)
+        named = os.fstat(named_fd)
+        if (
+            held.st_dev != named.st_dev
+            or held.st_ino != named.st_ino
+            or held.st_mode != named.st_mode
+            or held.st_uid != named.st_uid
+            or held.st_nlink != named.st_nlink
+            or held.st_size != named.st_size
+        ):
+            raise IntegrationEvidenceInvalid()
+    finally:
+        if named_fd >= 0:
+            os.close(named_fd)
+
+
 def _release_lock(fd: int) -> None:
     try:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -342,11 +365,14 @@ def evidence_lock_set(
             )
             try:
                 _acquire_lock(fd, mode=mode, deadline=deadline)
+                _verify_held_lock_entry(root_fd, lock_name, fd)
             except Exception:
                 os.close(fd)
                 raise
             acquired.append((logical_name, fd))
             acquired_identities[logical_name] = _fd_identity(fd)
+        _verify_held_lock_entry(root_fd, release_name, acquired[0][1])
+        _verify_held_lock_entry(root_fd, current_name, acquired[1][1])
         held_set = _HeldEvidenceLocks(
             state_identity=state_identity,
             integration_identity=integration_identity,

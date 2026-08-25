@@ -58,6 +58,31 @@ def _evidence_lock_child(
         release.wait(10)
 
 
+def _evidence_lock_child_holds(
+    state_home_text,
+    release_mode,
+    current_mode,
+    ready,
+    release,
+    result,
+):
+    from codex_usage.integration_evidence import IntegrationBusy, evidence_lock_set
+
+    ready.set()
+    try:
+        with evidence_lock_set(
+            state_home=Path(state_home_text),
+            release_mode=release_mode,
+            current_mode=current_mode,
+            timeout_seconds=0,
+            create=False,
+        ):
+            result.put("acquired")
+            release.wait(10)
+    except IntegrationBusy:
+        result.put("busy")
+
+
 def _create_evidence_lock_inodes(state_home):
     from codex_usage import integration_evidence
 
@@ -87,7 +112,7 @@ def child_lock_attempt(tmp_path, *, held, requested):
     release = context.Event()
     result = context.Queue()
     process = context.Process(
-        target=_evidence_lock_child,
+        target=_evidence_lock_child_holds,
         args=(
             str(state_home),
             requested[0],
@@ -1762,3 +1787,91 @@ def test_same_mode_nested_different_state_home_acquires_distinct_child_locks(
         if process.is_alive():
             process.terminate()
             process.join(10)
+
+
+def test_lock_entry_replacement_after_flock_fails_before_independent_domain(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    lock_root = private_io._private_lock_root()
+    release_target = (
+        state_home / "codex-usage" / "integration" / "producer-install"
+    )
+    release_lock = lock_root / integration_evidence._evidence_lock_name(
+        release_target
+    )
+    old_lock = lock_root / ".replaced-release-old"
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    result = context.Queue()
+    process = context.Process(
+        target=_evidence_lock_child_holds,
+        args=(
+            str(state_home),
+            "exclusive",
+            "exclusive",
+            ready,
+            release,
+            result,
+        ),
+    )
+    original_acquire = integration_evidence._acquire_lock
+    replaced = False
+    child_result = None
+
+    def acquire_then_replace(fd, *, mode, deadline):
+        nonlocal replaced, child_result
+        original_acquire(fd, mode=mode, deadline=deadline)
+        if replaced:
+            return
+        replaced = True
+        os.rename(release_lock, old_lock)
+        replacement_fd = os.open(
+            release_lock,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        os.close(replacement_fd)
+        process.start()
+        assert ready.wait(10)
+        child_result = result.get(timeout=10)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_acquire_lock",
+        acquire_then_replace,
+    )
+    entered = False
+    try:
+        with pytest.raises(integration_evidence.IntegrationEvidenceInvalid):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=False,
+            ):
+                entered = True
+    finally:
+        release.set()
+        if process.pid is not None:
+            process.join(10)
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
+    assert not entered
+    assert child_result == "acquired"
+    assert process.exitcode == 0
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        pass
