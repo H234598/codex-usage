@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import stat
@@ -1096,3 +1097,185 @@ def test_reader_rejects_binding_inode_swap(published_evidence_layout, monkeypatc
         monkeypatch,
         "_before_reader_binding_recheck",
     )
+
+
+def _late_reader_file_swap(generations_fd: int, generation_id: str, name: str) -> None:
+    fd = os.open(
+        generation_id,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        dir_fd=generations_fd,
+    )
+    try:
+        payload_fd = os.open(name, os.O_RDONLY, dir_fd=fd)
+        try:
+            payload = os.read(payload_fd, os.fstat(payload_fd).st_size)
+        finally:
+            os.close(payload_fd)
+        _replace_named_file(fd, name, payload)
+    finally:
+        os.close(fd)
+
+
+def _assert_reader_rejects_late_file_swap(
+    published_evidence_layout, monkeypatch, name: str, *, previous: bool = False
+) -> None:
+    """Would fail if final reader phase trusted first file validation."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, payload, verified, _current_bytes = (
+        published_evidence_layout
+    )
+    if previous:
+        integration_evidence.publish_evidence_generation(
+            payload,
+            state_home=state_home,
+            data_home=data_home,
+            verified_active_manifest=verified,
+        )
+
+    def late_swap(generations_fd, pointer):
+        generation_id = (
+            pointer.previous_generation_id
+            if previous
+            else pointer.current_generation_id
+        )
+        assert generation_id is not None
+        _late_reader_file_swap(generations_fd, generation_id, name)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_reader_final_revalidate",
+        late_swap,
+        raising=False,
+    )
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert document == {}
+    assert status in {"unavailable", "invalid"}
+
+
+def test_reader_rejects_late_payload_inode_swap(
+    published_evidence_layout, monkeypatch
+):
+    _assert_reader_rejects_late_file_swap(
+        published_evidence_layout,
+        monkeypatch,
+        "account-usage-v2.json",
+    )
+
+
+def test_reader_rejects_late_binding_inode_swap(
+    published_evidence_layout, monkeypatch
+):
+    _assert_reader_rejects_late_file_swap(
+        published_evidence_layout,
+        monkeypatch,
+        "account-usage-v2.binding.json",
+    )
+
+
+def test_reader_rejects_late_previous_binding_inode_swap(
+    published_evidence_layout, monkeypatch
+):
+    _assert_reader_rejects_late_file_swap(
+        published_evidence_layout,
+        monkeypatch,
+        "account-usage-v2.binding.json",
+        previous=True,
+    )
+
+
+def _hold_exclusive_evidence_locks(state_home: str, ready, release) -> None:
+    from codex_usage import integration_evidence
+
+    with integration_evidence.evidence_lock_set(
+        state_home=Path(state_home),
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=5,
+        create=False,
+    ):
+        ready.set()
+        release.wait(10)
+
+
+def test_reader_reports_busy_while_child_holds_exclusive_evidence_locks(
+    published_evidence_layout,
+):
+    """Would fail if an EX-held evidence namespace looked unavailable."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    context = multiprocessing.get_context("fork")
+    ready = context.Event()
+    release = context.Event()
+    child = context.Process(
+        target=_hold_exclusive_evidence_locks,
+        args=(str(state_home), ready, release),
+    )
+    child.start()
+    try:
+        assert ready.wait(5)
+        assert integration_evidence.read_current_evidence(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+            now=datetime(2026, 8, 25, tzinfo=UTC),
+        ) == ({}, "busy")
+    finally:
+        release.set()
+        child.join(10)
+    assert child.exitcode == 0
+
+
+def test_reader_fresh_until_expiration_is_stale_after_deadline(
+    published_evidence_layout,
+):
+    """Would fail if fresh_until deadline were ignored or treated inclusively."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    mutate_evidence_layout(state_home, "partial_status")
+    pointer = integration_evidence.parse_pointer(
+        (state_home / "codex-usage/integration/current.json").read_bytes()
+    )
+    generation = state_home / "codex-usage/integration/generations" / pointer.current_generation_id
+    payload_path = generation / "account-usage-v2.json"
+    document = json.loads(payload_path.read_bytes())
+    document["accounts"][0]["status"] = "ok"
+    payload = integration_evidence.serialize_schema2_document(document)
+    _rewrite_reader_file(generation, "account-usage-v2.json", payload)
+    binding_path = generation / "account-usage-v2.binding.json"
+    binding = integration_evidence.parse_binding(binding_path.read_bytes())
+    binding_bytes = integration_evidence.serialize_binding(
+        replace(
+            binding,
+            payload_sha256=hashlib.sha256(payload).hexdigest(),
+            payload_size_bytes=len(payload),
+        )
+    )
+    _rewrite_reader_file(generation, "account-usage-v2.binding.json", binding_bytes)
+    _rewrite_reader_file(
+        state_home / "codex-usage/integration",
+        "current.json",
+        integration_evidence.serialize_pointer(
+            replace(
+                pointer,
+                current_binding_sha256=hashlib.sha256(binding_bytes).hexdigest(),
+            )
+        ),
+    )
+    assert integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, 10, 15, 1, tzinfo=UTC),
+    )[1] == "stale"

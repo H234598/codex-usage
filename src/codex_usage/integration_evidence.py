@@ -116,6 +116,14 @@ class _PublicationCommitState:
     committed: bool = False
 
 
+@dataclass(frozen=True)
+class _ValidatedEvidenceGeneration:
+    document: dict[str, object] | None
+    generation_identity: FileIdentity
+    binding_identity: FileIdentity
+    payload_identity: FileIdentity | None
+
+
 class IntegrationBusy(IntegrationEvidenceError):
     pass
 
@@ -198,6 +206,13 @@ def _before_reader_binding_recheck(
     _parent_fd: int,
     _name: str,
     _held_fd: int,
+) -> None:
+    return None
+
+
+def _before_reader_final_revalidate(
+    _generations_fd: int,
+    _pointer: EvidencePointer,
 ) -> None:
     return None
 
@@ -1005,22 +1020,27 @@ def _validate_pointer_binding(
     binding_sha256: str,
     verified: VerifiedActiveManifest | None,
     read_payload: bool,
-) -> tuple[dict[str, object] | None, FileIdentity]:
+    hooks: bool = True,
+) -> _ValidatedEvidenceGeneration:
     generation_fd = -1
     try:
         generation_fd = private_io.open_private_dir_at(generations_fd, generation_id)
         generation_identity = _fd_identity(generation_fd)
-        if read_payload:
+        if read_payload and hooks:
             _before_reader_generation_recheck(
                 generations_fd,
                 generation_id,
                 generation_fd,
             )
-        binding_bytes, _binding_identity = _read_verified_evidence_file(
+        binding_bytes, binding_identity = _read_verified_evidence_file(
             generation_fd,
             "account-usage-v2.binding.json",
             maximum=_BINDING_MAX_BYTES,
-            hook=_before_reader_binding_recheck if read_payload else lambda *_: None,
+            hook=(
+                _before_reader_binding_recheck
+                if read_payload and hooks
+                else lambda *_: None
+            ),
         )
         binding = parse_binding(binding_bytes)
         if (
@@ -1029,14 +1049,15 @@ def _validate_pointer_binding(
         ):
             raise IntegrationEvidenceInvalid()
         document: dict[str, object] | None = None
+        payload_identity: FileIdentity | None = None
         if read_payload:
             if verified is None:
                 raise IntegrationEvidenceInvalid()
-            payload, _payload_identity = _read_verified_evidence_file(
+            payload, payload_identity = _read_verified_evidence_file(
                 generation_fd,
                 binding.payload_filename,
                 maximum=_PAYLOAD_MAX_BYTES,
-                hook=_before_reader_payload_recheck,
+                hook=_before_reader_payload_recheck if hooks else lambda *_: None,
             )
             document = validate_v2_payload_bytes(payload)
             if (
@@ -1054,7 +1075,12 @@ def _validate_pointer_binding(
             != generation_identity
         ):
             raise IntegrationEvidenceInvalid()
-        return document, generation_identity
+        return _ValidatedEvidenceGeneration(
+            document=document,
+            generation_identity=generation_identity,
+            binding_identity=binding_identity,
+            payload_identity=payload_identity,
+        )
     except IntegrationEvidenceError:
         raise
     except IntegrationInvalidSource as exc:
@@ -1154,18 +1180,20 @@ def read_current_evidence(
                     hook=_before_reader_current_recheck,
                 )
                 pointer = parse_pointer(current_bytes)
-                document, _generation_identity = _validate_pointer_binding(
+                current_generation = _validate_pointer_binding(
                     generations_fd=generations_fd,
                     generation_id=pointer.current_generation_id,
                     binding_sha256=pointer.current_binding_sha256,
                     verified=verified,
                     read_payload=True,
                 )
+                document = current_generation.document
+                previous_generation: _ValidatedEvidenceGeneration | None = None
                 if (
                     pointer.previous_generation_id is not None
                     and pointer.previous_binding_sha256 is not None
                 ):
-                    _validate_pointer_binding(
+                    previous_generation = _validate_pointer_binding(
                         generations_fd=generations_fd,
                         generation_id=pointer.previous_generation_id,
                         binding_sha256=pointer.previous_binding_sha256,
@@ -1207,10 +1235,69 @@ def read_current_evidence(
                     or document is None
                 ):
                     raise IntegrationEvidenceInvalid()
+                _before_reader_final_revalidate(generations_fd, pointer)
+                final_generation = _validate_pointer_binding(
+                    generations_fd=generations_fd,
+                    generation_id=pointer.current_generation_id,
+                    binding_sha256=pointer.current_binding_sha256,
+                    verified=verified,
+                    read_payload=True,
+                    hooks=False,
+                )
+                if (
+                    pointer.previous_generation_id is not None
+                    and pointer.previous_binding_sha256 is not None
+                ):
+                    final_previous_generation = _validate_pointer_binding(
+                        generations_fd=generations_fd,
+                        generation_id=pointer.previous_generation_id,
+                        binding_sha256=pointer.previous_binding_sha256,
+                        verified=None,
+                        read_payload=False,
+                        hooks=False,
+                    )
+                    if final_previous_generation != previous_generation:
+                        raise IntegrationEvidenceInvalid()
+                final_current, final_identity = _read_verified_evidence_file(
+                    integration_fd,
+                    "current.json",
+                    maximum=_POINTER_MAX_BYTES,
+                    hook=lambda *_: None,
+                )
+                if (
+                    final_generation != current_generation
+                    or final_current != current_bytes
+                    or final_identity != current_identity
+                    or parse_pointer(final_current) != pointer
+                ):
+                    raise IntegrationEvidenceInvalid()
+                final_verified = _require_verified_manifest(
+                    _verify_active_manifest_for_reader(
+                        state_home=state_home,
+                        data_home=data_home,
+                        expected_entrypoint_path=expected_entrypoint_path,
+                    )
+                )
+                _require_same_verified_manifest(verified, final_verified)
+                final_state_identity, final_integration_identity = (
+                    _fresh_parent_identities(state_home)
+                )
+                if (
+                    _fd_identity(state_fd) != state_identity
+                    or _fd_identity(integration_fd) != integration_identity
+                    or _fd_identity(generations_fd) != generations_identity
+                    or _named_identity(integration_fd, "generations", directory=True)
+                    != generations_identity
+                    or final_state_identity != state_identity
+                    or final_integration_identity != integration_identity
+                ):
+                    raise IntegrationEvidenceInvalid()
                 return document, _reader_status(document, now=now)
             finally:
                 _close_fds(generations_fd, integration_fd, app_fd, state_fd)
-    except (IntegrationBusy, IntegrationEvidenceUnavailable, FileNotFoundError):
+    except IntegrationBusy:
+        return {}, "busy"
+    except (IntegrationEvidenceUnavailable, FileNotFoundError):
         return {}, "unavailable"
     except (IntegrationEvidenceInvalid, IntegrationInvalidSource, ValueError, OSError):
         return {}, "invalid"
