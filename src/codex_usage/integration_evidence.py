@@ -124,6 +124,15 @@ class _ValidatedEvidenceGeneration:
     payload_identity: FileIdentity | None
 
 
+@dataclass(frozen=True)
+class _CompleteEvidenceGeneration:
+    generation_id: str
+    published_at: str
+    generation_identity: FileIdentity
+    binding_identity: FileIdentity
+    payload_identity: FileIdentity
+
+
 class IntegrationBusy(IntegrationEvidenceError):
     pass
 
@@ -1410,9 +1419,12 @@ def _remove_safe_staging_directory(generations_fd: int, name: str) -> None:
     try:
         staging_fd = private_io.open_private_dir_at(generations_fd, name)
         staging_identity = _fd_identity(staging_fd)
-        entries = list(os.scandir(staging_fd))
-        if len(entries) > 4:
-            raise IntegrationEvidenceInvalid()
+        entries = []
+        with os.scandir(staging_fd) as iterator:
+            for entry in iterator:
+                entries.append(entry)
+                if len(entries) > 4:
+                    raise IntegrationEvidenceInvalid()
         identities: list[tuple[str, FileIdentity]] = []
         for entry in entries:
             if entry.name not in {
@@ -1529,11 +1541,387 @@ def gc_evidence_generations(
     pointer: EvidencePointer,
     verified_active_manifest: VerifiedActiveManifest,
 ) -> None:
-    """Task-3 staging interface; bounded retention is implemented in Task 5."""
-    if type(state_home) is not type(Path()) or type(data_home) is not type(Path()):
+    verified = _require_verified_manifest(verified_active_manifest)
+    if (
+        type(state_home) is not type(Path())
+        or type(data_home) is not type(Path())
+        or not state_home.is_absolute()
+        or not data_home.is_absolute()
+    ):
         raise IntegrationEvidenceInvalid()
-    parse_pointer(serialize_pointer(pointer))
-    _require_verified_manifest(verified_active_manifest)
+    expected_pointer = parse_pointer(serialize_pointer(pointer))
+
+    with evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        state_fd = app_fd = integration_fd = generations_fd = -1
+        try:
+            state_fd, app_fd, integration_fd, generations_fd = _open_evidence_parents(
+                state_home
+            )
+            state_identity = _fd_identity(state_fd)
+            integration_identity = _fd_identity(integration_fd)
+            generations_identity = _fd_identity(generations_fd)
+            if (
+                state_identity != verified.state_home_identity
+                or integration_identity != verified.integration_parent_identity
+                or _named_identity(integration_fd, "generations", directory=True)
+                != generations_identity
+            ):
+                raise IntegrationEvidenceInvalid()
+
+            recover_evidence_staging(generations_fd=generations_fd)
+            fresh = _verify_active_manifest_for_publish(
+                state_home=state_home,
+                data_home=data_home,
+                expected_entrypoint_path=verified.active_release.entrypoint_path,
+            )
+            _require_same_verified_manifest(verified, fresh)
+
+            current_bytes, _current_identity = _read_verified_evidence_file(
+                integration_fd,
+                "current.json",
+                maximum=_POINTER_MAX_BYTES,
+                hook=lambda *_: None,
+            )
+            current_pointer = parse_pointer(current_bytes)
+            if current_pointer != expected_pointer:
+                raise IntegrationEvidenceInvalid()
+            _validate_pointer_binding(
+                generations_fd=generations_fd,
+                generation_id=current_pointer.current_generation_id,
+                binding_sha256=current_pointer.current_binding_sha256,
+                verified=verified,
+                read_payload=True,
+                hooks=False,
+            )
+            if (
+                current_pointer.previous_generation_id is not None
+                and current_pointer.previous_binding_sha256 is not None
+            ):
+                _validate_pointer_binding(
+                    generations_fd=generations_fd,
+                    generation_id=current_pointer.previous_generation_id,
+                    binding_sha256=current_pointer.previous_binding_sha256,
+                    verified=verified,
+                    read_payload=True,
+                    hooks=False,
+                )
+
+            generations = _scan_complete_generations(
+                generations_fd=generations_fd,
+                verified=verified,
+            )
+            if len(generations) <= 256:
+                return
+            protected = {
+                current_pointer.current_generation_id,
+                current_pointer.previous_generation_id,
+            }
+            candidates = sorted(
+                (
+                    generation
+                    for generation in generations
+                    if generation.generation_id not in protected
+                ),
+                key=lambda generation: (
+                    generation.published_at,
+                    generation.generation_id,
+                ),
+            )
+            delete_count = len(generations) - 256
+            if len(candidates) < delete_count:
+                raise IntegrationEvidenceInvalid()
+            for generation in candidates[:delete_count]:
+                _remove_complete_generation(
+                    generations_fd=generations_fd,
+                    generation=generation,
+                )
+            if (
+                _fd_identity(state_fd) != state_identity
+                or _fd_identity(integration_fd) != integration_identity
+                or _fd_identity(generations_fd) != generations_identity
+                or _named_identity(integration_fd, "generations", directory=True)
+                != generations_identity
+            ):
+                raise IntegrationEvidenceInvalid()
+        except IntegrationEvidenceError:
+            raise
+        except IntegrationInvalidSource as exc:
+            raise IntegrationEvidenceInvalid() from exc
+        except ValueError as exc:
+            raise IntegrationEvidenceInvalid() from exc
+        except OSError as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        finally:
+            _close_fds(generations_fd, integration_fd, app_fd, state_fd)
+
+
+def _scan_complete_generations(
+    *,
+    generations_fd: int,
+    verified: VerifiedActiveManifest,
+) -> list[_CompleteEvidenceGeneration]:
+    complete: list[_CompleteEvidenceGeneration] = []
+    try:
+        private_io._require_private_directory_fd(generations_fd)
+        with os.scandir(generations_fd) as entries:
+            for entry in entries:
+                if entry.name.startswith(".tmp-"):
+                    if _STAGING_RE.fullmatch(entry.name) is None:
+                        raise IntegrationEvidenceInvalid()
+                    continue
+                if _GENERATION_ID_RE.fullmatch(entry.name) is None:
+                    raise IntegrationEvidenceInvalid()
+                if len(complete) == 257:
+                    raise IntegrationEvidenceInvalid()
+                complete.append(
+                    _inspect_complete_generation(
+                        generations_fd=generations_fd,
+                        generation_id=entry.name,
+                        verified=verified,
+                    )
+                )
+        return complete
+    except IntegrationEvidenceError:
+        raise
+    except IntegrationInvalidSource as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+
+
+def _inspect_complete_generation(
+    *,
+    generations_fd: int,
+    generation_id: str,
+    verified: VerifiedActiveManifest,
+) -> _CompleteEvidenceGeneration:
+    generation_fd = -1
+    try:
+        generation_fd = private_io.open_private_dir_at(generations_fd, generation_id)
+        generation_identity = _fd_identity(generation_fd)
+        names: set[str] = set()
+        with os.scandir(generation_fd) as entries:
+            for entry in entries:
+                names.add(entry.name)
+                if len(names) > 2:
+                    raise IntegrationEvidenceInvalid()
+        if names != {
+            "account-usage-v2.json",
+            "account-usage-v2.binding.json",
+        }:
+            raise IntegrationEvidenceInvalid()
+        binding_bytes, binding_identity = _read_verified_evidence_file(
+            generation_fd,
+            "account-usage-v2.binding.json",
+            maximum=_BINDING_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        binding = parse_binding(binding_bytes)
+        payload, payload_identity = _read_verified_evidence_file(
+            generation_fd,
+            binding.payload_filename,
+            maximum=_PAYLOAD_MAX_BYTES,
+            hook=lambda *_: None,
+        )
+        document = validate_v2_payload_bytes(payload)
+        if (
+            binding.generation_id != generation_id
+            or len(payload) != binding.payload_size_bytes
+            or hashlib.sha256(payload).hexdigest() != binding.payload_sha256
+            or binding.published_at != document["generated_at"]
+            or binding.active_manifest_sha256 != verified.active_manifest_sha256
+            or binding.release_id != verified.release_id
+            or binding.source_manifest_sha256 != verified.source_manifest_sha256
+            or _fd_identity(generation_fd) != generation_identity
+            or _named_identity(generations_fd, generation_id, directory=True)
+            != generation_identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        return _CompleteEvidenceGeneration(
+            generation_id=generation_id,
+            published_at=binding.published_at,
+            generation_identity=generation_identity,
+            binding_identity=binding_identity,
+            payload_identity=payload_identity,
+        )
+    finally:
+        _close_fds(generation_fd)
+
+
+def _remove_complete_generation(
+    *,
+    generations_fd: int,
+    generation: _CompleteEvidenceGeneration,
+) -> None:
+    generation_fd = -1
+    try:
+        generation_fd = private_io.open_private_dir_at(
+            generations_fd,
+            generation.generation_id,
+        )
+        if (
+            _fd_identity(generation_fd) != generation.generation_identity
+            or _named_identity(
+                generations_fd,
+                generation.generation_id,
+                directory=True,
+            )
+            != generation.generation_identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        for name, identity in (
+            ("account-usage-v2.json", generation.payload_identity),
+            ("account-usage-v2.binding.json", generation.binding_identity),
+        ):
+            if _named_identity(generation_fd, name, directory=False) != identity:
+                raise IntegrationEvidenceInvalid()
+            os.unlink(name, dir_fd=generation_fd)
+        os.fsync(generation_fd)
+        if (
+            _fd_identity(generation_fd) != generation.generation_identity
+            or _named_identity(
+                generations_fd,
+                generation.generation_id,
+                directory=True,
+            )
+            != generation.generation_identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        os.rmdir(generation.generation_id, dir_fd=generations_fd)
+        os.fsync(generations_fd)
+    finally:
+        _close_fds(generation_fd)
+
+
+def rollback_current_evidence(
+    *,
+    state_home: Path,
+    data_home: Path,
+    verified_active_manifest: VerifiedActiveManifest,
+) -> EvidencePointer:
+    verified = _require_verified_manifest(verified_active_manifest)
+    if (
+        type(state_home) is not type(Path())
+        or type(data_home) is not type(Path())
+        or not state_home.is_absolute()
+        or not data_home.is_absolute()
+    ):
+        raise IntegrationEvidenceInvalid()
+
+    with evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        state_fd = app_fd = integration_fd = generations_fd = -1
+        try:
+            state_fd, app_fd, integration_fd, generations_fd = _open_evidence_parents(
+                state_home
+            )
+            state_identity = _fd_identity(state_fd)
+            integration_identity = _fd_identity(integration_fd)
+            generations_identity = _fd_identity(generations_fd)
+            if (
+                state_identity != verified.state_home_identity
+                or integration_identity != verified.integration_parent_identity
+                or _named_identity(integration_fd, "generations", directory=True)
+                != generations_identity
+            ):
+                raise IntegrationEvidenceInvalid()
+
+            recover_evidence_staging(generations_fd=generations_fd)
+            fresh = _verify_active_manifest_for_publish(
+                state_home=state_home,
+                data_home=data_home,
+                expected_entrypoint_path=verified.active_release.entrypoint_path,
+            )
+            _require_same_verified_manifest(verified, fresh)
+            current_bytes, current_identity = _read_verified_evidence_file(
+                integration_fd,
+                "current.json",
+                maximum=_POINTER_MAX_BYTES,
+                hook=lambda *_: None,
+            )
+            pointer = parse_pointer(current_bytes)
+            if (
+                pointer.previous_generation_id is None
+                or pointer.previous_binding_sha256 is None
+            ):
+                raise IntegrationEvidenceUnavailable()
+            _validate_pointer_binding(
+                generations_fd=generations_fd,
+                generation_id=pointer.current_generation_id,
+                binding_sha256=pointer.current_binding_sha256,
+                verified=verified,
+                read_payload=True,
+                hooks=False,
+            )
+            try:
+                _validate_pointer_binding(
+                    generations_fd=generations_fd,
+                    generation_id=pointer.previous_generation_id,
+                    binding_sha256=pointer.previous_binding_sha256,
+                    verified=verified,
+                    read_payload=True,
+                    hooks=False,
+                )
+            except IntegrationEvidenceError as exc:
+                raise IntegrationEvidenceUnavailable() from exc
+            repeated_current, repeated_identity = _read_verified_evidence_file(
+                integration_fd,
+                "current.json",
+                maximum=_POINTER_MAX_BYTES,
+                hook=lambda *_: None,
+            )
+            repeated_verified = _verify_active_manifest_for_publish(
+                state_home=state_home,
+                data_home=data_home,
+                expected_entrypoint_path=verified.active_release.entrypoint_path,
+            )
+            _require_same_verified_manifest(verified, repeated_verified)
+            if (
+                repeated_current != current_bytes
+                or repeated_identity != current_identity
+                or parse_pointer(repeated_current) != pointer
+                or _fd_identity(state_fd) != state_identity
+                or _fd_identity(integration_fd) != integration_identity
+                or _fd_identity(generations_fd) != generations_identity
+                or _named_identity(integration_fd, "generations", directory=True)
+                != generations_identity
+            ):
+                raise IntegrationEvidenceInvalid()
+            rolled_back = EvidencePointer(
+                pointer.previous_generation_id,
+                pointer.previous_binding_sha256,
+                1,
+                pointer.current_generation_id,
+                pointer.current_binding_sha256,
+            )
+            _atomic_replace_current(
+                integration_fd,
+                serialize_pointer(rolled_back),
+            )
+            return rolled_back
+        except IntegrationEvidenceError:
+            raise
+        except IntegrationInvalidSource as exc:
+            raise IntegrationEvidenceInvalid() from exc
+        except ValueError as exc:
+            raise IntegrationEvidenceInvalid() from exc
+        except OSError as exc:
+            raise IntegrationEvidenceUnavailable() from exc
+        finally:
+            _close_fds(generations_fd, integration_fd, app_fd, state_fd)
 
 
 def publish_evidence_generation(
