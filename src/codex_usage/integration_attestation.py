@@ -127,6 +127,13 @@ class VerifiedActiveManifest:
     active_file_identity: FileIdentity
 
 
+@dataclass(frozen=True)
+class _ReleaseTreeEvidence:
+    releases_identity: FileIdentity
+    entry_identities: tuple[tuple[str, FileIdentity], ...]
+    rows: tuple[bytes, ...]
+
+
 def _unavailable() -> IntegrationAttestationUnavailable:
     return IntegrationAttestationUnavailable()
 
@@ -363,6 +370,186 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
     finally:
         for directory_fd, _, _ in stack:
             os.close(directory_fd)
+
+
+def _release_tree_evidence_at(
+    *,
+    integration_fd: int,
+    release_id: str,
+) -> _ReleaseTreeEvidence:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    releases_fd = -1
+    release_fd = -1
+    stack: list[tuple[int, str, os.stat_result]] = []
+    try:
+        releases_fd = open_private_dir_at(integration_fd, "releases")
+        releases_item = os.fstat(releases_fd)
+        releases_identity = _fd_identity(releases_fd)
+        release_fd = open_private_dir_at(releases_fd, release_id)
+        release_item = os.fstat(release_fd)
+        stack.append((release_fd, ".", release_item))
+        release_fd = -1
+        rows: list[bytes] = []
+        identities: list[tuple[str, FileIdentity]] = []
+        entries_seen = 1
+        file_bytes = 0
+        while stack:
+            item_fd, relative, initial = stack.pop()
+            try:
+                mode = stat.S_IMODE(initial.st_mode)
+                identity = FileIdentity(initial.st_dev, initial.st_ino, mode)
+                identities.append((relative, identity))
+                if stat.S_ISDIR(initial.st_mode):
+                    if initial.st_uid != os.getuid():
+                        raise _unavailable()
+                    rows.append(f"D {relative}\0{mode:04o}\n".encode())
+                    children: list[tuple[str, int, os.stat_result]] = []
+                    try:
+                        with os.scandir(item_fd) as entries:
+                            for entry in entries:
+                                if entries_seen >= MAX_RELEASE_TREE_ENTRIES:
+                                    raise _unavailable()
+                                entries_seen += 1
+                                name = entry.name
+                                if (
+                                    not name
+                                    or name in {".", ".."}
+                                    or "/" in name
+                                    or "\\" in name
+                                    or "\x00" in name
+                                ):
+                                    raise _unavailable()
+                                child_initial = entry.stat(follow_symlinks=False)
+                                if stat.S_ISDIR(child_initial.st_mode):
+                                    child_flags = directory_flags
+                                elif stat.S_ISREG(child_initial.st_mode):
+                                    child_flags = file_flags
+                                else:
+                                    raise _unavailable()
+                                child_fd = -1
+                                try:
+                                    child_fd = os.open(
+                                        name,
+                                        child_flags,
+                                        dir_fd=item_fd,
+                                    )
+                                    opened = os.fstat(child_fd)
+                                    if (
+                                        stat.S_IFMT(opened.st_mode)
+                                        != stat.S_IFMT(child_initial.st_mode)
+                                        or opened.st_dev != child_initial.st_dev
+                                        or opened.st_ino != child_initial.st_ino
+                                        or opened.st_uid != os.getuid()
+                                        or opened.st_mode != child_initial.st_mode
+                                        or (
+                                            stat.S_ISREG(opened.st_mode)
+                                            and (
+                                                opened.st_nlink != 1
+                                                or opened.st_size
+                                                > MAX_ATTESTATION_FILE_BYTES
+                                            )
+                                        )
+                                    ):
+                                        raise _unavailable()
+                                    children.append((name, child_fd, opened))
+                                    child_fd = -1
+                                finally:
+                                    if child_fd >= 0:
+                                        os.close(child_fd)
+                        children.sort(key=lambda child: child[0], reverse=True)
+                        stack.extend(
+                            (
+                                child_fd,
+                                f"{relative}/{name}",
+                                child_item,
+                            )
+                            for name, child_fd, child_item in children
+                        )
+                        children.clear()
+                    finally:
+                        for _, child_fd, _ in children:
+                            os.close(child_fd)
+                    final = os.fstat(item_fd)
+                    if (
+                        final.st_dev != initial.st_dev
+                        or final.st_ino != initial.st_ino
+                        or final.st_mode != initial.st_mode
+                        or final.st_uid != initial.st_uid
+                    ):
+                        raise _unavailable()
+                    continue
+                if not stat.S_ISREG(initial.st_mode):
+                    raise _unavailable()
+                if (
+                    initial.st_uid != os.getuid()
+                    or initial.st_nlink != 1
+                    or initial.st_size > MAX_ATTESTATION_FILE_BYTES
+                    or file_bytes + initial.st_size > MAX_RELEASE_TREE_BYTES
+                ):
+                    raise _unavailable()
+                payload = bytearray()
+                while len(payload) <= MAX_ATTESTATION_FILE_BYTES:
+                    chunk = os.read(
+                        item_fd,
+                        min(
+                            65_536,
+                            MAX_ATTESTATION_FILE_BYTES + 1 - len(payload),
+                        ),
+                    )
+                    if not chunk:
+                        break
+                    payload.extend(chunk)
+                if len(payload) > MAX_ATTESTATION_FILE_BYTES:
+                    raise _unavailable()
+                final = os.fstat(item_fd)
+                if (
+                    final.st_dev != initial.st_dev
+                    or final.st_ino != initial.st_ino
+                    or final.st_mode != initial.st_mode
+                    or final.st_uid != initial.st_uid
+                    or final.st_nlink != initial.st_nlink
+                    or final.st_size != initial.st_size
+                    or final.st_mtime_ns != initial.st_mtime_ns
+                    or final.st_ctime_ns != initial.st_ctime_ns
+                ):
+                    raise _unavailable()
+                file_bytes += len(payload)
+                if file_bytes > MAX_RELEASE_TREE_BYTES:
+                    raise _unavailable()
+                rows.append(
+                    f"F {relative}\0{mode:04o}\0{len(payload)}\0".encode()
+                    + _sha256_bytes(bytes(payload)).encode("ascii")
+                    + b"\n"
+                )
+            finally:
+                os.close(item_fd)
+        current_releases = os.fstat(releases_fd)
+        if (
+            current_releases.st_dev != releases_item.st_dev
+            or current_releases.st_ino != releases_item.st_ino
+            or current_releases.st_mode != releases_item.st_mode
+            or current_releases.st_uid != releases_item.st_uid
+        ):
+            raise _unavailable()
+        return _ReleaseTreeEvidence(
+            releases_identity=releases_identity,
+            entry_identities=tuple(identities),
+            rows=tuple(rows),
+        )
+    except IntegrationAttestationUnavailable:
+        raise
+    except (OSError, ValueError):
+        raise _unavailable() from None
+    finally:
+        for item_fd, _, _ in stack:
+            os.close(item_fd)
+        if release_fd >= 0:
+            os.close(release_fd)
+        if releases_fd >= 0:
+            os.close(releases_fd)
 
 
 def _read_nofollow_fd(fd: int) -> bytes:
@@ -871,6 +1058,15 @@ def verify_active_manifest_at(
             source_manifest_sha256 = _valid_hash(
                 manifest.get("source_manifest_sha256")
             )
+            release_evidence = _release_tree_evidence_at(
+                integration_fd=integration_fd,
+                release_id=release_id,
+            )
+            if (
+                hashlib.sha256(b"".join(release_evidence.rows)).hexdigest()
+                != active_release.release_tree_sha256
+            ):
+                raise _unavailable()
         except IntegrationAttestationUnavailable as exc:
             raise IntegrationEvidenceUnavailable() from exc
         except Exception as exc:
@@ -889,6 +1085,14 @@ def verify_active_manifest_at(
                 or _fd_identity(integration_fd) != integration_identity
                 or repeated_identity != active_identity
                 or repeated_payload != active_payload
+            ):
+                raise IntegrationEvidenceInvalid()
+            if (
+                _release_tree_evidence_at(
+                    integration_fd=integration_fd,
+                    release_id=release_id,
+                )
+                != release_evidence
             ):
                 raise IntegrationEvidenceInvalid()
 
@@ -912,6 +1116,11 @@ def verify_active_manifest_at(
                     or _fd_identity(fresh_integration_fd) != integration_identity
                     or fresh_active_identity != active_identity
                     or fresh_payload != active_payload
+                    or _release_tree_evidence_at(
+                        integration_fd=fresh_integration_fd,
+                        release_id=release_id,
+                    )
+                    != release_evidence
                 ):
                     raise IntegrationEvidenceInvalid()
             finally:

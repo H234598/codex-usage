@@ -10,11 +10,13 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from . import private_io
 from .private_io import (
+    FileIdentity,
     IntegrationEvidenceError,
     IntegrationEvidenceInvalid,
     IntegrationEvidenceUnavailable,
@@ -22,6 +24,20 @@ from .private_io import (
 
 _LOCK_MAX_BYTES = 4096
 _EVIDENCE_LOCK_STATE = threading.local()
+
+
+@dataclass
+class _HeldEvidenceLocks:
+    state_identity: FileIdentity
+    integration_identity: FileIdentity
+    lock_root_identity: FileIdentity
+    release_name: str
+    release_identity: FileIdentity
+    current_name: str
+    current_identity: FileIdentity
+    release_mode: str
+    current_mode: str
+    depth: int = 1
 
 
 class IntegrationBusy(IntegrationEvidenceError):
@@ -189,14 +205,21 @@ def _release_lock(fd: int) -> None:
     os.close(fd)
 
 
-def _verify_lock_target_parent(state_home: Path) -> None:
+def _fd_identity(fd: int) -> FileIdentity:
+    item = os.fstat(fd)
+    return FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
+
+
+def _verify_lock_target_parent(state_home: Path) -> tuple[FileIdentity, FileIdentity]:
     state_fd = -1
     app_fd = -1
     integration_fd = -1
     try:
         state_fd = private_io.open_verified_state_home(state_home)
+        state_identity = _fd_identity(state_fd)
         app_fd = private_io.open_private_dir_at(state_fd, "codex-usage")
         integration_fd = private_io.open_private_dir_at(app_fd, "integration")
+        integration_identity = _fd_identity(integration_fd)
     except FileNotFoundError as exc:
         raise IntegrationEvidenceUnavailable() from exc
     except OSError as exc:
@@ -210,6 +233,42 @@ def _verify_lock_target_parent(state_home: Path) -> None:
             os.close(app_fd)
         if state_fd >= 0:
             os.close(state_fd)
+    return state_identity, integration_identity
+
+
+def _matches_held_lock_set(
+    held_set: _HeldEvidenceLocks,
+    *,
+    state_identity: FileIdentity,
+    integration_identity: FileIdentity,
+    release_name: str,
+    current_name: str,
+    create: bool,
+) -> bool:
+    if (
+        held_set.state_identity != state_identity
+        or held_set.integration_identity != integration_identity
+        or held_set.release_name != release_name
+        or held_set.current_name != current_name
+    ):
+        return False
+    root_fd = _open_lock_root(create=create)
+    release_fd = -1
+    current_fd = -1
+    try:
+        if _fd_identity(root_fd) != held_set.lock_root_identity:
+            return False
+        release_fd = _open_lock_file(root_fd, release_name, create=create)
+        if _fd_identity(release_fd) != held_set.release_identity:
+            return False
+        current_fd = _open_lock_file(root_fd, current_name, create=create)
+        return _fd_identity(current_fd) == held_set.current_identity
+    finally:
+        if current_fd >= 0:
+            os.close(current_fd)
+        if release_fd >= 0:
+            os.close(release_fd)
+        os.close(root_fd)
 
 
 @contextmanager
@@ -230,40 +289,55 @@ def evidence_lock_set(
         raise IntegrationEvidenceInvalid()
     if type(create) is not bool:
         raise IntegrationEvidenceInvalid()
-    _verify_lock_target_parent(state_home)
+    state_identity, integration_identity = _verify_lock_target_parent(state_home)
     deadline = _deadline(timeout_seconds)
-    held = getattr(_EVIDENCE_LOCK_STATE, "held", None)
-    if held is None:
-        held = {}
-        _EVIDENCE_LOCK_STATE.held = held
-    if "current" in held and "release" not in held:
+    order_probe = getattr(_EVIDENCE_LOCK_STATE, "held", None)
+    if order_probe is not None and "current" in order_probe and "release" not in order_probe:
         raise IntegrationBusy()
-    if held:
-        if set(held) != {"release", "current"}:
+
+    integration = state_home / "codex-usage" / "integration"
+    release_name = _evidence_lock_name(integration / "producer-install")
+    current_name = _evidence_lock_name(integration / "current.json")
+    held_sets = getattr(_EVIDENCE_LOCK_STATE, "sets", None)
+    if held_sets is None:
+        held_sets = []
+        _EVIDENCE_LOCK_STATE.sets = held_sets
+    for held_set in held_sets:
+        if not _matches_held_lock_set(
+            held_set,
+            state_identity=state_identity,
+            integration_identity=integration_identity,
+            release_name=release_name,
+            current_name=current_name,
+            create=create,
+        ):
+            continue
+        if (
+            held_set.release_mode != release_mode
+            or held_set.current_mode != current_mode
+        ):
             raise IntegrationBusy()
-        if held["release"][0] != release_mode or held["current"][0] != current_mode:
-            raise IntegrationBusy()
-        held["release"] = (release_mode, held["release"][1] + 1)
-        held["current"] = (current_mode, held["current"][1] + 1)
+        held_set.depth += 1
         try:
             yield
         finally:
-            held["current"] = (current_mode, held["current"][1] - 1)
-            held["release"] = (release_mode, held["release"][1] - 1)
+            held_set.depth -= 1
         return
 
-    integration = state_home / "codex-usage" / "integration"
     targets = (
-        ("release", integration / "producer-install", release_mode),
-        ("current", integration / "current.json", current_mode),
+        ("release", release_name, release_mode),
+        ("current", current_name, current_mode),
     )
     root_fd = _open_lock_root(create=create)
+    lock_root_identity = _fd_identity(root_fd)
     acquired: list[tuple[str, int]] = []
+    acquired_identities: dict[str, FileIdentity] = {}
+    held_set = None
     try:
-        for logical_name, target, mode in targets:
+        for logical_name, lock_name, mode in targets:
             fd = _open_lock_file(
                 root_fd,
-                _evidence_lock_name(target),
+                lock_name,
                 create=create,
             )
             try:
@@ -272,13 +346,26 @@ def evidence_lock_set(
                 os.close(fd)
                 raise
             acquired.append((logical_name, fd))
-            held[logical_name] = (mode, 1)
+            acquired_identities[logical_name] = _fd_identity(fd)
+        held_set = _HeldEvidenceLocks(
+            state_identity=state_identity,
+            integration_identity=integration_identity,
+            lock_root_identity=lock_root_identity,
+            release_name=release_name,
+            release_identity=acquired_identities["release"],
+            current_name=current_name,
+            current_identity=acquired_identities["current"],
+            release_mode=release_mode,
+            current_mode=current_mode,
+        )
+        held_sets.append(held_set)
         try:
             yield
         finally:
-            held.clear()
+            held_sets.remove(held_set)
     finally:
-        held.clear()
+        if held_set is not None and held_set in held_sets:
+            held_sets.remove(held_set)
         for _, fd in reversed(acquired):
             _release_lock(fd)
         os.close(root_fd)

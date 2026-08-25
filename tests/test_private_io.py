@@ -1707,3 +1707,58 @@ def test_partial_evidence_lock_failure_does_not_poison_thread_state(tmp_path):
         create=False,
     ):
         pass
+
+
+def test_same_mode_nested_different_state_home_acquires_distinct_child_locks(
+    tmp_path,
+):
+    from codex_usage.integration_evidence import evidence_lock_set
+
+    first_state_home = tmp_path / "first-state"
+    second_state_home = tmp_path / "second-state"
+    for state_home in (first_state_home, second_state_home):
+        state_home.mkdir(mode=0o700)
+        _create_evidence_lock_inodes(state_home)
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    result = context.Queue()
+    process = context.Process(
+        target=_evidence_lock_child,
+        args=(
+            str(second_state_home),
+            "exclusive",
+            "exclusive",
+            ready,
+            release,
+            result,
+        ),
+    )
+    try:
+        with evidence_lock_set(
+            state_home=first_state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            with evidence_lock_set(
+                state_home=second_state_home,
+                release_mode="shared",
+                current_mode="shared",
+                timeout_seconds=0,
+                create=False,
+            ):
+                process.start()
+                assert ready.wait(10)
+                child_result = result.get(timeout=10)
+        release.set()
+        process.join(10)
+        assert process.exitcode == 0
+        assert child_result == "busy"
+    finally:
+        release.set()
+        if process.is_alive():
+            process.terminate()
+            process.join(10)

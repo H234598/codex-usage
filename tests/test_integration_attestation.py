@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -101,6 +102,61 @@ def test_verify_active_manifest_at_rejects_integration_parent_swap(
         integration_attestation,
         "_before_active_identity_recheck",
         swap_integration,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+        )
+
+
+def test_verify_active_manifest_at_rejects_release_directory_swap_after_hash(
+    evidence_layout, monkeypatch
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_evidence import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, _payload, verified = evidence_layout
+    release_dir = verified.active_release.release_dir
+    replacement = release_dir.parent / ".release-replacement"
+    old = release_dir.parent / ".release-old"
+    shutil.copytree(release_dir, replacement, copy_function=shutil.copy2)
+
+    def swap_release(_integration_fd):
+        os.rename(release_dir, old)
+        os.rename(replacement, release_dir)
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_active_identity_recheck",
+        swap_release,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+        )
+
+
+def test_verify_active_manifest_at_rejects_release_file_swap_after_hash(
+    evidence_layout, monkeypatch
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_evidence import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, _payload, verified = evidence_layout
+    replacement = verified.active_release.release_dir.parent / ".entrypoint-replacement"
+    shutil.copy2(entrypoint, replacement)
+
+    def swap_entrypoint(_integration_fd):
+        os.replace(replacement, entrypoint)
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_active_identity_recheck",
+        swap_entrypoint,
     )
     with pytest.raises(IntegrationEvidenceInvalid):
         integration_attestation.verify_active_manifest_at(
