@@ -30,10 +30,12 @@ from .integration_attestation import (
     MAX_RELEASE_TREE_ENTRIES,
     ActiveRelease,
     IntegrationAttestationUnavailable,
+    _absolute_path,
     _manifest_from_canonical_bytes,
     _read_manifest,
     _release_tree_sha256,
     _require_manifest_fields,
+    _valid_hash,
     _verify_manifest,
     _verify_previous_schema2_manifest_for_upgrade,
 )
@@ -928,25 +930,67 @@ def _require_compromised_06535_active_marker(
             _manifest_from_canonical_bytes(payload),
             expected_fields=_CURRENT_SCHEMA2_MANIFEST_FIELDS,
         )
+        schema_version = manifest.get("schema_version")
+        source_digest = _valid_hash(manifest.get("source_manifest_sha256"))
+        if (
+            type(schema_version) is not int
+            or schema_version != 2
+            or manifest.get("version") != "0.6.535"
+        ):
+            raise IntegrationAttestationUnavailable
+        manifest_state = _absolute_path(manifest.get("state_home"))
+        manifest_data = _absolute_path(manifest.get("data_home"))
+        if manifest_state != state_home or manifest_data != data_home:
+            raise IntegrationAttestationUnavailable
+
+        release_id = f"0.6.535-{source_digest[:16]}"
+        release_dir = _absolute_path(manifest.get("release_dir"))
+        expected_release_dir = (
+            state_home / "codex-usage" / "integration" / "releases" / release_id
+        )
+        if (
+            manifest.get("release_id") != release_id
+            or release_dir != expected_release_dir
+        ):
+            raise IntegrationAttestationUnavailable
+
+        launcher_path = _absolute_path(manifest.get("launcher_path"))
+        entrypoint_path = _absolute_path(manifest.get("entrypoint_path"))
+        wheel_path = _absolute_path(manifest.get("wheel_path"))
+        record_path = _absolute_path(manifest.get("record_path"))
+        site_packages = record_path.parent.parent
+        try:
+            site_packages_parts = site_packages.relative_to(release_dir).parts
+        except ValueError:
+            raise IntegrationAttestationUnavailable from None
+        python_directory = (
+            site_packages_parts[2] if len(site_packages_parts) == 4 else ""
+        )
+        if (
+            len(site_packages_parts) != 4
+            or site_packages_parts[:2] != ("venv", "lib")
+            or site_packages_parts[3] != "site-packages"
+            or not python_directory.startswith("python3.")
+            or not python_directory.removeprefix("python3.").isdecimal()
+            or launcher_path != release_dir / "venv" / "bin" / "codex-usage"
+            or wheel_path != release_dir / "producer.whl"
+            or record_path
+            != site_packages
+            / "codex_usage_integration_producer-0.6.535.dist-info"
+            / "RECORD"
+            or entrypoint_path
+            != site_packages / "codex_usage" / "integration_entrypoint.py"
+        ):
+            raise IntegrationAttestationUnavailable
+        for field in (
+            "entrypoint_sha256",
+            "wheel_sha256",
+            "record_sha256",
+            "launcher_sha256",
+            "release_tree_sha256",
+        ):
+            _valid_hash(manifest.get(field))
     except IntegrationAttestationUnavailable:
-        _fail()
-    source_digest = manifest.get("source_manifest_sha256")
-    if (
-        manifest.get("schema_version") != 2
-        or manifest.get("version") != "0.6.535"
-        or manifest.get("state_home") != str(state_home)
-        or manifest.get("data_home") != str(data_home)
-        or type(source_digest) is not str
-        or len(source_digest) != 64
-        or any(character not in "0123456789abcdef" for character in source_digest)
-    ):
-        _fail()
-    release_id = f"0.6.535-{source_digest[:16]}"
-    if (
-        manifest.get("release_id") != release_id
-        or manifest.get("release_dir")
-        != str(state_home / "codex-usage" / "integration" / "releases" / release_id)
-    ):
         _fail()
 
 

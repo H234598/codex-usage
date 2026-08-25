@@ -1024,6 +1024,183 @@ def test_installer_recovers_compromised_06535_only_from_attested_previous_06534(
     ) == installed
 
 
+_COMPROMISED_06535_MARKER_MUTATIONS = (
+    "extra-field",
+    "missing-field",
+    "schema-version-value",
+    "schema-version-float",
+    "version-value",
+    "version-type",
+    "state-home-value",
+    "state-home-type",
+    "data-home-value",
+    "data-home-type",
+    "source-digest-value",
+    "source-digest-type",
+    "source-digest-uppercase",
+    "source-digest-short",
+    "release-id-value",
+    "release-id-type",
+    "release-dir-type",
+    "release-dir-path",
+    "launcher-path-type",
+    "launcher-path-name",
+    "entrypoint-path-type",
+    "entrypoint-path-name",
+    "entrypoint-path-python-version",
+    "record-path-type",
+    "record-path-version",
+    "record-path-python-version",
+    "wheel-path-type",
+    "wheel-path-name",
+    "entrypoint-digest-type",
+    "entrypoint-digest-uppercase",
+    "launcher-digest-type",
+    "launcher-digest-uppercase",
+    "record-digest-type",
+    "record-digest-uppercase",
+    "wheel-digest-type",
+    "wheel-digest-uppercase",
+    "release-tree-digest-type",
+    "release-tree-digest-uppercase",
+)
+
+
+def _mutate_compromised_06535_marker(
+    manifest: dict[str, object],
+    mutation: str,
+) -> None:
+    release_dir = Path(str(manifest["release_dir"]))
+    site_packages = Path(str(manifest["record_path"])).parent.parent
+    digest_field = mutation.removesuffix("-type").removesuffix("-uppercase")
+    digest_fields = {
+        "entrypoint-digest": "entrypoint_sha256",
+        "launcher-digest": "launcher_sha256",
+        "record-digest": "record_sha256",
+        "wheel-digest": "wheel_sha256",
+        "release-tree-digest": "release_tree_sha256",
+    }
+    if mutation == "extra-field":
+        manifest["untrusted_recovery_hint"] = True
+    elif mutation == "missing-field":
+        del manifest["launcher_sha256"]
+    elif mutation == "schema-version-value":
+        manifest["schema_version"] = 1
+    elif mutation == "schema-version-float":
+        manifest["schema_version"] = 2.0
+    elif mutation == "version-value":
+        manifest["version"] = "0.6.534"
+    elif mutation == "version-type":
+        manifest["version"] = 535
+    elif mutation == "state-home-value":
+        manifest["state_home"] = str(Path(str(manifest["state_home"])).parent)
+    elif mutation == "state-home-type":
+        manifest["state_home"] = 1
+    elif mutation == "data-home-value":
+        manifest["data_home"] = str(Path(str(manifest["data_home"])).parent)
+    elif mutation == "data-home-type":
+        manifest["data_home"] = 1
+    elif mutation == "source-digest-value":
+        manifest["source_manifest_sha256"] = "0" * 64
+    elif mutation == "source-digest-type":
+        manifest["source_manifest_sha256"] = 1
+    elif mutation == "source-digest-uppercase":
+        manifest["source_manifest_sha256"] = "A" * 64
+    elif mutation == "source-digest-short":
+        manifest["source_manifest_sha256"] = "a" * 63
+    elif mutation == "release-id-value":
+        manifest["release_id"] = "0.6.535-0000000000000000"
+    elif mutation == "release-id-type":
+        manifest["release_id"] = 1
+    elif mutation == "release-dir-type":
+        manifest["release_dir"] = 1
+    elif mutation == "release-dir-path":
+        manifest["release_dir"] = str(release_dir.parent / "0.6.535-wrong")
+    elif mutation == "launcher-path-type":
+        manifest["launcher_path"] = 1
+    elif mutation == "launcher-path-name":
+        manifest["launcher_path"] = str(release_dir / "venv/bin/not-codex-usage")
+    elif mutation == "entrypoint-path-type":
+        manifest["entrypoint_path"] = 1
+    elif mutation == "entrypoint-path-name":
+        manifest["entrypoint_path"] = str(
+            site_packages / "codex_usage/not-integration-entrypoint.py"
+        )
+    elif mutation == "entrypoint-path-python-version":
+        manifest["entrypoint_path"] = str(
+            release_dir
+            / "venv/lib/not-python/site-packages/codex_usage/integration_entrypoint.py"
+        )
+    elif mutation == "record-path-type":
+        manifest["record_path"] = 1
+    elif mutation == "record-path-version":
+        manifest["record_path"] = str(
+            site_packages
+            / "codex_usage_integration_producer-0.6.536.dist-info/RECORD"
+        )
+    elif mutation == "record-path-python-version":
+        manifest["record_path"] = str(
+            release_dir
+            / "venv/lib/not-python/site-packages/"
+            "codex_usage_integration_producer-0.6.535.dist-info/RECORD"
+        )
+    elif mutation == "wheel-path-type":
+        manifest["wheel_path"] = 1
+    elif mutation == "wheel-path-name":
+        manifest["wheel_path"] = str(release_dir / "not-producer.whl")
+    elif digest_field in digest_fields:
+        manifest[digest_fields[digest_field]] = (
+            1 if mutation.endswith("-type") else "A" * 64
+        )
+    else:  # pragma: no cover - parameter table is closed above
+        raise AssertionError(mutation)
+
+
+@pytest.mark.parametrize("mutation", _COMPROMISED_06535_MARKER_MUTATIONS)
+def test_installer_recovery_rejects_malformed_compromised_active_marker_without_mutation(
+    tmp_path,
+    mutation,
+):
+    from codex_usage import integration_installer
+    from codex_usage.private_io import write_private_text
+
+    (
+        _,
+        _,
+        source_root,
+        data_home,
+        state_home,
+        temporary_root,
+    ) = _compromised_06535_with_previous_06534(tmp_path)
+    integration = state_home / "codex-usage" / "integration"
+    active_path = integration / "active.json"
+    previous_path = integration / "previous.json"
+    manifest = json.loads(active_path.read_bytes())
+    _mutate_compromised_06535_marker(manifest, mutation)
+    write_private_text(
+        active_path,
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        label="malformed compromised active integration manifest",
+        mode=0o600,
+    )
+    active_before = active_path.read_bytes()
+    previous_before = previous_path.read_bytes()
+    releases_before = {path.name for path in (integration / "releases").iterdir()}
+
+    with pytest.raises(integration_installer.IntegrationInstallError):
+        integration_installer.install_release(
+            source_root=source_root,
+            state_home=state_home,
+            data_home=data_home,
+            python_executable=Path(sys.executable),
+            temporary_root=temporary_root,
+        )
+
+    assert active_path.read_bytes() == active_before
+    assert previous_path.read_bytes() == previous_before
+    assert {path.name for path in (integration / "releases").iterdir()} == releases_before
+
+
 @pytest.mark.parametrize("mutation", ["unknown-field", "forbidden-pyc"])
 def test_installer_recovery_rejects_invalid_previous_without_mutation(
     tmp_path,
