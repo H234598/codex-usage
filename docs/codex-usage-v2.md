@@ -15,10 +15,11 @@ integration-snapshot --schema 2 --format json
 ```
 
 Andere Argumente, PATH-Auflösung, ein allgemeiner `codex-usage`-CLI-Aufruf,
-Schema-1-Fallback und erneutes Lesen alter Snapshotquellen sind unzulässig. Der
-stabile private Cache-Dateiname bleibt aus Kompatibilitätsgründen
-`account-usage-v1.json`; sein Inhalt ist nach dem Cutover ausschließlich das
-unten definierte Schema 2. Es gibt keine zweite Datei und kein Dual-Write.
+Schema-1-Fallback und erneutes Lesen alter Snapshotquellen sind unzulässig.
+Einzige Consumerquelle ist die unten definierte immutable
+V2-Generation mit `account-usage-v2.json`, Binding und `current.json`.
+Der frühere feste V1-Cachepfad ist nach dem Cutover keine Consumerquelle;
+es gibt weder Legacy-Read noch Dual-Write.
 
 ## Exaktes Schema 2
 
@@ -334,11 +335,20 @@ Nicht sofort verfügbare Locks ergeben `busy`; Runtime erzeugt fehlende Lockdate
 nie. Nur Installer-Bootstrap darf sie einmal anlegen.
 
 Die Lockdateien liegen unter
-`$HOME/.local/state/codex-usage/locks/<sha256(abs-ziel)>.lock`; sie sind
-UID-eigene reguläre `0600`-Dateien mit Linkcount 1 und höchstens 4096 Byte.
-Die Lockroot und ihre kontrollierten Eltern sind reale UID-eigene `0700`-
-Verzeichnisse. Vertrauensgrenze: Prozesse unter derselben UID kooperieren; ein
-bösartiger Prozess derselben UID ist nicht abgewehrt.
+`pwd.getpwuid(os.geteuid()).pw_dir/.local/state/codex-usage/locks/` als
+`<sha256(os.fsencode(os.path.abspath(abs-ziel)))>.lock`. `HOME`, XDG-Werte und
+reale UID wählen keinen Lockraum. Lockdateien sind der effektiven UID eigene
+reguläre `0600`-Dateien mit Linkcount 1 und höchstens 4096 Byte. Lockroot und
+kontrollierte Eltern ab passwd-Home sind reale, derselben effektiven UID
+gehörende `0700`-Verzeichnisse. Vertrauensgrenze: Prozesse unter derselben
+effektiven UID kooperieren; ein bösartiger Prozess derselben UID ist nicht
+abgewehrt.
+
+EntryPoint erwirbt beide EX-Locks vor Uhrzeit-, Quellen-, History-, Build- und
+Serialisierungsschritt und hält sie durch Retention und Current-Commit. Der
+interne Publisher erwirbt sie nicht erneut. Auch direkte Publisheraufrufe
+verwerfen unter denselben Locks ein `generated_at` vor dem gültigen aktuellen
+`published_at`; eine ältere Invocation kann Current daher nicht zurücksetzen.
 
 Nach `openat`/`dir_fd`-Traversal mit `O_NOFOLLOW` prüft Reader vor und nach
 jeder Lektüre Device, Inode, Modus, UID, Linkcount, Größe, mtime und ctime,
@@ -367,12 +377,16 @@ Payloads. Reader gibt ausschließlich `complete`, `stale`, `partial`, `busy`,
 ist `unavailable`; Lockkonflikt `busy`; jede Vertrauens-, Format- oder
 Raceverletzung `invalid`.
 
-GC läuft nur unter beiden EX-Locks, räumt zuerst höchstens 16 gültige
-`.tmp-<generation_id>`-Stagings auf und hält höchstens 256 vollständige
-Generationen. Current und previous bleiben geschützt; älteste ungeschützte
-Generation wird erst nach erneuter Pointer-/Identitätsprüfung umbenannt und
-FD-gebunden entfernt. Mehr als 257 vollständige Generationen oder 258 beim
-bounded Scan sind `invalid`.
+Eine einzige begrenzte Namespace-Klassifikation akzeptiert höchstens 257
+vollständige Generationen und 16 gültige `.tmp-<generation_id>`-Stagings;
+fremder Name, 258. vollständige oder 17. Staging-Generation ist sofort
+`invalid`. Publish verwendet dasselbe Scanergebnis für Recovery und Retention,
+löscht unter derselben EX-Transaktion vor neuem Staging so viele älteste
+ungeschützte Generationen, dass höchstens 255 bleiben, und committet dadurch
+nie mehr als 256. Current und previous bleiben geschützt. Expliziter GC kann
+einen gültigen 257-Zustand auf 256 reduzieren; ein vorhandener 258-Zustand ist
+vor jeder Löschung fail-closed. Jede Löschung prüft Pointer und Identität
+erneut, benennt den Kandidaten FD-gebunden in Staging um und fsync't Parents.
 
 ## Kanonisches verifiziertes Installationsverfahren
 
@@ -382,7 +396,7 @@ absoluter regulärer ausführbarer Interpreter. Aufruf erfolgt aus genau dem zu
 veröffentlichenden Checkout, nicht über einen PATH-gefundenen Producer:
 
 ```text
-PYTHONPATH=ABS_CHECKOUT/src ABS_PYTHON ABS_CHECKOUT/scripts/install_integration_producer.py --source-root ABS_CHECKOUT --state-home ABS_STATE --data-home ABS_DATA --python ABS_PYTHON --temporary-root ABS_TEMP
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=ABS_CHECKOUT/src ABS_PYTHON -B ABS_CHECKOUT/scripts/install_integration_producer.py --source-root ABS_CHECKOUT --state-home ABS_STATE --data-home ABS_DATA --python ABS_PYTHON --temporary-root ABS_TEMP
 ```
 
 Der Installer kopiert nur die feste Source-Manifest-Allowlist, baut offline
@@ -403,7 +417,7 @@ Verfahren ohne stärkeren Workaround; vorherige aktive Generation bleibt aktiv.
 Rollback ist ausschließlich:
 
 ```text
-PYTHONPATH=ABS_CHECKOUT/src ABS_PYTHON ABS_CHECKOUT/scripts/install_integration_producer.py --rollback --state-home ABS_STATE --data-home ABS_DATA
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=ABS_CHECKOUT/src ABS_PYTHON -B ABS_CHECKOUT/scripts/install_integration_producer.py --rollback --state-home ABS_STATE --data-home ABS_DATA
 ```
 
 Auch hier erfolgt vor und nach dem atomaren `active.json`-Swap vollständige

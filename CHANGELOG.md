@@ -16,6 +16,12 @@
 - Vollständiger Consumer-Handoff dokumentiert kanonischen Payloadpfad,
   Binding-/Pointerkette, SH/EX-Locks, FD-gebundene Vor-/Nachprüfungen,
   Größen-/Dateigrenzen, exakte Fenster-Allowlist und bounded GC.
+- Snapshotbau, monotone Publikation, Retention und Pointer-Commit laufen unter
+  derselben Release→Current-EX-Transaktion. Ein einzelner bounded Namespace-
+  Scan verhindert postcommit GC-Wedges und hält jede erfolgreiche Publikation
+  bei höchstens 256 Generationen.
+- Persistente Locks werden ausschließlich aus passwd-Home der effektiven UID
+  abgeleitet; `HOME`, XDG und reale UID wählen keinen alternativen Lockraum.
 
 ## 0.6.534 - 2026-08-24
 
