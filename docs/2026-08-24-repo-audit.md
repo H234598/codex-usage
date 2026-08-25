@@ -4736,3 +4736,18 @@ Verifikation: **396 `tests/test_direct.py`-Tests**, **1220 gekoppelte
 Direct-/Identity-/Bridge-/App-Server-/Extractor-Tests**, 100%-Statement- und
 Branch-Coverage im Direct-Modul, Mypy, Ruff, Python-Compile und
 `git diff --check` grün.
+
+## Runde 235: Direct-Pfad-Reaudit ohne neues Root-Finding
+
+Fokus: `src/codex_usage/direct.py`, stabile WHAM-Auswahl, Reset-Identitäten,
+Credit-Parsing, Auth-Datei-Descriptor und HTTP-Response-Grenzen.
+
+Keine neue reproduzierbare Root-Ursache gefunden. Fuzzing mit zehntausenden
+kaputten, aber JSON-kompatiblen Provider-Payloads blieb am stabilen Selector
+oder am kontrollierten `DirectFetchError` hängen. Die einzige rohe Ausnahme
+entstand ausschließlich durch ein absichtlich vertragswidriges Test-Double,
+das `_fetch_stable_wham_usage()` Nicht-Dictionaries zurückgab; der echte
+`_fetch_wham_usage()`-Parser liefert ausschließlich native JSON-Objekte.
+
+Verifikation: **396 `tests/test_direct.py`-Tests** grün; Reload zuvor mit
+`status=installed`, unverändertem Settings-Cache und `reload=ok` bestätigt.
