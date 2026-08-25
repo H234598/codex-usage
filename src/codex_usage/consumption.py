@@ -364,8 +364,10 @@ def _reset_boundary_at(
             previous.reset_at is not None
             and previous.reset_at > previous.captured_at
             and previous.reset_at <= current.captured_at
-            and current.reset_at != previous.reset_at
         ):
+            # Providers may keep reporting the same scheduled timestamp for
+            # the first sample after rollover.  Crossing that timestamp is
+            # enough evidence to start a fresh counter cycle.
             return previous.reset_at
         if (
             previous.captured_at < current.reset_at <= current.captured_at

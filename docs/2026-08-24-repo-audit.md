@@ -4577,3 +4577,23 @@ nach dem äußeren Capture-Zeitpunkt liegt; sonst fällt es auf
 Verifikation: **174 `tests/test_history.py`-Tests** inklusive zweier
 Regressionen und **92 Consumption-Tests** bestanden; Mypy, Ruff, Python-
 Compile und `git diff --check` folgen vor Commit.
+
+## Runde 227: Geplanter Reset mit unverändertem Resetziel
+
+Fokus: `src/codex_usage/consumption.py`, Rücksetzung von Tokendelta,
+Creditverbrauch und EMA.
+
+Ein reproduzierbarer Fehler: Wenn ein Provider den geplanten Resetzeitpunkt
+auch im ersten Messpunkt nach dem Rollover unverändert meldete, wurde die
+Resetgrenze wegen des gleichen `reset_at` verworfen. Ein neuer Zyklus mit
+höherem Startverbrauch wurde dadurch als normale Delta-Steigerung des alten
+Zyklus gezählt.
+
+Fix: Das Überschreiten eines zuvor gültigen geplanten Resetzeitpunkts gilt
+auch bei unverändertem `reset_at` als Zyklusgrenze. Rohzähler und EMA nutzen
+gemeinsame Reset-Erkennung; Rückkehr auf 100 % Limit bleibt weiterhin die
+metadatenlose Resetgrenze.
+
+Verifikation: **93 `tests/test_consumption.py`-Tests**, **312 gekoppelte
+History-/CLI-/Integration-Tests**, 100%-Statement- und Branch-Coverage im
+Consumption-Modul, Mypy, Ruff, Python-Compile und `git diff --check` grün.

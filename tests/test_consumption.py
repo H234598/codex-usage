@@ -461,6 +461,22 @@ def test_consumption_resets_counter_at_planned_reset():
     assert result.coverage == "complete"
 
 
+def test_consumption_resets_counter_when_planned_reset_target_is_unchanged():
+    reset = BASE + timedelta(minutes=45)
+    result = calculate_consumption(
+        [
+            _sample(0, 80, generation="same", reset_at=reset),
+            _sample(60, 95, generation="same", reset_at=reset),
+        ],
+        amount=1,
+        unit="hours",
+        now=BASE + timedelta(minutes=60),
+    )
+
+    assert result.consumed_percentage_points == 95.0
+    assert result.coverage == "complete"
+
+
 def test_consumption_resets_counter_when_limit_returns_to_full_without_metadata():
     result = calculate_consumption(
         [_sample(-30, 40), _sample(0, 50), _sample(30, 70), _sample(60, 0), _sample(90, 8)],
