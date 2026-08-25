@@ -4535,3 +4535,23 @@ Verifikation: **72 `tests/test_identity.py`-Tests** inklusive zweier
 Reihenfolge-Regressionen bestanden; zusätzlich exhaustive Drei-Kandidaten-
 Permutation ohne reihenfolgeabhängiges Ergebnis, Ruff und `git diff --check`
 grün.
+
+## Runde 225: Reset bei identischem Capture-Zeitpunkt
+
+Fokus: `src/codex_usage/consumption.py`, Rohverbrauch und EMA nach Reset.
+
+Zwei zusammenhängende reproduzierbare Lücken: Wenn der Provider den alten
+Verbrauch und den auf 100 % zurückgesetzten Wert mit identischem
+`captured_at`-Zeitpunkt meldete, wurde die Nullzeit-Lücke vor der Resetprüfung
+verworfen. Der Tokendelta-/Creditverbrauch behielt dadurch den alten Zyklus.
+Die EMA übersprang denselben Reset ebenfalls und mischte die alte Rate in die
+neue Prognose.
+
+Fix: Bestätigte Resetgrenzen werden vor der `gap <= 0`-/Großlückenprüfung
+ausgewertet. Rohzähler und EMA verwerfen damit auch bei doppeltem Zeitstempel
+ihre alte Zyklushistorie; die Beobachtung bleibt bei nichtpositiver Lücke
+weiterhin als `partial` markiert.
+
+Verifikation: **92 `tests/test_consumption.py`-Tests** inklusive zweier
+Reset-/EMA-Regressionen bestanden; fokussierte History-/CLI-/Integration-
+Tests, Ruff, Mypy, Python-Compile und `git diff --check` folgen vor Commit.
