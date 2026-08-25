@@ -4513,3 +4513,25 @@ explizit verglichen.
 Verifikation: **52 `tests/test_usage_resets.py`-Tests**, **1417 gekoppelte
 Reset-/State-/App-Server-/Direct-/Bridge-/Model-Tests**, 98%-Branch-Coverage
 im Reset-Modul, Mypy, Ruff, Python-Compile und `git diff --check` grün.
+
+## Runde 224: Identitätsgruppen unabhängig von Antwortreihenfolge
+
+Fokus: `src/codex_usage/identity.py`, Zusammenführung partieller Backend-
+Identitäten.
+
+Ein reproduzierbarer Fehler: Eine Antwort mit nur `user_id` und eine zweite
+mit nur `account_id` wurden als getrennte Gruppen angelegt, wenn die vollständige
+`user_id`/`account_id`-Antwort erst danach eintraf. Die vollständige Antwort
+konnte dann nur mit einer der beiden Gruppen verbunden werden. Je nach
+Antwortreihenfolge wurde derselbe Account deshalb fälschlich als mehrere
+Backend-Accounts abgelehnt.
+
+Fix: Jede neue Identität verbindet jetzt alle bereits kompatiblen Gruppen in
+einem Schritt. Identitätsfelder werden dabei vereinigt; Kandidatenreihenfolge
+bleibt für die Rückgabe erhalten. Widersprüchliche vollständige Identitäten
+bleiben getrennte Gruppen und werden weiterhin fail-closed behandelt.
+
+Verifikation: **72 `tests/test_identity.py`-Tests** inklusive zweier
+Reihenfolge-Regressionen bestanden; zusätzlich exhaustive Drei-Kandidaten-
+Permutation ohne reihenfolgeabhängiges Ergebnis, Ruff und `git diff --check`
+grün.

@@ -16,6 +16,11 @@ class _ValueErrorIterator:
         raise ValueError("synthetic iterator failure")
 
 
+class _RuntimeErrorIterator:
+    def __iter__(self):
+        raise RuntimeError("synthetic iterator failure")
+
+
 def test_usage_endpoint_identity_wins_over_settings_response_order():
     candidates = [
         JsonCandidate(
@@ -110,9 +115,63 @@ def test_backend_identity_rejects_string_subclass_hooks():
         backend_identity_from_payload({"user_id": BrokenStr("user")})
 
 
+@pytest.mark.parametrize(
+    "value",
+    [chr(codepoint) for codepoint in range(0x80, 0x8B) if codepoint != 0x85],
+)
+def test_identity_fields_reject_c1_control_characters(value):
+    with pytest.raises(ValueError, match="backend response user_id is invalid"):
+        backend_identity_from_payload({"user_id": value})
+    with pytest.raises(ValueError, match="backend response plan_type is invalid"):
+        backend_plan_type_from_payload({"plan_type": value})
+    with pytest.raises(ValueError, match="auth_user_id is invalid"):
+        select_identity_consistent_candidates(
+            [], auth_user_id=value, auth_account_id=None
+        )
+
+
 def test_identity_payload_helpers_reject_non_mapping_values():
     assert backend_identity_from_payload([]) == (None, None)
     assert backend_plan_type_from_payload([]) is None
+
+
+def test_identity_payload_helpers_reject_mapping_subclass_hooks():
+    class BrokenDict(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic identity payload marker")
+
+    payload = BrokenDict(user_id="user")
+
+    assert backend_identity_from_payload(payload) == (None, None)
+    assert backend_plan_type_from_payload(payload) is None
+
+
+def test_identity_candidate_priority_rejects_mapping_subclass_hooks():
+    class BrokenDict(dict):
+        def __contains__(self, _key):
+            raise RuntimeError("synthetic identity priority marker")
+
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/other",
+        payload=BrokenDict(rate_limit={}),
+    )
+
+    assert backend_plan_type_from_candidates([candidate]) is None
+
+
+def test_identity_helpers_skip_candidate_subclass_hooks():
+    class BrokenCandidate(JsonCandidate):
+        def __getattribute__(self, name):
+            if name == "url":
+                raise RuntimeError("synthetic identity candidate marker")
+            return super().__getattribute__(name)
+
+    candidate = BrokenCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={"user_id": "wrong-user"},
+    )
+
+    assert backend_identity_from_candidates([candidate]) == (None, None)
 
 
 @pytest.mark.parametrize("value", [[], 42, " ", "plan\nforged"])
@@ -426,7 +485,8 @@ def test_identity_helpers_skip_url_string_subclass_hooks():
 
 
 @pytest.mark.parametrize(
-    "candidates", [None, 1, True, object(), _ValueErrorIterator()]
+    "candidates",
+    [None, 1, True, object(), _ValueErrorIterator(), _RuntimeErrorIterator()],
 )
 def test_identity_helpers_reject_non_iterable_candidates(candidates):
     assert backend_identity_from_candidates(candidates) == (None, None)  # type: ignore[arg-type]
@@ -760,3 +820,103 @@ def test_select_identity_consistent_candidates_rejects_unknown_account():
             auth_user_id="user-b",
             auth_account_id="account-b",
         )
+
+
+@pytest.mark.parametrize("order", [("user", "account", "full"), ("account", "user", "full")])
+def test_identity_selection_merges_partial_candidates_regardless_of_order(order):
+    candidates = {
+        "user": JsonCandidate(
+            "https://chatgpt.com/backend-api/wham/usage/user",
+            {"user_id": "user"},
+        ),
+        "account": JsonCandidate(
+            "https://chatgpt.com/backend-api/wham/usage/account",
+            {"account_id": "account"},
+        ),
+        "full": JsonCandidate(
+            "https://chatgpt.com/backend-api/wham/usage",
+            {"user_id": "user", "account_id": "account"},
+        ),
+    }
+
+    selected = select_identity_consistent_candidates(
+        [candidates[key] for key in order],
+        auth_user_id=None,
+        auth_account_id=None,
+    )
+
+    assert selected == [candidates[key] for key in order]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("auth_user_id", 1),
+        ("auth_account_id", []),
+        ("auth_user_id", ""),
+        ("auth_account_id", " "),
+        ("auth_user_id", "user\nforged"),
+        ("auth_account_id", "a" * 257),
+    ),
+)
+def test_identity_selection_rejects_malformed_auth_ids(field, value):
+    candidate = JsonCandidate(
+        url="https://chatgpt.com/backend-api/wham/usage",
+        payload={"user_id": "user", "account_id": "account"},
+    )
+    auth = {"auth_user_id": None, "auth_account_id": None}
+    auth[field] = value
+
+    with pytest.raises(ValueError, match=f"{field} is invalid"):
+        select_identity_consistent_candidates([candidate], **auth)
+
+
+def test_identity_selection_rejects_auth_id_string_subclass_hooks():
+    class BrokenStr(str):
+        def __len__(self):
+            raise RuntimeError("synthetic auth identity marker")
+
+    with pytest.raises(ValueError, match="auth_user_id is invalid"):
+        select_identity_consistent_candidates(
+            [], auth_user_id=BrokenStr("user"), auth_account_id=None
+        )
+
+
+def test_identity_selection_rejects_account_id_string_subclass_hooks():
+    class BrokenStr(str):
+        def __bool__(self):
+            raise RuntimeError("synthetic auth account marker")
+
+    with pytest.raises(ValueError, match="auth_account_id is invalid"):
+        select_identity_consistent_candidates(
+            [], auth_user_id=None, auth_account_id=BrokenStr("account")
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("backend_user_id", []),
+        ("auth_account_id", {}),
+    ),
+)
+def test_identity_match_rejects_malformed_ids(field, value):
+    values = {
+        "backend_user_id": None,
+        "backend_account_id": None,
+        "auth_user_id": None,
+        "auth_account_id": None,
+    }
+    values[field] = value
+
+    assert identity_module._response_identity_matches_auth(**values) is False
+
+
+def test_identity_candidate_priority_recovers_from_invalid_url_provider():
+    class BrokenUrl:
+        def __str__(self):
+            raise RuntimeError("synthetic identity URL provider marker")
+
+    candidate = JsonCandidate(url=BrokenUrl(), payload={})  # type: ignore[arg-type]
+
+    assert identity_module._candidate_priority(candidate) == 2
