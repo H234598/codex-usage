@@ -2273,7 +2273,7 @@ def _optional_snapshot_identity(value: Any, *, limit: int) -> str | None:
     if not isinstance(value, str) or not value or len(value) > limit:
         return None
     if any(
-        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        char.isspace() or ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
         for char in value
     ):
         return None

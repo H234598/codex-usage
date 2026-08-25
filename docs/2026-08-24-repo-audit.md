@@ -4630,3 +4630,21 @@ Längenregeln bleiben unverändert.
 Verifikation: **386 `tests/test_state.py`-Tests** inklusive zweier C1-
 Regressionen bestanden; State-Coverage weiterhin 99%, Mypy, Ruff,
 Python-Compile und `git diff --check` folgen vor Commit.
+
+## Runde 230: C1-Steuerzeichen in Snapshot-Identitäten
+
+Fokus: `src/codex_usage/state.py`, optionale Pool- und Model-Identitäten aus
+persistierten Snapshots.
+
+Zwei reproduzierbare Eingaben (`U+0080` und `U+009F`) passierten die
+Identitätsvalidierung. Solche Steuerzeichen können als Snapshot-Schlüssel in
+spätere Status- und Zuordnungslogik gelangen und dort Darstellung oder
+Vergleiche verfälschen.
+
+Fix: Optionale Snapshot-Identitäten weisen jetzt den kompletten Bereich
+`0x7F…0x9F` zusätzlich zu Whitespace und C0 zurück. Längen- und
+Typvalidierung bleiben unverändert.
+
+Verifikation: **388 `tests/test_state.py`-Tests**, **961 gekoppelte
+State-/Scheduler-/Service-/Snapshot-Tests**, State-Coverage weiterhin 99%,
+Mypy, Ruff, Python-Compile und `git diff --check` grün.

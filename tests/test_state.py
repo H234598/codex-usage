@@ -6470,6 +6470,11 @@ def test_state_snapshot_small_helpers_cover_empty_and_invalid_values():
         _saved_datetime(None)
 
 
+@pytest.mark.parametrize("value", ["main\u0080", "main\u009f"])
+def test_state_snapshot_identity_rejects_c1_controls(value):
+    assert state_module._optional_snapshot_identity(value, limit=120) is None
+
+
 def test_state_configured_provenance_rejects_backend_configured_hook():
     class BrokenUsage(AccountUsage):
         ready = False
