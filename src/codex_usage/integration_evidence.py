@@ -163,6 +163,58 @@ def _before_publish_pointer_parent_recheck(
     return None
 
 
+def _before_reader_current_recheck(
+    _parent_fd: int,
+    _name: str,
+    _held_fd: int,
+) -> None:
+    return None
+
+
+def _before_reader_pointer_parent_recheck(
+    _state_home: Path,
+    _integration_fd: int,
+) -> None:
+    return None
+
+
+def _before_reader_generation_recheck(
+    _generations_fd: int,
+    _generation_id: str,
+    _generation_fd: int,
+) -> None:
+    return None
+
+
+def _before_reader_payload_recheck(
+    _parent_fd: int,
+    _name: str,
+    _held_fd: int,
+) -> None:
+    return None
+
+
+def _before_reader_binding_recheck(
+    _parent_fd: int,
+    _name: str,
+    _held_fd: int,
+) -> None:
+    return None
+
+
+def _verify_active_manifest_for_reader(
+    *,
+    state_home: Path,
+    data_home: Path,
+    expected_entrypoint_path: Path,
+) -> VerifiedActiveManifest:
+    return verify_active_manifest_at(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=expected_entrypoint_path,
+    )
+
+
 def _verify_active_manifest_for_publish(
     *,
     state_home: Path,
@@ -886,6 +938,282 @@ def _verify_named_file(
         raise IntegrationEvidenceUnavailable() from exc
     finally:
         _close_fds(fd)
+
+
+def _read_verified_evidence_file(
+    parent_fd: int,
+    name: str,
+    *,
+    maximum: int,
+    hook,
+) -> tuple[bytes, FileIdentity]:
+    """Read one private evidence file without rebinding its parent name."""
+    fd = -1
+    try:
+        fd = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=parent_fd,
+        )
+        initial = os.fstat(fd)
+        identity = private_io._require_private_file_stat(
+            initial,
+            maximum=maximum,
+            mode=0o600,
+        )
+        payload = bytearray()
+        while len(payload) < initial.st_size:
+            chunk = os.read(fd, min(65_536, initial.st_size - len(payload)))
+            if not chunk:
+                raise IntegrationEvidenceUnavailable()
+            payload.extend(chunk)
+        hook(parent_fd, name, fd)
+        final = os.fstat(fd)
+        if (
+            private_io._require_private_file_stat(
+                final,
+                maximum=maximum,
+                mode=0o600,
+            )
+            != identity
+            or final.st_size != initial.st_size
+            or final.st_mtime_ns != initial.st_mtime_ns
+            or final.st_ctime_ns != initial.st_ctime_ns
+            or _named_identity(parent_fd, name, directory=False) != identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        return bytes(payload), identity
+    except IntegrationEvidenceError:
+        raise
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
+            raise IntegrationEvidenceInvalid() from exc
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        _close_fds(fd)
+
+
+def _validate_pointer_binding(
+    *,
+    generations_fd: int,
+    generation_id: str,
+    binding_sha256: str,
+    verified: VerifiedActiveManifest | None,
+    read_payload: bool,
+) -> tuple[dict[str, object] | None, FileIdentity]:
+    generation_fd = -1
+    try:
+        generation_fd = private_io.open_private_dir_at(generations_fd, generation_id)
+        generation_identity = _fd_identity(generation_fd)
+        if read_payload:
+            _before_reader_generation_recheck(
+                generations_fd,
+                generation_id,
+                generation_fd,
+            )
+        binding_bytes, _binding_identity = _read_verified_evidence_file(
+            generation_fd,
+            "account-usage-v2.binding.json",
+            maximum=_BINDING_MAX_BYTES,
+            hook=_before_reader_binding_recheck if read_payload else lambda *_: None,
+        )
+        binding = parse_binding(binding_bytes)
+        if (
+            binding.generation_id != generation_id
+            or hashlib.sha256(binding_bytes).hexdigest() != binding_sha256
+        ):
+            raise IntegrationEvidenceInvalid()
+        document: dict[str, object] | None = None
+        if read_payload:
+            if verified is None:
+                raise IntegrationEvidenceInvalid()
+            payload, _payload_identity = _read_verified_evidence_file(
+                generation_fd,
+                binding.payload_filename,
+                maximum=_PAYLOAD_MAX_BYTES,
+                hook=_before_reader_payload_recheck,
+            )
+            document = validate_v2_payload_bytes(payload)
+            if (
+                len(payload) != binding.payload_size_bytes
+                or hashlib.sha256(payload).hexdigest() != binding.payload_sha256
+                or binding.published_at != document["generated_at"]
+                or binding.active_manifest_sha256 != verified.active_manifest_sha256
+                or binding.release_id != verified.release_id
+                or binding.source_manifest_sha256 != verified.source_manifest_sha256
+            ):
+                raise IntegrationEvidenceInvalid()
+        if (
+            _fd_identity(generation_fd) != generation_identity
+            or _named_identity(generations_fd, generation_id, directory=True)
+            != generation_identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        return document, generation_identity
+    except IntegrationEvidenceError:
+        raise
+    except IntegrationInvalidSource as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except FileNotFoundError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    except ValueError as exc:
+        raise IntegrationEvidenceInvalid() from exc
+    except OSError as exc:
+        raise IntegrationEvidenceUnavailable() from exc
+    finally:
+        _close_fds(generation_fd)
+
+
+def _reader_status(document: dict[str, object], *, now: datetime) -> str:
+    stale = False
+    partial = False
+    for account in cast(list[dict[str, object]], document["accounts"]):
+        freshness = cast(dict[str, object], account["freshness"])
+        fresh_until = datetime.fromisoformat(
+            cast(str, freshness["fresh_until"]).replace("Z", "+00:00")
+        )
+        if freshness["stale"] is True or now > fresh_until:
+            stale = True
+        if account["status"] != "ok":
+            partial = True
+        limits = cast(list[dict[str, object]], account["limits"])
+        evidence = cast(list[dict[str, object]], account["tracker_evidence"])
+        complete = {
+            (item["pool"], item["limit_window_seconds"])
+            for item in evidence
+            if item["coverage"] == "complete"
+        }
+        if any((item["pool"], item["window_seconds"]) not in complete for item in limits):
+            partial = True
+    if stale:
+        return "stale"
+    if partial:
+        return "partial"
+    return "complete"
+
+
+def read_current_evidence(
+    *,
+    state_home: Path,
+    data_home: Path,
+    expected_entrypoint_path: Path,
+    now: datetime,
+) -> tuple[dict[str, object], str]:
+    """Return only atomically bound, currently attested V2 evidence."""
+    if (
+        type(state_home) is not type(Path())
+        or type(data_home) is not type(Path())
+        or type(expected_entrypoint_path) is not type(Path())
+        or type(now) is not datetime
+        or not state_home.is_absolute()
+        or not data_home.is_absolute()
+        or not expected_entrypoint_path.is_absolute()
+        or now.tzinfo is None
+        or now.utcoffset() != timedelta(0)
+    ):
+        return {}, "invalid"
+    try:
+        with evidence_lock_set(
+            state_home=state_home,
+            release_mode="shared",
+            current_mode="shared",
+            timeout_seconds=0,
+            create=False,
+        ):
+            verified = _require_verified_manifest(
+                _verify_active_manifest_for_reader(
+                    state_home=state_home,
+                    data_home=data_home,
+                    expected_entrypoint_path=expected_entrypoint_path,
+                )
+            )
+            state_fd = app_fd = integration_fd = generations_fd = -1
+            try:
+                state_fd, app_fd, integration_fd, generations_fd = _open_evidence_parents(
+                    state_home
+                )
+                state_identity = _fd_identity(state_fd)
+                integration_identity = _fd_identity(integration_fd)
+                generations_identity = _fd_identity(generations_fd)
+                if (
+                    state_identity != verified.state_home_identity
+                    or integration_identity != verified.integration_parent_identity
+                    or _named_identity(integration_fd, "generations", directory=True)
+                    != generations_identity
+                ):
+                    raise IntegrationEvidenceInvalid()
+                current_bytes, current_identity = _read_verified_evidence_file(
+                    integration_fd,
+                    "current.json",
+                    maximum=_POINTER_MAX_BYTES,
+                    hook=_before_reader_current_recheck,
+                )
+                pointer = parse_pointer(current_bytes)
+                document, _generation_identity = _validate_pointer_binding(
+                    generations_fd=generations_fd,
+                    generation_id=pointer.current_generation_id,
+                    binding_sha256=pointer.current_binding_sha256,
+                    verified=verified,
+                    read_payload=True,
+                )
+                if (
+                    pointer.previous_generation_id is not None
+                    and pointer.previous_binding_sha256 is not None
+                ):
+                    _validate_pointer_binding(
+                        generations_fd=generations_fd,
+                        generation_id=pointer.previous_generation_id,
+                        binding_sha256=pointer.previous_binding_sha256,
+                        verified=None,
+                        read_payload=False,
+                    )
+                _before_reader_pointer_parent_recheck(state_home, integration_fd)
+                fresh_state_identity, fresh_integration_identity = _fresh_parent_identities(
+                    state_home
+                )
+                if (
+                    _fd_identity(state_fd) != state_identity
+                    or _fd_identity(integration_fd) != integration_identity
+                    or _fd_identity(generations_fd) != generations_identity
+                    or _named_identity(integration_fd, "generations", directory=True)
+                    != generations_identity
+                    or fresh_state_identity != state_identity
+                    or fresh_integration_identity != integration_identity
+                ):
+                    raise IntegrationEvidenceInvalid()
+                repeated = _require_verified_manifest(
+                    _verify_active_manifest_for_reader(
+                        state_home=state_home,
+                        data_home=data_home,
+                        expected_entrypoint_path=expected_entrypoint_path,
+                    )
+                )
+                _require_same_verified_manifest(verified, repeated)
+                repeated_current, repeated_identity = _read_verified_evidence_file(
+                    integration_fd,
+                    "current.json",
+                    maximum=_POINTER_MAX_BYTES,
+                    hook=lambda *_: None,
+                )
+                if (
+                    repeated_current != current_bytes
+                    or repeated_identity != current_identity
+                    or parse_pointer(repeated_current) != pointer
+                    or document is None
+                ):
+                    raise IntegrationEvidenceInvalid()
+                return document, _reader_status(document, now=now)
+            finally:
+                _close_fds(generations_fd, integration_fd, app_fd, state_fd)
+    except (IntegrationBusy, IntegrationEvidenceUnavailable, FileNotFoundError):
+        return {}, "unavailable"
+    except (IntegrationEvidenceInvalid, IntegrationInvalidSource, ValueError, OSError):
+        return {}, "invalid"
 
 
 def _safe_unlink_owned_file(parent_fd: int, name: str, identity: FileIdentity) -> None:

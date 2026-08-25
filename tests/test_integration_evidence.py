@@ -7,6 +7,7 @@ import shutil
 import stat
 import sys
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -161,6 +162,12 @@ def staged_evidence_layout(evidence_layout, monkeypatch):
     monkeypatch.setattr(
         integration_evidence,
         "_verify_active_manifest_for_publish",
+        staged_reverify,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        integration_evidence,
+        "_verify_active_manifest_for_reader",
         staged_reverify,
         raising=False,
     )
@@ -778,4 +785,314 @@ def test_v2_contract_exposes_private_exact_window_allowlist():
 
     assert integration_evidence._ALLOWED_WINDOW_SECONDS == frozenset(
         (18_000, 604_800, 2_592_000)
+    )
+
+
+def _complete_reader_account() -> dict[str, object]:
+    return {
+        "account_id": "account-1",
+        "freshness": {
+            "captured_at": "2026-08-25T10:00:00Z",
+            "fresh_until": "2026-08-25T10:15:00Z",
+            "stale": False,
+        },
+        "limits": [
+            {
+                "pool": "main",
+                "remaining_percent": 90.0,
+                "reset_at": "2026-08-25T12:00:00Z",
+                "used_percent": 10.0,
+                "window_seconds": 18_000,
+            }
+        ],
+        "status": "ok",
+        "tracker_evidence": [
+            {
+                "coverage": "complete",
+                "ema_time_constant_seconds": 3_600,
+                "first_sample_at": "2026-08-25T09:45:00Z",
+                "last_sample_at": "2026-08-25T10:00:00Z",
+                "limit_window_seconds": 18_000,
+                "pool": "main",
+                "projected_used_percent_at_reset": 11.0,
+                "rate_percentage_points_per_second": 0.1,
+                "reset_generation": "reset-1",
+                "sample_count": 2,
+            }
+        ],
+    }
+
+
+def _rewrite_reader_file(parent: Path, name: str, payload: bytes) -> None:
+    fd = os.open(parent / name, os.O_WRONLY | os.O_TRUNC)
+    try:
+        os.write(fd, payload)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def mutate_evidence_layout(state_home: Path, mutation: str) -> None:
+    """Mutate one contract layer while retaining valid private FS metadata."""
+    from codex_usage import integration_evidence
+
+    integration = state_home / "codex-usage" / "integration"
+    pointer_path = integration / "current.json"
+    pointer = integration_evidence.parse_pointer(pointer_path.read_bytes())
+    generation = integration / "generations" / pointer.current_generation_id
+    payload_path = generation / "account-usage-v2.json"
+    binding_path = generation / "account-usage-v2.binding.json"
+    if mutation == "missing_binding":
+        binding_path.unlink()
+        return
+    binding = integration_evidence.parse_binding(binding_path.read_bytes())
+    if mutation == "payload_hash":
+        binding = replace(binding, payload_sha256="f" * 64)
+    else:
+        document = json.loads(payload_path.read_bytes())
+        document["accounts"] = [_complete_reader_account()]
+        account = document["accounts"][0]
+        if mutation == "freshness_stale":
+            account["freshness"]["stale"] = True
+        elif mutation == "fresh_until_expired":
+            account["freshness"] = {
+                "captured_at": "2026-08-25T09:00:00Z",
+                "fresh_until": "2026-08-25T09:15:00Z",
+                "stale": True,
+            }
+            account["tracker_evidence"][0]["last_sample_at"] = "2026-08-25T09:00:00Z"
+            account["tracker_evidence"][0]["first_sample_at"] = "2026-08-25T08:45:00Z"
+            account["tracker_evidence"][0]["coverage"] = "stale"
+        elif mutation == "partial_status":
+            account["status"] = "partial"
+        elif mutation == "missing_complete_trend":
+            account["tracker_evidence"][0]["coverage"] = "partial"
+        else:
+            raise AssertionError(f"unexpected mutation: {mutation}")
+        payload = integration_evidence.serialize_schema2_document(document)
+        _rewrite_reader_file(generation, "account-usage-v2.json", payload)
+        binding = replace(
+            binding,
+            payload_sha256=hashlib.sha256(payload).hexdigest(),
+            payload_size_bytes=len(payload),
+        )
+    binding_bytes = integration_evidence.serialize_binding(binding)
+    _rewrite_reader_file(generation, "account-usage-v2.binding.json", binding_bytes)
+    pointer = replace(
+        pointer,
+        current_binding_sha256=hashlib.sha256(binding_bytes).hexdigest(),
+    )
+    _rewrite_reader_file(
+        integration,
+        "current.json",
+        integration_evidence.serialize_pointer(pointer),
+    )
+
+
+def test_reader_requires_active_binding_payload_and_pointer_hash_chain(
+    published_evidence_layout,
+):
+    """Would fail if reader accepted an unbound or unattested payload."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert status == "complete"
+    assert document["schema_version"] == 2
+
+
+@pytest.mark.parametrize(
+    ("mutation", "status"),
+    [
+        ("missing_binding", "unavailable"),
+        ("payload_hash", "invalid"),
+        ("freshness_stale", "stale"),
+        ("fresh_until_expired", "stale"),
+        ("partial_status", "partial"),
+        ("missing_complete_trend", "partial"),
+    ],
+)
+def test_reader_classification_priority(published_evidence_layout, mutation, status):
+    """Would fail if invalid/stale/partial precedence changed consumer authority."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    mutate_evidence_layout(state_home, mutation)
+    assert (
+        integration_evidence.read_current_evidence(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+            now=datetime(2026, 8, 25, tzinfo=UTC),
+        )[1]
+        == status
+    )
+
+
+def test_reader_missing_current_pointer_is_unavailable_without_document(
+    published_evidence_layout,
+):
+    """Would fail if reader fell back to prior or unauthenticated payload."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    (state_home / "codex-usage/integration/current.json").unlink()
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert document == {}
+    assert status == "unavailable"
+
+
+def _reader_swap_hook(parent_fd: int, name: str, held_fd: int) -> None:
+    payload = os.pread(held_fd, os.fstat(held_fd).st_size, 0)
+    _replace_named_file(parent_fd, name, payload)
+
+
+def test_reader_rejects_current_pointer_inode_swap(published_evidence_layout, monkeypatch):
+    """Would fail if Current inode changed between reader fstats."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_reader_current_recheck",
+        _reader_swap_hook,
+        raising=False,
+    )
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert document == {}
+    assert status in {"unavailable", "invalid"}
+
+
+def test_reader_rejects_current_pointer_parent_swap(
+    published_evidence_layout, monkeypatch
+):
+    """Would fail if reader escaped captured Current parent directory."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    integration = state_home / "codex-usage/integration"
+
+    def swap_parent(_state_home, _integration_fd):
+        old = integration.with_name("integration-reader-old")
+        os.rename(integration, old)
+        shutil.copytree(old, integration)
+        for directory in (integration, integration / "generations"):
+            directory.chmod(0o700)
+        for path in integration.rglob("*.json"):
+            path.chmod(0o600)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_reader_pointer_parent_recheck",
+        swap_parent,
+        raising=False,
+    )
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert document == {}
+    assert status in {"unavailable", "invalid"}
+
+
+def test_reader_rejects_generation_directory_swap(
+    published_evidence_layout, monkeypatch
+):
+    """Would fail if generation name rebound while reader held its FD."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+
+    def swap_generation(generations_fd, generation_id, _generation_fd):
+        old_name = f"reader-old-{generation_id}"
+        os.rename(
+            generation_id,
+            old_name,
+            src_dir_fd=generations_fd,
+            dst_dir_fd=generations_fd,
+        )
+        os.mkdir(generation_id, mode=0o700, dir_fd=generations_fd)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_before_reader_generation_recheck",
+        swap_generation,
+        raising=False,
+    )
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert document == {}
+    assert status in {"unavailable", "invalid"}
+
+
+def _assert_reader_rejects_file_inode_swap(
+    published_evidence_layout, monkeypatch, hook_name: str
+) -> None:
+    """Exercise the real reader with one named file-recheck hook."""
+    from codex_usage import integration_evidence
+
+    state_home, data_home, entrypoint, _payload, _verified, _current_bytes = (
+        published_evidence_layout
+    )
+    monkeypatch.setattr(
+        integration_evidence, hook_name, _reader_swap_hook, raising=False
+    )
+    document, status = integration_evidence.read_current_evidence(
+        state_home=state_home,
+        data_home=data_home,
+        expected_entrypoint_path=entrypoint,
+        now=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    assert document == {}
+    assert status in {"unavailable", "invalid"}
+
+
+def test_reader_rejects_payload_inode_swap(published_evidence_layout, monkeypatch):
+    """Would fail if payload inode changed between reader fstats."""
+    _assert_reader_rejects_file_inode_swap(
+        published_evidence_layout,
+        monkeypatch,
+        "_before_reader_payload_recheck",
+    )
+
+
+def test_reader_rejects_binding_inode_swap(published_evidence_layout, monkeypatch):
+    """Would fail if Binding inode changed between reader fstats."""
+    _assert_reader_rejects_file_inode_swap(
+        published_evidence_layout,
+        monkeypatch,
+        "_before_reader_binding_recheck",
     )
