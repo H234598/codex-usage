@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
+import importlib
+import importlib.abc
 import importlib.machinery
+import importlib.util
 import os
 import stat
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import MappingProxyType, ModuleType
 
 
 def _require_source_directory(path: Path) -> None:
@@ -142,16 +146,33 @@ def _local_imports(payload: bytes) -> set[str]:
 
 def _validate_loaded_modules(
     expected_modules: dict[str, tuple[Path, tuple[int, ...]]],
+    source_finder: _ValidatedSourceFinder,
 ) -> None:
     for module_name, (expected_path, expected_identity) in expected_modules.items():
-        if module_name not in sys.modules:
-            continue
-        module = sys.modules[module_name]
-        if type(module) is not ModuleType:
-            raise ValueError("preloaded installer module is unsafe")
+        module = sys.modules.get(module_name)
+        loader = source_finder.loader_for(module_name)
+        source = source_finder.source_for(module_name)
+        if (
+            type(module) is not ModuleType
+            or type(loader) is not _ValidatedSourceLoader
+            or source is None
+        ):
+            raise ValueError("installer module loader is unavailable")
+        source_path, payload, digest = source
+        spec = vars(module).get("__spec__")
         origin = vars(module).get("__file__")
         if (
-            type(origin) is not str
+            type(spec) is not importlib.machinery.ModuleSpec
+            or spec.loader is not loader
+            or vars(module).get("__loader__") is not loader
+            or spec.origin != str(expected_path)
+            or source_path != expected_path
+            or loader.name != module_name
+            or loader.path != str(expected_path)
+            or loader._payload is not payload
+            or loader._digest != digest
+            or hashlib.sha256(payload).digest() != digest
+            or type(origin) is not str
             or not Path(origin).is_absolute()
             or Path(origin) != expected_path
             or Path(origin).resolve(strict=True) != expected_path
@@ -165,28 +186,70 @@ class _ValidatedSourceLoader(importlib.machinery.SourceFileLoader):
         self,
         fullname: str,
         path: str,
-        sources: dict[str, tuple[Path, bytes]],
+        payload: bytes,
+        digest: bytes,
     ) -> None:
         super().__init__(fullname, path)
-        self._sources = sources
+        self._payload = payload
+        self._digest = digest
 
     def get_code(self, fullname: str):
+        if (
+            fullname != self.name
+            or hashlib.sha256(self._payload).digest() != self._digest
+        ):
+            raise ImportError("installer source loader path is unsafe")
+        return compile(self._payload, self.path, "exec", dont_inherit=True)
+
+
+class _ValidatedSourceFinder(importlib.abc.MetaPathFinder):
+    def __init__(
+        self,
+        package_root: Path,
+        sources: dict[str, tuple[Path, bytes, bytes]],
+    ) -> None:
+        self._package_root = package_root
+        self._sources = MappingProxyType(dict(sources))
+        self._loaders: dict[str, _ValidatedSourceLoader] = {}
+
+    def find_spec(self, fullname: str, path=None, target=None):
+        if fullname != "codex_usage" and not fullname.startswith("codex_usage."):
+            return None
         source = self._sources.get(fullname)
         if source is None:
-            raise ImportError("installer source is outside validated closure")
-        expected_path, payload = source
-        if self.path != str(expected_path):
-            raise ImportError("installer source loader path is unsafe")
-        return compile(payload, str(expected_path), "exec", dont_inherit=True)
+            raise ImportError("installer import is outside validated closure")
+        source_path, payload, digest = source
+        loader = _ValidatedSourceLoader(fullname, str(source_path), payload, digest)
+        self._loaders[fullname] = loader
+        spec = importlib.util.spec_from_file_location(
+            fullname,
+            source_path,
+            loader=loader,
+            submodule_search_locations=(
+                [str(self._package_root)] if fullname == "codex_usage" else None
+            ),
+        )
+        if spec is None:
+            raise ImportError("installer source spec is unavailable")
+        return spec
+
+    def loader_for(self, fullname: str) -> _ValidatedSourceLoader | None:
+        return self._loaders.get(fullname)
+
+    def source_for(self, fullname: str) -> tuple[Path, bytes, bytes] | None:
+        return self._sources.get(fullname)
 
 
 def _install_source_only_finders(
     source_root: Path,
     package_root: Path,
-    sources: dict[str, tuple[Path, bytes]],
+    sources: dict[str, tuple[Path, bytes, bytes]],
 ) -> None:
     def loader(fullname: str, path: str) -> _ValidatedSourceLoader:
-        return _ValidatedSourceLoader(fullname, path, sources)
+        source = sources.get(fullname)
+        if source is None or str(source[0]) != path:
+            raise ImportError("installer source is outside validated closure")
+        return _ValidatedSourceLoader(fullname, path, source[1], source[2])
 
     for directory in (source_root, package_root):
         directory_text = str(directory)
@@ -215,7 +278,12 @@ def _require_source_only_runtime(source_root: Path, package_root: Path) -> None:
                 raise ValueError("installer source bytecode cache is unsafe")
 
 
-def _bootstrap_repo_source() -> dict[str, tuple[Path, tuple[int, ...]]]:
+def _bootstrap_repo_source() -> tuple[
+    dict[str, tuple[Path, tuple[int, ...]]],
+    _ValidatedSourceFinder,
+    list[object],
+    tuple[object, ...],
+]:
     script_path = Path(__file__).absolute()
     if script_path.resolve(strict=True) != script_path:
         raise ValueError("installer entrypoint must not use symlinks")
@@ -239,7 +307,11 @@ def _bootstrap_repo_source() -> dict[str, tuple[Path, tuple[int, ...]]]:
     source_modules = _declared_source_modules(installer_payload)
     payloads = {"integration_installer": installer_payload}
     sources = {
-        "codex_usage.integration_installer": (installer_path, installer_payload),
+        "codex_usage.integration_installer": (
+            installer_path,
+            installer_payload,
+            hashlib.sha256(installer_payload).digest(),
+        ),
     }
     expected_modules = {
         "codex_usage.integration_installer": (installer_path, installer_identity),
@@ -250,7 +322,11 @@ def _bootstrap_repo_source() -> dict[str, tuple[Path, tuple[int, ...]]]:
         stem = filename[:-3]
         payloads[stem] = payload
         module_name = "codex_usage" if stem == "__init__" else f"codex_usage.{stem}"
-        sources[module_name] = (module_path, payload)
+        sources[module_name] = (
+            module_path,
+            payload,
+            hashlib.sha256(payload).digest(),
+        )
         expected_modules[module_name] = (module_path, identity)
 
     declared_stems = set(payloads)
@@ -262,25 +338,63 @@ def _bootstrap_repo_source() -> dict[str, tuple[Path, tuple[int, ...]]]:
     if sys.path[:1] != [source_text]:
         sys.path.insert(0, source_text)
     _install_source_only_finders(source_root, package_root, sources)
-    return expected_modules
+    source_finder = _ValidatedSourceFinder(package_root, sources)
+    if type(sys.meta_path) is not list:
+        raise ValueError("installer meta path is unsafe")
+    meta_path = sys.meta_path
+    ambient_meta_path = tuple(meta_path)
+    meta_path[:] = [
+        source_finder,
+        importlib.machinery.BuiltinImporter,
+        importlib.machinery.FrozenImporter,
+        importlib.machinery.PathFinder,
+    ]
+    return expected_modules, source_finder, meta_path, ambient_meta_path
+
+
+def _restore_guarded_meta_path(
+    source_finder: _ValidatedSourceFinder,
+    meta_path: list[object],
+    ambient_meta_path: tuple[object, ...],
+) -> None:
+    meta_path[:] = [
+        source_finder,
+        *(finder for finder in ambient_meta_path if finder is not source_finder),
+    ]
+    sys.meta_path = meta_path
 
 
 try:
-    _EXPECTED_MODULES = _bootstrap_repo_source()
+    (
+        _EXPECTED_MODULES,
+        _SOURCE_FINDER,
+        _META_PATH,
+        _AMBIENT_META_PATH,
+    ) = _bootstrap_repo_source()
 except (OSError, RuntimeError, SyntaxError, TypeError, ValueError):
     sys.stderr.write("integration_producer_unavailable\n")
     raise SystemExit(69) from None
 
 
 try:
-    from codex_usage.integration_installer import (
-        IntegrationCleanupError,
-        IntegrationInstallError,
-        install_release,
-        rollback_active_release,
-    )
+    try:
+        from codex_usage.integration_installer import (
+            IntegrationCleanupError,
+            IntegrationInstallError,
+            install_release,
+            rollback_active_release,
+        )
 
-    _validate_loaded_modules(_EXPECTED_MODULES)
+        for _module_name in _EXPECTED_MODULES:
+            if _module_name not in sys.modules:
+                importlib.import_module(_module_name)
+        _validate_loaded_modules(_EXPECTED_MODULES, _SOURCE_FINDER)
+    finally:
+        _restore_guarded_meta_path(
+            _SOURCE_FINDER,
+            _META_PATH,
+            _AMBIENT_META_PATH,
+        )
 except (ImportError, OSError, RuntimeError, SyntaxError, TypeError, ValueError):
     sys.stderr.write("integration_producer_unavailable\n")
     raise SystemExit(69) from None

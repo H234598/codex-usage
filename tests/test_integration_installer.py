@@ -5470,6 +5470,152 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     assert completed.stderr == "integration_producer_unavailable\n"
 
 
+def test_installer_script_imports_never_reach_hostile_meta_path_finder(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "meta-finder-executed"
+    wrapper = """\
+import importlib.machinery
+import os
+from pathlib import Path
+import runpy
+import sys
+
+script = Path(sys.argv[1])
+package_root = script.parents[1] / "src" / "codex_usage"
+
+class HostileLoader:
+    def __init__(self, fullname, source_path):
+        self.fullname = fullname
+        self.source_path = source_path
+
+    def create_module(self, _spec):
+        return None
+
+    def exec_module(self, module):
+        Path(os.environ["META_FINDER_MARKER"]).write_text("executed")
+        module.__file__ = str(self.source_path)
+        if self.fullname == "codex_usage.integration_installer":
+            module.IntegrationCleanupError = type("IntegrationCleanupError", (Exception,), {})
+            module.IntegrationInstallError = type("IntegrationInstallError", (Exception,), {})
+            module.install_release = lambda **_kwargs: None
+            module.rollback_active_release = lambda **_kwargs: None
+
+class HostileFinder:
+    def find_spec(self, fullname, _path=None, _target=None):
+        if fullname != "codex_usage" and not fullname.startswith("codex_usage."):
+            return None
+        source_path = package_root / (
+            "__init__.py" if fullname == "codex_usage" else fullname.rsplit(".", 1)[1] + ".py"
+        )
+        loader = HostileLoader(fullname, source_path)
+        spec = importlib.machinery.ModuleSpec(
+            fullname,
+            loader,
+            origin=str(source_path),
+            is_package=fullname == "codex_usage",
+        )
+        spec.has_location = True
+        if fullname == "codex_usage":
+            spec.submodule_search_locations = [str(package_root)]
+        return spec
+
+sys.meta_path.insert(0, HostileFinder())
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--help",
+        ],
+        cwd=repo_root,
+        env={
+            "META_FINDER_MARKER": str(marker),
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    assert not marker.exists()
+
+
+def test_installer_script_keeps_exact_loader_guard_for_complete_closure(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "restored-meta-finder-reached"
+    wrapper = """\
+import hashlib
+import importlib
+import os
+from pathlib import Path
+import runpy
+import sys
+
+class AmbientFinder:
+    def find_spec(self, fullname, _path=None, _target=None):
+        if fullname == "codex_usage" or fullname.startswith("codex_usage."):
+            Path(os.environ["RESTORED_META_FINDER_MARKER"]).write_text("reached")
+        return None
+
+ambient = AmbientFinder()
+sys.meta_path.insert(0, ambient)
+namespace = runpy.run_path(sys.argv[1], run_name="synthetic_installer")
+finder = namespace["_SOURCE_FINDER"]
+expected = namespace["_EXPECTED_MODULES"]
+loader_type = namespace["_ValidatedSourceLoader"]
+assert sys.meta_path[0] is finder
+assert sys.meta_path[1] is ambient
+for fullname, (expected_path, _identity) in expected.items():
+    module = sys.modules[fullname]
+    loader = module.__spec__.loader
+    assert type(loader) is loader_type
+    assert module.__loader__ is loader
+    assert loader is finder.loader_for(fullname)
+    assert loader.path == str(expected_path)
+    assert loader._digest == hashlib.sha256(loader._payload).digest()
+try:
+    importlib.import_module("codex_usage.undeclared")
+except ImportError:
+    pass
+else:
+    raise AssertionError("undeclared package import escaped trusted guard")
+assert not Path(os.environ["RESTORED_META_FINDER_MARKER"]).exists()
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "RESTORED_META_FINDER_MARKER": str(marker),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+    assert completed.stderr == ""
+    assert not marker.exists()
+
+
 @pytest.mark.parametrize("cache_kind", ("directory", "loose-pyc"))
 def test_installer_script_rejects_source_bytecode_cache_without_deleting_it(
     tmp_path, cache_kind
