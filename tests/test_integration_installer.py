@@ -5108,6 +5108,139 @@ def test_installer_script_has_narrow_parser_and_no_general_cli_import():
     assert "codex_usage.cli" not in source
 
 
+def test_installer_script_bootstraps_repo_source_ahead_of_ambient_package(
+    tmp_path, pytestconfig
+):
+    from codex_usage import private_io
+
+    source_root = _temporary_source_copy(tmp_path)
+    data_home, state_home, temporary_root = _roots(tmp_path)
+    lock_root = private_io._private_lock_root()
+    production_lock_root = pytestconfig._private_lock_production_root
+    ambient = tmp_path / "ambient"
+    ambient_package = ambient / "codex_usage"
+    ambient_package.mkdir(parents=True)
+    (ambient_package / "__init__.py").write_text("", encoding="utf-8")
+    (ambient_package / "integration_installer.py").write_text(
+        """\
+from pathlib import Path
+
+class IntegrationCleanupError(Exception):
+    pass
+
+class IntegrationInstallError(Exception):
+    pass
+
+def install_release(**kwargs):
+    Path(kwargs["state_home"], "ambient-imported").write_text("0.6.532")
+
+def rollback_active_release(**kwargs):
+    Path(kwargs["state_home"], "ambient-imported").write_text("0.6.532")
+""",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "/usr/bin/bwrap",
+            "--bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--dir",
+            str(production_lock_root),
+            "--bind",
+            str(lock_root),
+            str(production_lock_root),
+            "--",
+            sys.executable,
+            "-B",
+            str(SCRIPT_PATH),
+            "--source-root",
+            str(source_root),
+            "--state-home",
+            str(state_home),
+            "--data-home",
+            str(data_home),
+            "--python",
+            sys.executable,
+            "--temporary-root",
+            str(temporary_root),
+        ],
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": str(ambient),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert not (state_home / "ambient-imported").exists()
+    assert completed.returncode == 0
+    assert completed.stdout == "integration_producer_install_ok\n"
+    assert completed.stderr == ""
+    active = json.loads(
+        (state_home / "codex-usage" / "integration" / "active.json").read_bytes()
+    )
+    assert active["version"] == "0.6.536"
+
+
+def test_installer_script_rejects_symlinked_entrypoint_before_ambient_import(tmp_path):
+    ambient = tmp_path / "ambient"
+    ambient_package = ambient / "codex_usage"
+    ambient_package.mkdir(parents=True)
+    marker = tmp_path / "ambient-imported"
+    (ambient_package / "__init__.py").write_text("", encoding="utf-8")
+    (ambient_package / "integration_installer.py").write_text(
+        """\
+import os
+from pathlib import Path
+
+Path(os.environ["AMBIENT_IMPORT_MARKER"]).write_text("imported")
+
+class IntegrationCleanupError(Exception):
+    pass
+
+class IntegrationInstallError(Exception):
+    pass
+
+def install_release(**kwargs):
+    pass
+
+def rollback_active_release(**kwargs):
+    pass
+""",
+        encoding="utf-8",
+    )
+    linked_script = tmp_path / SCRIPT_PATH.name
+    linked_script.symlink_to(SCRIPT_PATH)
+
+    completed = subprocess.run(
+        [sys.executable, "-B", str(linked_script), "--help"],
+        cwd=tmp_path,
+        env={
+            "AMBIENT_IMPORT_MARKER": str(marker),
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": str(ambient),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+
+
 def test_candidate_manifest_is_single_final_only_write_with_real_treehash(tmp_path, monkeypatch):
     from codex_usage import integration_installer
 

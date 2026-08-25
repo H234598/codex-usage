@@ -4,7 +4,45 @@ import argparse
 import sys
 from pathlib import Path
 
-from codex_usage.integration_installer import (
+
+def _bootstrap_repo_source() -> None:
+    script_path = Path(__file__).absolute()
+    if script_path.resolve(strict=True) != script_path:
+        raise ValueError("installer entrypoint must not use symlinks")
+    if (
+        script_path.name != "install_integration_producer.py"
+        or script_path.parent.name != "scripts"
+    ):
+        raise ValueError("installer entrypoint has unexpected layout")
+
+    repo_root = script_path.parents[1]
+    source_root = repo_root / "src"
+    package_root = source_root / "codex_usage"
+    for directory in (repo_root, script_path.parent, source_root, package_root):
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError("installer source directory is unsafe")
+    for file_path in (
+        script_path,
+        repo_root / "pyproject.toml",
+        package_root / "__init__.py",
+        package_root / "integration_installer.py",
+    ):
+        if file_path.is_symlink() or not file_path.is_file():
+            raise ValueError("installer source file is unsafe")
+
+    source_text = str(source_root)
+    if sys.path[:1] != [source_text]:
+        sys.path.insert(0, source_text)
+
+
+try:
+    _bootstrap_repo_source()
+except (OSError, RuntimeError, ValueError):
+    sys.stderr.write("integration_producer_unavailable\n")
+    raise SystemExit(69) from None
+
+
+from codex_usage.integration_installer import (  # noqa: E402
     IntegrationCleanupError,
     IntegrationInstallError,
     install_release,
