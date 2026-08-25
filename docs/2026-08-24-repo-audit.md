@@ -4648,3 +4648,25 @@ Typvalidierung bleiben unverändert.
 Verifikation: **388 `tests/test_state.py`-Tests**, **961 gekoppelte
 State-/Scheduler-/Service-/Snapshot-Tests**, State-Coverage weiterhin 99%,
 Mypy, Ruff, Python-Compile und `git diff --check` grün.
+
+## Runde 231: Mehrdeutige Snapshot-Limits
+
+Fokus: `src/codex_usage/integration_snapshot.py`, Export und Kanonisierung
+von Limitfenstern.
+
+Ein reproduzierbarer Fall: Derselbe Pool und dasselbe Fenster (z. B. `main` /
+`5h`) mit zwei verschiedenen `reset_at`-Werten wurde als zweimalige Grenze
+akzeptiert. Die Resetzeit gehört zur Messung, identifiziert aber kein zweites
+Limit; nachgelagerte Verbraucher konnten dadurch eine mehrdeutige Liste
+erhalten.
+
+Fix: Duplikatprüfung verwendet jetzt ausschließlich `(pool,
+window_seconds)`, sowohl beim Export aus dem Laufzeitmodell als auch bei der
+Kanonisierung eingehender Dokumente. Stabile Sortierung über Resetdaten bleibt
+für gültige Einträge erhalten. Statische Typprüfungen der abgesicherten
+Attributzugriffe wurden dabei ebenfalls geschlossen.
+
+Verifikation: **110 `tests/test_integration_snapshot.py`-Tests**, **38
+Integration-Entrypoint-Tests**, **238 Integration-Installer-Tests**, 99%-
+Branch-Coverage im Snapshot-Modul, Mypy, Ruff, Python-Compile und
+`git diff --check` grün.

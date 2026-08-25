@@ -321,7 +321,7 @@ def _source_limits(usage: AccountUsage) -> list[dict[str, object]]:
     if len(limits) > _MAX_LIMITS_PER_ACCOUNT:
         _invalid()
     identities = {
-        (item["pool"], item["window_seconds"], item.get("reset_at"))
+        (item["pool"], item["window_seconds"])
         for item in limits
     }
     if len(identities) != len(limits):
@@ -609,7 +609,7 @@ def _canonical_document(document: object) -> dict[str, object]:
                 _invalid()
             canonical_limits = [_canonical_limit(limit) for limit in limits]
             identities = {
-                (item["pool"], item["window_seconds"], item.get("reset_at"))
+                (item["pool"], item["window_seconds"])
                 for item in canonical_limits
             }
             if len(identities) != len(canonical_limits):

@@ -761,6 +761,21 @@ def test_projection_rejects_duplicate_canonical_limit_identity():
         build_schema1_document((_usage_with_pools(pools),), generated_at=GENERATED)
 
 
+def test_projection_rejects_duplicate_limit_identity_with_different_reset():
+    from codex_usage.integration_snapshot import IntegrationInvalidSource, build_schema1_document
+
+    first = LimitWindow(
+        name="5h",
+        percent=75.0,
+        duration_seconds=18_000,
+        reset_at=RESET,
+    )
+    second = replace(first, reset_at=RESET.replace(hour=16))
+    pools = (_pool("main", (first, second)),)
+    with pytest.raises(IntegrationInvalidSource):
+        build_schema1_document((_usage_with_pools(pools),), generated_at=GENERATED)
+
+
 def test_serialization_rejects_boolean_schema_version():
     from codex_usage.integration_snapshot import (
         IntegrationInvalidSource,
@@ -1246,6 +1261,13 @@ def test_snapshot_canonical_document_rejects_shapes_and_canonicalizes_optional_s
     with pytest.raises(IntegrationInvalidSource):
         _canonical_document(
             _canonical_document_base({**base_account, "limits": [duplicate_limit, duplicate_limit]})
+        )
+    duplicate_reset_limit = {**duplicate_limit, "reset_at": "2026-08-15T16:00:00Z"}
+    with pytest.raises(IntegrationInvalidSource):
+        _canonical_document(
+            _canonical_document_base(
+                {**base_account, "limits": [duplicate_limit, duplicate_reset_limit]}
+            )
         )
 
     document = _canonical_document_base(
