@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.machinery
 import os
 import stat
 import sys
@@ -159,6 +160,61 @@ def _validate_loaded_modules(
             raise ValueError("preloaded installer module has foreign origin")
 
 
+class _ValidatedSourceLoader(importlib.machinery.SourceFileLoader):
+    def __init__(
+        self,
+        fullname: str,
+        path: str,
+        sources: dict[str, tuple[Path, bytes]],
+    ) -> None:
+        super().__init__(fullname, path)
+        self._sources = sources
+
+    def get_code(self, fullname: str):
+        source = self._sources.get(fullname)
+        if source is None:
+            raise ImportError("installer source is outside validated closure")
+        expected_path, payload = source
+        if self.path != str(expected_path):
+            raise ImportError("installer source loader path is unsafe")
+        return compile(payload, str(expected_path), "exec", dont_inherit=True)
+
+
+def _install_source_only_finders(
+    source_root: Path,
+    package_root: Path,
+    sources: dict[str, tuple[Path, bytes]],
+) -> None:
+    def loader(fullname: str, path: str) -> _ValidatedSourceLoader:
+        return _ValidatedSourceLoader(fullname, path, sources)
+
+    for directory in (source_root, package_root):
+        directory_text = str(directory)
+        sys.path_importer_cache.pop(directory_text, None)
+        sys.path_importer_cache[directory_text] = importlib.machinery.FileFinder(
+            directory_text,
+            (loader, importlib.machinery.SOURCE_SUFFIXES),
+        )
+
+
+def _require_source_only_runtime(source_root: Path, package_root: Path) -> None:
+    if (
+        not sys.dont_write_bytecode
+        or os.environ.get("PYTHONDONTWRITEBYTECODE") != "1"
+        or sys.pycache_prefix is not None
+    ):
+        raise ValueError("installer bytecode suppression is unavailable")
+    if any(
+        type(name) is str and (name == "codex_usage" or name.startswith("codex_usage."))
+        for name in sys.modules
+    ):
+        raise ValueError("installer package is already loaded")
+    for directory in (source_root, package_root):
+        with os.scandir(directory) as entries:
+            if any(entry.name == "__pycache__" or entry.name.endswith(".pyc") for entry in entries):
+                raise ValueError("installer source bytecode cache is unsafe")
+
+
 def _bootstrap_repo_source() -> dict[str, tuple[Path, tuple[int, ...]]]:
     script_path = Path(__file__).absolute()
     if script_path.resolve(strict=True) != script_path:
@@ -176,11 +232,15 @@ def _bootstrap_repo_source() -> dict[str, tuple[Path, tuple[int, ...]]]:
         _require_source_directory(directory)
     _require_source_file(script_path)
     _require_source_file(repo_root / "pyproject.toml")
+    _require_source_only_runtime(source_root, package_root)
 
     installer_path = package_root / "integration_installer.py"
     installer_payload, installer_identity = _read_source_file(installer_path)
     source_modules = _declared_source_modules(installer_payload)
     payloads = {"integration_installer": installer_payload}
+    sources = {
+        "codex_usage.integration_installer": (installer_path, installer_payload),
+    }
     expected_modules = {
         "codex_usage.integration_installer": (installer_path, installer_identity),
     }
@@ -190,17 +250,18 @@ def _bootstrap_repo_source() -> dict[str, tuple[Path, tuple[int, ...]]]:
         stem = filename[:-3]
         payloads[stem] = payload
         module_name = "codex_usage" if stem == "__init__" else f"codex_usage.{stem}"
+        sources[module_name] = (module_path, payload)
         expected_modules[module_name] = (module_path, identity)
 
     declared_stems = set(payloads)
     for payload in payloads.values():
         if not _local_imports(payload) <= declared_stems:
             raise ValueError("installer local import is absent from source closure")
-    _validate_loaded_modules(expected_modules)
 
     source_text = str(source_root)
     if sys.path[:1] != [source_text]:
         sys.path.insert(0, source_text)
+    _install_source_only_finders(source_root, package_root, sources)
     return expected_modules
 
 

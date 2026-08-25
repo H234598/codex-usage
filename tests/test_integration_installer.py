@@ -6,10 +6,12 @@ import errno
 import hashlib
 import importlib.util
 import json
+import marshal
 import multiprocessing
 import os
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -5070,40 +5072,47 @@ def test_first_install_bootstrap_converges_then_uses_one_zero_time_lock(tmp_path
     assert holder.exitcode == contender.exitcode == 0
 
 
-def test_installer_script_has_narrow_parser_and_no_general_cli_import():
-    spec = importlib.util.spec_from_file_location("synthetic_installer_script", SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    parser = module._parser()
-    parsed = parser.parse_args(
+def test_installer_script_has_narrow_parser_and_no_general_cli_import(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+
+    completed = _run_bootstrap_help(repo_root)
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    for option in (
+        "--rollback",
+        "--source-root",
+        "--state-home",
+        "--data-home",
+        "--python",
+        "--temporary-root",
+    ):
+        assert option in completed.stdout
+    rejected = subprocess.run(
         [
-            "--source-root",
-            "/tmp/source",
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--rollback",
             "--state-home",
             "/tmp/state",
             "--data-home",
             "/tmp/data",
             "--python",
-            "/usr/bin/python3",
-            "--temporary-root",
-            "/tmp/temporary",
-        ]
+            "/tmp/python",
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
-    assert parsed.source_root == "/tmp/source"
-    assert parsed.rollback is False
-    with pytest.raises(module._InstallerArgumentError):
-        parser.parse_args(
-            [
-                "--rollback",
-                "--state-home",
-                "/tmp/state",
-                "--data-home",
-                "/tmp/data",
-                "--python",
-                "/tmp/python",
-            ]
-        )
+    assert rejected.returncode == 64
+    assert rejected.stderr == "integration_producer_unavailable\n"
     source = SCRIPT_PATH.read_text(encoding="utf-8")
     assert "codex_usage.cli" not in source
 
@@ -5114,6 +5123,9 @@ def test_installer_script_bootstraps_repo_source_ahead_of_ambient_package(
     from codex_usage import private_io
 
     source_root = _temporary_source_copy(tmp_path)
+    bootstrap_parent = tmp_path / "bootstrap"
+    bootstrap_parent.mkdir(mode=0o700)
+    repo_root = _temporary_bootstrap_repo(bootstrap_parent)
     data_home, state_home, temporary_root = _roots(tmp_path)
     lock_root = private_io._private_lock_root()
     production_lock_root = pytestconfig._private_lock_production_root
@@ -5156,7 +5168,7 @@ def rollback_active_release(**kwargs):
             "--",
             sys.executable,
             "-B",
-            str(SCRIPT_PATH),
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
             "--source-root",
             str(source_root),
             "--state-home",
@@ -5269,12 +5281,12 @@ def _run_bootstrap_help(
     repo_root: Path,
     *,
     environment: dict[str, str] | None = None,
+    include_bytecode_environment: bool = True,
     prefix: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
-    child_environment = {
-        "PATH": os.environ.get("PATH", ""),
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
+    child_environment = {"PATH": os.environ.get("PATH", "")}
+    if include_bytecode_environment:
+        child_environment["PYTHONDONTWRITEBYTECODE"] = "1"
     child_environment.update(environment or {})
     return subprocess.run(
         [
@@ -5354,6 +5366,197 @@ runpy.run_path(sys.argv[0], run_name="__main__")
     assert completed.stdout == ""
     assert completed.stderr == "integration_producer_unavailable\n"
     assert not marker.exists()
+
+
+def test_installer_script_rejects_preloaded_installer_spoofing_local_origins(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "spoofed-called"
+    wrapper = """\
+import os
+from pathlib import Path
+import runpy
+import sys
+import types
+
+script = Path(sys.argv[1])
+package_root = script.parents[1] / "src" / "codex_usage"
+package = types.ModuleType("codex_usage")
+package.__file__ = str(package_root / "__init__.py")
+package.__path__ = [str(package_root)]
+installer = types.ModuleType("codex_usage.integration_installer")
+installer.__file__ = str(package_root / "integration_installer.py")
+installer.IntegrationCleanupError = type("IntegrationCleanupError", (Exception,), {})
+installer.IntegrationInstallError = type("IntegrationInstallError", (Exception,), {})
+
+def spoofed_install(**_kwargs):
+    Path(os.environ["SPOOFED_CALL_MARKER"]).write_text("called")
+
+installer.install_release = spoofed_install
+installer.rollback_active_release = spoofed_install
+sys.modules["codex_usage"] = package
+sys.modules["codex_usage.integration_installer"] = installer
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--source-root",
+            str(tmp_path / "source-root"),
+            "--state-home",
+            str(tmp_path / "state"),
+            "--data-home",
+            str(tmp_path / "data"),
+            "--python",
+            sys.executable,
+            "--temporary-root",
+            str(tmp_path / "temporary"),
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "SPOOFED_CALL_MARKER": str(marker),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+
+
+def test_installer_script_rejects_any_preloaded_package_namespace_key(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    wrapper = """\
+import runpy
+import sys
+import types
+
+sys.modules["codex_usage.unrelated"] = types.ModuleType("codex_usage.unrelated")
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            wrapper,
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--help",
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+
+
+@pytest.mark.parametrize("cache_kind", ("directory", "loose-pyc"))
+def test_installer_script_rejects_source_bytecode_cache_without_deleting_it(
+    tmp_path, cache_kind
+):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    package_root = repo_root / "src" / "codex_usage"
+    if cache_kind == "directory":
+        cache_path = package_root / "__pycache__"
+        cache_path.mkdir(mode=0o755)
+    else:
+        cache_path = package_root / "private_io.pyc"
+        cache_path.write_bytes(b"attacker-bytecode")
+        cache_path.chmod(0o644)
+
+    completed = _run_bootstrap_help(repo_root)
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert cache_path.exists()
+
+
+def test_installer_script_never_executes_valid_timestamp_bytecode(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    marker = tmp_path / "bytecode-executed"
+    source = repo_root / "src" / "codex_usage" / "integration_attestation.py"
+    source_stat = source.stat()
+    attacker = compile(
+        "from pathlib import Path\n"
+        "import os\n"
+        'Path(os.environ["BYTECODE_EXECUTION_MARKER"]).write_text("executed")\n',
+        str(source),
+        "exec",
+    )
+    bytecode = (
+        importlib.util.MAGIC_NUMBER
+        + struct.pack(
+            "<III",
+            0,
+            int(source_stat.st_mtime) & 0xFFFFFFFF,
+            source_stat.st_size & 0xFFFFFFFF,
+        )
+        + marshal.dumps(attacker)
+    )
+    cache_path = Path(importlib.util.cache_from_source(str(source)))
+    cache_path.parent.mkdir(mode=0o755)
+    cache_path.write_bytes(bytecode)
+    cache_path.chmod(0o644)
+
+    completed = _run_bootstrap_help(
+        repo_root,
+        environment={"BYTECODE_EXECUTION_MARKER": str(marker)},
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not marker.exists()
+    assert cache_path.exists()
+
+
+def test_installer_script_requires_bytecode_environment_even_with_dash_b(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+
+    completed = _run_bootstrap_help(
+        repo_root,
+        include_bytecode_environment=False,
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+
+
+def test_installer_script_rejects_external_pycache_prefix(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    external_cache = tmp_path / "external-pycache"
+
+    completed = _run_bootstrap_help(
+        repo_root,
+        environment={"PYTHONPYCACHEPREFIX": str(external_cache)},
+    )
+
+    assert completed.returncode == 69
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert not external_cache.exists()
 
 
 @pytest.mark.parametrize("module_name", _BOOTSTRAP_TRANSITIVE_MODULES)
@@ -6856,32 +7059,50 @@ def test_launcher_drops_marker_environment_before_runtime(tmp_path):
     assert completed.stderr == ""
 
 
-def test_installer_parser_errors_are_data_sparse(capsys):
-    spec = importlib.util.spec_from_file_location("synthetic_installer_parser", SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+def test_installer_parser_errors_are_data_sparse(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
 
-    result = module.main(["--unknown", "secret-marker"])
-    captured = capsys.readouterr()
-    assert result == 64
-    assert captured.out == ""
-    assert captured.err == "integration_producer_unavailable\n"
-    assert "secret-marker" not in captured.err
-
-
-def test_installer_cleanup_errors_have_distinct_data_sparse_result(tmp_path, monkeypatch, capsys):
-    spec = importlib.util.spec_from_file_location("synthetic_installer_cleanup", SCRIPT_PATH)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    def fail_install(**_kwargs):
-        raise module.IntegrationCleanupError()
-
-    monkeypatch.setattr(module, "install_release", fail_install)
-    result = module.main(
+    completed = subprocess.run(
         [
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
+            "--unknown",
+            "secret-marker",
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 64
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_unavailable\n"
+    assert "secret-marker" not in completed.stderr
+
+
+def test_installer_cleanup_errors_have_distinct_data_sparse_result(tmp_path):
+    repo_root = _temporary_bootstrap_repo(tmp_path)
+    installer_path = repo_root / "src/codex_usage/integration_installer.py"
+    installer_path.write_text(
+        installer_path.read_text(encoding="utf-8")
+        + "\ndef install_release(**_kwargs):\n"
+        + "    raise IntegrationCleanupError()\n",
+        encoding="utf-8",
+    )
+    installer_path.chmod(0o644)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            str(repo_root / "scripts" / SCRIPT_PATH.name),
             "--source-root",
             str(tmp_path / "source"),
             "--state-home",
@@ -6892,12 +7113,20 @@ def test_installer_cleanup_errors_have_distinct_data_sparse_result(tmp_path, mon
             str(tmp_path / "python"),
             "--temporary-root",
             str(tmp_path / "temporary"),
-        ]
+        ],
+        cwd=repo_root,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
     )
-    captured = capsys.readouterr()
-    assert result == 70
-    assert captured.out == ""
-    assert captured.err == "integration_producer_cleanup_failed\n"
+    assert completed.returncode == 70
+    assert completed.stdout == ""
+    assert completed.stderr == "integration_producer_cleanup_failed\n"
 
 
 def test_attestation_private_path_guards_reject_missing_and_wrong_types(tmp_path):
