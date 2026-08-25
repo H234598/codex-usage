@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import stat
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -1372,6 +1373,131 @@ def test_private_path_lock_no_create_reuses_same_thread_lock(tmp_path):
     with private_path_lock(target, label="outer profile lock"):
         with private_path_lock(target, label="nested profile lock", create=False):
             pass
+
+
+def _lock_metadata(path: Path, *, follow_symlinks: bool = True) -> tuple[int, ...]:
+    item = path.stat() if follow_symlinks else path.lstat()
+    return (
+        item.st_dev,
+        item.st_ino,
+        item.st_mode,
+        item.st_uid,
+        item.st_gid,
+        item.st_nlink,
+        item.st_size,
+        item.st_mtime_ns,
+        item.st_ctime_ns,
+    )
+
+
+def _existing_private_lock(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    root_mode: int = 0o700,
+    lock_mode: int = 0o600,
+    payload: bytes = b"",
+) -> tuple[Path, Path, Path]:
+    target = tmp_path / "profile" / "profile.json"
+    target.parent.mkdir()
+    lock_root = tmp_path / "lock-root"
+    lock_root.mkdir(mode=0o700)
+    lock_root.chmod(root_mode)
+    lock_path = lock_root / private_io._private_lock_name(target)
+    fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, lock_mode)
+    try:
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
+    lock_path.chmod(lock_mode)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: lock_root)
+    return target, lock_root, lock_path
+
+
+@pytest.mark.parametrize(
+    ("root_mode", "lock_mode", "payload"),
+    [
+        pytest.param(0o777, 0o600, b"", id="world-writable-root"),
+        pytest.param(0o700, 0o644, b"", id="wrong-lock-mode"),
+        pytest.param(0o700, 0o600, b"x" * 5000, id="oversized-lock"),
+    ],
+)
+def test_private_path_lock_no_create_rejects_unsafe_namespace_without_mutation(
+    tmp_path, monkeypatch, root_mode, lock_mode, payload
+):
+    target, lock_root, lock_path = _existing_private_lock(
+        tmp_path,
+        monkeypatch,
+        root_mode=root_mode,
+        lock_mode=lock_mode,
+        payload=payload,
+    )
+    root_before = _lock_metadata(lock_root)
+    lock_before = _lock_metadata(lock_path)
+
+    with pytest.raises(ValueError):
+        with private_path_lock(target, label="profile lock", create=False):
+            pass
+
+    assert _lock_metadata(lock_root) == root_before
+    assert _lock_metadata(lock_path) == lock_before
+    assert stat.S_IMODE(lock_path.stat().st_mode) == lock_mode
+    assert lock_path.read_bytes() == payload
+
+
+def test_private_path_lock_no_create_rejects_symlink_root_without_mutation(
+    tmp_path, monkeypatch
+):
+    target, real_root, lock_path = _existing_private_lock(tmp_path, monkeypatch)
+    linked_root = tmp_path / "linked-lock-root"
+    linked_root.symlink_to(real_root, target_is_directory=True)
+    monkeypatch.setattr(private_io, "_private_lock_root", lambda: linked_root)
+    link_before = _lock_metadata(linked_root, follow_symlinks=False)
+    root_before = _lock_metadata(real_root)
+    lock_before = _lock_metadata(lock_path)
+
+    with pytest.raises(ValueError):
+        with private_path_lock(target, label="profile lock", create=False):
+            pass
+
+    assert _lock_metadata(linked_root, follow_symlinks=False) == link_before
+    assert _lock_metadata(real_root) == root_before
+    assert _lock_metadata(lock_path) == lock_before
+
+
+def test_private_path_lock_no_create_revalidates_named_inode_after_flock(
+    tmp_path, monkeypatch
+):
+    target, lock_root, lock_path = _existing_private_lock(tmp_path, monkeypatch)
+    old_lock_path = lock_root / f".{lock_path.name}.old"
+    real_flock = private_io.fcntl.flock
+    replaced = False
+
+    def replace_after_acquire(fd, operation):
+        nonlocal replaced
+        result = real_flock(fd, operation)
+        if operation & private_io.fcntl.LOCK_EX and not replaced:
+            replaced = True
+            lock_path.rename(old_lock_path)
+            replacement_fd = os.open(
+                lock_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            os.close(replacement_fd)
+        return result
+
+    monkeypatch.setattr(private_io.fcntl, "flock", replace_after_acquire)
+    entered = False
+    with pytest.raises(ValueError):
+        with private_path_lock(target, label="profile lock", create=False):
+            entered = True
+
+    assert replaced
+    assert not entered
+    assert old_lock_path.is_file()
+    assert lock_path.is_file()
+    assert old_lock_path.stat().st_ino != lock_path.stat().st_ino
 
 
 def test_private_path_lock_keeps_waiter_before_acquire_on_persistent_inode(tmp_path):

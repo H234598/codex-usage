@@ -18,6 +18,7 @@ from itertools import islice
 from pathlib import Path
 
 PRIVATE_LOCK_TIMEOUT_SECONDS = 30
+_PRIVATE_LOCK_MAX_BYTES = 4096
 _PATH_TYPE = type(Path())
 _MAX_STALE_ROLLBACKS = 1
 _MAX_PRIVATE_ROLLBACK_BYTES = 64 * 1024 * 1024
@@ -225,11 +226,131 @@ def _require_private_directory_fd(fd: int) -> FileIdentity:
         raise ValueError("private directory descriptor is invalid") from exc
     if (
         not stat.S_ISDIR(item.st_mode)
-        or item.st_uid != os.getuid()
+        or item.st_uid != os.geteuid()
         or stat.S_IMODE(item.st_mode) != 0o700
     ):
         raise ValueError("private directory descriptor is invalid")
     return _directory_identity(item)
+
+
+def _open_existing_private_lock_root(
+    lock_root: Path,
+) -> tuple[int, tuple[FileIdentity, ...]]:
+    lock_root = _require_path(lock_root, label="private lock directory")
+    if (
+        not lock_root.is_absolute()
+        or any(part in {"", ".", ".."} for part in lock_root.parts[1:])
+    ):
+        raise ValueError("private lock directory must be an absolute normalized path")
+    try:
+        passwd_home = Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise ValueError("cannot determine private lock home") from exc
+    enforce_from = len(lock_root.parts) - 1
+    if lock_root.parts[: len(passwd_home.parts)] == passwd_home.parts:
+        enforce_from = len(passwd_home.parts) - 1
+    flags = _directory_open_flags()
+    current_fd = os.open(lock_root.anchor, flags)
+    identities: list[FileIdentity] = []
+    try:
+        for index, component in enumerate(lock_root.parts[1:], start=1):
+            try:
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise ValueError("private lock directory is unsafe") from exc
+                raise
+            os.close(current_fd)
+            current_fd = next_fd
+            if index >= enforce_from:
+                identities.append(_require_private_directory_fd(current_fd))
+        result = current_fd
+        current_fd = -1
+        return result, tuple(identities)
+    finally:
+        if current_fd >= 0:
+            os.close(current_fd)
+
+
+def _private_lock_file_identity(item: os.stat_result) -> tuple[int, ...]:
+    if (
+        not stat.S_ISREG(item.st_mode)
+        or item.st_uid != os.geteuid()
+        or stat.S_IMODE(item.st_mode) != 0o600
+        or item.st_nlink != 1
+        or item.st_size > _PRIVATE_LOCK_MAX_BYTES
+    ):
+        raise ValueError("private lock file is invalid")
+    return (
+        item.st_dev,
+        item.st_ino,
+        item.st_mode,
+        item.st_uid,
+        item.st_nlink,
+        item.st_size,
+    )
+
+
+def _open_existing_private_lock_file(
+    root_fd: int,
+    name: str,
+    *,
+    label: str,
+) -> tuple[int, tuple[int, ...]]:
+    component = _safe_component(name)
+    flags = (
+        os.O_RDWR
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        fd = os.open(component, flags, dir_fd=root_fd)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EISDIR, errno.ENXIO):
+            raise ValueError(f"{label} must be a regular file") from exc
+        raise
+    try:
+        identity = _private_lock_file_identity(os.fstat(fd))
+        result = fd
+        fd = -1
+        return result, identity
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _revalidate_existing_private_lock(
+    *,
+    lock_root: Path,
+    root_identities: tuple[FileIdentity, ...],
+    lock_name: str,
+    lock_fd: int,
+    lock_identity: tuple[int, ...],
+    label: str,
+) -> None:
+    if _private_lock_file_identity(os.fstat(lock_fd)) != lock_identity:
+        raise ValueError(f"{label} changed while locking")
+    fresh_root_fd = -1
+    fresh_lock_fd = -1
+    try:
+        fresh_root_fd, fresh_root_identities = _open_existing_private_lock_root(
+            lock_root
+        )
+        if fresh_root_identities != root_identities:
+            raise ValueError(f"{label} namespace changed while locking")
+        fresh_lock_fd, fresh_lock_identity = _open_existing_private_lock_file(
+            fresh_root_fd,
+            lock_name,
+            label=label,
+        )
+        if fresh_lock_identity != lock_identity:
+            raise ValueError(f"{label} changed while locking")
+    finally:
+        if fresh_lock_fd >= 0:
+            os.close(fresh_lock_fd)
+        if fresh_root_fd >= 0:
+            os.close(fresh_root_fd)
 
 
 def open_verified_state_home(state_home: Path) -> int:
@@ -812,19 +933,15 @@ def private_path_lock(
     assert_no_symlink_ancestors(parent, label=label)
     if parent.is_symlink() or not parent.is_dir():
         raise ValueError(f"{label} parent must be a real directory: {parent}")
-    lock_path = (
-        _private_lock_path(path)
-        if create
-        else _private_lock_root() / _private_lock_name(path)
-    )
-    if lock_path.is_symlink() or (lock_path.exists() and not lock_path.is_file()):
-        raise ValueError(f"{label} must be a regular file: {lock_path}")
+    lock_root = _private_lock_root()
+    lock_name = _private_lock_name(path)
+    lock_path = lock_root / lock_name
     lock_key = Path(os.path.abspath(lock_path))
-    held_lock_paths = getattr(_PRIVATE_LOCK_STATE, "paths", None)
-    if held_lock_paths is None:
-        held_lock_paths = set()
-        _PRIVATE_LOCK_STATE.paths = held_lock_paths
-    if lock_key in held_lock_paths:
+    held_lock_identities = getattr(_PRIVATE_LOCK_STATE, "identities", None)
+    if held_lock_identities is None:
+        held_lock_identities = {}
+        _PRIVATE_LOCK_STATE.identities = held_lock_identities
+    if create and lock_key in held_lock_identities:
         yield
         return
     flags = os.O_RDWR
@@ -833,12 +950,35 @@ def private_path_lock(
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
     lock_created = False
+    root_fd = -1
+    root_identities: tuple[FileIdentity, ...] = ()
+    existing_lock_identity: tuple[int, ...] | None = None
     try:
         if not create:
-            fd = os.open(lock_path, flags)
+            root_fd, root_identities = _open_existing_private_lock_root(lock_root)
+            try:
+                fd, existing_lock_identity = _open_existing_private_lock_file(
+                    root_fd,
+                    lock_name,
+                    label=label,
+                )
+            except Exception:
+                os.close(root_fd)
+                root_fd = -1
+                raise
         elif created_lock_files is None:
+            lock_path = _private_lock_path(path)
+            if lock_path.is_symlink() or (
+                lock_path.exists() and not lock_path.is_file()
+            ):
+                raise ValueError(f"{label} must be a regular file: {lock_path}")
             fd = os.open(lock_path, flags | os.O_CREAT, 0o600)
         else:
+            lock_path = _private_lock_path(path)
+            if lock_path.is_symlink() or (
+                lock_path.exists() and not lock_path.is_file()
+            ):
+                raise ValueError(f"{label} must be a regular file: {lock_path}")
             try:
                 fd = os.open(lock_path, flags | os.O_CREAT | os.O_EXCL, 0o600)
                 lock_created = True
@@ -850,15 +990,34 @@ def private_path_lock(
         raise
     try:
         file_stat = os.fstat(fd)
-        if (
-            not stat.S_ISREG(file_stat.st_mode)
-            or file_stat.st_nlink != 1
-            or file_stat.st_uid != os.getuid()
-        ):
-            raise ValueError(f"{label} must be a private regular file: {lock_path}")
-        os.fchmod(fd, 0o600)
+        if create:
+            if (
+                not stat.S_ISREG(file_stat.st_mode)
+                or file_stat.st_nlink != 1
+                or file_stat.st_uid != os.getuid()
+            ):
+                raise ValueError(
+                    f"{label} must be a private regular file: {lock_path}"
+                )
+            os.fchmod(fd, 0o600)
+        elif existing_lock_identity is None:  # pragma: no cover - local invariant
+            raise ValueError(f"{label} identity is unavailable")
         if lock_created:
             created_lock_files.append((lock_path, file_stat.st_dev, file_stat.st_ino))
+        held_identity = (file_stat.st_dev, file_stat.st_ino)
+        if lock_key in held_lock_identities:
+            if create or held_lock_identities[lock_key] != held_identity:
+                raise ValueError(f"{label} changed while locking")
+            _revalidate_existing_private_lock(
+                lock_root=lock_root,
+                root_identities=root_identities,
+                lock_name=lock_name,
+                lock_fd=fd,
+                lock_identity=existing_lock_identity,
+                label=label,
+            )
+            yield
+            return
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -867,17 +1026,28 @@ def private_path_lock(
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"{label} is already in use") from exc
                 time.sleep(0.05)
-        held_lock_paths.add(lock_key)
+        if not create:
+            _revalidate_existing_private_lock(
+                lock_root=lock_root,
+                root_identities=root_identities,
+                lock_name=lock_name,
+                lock_fd=fd,
+                lock_identity=existing_lock_identity,
+                label=label,
+            )
+        held_lock_identities[lock_key] = held_identity
         try:
             yield
         finally:
-            held_lock_paths.remove(lock_key)
+            del held_lock_identities[lock_key]
             try:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             except OSError:
                 pass
     finally:
         os.close(fd)
+        if root_fd >= 0:
+            os.close(root_fd)
 
 
 def _require_path(path: object, *, label: str) -> Path:
