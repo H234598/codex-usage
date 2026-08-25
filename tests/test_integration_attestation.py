@@ -200,3 +200,156 @@ def test_verify_active_manifest_at_rejects_descendant_directory_rebinding(
             expected_entrypoint_path=entrypoint,
         )
     assert walks == 3
+
+
+def test_verify_active_manifest_at_rejects_in_place_release_bytes_after_scan(
+    evidence_layout, monkeypatch
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_evidence import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, _payload, _verified = evidence_layout
+    walks = 0
+
+    def mutate_after_last_descendant_walk(_release_fd):
+        nonlocal walks
+        walks += 1
+        if walks == 3:
+            payload = bytearray(entrypoint.read_bytes())
+            payload[0] ^= 1
+            entrypoint.write_bytes(payload)
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_release_namespace_recheck",
+        mutate_after_last_descendant_walk,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+        )
+    assert walks == 3
+
+
+def test_verify_active_manifest_at_rejects_release_metadata_change_after_scan(
+    evidence_layout, monkeypatch
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_evidence import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, _payload, _verified = evidence_layout
+    walks = 0
+
+    def mutate_after_last_descendant_walk(_release_fd):
+        nonlocal walks
+        walks += 1
+        if walks == 3:
+            item = entrypoint.stat()
+            os.utime(
+                entrypoint,
+                ns=(item.st_atime_ns, item.st_mtime_ns + 1_000_000_000),
+            )
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_release_namespace_recheck",
+        mutate_after_last_descendant_walk,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+        )
+    assert walks == 3
+
+
+def test_verify_active_manifest_at_rejects_release_size_change_after_scan(
+    evidence_layout, monkeypatch
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_evidence import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, _payload, _verified = evidence_layout
+    walks = 0
+
+    def mutate_after_last_descendant_walk(_release_fd):
+        nonlocal walks
+        walks += 1
+        if walks == 3:
+            entrypoint.write_bytes(entrypoint.read_bytes() + b"\n")
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_release_namespace_recheck",
+        mutate_after_last_descendant_walk,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+        )
+    assert walks == 3
+
+
+def test_verify_active_manifest_at_rejects_inserted_release_entry_after_scan(
+    evidence_layout, monkeypatch
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_evidence import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, _payload, verified = evidence_layout
+    inserted = verified.active_release.release_dir / ".late-entry"
+    walks = 0
+
+    def insert_after_last_descendant_walk(_release_fd):
+        nonlocal walks
+        walks += 1
+        if walks == 3:
+            inserted.write_bytes(b"late")
+            inserted.chmod(0o600)
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_release_namespace_recheck",
+        insert_after_last_descendant_walk,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+        )
+    assert walks == 3
+
+
+def test_verify_active_manifest_at_rejects_deleted_release_entry_after_scan(
+    evidence_layout, monkeypatch
+):
+    from codex_usage import integration_attestation
+    from codex_usage.integration_evidence import IntegrationEvidenceInvalid
+
+    state_home, data_home, entrypoint, _payload, _verified = evidence_layout
+    walks = 0
+
+    def delete_after_last_descendant_walk(_release_fd):
+        nonlocal walks
+        walks += 1
+        if walks == 3:
+            entrypoint.unlink()
+
+    monkeypatch.setattr(
+        integration_attestation,
+        "_before_release_namespace_recheck",
+        delete_after_last_descendant_walk,
+    )
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_attestation.verify_active_manifest_at(
+            state_home=state_home,
+            data_home=data_home,
+            expected_entrypoint_path=entrypoint,
+        )
+    assert walks == 3

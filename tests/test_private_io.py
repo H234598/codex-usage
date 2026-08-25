@@ -1875,3 +1875,143 @@ def test_lock_entry_replacement_after_flock_fails_before_independent_domain(
         create=False,
     ):
         pass
+
+
+def test_lock_root_replacement_after_flock_fails_before_independent_domain(
+    tmp_path, monkeypatch
+):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    lock_root = private_io._private_lock_root()
+    old_root = lock_root.with_name(f"{lock_root.name}-old")
+    integration = state_home / "codex-usage" / "integration"
+    lock_names = (
+        integration_evidence._evidence_lock_name(integration / "producer-install"),
+        integration_evidence._evidence_lock_name(integration / "current.json"),
+    )
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    result = context.Queue()
+    process = context.Process(
+        target=_evidence_lock_child_holds,
+        args=(
+            str(state_home),
+            "exclusive",
+            "exclusive",
+            ready,
+            release,
+            result,
+        ),
+    )
+    original_acquire = integration_evidence._acquire_lock
+    acquisitions = 0
+    child_result = None
+
+    def acquire_then_replace_root(fd, *, mode, deadline):
+        nonlocal acquisitions, child_result
+        original_acquire(fd, mode=mode, deadline=deadline)
+        acquisitions += 1
+        if acquisitions != 2:
+            return
+        os.rename(lock_root, old_root)
+        lock_root.mkdir(mode=0o700)
+        for lock_name in lock_names:
+            replacement_fd = os.open(
+                lock_root / lock_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            os.close(replacement_fd)
+        process.start()
+        assert ready.wait(10)
+        child_result = result.get(timeout=10)
+
+    monkeypatch.setattr(
+        integration_evidence,
+        "_acquire_lock",
+        acquire_then_replace_root,
+    )
+    entered = False
+    try:
+        with pytest.raises(integration_evidence.IntegrationEvidenceInvalid):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=False,
+            ):
+                entered = True
+    finally:
+        release.set()
+        if process.pid is not None:
+            process.join(10)
+        if process.is_alive():
+            process.terminate()
+            process.join(10)
+    assert not entered
+    assert child_result == "acquired"
+    assert process.exitcode == 0
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        pass
+
+
+def test_nested_same_logical_target_rejects_replaced_lock_inodes(tmp_path):
+    from codex_usage import integration_evidence
+
+    state_home = tmp_path / "state"
+    state_home.mkdir(mode=0o700)
+    _create_evidence_lock_inodes(state_home)
+    lock_root = private_io._private_lock_root()
+    integration = state_home / "codex-usage" / "integration"
+    lock_names = (
+        integration_evidence._evidence_lock_name(integration / "producer-install"),
+        integration_evidence._evidence_lock_name(integration / "current.json"),
+    )
+
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        for lock_name in lock_names:
+            lock_path = lock_root / lock_name
+            os.rename(lock_path, lock_root / f".{lock_name}.old")
+            replacement_fd = os.open(
+                lock_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            os.close(replacement_fd)
+        entered = False
+        with pytest.raises(integration_evidence.IntegrationEvidenceInvalid):
+            with integration_evidence.evidence_lock_set(
+                state_home=state_home,
+                release_mode="exclusive",
+                current_mode="exclusive",
+                timeout_seconds=0,
+                create=False,
+            ):
+                entered = True
+        assert not entered
+
+    with integration_evidence.evidence_lock_set(
+        state_home=state_home,
+        release_mode="exclusive",
+        current_mode="exclusive",
+        timeout_seconds=0,
+        create=False,
+    ):
+        pass

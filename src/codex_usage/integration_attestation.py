@@ -130,8 +130,20 @@ class VerifiedActiveManifest:
 @dataclass(frozen=True)
 class _ReleaseTreeEvidence:
     releases_identity: FileIdentity
-    entry_identities: tuple[tuple[str, bool, FileIdentity], ...]
+    entries: tuple[_ReleaseEntryEvidence, ...]
     rows: tuple[bytes, ...]
+
+
+@dataclass(frozen=True)
+class _ReleaseEntryEvidence:
+    relative: str
+    is_directory: bool
+    identity: FileIdentity
+    uid: int
+    nlink: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
 
 
 def _before_release_namespace_recheck(_release_fd: int) -> None:
@@ -376,46 +388,54 @@ def _release_tree_rows(*, release_dir: Path) -> list[bytes]:
             os.close(directory_fd)
 
 
-def _release_tree_evidence_at(
-    *,
-    integration_fd: int,
-    release_id: str,
-) -> _ReleaseTreeEvidence:
+def _release_entry_evidence(
+    relative: str,
+    item: os.stat_result,
+) -> _ReleaseEntryEvidence:
+    return _ReleaseEntryEvidence(
+        relative=relative,
+        is_directory=stat.S_ISDIR(item.st_mode),
+        identity=FileIdentity(
+            item.st_dev,
+            item.st_ino,
+            stat.S_IMODE(item.st_mode),
+        ),
+        uid=item.st_uid,
+        nlink=item.st_nlink,
+        size=item.st_size,
+        mtime_ns=item.st_mtime_ns,
+        ctime_ns=item.st_ctime_ns,
+    )
+
+
+def _scan_release_tree_at(
+    release_anchor_fd: int,
+) -> tuple[list[_ReleaseEntryEvidence], list[bytes]]:
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     file_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
-    releases_fd = -1
-    release_fd = -1
-    release_anchor_fd = -1
     stack: list[tuple[int, str, os.stat_result]] = []
     try:
-        releases_fd = open_private_dir_at(integration_fd, "releases")
-        releases_item = os.fstat(releases_fd)
-        releases_identity = _fd_identity(releases_fd)
-        release_fd = open_private_dir_at(releases_fd, release_id)
-        release_item = os.fstat(release_fd)
-        release_anchor_fd = os.open(".", directory_flags, dir_fd=release_fd)
-        stack.append((release_fd, ".", release_item))
-        release_fd = -1
+        root_fd = os.open(".", directory_flags, dir_fd=release_anchor_fd)
+        stack.append((root_fd, ".", os.fstat(root_fd)))
         rows: list[bytes] = []
-        identities: list[tuple[str, bool, FileIdentity]] = []
+        entries: list[_ReleaseEntryEvidence] = []
         entries_seen = 1
         file_bytes = 0
         while stack:
             item_fd, relative, initial = stack.pop()
             try:
                 mode = stat.S_IMODE(initial.st_mode)
-                identity = FileIdentity(initial.st_dev, initial.st_ino, mode)
-                identities.append((relative, stat.S_ISDIR(initial.st_mode), identity))
+                entries.append(_release_entry_evidence(relative, initial))
                 if stat.S_ISDIR(initial.st_mode):
                     if initial.st_uid != os.getuid():
                         raise _unavailable()
                     rows.append(f"D {relative}\0{mode:04o}\n".encode())
                     children: list[tuple[str, int, os.stat_result]] = []
                     try:
-                        with os.scandir(item_fd) as entries:
-                            for entry in entries:
+                        with os.scandir(item_fd) as directory_entries:
+                            for entry in directory_entries:
                                 if entries_seen >= MAX_RELEASE_TREE_ENTRIES:
                                     raise _unavailable()
                                 entries_seen += 1
@@ -484,6 +504,10 @@ def _release_tree_evidence_at(
                         or final.st_ino != initial.st_ino
                         or final.st_mode != initial.st_mode
                         or final.st_uid != initial.st_uid
+                        or final.st_nlink != initial.st_nlink
+                        or final.st_size != initial.st_size
+                        or final.st_mtime_ns != initial.st_mtime_ns
+                        or final.st_ctime_ns != initial.st_ctime_ns
                     ):
                         raise _unavailable()
                     continue
@@ -532,6 +556,34 @@ def _release_tree_evidence_at(
                 )
             finally:
                 os.close(item_fd)
+        return entries, rows
+    except IntegrationAttestationUnavailable:
+        raise
+    except (OSError, ValueError):
+        raise _unavailable() from None
+    finally:
+        for item_fd, _, _ in stack:
+            os.close(item_fd)
+
+
+def _release_tree_evidence_at(
+    *,
+    integration_fd: int,
+    release_id: str,
+) -> _ReleaseTreeEvidence:
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    releases_fd = -1
+    release_fd = -1
+    release_anchor_fd = -1
+    try:
+        releases_fd = open_private_dir_at(integration_fd, "releases")
+        releases_item = os.fstat(releases_fd)
+        releases_identity = _fd_identity(releases_fd)
+        release_fd = open_private_dir_at(releases_fd, release_id)
+        release_item = os.fstat(release_fd)
+        release_anchor_fd = os.open(".", directory_flags, dir_fd=release_fd)
+        entries, rows = _scan_release_tree_at(release_anchor_fd)
         _before_release_namespace_recheck(release_anchor_fd)
         _verify_release_namespace_at(
             integration_fd=integration_fd,
@@ -543,7 +595,22 @@ def _release_tree_evidence_at(
                 stat.S_IMODE(release_item.st_mode),
             ),
             release_anchor_fd=release_anchor_fd,
-            entries=identities,
+            entries=entries,
+        )
+        repeated_entries, repeated_rows = _scan_release_tree_at(release_anchor_fd)
+        if repeated_entries != entries or repeated_rows != rows:
+            raise _unavailable()
+        _verify_release_namespace_at(
+            integration_fd=integration_fd,
+            releases_identity=releases_identity,
+            release_id=release_id,
+            release_identity=FileIdentity(
+                release_item.st_dev,
+                release_item.st_ino,
+                stat.S_IMODE(release_item.st_mode),
+            ),
+            release_anchor_fd=release_anchor_fd,
+            entries=repeated_entries,
         )
         current_releases = os.fstat(releases_fd)
         if (
@@ -555,7 +622,7 @@ def _release_tree_evidence_at(
             raise _unavailable()
         return _ReleaseTreeEvidence(
             releases_identity=releases_identity,
-            entry_identities=tuple(identities),
+            entries=tuple(entries),
             rows=tuple(rows),
         )
     except IntegrationAttestationUnavailable:
@@ -563,8 +630,6 @@ def _release_tree_evidence_at(
     except (OSError, ValueError):
         raise _unavailable() from None
     finally:
-        for item_fd, _, _ in stack:
-            os.close(item_fd)
         if release_fd >= 0:
             os.close(release_fd)
         if release_anchor_fd >= 0:
@@ -576,10 +641,9 @@ def _release_tree_evidence_at(
 def _verify_release_entry_at(
     *,
     release_anchor_fd: int,
-    relative: str,
-    is_directory: bool,
-    expected: FileIdentity,
+    expected: _ReleaseEntryEvidence,
 ) -> None:
+    relative = expected.relative
     if relative == ".":
         item = os.fstat(release_anchor_fd)
     else:
@@ -603,7 +667,11 @@ def _verify_release_entry_at(
         try:
             for index, component in enumerate(components):
                 final = index == len(components) - 1
-                flags = file_flags if final and not is_directory else directory_flags
+                flags = (
+                    file_flags
+                    if final and not expected.is_directory
+                    else directory_flags
+                )
                 next_fd = os.open(component, flags, dir_fd=current_fd)
                 os.close(current_fd)
                 current_fd = next_fd
@@ -612,11 +680,16 @@ def _verify_release_entry_at(
             os.close(current_fd)
     identity = FileIdentity(item.st_dev, item.st_ino, stat.S_IMODE(item.st_mode))
     if (
-        identity != expected
+        identity != expected.identity
+        or item.st_uid != expected.uid
+        or item.st_nlink != expected.nlink
+        or item.st_size != expected.size
+        or item.st_mtime_ns != expected.mtime_ns
+        or item.st_ctime_ns != expected.ctime_ns
         or item.st_uid != os.getuid()
-        or (is_directory and not stat.S_ISDIR(item.st_mode))
+        or (expected.is_directory and not stat.S_ISDIR(item.st_mode))
         or (
-            not is_directory
+            not expected.is_directory
             and (not stat.S_ISREG(item.st_mode) or item.st_nlink != 1)
         )
     ):
@@ -630,7 +703,7 @@ def _verify_release_namespace_at(
     release_id: str,
     release_identity: FileIdentity,
     release_anchor_fd: int,
-    entries: list[tuple[str, bool, FileIdentity]],
+    entries: list[_ReleaseEntryEvidence],
 ) -> None:
     bound_releases_fd = -1
     bound_release_fd = -1
@@ -641,12 +714,10 @@ def _verify_release_namespace_at(
         bound_release_fd = open_private_dir_at(bound_releases_fd, release_id)
         if _fd_identity(bound_release_fd) != release_identity:
             raise _unavailable()
-        for relative, is_directory, identity in entries:
+        for entry in entries:
             _verify_release_entry_at(
                 release_anchor_fd=release_anchor_fd,
-                relative=relative,
-                is_directory=is_directory,
-                expected=identity,
+                expected=entry,
             )
     finally:
         if bound_release_fd >= 0:

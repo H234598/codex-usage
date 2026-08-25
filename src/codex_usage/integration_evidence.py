@@ -28,6 +28,7 @@ _EVIDENCE_LOCK_STATE = threading.local()
 
 @dataclass
 class _HeldEvidenceLocks:
+    state_home: Path
     state_identity: FileIdentity
     integration_identity: FileIdentity
     lock_root_identity: FileIdentity
@@ -220,6 +221,33 @@ def _verify_held_lock_entry(lock_root_fd: int, name: str, held_fd: int) -> None:
             os.close(named_fd)
 
 
+def _verify_held_lock_namespace(
+    *,
+    held_root_fd: int,
+    lock_root_identity: FileIdentity,
+    release_name: str,
+    release_fd: int,
+    current_name: str,
+    current_fd: int,
+) -> None:
+    fresh_root_fd = -1
+    try:
+        try:
+            fresh_root_fd = _open_lock_root(create=False)
+        except IntegrationEvidenceUnavailable as exc:
+            raise IntegrationEvidenceInvalid() from exc
+        if (
+            _fd_identity(held_root_fd) != lock_root_identity
+            or _fd_identity(fresh_root_fd) != lock_root_identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        _verify_held_lock_entry(fresh_root_fd, release_name, release_fd)
+        _verify_held_lock_entry(fresh_root_fd, current_name, current_fd)
+    finally:
+        if fresh_root_fd >= 0:
+            os.close(fresh_root_fd)
+
+
 def _release_lock(fd: int) -> None:
     try:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -262,29 +290,19 @@ def _verify_lock_target_parent(state_home: Path) -> tuple[FileIdentity, FileIden
 def _matches_held_lock_set(
     held_set: _HeldEvidenceLocks,
     *,
-    state_identity: FileIdentity,
-    integration_identity: FileIdentity,
     release_name: str,
     current_name: str,
-    create: bool,
 ) -> bool:
-    if (
-        held_set.state_identity != state_identity
-        or held_set.integration_identity != integration_identity
-        or held_set.release_name != release_name
-        or held_set.current_name != current_name
-    ):
-        return False
-    root_fd = _open_lock_root(create=create)
+    root_fd = _open_lock_root(create=False)
     release_fd = -1
     current_fd = -1
     try:
         if _fd_identity(root_fd) != held_set.lock_root_identity:
             return False
-        release_fd = _open_lock_file(root_fd, release_name, create=create)
+        release_fd = _open_lock_file(root_fd, release_name, create=False)
         if _fd_identity(release_fd) != held_set.release_identity:
             return False
-        current_fd = _open_lock_file(root_fd, current_name, create=create)
+        current_fd = _open_lock_file(root_fd, current_name, create=False)
         return _fd_identity(current_fd) == held_set.current_identity
     finally:
         if current_fd >= 0:
@@ -326,15 +344,27 @@ def evidence_lock_set(
         held_sets = []
         _EVIDENCE_LOCK_STATE.sets = held_sets
     for held_set in held_sets:
-        if not _matches_held_lock_set(
-            held_set,
-            state_identity=state_identity,
-            integration_identity=integration_identity,
-            release_name=release_name,
-            current_name=current_name,
-            create=create,
+        if (
+            held_set.state_home != state_home
+            or held_set.release_name != release_name
+            or held_set.current_name != current_name
         ):
             continue
+        if (
+            held_set.state_identity != state_identity
+            or held_set.integration_identity != integration_identity
+        ):
+            raise IntegrationEvidenceInvalid()
+        try:
+            matches_held_set = _matches_held_lock_set(
+                held_set,
+                release_name=release_name,
+                current_name=current_name,
+            )
+        except IntegrationEvidenceError as exc:
+            raise IntegrationEvidenceInvalid() from exc
+        if not matches_held_set:
+            raise IntegrationEvidenceInvalid()
         if (
             held_set.release_mode != release_mode
             or held_set.current_mode != current_mode
@@ -371,9 +401,16 @@ def evidence_lock_set(
                 raise
             acquired.append((logical_name, fd))
             acquired_identities[logical_name] = _fd_identity(fd)
-        _verify_held_lock_entry(root_fd, release_name, acquired[0][1])
-        _verify_held_lock_entry(root_fd, current_name, acquired[1][1])
+        _verify_held_lock_namespace(
+            held_root_fd=root_fd,
+            lock_root_identity=lock_root_identity,
+            release_name=release_name,
+            release_fd=acquired[0][1],
+            current_name=current_name,
+            current_fd=acquired[1][1],
+        )
         held_set = _HeldEvidenceLocks(
+            state_home=state_home,
             state_identity=state_identity,
             integration_identity=integration_identity,
             lock_root_identity=lock_root_identity,
