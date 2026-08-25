@@ -4613,3 +4613,20 @@ Fensterfelder behalten weiterhin ihr partielles Merge- und Fail-Closed-Verhalten
 
 Verifikation: **185 `tests/test_usage_limits.py`-Tests**, 98%-Branch-Coverage
 im Usage-Limits-Modul, Mypy, Ruff, Python-Compile und `git diff --check` grün.
+
+## Runde 229: C1-Steuerzeichen in Snapshot-Fensternamen
+
+Fokus: `src/codex_usage/state.py`, Laden persistierter Limit-Fenster.
+
+Zwei reproduzierbare Eingaben (`U+0080` und `U+009F`) passierten die
+Fensternamenvalidierung. C0 und DEL wurden bereits verworfen, der übrige
+C1-Bereich jedoch nicht. Der Name kann später in Status-, Hover- oder
+Klickausgaben landen.
+
+Fix: Snapshot-Fensternamen weisen jetzt den kompletten Bereich `0x7F…0x9F`
+zusätzlich zu Whitespace und C0 zurück. Bestehende Identitäts- und
+Längenregeln bleiben unverändert.
+
+Verifikation: **386 `tests/test_state.py`-Tests** inklusive zweier C1-
+Regressionen bestanden; State-Coverage weiterhin 99%, Mypy, Ruff,
+Python-Compile und `git diff --check` folgen vor Commit.

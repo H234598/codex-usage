@@ -182,6 +182,21 @@ def test_load_current_usage_rejects_non_string_account_id(tmp_path, account_id):
     assert load_current_usage(account_id, tmp_path) is None
 
 
+def test_state_entrypoints_reject_reserved_global_account_id(tmp_path):
+    usage = AccountUsage(
+        account_id="__all_accounts__",
+        label="reserved",
+        captured_at=datetime.now(UTC),
+    )
+    with pytest.raises(ValueError, match="account id"):
+        load_state_generation("__all_accounts__", tmp_path)
+    assert load_usage_snapshot("__all_accounts__", tmp_path) is None
+    assert load_current_usage("__all_accounts__", tmp_path) is None
+    for helper in (save_usage_snapshot, save_current_usage):
+        with pytest.raises(ValueError, match="account id"):
+            helper(usage, tmp_path)
+
+
 @pytest.mark.parametrize("directory", [[], "invalid", 1, False, object()])
 def test_state_entrypoints_reject_non_path_directory(directory):
     for helper, args in (
@@ -200,6 +215,51 @@ def test_state_entrypoints_reject_non_path_directory(directory):
     for helper in (save_usage_snapshot, save_current_usage):
         with pytest.raises(ValueError, match="state directory is invalid"):
             helper(usage, directory)  # type: ignore[arg-type]
+
+
+def test_state_entrypoints_reject_path_subclass_hooks(tmp_path):
+    path_type = type(Path())
+
+    class BrokenPath(path_type):
+        def __truediv__(self, _other):
+            raise RuntimeError("path hook executed")
+
+    directory = BrokenPath(str(tmp_path))
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+    for helper, args in (
+        (load_state_generation, ("account", directory)),
+        (load_usage_snapshot, ("account", directory)),
+        (load_current_usage, ("account", directory)),
+    ):
+        with pytest.raises(ValueError, match="state directory is invalid"):
+            helper(*args)
+    for helper in (save_usage_snapshot, save_current_usage):
+        with pytest.raises(ValueError, match="state directory is invalid"):
+            helper(usage, directory)
+
+
+def test_state_entrypoints_reject_account_id_subclass_hooks(tmp_path):
+    class BrokenString(str):
+        def __hash__(self):
+            raise RuntimeError("account id hook executed")
+
+    account_id = BrokenString("account")
+    usage = AccountUsage(
+        account_id=account_id,
+        label="Account",
+        captured_at=datetime.now(UTC),
+    )
+    with pytest.raises(ValueError, match="account id"):
+        load_state_generation(account_id, tmp_path)
+    assert load_usage_snapshot(account_id, tmp_path) is None
+    assert load_current_usage(account_id, tmp_path) is None
+    for helper in (save_usage_snapshot, save_current_usage):
+        with pytest.raises(ValueError, match="account id"):
+            helper(usage, tmp_path)
 
 
 @pytest.mark.parametrize("usage", [None, [], 1, object()])
@@ -642,7 +702,49 @@ def test_usage_state_rejects_malformed_window_duration(duration):
     assert loaded.error == "invalid cached limit window slot: five_hour"
 
 
-@pytest.mark.parametrize("name", ["weekly\u0000", " weekly"])
+def test_usage_state_marks_malformed_credit_window_stale():
+    loaded = usage_from_dict(
+        {
+            "account": "malformed-credit-window",
+            "label": "Malformed credit window",
+            "captured_at": "2026-07-16T04:00:00+00:00",
+            "status": "partial",
+            "stale": False,
+            "cache_invalidated": False,
+            "five_hour": {"name": "5h", "remaining": 90},
+            "weekly": {"name": "weekly", "remaining": 55},
+            "credits": [],
+        }
+    )
+
+    assert loaded.credits is None
+    assert loaded.stale is True
+    assert loaded.cache_invalidated is False
+    assert loaded.error == "invalid cached limit window slot: credits"
+
+
+def test_usage_state_marks_invalid_credit_value_stale():
+    loaded = usage_from_dict(
+        {
+            "account": "invalid-credit-value",
+            "label": "Invalid credit value",
+            "captured_at": "2026-07-16T04:00:00+00:00",
+            "status": "partial",
+            "stale": False,
+            "cache_invalidated": False,
+            "five_hour": {"name": "5h", "remaining": 90},
+            "weekly": {"name": "weekly", "remaining": 55},
+            "credits": {"name": "credits", "remaining": -1},
+        }
+    )
+
+    assert loaded.credits is not None
+    assert loaded.credits.remaining is None
+    assert loaded.stale is True
+    assert loaded.error == "invalid cached limit value: credits"
+
+
+@pytest.mark.parametrize("name", ["weekly\u0000", "weekly\u0080", "weekly\u009f", " weekly"])
 def test_usage_state_rejects_normalized_window_identity(name):
     with pytest.raises(ValueError, match="snapshot window name is invalid"):
         usage_from_dict(
@@ -696,6 +798,7 @@ def test_usage_state_rejects_normalized_pool_identity(field):
     assert loaded.cache_invalidated is True
     assert loaded.five_hour is None
     assert loaded.weekly is None
+    assert loaded.credits is None
     assert loaded.main is None
     assert loaded.models == ()
 
@@ -718,6 +821,7 @@ def test_load_usage_snapshot_invalidates_untrusted_backend_provenance(
         "cache_invalidated": False,
         "five_hour": {"name": "5h", "remaining": 97},
         "weekly": {"name": "weekly", "remaining": 55},
+        "credits": {"name": "credits", "remaining": 35},
         "backend_configured": backend_configured,
         "backend_used": backend_used,
         "fallback_reason": "forged fallback",
@@ -738,6 +842,7 @@ def test_load_usage_snapshot_invalidates_untrusted_backend_provenance(
     assert loaded.models == ()
     assert loaded.values_captured_at is None
     assert loaded.error == "incomplete cached backend provenance"
+    assert loaded.credits is None
 
 
 def test_backend_provenance_rejects_explicit_cross_backend_cache_data():
@@ -1148,6 +1253,28 @@ def test_expire_reset_windows_drops_only_expired_cached_values():
     assert expired.status == AccountStatus.PARTIAL
     assert expired.stale is True
     assert expired.error == "cached limit window expired: 5h; refresh required"
+
+
+def test_expire_reset_windows_drops_expired_credit_value():
+    reference_at = datetime(2026, 7, 12, 9, 40, tzinfo=UTC)
+    usage = AccountUsage(
+        account_id="credit-expired",
+        label="Credit expired",
+        captured_at=reference_at,
+        status=AccountStatus.OK,
+        credits=LimitWindow(
+            name="credits",
+            remaining=35,
+            reset_at=reference_at - timedelta(seconds=1),
+        ),
+    )
+
+    expired = expire_reset_windows(usage, reference_at=reference_at)
+
+    assert expired.credits is None
+    assert expired.status == AccountStatus.PARTIAL
+    assert expired.stale is True
+    assert expired.error == "cached limit window expired: credits; refresh required"
 
 
 def test_expire_reset_windows_handles_dynamic_core_and_model_pools():
@@ -2067,6 +2194,22 @@ def test_state_transaction_cleanup_rejects_unexpected_directory(tmp_path):
     sentinel.write_text("keep", encoding="utf-8")
 
     with pytest.raises(ValueError, match="unexpected state transaction entry"):
+        _remove_state_transaction_dir(transaction)
+
+    assert sentinel.exists()
+
+
+def test_state_transaction_cleanup_rejects_symlink_directory_without_touching_target(
+    tmp_path,
+):
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    sentinel = outside / "sentinel"
+    sentinel.write_text("keep", encoding="utf-8")
+    transaction = tmp_path / "transaction"
+    transaction.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="transaction directory"):
         _remove_state_transaction_dir(transaction)
 
     assert sentinel.exists()
@@ -3446,6 +3589,90 @@ def test_login_required_status_does_not_restore_last_success_values(tmp_path):
     assert merged.backend_used == "app-server"
 
 
+def test_login_required_merge_clears_credit_window():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.LOGIN_REQUIRED,
+        credits=LimitWindow(name="credits", remaining=35, duration_seconds=2_592_000),
+    )
+
+    merged = merge_current_with_last_success(
+        current,
+        AccountUsage(account_id="privat", label="Privat", captured_at=captured),
+    )
+
+    assert merged.credits is None
+    assert merged.cache_invalidated is True
+    assert merged.stale is True
+
+
+def test_transient_authenticated_error_retains_only_known_reset_count():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.ERROR,
+        error="failed to fetch codex rate limits: network down",
+        backend_configured="app-server",
+        backend_used="app-server",
+        cache_invalidated=True,
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured - timedelta(minutes=1),
+        backend_configured="app-server",
+        backend_used="app-server",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        weekly=LimitWindow(name="weekly", remaining=80),
+        usage_resets=UsageResetState(1, True, False),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.status == AccountStatus.PARTIAL
+    assert merged.cache_invalidated is False
+    assert merged.stale is True
+    assert merged.five_hour is None
+    assert merged.weekly is None
+    assert merged.usage_resets == UsageResetState(1, True, False)
+    reloaded = usage_from_dict(merged.as_dict())
+    assert reloaded.usage_resets == UsageResetState(1, True, False)
+
+
+def test_transient_error_does_not_retain_reset_from_invalidated_snapshot():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.ERROR,
+        backend_configured="app-server",
+        backend_used="app-server",
+        cache_invalidated=True,
+    )
+    invalidated = replace(
+        current,
+        status=AccountStatus.PARTIAL,
+        cache_invalidated=True,
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        usage_resets=UsageResetState(1, True, False),
+    )
+
+    merged = merge_current_with_last_success(current, invalidated)
+
+    assert merged is current
+    assert merged.status == AccountStatus.ERROR
+    assert merged.cache_invalidated is True
+    assert merged.usage_resets == UsageResetState(None, False, False)
+
+
 def test_invalidated_state_discards_embedded_limit_windows():
     payload = AccountUsage(
         account_id="privat",
@@ -3574,6 +3801,47 @@ def test_merge_current_with_last_success_fills_missing_window():
     assert merged.stale is True
 
 
+def test_merge_current_with_last_success_fills_missing_credit_window():
+    captured = datetime(2026, 6, 8, 4, 20, tzinfo=ZoneInfo("Europe/Berlin"))
+    current = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(
+            name="5h",
+            remaining=97,
+            reset_at=captured + timedelta(hours=5),
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=captured,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        weekly=LimitWindow(name="weekly", remaining=55),
+        credits=LimitWindow(
+            name="credits",
+            remaining=35,
+            reset_at=captured + timedelta(days=1),
+            duration_seconds=2_592_000,
+        ),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.credits == last_success.credits
+    assert merged.weekly == last_success.weekly
+    assert merged.stale is True
+
+
 def test_browser_merge_does_not_age_fresh_resetless_window_with_old_counterpart():
     timezone = ZoneInfo("Europe/Berlin")
     current_capture = datetime(2026, 7, 12, 10, 0, tzinfo=timezone)
@@ -3604,6 +3872,44 @@ def test_browser_merge_does_not_age_fresh_resetless_window_with_old_counterpart(
     assert merged.values_captured_at is None
     assert evaluated.five_hour is not None
     assert evaluated.five_hour.remaining == 80
+
+
+def test_browser_pool_only_merge_does_not_restore_legacy_counterpart():
+    timezone = ZoneInfo("Europe/Berlin")
+    current_capture = datetime(2026, 7, 12, 10, 0, tzinfo=timezone)
+    current = AccountUsage(
+        account_id="pool-only",
+        label="Pool only",
+        captured_at=current_capture,
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-pool-only",
+        backend_account_id="account-pool-only",
+        main=UsagePool(
+            key="main",
+            display_name="Codex",
+            windows=(
+                LimitWindow(name="5h", duration_seconds=18_000, remaining=80),
+            ),
+        ),
+    )
+    last_success = AccountUsage(
+        account_id="pool-only",
+        label="Pool only",
+        captured_at=current_capture - timedelta(hours=1),
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-pool-only",
+        backend_account_id="account-pool-only",
+        five_hour=LimitWindow(name="5h", remaining=70),
+    )
+
+    merged = merge_current_with_last_success(current, last_success)
+
+    assert merged.five_hour is None
+    assert merged.main is current.main
 
 
 def test_browser_merge_does_not_expire_fresh_resetful_window_with_old_counterpart():
@@ -4739,6 +5045,47 @@ def test_merge_current_with_newer_partial_snapshot_drops_older_resetless_counter
     assert merged.weekly == last_success.weekly
     assert merged.values_captured_at is None
     assert merged.stale is False
+
+
+def test_merge_newer_partial_snapshot_preserves_older_credit_window():
+    timezone = ZoneInfo("Europe/Berlin")
+    older_capture = datetime(2026, 7, 11, 2, 0, tzinfo=timezone)
+    newer_capture = datetime(2026, 7, 11, 3, 0, tzinfo=timezone)
+    older = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=older_capture,
+        status=AccountStatus.OK,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", remaining=42),
+        credits=LimitWindow(
+            name="credits",
+            remaining=35,
+            reset_at=older_capture + timedelta(days=1),
+            duration_seconds=2_592_000,
+        ),
+    )
+    newer = AccountUsage(
+        account_id="privat",
+        label="Privat",
+        captured_at=newer_capture,
+        status=AccountStatus.PARTIAL,
+        backend_configured="direct",
+        backend_used="browser",
+        backend_user_id="user-privat",
+        backend_account_id="account-privat",
+        five_hour=LimitWindow(name="5h", reset_at=newer_capture + timedelta(hours=5)),
+    )
+
+    merged = merge_current_with_last_success(older, newer)
+
+    assert merged.credits == older.credits
+    assert merged.five_hour is not None
+    assert merged.five_hour.remaining == 42
+    assert merged.five_hour.reset_at == newer.five_hour.reset_at
 
 
 @pytest.mark.parametrize("backend", ("direct", "app-server"))
@@ -6121,3 +6468,812 @@ def test_state_snapshot_small_helpers_cover_empty_and_invalid_values():
     assert state_module._optional_bool("true") is None
     with pytest.raises(ValueError, match="captured_at must be a datetime"):
         _saved_datetime(None)
+
+
+def test_state_configured_provenance_rejects_backend_configured_hook():
+    class BrokenUsage(AccountUsage):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "backend_configured" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic configured backend hook")
+            return super().__getattribute__(name)
+
+    usage = BrokenUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    object.__setattr__(usage, "ready", True)
+
+    assert backend_provenance_matches_configured(usage, "direct") is False
+
+
+def test_state_configured_provenance_rejects_backend_used_hook():
+    class BrokenUsage(AccountUsage):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "backend_used" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic used backend hook")
+            return super().__getattribute__(name)
+
+    usage = BrokenUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    object.__setattr__(usage, "ready", True)
+
+    assert backend_provenance_matches_configured(usage, "direct") is False
+
+
+def test_state_configured_provenance_guard_fails_closed(monkeypatch):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+
+    def raise_guard(_usage):
+        raise RuntimeError("synthetic provenance guard")
+
+    monkeypatch.setattr(state_module, "_backend_provenance_fields_valid", raise_guard)
+
+    assert backend_provenance_matches_configured(usage, "direct") is False
+
+
+def test_state_backend_provenance_guard_fails_closed(monkeypatch):
+    usage = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+
+    def raise_guard(_usage):
+        raise RuntimeError("synthetic provenance guard")
+
+    monkeypatch.setattr(state_module, "_backend_provenance_is_complete", raise_guard)
+
+    assert backend_provenance_matches(usage, usage) is False
+
+
+def test_state_provenance_fields_guard_rejects_configured_hook():
+    class BrokenUsage(AccountUsage):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "backend_configured" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic configured backend hook")
+            return super().__getattribute__(name)
+
+    usage = BrokenUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    object.__setattr__(usage, "ready", True)
+
+    assert state_module._backend_provenance_fields_valid(usage) is False
+
+
+def test_state_provenance_complete_guard_rejects_configured_hook():
+    class BrokenUsage(AccountUsage):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "backend_configured" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic configured backend hook")
+            return super().__getattribute__(name)
+
+    usage = BrokenUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    object.__setattr__(usage, "ready", True)
+
+    assert state_module._backend_provenance_is_complete(usage) is False
+
+
+def test_state_fallback_proof_rejects_reason_hook():
+    class BrokenUsage(AccountUsage):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "fallback_reason" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic fallback reason hook")
+            return super().__getattribute__(name)
+
+    usage = BrokenUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="app-server",
+        backend_used="direct",
+    )
+    object.__setattr__(usage, "ready", True)
+
+    assert state_module._has_backend_fallback_proof(usage) is False
+
+
+def test_state_backend_provenance_matches_rejects_left_backend_hook():
+    class BrokenUsage(AccountUsage):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "backend_used" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic left backend hook")
+            return super().__getattribute__(name)
+
+    left = BrokenUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+    )
+    right = replace(left)
+    object.__setattr__(left, "ready", True)
+
+    assert backend_provenance_matches(left, right) is False
+
+
+def test_state_backend_identity_matches_rejects_left_backend_hook():
+    class BrokenUsage(AccountUsage):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "backend_used" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic left backend hook")
+            return super().__getattribute__(name)
+
+    left = BrokenUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-id",
+    )
+    right = replace(left)
+    object.__setattr__(left, "ready", True)
+
+    assert backend_identity_matches(left, right) is False
+
+
+def test_state_backend_identity_matches_rejects_right_account_hook():
+    class BrokenUsage(AccountUsage):
+        ready = False
+
+        def __getattribute__(self, name):
+            if name == "backend_account_id" and object.__getattribute__(self, "ready"):
+                raise RuntimeError("synthetic right account hook")
+            return super().__getattribute__(name)
+
+    left = AccountUsage(
+        account_id="account",
+        label="Account",
+        captured_at=datetime.now().astimezone(),
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-id",
+    )
+    right = BrokenUsage(
+        account_id="account",
+        label="Account",
+        captured_at=left.captured_at,
+        backend_configured="direct",
+        backend_used="direct",
+        backend_account_id="account-id",
+    )
+    object.__setattr__(right, "ready", True)
+
+    assert backend_identity_matches(left, right) is False
+
+
+def test_state_backend_value_guard_rejects_equality_hook():
+    class BrokenValue(str):
+        def __eq__(self, _other):
+            raise RuntimeError("synthetic backend equality hook")
+
+    assert (
+        state_module._backend_value_valid(BrokenValue("direct"), state_module.KNOWN_BACKENDS)
+        is False
+    )
+
+
+def test_state_backend_value_guard_rejects_hash_hook():
+    class BrokenValue(str):
+        def __hash__(self):
+            raise RuntimeError("synthetic backend hash hook")
+
+    assert (
+        state_module._backend_value_valid(BrokenValue("direct"), state_module.KNOWN_BACKENDS)
+        is False
+    )
+
+
+class _StateLocksCloseFailure:
+    def __init__(self, message="synthetic lock close marker"):
+        self.message = message
+
+    def close(self):
+        raise RuntimeError(self.message)
+
+
+def test_state_transaction_commit_lock_close_failure_marks_closed(tmp_path):
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=None,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=_StateLocksCloseFailure(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="lock close"):
+        transaction.commit()
+
+    assert transaction.closed is True
+
+
+def test_state_transaction_commit_cleanup_and_lock_close_failure_marks_closed(
+    tmp_path,
+):
+    transaction_dir = tmp_path / "transaction"
+    transaction_dir.mkdir()
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=transaction_dir,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=_StateLocksCloseFailure(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="lock close"):
+        transaction.commit()
+
+    assert transaction.closed is True
+    assert not transaction_dir.exists()
+
+
+def test_state_transaction_rollback_lock_close_failure_is_grouped(tmp_path):
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=None,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=_StateLocksCloseFailure(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed") as exc:
+        transaction.rollback()
+
+    assert any("lock close" in str(error) for error in exc.value.exceptions)
+    assert transaction.closed is True
+
+
+def test_state_transaction_rollback_keeps_generation_and_lock_errors(tmp_path, monkeypatch):
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=None,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=_StateLocksCloseFailure(),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        state_module,
+        "_restore_generation_state",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("generation rollback marker")),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed") as exc:
+        transaction.rollback()
+
+    messages = [str(error) for error in exc.value.exceptions]
+    assert any("generation rollback marker" in message for message in messages)
+    assert any("lock close" in message for message in messages)
+    assert transaction.closed is True
+
+
+def test_state_transaction_rollback_keeps_cleanup_and_lock_errors(tmp_path, monkeypatch):
+    transaction_dir = tmp_path / "transaction"
+    transaction_dir.mkdir()
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=transaction_dir,
+        moved=[],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=_StateLocksCloseFailure(),  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        state_module,
+        "_remove_state_transaction_dir",
+        lambda _path: (_ for _ in ()).throw(RuntimeError("transaction cleanup marker")),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed") as exc:
+        transaction.rollback()
+
+    messages = [str(error) for error in exc.value.exceptions]
+    assert any("transaction cleanup marker" in message for message in messages)
+    assert any("lock close" in message for message in messages)
+    assert transaction.closed is True
+
+
+def test_state_transaction_rollback_keeps_restore_and_lock_errors(tmp_path, monkeypatch):
+    target = tmp_path / "target.json"
+    backup = tmp_path / "backup.json"
+    backup.write_text("backup", encoding="utf-8")
+    transaction = state_module._StateDeleteTransaction(
+        transaction_dir=None,
+        moved=[(target, backup)],
+        generation_path=tmp_path / "generation.json",
+        generation_before=None,
+        locks=_StateLocksCloseFailure(),  # type: ignore[arg-type]
+    )
+    original_rename = Path.rename
+
+    def fail_restore(path, destination):
+        if path == backup:
+            raise OSError("backup restore marker")
+        return original_rename(path, destination)
+
+    monkeypatch.setattr(Path, "rename", fail_restore)
+
+    with pytest.raises(BaseExceptionGroup, match="state deletion rollback failed") as exc:
+        transaction.rollback()
+
+    messages = [str(error) for error in exc.value.exceptions]
+    assert any("backup restore marker" in message for message in messages)
+    assert any("lock close" in message for message in messages)
+    assert transaction.closed is True
+
+
+def test_state_early_rollback_keeps_primary_and_lock_close_errors(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    root.mkdir()
+    snapshot = root / "snapshots"
+    snapshot.write_text("not a directory", encoding="utf-8")
+
+    class FailingExitStack(state_module.ExitStack):
+        def close(self):
+            raise RuntimeError("lock close marker")
+
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: root / "current")
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(state_module, "ExitStack", FailingExitStack)
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed") as exc:
+        state_module._remove_account_state_unlocked("account")
+
+    messages = [str(error) for error in exc.value.exceptions]
+    assert any("snapshot path directory" in message for message in messages)
+    assert any("lock close marker" in message for message in messages)
+
+
+def test_state_early_generation_failure_keeps_lock_close_error(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    (snapshot / "account.json").write_text("snapshot", encoding="utf-8")
+
+    class FailingExitStack(state_module.ExitStack):
+        def close(self):
+            raise RuntimeError("lock close marker")
+
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(state_module, "ExitStack", FailingExitStack)
+    monkeypatch.setattr(
+        state_module,
+        "_increment_state_generation",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("generation increment marker")),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed") as exc:
+        state_module._remove_account_state_unlocked("account")
+
+    messages = [str(error) for error in exc.value.exceptions]
+    assert any("generation increment marker" in message for message in messages)
+    assert any("lock close marker" in message for message in messages)
+
+
+def test_state_early_rollback_restore_failure_keeps_lock_close_error(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    (snapshot / "account.json").write_text("snapshot", encoding="utf-8")
+
+    class FailingExitStack(state_module.ExitStack):
+        def close(self):
+            raise RuntimeError("lock close marker")
+
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(state_module, "ExitStack", FailingExitStack)
+    monkeypatch.setattr(
+        state_module,
+        "_increment_state_generation",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("generation increment marker")),
+    )
+    monkeypatch.setattr(
+        state_module,
+        "_restore_generation_state",
+        lambda *_args: (_ for _ in ()).throw(ValueError("generation restore marker")),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed") as exc:
+        state_module._remove_account_state_unlocked("account")
+
+    messages = [str(error) for error in exc.value.exceptions]
+    assert any("generation increment marker" in message for message in messages)
+    assert any("generation restore marker" in message for message in messages)
+    assert any("lock close marker" in message for message in messages)
+
+
+def test_state_early_cleanup_failure_keeps_lock_close_error(tmp_path, monkeypatch):
+    root = tmp_path / "state"
+    snapshot = root / "snapshots"
+    current = root / "current"
+    debug = root / "debug"
+    for directory in (root, snapshot, current, debug):
+        directory.mkdir()
+    (snapshot / "account.json").write_text("snapshot", encoding="utf-8")
+
+    class FailingExitStack(state_module.ExitStack):
+        def close(self):
+            raise RuntimeError("lock close marker")
+
+    monkeypatch.setattr(state_module, "default_state_dir", lambda: root)
+    monkeypatch.setattr(state_module, "default_snapshot_dir", lambda: snapshot)
+    monkeypatch.setattr(state_module, "default_current_dir", lambda: current)
+    monkeypatch.setattr(state_module, "private_path_lock", lambda *_args, **_kwargs: nullcontext())
+    monkeypatch.setattr(state_module, "ExitStack", FailingExitStack)
+    monkeypatch.setattr(
+        state_module,
+        "_increment_state_generation",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("generation increment marker")),
+    )
+    monkeypatch.setattr(
+        state_module,
+        "_remove_state_transaction_dir",
+        lambda _path: (_ for _ in ()).throw(ValueError("transaction cleanup marker")),
+    )
+
+    with pytest.raises(BaseExceptionGroup, match="state cleanup rollback failed") as exc:
+        state_module._remove_account_state_unlocked("account")
+
+    messages = [str(error) for error in exc.value.exceptions]
+    assert any("generation increment marker" in message for message in messages)
+    assert any("transaction cleanup marker" in message for message in messages)
+    assert any("lock close marker" in message for message in messages)
+
+
+def test_state_generation_maps_generic_ancestor_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        state_module,
+        "assert_no_symlink_ancestors",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic generation ancestor marker")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="state generation is invalid"):
+        state_module._read_state_generation(tmp_path / "generation.json", "account")
+
+
+def test_state_generation_maps_generic_exists_error(monkeypatch):
+    class BrokenPath:
+        def exists(self):
+            raise RuntimeError("synthetic generation exists marker")
+
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
+
+    with pytest.raises(ValueError, match="state generation is invalid"):
+        state_module._read_state_generation(BrokenPath(), "account")
+
+
+def test_state_generation_maps_generic_symlink_error(monkeypatch):
+    class BrokenPath:
+        def exists(self):
+            return False
+
+        def is_symlink(self):
+            raise RuntimeError("synthetic generation symlink marker")
+
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
+
+    with pytest.raises(ValueError, match="state generation is invalid"):
+        state_module._read_state_generation(BrokenPath(), "account")
+
+
+def test_state_generation_maps_generic_reader_error(tmp_path, monkeypatch):
+    path = tmp_path / "generation.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        state_module,
+        "read_private_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic generation reader marker")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="state generation is invalid"):
+        state_module._read_state_generation(path, "account")
+
+
+def test_state_generation_maps_generic_stat_error(tmp_path, monkeypatch):
+    path = tmp_path / "generation.json"
+    path.write_text("{}", encoding="utf-8")
+
+    class BrokenStat:
+        @property
+        def st_nlink(self):
+            raise RuntimeError("synthetic generation stat marker")
+
+    monkeypatch.setattr(
+        state_module,
+        "read_private_text",
+        lambda *_args, **_kwargs: ("{}", BrokenStat()),
+    )
+
+    with pytest.raises(ValueError, match="state generation is invalid"):
+        state_module._read_state_generation(path, "account")
+
+
+def test_state_generation_maps_generic_parser_error(tmp_path, monkeypatch):
+    path = tmp_path / "generation.json"
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o600)
+    monkeypatch.setattr(
+        state_module,
+        "loads_strict",
+        lambda _text: (_ for _ in ()).throw(
+            RuntimeError("synthetic generation parser marker")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="state generation is invalid"):
+        state_module._read_state_generation(path, "account")
+
+
+def test_state_generation_maps_generic_account_getter(tmp_path, monkeypatch):
+    path = tmp_path / "generation.json"
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o600)
+
+    class BrokenPayload(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic generation payload marker")
+
+    monkeypatch.setattr(state_module, "loads_strict", lambda _text: BrokenPayload())
+
+    with pytest.raises(ValueError, match="state generation is invalid"):
+        state_module._read_state_generation(path, "account")
+
+
+def test_state_generation_maps_generic_generation_getter(tmp_path, monkeypatch):
+    path = tmp_path / "generation.json"
+    path.write_text("{}", encoding="utf-8")
+    path.chmod(0o600)
+
+    class BrokenPayload(dict):
+        def get(self, key, default=None):
+            if key == "account":
+                return "account"
+            raise RuntimeError("synthetic generation value marker")
+
+    monkeypatch.setattr(state_module, "loads_strict", lambda _text: BrokenPayload())
+
+    with pytest.raises(ValueError, match="state generation is invalid"):
+        state_module._read_state_generation(path, "account")
+
+
+def test_state_generation_increment_maps_generic_ancestor_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        state_module,
+        "assert_no_symlink_ancestors",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic generation directory ancestor marker")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="state generation directory is invalid"):
+        state_module._increment_state_generation("account", tmp_path)
+
+
+def test_state_generation_increment_maps_generic_directory_metadata_error(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "state"
+    root.mkdir()
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
+    original_is_symlink = Path.is_symlink
+    generation_dir = root / "generations"
+
+    def fail_generation_is_symlink(path):
+        if path == generation_dir:
+            raise RuntimeError("synthetic generation directory symlink marker")
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", fail_generation_is_symlink)
+
+    with pytest.raises(ValueError, match="state generation directory is invalid"):
+        state_module._increment_state_generation("account", root)
+
+
+def test_state_generation_increment_maps_generic_prepare_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(state_module, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        state_module,
+        "ensure_private_directory",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic generation directory prepare marker")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="could not secure state generation directory"):
+        state_module._increment_state_generation("account", tmp_path)
+
+
+def test_load_usage_maps_generic_directory_join_error():
+    class BrokenDirectory:
+        def __truediv__(self, _name):
+            raise RuntimeError("synthetic snapshot path join marker")
+
+    assert state_module._load_usage("account", BrokenDirectory()) is None
+
+
+def test_load_usage_maps_generic_path_exists_error(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    original_exists = Path.exists
+
+    def fail_exists(candidate):
+        if candidate == path:
+            raise RuntimeError("synthetic snapshot exists marker")
+        return original_exists(candidate)
+
+    monkeypatch.setattr(Path, "exists", fail_exists)
+
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_maps_generic_reader_error(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        state_module,
+        "read_private_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic snapshot reader marker")
+        ),
+    )
+
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_maps_generic_stat_error(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    path.write_text("{}", encoding="utf-8")
+
+    class BrokenStat:
+        @property
+        def st_nlink(self):
+            raise RuntimeError("synthetic snapshot stat marker")
+
+    monkeypatch.setattr(
+        state_module,
+        "read_private_text",
+        lambda *_args, **_kwargs: ("{}", BrokenStat()),
+    )
+
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_maps_generic_parser_error(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        state_module,
+        "loads_strict",
+        lambda _text: (_ for _ in ()).throw(
+            RuntimeError("synthetic snapshot parser marker")
+        ),
+    )
+
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_maps_generic_payload_getter(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    path.write_text("{}", encoding="utf-8")
+
+    class BrokenPayload(dict):
+        def get(self, _key, _default=None):
+            raise RuntimeError("synthetic snapshot payload marker")
+
+    monkeypatch.setattr(state_module, "loads_strict", lambda _text: BrokenPayload())
+
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_maps_generic_usage_parser_error(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    _write_trusted_snapshot(path, {"account": "account"})
+    monkeypatch.setattr(
+        state_module,
+        "usage_from_dict",
+        lambda _payload: (_ for _ in ()).throw(
+            RuntimeError("synthetic snapshot usage marker")
+        ),
+    )
+
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_maps_generic_provenance_complete_error(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    _write_trusted_snapshot(path, {"account": "account"})
+    monkeypatch.setattr(
+        state_module,
+        "_backend_provenance_is_complete",
+        lambda _usage: (_ for _ in ()).throw(
+            RuntimeError("synthetic snapshot provenance marker")
+        ),
+    )
+
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_maps_generic_configured_provenance_error(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    _write_trusted_snapshot(path, {"account": "account"})
+    monkeypatch.setattr(state_module, "_backend_provenance_is_complete", lambda _usage: True)
+    monkeypatch.setattr(
+        state_module,
+        "backend_provenance_matches_configured",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic configured provenance marker")
+        ),
+    )
+
+    assert state_module._load_usage("account", tmp_path) is None
+
+
+def test_load_usage_maps_generic_generation_reader_error(tmp_path, monkeypatch):
+    path = tmp_path / "account.json"
+    _write_trusted_snapshot(path, {"account": "account"})
+    monkeypatch.setattr(
+        state_module,
+        "_read_state_generation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic snapshot generation marker")
+        ),
+    )
+
+    assert state_module._load_usage("account", tmp_path) is None

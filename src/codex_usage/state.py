@@ -43,6 +43,7 @@ WINDOW_DURATIONS = {
 MAX_MODEL_POOLS = 20
 MAX_POOL_WINDOWS = 8
 MAX_RESET_FUTURE_SKEW_SECONDS = 5 * 60
+_PATH_TYPE = type(Path())
 APP_SERVER_FALLBACK_REASON_PREFIX = "app-server unavailable: "
 KNOWN_APP_SERVER_UNAVAILABLE_DETAILS = frozenset(
     (
@@ -73,94 +74,115 @@ def backend_provenance_matches_configured(
     configured_backend: str,
 ) -> bool:
     """Reject authenticated cache data produced by an explicit other backend."""
-    if (
-        not isinstance(configured_backend, str)
-        or configured_backend not in KNOWN_BACKENDS
-    ):
+    try:
+        if (
+            not isinstance(configured_backend, str)
+            or configured_backend not in KNOWN_BACKENDS
+        ):
+            return False
+        if not isinstance(usage, AccountUsage):
+            return False
+        if not _backend_provenance_fields_valid(usage):
+            return False
+        if not _backend_provenance_is_complete(usage):
+            return False
+        if usage.backend_configured != configured_backend:
+            return False
+        if usage.backend_used == "browser":
+            # Browser can be an intentional fallback for an account configured
+            # with an authenticated backend, but only when that provenance is
+            # explicit. An unlabelled browser snapshot is not attributable.
+            return usage.backend_configured == configured_backend
+        if usage.backend_used not in AUTHENTICATED_BACKENDS:
+            return True
+        if usage.backend_used == configured_backend:
+            return True
+        return configured_backend == "app-server" and _has_backend_fallback_proof(usage)
+    except Exception:
         return False
-    if not isinstance(usage, AccountUsage):
-        return False
-    if not _backend_provenance_fields_valid(usage):
-        return False
-    if not _backend_provenance_is_complete(usage):
-        return False
-    if usage.backend_configured != configured_backend:
-        return False
-    if usage.backend_used == "browser":
-        # Browser can be an intentional fallback for an account configured
-        # with an authenticated backend, but only when that provenance is
-        # explicit. An unlabelled browser snapshot is not attributable.
-        return usage.backend_configured == configured_backend
-    if usage.backend_used not in AUTHENTICATED_BACKENDS:
-        return True
-    if usage.backend_used == configured_backend:
-        return True
-    return configured_backend == "app-server" and _has_backend_fallback_proof(usage)
 
 
 def backend_provenance_matches(left: AccountUsage, right: AccountUsage) -> bool:
     """Avoid merging values across authenticated backends without fallback proof."""
-    if not isinstance(left, AccountUsage) or not isinstance(right, AccountUsage):
+    try:
+        if not isinstance(left, AccountUsage) or not isinstance(right, AccountUsage):
+            return False
+        if not _backend_provenance_is_complete(left) or not _backend_provenance_is_complete(right):
+            return False
+        if (
+            left.backend_configured
+            and right.backend_configured
+            and left.backend_configured != right.backend_configured
+        ):
+            return False
+        left_backend = left.backend_used
+        right_backend = right.backend_used
+        if "browser" in {left_backend, right_backend}:
+            return left_backend == right_backend == "browser"
+        if (
+            left_backend not in AUTHENTICATED_BACKENDS
+            or right_backend not in AUTHENTICATED_BACKENDS
+        ):
+            return True
+        if left_backend == right_backend:
+            return True
+        return _has_backend_fallback_proof(left) or _has_backend_fallback_proof(right)
+    except Exception:
         return False
-    if not _backend_provenance_is_complete(left) or not _backend_provenance_is_complete(right):
-        return False
-    if (
-        left.backend_configured
-        and right.backend_configured
-        and left.backend_configured != right.backend_configured
-    ):
-        return False
-    left_backend = left.backend_used
-    right_backend = right.backend_used
-    if "browser" in {left_backend, right_backend}:
-        return left_backend == right_backend == "browser"
-    if left_backend not in AUTHENTICATED_BACKENDS or right_backend not in AUTHENTICATED_BACKENDS:
-        return True
-    if left_backend == right_backend:
-        return True
-    return _has_backend_fallback_proof(left) or _has_backend_fallback_proof(right)
 
 
 def _backend_provenance_fields_valid(usage: AccountUsage) -> bool:
-    return (
-        _backend_value_valid(usage.backend_configured, KNOWN_BACKENDS)
-        and _backend_value_valid(usage.backend_used, KNOWN_BACKENDS)
-    )
+    try:
+        return (
+            _backend_value_valid(usage.backend_configured, KNOWN_BACKENDS)
+            and _backend_value_valid(usage.backend_used, KNOWN_BACKENDS)
+        )
+    except Exception:
+        return False
 
 
 def _backend_value_valid(value: str | None, allowed: frozenset[str]) -> bool:
-    return value is None or value == "" or (
-        isinstance(value, str) and value in allowed
-    )
+    try:
+        return value is None or value == "" or (
+            isinstance(value, str) and value in allowed
+        )
+    except Exception:
+        return False
 
 
 def _backend_provenance_is_complete(usage: AccountUsage) -> bool:
-    return (
-        isinstance(usage.backend_configured, str)
-        and bool(usage.backend_configured)
-        and usage.backend_configured in KNOWN_BACKENDS
-        and isinstance(usage.backend_used, str)
-        and bool(usage.backend_used)
-        and usage.backend_used in KNOWN_BACKENDS
-    )
+    try:
+        return (
+            isinstance(usage.backend_configured, str)
+            and bool(usage.backend_configured)
+            and usage.backend_configured in KNOWN_BACKENDS
+            and isinstance(usage.backend_used, str)
+            and bool(usage.backend_used)
+            and usage.backend_used in KNOWN_BACKENDS
+        )
+    except Exception:
+        return False
 
 
 def _has_backend_fallback_proof(usage: AccountUsage) -> bool:
-    if (
-        usage.backend_configured != "app-server"
-        or usage.backend_used != "direct"
-    ):
+    try:
+        if (
+            usage.backend_configured != "app-server"
+            or usage.backend_used != "direct"
+        ):
+            return False
+        fallback_reason = usage.fallback_reason
+        if not isinstance(fallback_reason, str):
+            return False
+        if fallback_reason in KNOWN_FALLBACK_REASONS:
+            return True
+        return bool(
+            fallback_reason.startswith(APP_SERVER_FALLBACK_REASON_PREFIX)
+            and fallback_reason[len(APP_SERVER_FALLBACK_REASON_PREFIX) :]
+            in KNOWN_APP_SERVER_UNAVAILABLE_DETAILS
+        )
+    except Exception:
         return False
-    fallback_reason = usage.fallback_reason
-    if not isinstance(fallback_reason, str):
-        return False
-    if fallback_reason in KNOWN_FALLBACK_REASONS:
-        return True
-    return bool(
-        fallback_reason.startswith(APP_SERVER_FALLBACK_REASON_PREFIX)
-        and fallback_reason[len(APP_SERVER_FALLBACK_REASON_PREFIX) :]
-        in KNOWN_APP_SERVER_UNAVAILABLE_DETAILS
-    )
 
 
 def default_snapshot_dir() -> Path:
@@ -174,7 +196,7 @@ def default_current_dir() -> Path:
 def _state_directory(path: object | None, default: Path) -> Path:
     if path is None:
         return default
-    if not isinstance(path, Path):
+    if type(path) is not _PATH_TYPE:
         raise ValueError("state directory is invalid")
     return path
 
@@ -342,7 +364,11 @@ class _StateDeleteTransaction:
                     [primary_error, rollback_error],
                 ) from None
             raise
-        self.locks.close()
+        try:
+            self.locks.close()
+        except BaseException:
+            self.closed = True
+            raise
         self.closed = True
 
     def rollback(self) -> None:
@@ -368,7 +394,10 @@ class _StateDeleteTransaction:
                 self.transaction_dir = None
             except BaseException as rollback_error:
                 rollback_errors.append(rollback_error)
-        self.locks.close()
+        try:
+            self.locks.close()
+        except BaseException as rollback_error:
+            rollback_errors.append(rollback_error)
         self.closed = True
         if rollback_errors:
             raise BaseExceptionGroup("state deletion rollback failed", rollback_errors)
@@ -483,7 +512,10 @@ def _remove_account_state_unlocked(
                 _remove_state_transaction_dir(transaction_dir)
             except BaseException as rollback_error:
                 rollback_errors.append(rollback_error)
-        locks.close()
+        try:
+            locks.close()
+        except BaseException as rollback_error:
+            rollback_errors.append(rollback_error)
         if rollback_errors:
             raise BaseExceptionGroup(
                 "state cleanup rollback failed",
@@ -494,6 +526,11 @@ def _remove_account_state_unlocked(
 
 
 def _remove_state_transaction_dir(path: Path) -> None:
+    assert_no_symlink_ancestors(path, label="state transaction directory")
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(
+            f"state transaction directory must be a real directory: {path}"
+        )
     children: list[Path] = []
     for child in path.iterdir():
         if len(children) >= MAX_STATE_TRANSACTION_ENTRIES:
@@ -545,38 +582,59 @@ def _state_generation_path(account_id: str, directory: Path) -> Path:
 
 
 def _read_state_generation(path: Path, account_id: str) -> int:
-    assert_no_symlink_ancestors(path, label="state generation")
-    if not path.exists():
-        if path.is_symlink():
-            raise ValueError(f"state generation must be a regular file: {path}")
-        return 0
-    text, file_stat = read_private_text(
-        path,
-        regular_label="state generation",
-        read_label="state generation",
-        max_bytes=MAX_STATE_GENERATION_BYTES,
-        too_large_label="state generation",
-        invalid_utf8_label="state generation",
-    )
-    if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
-        raise ValueError(f"state generation must be a private regular file: {path}")
-    payload = loads_strict(text)
-    if not isinstance(payload, dict) or payload.get("account") != account_id:
-        raise ValueError(f"state generation account mismatch: {path}")
-    generation = payload.get("generation")
-    if type(generation) is not int or generation < 0:
-        raise ValueError(f"invalid state generation: {path}")
-    return generation
+    try:
+        assert_no_symlink_ancestors(path, label="state generation")
+        if not path.exists():
+            if path.is_symlink():
+                raise ValueError(f"state generation must be a regular file: {path}")
+            return 0
+        text, file_stat = read_private_text(
+            path,
+            regular_label="state generation",
+            read_label="state generation",
+            max_bytes=MAX_STATE_GENERATION_BYTES,
+            too_large_label="state generation",
+            invalid_utf8_label="state generation",
+        )
+        if file_stat.st_nlink != 1 or file_stat.st_mode & 0o077:
+            raise ValueError(f"state generation must be a private regular file: {path}")
+        payload = loads_strict(text)
+        if not isinstance(payload, dict) or payload.get("account") != account_id:
+            raise ValueError(f"state generation account mismatch: {path}")
+        generation = payload.get("generation")
+        if type(generation) is not int or generation < 0:
+            raise ValueError(f"invalid state generation: {path}")
+        return generation
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("state generation is invalid") from exc
 
 
 def _increment_state_generation(account_id: str, state_dir: Path) -> int:
     directory = state_dir / "generations"
-    assert_no_symlink_ancestors(directory, label="state generation directory")
-    if directory.is_symlink():
-        raise ValueError(f"state generation directory must not be a symlink: {directory}")
+    try:
+        assert_no_symlink_ancestors(directory, label="state generation directory")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("state generation directory is invalid") from exc
+    try:
+        if directory.is_symlink():
+            raise ValueError(
+                f"state generation directory must not be a symlink: {directory}"
+            )
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("state generation directory is invalid") from exc
     try:
         ensure_private_directory(directory, label="state generation directory")
     except OSError as exc:
+        raise ValueError("could not secure state generation directory") from exc
+    except ValueError:
+        raise
+    except Exception as exc:
         raise ValueError("could not secure state generation directory") from exc
     path = directory / f"{account_id}.json"
     generation = _read_state_generation(path, account_id) + 1
@@ -595,10 +653,10 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
         _validate_snapshot_account_id(account_id)
     except (OverflowError, ValueError):
         return None
-    path = directory / f"{account_id}.json"
-    if not path.exists():
-        return None
     try:
+        path = directory / f"{account_id}.json"
+        if not path.exists():
+            return None
         text, file_stat = read_private_text(
             path,
             regular_label="snapshot path",
@@ -632,6 +690,7 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
                 usage,
                 five_hour=None,
                 weekly=None,
+                credits=None,
                 main=None,
                 models=(),
                 error=error,
@@ -663,6 +722,8 @@ def _load_usage(account_id: str, directory: Path) -> AccountUsage | None:
         ValueError,
     ):
         return None
+    except Exception:
+        return None
 
 
 def expire_reset_windows(
@@ -689,8 +750,10 @@ def expire_reset_windows(
     expired_names: list[str] = []
     five_hour = usage.five_hour
     weekly = usage.weekly
+    credits = usage.credits
     five_hour_expired = False
     weekly_expired = False
+    credits_expired = False
     values_captured_at = _values_capture_for_expiry(usage)
     if _cached_window_expired(
         five_hour,
@@ -710,6 +773,15 @@ def expire_reset_windows(
         expired_names.append("weekly")
         weekly_expired = True
         weekly = None
+    if _cached_window_expired(
+        credits,
+        captured_at=_window_expiry_capture(usage, credits, values_captured_at),
+        reference_at=reference_at,
+        expected_kind="credits",
+    ):
+        expired_names.append("credits")
+        credits_expired = True
+        credits = None
     main, main_expired = _expire_pool_windows(
         usage.main,
         usage=usage,
@@ -752,7 +824,7 @@ def expire_reset_windows(
             continue
         models_changed = models_changed or pool_expired
         model_pools += (updated_pool,)
-    core_expired = five_hour_expired or weekly_expired or main_expired
+    core_expired = five_hour_expired or weekly_expired or credits_expired or main_expired
     model_windows_remaining = any(
         isinstance(pool, UsagePool) and bool(pool.windows)
         for pool in model_pools
@@ -769,6 +841,7 @@ def expire_reset_windows(
         usage.status == AccountStatus.BLOCKED
         and not five_hour
         and not weekly
+        and not credits
         and not (main and main.windows)
         and not model_windows_remaining
         and (usage.blocked_until is None or blocked_until_expired)
@@ -808,6 +881,7 @@ def expire_reset_windows(
         usage,
         five_hour=five_hour,
         weekly=weekly,
+        credits=credits,
         main=main,
         models=model_pools,
         status=status,
@@ -906,6 +980,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         for field, raw_window, parsed_window in (
             ("five_hour", raw_five_hour, five_hour),
             ("weekly", raw_weekly, weekly),
+            ("credits", raw_credits, credits),
         )
         if isinstance(raw_window, dict) and parsed_window is None
     ]
@@ -914,6 +989,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         for field, raw_window in (
             ("five_hour", raw_five_hour),
             ("weekly", raw_weekly),
+            ("credits", raw_credits),
         )
         if field in payload and raw_window is not None and not isinstance(raw_window, dict)
     )
@@ -925,6 +1001,7 @@ def usage_from_dict(payload: dict[str, Any]) -> AccountUsage:
         for field, raw_window, parsed_window in (
             ("five_hour", raw_five_hour, five_hour),
             ("weekly", raw_weekly, weekly),
+            ("credits", raw_credits, credits),
         )
         if _window_had_invalid_cached_value(raw_window, parsed_window)
     ]
@@ -1152,11 +1229,23 @@ def merge_current_with_last_success(
         raise ValueError("last success usage is invalid")
     if last_success is None:
         return current
+    if _can_retain_reset_after_transient_error(current, last_success):
+        # Transport errors carry no authenticated identity and no usable
+        # limits. Keep only last known reset count as partial metadata; never
+        # revive stale limit windows.
+        return replace(
+            current,
+            status=AccountStatus.PARTIAL,
+            cache_invalidated=False,
+            stale=True,
+            usage_resets=last_success.usage_resets,
+        )
     if current.status == AccountStatus.LOGIN_REQUIRED:
         return replace(
             current,
             five_hour=None,
             weekly=None,
+            credits=None,
             main=None,
             models=(),
             values_captured_at=None,
@@ -1202,6 +1291,15 @@ def merge_current_with_last_success(
         expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
+    credits = _merge_window_with_last_success(
+        current.credits,
+        last_success.credits,
+        reference_at=current.captured_at,
+        current_captured_at=current_values_captured_at,
+        last_success_captured_at=last_success_values_captured_at,
+        expected_kind="credits",
+        preserve_missing_value=preserve_missing_window_values,
+    )
     main = _merge_pool_windows_with_last_success(
         current.main,
         last_success.main,
@@ -1221,6 +1319,7 @@ def merge_current_with_last_success(
     if (
         five_hour is current.five_hour
         and weekly is current.weekly
+        and credits is current.credits
         and main is current.main
         and models is current.models
     ):
@@ -1229,6 +1328,7 @@ def merge_current_with_last_success(
         current,
         five_hour=five_hour,
         weekly=weekly,
+        credits=credits,
         main=main,
         models=models,
         values_captured_at=last_success.values_captured_at or last_success.captured_at,
@@ -1272,6 +1372,15 @@ def _merge_newer_partial_usage(
         expected_kind="weekly",
         preserve_missing_value=preserve_missing_window_values,
     )
+    credits = _merge_window_with_last_success(
+        newer.credits,
+        older.credits,
+        reference_at=newer.captured_at,
+        current_captured_at=newer_values_captured_at,
+        last_success_captured_at=older_values_captured_at,
+        expected_kind="credits",
+        preserve_missing_value=preserve_missing_window_values,
+    )
     main = _merge_pool_windows_with_last_success(
         newer.main,
         older.main,
@@ -1291,6 +1400,7 @@ def _merge_newer_partial_usage(
     if (
         five_hour is newer.five_hour
         and weekly is newer.weekly
+        and credits is newer.credits
         and main is newer.main
         and models is newer.models
     ):
@@ -1299,6 +1409,7 @@ def _merge_newer_partial_usage(
         newer,
         five_hour=five_hour,
         weekly=weekly,
+        credits=credits,
         main=main,
         models=models,
         values_captured_at=older.values_captured_at or older.captured_at,
@@ -1320,11 +1431,15 @@ def _allow_missing_window_restore(usage: AccountUsage) -> bool:
 
 
 def _has_resetless_usage_window(usage: AccountUsage) -> bool:
+    windows: list[object] = [usage.five_hour, usage.weekly, usage.credits]
+    main = usage.main
+    if isinstance(main, UsagePool) and isinstance(main.windows, tuple):
+        windows.extend(main.windows)
     return any(
         isinstance(window, LimitWindow)
         and window.has_usage_value
         and window.reset_at is None
-        for window in (usage.five_hour, usage.weekly)
+        for window in windows
     )
 
 
@@ -1350,6 +1465,38 @@ def _authoritative_empty_limits(usage: AccountUsage) -> bool:
         and usage.weekly is None
         and isinstance(usage.backend_used, str)
         and usage.backend_used in {"direct", "app-server"}
+    )
+
+
+def _can_retain_reset_after_transient_error(
+    current: AccountUsage,
+    last_success: AccountUsage,
+) -> bool:
+    """Allow reset metadata through identity-free authenticated transport errors."""
+    if (
+        current.status != AccountStatus.ERROR
+        or current.cache_invalidated is not True
+        or current.account_id != last_success.account_id
+        or current.backend_used not in AUTHENTICATED_BACKENDS
+        or current.backend_configured != current.backend_used
+        or current.backend_user_id
+        or current.backend_account_id
+    ):
+        return False
+    if (
+        last_success.cache_invalidated
+        or last_success.status in {AccountStatus.ERROR, AccountStatus.LOGIN_REQUIRED}
+        or last_success.backend_configured != current.backend_configured
+        or last_success.backend_used != current.backend_used
+        or not _backend_provenance_is_complete(last_success)
+        or not backend_provenance_matches_configured(
+            last_success, last_success.backend_configured
+        )
+    ):
+        return False
+    return (
+        isinstance(last_success.usage_resets, UsageResetState)
+        and last_success.usage_resets.known
     )
 
 
@@ -1751,56 +1898,59 @@ def _values_capture_for_expiry(usage: AccountUsage) -> datetime:
 
 
 def backend_identity_matches(left: AccountUsage, right: AccountUsage) -> bool:
-    if not isinstance(left, AccountUsage) or not isinstance(right, AccountUsage):
-        return False
-    if (
-        left.backend_used is not None
-        and not isinstance(left.backend_used, str)
-    ) or (
-        right.backend_used is not None
-        and not isinstance(right.backend_used, str)
-    ):
-        return False
-    if (
-        left.backend_used in AUTHENTICATED_BACKENDS
-        and right.backend_used in AUTHENTICATED_BACKENDS
-        and not any(
-            (
-                left.backend_account_id,
-                right.backend_account_id,
-                left.backend_user_id,
-                right.backend_user_id,
+    try:
+        if not isinstance(left, AccountUsage) or not isinstance(right, AccountUsage):
+            return False
+        if (
+            left.backend_used is not None
+            and not isinstance(left.backend_used, str)
+        ) or (
+            right.backend_used is not None
+            and not isinstance(right.backend_used, str)
+        ):
+            return False
+        if (
+            left.backend_used in AUTHENTICATED_BACKENDS
+            and right.backend_used in AUTHENTICATED_BACKENDS
+            and not any(
+                (
+                    left.backend_account_id,
+                    right.backend_account_id,
+                    left.backend_user_id,
+                    right.backend_user_id,
+                )
             )
-        )
-    ):
-        # An explicit authenticated backend without identity proof must not
-        # restore values captured before a possible account switch.
-        return False
-    if (
-        left.backend_used in AUTHENTICATED_BACKENDS
-        and right.backend_used in AUTHENTICATED_BACKENDS
-        and not (left.backend_account_id and right.backend_account_id)
-    ):
-        return False
-    if left.backend_used == "browser" and right.backend_used == "browser":
-        if not (left.backend_user_id or left.backend_account_id):
+        ):
+            # An explicit authenticated backend without identity proof must not
+            # restore values captured before a possible account switch.
             return False
-        if not (right.backend_user_id or right.backend_account_id):
+        if (
+            left.backend_used in AUTHENTICATED_BACKENDS
+            and right.backend_used in AUTHENTICATED_BACKENDS
+            and not (left.backend_account_id and right.backend_account_id)
+        ):
             return False
-        if bool(left.backend_account_id) != bool(right.backend_account_id):
-            # A shared browser user ID cannot bind an account-bound snapshot
-            # to a user-only snapshot when multiple accounts may share it.
-            return False
-    left_account_id = left.backend_account_id
-    right_account_id = right.backend_account_id
-    if left_account_id:
-        if left_account_id != right_account_id:
-            return False
-        if left.backend_user_id and right.backend_user_id:
-            return left.backend_user_id == right.backend_user_id
-        return True
+        if left.backend_used == "browser" and right.backend_used == "browser":
+            if not (left.backend_user_id or left.backend_account_id):
+                return False
+            if not (right.backend_user_id or right.backend_account_id):
+                return False
+            if bool(left.backend_account_id) != bool(right.backend_account_id):
+                # A shared browser user ID cannot bind an account-bound snapshot
+                # to a user-only snapshot when multiple accounts may share it.
+                return False
+        left_account_id = left.backend_account_id
+        right_account_id = right.backend_account_id
+        if left_account_id:
+            if left_account_id != right_account_id:
+                return False
+            if left.backend_user_id and right.backend_user_id:
+                return left.backend_user_id == right.backend_user_id
+            return True
 
-    return left.backend_user_id == right.backend_user_id
+        return left.backend_user_id == right.backend_user_id
+    except Exception:
+        return False
 
 
 def _window_from_dict(
@@ -1995,7 +2145,7 @@ def _snapshot_window_name(value: Any) -> str:
     if value is None or value == "":
         return ""
     if not isinstance(value, str) or len(value) > 40 or any(
-        char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        char.isspace() or ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
         for char in value
     ):
         raise ValueError("snapshot window name is invalid")
@@ -2144,8 +2294,8 @@ def _snapshot_source_urls(value: Any) -> tuple[str, ...]:
 
 def _validate_snapshot_account_id(account_id: object) -> None:
     if (
-        not isinstance(account_id, str)
-        or account_id in {".", ".."}
+        type(account_id) is not str
+        or account_id in {".", "..", "__all_accounts__"}
         or not SNAPSHOT_ACCOUNT_ID_RE.fullmatch(account_id)
     ):
         raise ValueError("account id must be 1-64 chars: letters, digits, underscore, dot, dash")
