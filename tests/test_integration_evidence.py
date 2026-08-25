@@ -182,3 +182,72 @@ def test_verify_active_manifest_at_hashes_exact_active_bytes(evidence_layout):
     active = state_home / "codex-usage" / "integration" / "active.json"
     assert verified.active_manifest_bytes == active.read_bytes()
     assert verified.active_manifest_sha256 == hashlib.sha256(active.read_bytes()).hexdigest()
+
+
+def test_binding_requires_exact_ten_fields_and_32kib_limit():
+    """Would fail if binding parser accepted missing, extra, or oversized bytes."""
+    from codex_usage import integration_evidence
+    from codex_usage.integration_evidence import EvidenceBinding
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    binding = EvidenceBinding(
+        active_manifest_sha256="a" * 64,
+        binding_schema_version=1,
+        generation_id="b" * 32,
+        payload_filename="account-usage-v2.json",
+        payload_sha256="c" * 64,
+        payload_size_bytes=64,
+        published_at="2026-08-25T10:00:00Z",
+        producer_version="0.6.536",
+        release_id="0.6.536-" + "d" * 16,
+        source_manifest_sha256="e" * 64,
+    )
+
+    assert integration_evidence.parse_binding(
+        integration_evidence.serialize_binding(binding)
+    ) == binding
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.parse_binding(b"{" + b"x" * 32768 + b"}")
+
+
+def test_pointer_rejects_half_previous_pair_and_equal_generations():
+    """Would fail if pointer parser allowed unusable rollback state."""
+    from codex_usage import integration_evidence
+    from codex_usage.private_io import IntegrationEvidenceInvalid
+
+    pointer = {
+        "current_binding_sha256": "a" * 64,
+        "current_generation_id": "b" * 32,
+        "pointer_schema_version": 1,
+        "previous_binding_sha256": None,
+        "previous_generation_id": None,
+    }
+    pointer["previous_generation_id"] = "c" * 32
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.parse_pointer(
+            json.dumps(pointer, sort_keys=True, separators=(",", ":")).encode("ascii")
+        )
+    pointer["previous_binding_sha256"] = "d" * 64
+    pointer["previous_generation_id"] = pointer["current_generation_id"]
+    with pytest.raises(IntegrationEvidenceInvalid):
+        integration_evidence.parse_pointer(
+            json.dumps(pointer, sort_keys=True, separators=(",", ":")).encode("ascii")
+        )
+
+
+def test_v2_payload_rejects_2097153_bytes():
+    """Would fail if payload boundary admitted more than two MiB."""
+    from codex_usage import integration_evidence
+    from codex_usage.integration_snapshot import IntegrationInvalidSource
+
+    with pytest.raises(IntegrationInvalidSource):
+        integration_evidence.validate_v2_payload_bytes(b"x" * 2_097_153)
+
+
+def test_v2_contract_allows_only_three_windows():
+    """Would fail if a non-approved quota window entered V2 validation."""
+    from codex_usage import integration_evidence
+
+    assert integration_evidence.ALLOWED_WINDOW_SECONDS == frozenset(
+        (18_000, 604_800, 2_592_000)
+    )

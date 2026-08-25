@@ -18,14 +18,8 @@ from .consumption import (
     calculate_tracker_evidence,
 )
 from .history import CREDIT_HISTORY_WINDOW_SECONDS, MAX_HISTORY_SAMPLES
-from .json_utils import loads_strict
 from .models import AccountStatus, AccountUsage, LimitWindow, UsagePool
-from .private_io import (
-    _recover_stale_rollback,
-    assert_no_symlink_ancestors,
-    private_path_lock,
-    write_private_text,
-)
+from .private_io import assert_no_symlink_ancestors
 from .state import load_current_usage
 
 _ACCOUNT_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -883,76 +877,3 @@ def serialize_schema2_document(document: Mapping[str, object]) -> bytes:
     if len(payload) > _MAX_DOCUMENT_BYTES:
         raise IntegrationInvalidSource()
     return payload
-
-
-def _require_integration_directory(cache_path: Path) -> None:
-    if not isinstance(cache_path, Path) or not cache_path.is_absolute():
-        raise IntegrationSecureIOError()
-    try:
-        assert_no_symlink_ancestors(cache_path, label="integration cache")
-        directory = cache_path.parent
-        item = directory.lstat()
-    except (OSError, ValueError):
-        raise IntegrationSecureIOError() from None
-    if (
-        cache_path.name != "account-usage-v1.json"
-        or directory.name != "integration"
-        or not stat.S_ISDIR(item.st_mode)
-        or stat.S_IMODE(item.st_mode) != 0o700
-        or item.st_uid != os.getuid()
-    ):
-        raise IntegrationSecureIOError()
-
-
-def _validate_existing_cache(cache_path: Path) -> None:
-    try:
-        item = cache_path.lstat()
-    except FileNotFoundError:
-        return
-    except OSError:
-        raise IntegrationSecureIOError() from None
-    if (
-        not stat.S_ISREG(item.st_mode)
-        or stat.S_IMODE(item.st_mode) != 0o600
-        or item.st_nlink != 1
-        or item.st_uid != os.getuid()
-    ):
-        raise IntegrationSecureIOError()
-
-
-def publish_schema2_cache(payload: bytes, *, cache_path: Path) -> None:
-    if type(payload) is not bytes or not payload or len(payload) > _MAX_DOCUMENT_BYTES:
-        raise IntegrationInvalidSource()
-    try:
-        parsed = loads_strict(payload)
-        canonical = serialize_schema2_document(parsed)
-    except IntegrationSnapshotError:
-        raise
-    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
-        raise IntegrationInvalidSource() from None
-    if canonical != payload:
-        raise IntegrationInvalidSource()
-    _require_integration_directory(cache_path)
-    try:
-        with private_path_lock(
-            cache_path,
-            timeout_seconds=0,
-            label="integration cache lock",
-        ):
-            _require_integration_directory(cache_path)
-            _recover_stale_rollback(
-                cache_path,
-                label="integration cache",
-                required_target_mode=0o600,
-            )
-            _validate_existing_cache(cache_path)
-            write_private_text(
-                cache_path,
-                payload.decode("utf-8"),
-                label="integration cache",
-                mode=0o600,
-            )
-    except TimeoutError:
-        raise IntegrationBusy() from None
-    except (OSError, TypeError, ValueError):
-        raise IntegrationSecureIOError() from None

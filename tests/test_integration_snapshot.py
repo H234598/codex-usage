@@ -241,7 +241,7 @@ def test_schema2_golden_document_contains_only_current_limits_and_tracker_eviden
 def test_schema2_is_only_active_snapshot_api():
     assert hasattr(snapshot_module, "build_schema2_document")
     assert hasattr(snapshot_module, "serialize_schema2_document")
-    assert hasattr(snapshot_module, "publish_schema2_cache")
+    assert not hasattr(snapshot_module, "publish_schema2_cache")
     assert not hasattr(snapshot_module, "build_schema1_document")
     assert not hasattr(snapshot_module, "serialize_schema1_document")
     assert not hasattr(snapshot_module, "publish_schema1_cache")
@@ -780,26 +780,6 @@ def test_source_failures_do_not_publish_or_mutate_existing_state(tmp_path, monke
     assert state_file.stat().st_mode & 0o777 == 0o644
 
 
-def test_secret_marker_rejects_before_cache_replace(tmp_path, monkeypatch):
-    from codex_usage import integration_snapshot
-
-    cache = _cache_path(tmp_path)
-    cache.write_text('{"old":"safe"}', encoding="utf-8")
-    monkeypatch.setattr(
-        integration_snapshot,
-        "write_private_text",
-        lambda *args, **kwargs: pytest.fail("cache write"),
-    )
-    cache.chmod(0o600)
-    candidate = (
-        b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z",'
-        b'"password":"synthetic-marker","schema_version":2}'
-    )
-    with pytest.raises(integration_snapshot.IntegrationInvalidSource):
-        integration_snapshot.publish_schema2_cache(candidate, cache_path=cache)
-    assert cache.read_text(encoding="utf-8") == '{"old":"safe"}'
-
-
 def test_read_current_usage_records_rejects_symlink_source(tmp_path):
     from codex_usage.integration_snapshot import (
         IntegrationInvalidSource,
@@ -873,157 +853,6 @@ def test_read_current_usage_records_stops_collecting_after_account_cap(tmp_path,
     monkeypatch.setattr(Path, "iterdir", bounded_entries)
     with pytest.raises(IntegrationInvalidSource):
         read_current_usage_records(current)
-
-
-def test_publish_schema2_cache_keeps_old_bytes_when_replace_fails(tmp_path, monkeypatch):
-    from codex_usage import integration_snapshot
-
-    cache = _cache_path(tmp_path)
-    cache.write_bytes(b'{"old":"safe"}')
-    cache.chmod(0o600)
-    calls: list[tuple[object, object]] = []
-
-    def fail_replace(*args):
-        calls.append(args)
-        raise OSError("synthetic")
-
-    monkeypatch.setattr("codex_usage.private_io.os.replace", fail_replace)
-    with pytest.raises(integration_snapshot.IntegrationSecureIOError):
-        integration_snapshot.publish_schema2_cache(
-            b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}',
-            cache_path=cache,
-        )
-    assert len(calls) == 1
-    assert cache.read_bytes() == b'{"old":"safe"}'
-
-
-def test_publish_schema2_cache_restores_old_bytes_when_directory_fsync_fails(
-    tmp_path,
-    monkeypatch,
-):
-    from codex_usage import integration_snapshot, private_io
-
-    cache = _cache_path(tmp_path)
-    cache.write_bytes(b'{"old":"safe"}')
-    cache.chmod(0o600)
-    fsync_calls = 0
-
-    def fail_post_replace_fsync(_path):
-        nonlocal fsync_calls
-        fsync_calls += 1
-        if fsync_calls == 2:
-            raise OSError("synthetic directory fsync")
-
-    monkeypatch.setattr(private_io, "_fsync_directory", fail_post_replace_fsync)
-
-    with pytest.raises(integration_snapshot.IntegrationSecureIOError):
-        integration_snapshot.publish_schema2_cache(
-            b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}',
-            cache_path=cache,
-        )
-
-    assert cache.read_bytes() == b'{"old":"safe"}'
-    assert fsync_calls >= 2
-
-
-def test_publish_schema2_cache_recovers_stale_hardlink_rollback(tmp_path):
-    from codex_usage.integration_snapshot import publish_schema2_cache
-
-    cache = _cache_path(tmp_path)
-    cache.write_bytes(b'{"old":"safe"}')
-    cache.chmod(0o600)
-    rollback = cache.with_name(f".{cache.name}.rollback-crash")
-    rollback.hardlink_to(cache)
-    payload = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}'
-
-    publish_schema2_cache(payload, cache_path=cache)
-
-    assert cache.read_bytes() == payload
-    assert cache.stat().st_nlink == 1
-    assert not rollback.exists()
-
-
-def test_publish_schema2_cache_retains_rollback_when_live_mode_is_invalid(tmp_path):
-    from codex_usage.integration_snapshot import IntegrationSecureIOError, publish_schema2_cache
-
-    cache = _cache_path(tmp_path)
-    cache.write_bytes(b'{"newer":"invalid-mode"}')
-    cache.chmod(0o640)
-    rollback = cache.with_name(f".{cache.name}.rollback")
-    rollback.write_bytes(b'{"old":"safe"}')
-    rollback.chmod(0o600)
-    payload = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}'
-
-    with pytest.raises(IntegrationSecureIOError):
-        publish_schema2_cache(payload, cache_path=cache)
-
-    assert cache.read_bytes() == b'{"newer":"invalid-mode"}'
-    assert rollback.read_bytes() == b'{"old":"safe"}'
-
-
-def test_publish_schema2_cache_rejects_bytes_subclass_before_decode(tmp_path):
-    from codex_usage import integration_snapshot
-
-    class BrokenBytes(bytes):
-        def decode(self, *_args, **_kwargs):
-            raise RuntimeError("synthetic snapshot bytes marker")
-
-    cache = _cache_path(tmp_path)
-    payload = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}'
-
-    with pytest.raises(integration_snapshot.IntegrationInvalidSource):
-        integration_snapshot.publish_schema2_cache(
-            BrokenBytes(payload),
-            cache_path=cache,
-        )
-    assert not cache.exists()
-
-
-def test_schema2_publish_replaces_existing_cache_without_parallel_file(tmp_path):
-    from codex_usage.integration_snapshot import publish_schema2_cache
-
-    integration = tmp_path / "state" / "codex-usage" / "integration"
-    integration.mkdir(parents=True, mode=0o700)
-    integration.chmod(0o700)
-    cache = integration / "account-usage-v1.json"
-    cache.write_bytes(b'{"schema_version":1}')
-    cache.chmod(0o600)
-    payload = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}'
-
-    publish_schema2_cache(payload, cache_path=cache)
-
-    assert cache.read_bytes() == payload
-    assert not (integration / "account-usage-v2.json").exists()
-
-
-def test_publish_rejects_foreign_integration_directory(tmp_path, monkeypatch):
-    from codex_usage import integration_snapshot
-    from codex_usage.integration_snapshot import IntegrationSecureIOError
-
-    cache = _cache_path(tmp_path)
-    monkeypatch.setattr(integration_snapshot.os, "getuid", lambda: 2**31 - 1)
-    payload = integration_snapshot.serialize_schema2_document(
-        {"accounts": [], "generated_at": "2026-08-15T10:05:00Z", "schema_version": 2}
-    )
-
-    with pytest.raises(IntegrationSecureIOError):
-        integration_snapshot.publish_schema2_cache(
-            payload,
-            cache_path=cache,
-        )
-
-
-def test_validate_existing_cache_rejects_foreign_owner(tmp_path, monkeypatch):
-    from codex_usage import integration_snapshot
-    from codex_usage.integration_snapshot import IntegrationSecureIOError
-
-    cache = _cache_path(tmp_path)
-    cache.write_bytes(b"cache")
-    cache.chmod(0o600)
-    monkeypatch.setattr(integration_snapshot.os, "getuid", lambda: 2**31 - 1)
-
-    with pytest.raises(IntegrationSecureIOError):
-        integration_snapshot._validate_existing_cache(cache)
 
 
 def test_projection_rejects_duplicate_identity_and_never_uses_label():
@@ -1523,67 +1352,6 @@ def test_schema2_serializer_retains_old_single_sample_insufficient_semantics():
     ][0]["coverage"] == "insufficient"
 
 
-@pytest.mark.parametrize(
-    ("coverage", "last_sample_at", "accepted"),
-    [
-        pytest.param("complete", "2026-08-15T09:50:00Z", True, id="boundary-complete"),
-        pytest.param(
-            "complete",
-            "2026-08-15T09:49:59.999999Z",
-            False,
-            id="old-complete",
-        ),
-        pytest.param("stale", "2026-08-15T09:50:00Z", False, id="boundary-stale"),
-        pytest.param(
-            "stale",
-            "2026-08-15T09:49:59.999999Z",
-            True,
-            id="old-stale",
-        ),
-        pytest.param(
-            "complete",
-            "2026-08-15T10:05:00.000001Z",
-            False,
-            id="future-sample",
-        ),
-    ],
-)
-def test_schema2_publisher_enforces_coverage_age_before_cache_mutation(
-    tmp_path,
-    coverage,
-    last_sample_at,
-    accepted,
-):
-    from codex_usage.integration_snapshot import (
-        IntegrationInvalidSource,
-        publish_schema2_cache,
-    )
-
-    document = _schema2_document_with_coverage(
-        coverage,
-        last_sample_at=last_sample_at,
-    )
-    payload = json.dumps(
-        document,
-        ensure_ascii=True,
-        allow_nan=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    cache = _cache_path(tmp_path)
-    previous = b'{"previous":"safe"}'
-    cache.write_bytes(previous)
-    cache.chmod(0o600)
-
-    if accepted:
-        publish_schema2_cache(payload, cache_path=cache)
-        assert cache.read_bytes() == payload
-    else:
-        with pytest.raises(IntegrationInvalidSource):
-            publish_schema2_cache(payload, cache_path=cache)
-        assert cache.read_bytes() == previous
-
-
 @pytest.mark.parametrize("location", ["root", "account", "freshness", "limit", "evidence"])
 def test_schema2_serializer_rejects_unknown_and_secret_like_fields(location):
     from codex_usage.integration_snapshot import (
@@ -1980,10 +1748,9 @@ def test_schema2_builder_rejects_duplicate_pool_window_with_different_resets():
 
 
 
-def test_snapshot_serializer_rejects_oversized_and_noncanonical_payloads(tmp_path, monkeypatch):
+def test_snapshot_serializer_rejects_oversized_payload(monkeypatch):
     from codex_usage.integration_snapshot import (
         IntegrationInvalidSource,
-        publish_schema2_cache,
         serialize_schema2_document,
     )
 
@@ -1996,89 +1763,3 @@ def test_snapshot_serializer_rejects_oversized_and_noncanonical_payloads(tmp_pat
                 "schema_version": 2,
             }
         )
-
-    monkeypatch.setattr(snapshot_module, "_MAX_DOCUMENT_BYTES", 2 * 1024 * 1024)
-    cache = _cache_path(tmp_path)
-    noncanonical = b'{"schema_version":2,"generated_at":"2026-08-15T10:05:00Z","accounts":[]}'
-    with pytest.raises(IntegrationInvalidSource):
-        publish_schema2_cache(noncanonical, cache_path=cache)
-
-
-def test_snapshot_cache_security_guards_cover_missing_and_io_errors(tmp_path, monkeypatch):
-    from codex_usage.integration_snapshot import (
-        IntegrationSecureIOError,
-        _require_integration_directory,
-        _validate_existing_cache,
-    )
-
-    with pytest.raises(IntegrationSecureIOError):
-        _require_integration_directory(Path("relative/cache.json"))
-
-    cache = _cache_path(tmp_path)
-
-    def raise_value(*_args, **_kwargs):
-        raise ValueError("synthetic ancestor marker")
-
-    monkeypatch.setattr(snapshot_module, "assert_no_symlink_ancestors", raise_value)
-    with pytest.raises(IntegrationSecureIOError):
-        _require_integration_directory(cache)
-
-    monkeypatch.setattr(snapshot_module, "assert_no_symlink_ancestors", lambda *_a, **_k: None)
-    original_lstat = Path.lstat
-
-    def fail_directory_lstat(path):
-        if path == cache.parent:
-            raise OSError("synthetic directory marker")
-        return original_lstat(path)
-
-    monkeypatch.setattr(Path, "lstat", fail_directory_lstat)
-    with pytest.raises(IntegrationSecureIOError):
-        _require_integration_directory(cache)
-    monkeypatch.setattr(Path, "lstat", original_lstat)
-
-    _validate_existing_cache(tmp_path / "missing-cache.json")
-
-    def fail_cache_lstat(path):
-        if path == cache:
-            raise OSError("synthetic cache marker")
-        return original_lstat(path)
-
-    monkeypatch.setattr(Path, "lstat", fail_cache_lstat)
-    with pytest.raises(IntegrationSecureIOError):
-        _validate_existing_cache(cache)
-
-
-def test_snapshot_publish_maps_decode_and_lock_failures(tmp_path, monkeypatch):
-    from codex_usage.integration_snapshot import (
-        IntegrationBusy,
-        IntegrationInvalidSource,
-        publish_schema2_cache,
-    )
-
-    cache = _cache_path(tmp_path)
-    with pytest.raises(IntegrationInvalidSource):
-        publish_schema2_cache(b"\xff", cache_path=cache)
-
-    valid = b'{"accounts":[],"generated_at":"2026-08-15T10:05:00Z","schema_version":2}'
-    original_loads_strict = snapshot_module.loads_strict
-    def fail_parse(_payload):
-        raise ValueError("synthetic parse")
-
-    monkeypatch.setattr(snapshot_module, "loads_strict", fail_parse)
-    with pytest.raises(IntegrationInvalidSource):
-        publish_schema2_cache(valid, cache_path=cache)
-    monkeypatch.setattr(snapshot_module, "loads_strict", original_loads_strict)
-    cache.write_bytes(b'{"old":"safe"}')
-    cache.chmod(0o600)
-
-    class BusyLock:
-        def __enter__(self):
-            raise TimeoutError("synthetic lock marker")
-
-        def __exit__(self, *_args):
-            return False
-
-    monkeypatch.setattr(snapshot_module, "private_path_lock", lambda *_a, **_k: BusyLock())
-    with pytest.raises(IntegrationBusy):
-        publish_schema2_cache(valid, cache_path=cache)
-    assert cache.read_bytes() == b'{"old":"safe"}'

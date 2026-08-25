@@ -2,19 +2,28 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import json
 import math
 import os
 import pwd
+import re
 import stat
 import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from . import private_io
+from .integration_snapshot import (
+    IntegrationInvalidSource,
+    _canonical_document_v2,
+    serialize_schema2_document,
+)
+from .json_utils import loads_strict
 from .private_io import (
     FileIdentity,
     IntegrationEvidenceError,
@@ -24,6 +33,59 @@ from .private_io import (
 
 _LOCK_MAX_BYTES = 4096
 _EVIDENCE_LOCK_STATE = threading.local()
+_BINDING_MAX_BYTES = 32 * 1024
+_POINTER_MAX_BYTES = 4096
+_PAYLOAD_MAX_BYTES = 2 * 1024 * 1024
+_BINDING_FIELDS = frozenset(
+    (
+        "active_manifest_sha256",
+        "binding_schema_version",
+        "generation_id",
+        "payload_filename",
+        "payload_sha256",
+        "payload_size_bytes",
+        "published_at",
+        "producer_version",
+        "release_id",
+        "source_manifest_sha256",
+    )
+)
+_POINTER_FIELDS = frozenset(
+    (
+        "current_binding_sha256",
+        "current_generation_id",
+        "pointer_schema_version",
+        "previous_binding_sha256",
+        "previous_generation_id",
+    )
+)
+ALLOWED_WINDOW_SECONDS = frozenset((18_000, 604_800, 2_592_000))
+_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
+_GENERATION_ID_RE = re.compile(r"[0-9a-f]{32}")
+_RELEASE_ID_RE = re.compile(r"0\.6\.536-[0-9a-f]{16}")
+
+
+@dataclass(frozen=True)
+class EvidenceBinding:
+    active_manifest_sha256: str
+    binding_schema_version: int
+    generation_id: str
+    payload_filename: str
+    payload_sha256: str
+    payload_size_bytes: int
+    published_at: str
+    producer_version: str
+    release_id: str
+    source_manifest_sha256: str
+
+
+@dataclass(frozen=True)
+class EvidencePointer:
+    current_binding_sha256: str
+    current_generation_id: str
+    pointer_schema_version: int
+    previous_binding_sha256: str | None
+    previous_generation_id: str | None
 
 
 @dataclass
@@ -43,6 +105,193 @@ class _HeldEvidenceLocks:
 
 class IntegrationBusy(IntegrationEvidenceError):
     pass
+
+
+def _invalid_contract() -> None:
+    raise IntegrationEvidenceInvalid()
+
+
+def _canonical_timestamp(value: object) -> str:
+    if type(value) is not str or len(value) > 64 or "T" not in value:
+        _invalid_contract()
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        _invalid_contract()
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        _invalid_contract()
+    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _require_exact_object(value: object, *, fields: frozenset[str]) -> dict[str, object]:
+    if type(value) is not dict:
+        _invalid_contract()
+    mapping = cast(dict[object, object], value)
+    if len(mapping) != len(fields) or set(mapping) != fields:
+        _invalid_contract()
+    if any(type(key) is not str for key in mapping):
+        _invalid_contract()
+    return cast(dict[str, object], mapping)
+
+
+def _require_digest(value: object) -> str:
+    if type(value) is not str or _DIGEST_RE.fullmatch(value) is None:
+        _invalid_contract()
+    return value
+
+
+def _require_generation_id(value: object) -> str:
+    if type(value) is not str or _GENERATION_ID_RE.fullmatch(value) is None:
+        _invalid_contract()
+    return value
+
+
+def _canonical_binding(binding: EvidenceBinding) -> dict[str, object]:
+    if type(binding) is not EvidenceBinding:
+        _invalid_contract()
+    if type(binding.binding_schema_version) is not int or binding.binding_schema_version != 1:
+        _invalid_contract()
+    if binding.payload_filename != "account-usage-v2.json":
+        _invalid_contract()
+    if (
+        type(binding.payload_size_bytes) is not int
+        or not 1 <= binding.payload_size_bytes <= _PAYLOAD_MAX_BYTES
+    ):
+        _invalid_contract()
+    if binding.producer_version != "0.6.536":
+        _invalid_contract()
+    if type(binding.release_id) is not str or _RELEASE_ID_RE.fullmatch(binding.release_id) is None:
+        _invalid_contract()
+    return {
+        "active_manifest_sha256": _require_digest(binding.active_manifest_sha256),
+        "binding_schema_version": 1,
+        "generation_id": _require_generation_id(binding.generation_id),
+        "payload_filename": "account-usage-v2.json",
+        "payload_sha256": _require_digest(binding.payload_sha256),
+        "payload_size_bytes": binding.payload_size_bytes,
+        "published_at": _canonical_timestamp(binding.published_at),
+        "producer_version": "0.6.536",
+        "release_id": binding.release_id,
+        "source_manifest_sha256": _require_digest(binding.source_manifest_sha256),
+    }
+
+
+def _canonical_pointer(pointer: EvidencePointer) -> dict[str, object]:
+    if type(pointer) is not EvidencePointer:
+        _invalid_contract()
+    if type(pointer.pointer_schema_version) is not int or pointer.pointer_schema_version != 1:
+        _invalid_contract()
+    current_generation_id = _require_generation_id(pointer.current_generation_id)
+    previous_digest = pointer.previous_binding_sha256
+    previous_generation_id = pointer.previous_generation_id
+    if (previous_digest is None) != (previous_generation_id is None):
+        _invalid_contract()
+    if previous_digest is not None:
+        previous_digest = _require_digest(previous_digest)
+        previous_generation_id = _require_generation_id(previous_generation_id)
+        if previous_generation_id == current_generation_id:
+            _invalid_contract()
+    return {
+        "current_binding_sha256": _require_digest(pointer.current_binding_sha256),
+        "current_generation_id": current_generation_id,
+        "pointer_schema_version": 1,
+        "previous_binding_sha256": previous_digest,
+        "previous_generation_id": previous_generation_id,
+    }
+
+
+def _serialize_contract(value: dict[str, object]) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError):
+        _invalid_contract()
+
+
+def serialize_binding(binding: EvidenceBinding) -> bytes:
+    payload = _serialize_contract(_canonical_binding(binding))
+    if not 1 <= len(payload) <= _BINDING_MAX_BYTES:
+        _invalid_contract()
+    return payload
+
+
+def parse_binding(payload: bytes) -> EvidenceBinding:
+    if type(payload) is not bytes or not 1 <= len(payload) <= _BINDING_MAX_BYTES:
+        _invalid_contract()
+    try:
+        value = _require_exact_object(loads_strict(payload), fields=_BINDING_FIELDS)
+        binding = EvidenceBinding(
+            active_manifest_sha256=_require_digest(value["active_manifest_sha256"]),
+            binding_schema_version=value["binding_schema_version"],
+            generation_id=_require_generation_id(value["generation_id"]),
+            payload_filename=value["payload_filename"],
+            payload_sha256=_require_digest(value["payload_sha256"]),
+            payload_size_bytes=value["payload_size_bytes"],
+            published_at=value["published_at"],
+            producer_version=value["producer_version"],
+            release_id=value["release_id"],
+            source_manifest_sha256=_require_digest(value["source_manifest_sha256"]),
+        )
+        canonical = serialize_binding(binding)
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        _invalid_contract()
+    if canonical != payload:
+        _invalid_contract()
+    return binding
+
+
+def serialize_pointer(pointer: EvidencePointer) -> bytes:
+    payload = _serialize_contract(_canonical_pointer(pointer))
+    if not 1 <= len(payload) <= _POINTER_MAX_BYTES:
+        _invalid_contract()
+    return payload
+
+
+def parse_pointer(payload: bytes) -> EvidencePointer:
+    if type(payload) is not bytes or not 1 <= len(payload) <= _POINTER_MAX_BYTES:
+        _invalid_contract()
+    try:
+        value = _require_exact_object(loads_strict(payload), fields=_POINTER_FIELDS)
+        pointer = EvidencePointer(
+            current_binding_sha256=_require_digest(value["current_binding_sha256"]),
+            current_generation_id=_require_generation_id(value["current_generation_id"]),
+            pointer_schema_version=value["pointer_schema_version"],
+            previous_binding_sha256=value["previous_binding_sha256"],
+            previous_generation_id=value["previous_generation_id"],
+        )
+        canonical = serialize_pointer(pointer)
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        _invalid_contract()
+    if canonical != payload:
+        _invalid_contract()
+    return pointer
+
+
+def validate_v2_payload_bytes(payload: bytes) -> dict[str, object]:
+    if type(payload) is not bytes or not 1 <= len(payload) <= _PAYLOAD_MAX_BYTES:
+        raise IntegrationInvalidSource()
+    try:
+        document = _canonical_document_v2(loads_strict(payload))
+        canonical = serialize_schema2_document(document)
+    except IntegrationInvalidSource:
+        raise
+    except (TypeError, ValueError, UnicodeDecodeError, RecursionError):
+        raise IntegrationInvalidSource() from None
+    if canonical != payload:
+        raise IntegrationInvalidSource()
+    for account in cast(list[dict[str, object]], document["accounts"]):
+        for limit in cast(list[dict[str, object]], account["limits"]):
+            if limit["window_seconds"] not in ALLOWED_WINDOW_SECONDS:
+                raise IntegrationInvalidSource()
+        for evidence in cast(list[dict[str, object]], account["tracker_evidence"]):
+            if evidence["limit_window_seconds"] not in ALLOWED_WINDOW_SECONDS:
+                raise IntegrationInvalidSource()
+    return document
 
 
 def _evidence_lock_name(target: Path) -> str:
